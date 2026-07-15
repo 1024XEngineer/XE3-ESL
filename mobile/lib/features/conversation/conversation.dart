@@ -1,0 +1,2 @@
+/// Conversation module boundary.
+library;
