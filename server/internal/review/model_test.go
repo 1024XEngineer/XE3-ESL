@@ -128,7 +128,13 @@ func TestEvidenceValidate(t *testing.T) {
 }
 
 func TestNewFeedbackItemCopiesEvidence(t *testing.T) {
-	evidence := []review.Evidence{{TranscriptText: "I reduced latency by 30%."}}
+	startMS := int64(100)
+	endMS := int64(200)
+	evidence := []review.Evidence{{
+		TranscriptText: "I reduced latency by 30%.",
+		StartMS:        &startMS,
+		EndMS:          &endMS,
+	}}
 	item, err := review.NewFeedbackItem(
 		"feedback-1",
 		"analysis-1",
@@ -144,8 +150,13 @@ func TestNewFeedbackItemCopiesEvidence(t *testing.T) {
 	}
 
 	evidence[0].TranscriptText = "changed by caller"
+	startMS = -1
+	endMS = 50
 	if item.Evidence[0].TranscriptText != "I reduced latency by 30%." {
 		t.Fatalf("feedback evidence changed through caller slice: %#v", item.Evidence)
+	}
+	if *item.Evidence[0].StartMS != 100 || *item.Evidence[0].EndMS != 200 {
+		t.Fatalf("feedback evidence range changed through caller pointers: %#v", item.Evidence)
 	}
 	if err := item.Validate(); err != nil {
 		t.Fatalf("feedback should validate: %v", err)
@@ -234,6 +245,18 @@ func TestNewHistoryRecordUsesStableSourceIDs(t *testing.T) {
 	}
 	if err := record.Validate(); err != nil {
 		t.Fatalf("history record should validate: %v", err)
+	}
+}
+
+func TestNewHistoryRecordRejectsReviewBeforeAnalysisCompletion(t *testing.T) {
+	analysis := mustPendingAnalysis(t)
+	if err := analysis.Complete(72, "The answer needs a clearer result.", "", testTime.Add(time.Minute)); err != nil {
+		t.Fatalf("complete analysis: %v", err)
+	}
+
+	_, err := review.NewHistoryRecord("history-1", "session-1", analysis, testTime.Add(30*time.Second))
+	if !errors.Is(err, review.ErrInvalidHistoryRecord) {
+		t.Fatalf("expected history before analysis completion to fail, got %v", err)
 	}
 }
 

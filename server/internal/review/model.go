@@ -235,8 +235,8 @@ type FeedbackItem struct {
 	CreatedAt  time.Time
 }
 
-// NewFeedbackItem 创建反馈并复制证据切片，避免调用方后续追加元素时
-// 意外改变反馈内部保存的证据集合。
+// NewFeedbackItem 创建反馈并深拷贝证据，避免调用方后续修改切片元素或
+// 音频范围指针时意外改变反馈内部保存的证据集合。
 func NewFeedbackItem(
 	id, analysisID string,
 	category FeedbackCategory,
@@ -251,7 +251,7 @@ func NewFeedbackItem(
 		Category:   FeedbackCategory(strings.TrimSpace(string(category))),
 		Message:    strings.TrimSpace(message),
 		Suggestion: strings.TrimSpace(suggestion),
-		Evidence:   append([]Evidence(nil), evidence...),
+		Evidence:   cloneEvidence(evidence),
 		Retryable:  retryable,
 		CreatedAt:  createdAt,
 	}
@@ -462,7 +462,7 @@ func NewHistoryRecord(id, sessionID string, analysis TurnAnalysis, reviewedAt ti
 	if analysis.Status != AnalysisStatusCompleted {
 		return HistoryRecord{}, fmt.Errorf("%w: analysis must be completed", ErrInvalidHistoryRecord)
 	}
-	if reviewedAt.IsZero() || reviewedAt.Before(analysis.CreatedAt) {
+	if reviewedAt.IsZero() || reviewedAt.Before(*analysis.CompletedAt) {
 		return HistoryRecord{}, fmt.Errorf("%w: invalid reviewed_at", ErrInvalidHistoryRecord)
 	}
 
@@ -534,6 +534,24 @@ func validateUpdatedAt(createdAt, currentUpdatedAt, nextUpdatedAt time.Time) err
 
 func intPointer(value int) *int {
 	return &value
+}
+
+func int64Pointer(value int64) *int64 {
+	return &value
+}
+
+func cloneEvidence(source []Evidence) []Evidence {
+	cloned := make([]Evidence, len(source))
+	for i, evidence := range source {
+		cloned[i] = evidence
+		if evidence.StartMS != nil {
+			cloned[i].StartMS = int64Pointer(*evidence.StartMS)
+		}
+		if evidence.EndMS != nil {
+			cloned[i].EndMS = int64Pointer(*evidence.EndMS)
+		}
+	}
+	return cloned
 }
 
 func timePointer(value time.Time) *time.Time {
