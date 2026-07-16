@@ -36,3 +36,5 @@ yarn-error.log*
 server/bin/
 *.test
 *.out
+# Local Review architecture documents
+server/internal/review/docs/
