@@ -117,17 +117,23 @@ type Turn struct {
 // AudioAsset contains business metadata for audio whose bytes are stored by a
 // Platform file-storage capability. StorageRef is a stable internal reference,
 // not a public URL or storage credential.
+//
+// Question TTS and completed answer audio have an OwnerType and OwnerID. An
+// answer uploaded before transcription has no owner yet and instead references
+// its Question through PendingAnswerQuestionID. After a valid Turn is created,
+// the asset is bound to that Turn and PendingAnswerQuestionID is cleared.
 type AudioAsset struct {
-	AudioAssetID string
-	OwnerType    AudioOwnerType
-	OwnerID      string
-	DurationMS   int64
-	StorageRef   *string
-	AudioStatus  AudioStatus
-	ContentType  *string
-	Language     *string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	AudioAssetID            string
+	OwnerType               *AudioOwnerType
+	OwnerID                 *string
+	PendingAnswerQuestionID *string
+	DurationMS              int64
+	StorageRef              *string
+	AudioStatus             AudioStatus
+	ContentType             *string
+	Language                *string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 // TurnOutcome is the idempotent control signal submitted to Practice after a

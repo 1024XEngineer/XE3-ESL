@@ -47,9 +47,15 @@ func TestConversationEnumContracts(t *testing.T) {
 }
 
 func TestProcessingAttemptSupportsFailureBeforeTurnCreation(t *testing.T) {
+	questionID := "question-1"
 	audioAssetID := "audio-1"
+	audioAsset := conversation.AudioAsset{
+		AudioAssetID:            audioAssetID,
+		PendingAnswerQuestionID: &questionID,
+		AudioStatus:             conversation.AudioStatusReady,
+	}
 	attempt := conversation.ProcessingAttempt{
-		QuestionID:   "question-1",
+		QuestionID:   questionID,
 		AudioAssetID: &audioAssetID,
 		Stage:        conversation.ProcessingStageTranscription,
 		Status:       conversation.ProcessingAttemptStatusFailed,
@@ -59,6 +65,12 @@ func TestProcessingAttemptSupportsFailureBeforeTurnCreation(t *testing.T) {
 		},
 	}
 
+	if audioAsset.OwnerType != nil || audioAsset.OwnerID != nil {
+		t.Fatal("pre-turn answer audio must not reference a Turn that does not exist")
+	}
+	if audioAsset.PendingAnswerQuestionID == nil || *audioAsset.PendingAnswerQuestionID != attempt.QuestionID {
+		t.Fatal("pre-turn answer audio must retain its Question association")
+	}
 	if attempt.TurnID != nil {
 		t.Fatal("a failed pre-turn transcription must not reference a Turn")
 	}
