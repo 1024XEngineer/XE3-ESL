@@ -21,6 +21,9 @@ type ToolRegistry interface {
 }
 
 type ToolInvocation struct {
+	// ActorUserID comes from the authenticated service command. Tool adapters
+	// must use it for authorization instead of trusting model-generated arguments.
+	ActorUserID    string
 	TaskRunID      string
 	ToolName       string
 	Arguments      map[string]any
@@ -33,4 +36,13 @@ type ConversationStore interface {
 	SaveThread(context.Context, AssistantThread) error
 	SaveTaskRun(context.Context, TaskRun) error
 	SaveToolCall(context.Context, ToolCall) error
+	// GetPendingConfirmationRequest restores an unfinished confirmation when a
+	// TaskRun resumes after a process restart.
+	GetPendingConfirmationRequest(
+		ctx context.Context,
+		taskRunID string,
+	) (ConfirmationRequest, error)
+	// SaveConfirmationRequest persists both newly created requests and later
+	// status transitions such as approval, rejection, or expiration.
+	SaveConfirmationRequest(context.Context, ConfirmationRequest) error
 }

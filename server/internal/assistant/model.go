@@ -19,6 +19,15 @@ const (
 	TaskRunStatusFailed          TaskRunStatus = "failed"
 )
 
+type ConfirmationStatus string
+
+const (
+	ConfirmationStatusPending  ConfirmationStatus = "pending"
+	ConfirmationStatusApproved ConfirmationStatus = "approved"
+	ConfirmationStatusRejected ConfirmationStatus = "rejected"
+	ConfirmationStatusExpired  ConfirmationStatus = "expired"
+)
+
 // AssistantThread is the long-lived conversation between a user and SpeakUp.
 // PracticeSession remains owned by the practice module.
 type AssistantThread struct {
@@ -59,7 +68,7 @@ type ConfirmationRequest struct {
 	Action    string
 	RiskLevel string
 	Summary   string
-	Status    string
+	Status    ConfirmationStatus
 	ExpiresAt time.Time
 }
 
