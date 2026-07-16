@@ -1,4 +1,5 @@
-// Package conversation owns questions, turns, transcripts, and media capability ports.
+// Package conversation owns questions, valid answer turns, transcripts, and
+// audio asset metadata for an interview conversation.
 package conversation
 
 type Module struct{}
