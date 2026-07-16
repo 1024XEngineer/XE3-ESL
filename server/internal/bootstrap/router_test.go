@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/assistant"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
@@ -19,6 +20,7 @@ import (
 func TestHealthIncludesRegisteredModules(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	router := bootstrap.NewRouter(logger,
+		assistant.New(),
 		preparation.New(),
 		practice.New(),
 		conversation.New(),
@@ -41,7 +43,7 @@ func TestHealthIncludesRegisteredModules(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	wantModules := []string{"preparation", "practice", "conversation", "review"}
+	wantModules := []string{"assistant", "preparation", "practice", "conversation", "review"}
 	if body.Status != "ok" || !reflect.DeepEqual(body.Modules, wantModules) {
 		t.Fatalf("unexpected health response: %#v", body)
 	}
