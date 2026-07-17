@@ -61,13 +61,38 @@ func TestUnknownRouteUsesStableErrorShape(t *testing.T) {
 
 	var body struct {
 		Error struct {
-			Code string `json:"code"`
+			Code      string `json:"code"`
+			Reason    string `json:"reason"`
+			Message   string `json:"message"`
+			Retryable bool   `json:"retryable"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.Error.Code != "route_not_found" {
+	if body.Error.Code != "not_found" {
 		t.Fatalf("unexpected error code: %q", body.Error.Code)
+	}
+	if body.Error.Reason != "route_not_found" {
+		t.Fatalf("unexpected error reason: %q", body.Error.Reason)
+	}
+	if body.Error.Message != "route not found" || body.Error.Retryable {
+		t.Fatalf("unexpected error response: %#v", body.Error)
+	}
+}
+
+func TestHealthResponseIsUnchanged(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := bootstrap.NewRouter(logger)
+
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+	if got, want := response.Body.String(), `{"modules":[],"status":"ok"}`; got != want {
+		t.Fatalf("health response changed: got %s, want %s", got, want)
 	}
 }
