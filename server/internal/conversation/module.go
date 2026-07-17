@@ -1,5 +1,4 @@
-// Package conversation owns questions, valid answer turns, transcripts, and
-// audio asset metadata for an interview conversation.
+// Package conversation 负责问题、有效回答、转录和音频资产元数据。
 package conversation
 
 type Module struct{}

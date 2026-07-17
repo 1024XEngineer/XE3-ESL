@@ -2,8 +2,7 @@ package conversation
 
 import "time"
 
-// QuestionType identifies whether a question starts an objective or follows up
-// on a primary question.
+// QuestionType 表示主问题或追问。
 type QuestionType string
 
 const (
@@ -11,7 +10,7 @@ const (
 	QuestionTypeFollowUp QuestionType = "FOLLOW_UP"
 )
 
-// InteractionMode identifies how an answer was captured.
+// InteractionMode 表示回答采用的语音交互方式。
 type InteractionMode string
 
 const (
@@ -19,8 +18,7 @@ const (
 	InteractionModeRealtime   InteractionMode = "REALTIME"
 )
 
-// TurnStatus tracks whether an effective answer is still being submitted to
-// Practice or has been accepted.
+// TurnStatus 表示有效回答的处理状态。
 type TurnStatus string
 
 const (
@@ -28,7 +26,7 @@ const (
 	TurnStatusCompleted  TurnStatus = "completed"
 )
 
-// AudioOwnerType identifies the Conversation entity that owns an audio asset.
+// AudioOwnerType 表示音频资产所属的 Conversation 实体类型。
 type AudioOwnerType string
 
 const (
@@ -36,7 +34,7 @@ const (
 	AudioOwnerTypeTurn     AudioOwnerType = "TURN"
 )
 
-// AudioStatus tracks the lifecycle of audio metadata managed by Conversation.
+// AudioStatus 表示音频资产的生命周期状态。
 type AudioStatus string
 
 const (
@@ -46,8 +44,7 @@ const (
 	AudioStatusDeleted AudioStatus = "deleted"
 )
 
-// AnswerValidity is kept compatible with the frozen cross-module contract.
-// Conversation only produces VALID outcomes in MS1.
+// AnswerValidity 保持与冻结的跨模块契约兼容，MS1 只产生 VALID 结果。
 type AnswerValidity string
 
 const (
@@ -55,7 +52,7 @@ const (
 	AnswerValidityInvalid AnswerValidity = "INVALID"
 )
 
-// ObjectiveCoverage describes how well an answer covers the current objective.
+// ObjectiveCoverage 表示回答对当前目标的覆盖程度。
 type ObjectiveCoverage string
 
 const (
@@ -64,7 +61,7 @@ const (
 	ObjectiveCoverageNotCovered       ObjectiveCoverage = "NOT_COVERED"
 )
 
-// ProcessingStage identifies an internal Conversation processing step.
+// ProcessingStage 表示 Conversation 内部处理阶段。
 type ProcessingStage string
 
 const (
@@ -72,8 +69,7 @@ const (
 	ProcessingStageTurnOutcomeSubmission ProcessingStage = "turn_outcome_submission"
 )
 
-// ProcessingAttemptStatus records the result of one append-only processing
-// attempt.
+// ProcessingAttemptStatus 表示一次追加式处理尝试的状态。
 type ProcessingAttemptStatus string
 
 const (
@@ -82,8 +78,7 @@ const (
 	ProcessingAttemptStatusFailed    ProcessingAttemptStatus = "failed"
 )
 
-// Question is an immutable interview question generated for a PracticeSession.
-// A FOLLOW_UP question references a PRIMARY question in the same session.
+// Question 表示为 PracticeSession 生成的不可变问题，追问必须关联同场主问题。
 type Question struct {
 	QuestionID           string
 	PracticeSessionID    string
@@ -97,8 +92,7 @@ type Question struct {
 	CreatedAt            time.Time
 }
 
-// Turn is one effective answer to a Question. Recording fragments, connection
-// events, empty answers, and failed transcription attempts do not create Turns.
+// Turn 表示对 Question 的一次有效回答，空回答或转录失败不会创建 Turn。
 type Turn struct {
 	TurnID               string
 	PracticeSessionID    string
@@ -114,14 +108,9 @@ type Turn struct {
 	CompletedAt          *time.Time
 }
 
-// AudioAsset contains business metadata for audio whose bytes are stored by a
-// Platform file-storage capability. StorageRef is a stable internal reference,
-// not a public URL or storage credential.
+// AudioAsset 保存音频业务元数据，实际内容由 Platform 文件存储能力管理。
 //
-// Question TTS and completed answer audio have an OwnerType and OwnerID. An
-// answer uploaded before transcription has no owner yet and instead references
-// its Question through PendingAnswerQuestionID. After a valid Turn is created,
-// the asset is bound to that Turn and PendingAnswerQuestionID is cleared.
+// 转录前的回答音频通过 PendingAnswerQuestionID 关联问题；创建有效 Turn 后再绑定 Owner，并清除临时关联。
 type AudioAsset struct {
 	AudioAssetID            string
 	OwnerType               *AudioOwnerType
@@ -136,8 +125,7 @@ type AudioAsset struct {
 	UpdatedAt               time.Time
 }
 
-// TurnOutcome is the idempotent control signal submitted to Practice after a
-// valid Turn is saved. TurnID is its idempotency key.
+// TurnOutcome 是有效 Turn 保存后提交给 Practice 的控制信号，TurnID 同时作为幂等键。
 type TurnOutcome struct {
 	TurnID                        string
 	PracticeSessionID             string
@@ -148,8 +136,7 @@ type TurnOutcome struct {
 	CompletedPrimaryQuestionCount int
 }
 
-// Transcript stores the internal ASR result. Other modules consume
-// Turn.AnswerText instead of depending on this structure.
+// Transcript 保存内部 ASR 结果，其他模块只使用 Turn.AnswerText。
 type Transcript struct {
 	TranscriptID string
 	QuestionID   string
@@ -161,14 +148,14 @@ type Transcript struct {
 	CreatedAt    time.Time
 }
 
-// TranscriptSegment is a time-bounded part of a Transcript.
+// TranscriptSegment 表示带音频时间范围的转录片段。
 type TranscriptSegment struct {
 	StartMS int64
 	EndMS   int64
 	Text    string
 }
 
-// ProcessingFailure describes why an internal processing attempt failed.
+// ProcessingFailure 描述内部处理尝试的失败原因。
 type ProcessingFailure struct {
 	Code      string
 	Message   string
@@ -176,9 +163,7 @@ type ProcessingFailure struct {
 	FailedAt  time.Time
 }
 
-// ProcessingAttempt is an append-only record of a Conversation processing
-// attempt. A transcription failure can be recorded before a Turn exists by
-// using QuestionID and AudioAssetID with a nil TurnID.
+// ProcessingAttempt 追加记录一次处理尝试，转录失败时允许 TurnID 为空。
 type ProcessingAttempt struct {
 	ProcessingAttemptID string
 	QuestionID          string
