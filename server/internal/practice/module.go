@@ -1,4 +1,4 @@
-// Package practice owns practice plans, sessions, and policy snapshots.
+// Package practice 管理练习计划、场次和推进策略
 package practice
 
 type Module struct{}
