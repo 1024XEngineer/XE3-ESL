@@ -2,7 +2,7 @@ package assistant
 
 import "context"
 
-// Planner turns a user goal into structured, reviewable tool steps.
+// Planner 将用户目标拆解为结构化、可审核的工具步骤。
 type Planner interface {
 	Plan(context.Context, PlanRequest) (Plan, error)
 }
@@ -13,16 +13,13 @@ type PlanRequest struct {
 	ContextSummary string
 }
 
-// ToolRegistry exposes only explicitly registered business capabilities.
-// Implementations adapt the public services of preparation, practice,
-// conversation, and review; they must not expose repositories.
+// ToolRegistry 只暴露显式注册的业务能力，不允许直接暴露 Repository。
 type ToolRegistry interface {
 	Execute(context.Context, ToolInvocation) (ToolResult, error)
 }
 
 type ToolInvocation struct {
-	// ActorUserID comes from the authenticated service command. Tool adapters
-	// must use it for authorization instead of trusting model-generated arguments.
+	// ActorUserID 来自已认证的服务命令，工具适配器必须使用它鉴权。
 	ActorUserID    string
 	TaskRunID      string
 	ToolName       string
@@ -30,19 +27,17 @@ type ToolInvocation struct {
 	IdempotencyKey string
 }
 
-// ConversationStore persists assistant-owned orchestration state only.
+// ConversationStore 只持久化 assistant 模块拥有的编排状态。
 type ConversationStore interface {
 	GetThread(context.Context, string) (AssistantThread, error)
 	SaveThread(context.Context, AssistantThread) error
 	SaveTaskRun(context.Context, TaskRun) error
 	SaveToolCall(context.Context, ToolCall) error
-	// GetPendingConfirmationRequest restores an unfinished confirmation when a
-	// TaskRun resumes after a process restart.
+	// GetPendingConfirmationRequest 用于在进程重启后恢复未完成的确认请求。
 	GetPendingConfirmationRequest(
 		ctx context.Context,
 		taskRunID string,
 	) (ConfirmationRequest, error)
-	// SaveConfirmationRequest persists both newly created requests and later
-	// status transitions such as approval, rejection, or expiration.
+	// SaveConfirmationRequest 保存确认请求及其批准、拒绝或过期等状态变化。
 	SaveConfirmationRequest(context.Context, ConfirmationRequest) error
 }

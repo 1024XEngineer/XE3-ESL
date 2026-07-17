@@ -7,9 +7,7 @@ import (
 
 var ErrNotImplemented = errors.New("assistant: not implemented")
 
-// AssistantService is the application entry point used by HTTP or WebSocket
-// delivery adapters. Concrete orchestration is added after the tool contracts
-// of the four business modules are available.
+// AssistantService 是 HTTP 或 WebSocket 调用助手编排能力的应用入口。
 type AssistantService interface {
 	StartTask(context.Context, StartTaskCommand) (TaskRun, error)
 	ResumeTask(context.Context, ResumeTaskCommand) (TaskRun, error)

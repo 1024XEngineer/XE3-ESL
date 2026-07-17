@@ -28,8 +28,7 @@ const (
 	ConfirmationStatusExpired  ConfirmationStatus = "expired"
 )
 
-// AssistantThread is the long-lived conversation between a user and SpeakUp.
-// PracticeSession remains owned by the practice module.
+// AssistantThread 表示用户与 SpeakUp 助手之间的长期对话，PracticeSession 仍由 practice 模块拥有。
 type AssistantThread struct {
 	ID             string
 	UserID         string
@@ -39,7 +38,7 @@ type AssistantThread struct {
 	UpdatedAt      time.Time
 }
 
-// TaskRun tracks one user goal being orchestrated inside an AssistantThread.
+// TaskRun 记录 AssistantThread 中一次用户目标的编排过程。
 type TaskRun struct {
 	ID          string
 	ThreadID    string
@@ -51,7 +50,7 @@ type TaskRun struct {
 	UpdatedAt   time.Time
 }
 
-// ToolCall records one structured invocation of a registered business tool.
+// ToolCall 记录一次已注册业务工具的结构化调用。
 type ToolCall struct {
 	ID             string
 	TaskRunID      string

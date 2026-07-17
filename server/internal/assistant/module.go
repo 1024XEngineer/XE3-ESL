@@ -1,5 +1,4 @@
-// Package assistant coordinates user intents across the public services exposed
-// by SpeakUp's business modules. It does not own their domain data.
+// Package assistant 负责跨业务模块编排用户意图，但不拥有各模块的领域数据。
 package assistant
 
 type Module struct{}
