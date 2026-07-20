@@ -3,43 +3,124 @@ package practice
 import "context"
 
 type CreatePracticePlanCommand struct {
-	UserID, ScenarioDefinitionID, ScenarioConfigID, PreparationProfileID string
-	ScenarioType                                                         ScenarioType
-	SelectedRoleIDs                                                      []string
-	IdempotencyKey                                                       string
+	UserID               string
+	ScenarioDefinitionID string
+	ScenarioType         ScenarioType
+	ScenarioConfigID     string
+	PreparationProfileID string
+	SelectedRoleIDs      []string
+	IdempotencyKey       string
 }
 
 type UpdatePracticePlanCommand struct {
-	UserID, PracticePlanID, ScenarioConfigID, PreparationProfileID string
-	SelectedRoleIDs                                                []string
-	ExpectedRevision                                               int
+	UserID               string
+	PracticePlanID       string
+	ScenarioConfigID     string
+	PreparationProfileID string
+	SelectedRoleIDs      []string
+	ExpectedRevision     int
+}
+
+type RetryPracticePlanConfigurationCommand struct {
+	UserID           string
+	PracticePlanID   string
+	ExpectedRevision int
+}
+
+type ArchivePracticePlanCommand struct {
+	UserID           string
+	PracticePlanID   string
+	ExpectedRevision int
+}
+
+type RestorePracticePlanCommand struct {
+	UserID           string
+	PracticePlanID   string
+	ExpectedRevision int
+}
+
+type DeleteEmptyPracticePlanCommand struct {
+	UserID           string
+	PracticePlanID   string
+	ExpectedRevision int
+}
+
+type GetPracticePlanQuery struct {
+	UserID         string
+	PracticePlanID string
+}
+
+type ListPracticePlansQuery struct {
+	UserID string
 }
 
 type CreatePracticeSessionCommand struct {
-	UserID, PracticePlanID, ParticipantRoleID, PracticeOptionID, IdempotencyKey string
-	PlanRevision                                                                int
+	UserID            string
+	PracticePlanID    string
+	PlanRevision      int
+	ParticipantRoleID string
+	PracticeOptionID  string
+	IdempotencyKey    string
+}
+
+type StartPracticeSessionCommand struct {
+	UserID            string
+	PracticeSessionID string
+}
+
+type PausePracticeSessionCommand struct {
+	UserID            string
+	PracticeSessionID string
+}
+
+type ResumePracticeSessionCommand struct {
+	UserID            string
+	PracticeSessionID string
+}
+
+type EndPracticeSessionEarlyCommand struct {
+	UserID            string
+	PracticeSessionID string
+	Reason            string
+}
+
+type GetActivePracticeSessionQuery struct {
+	UserID         string
+	PracticePlanID string
+}
+
+type GetPracticeSessionSnapshotQuery struct {
+	PracticeSessionID string
 }
 
 type ApplyTurnOutcomeCommand struct {
-	UserID  string
 	Outcome TurnOutcome
 }
 
-// Service 声明 Practice 对内提供的应用能力，具体编排由后续实现提供
-type Service interface {
-	CreatePracticePlan(context.Context, CreatePracticePlanCommand) (*PracticePlan, error)
-	RetryPlanConfiguration(context.Context, string, string, int) (*PracticePlan, error)
-	UpdatePracticePlan(context.Context, UpdatePracticePlanCommand) (*PracticePlan, error)
-	ArchivePracticePlan(context.Context, string, string, int) (*PracticePlan, error)
-	RestorePracticePlan(context.Context, string, string, int) (*PracticePlan, error)
-	DeleteEmptyPracticePlan(context.Context, string, string, int) error
+type PlanService interface {
+	CreatePracticePlan(context.Context, CreatePracticePlanCommand) (PracticePlan, error)
+	RetryPracticePlanConfiguration(context.Context, RetryPracticePlanConfigurationCommand) (PracticePlan, error)
+	UpdatePracticePlan(context.Context, UpdatePracticePlanCommand) (PracticePlan, error)
+	ArchivePracticePlan(context.Context, ArchivePracticePlanCommand) (PracticePlan, error)
+	RestorePracticePlan(context.Context, RestorePracticePlanCommand) (PracticePlan, error)
+	DeleteEmptyPracticePlan(context.Context, DeleteEmptyPracticePlanCommand) error
+	GetPracticePlan(context.Context, GetPracticePlanQuery) (PracticePlan, error)
+	ListPracticePlans(context.Context, ListPracticePlansQuery) ([]PracticePlan, error)
+}
 
-	CreatePracticeSession(context.Context, CreatePracticeSessionCommand) (*PracticeSession, error)
-	StartPracticeSession(context.Context, string, string) (*PracticeSession, error)
-	PausePracticeSession(context.Context, string, string) (*PracticeSession, error)
-	ResumePracticeSession(context.Context, string, string) (*PracticeSession, error)
-	EndPracticeSessionEarly(context.Context, string, string, string) (*PracticeSession, error)
-
-	GetPracticeSessionSnapshot(context.Context, string, string) (PracticeSessionSnapshot, error)
+type SessionService interface {
+	CreatePracticeSession(context.Context, CreatePracticeSessionCommand) (PracticeSession, error)
+	StartPracticeSession(context.Context, StartPracticeSessionCommand) (PracticeSession, error)
+	PausePracticeSession(context.Context, PausePracticeSessionCommand) (PracticeSession, error)
+	ResumePracticeSession(context.Context, ResumePracticeSessionCommand) (PracticeSession, error)
+	EndPracticeSessionEarly(context.Context, EndPracticeSessionEarlyCommand) (PracticeSession, error)
+	GetActivePracticeSession(context.Context, GetActivePracticeSessionQuery) (PracticeSession, error)
+	GetPracticeSessionSnapshot(context.Context, GetPracticeSessionSnapshotQuery) (PracticeSessionSnapshot, error)
 	ApplyTurnOutcome(context.Context, ApplyTurnOutcomeCommand) (NextAction, error)
+}
+
+// Service 汇总 Practice 对内公开的应用契约
+type Service interface {
+	PlanService
+	SessionService
 }

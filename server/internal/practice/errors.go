@@ -3,11 +3,18 @@ package practice
 import "errors"
 
 var (
-	ErrPracticePlanInvalid                 = errors.New("practice_plan_invalid")
-	ErrPracticePlanTransitionNotAllowed    = errors.New("practice_plan_transition_not_allowed")
+	ErrPracticeCommandInvalid              = errors.New("practice_command_invalid")
+	ErrPracticePlanNotFound                = errors.New("practice_plan_not_found")
+	ErrPracticePlanNotReady                = errors.New("practice_plan_not_ready")
+	ErrPracticePlanArchived                = errors.New("practice_plan_archived")
 	ErrPracticePlanHasActiveSession        = errors.New("practice_plan_has_active_session")
-	ErrPracticeSessionInvalid              = errors.New("practice_session_invalid")
-	ErrPracticeSessionInvalidTime          = errors.New("practice_session_invalid_time")
+	ErrPracticePlanRevisionConflict        = errors.New("practice_plan_revision_conflict")
+	ErrPracticeSessionNotFound             = errors.New("practice_session_not_found")
 	ErrPracticeSessionTransitionNotAllowed = errors.New("practice_session_transition_not_allowed")
-	ErrPracticeSessionSnapshotInvalid      = errors.New("practice_session_snapshot_invalid")
+	ErrPracticeSessionAlreadyTerminal      = errors.New("practice_session_already_terminal")
+	ErrPracticeParticipantInvalid          = errors.New("practice_participant_invalid")
+	ErrPracticeOptionInvalid               = errors.New("practice_option_invalid")
+	ErrTurnOutcomeSessionMismatch          = errors.New("turn_outcome_session_mismatch")
+	ErrPracticeIdempotencyConflict         = errors.New("practice_idempotency_conflict")
+	ErrPracticeResourceForbidden           = errors.New("practice_resource_forbidden")
 )
