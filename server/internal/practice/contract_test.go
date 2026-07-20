@@ -63,7 +63,13 @@ func TestCrossModuleContractsExposeRequiredFields(t *testing.T) {
 	contracts := []any{
 		practice.PracticePlan{ID: "plan-1", UserID: "user-1", Revision: 1, Status: practice.PracticePlanReady},
 		practice.PracticeSession{ID: "session-1", PlanID: "plan-1", StartedAt: &createdAt},
-		practice.PracticeParticipant{ID: "participant-1", SessionID: "session-1", RoleDefinitionID: "role-1"},
+		practice.PracticeParticipant{
+			ID:               "participant-1",
+			SessionID:        "session-1",
+			ParticipantRole:  "CANDIDATE",
+			SubjectRef:       practice.SubjectRef{Namespace: "user", SubjectID: "user-1"},
+			RoleDefinitionID: "role-1",
+		},
 		practice.PracticeSessionPolicy{Mode: practice.PracticeModeFullSimulation, TargetObjectiveIDs: []string{"objective-1"}},
 		practice.TurnOutcome{TurnID: "turn-1", SessionID: "session-1", AnswerValid: true},
 		practice.PracticeSessionSnapshot{ID: "snapshot-1", SessionID: "session-1", CreatedAt: createdAt},
@@ -89,6 +95,7 @@ var (
 	_ func(practice.SessionService, context.Context, practice.EndPracticeSessionEarlyCommand) (practice.PracticeSession, error)          = practice.SessionService.EndPracticeSessionEarly
 	_ func(practice.SessionService, context.Context, practice.GetActivePracticeSessionQuery) (practice.PracticeSession, error)           = practice.SessionService.GetActivePracticeSession
 	_ func(practice.SessionService, context.Context, practice.GetPracticeSessionSnapshotQuery) (practice.PracticeSessionSnapshot, error) = practice.SessionService.GetPracticeSessionSnapshot
+	_ func(practice.SessionService, context.Context, practice.ResolveActorParticipantQuery) (string, error)                              = practice.SessionService.ResolveActorParticipant
 	_ func(practice.SessionService, context.Context, practice.ApplyTurnOutcomeCommand) (practice.NextAction, error)                      = practice.SessionService.ApplyTurnOutcome
 	_ func(practice.PreparationReader, context.Context, string) (practice.ScenarioDefinitionSnapshot, error)                             = practice.PreparationReader.GetScenarioDefinition
 	_ func(practice.PreparationReader, context.Context, string) (practice.ScenarioConfigSnapshot, error)                                 = practice.PreparationReader.GetScenarioConfig

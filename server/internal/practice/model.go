@@ -55,6 +55,9 @@ type SubjectRef struct {
 	SubjectID string
 }
 
+// ParticipantRole 是由场景能力解释的开放职责值，不是 Practice 核心枚举
+type ParticipantRole string
+
 // 以下快照复制自 Preparation，源数据后续变更不会影响已经创建的场次
 type ScenarioDefinitionSnapshot struct {
 	ScenarioDefinitionID string
@@ -105,6 +108,7 @@ type PracticeOptionSnapshot struct {
 type PracticeParticipant struct {
 	ID               string
 	SessionID        string
+	ParticipantRole  ParticipantRole
 	SubjectRef       SubjectRef
 	RoleDefinitionID string
 	RoleSnapshot     RoleSnapshot

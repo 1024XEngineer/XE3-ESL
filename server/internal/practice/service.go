@@ -93,6 +93,11 @@ type GetPracticeSessionSnapshotQuery struct {
 	PracticeSessionID string
 }
 
+type ResolveActorParticipantQuery struct {
+	ActorUserID       string
+	PracticeSessionID string
+}
+
 type ApplyTurnOutcomeCommand struct {
 	Outcome TurnOutcome
 }
@@ -118,6 +123,8 @@ type SessionService interface {
 	EndPracticeSessionEarly(context.Context, EndPracticeSessionEarlyCommand) (PracticeSession, error)
 	GetActivePracticeSession(context.Context, GetActivePracticeSessionQuery) (PracticeSession, error)
 	GetPracticeSessionSnapshot(context.Context, GetPracticeSessionSnapshotQuery) (PracticeSessionSnapshot, error)
+	// ResolveActorParticipant 由服务端认证主体解析参与关系，不信任客户端提交的参与者 ID
+	ResolveActorParticipant(context.Context, ResolveActorParticipantQuery) (string, error)
 	ApplyTurnOutcome(context.Context, ApplyTurnOutcomeCommand) (NextAction, error)
 }
 
