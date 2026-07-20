@@ -116,9 +116,25 @@ func copyDetails(details map[string]any) map[string]any {
 	if details == nil {
 		return nil
 	}
+
 	copied := make(map[string]any, len(details))
 	for key, value := range details {
-		copied[key] = value
+		copied[key] = copyDetailValue(value)
 	}
 	return copied
+}
+
+func copyDetailValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return copyDetails(value)
+	case []any:
+		copied := make([]any, len(value))
+		for index, item := range value {
+			copied[index] = copyDetailValue(item)
+		}
+		return copied
+	default:
+		return value
+	}
 }

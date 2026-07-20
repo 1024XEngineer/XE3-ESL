@@ -83,6 +83,29 @@ func TestRenderPreservesSafeFieldsAndStructuredDetails(t *testing.T) {
 	}
 }
 
+func TestRenderCopiesNestedStructuredDetails(t *testing.T) {
+	err := apperror.InvalidArgument(
+		"request is invalid",
+		apperror.WithDetails(map[string]any{
+			"field": map[string]any{"value": "original"},
+			"items": []any{map[string]any{"name": "first"}},
+		}),
+	)
+
+	_, envelope := httpresponse.Render(err, "")
+	err.Details["field"].(map[string]any)["value"] = "changed"
+	err.Details["items"].([]any)[0].(map[string]any)["name"] = "changed"
+
+	field := envelope.Error.Details["field"].(map[string]any)
+	if got := field["value"]; got != "original" {
+		t.Fatalf("rendered nested map changed with source error: %#v", envelope.Error.Details)
+	}
+	items := envelope.Error.Details["items"].([]any)
+	if got := items[0].(map[string]any)["name"]; got != "first" {
+		t.Fatalf("rendered nested slice changed with source error: %#v", envelope.Error.Details)
+	}
+}
+
 func TestRenderOmitsEmptyOptionalFields(t *testing.T) {
 	_, envelope := httpresponse.Render(apperror.NotFound("missing"), "")
 	body, err := json.Marshal(envelope)

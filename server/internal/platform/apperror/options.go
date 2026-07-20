@@ -17,15 +17,34 @@ func WithDetail(detail string) Option {
 
 func WithDetails(details map[string]any) Option {
 	return func(err *Error) {
-		if details == nil {
-			err.Details = nil
-			return
-		}
+		err.Details = cloneDetails(details)
+	}
+}
 
-		err.Details = make(map[string]any, len(details))
-		for key, value := range details {
-			err.Details[key] = value
+func cloneDetails(details map[string]any) map[string]any {
+	if details == nil {
+		return nil
+	}
+
+	cloned := make(map[string]any, len(details))
+	for key, value := range details {
+		cloned[key] = cloneDetailValue(value)
+	}
+	return cloned
+}
+
+func cloneDetailValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneDetails(value)
+	case []any:
+		cloned := make([]any, len(value))
+		for index, item := range value {
+			cloned[index] = cloneDetailValue(item)
 		}
+		return cloned
+	default:
+		return value
 	}
 }
 

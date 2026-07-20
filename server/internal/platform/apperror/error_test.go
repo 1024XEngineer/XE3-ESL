@@ -125,13 +125,23 @@ func TestInternalIsNotRetryableByDefault(t *testing.T) {
 }
 
 func TestWithDetailsCopiesInputMap(t *testing.T) {
-	input := map[string]any{"field": "original"}
+	input := map[string]any{
+		"field": map[string]any{"value": "original"},
+		"items": []any{map[string]any{"name": "first"}},
+	}
 	err := apperror.InvalidArgument("invalid input", apperror.WithDetails(input))
-	input["field"] = "changed"
+
+	input["field"].(map[string]any)["value"] = "changed"
+	input["items"].([]any)[0].(map[string]any)["name"] = "changed"
 	input["extra"] = true
 
-	if got := err.Details["field"]; got != "original" {
-		t.Fatalf("details changed with caller map: %#v", err.Details)
+	field := err.Details["field"].(map[string]any)
+	if got := field["value"]; got != "original" {
+		t.Fatalf("nested map changed with caller input: %#v", err.Details)
+	}
+	items := err.Details["items"].([]any)
+	if got := items[0].(map[string]any)["name"]; got != "first" {
+		t.Fatalf("nested slice changed with caller input: %#v", err.Details)
 	}
 	if _, exists := err.Details["extra"]; exists {
 		t.Fatalf("details unexpectedly contains caller mutation: %#v", err.Details)
