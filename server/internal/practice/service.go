@@ -97,6 +97,7 @@ type ApplyTurnOutcomeCommand struct {
 	Outcome TurnOutcome
 }
 
+// PlanService 负责计划的配置与归档，不暴露场次推进能力
 type PlanService interface {
 	CreatePracticePlan(context.Context, CreatePracticePlanCommand) (PracticePlan, error)
 	RetryPracticePlanConfiguration(context.Context, RetryPracticePlanConfigurationCommand) (PracticePlan, error)
@@ -108,6 +109,7 @@ type PlanService interface {
 	ListPracticePlans(context.Context, ListPracticePlansQuery) ([]PracticePlan, error)
 }
 
+// SessionService 是 Conversation 和上层入口控制练习场次的边界
 type SessionService interface {
 	CreatePracticeSession(context.Context, CreatePracticeSessionCommand) (PracticeSession, error)
 	StartPracticeSession(context.Context, StartPracticeSessionCommand) (PracticeSession, error)
@@ -119,7 +121,8 @@ type SessionService interface {
 	ApplyTurnOutcome(context.Context, ApplyTurnOutcomeCommand) (NextAction, error)
 }
 
-// Service 汇总 Practice 对内公开的应用契约
+// Service 供需要完整 Practice 能力的组合根使用
+// 普通调用方应优先依赖 PlanService 或 SessionService
 type Service interface {
 	PlanService
 	SessionService

@@ -37,6 +37,7 @@ type PracticePlan struct {
 	Status               PracticePlanStatus
 }
 
+// PracticeSession 只记录场次生命周期，练习上下文以 SnapshotID 指向的快照为准
 type PracticeSession struct {
 	ID           string
 	PlanID       string
@@ -48,11 +49,13 @@ type PracticeSession struct {
 	EndReason    string
 }
 
+// SubjectRef 用命名空间区分用户、虚拟角色等不同来源的参与者
 type SubjectRef struct {
 	Namespace string
 	SubjectID string
 }
 
+// 以下快照复制自 Preparation，源数据后续变更不会影响已经创建的场次
 type ScenarioDefinitionSnapshot struct {
 	ScenarioDefinitionID string
 	ScenarioType         ScenarioType
@@ -108,7 +111,8 @@ type PracticeParticipant struct {
 	ParticipantOrder int
 }
 
-// Session 创建后只通过这份快照向 Conversation 和 Review 提供上下文
+// PracticeSessionSnapshot 是 Conversation 和 Review 读取场次上下文的稳定入口
+// 场次创建后不再随计划或 Preparation 源数据变化
 type PracticeSessionSnapshot struct {
 	ID                 string
 	SessionID          string

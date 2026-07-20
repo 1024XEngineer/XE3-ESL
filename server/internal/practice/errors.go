@@ -2,6 +2,7 @@ package practice
 
 import "errors"
 
+// 错误值只表达稳定的领域语义，协议状态码由 Delivery 层映射
 var (
 	ErrPracticeCommandInvalid              = errors.New("practice_command_invalid")
 	ErrPracticePlanNotFound                = errors.New("practice_plan_not_found")
