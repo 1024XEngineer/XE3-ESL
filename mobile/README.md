@@ -6,6 +6,7 @@ SpeakUp 的 Flutter Android/iOS 正式客户端。
 
 ```shell
 flutter pub get
-dart format --output=none --set-exit-if-changed lib
+dart format --output=none --set-exit-if-changed lib test
 flutter analyze
+flutter test
 ```
