@@ -1,0 +1,17 @@
+{
+  "event_id": "event_analysis_completed_001",
+  "event_type": "turn_analysis.completed",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:05:04Z",
+  "practice_session_id": "session_demo_001",
+  "sequence": 5,
+  "correlation_id": "corr_analysis_001",
+  "causation_id": "event_turn_completed_001",
+  "replayable": true,
+  "payload": {
+    "turn_analysis_id": "analysis_demo_001",
+    "turn_id": "turn_demo_001",
+    "score": 82,
+    "summary": "Clear ownership and measurable impact; make the trade-off more explicit."
+  }
+}

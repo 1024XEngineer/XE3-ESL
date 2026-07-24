@@ -1,0 +1,16 @@
+{
+  "event_id": "event_analysis_failed_002",
+  "event_type": "turn_analysis.failed",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:05:05Z",
+  "practice_session_id": "session_demo_001",
+  "sequence": 6,
+  "correlation_id": "corr_analysis_002",
+  "causation_id": "event_turn_completed_001",
+  "replayable": true,
+  "payload": {
+    "turn_analysis_id": "analysis_demo_002",
+    "turn_id": "turn_demo_001",
+    "failure_reason": "Deterministic failure fixture for retry verification."
+  }
+}

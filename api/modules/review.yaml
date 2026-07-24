@@ -1,0 +1,499 @@
+paths:
+  /v1/turns/{turn_id}/turn-analyses:
+    post:
+      tags:
+        - Review
+      summary: Start or return one analysis attempt
+      description: |
+        A completed Turn remains immutable if analysis fails. Reusing the same
+        idempotency key returns the same analysis resource.
+      operationId: analyzeTurn
+      parameters:
+        - $ref: '#/components/parameters/TurnId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: The analysis exists and is pending.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnAnalysis'
+              example:
+                turn_analysis_id: analysis_demo_001
+                turn_id: turn_demo_001
+                evaluator_version: mock-review-v1
+                analysis_status: pending
+                created_at: '2026-07-23T10:05:03Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    get:
+      tags:
+        - Review
+      summary: List analyses for a Turn
+      operationId: listTurnAnalyses
+      parameters:
+        - $ref: '#/components/parameters/TurnId'
+      responses:
+        '200':
+          description: Analysis resources for the requested Turn.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnAnalysisList'
+              example:
+                analyses:
+                  - turn_analysis_id: analysis_demo_001
+                    turn_id: turn_demo_001
+                    evaluator_version: mock-review-v1
+                    analysis_status: completed
+                    score: 82
+                    summary: Clear ownership and measurable impact; make the trade-off more explicit.
+                    analysis_transcript: |
+                      I led a Go API reliability project and reduced incident
+                      recovery time through tracing and a staged rollout.
+                    created_at: '2026-07-23T10:05:03Z'
+                    completed_at: '2026-07-23T10:05:04Z'
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/turn-analyses/{turn_analysis_id}/feedback-items:
+    get:
+      tags:
+        - Review
+      summary: List evidence-backed feedback for an analysis
+      operationId: listFeedbackItems
+      parameters:
+        - $ref: '#/components/parameters/TurnAnalysisId'
+      responses:
+        '200':
+          description: Feedback items generated only from a completed analysis.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackItemList'
+              example:
+                feedback_items:
+                  - feedback_item_id: feedback_demo_001
+                    turn_analysis_id: analysis_demo_001
+                    feedback_category: STRUCTURE
+                    message: The answer establishes ownership and outcome.
+                    suggestion: Add one sentence explaining why tracing was chosen before rollout.
+                    evidence:
+                      - transcript_text: I introduced request tracing, defined an error budget.
+                    retryable: true
+                    created_at: '2026-07-23T10:05:04Z'
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/feedback-items/{feedback_item_id}/retry-requests:
+    post:
+      tags:
+        - Review
+      summary: Request an idempotent same-question retry
+      description: |
+        Review first saves a pending immutable relation to the original Turn and
+        feedback, then invokes Conversation's internal CreateRetryTurn command.
+        Conversation idempotently creates one `answering` Turn for the original
+        Question; Review records its ID and returns `turn_created`. The client
+        never invokes or coordinates the cross-module command.
+
+        After the client submits a valid final answer to the original Question
+        with this `retry_request_id`, Conversation advances that same Turn
+        instead of creating another one. On completion, Conversation submits
+        TurnOutcome normally and Practice alone decides the progress effect from
+        the immutable PracticeSessionPolicy.
+      operationId: requestRetry
+      parameters:
+        - $ref: '#/components/parameters/FeedbackItemId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: The retry relation and its pre-created answering Turn.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryRequest'
+              example:
+                retry_request_id: retry_demo_001
+                original_turn_id: turn_demo_001
+                feedback_item_id: feedback_demo_001
+                new_turn_id: turn_retry_demo_001
+                retry_status: turn_created
+                created_at: '2026-07-23T10:06:00Z'
+                updated_at: '2026-07-23T10:06:01Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/retry-requests/{retry_request_id}:
+    get:
+      tags:
+        - Review
+      summary: Get a same-question retry request
+      operationId: getRetryRequest
+      parameters:
+        - $ref: '#/components/parameters/RetryRequestId'
+      responses:
+        '200':
+          description: Retry relation and its current status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryRequest'
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/history-records:
+    get:
+      tags:
+        - Review
+      summary: List review history for a practice session
+      operationId: listHistoryRecords
+      parameters:
+        - name: practice_session_id
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/ResourceId'
+      responses:
+        '200':
+          description: Rebuildable read projections ordered by review time descending.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryRecordList'
+              example:
+                history_records:
+                  - history_record_id: history_demo_001
+                    practice_session_id: session_demo_001
+                    turn_id: turn_demo_001
+                    turn_analysis_id: analysis_demo_001
+                    retry_request_id: retry_demo_001
+                    score: 82
+                    summary: Clear ownership and measurable impact; make the trade-off more explicit.
+                    reviewed_at: '2026-07-23T10:05:04Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  parameters:
+    TurnId:
+      name: turn_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    TurnAnalysisId:
+      name: turn_analysis_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    FeedbackItemId:
+      name: feedback_item_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    RetryRequestId:
+      name: retry_request_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    IdempotencyKey:
+      $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
+  schemas:
+    ResourceId:
+      type: string
+      minLength: 1
+      maxLength: 128
+    TurnAnalysis:
+      type: object
+      additionalProperties: false
+      description: |
+        At most one effective analysis exists for each
+        `(turn_id, evaluator_version)` pair. Failed analysis never mutates or
+        rolls back the source Turn or PracticeSession.
+      required:
+        - turn_analysis_id
+        - turn_id
+        - evaluator_version
+        - analysis_status
+        - created_at
+      properties:
+        turn_analysis_id:
+          $ref: '#/components/schemas/ResourceId'
+        turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        evaluator_version:
+          type: string
+          minLength: 1
+        analysis_status:
+          type: string
+          enum:
+            - pending
+            - completed
+            - failed
+        score:
+          type: number
+          description: No public score range is frozen for MS1.
+        summary:
+          type: string
+          minLength: 1
+        analysis_transcript:
+          type: string
+          minLength: 1
+        failure_reason:
+          type: string
+          minLength: 1
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        failed_at:
+          type: string
+          format: date-time
+      oneOf:
+        - properties:
+            analysis_status:
+              const: pending
+          required:
+            - analysis_status
+          not:
+            anyOf:
+              - required:
+                  - score
+              - required:
+                  - summary
+              - required:
+                  - failure_reason
+              - required:
+                  - completed_at
+              - required:
+                  - failed_at
+        - properties:
+            analysis_status:
+              const: completed
+          required:
+            - analysis_status
+            - score
+            - summary
+            - completed_at
+          not:
+            anyOf:
+              - required:
+                  - failure_reason
+              - required:
+                  - failed_at
+        - properties:
+            analysis_status:
+              const: failed
+          required:
+            - analysis_status
+            - failure_reason
+            - failed_at
+          not:
+            anyOf:
+              - required:
+                  - score
+              - required:
+                  - summary
+              - required:
+                  - completed_at
+    TurnAnalysisList:
+      type: object
+      additionalProperties: false
+      required:
+        - analyses
+      properties:
+        analyses:
+          type: array
+          items:
+            $ref: '#/components/schemas/TurnAnalysis'
+    Evidence:
+      type: object
+      additionalProperties: false
+      properties:
+        transcript_text:
+          type: string
+          minLength: 1
+        start_ms:
+          type: integer
+          minimum: 0
+        end_ms:
+          type: integer
+          minimum: 1
+      anyOf:
+        - required:
+            - transcript_text
+        - required:
+            - start_ms
+            - end_ms
+    FeedbackItem:
+      type: object
+      additionalProperties: false
+      required:
+        - feedback_item_id
+        - turn_analysis_id
+        - feedback_category
+        - message
+        - evidence
+        - retryable
+        - created_at
+      properties:
+        feedback_item_id:
+          $ref: '#/components/schemas/ResourceId'
+        turn_analysis_id:
+          $ref: '#/components/schemas/ResourceId'
+        feedback_category:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]*$'
+        message:
+          type: string
+          minLength: 1
+        suggestion:
+          type: string
+          minLength: 1
+        evidence:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Evidence'
+        retryable:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    FeedbackItemList:
+      type: object
+      additionalProperties: false
+      required:
+        - feedback_items
+      properties:
+        feedback_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedbackItem'
+    RetryRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - retry_request_id
+        - original_turn_id
+        - feedback_item_id
+        - retry_status
+        - created_at
+        - updated_at
+      properties:
+        retry_request_id:
+          $ref: '#/components/schemas/ResourceId'
+        original_turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        feedback_item_id:
+          $ref: '#/components/schemas/ResourceId'
+        new_turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        retry_status:
+          type: string
+          enum:
+            - pending
+            - turn_created
+            - failed
+        failure_reason:
+          type: string
+          minLength: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      oneOf:
+        - properties:
+            retry_status:
+              const: pending
+          required:
+            - retry_status
+          not:
+            anyOf:
+              - required:
+                  - new_turn_id
+              - required:
+                  - failure_reason
+        - properties:
+            retry_status:
+              const: turn_created
+          required:
+            - retry_status
+            - new_turn_id
+          not:
+            required:
+              - failure_reason
+        - properties:
+            retry_status:
+              const: failed
+          required:
+            - retry_status
+            - failure_reason
+          not:
+            required:
+              - new_turn_id
+    HistoryRecord:
+      type: object
+      additionalProperties: false
+      required:
+        - history_record_id
+        - practice_session_id
+        - turn_id
+        - turn_analysis_id
+        - score
+        - summary
+        - reviewed_at
+      properties:
+        history_record_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        turn_analysis_id:
+          $ref: '#/components/schemas/ResourceId'
+        retry_request_id:
+          $ref: '#/components/schemas/ResourceId'
+        score:
+          type: number
+        summary:
+          type: string
+          minLength: 1
+        reviewed_at:
+          type: string
+          format: date-time
+    HistoryRecordList:
+      type: object
+      additionalProperties: false
+      required:
+        - history_records
+      properties:
+        history_records:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoryRecord'

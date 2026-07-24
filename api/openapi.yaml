@@ -1,0 +1,226 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: SpeakUp MS1 API
+  version: 0.1.0
+  description: |
+    Language-neutral REST contract for the deterministic MS1 practice flow.
+    Authentication is intentionally out of scope. The MS1 adapter supplies a
+    fixed demo identity from server-side context; clients never submit trusted
+    user or respondent participant identifiers.
+
+    Optional JSON properties use absent-only semantics: clients omit values that
+    are not present and must not serialize them as explicit `null`.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://localhost:8080
+    description: Local deterministic MS1 server
+security: []
+x-json-null-policy: omit
+tags:
+  - name: Preparation
+    description: Scenario, role, profile, and immutable preparation snapshot resources.
+  - name: Practice
+    description: Practice plan, session lifecycle, participant, and policy snapshots.
+  - name: Conversation
+    description: Questions, effective Turns, and ordered session events.
+  - name: Review
+    description: Analysis, evidence feedback, same-question retry, and history projections.
+paths:
+  /health:
+    get:
+      summary: Check the modular monolith process
+      operationId: getHealth
+      responses:
+        '200':
+          description: Process health and registered business modules.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: ok
+                modules:
+                  - preparation
+                  - practice
+                  - conversation
+                  - review
+        '400':
+          $ref: ./common/errors.yaml#/components/responses/BadRequest
+        default:
+          $ref: ./common/errors.yaml#/components/responses/DefaultError
+  /v1/scenario-definitions/{scenario_definition_id}:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions~1{scenario_definition_id}
+  /v1/scenario-definitions/{scenario_definition_id}/role-definitions:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions~1{scenario_definition_id}~1role-definitions
+  /v1/preparation-profiles:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1preparation-profiles
+  /v1/preparation-profiles/{preparation_profile_id}/snapshots:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1preparation-profiles~1{preparation_profile_id}~1snapshots
+  /v1/practice-plans:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans
+  /v1/practice-plans/{practice_plan_id}:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans~1{practice_plan_id}
+  /v1/practice-plans/{practice_plan_id}/practice-sessions:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans~1{practice_plan_id}~1practice-sessions
+  /v1/practice-sessions/{practice_session_id}:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}
+  /v1/practice-sessions/{practice_session_id}/snapshot:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1snapshot
+  /v1/practice-sessions/{practice_session_id}/pause:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1pause
+  /v1/practice-sessions/{practice_session_id}/resume:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1resume
+  /v1/practice-sessions/{practice_session_id}/end-early:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1end-early
+  /v1/practice-sessions/{practice_session_id}/bootstrap:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1bootstrap
+  /v1/practice-sessions/{practice_session_id}/questions:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1questions
+  /v1/questions/{question_id}/turns:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1questions~1{question_id}~1turns
+  /v1/turns/{turn_id}:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1turns~1{turn_id}
+  /v1/practice-sessions/{practice_session_id}/events:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1events
+  /v1/turns/{turn_id}/turn-analyses:
+    $ref: ./modules/review.yaml#/paths/~1v1~1turns~1{turn_id}~1turn-analyses
+  /v1/turn-analyses/{turn_analysis_id}/feedback-items:
+    $ref: ./modules/review.yaml#/paths/~1v1~1turn-analyses~1{turn_analysis_id}~1feedback-items
+  /v1/feedback-items/{feedback_item_id}/retry-requests:
+    $ref: ./modules/review.yaml#/paths/~1v1~1feedback-items~1{feedback_item_id}~1retry-requests
+  /v1/retry-requests/{retry_request_id}:
+    $ref: ./modules/review.yaml#/paths/~1v1~1retry-requests~1{retry_request_id}
+  /v1/history-records:
+    $ref: ./modules/review.yaml#/paths/~1v1~1history-records
+components:
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - modules
+      properties:
+        status:
+          type: string
+          const: ok
+        modules:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - preparation
+              - practice
+              - conversation
+              - review
+    ErrorResponse:
+      $ref: ./common/errors.yaml#/components/schemas/ErrorResponse
+    ScenarioDefinition:
+      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioDefinition
+    ScenarioConfig:
+      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioConfig
+    InterviewScenarioConfig:
+      $ref: ./modules/preparation.yaml#/components/schemas/InterviewScenarioConfig
+    RoleDefinition:
+      $ref: ./modules/preparation.yaml#/components/schemas/RoleDefinition
+    PracticeOptionDefinition:
+      $ref: ./modules/preparation.yaml#/components/schemas/PracticeOptionDefinition
+    PreparationProfile:
+      $ref: ./modules/preparation.yaml#/components/schemas/PreparationProfile
+    PreparationSnapshot:
+      $ref: ./modules/preparation.yaml#/components/schemas/PreparationSnapshot
+    PracticePlan:
+      $ref: ./modules/practice.yaml#/components/schemas/PracticePlan
+    PracticeSession:
+      $ref: ./modules/practice.yaml#/components/schemas/PracticeSession
+    PracticeParticipant:
+      $ref: ./modules/practice.yaml#/components/schemas/PracticeParticipant
+    PracticeSessionSnapshot:
+      $ref: ./modules/practice.yaml#/components/schemas/PracticeSessionSnapshot
+    PracticeSessionPolicy:
+      $ref: ./modules/practice.yaml#/components/schemas/PracticeSessionPolicy
+    Question:
+      $ref: ./modules/conversation.yaml#/components/schemas/Question
+    Turn:
+      $ref: ./modules/conversation.yaml#/components/schemas/Turn
+    TranscriptSnapshot:
+      $ref: ./modules/conversation.yaml#/components/schemas/TranscriptSnapshot
+    AudioReference:
+      $ref: ./modules/conversation.yaml#/components/schemas/AudioReference
+    TurnReviewSource:
+      $ref: ./modules/conversation.yaml#/components/schemas/TurnReviewSource
+    CreateRetryTurnCommand:
+      $ref: ./modules/conversation.yaml#/components/schemas/CreateRetryTurnCommand
+    CreateRetryTurnResult:
+      $ref: ./modules/conversation.yaml#/components/schemas/CreateRetryTurnResult
+    ConversationBootstrap:
+      $ref: ./modules/conversation.yaml#/components/schemas/ConversationBootstrap
+    TurnAnalysis:
+      $ref: ./modules/review.yaml#/components/schemas/TurnAnalysis
+    FeedbackItem:
+      $ref: ./modules/review.yaml#/components/schemas/FeedbackItem
+    RetryRequest:
+      $ref: ./modules/review.yaml#/components/schemas/RetryRequest
+    HistoryRecord:
+      $ref: ./modules/review.yaml#/components/schemas/HistoryRecord
+    ConversationEvent:
+      oneOf:
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/StreamReadyEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/QuestionCreatedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnSubmittedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnProcessingEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnCompletedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/AnswerProcessingFailedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnAnalysisCompletedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnAnalysisFailedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionStartedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionPausedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionResumedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionCompletedEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionEndedEarlyEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/StreamResyncRequiredEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/SystemErrorEvent
+        - $ref: ./websocket/conversation-events.schema.json#/$defs/SystemHeartbeatEvent
+      discriminator:
+        propertyName: event_type
+        mapping:
+          stream.ready: ./websocket/conversation-events.schema.json#/$defs/StreamReadyEvent
+          question.created: ./websocket/conversation-events.schema.json#/$defs/QuestionCreatedEvent
+          turn.submitted: ./websocket/conversation-events.schema.json#/$defs/TurnSubmittedEvent
+          turn.processing: ./websocket/conversation-events.schema.json#/$defs/TurnProcessingEvent
+          turn.completed: ./websocket/conversation-events.schema.json#/$defs/TurnCompletedEvent
+          answer.processing_failed: ./websocket/conversation-events.schema.json#/$defs/AnswerProcessingFailedEvent
+          turn_analysis.completed: ./websocket/conversation-events.schema.json#/$defs/TurnAnalysisCompletedEvent
+          turn_analysis.failed: ./websocket/conversation-events.schema.json#/$defs/TurnAnalysisFailedEvent
+          practice_session.started: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionStartedEvent
+          practice_session.paused: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionPausedEvent
+          practice_session.resumed: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionResumedEvent
+          practice_session.completed: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionCompletedEvent
+          practice_session.ended_early: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionEndedEarlyEvent
+          stream.resync_required: ./websocket/conversation-events.schema.json#/$defs/StreamResyncRequiredEvent
+          system.error: ./websocket/conversation-events.schema.json#/$defs/SystemErrorEvent
+          system.heartbeat: ./websocket/conversation-events.schema.json#/$defs/SystemHeartbeatEvent
+x-websocket-contract:
+  endpoint: /v1/practice-sessions/{practice_session_id}/events
+  schema:
+    $ref: '#/components/schemas/ConversationEvent'
+x-module-commands:
+  CreateRetryTurn:
+    visibility: internal
+    direction: 'Review -> Conversation'
+    request:
+      $ref: '#/components/schemas/CreateRetryTurnCommand'
+    result:
+      $ref: '#/components/schemas/CreateRetryTurnResult'
+    idempotency_key: retry_request_id
+    description: |
+      Review invokes this command after durably saving a pending RetryRequest.
+      Conversation validates that the original Turn is completed, reuses its
+      Session, Question, sequence, and respondent, and creates an `answering`
+      Turn. Replaying the same ID and payload returns the same `new_turn_id`;
+      changing `original_turn_id` for that ID is a conflict. This is an internal
+      modular-monolith contract and is never called by Flutter.

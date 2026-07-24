@@ -1,0 +1,20 @@
+{
+  "name": "@speakup/api-contract",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Validation entrypoint for the SpeakUp REST and WebSocket contracts.",
+  "scripts": {
+    "check": "npm run lint:openapi && npm run validate:websocket && npm run validate:fixture",
+    "lint:openapi": "redocly lint openapi.yaml --config redocly.yaml",
+    "validate:websocket": "node scripts/validate-events.mjs",
+    "validate:fixture": "node scripts/validate-main-flow.mjs"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.40.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
