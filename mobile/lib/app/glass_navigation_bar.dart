@@ -41,9 +41,9 @@ class GlassNavigationBar extends StatelessWidget {
           borderRadius: BorderRadius.circular(32),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x24513E70),
-              blurRadius: 38,
-              offset: Offset(0, 14),
+              color: Color(0x1C000000),
+              blurRadius: 34,
+              offset: Offset(0, 12),
             ),
           ],
         ),
@@ -56,14 +56,9 @@ class GlassNavigationBar extends StatelessWidget {
               height: height,
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                color: highContrast ? const Color(0xFFF8F8FB) : null,
-                gradient: highContrast
-                    ? null
-                    : const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0xD9FFFFFF), Color(0x99FFFFFF)],
-                      ),
+                color: highContrast
+                    ? const Color(0xFFF8F8F6)
+                    : const Color(0xE6FFFFFF),
                 borderRadius: BorderRadius.circular(32),
                 border: Border.all(
                   color: highContrast
@@ -129,7 +124,7 @@ class _NavigationItem extends StatelessWidget {
                   : const Duration(milliseconds: 180),
               curve: Curves.easeOutCubic,
               decoration: BoxDecoration(
-                color: selected ? const Color(0xB8E7E8F2) : Colors.transparent,
+                color: selected ? const Color(0xFFE8E8E5) : Colors.transparent,
                 borderRadius: BorderRadius.circular(26),
                 border: selected
                     ? Border.all(color: const Color(0xCFFFFFFF))

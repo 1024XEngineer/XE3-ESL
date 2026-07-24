@@ -10,7 +10,7 @@ class PreparationPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('scenes-page'),
-      backgroundColor: const Color(0xFFF7F8FC),
+      backgroundColor: const Color(0xFFF3F3F0),
       body: SafeArea(
         bottom: false,
         child: ListView(
@@ -39,12 +39,12 @@ class PreparationPage extends StatelessWidget {
                       width: 52,
                       height: 52,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE8EAFF),
+                        color: const Color(0xFFE8E8E5),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: const Icon(
                         Icons.work_outline_rounded,
-                        color: Color(0xFF555AE6),
+                        color: Color(0xFF4F5054),
                       ),
                     ),
                     const SizedBox(width: 14),
@@ -71,7 +71,7 @@ class PreparationPage extends StatelessWidget {
                           Text(
                             '页面流程将在后续 Issue 接入',
                             style: TextStyle(
-                              color: Color(0xFF555AE6),
+                              color: Color(0xFF4F5054),
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),

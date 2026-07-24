@@ -10,7 +10,7 @@ class ReviewPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('review-page'),
-      backgroundColor: const Color(0xFFF7F8FC),
+      backgroundColor: const Color(0xFFF3F3F0),
       body: SafeArea(
         bottom: false,
         child: ListView(

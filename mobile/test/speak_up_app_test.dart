@@ -81,6 +81,38 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('keeps all four Agent actions above the composer on iPhone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(402, 874);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpAndSettle();
+
+    const actionKeys = [
+      'quick-action-create-plan',
+      'quick-action-continue-practice',
+      'quick-action-browse-scenes',
+      'quick-action-recent-review',
+    ];
+    for (final key in actionKeys) {
+      final action = find.byKey(Key(key));
+      expect(action, findsOneWidget);
+      expect(tester.getRect(action).bottom, lessThan(874));
+    }
+
+    final lastActionRect = tester.getRect(
+      find.byKey(const Key('quick-action-recent-review')),
+    );
+    final composerRect = tester.getRect(
+      find.byKey(const Key('agent-composer-surface')),
+    );
+    expect(composerRect.top - lastActionRect.bottom, greaterThanOrEqualTo(16));
+  });
+
   testWidgets('conversation drawer contains no duplicate primary navigation', (
     tester,
   ) async {

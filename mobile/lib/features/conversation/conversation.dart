@@ -29,7 +29,7 @@ class ConversationPage extends StatelessWidget {
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final textScaler = MediaQuery.textScalerOf(context);
-    final titleSize = width < 350 ? 32.0 : 38.0;
+    final titleSize = width < 350 ? 30.0 : 36.0;
 
     return Scaffold(
       key: const Key('agent-home-page'),
@@ -63,9 +63,7 @@ class ConversationPage extends StatelessWidget {
                           onOpenMenu: onOpenMenu,
                           onVoicePlaceholder: onVoicePlaceholder,
                         ),
-                        SizedBox(height: width < 350 ? 22 : 34),
-                        const Center(child: _AgentOrb()),
-                        SizedBox(height: width < 350 ? 24 : 34),
+                        SizedBox(height: width < 350 ? 32 : 48),
                         const _Greeting(),
                         const SizedBox(height: 8),
                         Text(
@@ -78,7 +76,7 @@ class ConversationPage extends StatelessWidget {
                             letterSpacing: -1.2,
                           ),
                         ),
-                        SizedBox(height: width < 350 ? 22 : 30),
+                        SizedBox(height: width < 350 ? 20 : 26),
                         _QuickActions(
                           compact: width < 350 || textScaler.scale(1) > 1.2,
                           onCreatePlan: onCreatePlan,
@@ -112,60 +110,7 @@ class _AgentBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ExcludeSemantics(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFFDDF5F5),
-                  Color(0xFFF8F8FC),
-                  Color(0xFFE4E8FF),
-                  Color(0xFFF0ECFA),
-                ],
-                stops: [0, 0.42, 0.7, 1],
-              ),
-            ),
-          ),
-          Positioned(
-            top: -80,
-            right: -90,
-            child: ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(sigmaX: 42, sigmaY: 42),
-              child: const _GlowCircle(size: 240, color: Color(0x667E8CFF)),
-            ),
-          ),
-          Positioned(
-            top: 170,
-            left: -110,
-            child: ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(sigmaX: 50, sigmaY: 50),
-              child: const _GlowCircle(size: 230, color: Color(0x665DE1DD)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GlowCircle extends StatelessWidget {
-  const _GlowCircle({required this.size, required this.color});
-
-  final double size;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-    );
+    return const ExcludeSemantics(child: ColoredBox(color: Color(0xFFF3F3F0)));
   }
 }
 
@@ -219,7 +164,7 @@ class _RoundGlassButton extends StatelessWidget {
       child: BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: Material(
-          color: const Color(0xAFFFFFFF),
+          color: const Color(0xD9FFFFFF),
           child: IconButton(
             tooltip: tooltip,
             onPressed: onPressed,
@@ -247,7 +192,7 @@ class _BrandCapsule extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 18),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: const Color(0xA8FFFFFF),
+            color: const Color(0xD9FFFFFF),
             borderRadius: BorderRadius.circular(24),
             border: Border.all(color: const Color(0xBFFFFFFF)),
           ),
@@ -261,72 +206,19 @@ class _BrandCapsule extends StatelessWidget {
   }
 }
 
-class _AgentOrb extends StatelessWidget {
-  const _AgentOrb();
-
-  @override
-  Widget build(BuildContext context) {
-    return ExcludeSemantics(
-      child: Container(
-        width: 104,
-        height: 104,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: const RadialGradient(
-            center: Alignment(-0.35, -0.42),
-            radius: 1.05,
-            colors: [
-              Color(0xFFF5FFFF),
-              Color(0xFFCBE7FF),
-              Color(0xFFB8B9F4),
-              Color(0xFFA78FDF),
-            ],
-            stops: [0, 0.36, 0.7, 1],
-          ),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x447A88D9),
-              blurRadius: 38,
-              spreadRadius: 4,
-              offset: Offset(0, 16),
-            ),
-          ],
-        ),
-        child: Align(
-          alignment: const Alignment(-0.24, -0.34),
-          child: Container(
-            width: 18,
-            height: 18,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Color(0xBFFFFFFF),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _Greeting extends StatelessWidget {
   const _Greeting();
 
   @override
   Widget build(BuildContext context) {
-    return ShaderMask(
-      blendMode: BlendMode.srcIn,
-      shaderCallback: (bounds) => const LinearGradient(
-        colors: [Color(0xFF5B9DF5), Color(0xFFD76ABB)],
-      ).createShader(bounds),
-      child: const Text(
-        'Hi, 智',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 34,
-          fontWeight: FontWeight.w500,
-          height: 1.1,
-          letterSpacing: -0.7,
-        ),
+    return const Text(
+      'Hi, 智',
+      style: TextStyle(
+        color: Color(0xFF5F6064),
+        fontSize: 29,
+        fontWeight: FontWeight.w500,
+        height: 1.1,
+        letterSpacing: -0.5,
       ),
     );
   }
@@ -352,30 +244,27 @@ class _QuickActions extends StatelessWidget {
       children: [
         _QuickActionButton(
           actionKey: const Key('quick-action-create-plan'),
-          icon: Icons.auto_awesome_rounded,
           label: '创建模拟面试',
           compact: compact,
           onPressed: onCreatePlan,
         ),
-        const SizedBox(height: 11),
+        const SizedBox(height: 10),
         _QuickActionButton(
           actionKey: const Key('quick-action-continue-practice'),
-          icon: Icons.play_circle_outline_rounded,
           label: '继续上次练习',
           compact: compact,
           onPressed: onContinuePractice,
         ),
-        const SizedBox(height: 11),
+        const SizedBox(height: 10),
         _QuickActionButton(
-          icon: Icons.grid_view_rounded,
+          actionKey: const Key('quick-action-browse-scenes'),
           label: '浏览练习场景',
           compact: compact,
           onPressed: onCreatePlan,
         ),
-        const SizedBox(height: 11),
+        const SizedBox(height: 10),
         _QuickActionButton(
           actionKey: const Key('quick-action-recent-review'),
-          icon: Icons.fact_check_outlined,
           label: '查看最近复盘',
           compact: compact,
           onPressed: onOpenReview,
@@ -388,14 +277,12 @@ class _QuickActions extends StatelessWidget {
 class _QuickActionButton extends StatelessWidget {
   const _QuickActionButton({
     this.actionKey,
-    required this.icon,
     required this.label,
     required this.compact,
     required this.onPressed,
   });
 
   final Key? actionKey;
-  final IconData icon;
   final String label;
   final bool compact;
   final VoidCallback? onPressed;
@@ -409,9 +296,9 @@ class _QuickActionButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(28),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x14513E70),
-              blurRadius: 18,
-              offset: Offset(0, 8),
+              color: Color(0x12000000),
+              blurRadius: 16,
+              offset: Offset(0, 7),
             ),
           ],
         ),
@@ -420,36 +307,27 @@ class _QuickActionButton extends StatelessWidget {
           child: BackdropFilter(
             filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
             child: Material(
-              color: const Color(0xB8FFFFFF),
+              color: const Color(0xE6FFFFFF),
               child: InkWell(
                 key: actionKey,
                 onTap: onPressed,
                 child: Container(
-                  constraints: const BoxConstraints(minHeight: 52),
+                  constraints: const BoxConstraints(minHeight: 50),
                   padding: EdgeInsets.symmetric(
-                    horizontal: compact ? 16 : 20,
-                    vertical: 12,
+                    horizontal: compact ? 18 : 22,
+                    vertical: 11,
                   ),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: const Color(0xCFFFFFFF)),
+                    border: Border.all(color: const Color(0xFFFFFFFF)),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(icon, size: 22, color: const Color(0xFF555AE6)),
-                      const SizedBox(width: 12),
-                      Flexible(
-                        child: Text(
-                          label,
-                          style: TextStyle(
-                            color: const Color(0xFF15161A),
-                            fontSize: compact ? 15 : 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: const Color(0xFF15161A),
+                      fontSize: compact ? 15 : 16,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
@@ -477,9 +355,9 @@ class _AgentComposer extends StatelessWidget {
         borderRadius: BorderRadius.circular(28),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x26513E70),
-            blurRadius: 32,
-            offset: Offset(0, 14),
+            color: Color(0x1C000000),
+            blurRadius: 28,
+            offset: Offset(0, 12),
           ),
         ],
       ),
@@ -492,13 +370,9 @@ class _AgentComposer extends StatelessWidget {
             constraints: BoxConstraints(minHeight: keyboardVisible ? 82 : 104),
             padding: const EdgeInsets.fromLTRB(12, 9, 10, 9),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xE6FFFFFF), Color(0xB8FFFFFF)],
-              ),
+              color: const Color(0xEFFFFFFF),
               borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: const Color(0xE0FFFFFF)),
+              border: Border.all(color: const Color(0xFFFFFFFF)),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -542,6 +416,10 @@ class _AgentComposer extends StatelessWidget {
                         child: IconButton.filledTonal(
                           tooltip: '语音输入，即将开放',
                           onPressed: onVoicePlaceholder,
+                          style: IconButton.styleFrom(
+                            backgroundColor: const Color(0xFFE8E8E5),
+                            foregroundColor: const Color(0xFF44464D),
+                          ),
                           icon: const Icon(Icons.mic_none_rounded),
                         ),
                       ),

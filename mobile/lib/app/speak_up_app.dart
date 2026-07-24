@@ -16,10 +16,10 @@ class SpeakUpApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF767BF2),
-          surface: const Color(0xFFF8F8FC),
+          seedColor: const Color(0xFF4F5054),
+          surface: const Color(0xFFF3F3F0),
         ),
-        scaffoldBackgroundColor: const Color(0xFFF8F8FC),
+        scaffoldBackgroundColor: const Color(0xFFF3F3F0),
         textTheme: ThemeData.light().textTheme.apply(
           bodyColor: const Color(0xFF111217),
           displayColor: const Color(0xFF111217),

@@ -18,7 +18,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   static const _destinations = [
     GlassNavigationDestination(
       label: 'SpeakUp',
-      icon: Icons.auto_awesome_rounded,
+      icon: Icons.chat_bubble_outline_rounded,
       key: Key('primary-tab-agent'),
     ),
     GlassNavigationDestination(
@@ -103,7 +103,7 @@ class _ConversationDrawer extends StatelessWidget {
   Widget build(BuildContext context) {
     return Drawer(
       width: 300,
-      backgroundColor: const Color(0xFFF8F9FC),
+      backgroundColor: const Color(0xFFF5F5F2),
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
@@ -187,7 +187,7 @@ class _ProfilePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('profile-page'),
-      backgroundColor: const Color(0xFFF7F8FC),
+      backgroundColor: const Color(0xFFF3F3F0),
       body: SafeArea(
         bottom: false,
         child: ListView(
