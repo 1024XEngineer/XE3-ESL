@@ -7,6 +7,7 @@ toolchain go1.26.5
 require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 )
 
