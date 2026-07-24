@@ -29,8 +29,6 @@ func (checker readinessChecker) Ping(ctx context.Context) error {
 
 type routedModule struct{}
 
-func (routedModule) Name() string { return "routed" }
-
 func (routedModule) RegisterRoutes(router *gin.Engine) {
 	router.GET("/module-route", func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
@@ -88,7 +86,15 @@ func TestHealthDoesNotDependOnDatabaseReadiness(t *testing.T) {
 
 func TestModuleCanRegisterProductionRoutes(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	router := bootstrap.NewRouter(logger, routedModule{})
+	router := bootstrap.NewRouterWithReadinessAndRoutes(
+		logger,
+		nil,
+		[]bootstrap.RouteRegistrar{routedModule{}},
+		preparation.New(),
+		practice.New(),
+		conversation.New(),
+		review.New(),
+	)
 
 	request := httptest.NewRequest(http.MethodGet, "/module-route", nil)
 	response := httptest.NewRecorder()
@@ -96,6 +102,20 @@ func TestModuleCanRegisterProductionRoutes(t *testing.T) {
 
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("expected status %d, got %d", http.StatusNoContent, response.Code)
+	}
+
+	healthRequest := httptest.NewRequest(http.MethodGet, "/health", nil)
+	healthResponse := httptest.NewRecorder()
+	router.ServeHTTP(healthResponse, healthRequest)
+	var healthBody struct {
+		Modules []string `json:"modules"`
+	}
+	if err := json.Unmarshal(healthResponse.Body.Bytes(), &healthBody); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	wantModules := []string{"preparation", "practice", "conversation", "review"}
+	if !reflect.DeepEqual(healthBody.Modules, wantModules) {
+		t.Fatalf("health modules = %#v, want %#v", healthBody.Modules, wantModules)
 	}
 }
 

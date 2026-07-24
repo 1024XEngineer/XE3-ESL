@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"container/heap"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,7 +14,16 @@ const (
 	registrationAttemptsPerIP = 5
 	loginAttemptsPerIP        = 30
 	loginAttemptsPerAccount   = 10
+	defaultRateLimitCapacity  = 10_000
 )
+
+type Clock interface {
+	Now() time.Time
+}
+
+type SystemClock struct{}
+
+func (SystemClock) Now() time.Time { return time.Now() }
 
 type RateLimitDecision struct {
 	Allowed    bool
@@ -25,20 +35,38 @@ type RateLimiter interface {
 }
 
 type rateLimitWindow struct {
-	start time.Time
-	count int
+	expiresAt time.Time
+	count     int
 }
 
-// FixedWindowLimiter is process-local admission control for expensive public
-// Identity endpoints. The Repository remains responsible for database
-// uniqueness. A future multi-instance deployment must replace this adapter
-// behind RateLimiter with shared admission control.
+type expiryEntry struct {
+	key       string
+	expiresAt time.Time
+}
+
+type expiryHeap []expiryEntry
+
+func (h expiryHeap) Len() int           { return len(h) }
+func (h expiryHeap) Less(i, j int) bool { return h[i].expiresAt.Before(h[j].expiresAt) }
+func (h expiryHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *expiryHeap) Push(value any)    { *h = append(*h, value.(expiryEntry)) }
+func (h *expiryHeap) Pop() any {
+	old := *h
+	last := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return last
+}
+
+// FixedWindowLimiter bounds both CPU and memory under high-cardinality input.
+// Expiration work is amortized O(log n), and a full live-key set fails closed.
 type FixedWindowLimiter struct {
-	mu      sync.Mutex
-	limit   int
-	window  time.Duration
-	clock   Clock
-	entries map[string]rateLimitWindow
+	mu       sync.Mutex
+	limit    int
+	window   time.Duration
+	capacity int
+	clock    Clock
+	entries  map[string]rateLimitWindow
+	expiry   expiryHeap
 }
 
 func NewFixedWindowLimiter(
@@ -46,14 +74,30 @@ func NewFixedWindowLimiter(
 	window time.Duration,
 	clock Clock,
 ) (*FixedWindowLimiter, error) {
-	if limit < 1 || window <= 0 || clock == nil {
+	return NewFixedWindowLimiterWithCapacity(
+		limit,
+		window,
+		defaultRateLimitCapacity,
+		clock,
+	)
+}
+
+func NewFixedWindowLimiterWithCapacity(
+	limit int,
+	window time.Duration,
+	capacity int,
+	clock Clock,
+) (*FixedWindowLimiter, error) {
+	if limit < 1 || window <= 0 || capacity < 1 || clock == nil {
 		return nil, errors.New("identity: invalid rate limiter configuration")
 	}
 	return &FixedWindowLimiter{
-		limit:   limit,
-		window:  window,
-		clock:   clock,
-		entries: make(map[string]rateLimitWindow),
+		limit:    limit,
+		window:   window,
+		capacity: capacity,
+		clock:    clock,
+		entries:  make(map[string]rateLimitWindow, capacity),
+		expiry:   make(expiryHeap, 0, capacity),
 	}, nil
 }
 
@@ -62,29 +106,48 @@ func (l *FixedWindowLimiter) Allow(key string) RateLimitDecision {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	entry, found := l.entries[key]
-	if !found || !now.Before(entry.start.Add(l.window)) {
-		l.pruneExpired(now)
-		l.entries[key] = rateLimitWindow{start: now, count: 1}
+	l.expire(now)
+	if entry, found := l.entries[key]; found {
+		if entry.count >= l.limit {
+			return RateLimitDecision{
+				Allowed:    false,
+				RetryAfter: positiveDuration(entry.expiresAt.Sub(now)),
+			}
+		}
+		entry.count++
+		l.entries[key] = entry
 		return RateLimitDecision{Allowed: true}
 	}
-	if entry.count >= l.limit {
-		return RateLimitDecision{
-			Allowed:    false,
-			RetryAfter: entry.start.Add(l.window).Sub(now),
+
+	if len(l.entries) >= l.capacity {
+		retryAfter := l.window
+		if len(l.expiry) > 0 {
+			retryAfter = positiveDuration(l.expiry[0].expiresAt.Sub(now))
 		}
+		return RateLimitDecision{Allowed: false, RetryAfter: retryAfter}
 	}
-	entry.count++
+
+	entry := rateLimitWindow{expiresAt: now.Add(l.window), count: 1}
 	l.entries[key] = entry
+	heap.Push(&l.expiry, expiryEntry{key: key, expiresAt: entry.expiresAt})
 	return RateLimitDecision{Allowed: true}
 }
 
-func (l *FixedWindowLimiter) pruneExpired(now time.Time) {
-	for key, entry := range l.entries {
-		if !now.Before(entry.start.Add(l.window)) {
-			delete(l.entries, key)
+func (l *FixedWindowLimiter) expire(now time.Time) {
+	for len(l.expiry) > 0 && !now.Before(l.expiry[0].expiresAt) {
+		expired := heap.Pop(&l.expiry).(expiryEntry)
+		entry, found := l.entries[expired.key]
+		if found && entry.expiresAt.Equal(expired.expiresAt) {
+			delete(l.entries, expired.key)
 		}
 	}
+}
+
+func positiveDuration(value time.Duration) time.Duration {
+	if value <= 0 {
+		return time.Nanosecond
+	}
+	return value
 }
 
 type RateLimiters struct {

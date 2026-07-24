@@ -9,10 +9,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+const transactionRollbackTimeout = 5 * time.Second
+
 type PostgreSQL interface {
 	Begin(context.Context) (pgx.Tx, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
 // PostgresRepository is the sole Identity adapter for the reviewed PostgreSQL
@@ -36,7 +37,6 @@ func (r *PostgresRepository) CreateUserWithCredential(
 	ctx context.Context,
 	canonicalEmail string,
 	passwordHash string,
-	now time.Time,
 ) (_ User, resultErr error) {
 	userID, err := r.ids.NewID()
 	if err != nil {
@@ -48,30 +48,31 @@ func (r *PostgresRepository) CreateUserWithCredential(
 	}
 	defer func() {
 		if resultErr != nil {
-			_ = tx.Rollback(ctx)
+			rollback(tx)
 		}
 	}()
 
-	if _, err := tx.Exec(ctx, `
+	var createdAt time.Time
+	var updatedAt time.Time
+	if err := tx.QueryRow(ctx, `
 INSERT INTO identity_users (
     id,
     canonical_email,
     account_status,
     created_at,
     updated_at
-) VALUES ($1, $2, 'active', $3, $3)`,
+) VALUES ($1, $2, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+RETURNING created_at, updated_at`,
 		userID,
 		canonicalEmail,
-		now,
-	); err != nil {
+	).Scan(&createdAt, &updatedAt); err != nil {
 		return User{}, mapPostgresError(err)
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO identity_credentials (user_id, password_hash, updated_at)
-VALUES ($1, $2, $3)`,
+VALUES ($1, $2, CURRENT_TIMESTAMP)`,
 		userID,
 		passwordHash,
-		now,
 	); err != nil {
 		return User{}, mapPostgresError(err)
 	}
@@ -82,8 +83,8 @@ VALUES ($1, $2, $3)`,
 		ID:        userID,
 		Email:     canonicalEmail,
 		Status:    AccountActive,
-		CreatedAt: now,
-		UpdatedAt: now,
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
 	}, nil
 }
 
@@ -100,7 +101,8 @@ SELECT
     users.account_status,
     users.created_at,
     users.updated_at,
-    credentials.password_hash
+    credentials.password_hash,
+    credentials.updated_at
 FROM identity_users AS users
 JOIN identity_credentials AS credentials ON credentials.user_id = users.id
 WHERE users.canonical_email = $1`,
@@ -112,6 +114,7 @@ WHERE users.canonical_email = $1`,
 		&credential.User.CreatedAt,
 		&credential.User.UpdatedAt,
 		&credential.PasswordHash,
+		&credential.UpdatedAt,
 	)
 	if err != nil {
 		return Credential{}, mapPostgresError(err)
@@ -124,6 +127,11 @@ func (r *PostgresRepository) CreateSession(
 	ctx context.Context,
 	params CreateSessionParams,
 ) (_ Session, resultErr error) {
+	if params.Lifetime <= 0 ||
+		params.Lifetime%time.Second != 0 ||
+		len(params.TokenDigest) != 32 {
+		return Session{}, ErrRepository
+	}
 	sessionID, err := r.ids.NewID()
 	if err != nil {
 		return Session{}, ErrRepository
@@ -134,37 +142,83 @@ func (r *PostgresRepository) CreateSession(
 	}
 	defer func() {
 		if resultErr != nil {
-			_ = tx.Rollback(ctx)
+			rollback(tx)
 		}
 	}()
 
+	var status string
+	if err := tx.QueryRow(ctx, `
+SELECT account_status
+FROM identity_users
+WHERE id = $1
+FOR UPDATE`,
+		params.UserID,
+	).Scan(&status); err != nil {
+		return Session{}, mapPostgresError(err)
+	}
+	var currentHash string
+	var credentialUpdatedAt time.Time
+	if err := tx.QueryRow(ctx, `
+SELECT password_hash, updated_at
+FROM identity_credentials
+WHERE user_id = $1
+FOR UPDATE`,
+		params.UserID,
+	).Scan(&currentHash, &credentialUpdatedAt); err != nil {
+		return Session{}, mapPostgresError(err)
+	}
+	if AccountStatus(status) != AccountActive ||
+		currentHash != params.PreviousHash ||
+		!credentialUpdatedAt.Equal(params.CredentialUpdatedAt) {
+		return Session{}, ErrAuthenticationChanged
+	}
+
 	if params.ReplacementHash != "" {
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 UPDATE identity_credentials
-SET password_hash = $1, updated_at = $2
-WHERE user_id = $3 AND password_hash = $4`,
+SET
+    password_hash = $1,
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE user_id = $2
+  AND password_hash = $3
+  AND updated_at = $4`,
 			params.ReplacementHash,
-			params.CreatedAt,
 			params.UserID,
 			params.PreviousHash,
-		); err != nil {
+			params.CredentialUpdatedAt,
+		)
+		if err != nil {
 			return Session{}, mapPostgresError(err)
 		}
+		if tag.RowsAffected() != 1 {
+			return Session{}, ErrAuthenticationChanged
+		}
 	}
-	if _, err := tx.Exec(ctx, `
+	var createdAt time.Time
+	var expiresAt time.Time
+	if err := tx.QueryRow(ctx, `
 INSERT INTO identity_auth_sessions (
     id,
     user_id,
     token_digest,
     created_at,
     expires_at
-) VALUES ($1, $2, $3, $4, $5)`,
+) VALUES (
+    $1,
+    $2,
+    $3,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP + ($4::bigint * INTERVAL '1 second')
+)
+RETURNING created_at, expires_at`,
 		sessionID,
 		params.UserID,
 		params.TokenDigest,
-		params.CreatedAt,
-		params.ExpiresAt,
-	); err != nil {
+		int64(params.Lifetime/time.Second),
+	).Scan(&createdAt, &expiresAt); err != nil {
 		return Session{}, mapPostgresError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -173,14 +227,13 @@ INSERT INTO identity_auth_sessions (
 	return Session{
 		ID:        sessionID,
 		UserID:    params.UserID,
-		ExpiresAt: params.ExpiresAt,
+		ExpiresAt: expiresAt,
 	}, nil
 }
 
 func (r *PostgresRepository) FindSessionByTokenDigest(
 	ctx context.Context,
 	tokenDigest []byte,
-	now time.Time,
 ) (SessionIdentity, error) {
 	var identity SessionIdentity
 	var status string
@@ -197,9 +250,9 @@ FROM identity_auth_sessions AS sessions
 JOIN identity_users AS users ON users.id = sessions.user_id
 WHERE sessions.token_digest = $1
   AND sessions.revoked_at IS NULL
-  AND sessions.expires_at > $2`,
+  AND sessions.created_at <= CURRENT_TIMESTAMP
+  AND sessions.expires_at > CURRENT_TIMESTAMP`,
 		tokenDigest,
-		now,
 	).Scan(
 		&identity.SessionID,
 		&identity.ExpiresAt,
@@ -245,18 +298,38 @@ func (r *PostgresRepository) RevokeSession(
 	ctx context.Context,
 	userID string,
 	sessionID string,
-	revokedAt time.Time,
 	reason string,
-) error {
-	tag, err := r.database.Exec(ctx, `
+) (resultErr error) {
+	tx, err := r.database.Begin(ctx)
+	if err != nil {
+		return ErrRepository
+	}
+	defer func() {
+		if resultErr != nil {
+			rollback(tx)
+		}
+	}()
+	var lockedUserID string
+	if err := tx.QueryRow(ctx, `
+SELECT id::text
+FROM identity_users
+WHERE id = $1
+FOR UPDATE`,
+		userID,
+	).Scan(&lockedUserID); err != nil {
+		return mapPostgresError(err)
+	}
+	tag, err := tx.Exec(ctx, `
 UPDATE identity_auth_sessions
 SET
-    revoked_at = COALESCE(revoked_at, $3),
-    revocation_reason = COALESCE(revocation_reason, $4)
+    revoked_at = COALESCE(
+        revoked_at,
+        GREATEST(CURRENT_TIMESTAMP, created_at)
+    ),
+    revocation_reason = COALESCE(revocation_reason, $3)
 WHERE id = $1 AND user_id = $2`,
 		sessionID,
 		userID,
-		revokedAt,
 		reason,
 	)
 	if err != nil {
@@ -265,24 +338,72 @@ WHERE id = $1 AND user_id = $2`,
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return ErrRepository
+	}
 	return nil
 }
 
 func (r *PostgresRepository) RevokeAllSessionsForUser(
 	ctx context.Context,
 	userID string,
-	revokedAt time.Time,
 	reason string,
-) error {
-	_, err := r.database.Exec(ctx, `
+) (resultErr error) {
+	tx, err := r.database.Begin(ctx)
+	if err != nil {
+		return ErrRepository
+	}
+	defer func() {
+		if resultErr != nil {
+			rollback(tx)
+		}
+	}()
+	var lockedUserID string
+	if err := tx.QueryRow(ctx, `
+SELECT id::text
+FROM identity_users
+WHERE id = $1
+FOR UPDATE`,
+		userID,
+	).Scan(&lockedUserID); err != nil {
+		return mapPostgresError(err)
+	}
+	tag, err := tx.Exec(ctx, `
+UPDATE identity_credentials
+SET updated_at = GREATEST(
+    CURRENT_TIMESTAMP,
+    updated_at + INTERVAL '1 microsecond'
+)
+WHERE user_id = $1`,
+		userID,
+	)
+	if err != nil {
+		return mapPostgresError(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
 UPDATE identity_auth_sessions
-SET revoked_at = $2, revocation_reason = $3
+SET
+    revoked_at = GREATEST(CURRENT_TIMESTAMP, created_at),
+    revocation_reason = $2
 WHERE user_id = $1 AND revoked_at IS NULL`,
 		userID,
-		revokedAt,
 		reason,
-	)
-	return mapPostgresError(err)
+	); err != nil {
+		return mapPostgresError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ErrRepository
+	}
+	return nil
+}
+
+func rollback(tx pgx.Tx) {
+	ctx, cancel := context.WithTimeout(context.Background(), transactionRollbackTimeout)
+	defer cancel()
+	_ = tx.Rollback(ctx)
 }
 
 func mapPostgresError(err error) error {

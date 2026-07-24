@@ -48,3 +48,31 @@ func TestLoginAccountScopeDoesNotContainEmail(t *testing.T) {
 		t.Fatal("canonical email variants must share a scope")
 	}
 }
+
+func TestFixedWindowLimiterFailsClosedAtCapacityAndReusesExpiredSpace(t *testing.T) {
+	clock := &mutableClock{now: time.Unix(1_000, 0)}
+	limiter, err := NewFixedWindowLimiterWithCapacity(1, time.Minute, 3, clock)
+	if err != nil {
+		t.Fatalf("new limiter: %v", err)
+	}
+	for _, key := range []string{"one", "two", "three"} {
+		if !limiter.Allow(key).Allowed {
+			t.Fatalf("expected %q to be admitted", key)
+		}
+	}
+	decision := limiter.Allow("high-cardinality-four")
+	if decision.Allowed || decision.RetryAfter != time.Minute {
+		t.Fatalf("capacity must fail closed: %#v", decision)
+	}
+	if len(limiter.entries) != 3 || len(limiter.expiry) != 3 {
+		t.Fatalf("limiter exceeded capacity: %d/%d", len(limiter.entries), len(limiter.expiry))
+	}
+
+	clock.now = clock.now.Add(time.Minute)
+	if !limiter.Allow("replacement").Allowed {
+		t.Fatal("expired capacity was not reclaimed")
+	}
+	if len(limiter.entries) != 1 || len(limiter.expiry) != 1 {
+		t.Fatalf("expired entries were not bounded: %d/%d", len(limiter.entries), len(limiter.expiry))
+	}
+}

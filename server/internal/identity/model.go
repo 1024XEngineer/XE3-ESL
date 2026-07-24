@@ -27,6 +27,7 @@ type User struct {
 type Credential struct {
 	User         User
 	PasswordHash string
+	UpdatedAt    time.Time
 }
 
 type Session struct {
@@ -48,12 +49,12 @@ type LoginResult struct {
 }
 
 type CreateSessionParams struct {
-	UserID          string
-	TokenDigest     []byte
-	CreatedAt       time.Time
-	ExpiresAt       time.Time
-	PreviousHash    string
-	ReplacementHash string
+	UserID              string
+	TokenDigest         []byte
+	CredentialUpdatedAt time.Time
+	Lifetime            time.Duration
+	PreviousHash        string
+	ReplacementHash     string
 }
 
 // Repository is the persistence boundary owned by Identity. Implementations
@@ -63,44 +64,40 @@ type Repository interface {
 		ctx context.Context,
 		canonicalEmail string,
 		passwordHash string,
-		now time.Time,
 	) (User, error)
 	FindCredentialByEmail(ctx context.Context, canonicalEmail string) (Credential, error)
 	CreateSession(ctx context.Context, params CreateSessionParams) (Session, error)
 	FindSessionByTokenDigest(
 		ctx context.Context,
 		tokenDigest []byte,
-		now time.Time,
 	) (SessionIdentity, error)
 	FindUserByID(ctx context.Context, userID string) (User, error)
 	RevokeSession(
 		ctx context.Context,
 		userID string,
 		sessionID string,
-		revokedAt time.Time,
 		reason string,
 	) error
 	RevokeAllSessionsForUser(
 		ctx context.Context,
 		userID string,
-		revokedAt time.Time,
 		reason string,
 	) error
 }
 
 type PasswordHasher interface {
-	Hash(password string) (string, error)
-	Verify(password, encodedHash string) (valid bool, needsRehash bool, err error)
+	Hash(ctx context.Context, password string) (string, error)
+	Verify(
+		ctx context.Context,
+		password string,
+		encodedHash string,
+	) (valid bool, needsRehash bool, err error)
 }
 
 type SessionTokens interface {
 	Generate() (raw string, digest []byte, err error)
 	Digest(raw string) []byte
 	ValidWireFormat(raw string) bool
-}
-
-type Clock interface {
-	Now() time.Time
 }
 
 type Application interface {

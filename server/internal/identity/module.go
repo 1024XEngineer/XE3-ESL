@@ -13,8 +13,6 @@ func NewModule(handler *HTTPHandler) (*Module, error) {
 	return &Module{handler: handler}, nil
 }
 
-func (*Module) Name() string { return "identity" }
-
 func (m *Module) RegisterRoutes(router *gin.Engine) {
 	m.handler.RegisterRoutes(router)
 }
