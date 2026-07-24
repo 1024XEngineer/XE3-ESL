@@ -60,6 +60,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   void initState() {
     super.initState();
     widget.agentController.addListener(_handleAgentState);
+    _restorePresentedReview();
   }
 
   @override
@@ -70,6 +71,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     }
     oldWidget.agentController.removeListener(_handleAgentState);
     widget.agentController.addListener(_handleAgentState);
+    _restorePresentedReview();
   }
 
   @override
@@ -92,10 +94,18 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _openPractice() {
+    if (widget.agentController.review != null) {
+      _selectDestination(2);
+      return;
+    }
     Navigator.of(context).pushNamed(AppRoutes.practice);
   }
 
   void _openVoicePractice() {
+    if (widget.agentController.review != null) {
+      _selectDestination(2);
+      return;
+    }
     if (!widget.agentController.hasActivePractice) {
       _selectDestination(1);
       _showMockNotice('请先选择一个练习场景');
@@ -116,6 +126,15 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       _selectedIndex = 2;
     }
     setState(() {});
+  }
+
+  void _restorePresentedReview() {
+    if (widget.agentController.review == null) {
+      _reviewPresented = false;
+      return;
+    }
+    _reviewPresented = true;
+    _selectedIndex = 2;
   }
 
   @override

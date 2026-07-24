@@ -307,14 +307,22 @@ void main() {
   test(
     'Fake client cancels old account work and reuses stable write IDs',
     () async {
-      final client = FakeAgentClient(delay: const Duration(milliseconds: 1));
+      final client = FakeAgentClient(delay: const Duration(milliseconds: 20));
       final staleRestore = client.restoreThread();
-
-      await client.clearAccountState();
-      await expectLater(
+      final staleCancellation = expectLater(
         staleRestore,
         throwsA(isA<AgentClientOperationCancelled>()),
       );
+      var cleanupCompleted = false;
+
+      final cleanup = client.clearAccountState();
+      cleanup.whenComplete(() => cleanupCompleted = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(cleanupCompleted, isFalse);
+
+      await staleCancellation;
+      await cleanup;
+      expect(cleanupCompleted, isTrue);
 
       final snapshot = await client.restoreThread();
       final first = await client.sendText(
@@ -334,6 +342,80 @@ void main() {
       expect(nextAccount.threadId, isNot(snapshot.threadId));
     },
   );
+
+  test('rejects inconsistent or unsafe restored snapshots', () async {
+    final scene = agentScenes.first;
+    final matter = AgentMatter(id: 'matter_valid', scene: scene);
+    const review = AgentReview(
+      id: 'review_valid',
+      title: 'Review',
+      summary: 'Summary',
+      strength: 'Strength',
+      nextFocus: 'Next focus',
+    );
+    final invalidSnapshots = <AgentThreadSnapshot>[
+      AgentThreadSnapshot(
+        threadId: 'thread_pending_too_early',
+        activeMatter: matter,
+        practice: const AgentPracticeSnapshot(
+          completedTurns: 2,
+          pendingReviewClientId: 'review_wrong_state',
+        ),
+      ),
+      AgentThreadSnapshot(
+        threadId: 'thread_review_and_pending',
+        activeMatter: matter,
+        practice: const AgentPracticeSnapshot(
+          completedTurns: 3,
+          review: review,
+          pendingReviewClientId: 'review_duplicate_state',
+        ),
+      ),
+      AgentThreadSnapshot(
+        threadId: 'thread_missing_pending_review',
+        activeMatter: matter,
+        practice: const AgentPracticeSnapshot(completedTurns: 3),
+      ),
+      AgentThreadSnapshot(
+        threadId: 'thread_empty_matter',
+        activeMatter: AgentMatter(id: ' ', scene: scene),
+      ),
+      const AgentThreadSnapshot(
+        threadId: 'thread_empty_message',
+        messages: <AgentMessage>[
+          AgentMessage(id: ' ', role: AgentMessageRole.user, text: 'Message'),
+        ],
+      ),
+      const AgentThreadSnapshot(
+        threadId: 'thread_duplicate_message',
+        messages: <AgentMessage>[
+          AgentMessage(
+            id: 'message_duplicate',
+            role: AgentMessageRole.user,
+            text: 'First',
+          ),
+          AgentMessage(
+            id: 'message_duplicate',
+            role: AgentMessageRole.assistant,
+            text: 'Second',
+          ),
+        ],
+      ),
+    ];
+
+    for (final snapshot in invalidSnapshots) {
+      final controller = AgentController(
+        client: _SnapshotAgentClient(snapshot),
+      );
+
+      await controller.initialize();
+
+      expect(controller.threadId, isNull, reason: snapshot.threadId);
+      expect(controller.canRetry, isTrue, reason: snapshot.threadId);
+      expect(controller.errorMessage, isNotNull, reason: snapshot.threadId);
+      controller.dispose();
+    }
+  });
 }
 
 class _DelegatingAgentClient implements AgentClient {

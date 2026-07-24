@@ -545,12 +545,44 @@ final class AgentController extends ChangeNotifier {
 
   void _validateSnapshot(AgentThreadSnapshot snapshot) {
     final practice = snapshot.practice;
-    if (snapshot.threadId.isEmpty ||
+    final activeMatter = snapshot.activeMatter;
+    final review = practice?.review;
+    final pendingReviewClientId = practice?.pendingReviewClientId;
+    final messageIds = <String>{};
+    final invalidMessages = snapshot.messages.any(
+      (message) =>
+          message.id.trim().isEmpty ||
+          message.text.trim().isEmpty ||
+          !messageIds.add(message.id),
+    );
+    final invalidPractice =
+        practice != null &&
+        (practice.completedTurns < 0 ||
+            practice.completedTurns > 3 ||
+            (review != null && practice.completedTurns != 3) ||
+            (pendingReviewClientId != null &&
+                (pendingReviewClientId.trim().isEmpty ||
+                    practice.completedTurns != 3 ||
+                    review != null)) ||
+            (practice.completedTurns == 3 &&
+                review == null &&
+                pendingReviewClientId == null));
+    final invalidReview =
+        review != null &&
+        (review.id.trim().isEmpty ||
+            review.title.trim().isEmpty ||
+            review.summary.trim().isEmpty ||
+            review.strength.trim().isEmpty ||
+            review.nextFocus.trim().isEmpty);
+    if (snapshot.threadId.trim().isEmpty ||
+        (activeMatter != null &&
+            (activeMatter.id.trim().isEmpty ||
+                activeMatter.scene.id.trim().isEmpty ||
+                activeMatter.scene.title.trim().isEmpty)) ||
         (practice != null && snapshot.activeMatter == null) ||
-        (practice != null &&
-            (practice.completedTurns < 0 || practice.completedTurns > 3)) ||
-        (practice?.review != null && practice?.completedTurns != 3) ||
-        (practice?.pendingReviewClientId?.isEmpty ?? false)) {
+        invalidPractice ||
+        invalidReview ||
+        invalidMessages) {
       throw StateError('Invalid Agent Thread snapshot.');
     }
   }

@@ -21,6 +21,7 @@ class _PracticePageState extends State<PracticePage> {
   void initState() {
     super.initState();
     widget.agentController?.addListener(_handleState);
+    _scheduleReviewExitIfNeeded();
   }
 
   @override
@@ -30,7 +31,9 @@ class _PracticePageState extends State<PracticePage> {
       return;
     }
     oldWidget.agentController?.removeListener(_handleState);
+    _scheduledReviewExit = false;
     widget.agentController?.addListener(_handleState);
+    _scheduleReviewExitIfNeeded();
   }
 
   @override
@@ -44,14 +47,28 @@ class _PracticePageState extends State<PracticePage> {
       return;
     }
     setState(() {});
-    if (widget.agentController?.review != null && !_scheduledReviewExit) {
-      _scheduledReviewExit = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          Navigator.of(context).maybePop();
-        }
-      });
+    if (widget.agentController?.review == null) {
+      _scheduledReviewExit = false;
+      return;
     }
+    _scheduleReviewExitIfNeeded();
+  }
+
+  void _scheduleReviewExitIfNeeded() {
+    if (widget.agentController?.review == null || _scheduledReviewExit) {
+      return;
+    }
+    _scheduledReviewExit = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      if (widget.agentController?.review == null) {
+        _scheduledReviewExit = false;
+        return;
+      }
+      Navigator.of(context).maybePop();
+    });
   }
 
   @override

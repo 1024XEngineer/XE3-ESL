@@ -6,6 +6,7 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
+import 'package:speakup/features/practice/practice.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/model/identity_models.dart';
@@ -179,6 +180,34 @@ void main() {
       expect(client.sceneClientIds.toSet(), hasLength(1));
     },
   );
+
+  testWidgets('restored Review opens directly and an existing practice exits', (
+    tester,
+  ) async {
+    final agentController = AgentController(client: FakeAgentClient());
+    await agentController.initialize();
+    await agentController.selectScene(agentScenes.first);
+    for (var turn = 0; turn < 3; turn++) {
+      agentController.startRecording();
+      await agentController.stopRecording();
+      await agentController.confirmTranscript();
+    }
+    expect(agentController.review, isNotNull);
+
+    await tester.pumpWidget(SpeakUpApp(agentController: agentController));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('review-content')), findsOneWidget);
+
+    final navigatorContext = tester.element(find.byType(SpeakUpShell));
+    Navigator.of(navigatorContext).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PracticePage(agentController: agentController),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('practice-page')), findsNothing);
+  });
 }
 
 final class _AuthenticatedIdentityClient implements IdentityClient {
