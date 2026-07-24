@@ -10,22 +10,24 @@
 
 ## 仓库与资源边界
 
-- `/Users/mac/Projects/XE3-ESL` 是正式开发工作区，正式前端、后端和 CI 只在本仓库维护。
-- `origin`（`https://github.com/Lq0412/XE3-ESL.git`）是个人 Fork，只用于推送任务分支；`upstream`（`https://github.com/1024XEngineer/XE3-ESL.git`）是官方主仓，只通过 Pull Request 合入。
-- `/Users/mac/Projects/ai-en-coach` 是前期共享开发与验证仓，只用于读取 Prototype、Agent Demo、门户资源和历史文档；不得在两个仓库重复维护同一份正式代码。
-- 从参考仓迁移前，先检查正式仓现有结构、已接受 Issue、接口契约、在审 PR 和其他成员分支；只迁移当前验收所需内容，不整仓复制或覆盖已有实现。
-- `https://speak-up.top` 是独立运行的线上门户，不属于 Flutter App 的迁移范围；Flutter 只选择性迁移当前 App 原型所需页面和流程，不搬运历史页面或门户实现。
-- Agent Demo 只作为后端能力验证参考；正式后端架构、接口和依赖必须在对应 Issue 中评估后再迁移。
-- 发生冲突时，依据优先级为：已接受的 Issue 决策、正式仓契约与代码、在审 PR、线上门户现状、历史参考文档。
-- 未经明确授权，不新建、修改或关闭官方主仓的 Issue、Milestone、PR、Tag 或 Release。
+- 正式开发工作区为 `/Users/mac/Projects/XE3-ESL`，前端、后端、API 契约、CI 和正式用户文档只在该仓库修改。
+- 本地仓库的 `origin` 为个人 Fork `https://github.com/Lq0412/XE3-ESL.git`，用于推送个人任务分支。
+- `upstream` 为官方主仓 `https://github.com/1024XEngineer/XE3-ESL.git`；`dev` 是日常开发与联调集成分支，`main` 只接收经过验证的正式发布。
+- 常规任务从最新 `upstream/dev` 创建短期分支，推送到 `origin` 后向 `upstream/dev` 发起 Pull Request。
+- 正式发布通过 `upstream/dev` 向 `upstream/main` 的发布 Pull Request 完成；禁止把常规功能分支直接合入 `main`。
+- 禁止直接推送官方主仓的 `dev` 或 `main`，也不在官方主仓创建个人开发分支。
+- `/Users/mac/Projects/ai-en-coach` 是前期共享开发与验证仓，包含 App 原型、已上线门户源码、Agent Demo 后端、资源文件和历史文档，仅允许读取和选择性迁移。
+- 不在 `ai-en-coach` 中继续同步维护正式代码，也不把 `XE3-ESL` 的正式实现反向复制回共享仓。
+- 从 `ai-en-coach` 迁移内容前，必须先检查正式仓的目录结构、已接受 Issue、接口契约和其他成员的在审分支或 Pull Request，避免覆盖或重复实现。
+- `https://speak-up.top` 是已经上线、独立运行的 Web 门户。门户不迁入 Flutter App；其源码、品牌、文案和视觉资源可以作为迁移参考。
+- Flutter 的迁移对象是共享仓中的 App 交互原型，不是门户的 React、HTML、CSS 或 JavaScript 源码；正式移动端功能必须按照 Flutter 工程结构重新实现。
+- 共享仓中的历史文档和原型不是正式决策来源。发生冲突时，权威顺序为：官方主仓已接受的 GitHub Issue、当前接口契约和代码、在审 Pull Request、线上门户实际表现、共享仓历史资料。
+- 未经明确授权，不创建、修改或关闭官方主仓的 Issue、Milestone、Pull Request、Tag 或 Release。
 
 ## Git 工作流
 
 - 所有代码变更必须通过个人 Fork 的短分支向主仓提交 Pull Request。
-- 常规任务从最新 `upstream/dev` 创建短期分支，推送到 `origin` 后向 `upstream/dev` 发起 PR。
-- `main` 只用于正式发布；发布通过 `upstream/dev` 向 `upstream/main` 的发布 PR 完成，常规功能分支不得直接合入 `main`。
 - 禁止在主仓直接创建个人开发分支或直接推送 `dev`、`main`。
-- 功能 Issue 在对应 PR 完成 Review 并合入 `upstream/dev` 后视为开发完成；正式发布状态由发布 PR 与 Milestone 单独管理。
 - 一个 Issue 对应一个分支和一个 PR；分支合并后删除。
 - Commit 使用 Conventional Commits，格式为 `<type>(<scope>): <subject>`。
 - PR 必须包含功能描述、实现思路、可复现测试方式和关联 Issue。
