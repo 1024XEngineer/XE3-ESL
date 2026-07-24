@@ -44,7 +44,14 @@ func run() int {
 	}
 	defer databasePool.Close()
 
+	identityModule, err := bootstrap.NewIdentityModule(databasePool.Native())
+	if err != nil {
+		logger.Error("identity startup failed", slog.Any("error", err))
+		return 1
+	}
+
 	router := bootstrap.NewRouterWithReadiness(logger, databasePool,
+		identityModule,
 		preparation.New(),
 		practice.New(),
 		conversation.New(),
