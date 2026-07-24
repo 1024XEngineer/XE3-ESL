@@ -21,6 +21,7 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 
 	const testAPIKey = "test-api-key"
 	var received chatCompletionRequest
+	var rawPayload map[string]json.RawMessage
 	doer := doerFunc(func(request *http.Request) (*http.Response, error) {
 		if request.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", request.Method)
@@ -35,8 +36,15 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 		if got := request.Header.Get("Content-Type"); got != "application/json" {
 			t.Errorf("content type = %q", got)
 		}
-		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+		requestBody, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if err := json.Unmarshal(requestBody, &received); err != nil {
 			t.Fatalf("decode request: %v", err)
+		}
+		if err := json.Unmarshal(requestBody, &rawPayload); err != nil {
+			t.Fatalf("decode raw request: %v", err)
 		}
 		return jsonResponse(http.StatusOK, `{
 			"id":"chatcmpl-safe-1",
@@ -62,9 +70,15 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 	}
 	if received.Model != "qwen3.5-flash" ||
 		received.Stream ||
-		received.MaxCompletionTokens != 512 ||
+		received.MaxTokens != 512 ||
 		len(received.Messages) != len(request.Messages) {
 		t.Fatalf("unexpected request payload: %#v", received)
+	}
+	if _, exists := rawPayload["max_tokens"]; !exists {
+		t.Fatal("request omitted the enforceable max_tokens output budget")
+	}
+	if _, exists := rawPayload["max_completion_tokens"]; exists {
+		t.Fatal("request used max_completion_tokens, which the compatibility endpoint ignores")
 	}
 	for index, message := range received.Messages {
 		if message.Role != string(request.Messages[index].Role) ||

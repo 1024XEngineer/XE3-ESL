@@ -134,10 +134,10 @@ func (generator *Generator) Generate(
 	}
 
 	payload := chatCompletionRequest{
-		Model:               generator.model,
-		Messages:            make([]chatMessage, 0, len(request.Messages)),
-		Stream:              false,
-		MaxCompletionTokens: generator.maxOutputTokens,
+		Model:     generator.model,
+		Messages:  make([]chatMessage, 0, len(request.Messages)),
+		Stream:    false,
+		MaxTokens: generator.maxOutputTokens,
 	}
 	for _, message := range request.Messages {
 		payload.Messages = append(payload.Messages, chatMessage{
@@ -239,10 +239,13 @@ func (generator *Generator) Generate(
 }
 
 type chatCompletionRequest struct {
-	Model               string        `json:"model"`
-	Messages            []chatMessage `json:"messages"`
-	Stream              bool          `json:"stream"`
-	MaxCompletionTokens int           `json:"max_completion_tokens"`
+	Model    string        `json:"model"`
+	Messages []chatMessage `json:"messages"`
+	Stream   bool          `json:"stream"`
+	// The current compatibility overview lists max_completion_tokens as
+	// silently ignored. The endpoint-specific Chat API still honors the
+	// deprecated max_tokens field, so it remains the enforceable budget.
+	MaxTokens int `json:"max_tokens"`
 }
 
 type chatMessage struct {
