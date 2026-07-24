@@ -1,0 +1,783 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://speak-up.top/api/schemas/websocket/conversation-events.schema.json",
+  "title": "SpeakUp conversation events",
+  "description": "Server-to-client events for one practice session. Replayable events are ordered by the session sequence. Version 1 consumers reject unknown event types or versions, stop applying the stream, and reconcile to the current interaction state through the REST bootstrap instead of decoding them as a known payload. The MS1 bootstrap is not a historical event or resource listing.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/StreamReadyEvent"
+    },
+    {
+      "$ref": "#/$defs/QuestionCreatedEvent"
+    },
+    {
+      "$ref": "#/$defs/TurnSubmittedEvent"
+    },
+    {
+      "$ref": "#/$defs/TurnProcessingEvent"
+    },
+    {
+      "$ref": "#/$defs/TurnCompletedEvent"
+    },
+    {
+      "$ref": "#/$defs/AnswerProcessingFailedEvent"
+    },
+    {
+      "$ref": "#/$defs/TurnAnalysisCompletedEvent"
+    },
+    {
+      "$ref": "#/$defs/TurnAnalysisFailedEvent"
+    },
+    {
+      "$ref": "#/$defs/PracticeSessionStartedEvent"
+    },
+    {
+      "$ref": "#/$defs/PracticeSessionPausedEvent"
+    },
+    {
+      "$ref": "#/$defs/PracticeSessionResumedEvent"
+    },
+    {
+      "$ref": "#/$defs/PracticeSessionCompletedEvent"
+    },
+    {
+      "$ref": "#/$defs/PracticeSessionEndedEarlyEvent"
+    },
+    {
+      "$ref": "#/$defs/StreamResyncRequiredEvent"
+    },
+    {
+      "$ref": "#/$defs/SystemErrorEvent"
+    },
+    {
+      "$ref": "#/$defs/SystemHeartbeatEvent"
+    }
+  ],
+  "$defs": {
+    "StreamReadyEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "stream.ready"
+            },
+            "replayable": {
+              "const": false
+            },
+            "payload": {
+              "$ref": "#/$defs/StreamReadyPayload"
+            }
+          }
+        }
+      ]
+    },
+    "QuestionCreatedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "question.created"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/QuestionCreatedPayload"
+            }
+          }
+        }
+      ]
+    },
+    "TurnSubmittedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "turn.submitted"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/TurnSubmittedPayload"
+            }
+          }
+        }
+      ]
+    },
+    "TurnProcessingEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "turn.processing"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/TurnProcessingPayload"
+            }
+          }
+        }
+      ]
+    },
+    "TurnCompletedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "turn.completed"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/TurnCompletedPayload"
+            }
+          }
+        }
+      ]
+    },
+    "AnswerProcessingFailedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "answer.processing_failed"
+            },
+            "replayable": {
+              "const": false
+            },
+            "payload": {
+              "$ref": "#/$defs/AnswerProcessingFailurePayload"
+            }
+          }
+        }
+      ]
+    },
+    "TurnAnalysisCompletedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "turn_analysis.completed"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/TurnAnalysisCompletedPayload"
+            }
+          }
+        }
+      ]
+    },
+    "TurnAnalysisFailedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "turn_analysis.failed"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/TurnAnalysisFailedPayload"
+            }
+          }
+        }
+      ]
+    },
+    "PracticeSessionStartedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "practice_session.started"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/PracticeSessionStartedPayload"
+            }
+          }
+        }
+      ]
+    },
+    "PracticeSessionPausedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "practice_session.paused"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/PracticeSessionPausedPayload"
+            }
+          }
+        }
+      ]
+    },
+    "PracticeSessionResumedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "practice_session.resumed"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/PracticeSessionStartedPayload"
+            }
+          }
+        }
+      ]
+    },
+    "PracticeSessionCompletedEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "practice_session.completed"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/PracticeSessionCompletedPayload"
+            }
+          }
+        }
+      ]
+    },
+    "PracticeSessionEndedEarlyEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "practice_session.ended_early"
+            },
+            "replayable": {
+              "const": true
+            },
+            "payload": {
+              "$ref": "#/$defs/PracticeSessionEndedEarlyPayload"
+            }
+          }
+        }
+      ]
+    },
+    "StreamResyncRequiredEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "stream.resync_required"
+            },
+            "replayable": {
+              "const": false
+            },
+            "payload": {
+              "$ref": "#/$defs/StreamResyncRequiredPayload"
+            }
+          }
+        }
+      ]
+    },
+    "SystemErrorEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "system.error"
+            },
+            "replayable": {
+              "const": false
+            },
+            "payload": {
+              "$ref": "#/$defs/SystemErrorPayload"
+            }
+          }
+        }
+      ]
+    },
+    "SystemHeartbeatEvent": {
+      "allOf": [
+        {
+          "$ref": "../common/event-envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": {
+              "const": "system.heartbeat"
+            },
+            "replayable": {
+              "const": false
+            },
+            "payload": {
+              "$ref": "#/$defs/SystemHeartbeatPayload"
+            }
+          }
+        }
+      ]
+    },
+    "StreamReadyPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "last_sequence"
+      ],
+      "properties": {
+        "last_sequence": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "QuestionCreatedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "question_id",
+        "speaker_participant_id",
+        "addressee_participant_ids",
+        "question_type",
+        "content",
+        "sequence"
+      ],
+      "properties": {
+        "question_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "speaker_participant_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "addressee_participant_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "objective_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question_type": {
+          "enum": [
+            "PRIMARY",
+            "FOLLOW_UP"
+          ]
+        },
+        "parent_question_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "question_type": {
+                "const": "FOLLOW_UP"
+              }
+            },
+            "required": [
+              "question_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "parent_question_id": {}
+            },
+            "required": [
+              "parent_question_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "question_type": {
+                "const": "PRIMARY"
+              }
+            },
+            "required": [
+              "question_type"
+            ]
+          },
+          "then": {
+            "not": {
+              "properties": {
+                "parent_question_id": {}
+              },
+              "required": [
+                "parent_question_id"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "TurnSubmittedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn_id",
+        "question_id",
+        "turn_status"
+      ],
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turn_status": {
+          "const": "submitted"
+        }
+      }
+    },
+    "TurnProcessingPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn_id",
+        "question_id",
+        "turn_status"
+      ],
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turn_status": {
+          "const": "processing"
+        }
+      }
+    },
+    "TurnCompletedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn_id",
+        "question_id",
+        "respondent_participant_id",
+        "turn_status",
+        "completed_at"
+      ],
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "respondent_participant_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turn_status": {
+          "const": "completed"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "AnswerProcessingFailurePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "question_id",
+        "code",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "question_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "TurnAnalysisCompletedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn_analysis_id",
+        "turn_id",
+        "score",
+        "summary"
+      ],
+      "properties": {
+        "turn_analysis_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "score": {
+          "type": "number"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "TurnAnalysisFailedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn_analysis_id",
+        "turn_id",
+        "failure_reason"
+      ],
+      "properties": {
+        "turn_analysis_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "failure_reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "PracticeSessionStartedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "practice_session_status",
+        "session_version"
+      ],
+      "properties": {
+        "practice_session_status": {
+          "const": "in_progress"
+        },
+        "session_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "PracticeSessionPausedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "practice_session_status",
+        "session_version"
+      ],
+      "properties": {
+        "practice_session_status": {
+          "const": "paused"
+        },
+        "session_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "PracticeSessionCompletedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "practice_session_status",
+        "session_version",
+        "end_reason"
+      ],
+      "properties": {
+        "practice_session_status": {
+          "const": "completed"
+        },
+        "session_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "PracticeSessionEndedEarlyPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "practice_session_status",
+        "session_version",
+        "end_reason"
+      ],
+      "properties": {
+        "practice_session_status": {
+          "const": "ended_early"
+        },
+        "session_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "StreamResyncRequiredPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "last_available_sequence"
+      ],
+      "properties": {
+        "last_available_sequence": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "SystemErrorPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "SystemHeartbeatPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "server_time"
+      ],
+      "properties": {
+        "server_time": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

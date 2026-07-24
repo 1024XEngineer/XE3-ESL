@@ -1,0 +1,626 @@
+paths:
+  /v1/practice-sessions/{practice_session_id}/bootstrap:
+    get:
+      tags:
+        - Conversation
+      summary: Reconcile the authorized client to current session state
+      description: |
+        Returns the immutable Session context, current Question/Turn when they
+        exist, and the latest replayable event sequence. Clients call this after
+        `stream.resync_required` before reconnecting with the returned sequence.
+        This MS1 bootstrap restores only the current interaction state; it does
+        not promise a historical event, Question, Turn, or analysis listing.
+      operationId: getPracticeSessionBootstrap
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+      responses:
+        '200':
+          description: Current authorized Session view for connection recovery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationBootstrap'
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/questions:
+    post:
+      tags:
+        - Conversation
+      summary: Ensure the current policy-approved Question exists
+      description: |
+        The client cannot supply question content, objectives, speakers, or
+        addressees. Conversation derives them from the immutable session
+        snapshot and the Practice policy result.
+
+        For a `starting` Session, this operation idempotently creates the first
+        Question and advances the Session to `in_progress`. After a normal Turn
+        completes, Conversation itself applies TurnOutcome to Practice and
+        either creates the next Question or completes the Session. Clients use
+        this operation only to ensure/recover the current Question; repeating an
+        intent never skips policy or creates a duplicate.
+      operationId: ensureCurrentQuestion
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The existing or newly created current Question.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Question'
+              example:
+                question_id: question_demo_001
+                practice_session_id: session_demo_001
+                speaker_participant_id: participant_interviewer_001
+                addressee_participant_ids:
+                  - participant_candidate_001
+                objective_id: introduction
+                question_type: PRIMARY
+                content: Tell me about your backend experience and one project you are proud of.
+                sequence: 1
+                created_at: '2026-07-23T10:04:00Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/questions/{question_id}/turns:
+    post:
+      tags:
+        - Conversation
+      summary: Submit one valid answer for processing
+      description: |
+        This is the only MS1 client write entry for a final answer. Empty,
+        invalid, or technically incomplete input is rejected before a normal
+        Turn is created or a pre-created retry Turn advances. The server resolves
+        `respondent_participant_id` from actor context and verifies it is one of
+        the Question addressees.
+
+        The deterministic Mock supplies final transcript text while preserving
+        the accepted `PUSH_TO_TALK` interaction mode; this contract does not add
+        a separate text practice mode or define audio binary transport. When
+        `retry_request_id` is present, Review and Conversation must already have
+        created an `answering` Turn for the original Question. This request
+        advances that same Turn to `submitted`; it never creates a second Turn.
+        After completion, Conversation submits TurnOutcome to Practice, which
+        alone decides the progress effect from the immutable Session policy.
+      operationId: submitTurn
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitTurnRequest'
+            examples:
+              normal_answer:
+                value:
+                  interaction_mode: PUSH_TO_TALK
+                  answer_text: |
+                    I led a Go API reliability project. I introduced request
+                    tracing, defined an error budget, and reduced incident recovery
+                    time by coordinating a staged rollout with two teams.
+              same_question_retry:
+                value:
+                  interaction_mode: PUSH_TO_TALK
+                  answer_text: |
+                    I chose tracing because the existing logs could not connect
+                    failures across services, then used the error budget to
+                    validate the rollout.
+                  retry_request_id: retry_demo_001
+      responses:
+        '202':
+          description: A valid Turn was saved and accepted for processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Turn'
+              examples:
+                normal_submission:
+                  value:
+                    turn_id: turn_demo_001
+                    practice_session_id: session_demo_001
+                    question_id: question_demo_001
+                    respondent_participant_id: participant_candidate_001
+                    sequence: 1
+                    interaction_mode: PUSH_TO_TALK
+                    answer_text: |
+                      I led a Go API reliability project. I introduced request
+                      tracing, defined an error budget, and reduced incident
+                      recovery time by coordinating a staged rollout with two teams.
+                    turn_status: submitted
+                    submitted_at: '2026-07-23T10:05:00Z'
+                    created_at: '2026-07-23T10:05:00Z'
+                same_question_retry_submission:
+                  value:
+                    turn_id: turn_retry_demo_001
+                    practice_session_id: session_demo_001
+                    question_id: question_demo_001
+                    respondent_participant_id: participant_candidate_001
+                    sequence: 1
+                    interaction_mode: PUSH_TO_TALK
+                    answer_text: |
+                      I chose tracing because the existing logs could not connect
+                      failures across services, then used the error budget to
+                      validate the rollout.
+                    turn_status: submitted
+                    submitted_at: '2026-07-23T10:07:00Z'
+                    created_at: '2026-07-23T10:06:01Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '403':
+          $ref: ../common/errors.yaml#/components/responses/Forbidden
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/turns/{turn_id}:
+    get:
+      tags:
+        - Conversation
+      summary: Get a Turn lifecycle resource
+      operationId: getTurn
+      parameters:
+        - $ref: '#/components/parameters/TurnId'
+      responses:
+        '200':
+          description: The requested Turn and current processing state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Turn'
+              example:
+                turn_id: turn_demo_001
+                practice_session_id: session_demo_001
+                question_id: question_demo_001
+                respondent_participant_id: participant_candidate_001
+                sequence: 1
+                interaction_mode: PUSH_TO_TALK
+                answer_text: |
+                  I led a Go API reliability project. I introduced request
+                  tracing, defined an error budget, and reduced incident recovery
+                  time by coordinating a staged rollout with two teams.
+                turn_status: completed
+                submitted_at: '2026-07-23T10:05:00Z'
+                created_at: '2026-07-23T10:05:00Z'
+                completed_at: '2026-07-23T10:05:02Z'
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/events:
+    get:
+      tags:
+        - Conversation
+      summary: Upgrade to the ordered session event stream
+      description: |
+        Upgrade this request to WebSocket. Replayable events use a monotonically
+        increasing per-session `sequence`. Reconnect with `after_sequence`; when
+        retained events cannot close a gap, the server emits
+        `stream.resync_required` and the client reloads REST resources.
+      operationId: connectPracticeSessionEvents
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - name: after_sequence
+          in: query
+          required: false
+          description: Last replayable sequence already applied by the client.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '101':
+          description: WebSocket protocol upgrade accepted.
+          headers:
+            Sec-WebSocket-Protocol:
+              description: Negotiated event protocol.
+              schema:
+                type: string
+                const: speakup.events.v1
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+      x-websocket-event-schema:
+        $ref: ../websocket/conversation-events.schema.json
+components:
+  parameters:
+    PracticeSessionId:
+      name: practice_session_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    QuestionId:
+      name: question_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    TurnId:
+      name: turn_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    IdempotencyKey:
+      $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
+  schemas:
+    ResourceId:
+      type: string
+      minLength: 1
+      maxLength: 128
+    Question:
+      type: object
+      additionalProperties: false
+      description: |
+        The speaker and every addressee must belong to the same immutable
+        PracticeSessionSnapshot. FOLLOW_UP Questions reference a PRIMARY
+        Question in the same Session.
+      required:
+        - question_id
+        - practice_session_id
+        - speaker_participant_id
+        - addressee_participant_ids
+        - question_type
+        - content
+        - sequence
+        - created_at
+      properties:
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        speaker_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        addressee_participant_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ResourceId'
+        objective_id:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+        question_type:
+          type: string
+          enum:
+            - PRIMARY
+            - FOLLOW_UP
+        parent_question_id:
+          $ref: '#/components/schemas/ResourceId'
+        content:
+          type: string
+          minLength: 1
+        sequence:
+          type: integer
+          minimum: 1
+        audio_asset_id:
+          $ref: '#/components/schemas/ResourceId'
+        created_at:
+          type: string
+          format: date-time
+      allOf:
+        - if:
+            properties:
+              question_type:
+                const: FOLLOW_UP
+            required:
+              - question_type
+          then:
+            required:
+              - parent_question_id
+        - if:
+            properties:
+              question_type:
+                const: PRIMARY
+            required:
+              - question_type
+          then:
+            not:
+              required:
+                - parent_question_id
+    SubmitTurnRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - interaction_mode
+        - answer_text
+      properties:
+        interaction_mode:
+          type: string
+          enum:
+            - PUSH_TO_TALK
+            - REALTIME
+        answer_text:
+          type: string
+          minLength: 1
+        audio_asset_id:
+          $ref: '#/components/schemas/ResourceId'
+        retry_request_id:
+          $ref: '#/components/schemas/ResourceId'
+    Turn:
+      type: object
+      additionalProperties: false
+      description: |
+        One answer lifecycle resource. For a normal answer, the server resolves
+        respondent_participant_id from actor context and verifies that it
+        belongs to the Question addressees in the same Session. For an
+        authorized same-question retry, Conversation reuses the original Turn's
+        respondent. The client never supplies this trusted field.
+
+        The one exception to final-answer creation timing is a same-question
+        retry: Conversation pre-creates an `answering` Turn from Review's
+        internal CreateRetryTurn command. That resource has no final answer yet
+        and becomes effective only after a valid submission advances it to
+        `submitted`.
+      required:
+        - turn_id
+        - practice_session_id
+        - question_id
+        - respondent_participant_id
+        - sequence
+        - turn_status
+        - created_at
+      properties:
+        turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        respondent_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        sequence:
+          type: integer
+          minimum: 1
+        interaction_mode:
+          type: string
+          enum:
+            - PUSH_TO_TALK
+            - REALTIME
+        answer_text:
+          type: string
+          minLength: 1
+        audio_asset_id:
+          $ref: '#/components/schemas/ResourceId'
+        turn_status:
+          type: string
+          description: |
+            `answering` is the pre-submission capture state, including a retry
+            Turn pre-created by the internal module command. The final-answer
+            REST write returns the same or newly created resource at `submitted`.
+          enum:
+            - answering
+            - submitted
+            - processing
+            - completed
+        submitted_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+      oneOf:
+        - properties:
+            turn_status:
+              const: answering
+          required:
+            - turn_status
+          not:
+            anyOf:
+              - required:
+                  - answer_text
+              - required:
+                  - submitted_at
+              - required:
+                  - completed_at
+        - properties:
+            turn_status:
+              const: submitted
+          required:
+            - turn_status
+            - interaction_mode
+            - answer_text
+            - submitted_at
+          not:
+            required:
+              - completed_at
+        - properties:
+            turn_status:
+              const: processing
+          required:
+            - turn_status
+            - interaction_mode
+            - answer_text
+            - submitted_at
+          not:
+            required:
+              - completed_at
+        - properties:
+            turn_status:
+              const: completed
+          required:
+            - turn_status
+            - interaction_mode
+            - answer_text
+            - submitted_at
+            - completed_at
+    TranscriptSegment:
+      type: object
+      additionalProperties: false
+      required:
+        - start_ms
+        - end_ms
+        - text
+      properties:
+        start_ms:
+          type: integer
+          minimum: 0
+        end_ms:
+          type: integer
+          minimum: 1
+        text:
+          type: string
+          minLength: 1
+    TranscriptSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - transcript_id
+        - text
+        - language
+        - status
+      properties:
+        transcript_id:
+          $ref: '#/components/schemas/ResourceId'
+        text:
+          type: string
+          minLength: 1
+        language:
+          type: string
+          minLength: 2
+        status:
+          type: string
+          const: ready
+        segments:
+          type: array
+          items:
+            $ref: '#/components/schemas/TranscriptSegment'
+    AudioReference:
+      type: object
+      additionalProperties: false
+      required:
+        - audio_id
+        - content_type
+        - format
+        - size_bytes
+        - duration_ms
+      properties:
+        audio_id:
+          $ref: '#/components/schemas/ResourceId'
+        content_type:
+          type: string
+          pattern: '^audio/[A-Za-z0-9.+-]+$'
+        format:
+          type: string
+          minLength: 1
+        size_bytes:
+          type: integer
+          minimum: 1
+        duration_ms:
+          type: integer
+          minimum: 1
+        checksum:
+          type: string
+          minLength: 1
+    TurnReviewSource:
+      type: object
+      additionalProperties: false
+      description: |
+        Immutable Conversation projection consumed by Review. `session_id`
+        retains the exact canonical field frozen in Issue #34 and identifies a
+        PracticeSession; changing it requires a later incremental decision.
+      required:
+        - turn_id
+        - session_id
+        - question_id
+        - question_text
+        - question_speaker_participant_id
+        - addressee_participant_ids
+        - respondent_participant_id
+        - transcript
+        - completed_at
+      properties:
+        turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        session_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_text:
+          type: string
+          minLength: 1
+        question_speaker_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        addressee_participant_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ResourceId'
+        respondent_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        transcript:
+          $ref: '#/components/schemas/TranscriptSnapshot'
+        audio:
+          $ref: '#/components/schemas/AudioReference'
+        completed_at:
+          type: string
+          format: date-time
+    CreateRetryTurnCommand:
+      type: object
+      additionalProperties: false
+      x-internal: true
+      description: |
+        Review-to-Conversation command. Review owns RetryRequest; Conversation
+        owns the new Turn and the idempotent retry-request-to-Turn mapping.
+      required:
+        - retry_request_id
+        - original_turn_id
+        - reason
+      properties:
+        retry_request_id:
+          $ref: '#/components/schemas/ResourceId'
+        original_turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        reason:
+          type: string
+          const: review_retry
+    CreateRetryTurnResult:
+      type: object
+      additionalProperties: false
+      x-internal: true
+      required:
+        - retry_request_id
+        - new_turn_id
+      properties:
+        retry_request_id:
+          $ref: '#/components/schemas/ResourceId'
+        new_turn_id:
+          $ref: '#/components/schemas/ResourceId'
+    ConversationBootstrap:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_session
+        - snapshot
+        - last_event_sequence
+      properties:
+        practice_session:
+          $ref: ./practice.yaml#/components/schemas/PracticeSession
+        snapshot:
+          $ref: ./practice.yaml#/components/schemas/PracticeSessionSnapshot
+        current_question:
+          $ref: '#/components/schemas/Question'
+        current_turn:
+          $ref: '#/components/schemas/Turn'
+        last_event_sequence:
+          type: integer
+          minimum: 0

@@ -1,0 +1,292 @@
+{
+  "fixture_id": "mock_main_flow_v1",
+  "practice_session": {
+    "practice_session_id": "session_demo_001",
+    "practice_plan_id": "plan_demo_backend",
+    "scenario_type": "INTERVIEW",
+    "snapshot_id": "snapshot_session_demo_001",
+    "practice_session_status": "completed",
+    "session_version": 6,
+    "started_at": "2026-07-23T10:04:00Z",
+    "ended_at": "2026-07-23T10:20:00Z",
+    "end_reason": "COVERAGE_SATISFIED_AT_CHECKPOINT",
+    "created_at": "2026-07-23T10:03:00Z"
+  },
+  "session_policy": {
+    "suggested_duration_seconds": 900,
+    "min_effective_turns": 4,
+    "max_effective_turns": 6,
+    "coverage_checkpoint_turn": 4,
+    "max_follow_ups_per_question": 1,
+    "target_objectives": [
+      {
+        "objective_id": "introduction",
+        "description": "Explain current experience clearly."
+      },
+      {
+        "objective_id": "system_design",
+        "description": "Explain a technical design and its trade-offs."
+      },
+      {
+        "objective_id": "project_depth",
+        "description": "Provide evidence of individual contribution."
+      },
+      {
+        "objective_id": "collaboration",
+        "description": "Explain cross-team communication and outcomes."
+      }
+    ],
+    "early_completion_rule": "COVERAGE_SATISFIED_AFTER_CHECKPOINT"
+  },
+  "participants": [
+    {
+      "practice_participant_id": "participant_interviewer_001",
+      "practice_session_id": "session_demo_001",
+      "participant_role": "INTERVIEWER",
+      "subject_ref": {
+        "namespace": "mock.actor",
+        "subject_id": "interviewer_technical"
+      },
+      "participant_order": 1
+    },
+    {
+      "practice_participant_id": "participant_candidate_001",
+      "practice_session_id": "session_demo_001",
+      "participant_role": "CANDIDATE",
+      "subject_ref": {
+        "namespace": "speakup.user",
+        "subject_id": "user_demo"
+      },
+      "participant_order": 2
+    }
+  ],
+  "questions": [
+    {
+      "question_id": "question_demo_001",
+      "practice_session_id": "session_demo_001",
+      "speaker_participant_id": "participant_interviewer_001",
+      "addressee_participant_ids": [
+        "participant_candidate_001"
+      ],
+      "objective_id": "introduction",
+      "question_type": "PRIMARY",
+      "content": "Please introduce yourself and the backend project you are most proud of.",
+      "sequence": 1,
+      "created_at": "2026-07-23T10:04:00Z"
+    },
+    {
+      "question_id": "question_demo_002",
+      "practice_session_id": "session_demo_001",
+      "speaker_participant_id": "participant_interviewer_001",
+      "addressee_participant_ids": [
+        "participant_candidate_001"
+      ],
+      "objective_id": "system_design",
+      "question_type": "PRIMARY",
+      "content": "How did you design the reliability controls for that API?",
+      "sequence": 2,
+      "created_at": "2026-07-23T10:08:00Z"
+    },
+    {
+      "question_id": "question_demo_003",
+      "practice_session_id": "session_demo_001",
+      "speaker_participant_id": "participant_interviewer_001",
+      "addressee_participant_ids": [
+        "participant_candidate_001"
+      ],
+      "objective_id": "project_depth",
+      "question_type": "FOLLOW_UP",
+      "parent_question_id": "question_demo_002",
+      "content": "Which design decision was yours, and what trade-off did you make?",
+      "sequence": 3,
+      "created_at": "2026-07-23T10:12:00Z"
+    },
+    {
+      "question_id": "question_demo_004",
+      "practice_session_id": "session_demo_001",
+      "speaker_participant_id": "participant_interviewer_001",
+      "addressee_participant_ids": [
+        "participant_candidate_001"
+      ],
+      "objective_id": "collaboration",
+      "question_type": "PRIMARY",
+      "content": "How did you align the rollout with the teams that consumed the API?",
+      "sequence": 4,
+      "created_at": "2026-07-23T10:16:00Z"
+    }
+  ],
+  "effective_turns": [
+    {
+      "turn_id": "turn_demo_001",
+      "practice_session_id": "session_demo_001",
+      "question_id": "question_demo_001",
+      "respondent_participant_id": "participant_candidate_001",
+      "sequence": 1,
+      "interaction_mode": "PUSH_TO_TALK",
+      "answer_text": "I led a Go API reliability project and reduced incident recovery time.",
+      "turn_status": "completed",
+      "submitted_at": "2026-07-23T10:05:00Z",
+      "created_at": "2026-07-23T10:05:00Z",
+      "completed_at": "2026-07-23T10:05:02Z"
+    },
+    {
+      "turn_id": "turn_demo_002",
+      "practice_session_id": "session_demo_001",
+      "question_id": "question_demo_002",
+      "respondent_participant_id": "participant_candidate_001",
+      "sequence": 2,
+      "interaction_mode": "PUSH_TO_TALK",
+      "answer_text": "I introduced request tracing, defined an error budget, and staged the rollout.",
+      "turn_status": "completed",
+      "submitted_at": "2026-07-23T10:09:00Z",
+      "created_at": "2026-07-23T10:09:00Z",
+      "completed_at": "2026-07-23T10:09:02Z"
+    },
+    {
+      "turn_id": "turn_demo_003",
+      "practice_session_id": "session_demo_001",
+      "question_id": "question_demo_003",
+      "respondent_participant_id": "participant_candidate_001",
+      "sequence": 3,
+      "interaction_mode": "PUSH_TO_TALK",
+      "answer_text": "I chose sampling by endpoint risk to control cost while preserving failure evidence.",
+      "turn_status": "completed",
+      "submitted_at": "2026-07-23T10:13:00Z",
+      "created_at": "2026-07-23T10:13:00Z",
+      "completed_at": "2026-07-23T10:13:02Z"
+    },
+    {
+      "turn_id": "turn_demo_004",
+      "practice_session_id": "session_demo_001",
+      "question_id": "question_demo_004",
+      "respondent_participant_id": "participant_candidate_001",
+      "sequence": 4,
+      "interaction_mode": "PUSH_TO_TALK",
+      "answer_text": "I published the error budget, ran a canary review, and agreed rollback signals.",
+      "turn_status": "completed",
+      "submitted_at": "2026-07-23T10:17:00Z",
+      "created_at": "2026-07-23T10:17:00Z",
+      "completed_at": "2026-07-23T10:17:02Z"
+    }
+  ],
+  "turn_analyses": [
+    {
+      "turn_analysis_id": "analysis_demo_001",
+      "turn_id": "turn_demo_001",
+      "evaluator_version": "mock-review-v1",
+      "analysis_status": "completed",
+      "score": 82,
+      "summary": "Clear ownership and impact; explain the design trade-off more explicitly.",
+      "analysis_transcript": "I led a Go API reliability project and reduced incident recovery time.",
+      "created_at": "2026-07-23T10:05:03Z",
+      "completed_at": "2026-07-23T10:05:04Z"
+    },
+    {
+      "turn_analysis_id": "analysis_demo_002",
+      "turn_id": "turn_demo_002",
+      "evaluator_version": "mock-review-v1",
+      "analysis_status": "pending",
+      "created_at": "2026-07-23T10:09:03Z"
+    },
+    {
+      "turn_analysis_id": "analysis_demo_003",
+      "turn_id": "turn_demo_003",
+      "evaluator_version": "mock-review-v1",
+      "analysis_status": "pending",
+      "created_at": "2026-07-23T10:13:03Z"
+    },
+    {
+      "turn_analysis_id": "analysis_demo_004",
+      "turn_id": "turn_demo_004",
+      "evaluator_version": "mock-review-v1",
+      "analysis_status": "pending",
+      "created_at": "2026-07-23T10:17:03Z"
+    }
+  ],
+  "feedback_items": [
+    {
+      "feedback_item_id": "feedback_demo_001",
+      "turn_analysis_id": "analysis_demo_001",
+      "feedback_category": "STRUCTURE",
+      "message": "The answer establishes ownership and outcome.",
+      "suggestion": "Add one sentence explaining why tracing was chosen before rollout.",
+      "evidence": [
+        {
+          "transcript_text": "I introduced request tracing, defined an error budget."
+        }
+      ],
+      "retryable": true,
+      "created_at": "2026-07-23T10:05:04Z"
+    }
+  ],
+  "retry_request_pending": {
+    "retry_request_id": "retry_demo_001",
+    "original_turn_id": "turn_demo_001",
+    "feedback_item_id": "feedback_demo_001",
+    "retry_status": "pending",
+    "created_at": "2026-07-23T10:06:00Z",
+    "updated_at": "2026-07-23T10:06:00Z"
+  },
+  "create_retry_turn_command": {
+    "retry_request_id": "retry_demo_001",
+    "original_turn_id": "turn_demo_001",
+    "reason": "review_retry"
+  },
+  "create_retry_turn_results": [
+    {
+      "retry_request_id": "retry_demo_001",
+      "new_turn_id": "turn_retry_demo_001"
+    },
+    {
+      "retry_request_id": "retry_demo_001",
+      "new_turn_id": "turn_retry_demo_001"
+    }
+  ],
+  "retry_turn_created": {
+    "turn_id": "turn_retry_demo_001",
+    "practice_session_id": "session_demo_001",
+    "question_id": "question_demo_001",
+    "respondent_participant_id": "participant_candidate_001",
+    "sequence": 1,
+    "turn_status": "answering",
+    "created_at": "2026-07-23T10:06:01Z"
+  },
+  "retry_request": {
+    "retry_request_id": "retry_demo_001",
+    "original_turn_id": "turn_demo_001",
+    "feedback_item_id": "feedback_demo_001",
+    "new_turn_id": "turn_retry_demo_001",
+    "retry_status": "turn_created",
+    "created_at": "2026-07-23T10:06:00Z",
+    "updated_at": "2026-07-23T10:06:01Z"
+  },
+  "retry_turn": {
+    "turn_id": "turn_retry_demo_001",
+    "practice_session_id": "session_demo_001",
+    "question_id": "question_demo_001",
+    "respondent_participant_id": "participant_candidate_001",
+    "sequence": 1,
+    "interaction_mode": "PUSH_TO_TALK",
+    "answer_text": "I led the reliability project, selected tracing after comparing cost and coverage, and reduced recovery time.",
+    "turn_status": "completed",
+    "submitted_at": "2026-07-23T10:07:00Z",
+    "created_at": "2026-07-23T10:06:01Z",
+    "completed_at": "2026-07-23T10:07:02Z"
+  },
+  "retry_progress_decision": {
+    "decided_by": "PracticeSessionPolicy",
+    "counts_toward_effective_turn_limit": false
+  },
+  "history_records": [
+    {
+      "history_record_id": "history_demo_001",
+      "practice_session_id": "session_demo_001",
+      "turn_id": "turn_demo_001",
+      "turn_analysis_id": "analysis_demo_001",
+      "retry_request_id": "retry_demo_001",
+      "score": 82,
+      "summary": "Clear ownership and impact; explain the design trade-off more explicitly.",
+      "reviewed_at": "2026-07-23T10:05:04Z"
+    }
+  ]
+}

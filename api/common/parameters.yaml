@@ -1,0 +1,23 @@
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Stable client-generated key for one write intent. Its scope is the
+        current actor, HTTP method, and canonical path.
+
+        The server fingerprints the request body. Concurrent or repeated
+        requests with the same key and fingerprint return the original status
+        code and response body without repeating side effects. Reusing the same
+        key with a different fingerprint returns HTTP 409 with
+        `idempotency_key_conflict`.
+
+        Results remain available for the lifetime of the created resource and
+        for at least 24 hours when no durable resource is created.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      example: intent-demo-0001

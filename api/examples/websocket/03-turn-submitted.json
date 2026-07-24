@@ -1,0 +1,16 @@
+{
+  "event_id": "event_turn_submitted_001",
+  "event_type": "turn.submitted",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:05:00Z",
+  "practice_session_id": "session_demo_001",
+  "sequence": 2,
+  "correlation_id": "corr_turn_001",
+  "causation_id": "event_question_001",
+  "replayable": true,
+  "payload": {
+    "turn_id": "turn_demo_001",
+    "question_id": "question_demo_001",
+    "turn_status": "submitted"
+  }
+}

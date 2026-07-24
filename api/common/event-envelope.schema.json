@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://speak-up.top/api/schemas/common/event-envelope.schema.json",
+  "title": "SpeakUp event envelope",
+  "description": "Ordered server-to-client event envelope for one practice session.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "event_type",
+    "event_version",
+    "occurred_at",
+    "practice_session_id",
+    "correlation_id",
+    "replayable",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "event_version": {
+      "const": 1,
+      "description": "This schema accepts only protocol version 1."
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "practice_session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic sequence within one practice session."
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "causation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "replayable": {
+      "type": "boolean"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "replayable": {
+            "const": true
+          }
+        },
+        "required": [
+          "replayable"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "sequence"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "sequence"
+          ]
+        }
+      }
+    }
+  ]
+}

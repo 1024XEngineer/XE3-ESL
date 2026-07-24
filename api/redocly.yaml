@@ -1,0 +1,7 @@
+extends:
+  - recommended
+rules:
+  no-invalid-media-type-examples: error
+  no-required-schema-properties-undefined: off
+  no-server-example.com: off
+  no-unused-components: off

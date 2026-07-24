@@ -1,0 +1,466 @@
+paths:
+  /v1/scenario-definitions/{scenario_definition_id}:
+    get:
+      tags:
+        - Preparation
+      summary: Get an active scenario definition and its MS1 configuration
+      operationId: getScenarioDefinition
+      parameters:
+        - $ref: '#/components/parameters/ScenarioDefinitionId'
+      responses:
+        '200':
+          description: Scenario definition, current configuration, and practice options.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioDetail'
+              example:
+                scenario_definition:
+                  scenario_definition_id: scn_programmer_interview
+                  scenario_type: INTERVIEW
+                  name: Programmer English interview
+                  version: 1
+                  status: active
+                scenario_config:
+                  scenario_config_id: scfg_backend_engineer
+                  scenario_definition_id: scn_programmer_interview
+                  config_type: INTERVIEW
+                  version: 1
+                  job_title: Backend engineer
+                  job_description: Build reliable APIs and explain engineering trade-offs.
+                  focus_areas:
+                    - introduction
+                    - system_design
+                    - project_depth
+                    - collaboration
+                practice_options:
+                  - practice_option_id: option_full_simulation
+                    scenario_definition_id: scn_programmer_interview
+                    practice_option_type: FULL_SIMULATION
+                    display_name: Full simulation
+                    version: 1
+                  - practice_option_id: option_technical_focus
+                    scenario_definition_id: scn_programmer_interview
+                    role_definition_id: role_technical_interviewer
+                    practice_option_type: FOCUS
+                    display_name: Technical deep dive
+                    version: 1
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/scenario-definitions/{scenario_definition_id}/role-definitions:
+    get:
+      tags:
+        - Preparation
+      summary: List role definitions available for a scenario
+      operationId: listRoleDefinitions
+      parameters:
+        - $ref: '#/components/parameters/ScenarioDefinitionId'
+      responses:
+        '200':
+          description: Role definitions in stable display order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleDefinitionList'
+              example:
+                roles:
+                  - role_definition_id: role_hr_interviewer
+                    scenario_definition_id: scn_programmer_interview
+                    role_type: HR_INTERVIEWER
+                    display_name: HR interviewer
+                    responsibilities: Validate motivation and communication clarity.
+                    style: Warm and structured.
+                    focus_areas:
+                      - motivation
+                      - communication
+                    version: 1
+                  - role_definition_id: role_technical_interviewer
+                    scenario_definition_id: scn_programmer_interview
+                    role_type: TECHNICAL_INTERVIEWER
+                    display_name: Technical interviewer
+                    responsibilities: Probe technical depth and decision making.
+                    style: Precise and evidence seeking.
+                    focus_areas:
+                      - system_design
+                      - project_depth
+                    version: 1
+                  - role_definition_id: role_project_manager
+                    scenario_definition_id: scn_programmer_interview
+                    role_type: PROJECT_MANAGER
+                    display_name: Project manager
+                    responsibilities: Explore delivery, ownership, and collaboration.
+                    style: Outcome oriented.
+                    focus_areas:
+                      - delivery
+                      - collaboration
+                    version: 1
+                  - role_definition_id: role_executive_interviewer
+                    scenario_definition_id: scn_programmer_interview
+                    role_type: EXECUTIVE_INTERVIEWER
+                    display_name: Executive interviewer
+                    responsibilities: Test strategic judgment and impact.
+                    style: Concise and high level.
+                    focus_areas:
+                      - impact
+                      - judgment
+                    version: 1
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/preparation-profiles:
+    post:
+      tags:
+        - Preparation
+      summary: Create or return the preparation profile for one intent
+      description: |
+        The fixed MS1 user is resolved from server-side context. The request does
+        not accept a trusted `user_id`.
+      operationId: createPreparationProfile
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePreparationProfileRequest'
+            example:
+              resume_ref: resume_demo_backend_v1
+              job_description_ref: jd_demo_backend_v1
+              background_summary: |
+                Backend engineer with three years of Go experience, responsible
+                for an API reliability project and cross-team delivery.
+      responses:
+        '201':
+          description: The preparation profile created for the current actor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparationProfile'
+              example:
+                preparation_profile_id: prep_demo_backend
+                user_id: user_demo
+                resume_ref: resume_demo_backend_v1
+                job_description_ref: jd_demo_backend_v1
+                background_summary: |
+                  Backend engineer with three years of Go experience, responsible
+                  for an API reliability project and cross-team delivery.
+                version: 1
+                updated_at: '2026-07-23T10:00:00Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/preparation-profiles/{preparation_profile_id}/snapshots:
+    post:
+      tags:
+        - Preparation
+      summary: Freeze a confirmed preparation profile
+      operationId: createPreparationSnapshot
+      parameters:
+        - $ref: '#/components/parameters/PreparationProfileId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePreparationSnapshotRequest'
+            example:
+              source_version: 1
+      responses:
+        '201':
+          description: Immutable preparation content for a future session snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparationSnapshot'
+              example:
+                preparation_snapshot_id: psnap_demo_backend_v1
+                source_profile_id: prep_demo_backend
+                source_version: 1
+                resume_snapshot: Go backend engineer; API reliability project.
+                job_description_snapshot: Build reliable APIs and explain engineering trade-offs.
+                background_snapshot: |
+                  Backend engineer with three years of Go experience, responsible
+                  for an API reliability project and cross-team delivery.
+                created_at: '2026-07-23T10:01:00Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  parameters:
+    ScenarioDefinitionId:
+      name: scenario_definition_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    PreparationProfileId:
+      name: preparation_profile_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    IdempotencyKey:
+      $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
+  schemas:
+    ResourceId:
+      type: string
+      minLength: 1
+      maxLength: 128
+    Version:
+      type: integer
+      minimum: 1
+    ScenarioType:
+      type: string
+      enum:
+        - INTERVIEW
+    ScenarioDefinition:
+      type: object
+      additionalProperties: false
+      required:
+        - scenario_definition_id
+        - scenario_type
+        - name
+        - version
+        - status
+      properties:
+        scenario_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        scenario_type:
+          $ref: '#/components/schemas/ScenarioType'
+        name:
+          type: string
+          minLength: 1
+        version:
+          $ref: '#/components/schemas/Version'
+        status:
+          type: string
+          enum:
+            - active
+            - inactive
+    ScenarioConfig:
+      oneOf:
+        - $ref: '#/components/schemas/InterviewScenarioConfig'
+      discriminator:
+        propertyName: config_type
+        mapping:
+          INTERVIEW: '#/components/schemas/InterviewScenarioConfig'
+    InterviewScenarioConfig:
+      type: object
+      additionalProperties: false
+      required:
+        - scenario_config_id
+        - scenario_definition_id
+        - config_type
+        - version
+        - job_title
+        - job_description
+        - focus_areas
+      properties:
+        scenario_config_id:
+          $ref: '#/components/schemas/ResourceId'
+        scenario_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        config_type:
+          type: string
+          const: INTERVIEW
+        version:
+          $ref: '#/components/schemas/Version'
+        job_title:
+          type: string
+          minLength: 1
+        job_description:
+          type: string
+          minLength: 1
+        focus_areas:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+    RoleDefinition:
+      type: object
+      additionalProperties: false
+      required:
+        - role_definition_id
+        - scenario_definition_id
+        - role_type
+        - display_name
+        - responsibilities
+        - style
+        - focus_areas
+        - version
+      properties:
+        role_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        scenario_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        role_type:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]*$'
+        display_name:
+          type: string
+          minLength: 1
+        responsibilities:
+          type: string
+          minLength: 1
+        style:
+          type: string
+          minLength: 1
+        focus_areas:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        voice_config_ref:
+          type: string
+          minLength: 1
+        version:
+          $ref: '#/components/schemas/Version'
+    PracticeOptionDefinition:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_option_id
+        - scenario_definition_id
+        - practice_option_type
+        - display_name
+        - version
+      properties:
+        practice_option_id:
+          $ref: '#/components/schemas/ResourceId'
+        scenario_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        role_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_option_type:
+          type: string
+          enum:
+            - FULL_SIMULATION
+            - FOCUS
+        display_name:
+          type: string
+          minLength: 1
+        version:
+          $ref: '#/components/schemas/Version'
+    ScenarioDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - scenario_definition
+        - scenario_config
+        - practice_options
+      properties:
+        scenario_definition:
+          $ref: '#/components/schemas/ScenarioDefinition'
+        scenario_config:
+          $ref: '#/components/schemas/ScenarioConfig'
+        practice_options:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PracticeOptionDefinition'
+    RoleDefinitionList:
+      type: object
+      additionalProperties: false
+      required:
+        - roles
+      properties:
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleDefinition'
+    CreatePreparationProfileRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - background_summary
+      properties:
+        resume_ref:
+          type: string
+          minLength: 1
+        job_description_ref:
+          type: string
+          minLength: 1
+        background_summary:
+          type: string
+          minLength: 1
+    PreparationProfile:
+      type: object
+      additionalProperties: false
+      required:
+        - preparation_profile_id
+        - user_id
+        - background_summary
+        - version
+        - updated_at
+      properties:
+        preparation_profile_id:
+          $ref: '#/components/schemas/ResourceId'
+        user_id:
+          $ref: '#/components/schemas/ResourceId'
+        resume_ref:
+          type: string
+          minLength: 1
+        job_description_ref:
+          type: string
+          minLength: 1
+        background_summary:
+          type: string
+          minLength: 1
+        version:
+          $ref: '#/components/schemas/Version'
+        updated_at:
+          type: string
+          format: date-time
+    CreatePreparationSnapshotRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - source_version
+      properties:
+        source_version:
+          $ref: '#/components/schemas/Version'
+    PreparationSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - preparation_snapshot_id
+        - source_profile_id
+        - source_version
+        - background_snapshot
+        - created_at
+      properties:
+        preparation_snapshot_id:
+          $ref: '#/components/schemas/ResourceId'
+        source_profile_id:
+          $ref: '#/components/schemas/ResourceId'
+        source_version:
+          $ref: '#/components/schemas/Version'
+        resume_snapshot:
+          type: string
+          minLength: 1
+        job_description_snapshot:
+          type: string
+          minLength: 1
+        background_snapshot:
+          type: string
+          minLength: 1
+        created_at:
+          type: string
+          format: date-time

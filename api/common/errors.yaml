@@ -1,0 +1,176 @@
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - retryable
+        - correlation_id
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          minLength: 1
+          description: Sanitized user-facing summary.
+        retryable:
+          type: boolean
+        correlation_id:
+          type: string
+          minLength: 1
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - field
+        - reason
+      properties:
+        field:
+          type: string
+          minLength: 1
+        reason:
+          type: string
+          minLength: 1
+    ErrorCode:
+      type: string
+      description: Stable machine-readable Delivery error code.
+      enum:
+        - invalid_request
+        - resource_not_found
+        - resource_conflict
+        - idempotency_key_conflict
+        - scenario_definition_not_found
+        - role_definition_not_found
+        - preparation_profile_not_found
+        - preparation_version_conflict
+        - practice_plan_not_found
+        - practice_plan_not_ready
+        - practice_plan_archived
+        - practice_plan_has_active_session
+        - practice_plan_revision_conflict
+        - practice_session_not_found
+        - practice_session_transition_not_allowed
+        - practice_session_already_terminal
+        - practice_session_version_conflict
+        - practice_participant_invalid
+        - practice_participant_not_authorized
+        - practice_option_invalid
+        - question_not_found
+        - answer_invalid
+        - turn_not_found
+        - turn_conflict
+        - turn_outcome_session_mismatch
+        - turn_analysis_not_found
+        - turn_analysis_conflict
+        - feedback_item_not_found
+        - retry_request_not_found
+        - retry_request_conflict
+        - transcript_unavailable
+        - unsupported_message
+        - internal_error
+      x-http-status-map:
+        invalid_request: 400
+        answer_invalid: 400
+        unsupported_message: 400
+        practice_participant_not_authorized: 403
+        scenario_definition_not_found: 404
+        role_definition_not_found: 404
+        preparation_profile_not_found: 404
+        practice_plan_not_found: 404
+        practice_session_not_found: 404
+        question_not_found: 404
+        turn_not_found: 404
+        turn_analysis_not_found: 404
+        feedback_item_not_found: 404
+        retry_request_not_found: 404
+        resource_not_found: 404
+        idempotency_key_conflict: 409
+        resource_conflict: 409
+        preparation_version_conflict: 409
+        practice_plan_not_ready: 409
+        practice_plan_archived: 409
+        practice_plan_has_active_session: 409
+        practice_plan_revision_conflict: 409
+        practice_session_transition_not_allowed: 409
+        practice_session_already_terminal: 409
+        practice_session_version_conflict: 409
+        practice_participant_invalid: 409
+        practice_option_invalid: 409
+        turn_conflict: 409
+        turn_outcome_session_mismatch: 409
+        turn_analysis_conflict: 409
+        retry_request_conflict: 409
+        transcript_unavailable: 422
+        internal_error: 500
+  responses:
+    BadRequest:
+      description: The request is malformed or violates a field constraint.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: invalid_request
+              message: Request validation failed.
+              retryable: false
+              correlation_id: corr_invalid_request
+              details:
+                - field: body
+                  reason: One or more fields are invalid.
+    NotFound:
+      description: The requested resource does not exist for the current actor.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: resource_not_found
+              message: Resource was not found.
+              retryable: false
+              correlation_id: corr_not_found
+    Forbidden:
+      description: The current actor cannot perform this operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: practice_participant_not_authorized
+              message: The current actor is not an addressee for this question.
+              retryable: false
+              correlation_id: corr_forbidden
+    Conflict:
+      description: The request conflicts with the current resource state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: resource_conflict
+              message: Resource state conflicts with this operation.
+              retryable: false
+              correlation_id: corr_conflict
+    DefaultError:
+      description: A stable error response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

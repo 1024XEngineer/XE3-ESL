@@ -1,0 +1,15 @@
+{
+  "event_id": "event_session_ended_early_001",
+  "event_type": "practice_session.ended_early",
+  "event_version": 1,
+  "occurred_at": "2026-07-23T10:14:00Z",
+  "practice_session_id": "session_lifecycle_ended_early_001",
+  "sequence": 1,
+  "correlation_id": "corr_session_ended_early_001",
+  "replayable": true,
+  "payload": {
+    "practice_session_status": "ended_early",
+    "session_version": 5,
+    "end_reason": "USER_ENDED"
+  }
+}
