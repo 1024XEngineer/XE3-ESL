@@ -13,15 +13,18 @@ import 'package:speakup/identity/model/identity_models.dart';
 class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp({
     required AuthController authController,
-    this.agentController,
+    required this.agentController,
     super.key,
-  }) : _authentication = (controller: authController);
+  }) : _authentication = (controller: authController),
+       _allowFakePreview = false;
 
   const SpeakUpApp.preview({this.agentController, super.key})
-    : _authentication = null;
+    : _authentication = null,
+      _allowFakePreview = true;
 
   final ({AuthController controller})? _authentication;
   final AgentController? agentController;
+  final bool _allowFakePreview;
 
   @override
   Widget build(BuildContext context) {
@@ -42,13 +45,17 @@ class SpeakUpApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: controller == null
-          ? _AuthenticatedNavigator(agentController: agentController)
+          ? _AuthenticatedNavigator(
+              agentController: agentController,
+              allowFakePreview: _allowFakePreview,
+            )
           : AuthGate(
               controller: controller,
               authenticatedBuilder: (_, user) => _AuthenticatedNavigator(
                 user: user,
                 authController: controller,
                 agentController: agentController,
+                allowFakePreview: _allowFakePreview,
               ),
             ),
     );
@@ -60,11 +67,13 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.user,
     this.authController,
     this.agentController,
+    required this.allowFakePreview,
   });
 
   final User? user;
   final AuthController? authController;
   final AgentController? agentController;
+  final bool allowFakePreview;
 
   @override
   State<_AuthenticatedNavigator> createState() =>
@@ -78,9 +87,15 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   @override
   void initState() {
     super.initState();
-    _ownsAgentController = widget.agentController == null;
+    final injectedController = widget.agentController;
+    if (injectedController == null && !widget.allowFakePreview) {
+      throw StateError(
+        'Production SpeakUpApp requires an injected AgentController.',
+      );
+    }
+    _ownsAgentController = injectedController == null;
     _agentController =
-        widget.agentController ?? AgentController(client: FakeAgentClient());
+        injectedController ?? AgentController(client: FakeAgentClient());
     _agentController.initialize();
   }
 

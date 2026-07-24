@@ -117,7 +117,7 @@ class _PracticePageState extends State<PracticePage> {
                   ],
                   const SizedBox(height: 18),
                   const Text(
-                    '当前使用可替换的本地语音预览，真实录音与千问 ASR 将在 #87 接入。',
+                    '当前页面仅供显式 Fake 预览，不代表生产语音服务已经接入。',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Color(0xFF85878E), fontSize: 12),
                   ),

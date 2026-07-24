@@ -45,6 +45,60 @@ abstract interface class AgentClient {
   });
 }
 
+/// Optional capability declaration for the preview-only practice flow.
+///
+/// Clients that do not implement this interface retain the existing Fake/test
+/// behavior. Production clients must explicitly opt out when the accepted API
+/// cannot represent the scene, voice, and Review lifecycle without inventing
+/// fields.
+abstract interface class AgentPracticeAvailability {
+  bool get supportsPracticeFlow;
+}
+
+enum AgentClientFailureKind {
+  unavailable,
+  authenticationRequired,
+  invalidRequest,
+  notFound,
+  conflict,
+  rateLimited,
+  server,
+  network,
+  invalidResponse,
+  runFailed,
+  pollingTimedOut,
+  unexpected,
+}
+
+/// A redacted Agent failure safe to surface in diagnostics.
+///
+/// Request content, response bodies, and Session credentials are deliberately
+/// never retained by this value.
+final class AgentClientException implements Exception {
+  const AgentClientException({
+    required this.kind,
+    this.statusCode,
+    this.errorCode,
+    this.retryable = false,
+    this.correlationId,
+  });
+
+  final AgentClientFailureKind kind;
+  final int? statusCode;
+  final String? errorCode;
+  final bool retryable;
+  final String? correlationId;
+
+  bool get isUnavailable => kind == AgentClientFailureKind.unavailable;
+
+  @override
+  String toString() {
+    final status = statusCode == null ? '' : ', statusCode: $statusCode';
+    final code = errorCode == null ? '' : ', errorCode: $errorCode';
+    return 'AgentClientException(kind: ${kind.name}$status$code)';
+  }
+}
+
 final class AgentClientOperationCancelled implements Exception {
   const AgentClientOperationCancelled();
 

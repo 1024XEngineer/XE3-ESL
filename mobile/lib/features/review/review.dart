@@ -51,6 +51,8 @@ class _ReviewPageState extends State<ReviewPage> {
   @override
   Widget build(BuildContext context) {
     final review = widget.agentController?.review;
+    final practiceAvailable =
+        widget.agentController?.supportsPracticeFlow ?? true;
     return Scaffold(
       key: const Key('review-page'),
       backgroundColor: const Color(0xFFF3F3F0),
@@ -84,7 +86,7 @@ class _ReviewPageState extends State<ReviewPage> {
             ),
             const SizedBox(height: 28),
             if (review == null)
-              const _EmptyReview()
+              _EmptyReview(practiceAvailable: practiceAvailable)
             else
               _ReviewContent(review: review),
           ],
@@ -95,28 +97,37 @@ class _ReviewPageState extends State<ReviewPage> {
 }
 
 class _EmptyReview extends StatelessWidget {
-  const _EmptyReview();
+  const _EmptyReview({required this.practiceAvailable});
+
+  final bool practiceAvailable;
 
   @override
   Widget build(BuildContext context) {
-    return const Card(
+    return Card(
       elevation: 0,
       color: Colors.white,
       child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 22, vertical: 34),
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 34),
         child: Column(
           children: [
-            Icon(Icons.fact_check_outlined, size: 42, color: Color(0xFF8B8E99)),
-            SizedBox(height: 14),
-            Text(
-              '完成三轮练习后再来看看',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            const Icon(
+              Icons.fact_check_outlined,
+              size: 42,
+              color: Color(0xFF8B8E99),
             ),
-            SizedBox(height: 6),
+            const SizedBox(height: 14),
             Text(
-              '有效回答达到三轮后会自动生成一次复盘。',
+              practiceAvailable ? '完成三轮练习后再来看看' : '复盘功能尚未开放',
+              key: const Key('review-availability-title'),
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              practiceAvailable
+                  ? '有效回答达到三轮后会自动生成一次复盘。'
+                  : '待服务端场景、语音与复盘契约开放后再接入，不会展示本地模拟结果。',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF777983)),
+              style: const TextStyle(color: Color(0xFF777983)),
             ),
           ],
         ),

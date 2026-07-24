@@ -87,6 +87,7 @@ class _PreparationPageState extends State<PreparationPage> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.agentController;
+    final practiceAvailable = controller?.supportsPracticeFlow ?? true;
     return Scaffold(
       key: const Key('scenes-page'),
       backgroundColor: const Color(0xFFF3F3F0),
@@ -114,16 +115,20 @@ class _PreparationPageState extends State<PreparationPage> {
               style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
-            const Text(
-              '直接进入已经开放的练习；未实现的场景不会提前展示。',
-              style: TextStyle(color: Color(0xFF696B73), fontSize: 15),
+            Text(
+              practiceAvailable
+                  ? '直接进入已经开放的练习；未实现的场景不会提前展示。'
+                  : '服务端场景与语音契约尚未开放，当前仅提供 Agent 文本对话。',
+              key: const Key('practice-availability-message'),
+              style: const TextStyle(color: Color(0xFF696B73), fontSize: 15),
             ),
             const SizedBox(height: 28),
             for (final scene in agentScenes) ...[
               _SceneCard(
                 scene: scene,
                 selected: controller?.scene?.id == scene.id,
-                enabled: controller?.canSelectScene ?? false,
+                enabled:
+                    practiceAvailable && (controller?.canSelectScene ?? false),
                 onPressed: () => _selectScene(scene),
               ),
               const SizedBox(height: 12),

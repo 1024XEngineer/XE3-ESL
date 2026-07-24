@@ -45,8 +45,17 @@ final class AgentController extends ChangeNotifier {
   int get completedTurns => _completedTurns;
   bool get isBusy => _busy || _practiceRequestInFlight;
   bool get canRetry => _retry != null;
+  bool get supportsPracticeFlow {
+    return switch (client) {
+      AgentPracticeAvailability(:final supportsPracticeFlow) =>
+        supportsPracticeFlow,
+      _ => true,
+    };
+  }
+
   bool get canSelectScene {
     return !_disposed &&
+        supportsPracticeFlow &&
         _threadId != null &&
         !_busy &&
         switch (_recordingState) {
@@ -173,10 +182,15 @@ final class AgentController extends ChangeNotifier {
       _completedTurns = 0;
       _retry = null;
       _errorMessage = null;
-    } catch (_) {
+    } catch (error) {
       if (_isCurrent(epoch)) {
-        _retry = operation;
-        _errorMessage = '暂时无法开始这个场景，请稍后重试。';
+        if (error is AgentClientException && error.isUnavailable) {
+          _retry = null;
+          _errorMessage = '场景与语音练习尚未开放，当前可以继续使用 Agent 文本对话。';
+        } else {
+          _retry = _canRetry(error) ? operation : null;
+          _errorMessage = '暂时无法开始这个场景，请稍后重试。';
+        }
       }
     } finally {
       if (_isCurrent(epoch)) {
@@ -220,10 +234,15 @@ final class AgentController extends ChangeNotifier {
       _appendExchange(exchange);
       _retry = null;
       _errorMessage = null;
-    } catch (_) {
+    } catch (error) {
       if (_isCurrent(epoch)) {
-        _retry = operation;
-        _errorMessage = '消息没有发送成功，可以重试。';
+        _retry = _canRetry(error) ? operation : null;
+        _errorMessage =
+            error is AgentClientException &&
+                error.kind == AgentClientFailureKind.runFailed &&
+                !error.retryable
+            ? '这次 Agent 运行未能完成，服务端不允许重试。'
+            : '消息没有发送成功，可以重试。';
       }
     } finally {
       if (_isCurrent(epoch)) {
@@ -593,6 +612,10 @@ final class AgentController extends ChangeNotifier {
       throw StateError('Agent client identity must not be empty.');
     }
     return value;
+  }
+
+  bool _canRetry(Object error) {
+    return error is! AgentClientException || error.retryable;
   }
 }
 

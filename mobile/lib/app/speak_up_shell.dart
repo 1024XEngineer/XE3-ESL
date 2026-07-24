@@ -94,6 +94,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _openPractice() {
+    if (!widget.agentController.supportsPracticeFlow) {
+      _showMockNotice('场景、语音练习与复盘尚未开放，当前可以使用 Agent 文本对话');
+      return;
+    }
     if (widget.agentController.review != null) {
       _selectDestination(2);
       return;
@@ -102,6 +106,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _openVoicePractice() {
+    if (!widget.agentController.supportsPracticeFlow) {
+      _showMockNotice('语音练习尚未开放，当前可以使用 Agent 文本对话');
+      return;
+    }
     if (widget.agentController.review != null) {
       _selectDestination(2);
       return;

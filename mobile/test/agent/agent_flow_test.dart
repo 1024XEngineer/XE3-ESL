@@ -17,7 +17,9 @@ void main() {
     tester,
   ) async {
     final agentController = AgentController(client: FakeAgentClient());
-    await tester.pumpWidget(SpeakUpApp(agentController: agentController));
+    await tester.pumpWidget(
+      SpeakUpApp.preview(agentController: agentController),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('primary-tab-scenes')));
@@ -160,7 +162,9 @@ void main() {
     (tester) async {
       final client = _FailOnceSceneClient();
       final agentController = AgentController(client: client);
-      await tester.pumpWidget(SpeakUpApp(agentController: agentController));
+      await tester.pumpWidget(
+        SpeakUpApp.preview(agentController: agentController),
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
@@ -194,7 +198,9 @@ void main() {
     }
     expect(agentController.review, isNotNull);
 
-    await tester.pumpWidget(SpeakUpApp(agentController: agentController));
+    await tester.pumpWidget(
+      SpeakUpApp.preview(agentController: agentController),
+    );
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('review-content')), findsOneWidget);

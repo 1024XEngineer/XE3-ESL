@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
@@ -12,29 +12,58 @@ void main() {
     'SPEAKUP_API_BASE_URL',
     defaultValue: 'http://127.0.0.1:8080',
   );
-  // #88 remains an explicit local preview until #86 publishes the reviewed
-  // Agent HTTP contract. Authentication is real; Agent data is still Fake.
-  final agentController = AgentController(client: FakeAgentClient());
+  final dependencies = createProductionAppDependencies(
+    baseUri: Uri.parse(apiBaseUrl),
+  );
   runApp(
     SpeakUpApp(
-      authController: createProductionAuthController(
-        baseUri: Uri.parse(apiBaseUrl),
-        clearPrivateState: agentController.clearPrivateState,
-      ),
-      agentController: agentController,
+      authController: dependencies.authController,
+      agentController: dependencies.agentController,
     ),
   );
 }
 
-AuthController createProductionAuthController({
+final class ProductionAppDependencies {
+  const ProductionAppDependencies({
+    required this.authController,
+    required this.agentController,
+  });
+
+  final AuthController authController;
+  final AgentController agentController;
+}
+
+ProductionAppDependencies createProductionAppDependencies({
   required Uri baseUri,
-  IdentityHttpTransport? transport,
+  IdentityHttpTransport? identityTransport,
+  IdentityHttpTransport? agentTransport,
   SessionStore? sessionStore,
-  PrivateStateCleanup? clearPrivateState,
 }) {
-  return AuthController(
-    identityClient: WireIdentityClient(baseUri: baseUri, transport: transport),
+  late final AuthController authController;
+  final agentController = AgentController(
+    client: WireAgentClient(
+      baseUri: baseUri,
+      credentialProvider: () => authController.currentCredential,
+      invalidateSession:
+          ({required expectedSessionToken, required expectedGeneration}) {
+            return authController.invalidateSession(
+              expectedSessionToken: expectedSessionToken,
+              expectedGeneration: expectedGeneration,
+            );
+          },
+      transport: agentTransport,
+    ),
+  );
+  authController = AuthController(
+    identityClient: WireIdentityClient(
+      baseUri: baseUri,
+      transport: identityTransport,
+    ),
     sessionStore: sessionStore ?? const IosKeychainSessionStore(),
-    clearPrivateState: clearPrivateState,
+    clearPrivateState: agentController.clearPrivateState,
+  );
+  return ProductionAppDependencies(
+    authController: authController,
+    agentController: agentController,
   );
 }
