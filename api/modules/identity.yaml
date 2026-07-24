@@ -1,0 +1,267 @@
+paths:
+  /v1/auth/register:
+    post:
+      tags:
+        - Identity
+      summary: Register a minimal email and password account
+      description: |
+        Creates a User without creating a Session. The service trims leading
+        and trailing ASCII whitespace from the email, validates the remaining
+        ASCII address, and stores and returns its lowercase canonical form.
+        Concurrent or repeated registration of the same canonical email does
+        not modify the existing account.
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              email: learner@example.com
+              password: correct horse battery staple
+      responses:
+        '201':
+          description: The minimal User was created. No Session Token is issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              example:
+                user_id: user_01k1example
+                email: learner@example.com
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '409':
+          $ref: '#/components/responses/RegistrationUnavailable'
+        '429':
+          $ref: ../common/errors.yaml#/components/responses/TooManyRequests
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/auth/login:
+    post:
+      tags:
+        - Identity
+      summary: Create an opaque Session for one device
+      description: |
+        Authenticates an email and password without revealing whether the
+        account exists or why authentication failed. The raw opaque Session
+        Token is returned only in this successful response.
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: learner@example.com
+              password: correct horse battery staple
+      responses:
+        '200':
+          description: A finite-lifetime Session was created for the User.
+          headers:
+            Cache-Control:
+              description: Prevents storage of the raw Session Token response.
+              schema:
+                type: string
+                const: no-store
+            Pragma:
+              description: Compatibility directive preventing response caching.
+              schema:
+                type: string
+                const: no-cache
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                user:
+                  user_id: user_01k1example
+                  email: learner@example.com
+                session_token: sess_Q7ZfMrq3Jst8ahRck4ExampleOpaqueValue
+                token_type: Bearer
+                expires_at: '2026-08-23T10:00:00Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '429':
+          $ref: ../common/errors.yaml#/components/responses/TooManyRequests
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/auth/logout:
+    post:
+      tags:
+        - Identity
+      summary: Revoke the current Session
+      description: |
+        Revokes only the Session represented by the Bearer credential. The
+        request has no body and never accepts a client-supplied `user_id` or
+        `session_id`.
+      operationId: logoutCurrentSession
+      responses:
+        '204':
+          description: The current Session was revoked.
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/me:
+    get:
+      tags:
+        - Identity
+      summary: Get the current User
+      description: |
+        Resolves the trusted User from the validated Session. The response does
+        not expose a password, credential hash, Session Token, Session digest,
+        or long-term information.
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: The minimal User represented by the current Session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              example:
+                user_id: user_01k1example
+                email: learner@example.com
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  responses:
+    InvalidCredentials:
+      description: |
+        Authentication failed. The response is identical for an unknown email,
+        incorrect password, disabled account, or account deletion state.
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+          example:
+            error:
+              code: invalid_credentials
+              message: Email or password is invalid.
+              retryable: false
+              correlation_id: corr_invalid_credentials
+    RegistrationUnavailable:
+      description: |
+        Registration cannot create the requested account. The response does not
+        reveal the existing account state.
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+          example:
+            error:
+              code: account_registration_unavailable
+              message: Account registration is unavailable.
+              retryable: false
+              correlation_id: corr_registration_unavailable
+  schemas:
+    UserId:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    EmailInput:
+      type: string
+      pattern: "^[\\x09-\\x0D\\x20]*(?=[^\\x09-\\x0D\\x20]{3,254}[\\x09-\\x0D\\x20]*$)[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+[\\x09-\\x0D\\x20]*$"
+      description: |
+        An ASCII email address with an ASCII or Punycode domain. The service
+        removes leading and trailing ASCII whitespace (U+0009 through U+000D
+        and U+0020) before validation. The pattern constrains the post-trim
+        value to 3 through 254 ASCII bytes. Provider-specific dot or
+        plus-address transformations are forbidden.
+    Email:
+      type: string
+      format: email
+      minLength: 3
+      maxLength: 254
+      pattern: "^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+      description: |
+        The lowercase canonical form of an ASCII email address. Punycode domain
+        labels are allowed; provider-specific dot or plus transformations are
+        never applied.
+      readOnly: true
+    Password:
+      type: string
+      minLength: 15
+      maxLength: 128
+      writeOnly: true
+      description: |
+        An opaque password string. The service does not trim, case-fold,
+        truncate, or apply Unicode normalization. No character-class
+        composition rule is required.
+    User:
+      type: object
+      additionalProperties: false
+      required:
+        - user_id
+        - email
+      properties:
+        user_id:
+          $ref: '#/components/schemas/UserId'
+          readOnly: true
+        email:
+          $ref: '#/components/schemas/Email'
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - password
+      properties:
+        email:
+          $ref: '#/components/schemas/EmailInput'
+        password:
+          $ref: '#/components/schemas/Password'
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - password
+      properties:
+        email:
+          $ref: '#/components/schemas/EmailInput'
+        password:
+          $ref: '#/components/schemas/Password'
+    OpaqueSessionToken:
+      type: string
+      minLength: 1
+      pattern: '^[A-Za-z0-9._~+/-]+={0,}$'
+      readOnly: true
+      description: |
+        A high-entropy first-party opaque Session Token returned only by a
+        successful login response. Its wire representation follows the RFC 6750
+        `b64token` character set so it can be carried safely by the Bearer
+        Authorization scheme. It is not a JWT and must not be logged or persisted
+        by the server in raw form. Its generated entropy and exact length are
+        frozen by the runtime implementation Issue, not by this contract.
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - user
+        - session_token
+        - token_type
+        - expires_at
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        session_token:
+          $ref: '#/components/schemas/OpaqueSessionToken'
+        token_type:
+          type: string
+          const: Bearer
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
