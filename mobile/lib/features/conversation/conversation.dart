@@ -9,6 +9,7 @@ class ConversationPage extends StatelessWidget {
   const ConversationPage({
     this.restingComposerBottom = 16,
     this.onOpenMenu,
+    this.onNavigateBack,
     this.onCreatePlan,
     this.onContinuePractice,
     this.onOpenReview,
@@ -18,6 +19,7 @@ class ConversationPage extends StatelessWidget {
 
   final double restingComposerBottom;
   final VoidCallback? onOpenMenu;
+  final VoidCallback? onNavigateBack;
   final VoidCallback? onCreatePlan;
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
@@ -59,6 +61,7 @@ class ConversationPage extends StatelessWidget {
                           children: [
                             _AgentTopBar(
                               onOpenMenu: onOpenMenu,
+                              onNavigateBack: onNavigateBack,
                               onVoicePlaceholder: onVoicePlaceholder,
                             ),
                             SizedBox(height: width < 350 ? 32 : 48),
@@ -120,10 +123,12 @@ class _AgentBackground extends StatelessWidget {
 class _AgentTopBar extends StatelessWidget {
   const _AgentTopBar({
     required this.onOpenMenu,
+    required this.onNavigateBack,
     required this.onVoicePlaceholder,
   });
 
   final VoidCallback? onOpenMenu;
+  final VoidCallback? onNavigateBack;
   final VoidCallback? onVoicePlaceholder;
 
   @override
@@ -131,10 +136,16 @@ class _AgentTopBar extends StatelessWidget {
     return Row(
       children: [
         _RoundGlassButton(
-          key: const Key('conversation-menu-button'),
-          tooltip: '打开对话菜单',
-          icon: Icons.menu_rounded,
-          onPressed: onOpenMenu,
+          key: Key(
+            onNavigateBack == null
+                ? 'conversation-menu-button'
+                : 'conversation-route-back-button',
+          ),
+          tooltip: onNavigateBack == null ? '打开对话菜单' : '返回',
+          icon: onNavigateBack == null
+              ? Icons.menu_rounded
+              : Icons.arrow_back_rounded,
+          onPressed: onNavigateBack ?? onOpenMenu,
         ),
         const Spacer(),
         _RoundGlassButton(

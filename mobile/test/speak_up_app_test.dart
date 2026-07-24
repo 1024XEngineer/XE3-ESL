@@ -173,10 +173,68 @@ void main() {
   testWidgets('keeps every formal feature route reachable', (tester) async {
     await tester.pumpWidget(const SpeakUpApp());
 
-    await _expectNamedRoute<PreparationPage>(tester, AppRoutes.preparation);
-    await _expectNamedRoute<PracticePage>(tester, AppRoutes.practice);
-    await _expectNamedRoute<ConversationPage>(tester, AppRoutes.conversation);
-    await _expectNamedRoute<ReviewPage>(tester, AppRoutes.review);
+    await _expectNamedRoute<PreparationPage>(
+      tester,
+      AppRoutes.preparation,
+      backButton: find.byKey(const Key('preparation-route-back-button')),
+    );
+    await _expectNamedRoute<PracticePage>(
+      tester,
+      AppRoutes.practice,
+      backButton: find.byType(BackButton),
+    );
+    await _expectNamedRoute<ConversationPage>(
+      tester,
+      AppRoutes.conversation,
+      backButton: find.byKey(const Key('conversation-route-back-button')),
+    );
+    await _expectNamedRoute<ReviewPage>(
+      tester,
+      AppRoutes.review,
+      backButton: find.byKey(const Key('review-route-back-button')),
+    );
+  });
+
+  testWidgets('keeps the named conversation route escapable on every tab', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const SpeakUpApp());
+
+    final shellContext = tester.element(find.byType(SpeakUpShell));
+    Navigator.of(shellContext).pushNamed(AppRoutes.conversation);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('conversation-route-back-button')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('primary-tab-scenes')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('preparation-route-back-button')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('primary-tab-review')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('review-route-back-button')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('primary-tab-profile')));
+    await tester.pumpAndSettle();
+    final profileBackButton = find.byKey(
+      const Key('profile-route-back-button'),
+    );
+    expect(profileBackButton, findsOneWidget);
+
+    await tester.tap(profileBackButton);
+    await tester.pumpAndSettle();
+
+    expect(profileBackButton, findsNothing);
+    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
+    expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
+    final rootShellContext = tester.element(find.byType(SpeakUpShell));
+    expect(Navigator.of(rootShellContext).canPop(), isFalse);
   });
 
   testWidgets('stays usable on a narrow screen and with the keyboard open', (
@@ -327,20 +385,32 @@ Future<void> _tapPrimaryDestination(
     tester.getSemantics(find.byKey(Key(key))),
     isSemantics(hasSelectedState: true, isSelected: true),
   );
+  expect(find.byKey(const Key('preparation-route-back-button')), findsNothing);
+  expect(find.byKey(const Key('review-route-back-button')), findsNothing);
+  expect(find.byKey(const Key('conversation-route-back-button')), findsNothing);
+  expect(find.byKey(const Key('profile-route-back-button')), findsNothing);
 }
 
 Future<void> _expectNamedRoute<T extends Widget>(
   WidgetTester tester,
-  String route,
-) async {
+  String route, {
+  required Finder backButton,
+}) async {
   final shellContext = tester.element(find.byType(SpeakUpShell));
   Navigator.of(shellContext).pushNamed(route);
   await tester.pumpAndSettle();
 
   expect(find.byType(T), findsOneWidget);
+  expect(backButton, findsOneWidget);
 
-  Navigator.of(tester.element(find.byType(T))).pop();
+  await tester.tap(backButton);
   await tester.pumpAndSettle();
+
+  expect(backButton, findsNothing);
+  expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
+  expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
+  final rootShellContext = tester.element(find.byType(SpeakUpShell));
+  expect(Navigator.of(rootShellContext).canPop(), isFalse);
 }
 
 Future<void> _tapVisible(WidgetTester tester, String key) async {

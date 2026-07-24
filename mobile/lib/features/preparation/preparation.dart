@@ -4,13 +4,29 @@ library;
 import 'package:flutter/material.dart';
 
 class PreparationPage extends StatelessWidget {
-  const PreparationPage({super.key});
+  const PreparationPage({this.showBackButton = false, super.key});
+
+  final bool showBackButton;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('scenes-page'),
       backgroundColor: const Color(0xFFF3F3F0),
+      appBar: showBackButton
+          ? AppBar(
+              backgroundColor: const Color(0xFFF3F3F0),
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              leading: IconButton(
+                key: const Key('preparation-route-back-button'),
+                tooltip: '返回',
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+            )
+          : null,
       body: SafeArea(
         bottom: false,
         child: ListView(

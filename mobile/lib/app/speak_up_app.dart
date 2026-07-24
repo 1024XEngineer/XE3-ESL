@@ -28,10 +28,11 @@ class SpeakUpApp extends StatelessWidget {
       initialRoute: AppRoutes.home,
       routes: {
         AppRoutes.home: (_) => const SpeakUpShell(),
-        AppRoutes.preparation: (_) => const PreparationPage(),
+        AppRoutes.preparation: (_) =>
+            const PreparationPage(showBackButton: true),
         AppRoutes.practice: (_) => const PracticePage(),
-        AppRoutes.conversation: (_) => const SpeakUpShell(),
-        AppRoutes.review: (_) => const ReviewPage(),
+        AppRoutes.conversation: (_) => const SpeakUpShell(showBackButton: true),
+        AppRoutes.review: (_) => const ReviewPage(showBackButton: true),
       },
     );
   }

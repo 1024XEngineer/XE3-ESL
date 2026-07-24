@@ -8,7 +8,9 @@ import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/review/review.dart';
 
 class SpeakUpShell extends StatefulWidget {
-  const SpeakUpShell({super.key});
+  const SpeakUpShell({this.showBackButton = false, super.key});
+
+  final bool showBackButton;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -67,15 +69,18 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ConversationPage(
         restingComposerBottom: composerBottomInset,
         onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
+        onNavigateBack: widget.showBackButton
+            ? () => Navigator.of(context).maybePop()
+            : null,
         onCreatePlan: () => _selectDestination(1),
         onContinuePractice: () =>
             Navigator.of(context).pushNamed(AppRoutes.practice),
         onOpenReview: () => _selectDestination(2),
         onVoicePlaceholder: () => _showMockNotice('该能力将在后续任务接入'),
       ),
-      const PreparationPage(),
-      const ReviewPage(),
-      const _ProfilePage(),
+      PreparationPage(showBackButton: widget.showBackButton),
+      ReviewPage(showBackButton: widget.showBackButton),
+      _ProfilePage(showBackButton: widget.showBackButton),
     ];
 
     return Scaffold(
@@ -176,13 +181,29 @@ class _ConversationTile extends StatelessWidget {
 }
 
 class _ProfilePage extends StatelessWidget {
-  const _ProfilePage();
+  const _ProfilePage({required this.showBackButton});
+
+  final bool showBackButton;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('profile-page'),
       backgroundColor: const Color(0xFFF3F3F0),
+      appBar: showBackButton
+          ? AppBar(
+              backgroundColor: const Color(0xFFF3F3F0),
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              leading: IconButton(
+                key: const Key('profile-route-back-button'),
+                tooltip: '返回',
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+            )
+          : null,
       body: SafeArea(
         bottom: false,
         child: ListView(
