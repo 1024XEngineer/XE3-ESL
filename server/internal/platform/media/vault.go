@@ -45,6 +45,8 @@ type temporaryAudioEntry struct {
 	ownerID string
 	data    []byte
 	meta    TemporaryAudioMetadata
+	readers int
+	removed bool
 }
 
 // TemporaryAudioVault is an actor-bound, process-local holding area for an
@@ -60,6 +62,7 @@ type TemporaryAudioVault struct {
 
 	config     TemporaryAudioVaultConfig
 	entries    map[string]*temporaryAudioEntry
+	totalItems int
 	totalBytes int64
 	closed     bool
 	wake       chan struct{}
@@ -158,7 +161,7 @@ func (vault *TemporaryAudioVault) Capture(
 		return TemporaryAudioMetadata{}, ErrTemporaryAudioClosed
 	}
 	vault.purgeExpiredLocked(time.Now())
-	if len(vault.entries) >= vault.config.MaxItems ||
+	if vault.totalItems >= vault.config.MaxItems ||
 		int64(len(data)) > vault.config.MaxBytes-vault.totalBytes {
 		clear(data)
 		return TemporaryAudioMetadata{}, ErrTemporaryAudioCapacity
@@ -183,6 +186,7 @@ func (vault *TemporaryAudioVault) Capture(
 		data:    data,
 		meta:    metadata,
 	}
+	vault.totalItems++
 	vault.totalBytes += int64(len(data))
 	vault.signalWake()
 	return metadata, nil
@@ -317,10 +321,11 @@ func (vault *TemporaryAudioVault) open(
 	if !found || entry.ownerID != ownerID {
 		return nil, ErrTemporaryAudioNotFound
 	}
-	data := bytes.Clone(entry.data)
-	return &clearingReadCloser{
-		reader: bytes.NewReader(data),
-		data:   data,
+	entry.readers++
+	return &sharedAudioReadCloser{
+		vault:  vault,
+		entry:  entry,
+		reader: bytes.NewReader(entry.data),
 	}, nil
 }
 
@@ -357,7 +362,34 @@ func (vault *TemporaryAudioVault) removeLocked(
 	id string,
 	entry *temporaryAudioEntry,
 ) {
+	if entry.removed {
+		return
+	}
 	delete(vault.entries, id)
+	entry.removed = true
+	if entry.readers == 0 {
+		vault.releaseEntryLocked(entry)
+	}
+}
+
+func (vault *TemporaryAudioVault) releaseReader(
+	entry *temporaryAudioEntry,
+) {
+	vault.mu.Lock()
+	defer vault.mu.Unlock()
+	if entry.readers <= 0 {
+		return
+	}
+	entry.readers--
+	if entry.removed && entry.readers == 0 {
+		vault.releaseEntryLocked(entry)
+	}
+}
+
+func (vault *TemporaryAudioVault) releaseEntryLocked(
+	entry *temporaryAudioEntry,
+) {
+	vault.totalItems--
 	vault.totalBytes -= int64(len(entry.data))
 	clear(entry.data)
 	entry.data = nil
@@ -426,14 +458,15 @@ func stopTimer(timer *time.Timer) {
 	}
 }
 
-type clearingReadCloser struct {
+type sharedAudioReadCloser struct {
 	mu     sync.Mutex
+	vault  *TemporaryAudioVault
+	entry  *temporaryAudioEntry
 	reader *bytes.Reader
-	data   []byte
 	closed bool
 }
 
-func (reader *clearingReadCloser) Read(buffer []byte) (int, error) {
+func (reader *sharedAudioReadCloser) Read(buffer []byte) (int, error) {
 	reader.mu.Lock()
 	defer reader.mu.Unlock()
 	if reader.closed {
@@ -442,19 +475,23 @@ func (reader *clearingReadCloser) Read(buffer []byte) (int, error) {
 	return reader.reader.Read(buffer)
 }
 
-func (reader *clearingReadCloser) Close() error {
+func (reader *sharedAudioReadCloser) Close() error {
 	if reader == nil {
 		return nil
 	}
 	reader.mu.Lock()
-	defer reader.mu.Unlock()
 	if reader.closed {
+		reader.mu.Unlock()
 		return nil
 	}
-	clear(reader.data)
-	reader.data = nil
 	reader.reader = bytes.NewReader(nil)
 	reader.closed = true
+	vault := reader.vault
+	entry := reader.entry
+	reader.vault = nil
+	reader.entry = nil
+	reader.mu.Unlock()
+	vault.releaseReader(entry)
 	return nil
 }
 

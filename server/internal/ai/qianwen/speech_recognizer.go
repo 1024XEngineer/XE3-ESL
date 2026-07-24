@@ -29,7 +29,7 @@ type Recognizer struct {
 	endpoint string
 	model    string
 	timeout  time.Duration
-	apiKey   string
+	apiKey   providerSecret
 	client   httpDoer
 }
 
@@ -85,7 +85,7 @@ func newRecognizerWithClient(
 		endpoint: baseURL + multimodalGenerationPath,
 		model:    model,
 		timeout:  config.Timeout,
-		apiKey:   apiKey,
+		apiKey:   newProviderSecret(apiKey),
 		client:   client,
 	}, nil
 }
@@ -186,7 +186,10 @@ func (recognizer *Recognizer) Transcribe(
 			errors.New("create Fun-ASR request"),
 		)
 	}
-	httpRequest.Header.Set(authorizationHeaderName, "Bearer "+recognizer.apiKey)
+	httpRequest.Header.Set(
+		authorizationHeaderName,
+		"Bearer "+recognizer.apiKey.reveal(),
+	)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Accept", "application/json")
 	httpRequest.Header.Set("X-DashScope-SSE", "disable")

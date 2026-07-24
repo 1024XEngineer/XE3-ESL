@@ -272,9 +272,22 @@ func TestSynthesizerTimeoutRedirectPolicyAndFormattingAreSafe(t *testing.T) {
 		fmt.Sprint(synthesizer),
 		fmt.Sprintf("%+v", synthesizer),
 		fmt.Sprintf("%#v", synthesizer),
+		fmt.Sprint(*synthesizer),
+		fmt.Sprintf("%+v", *synthesizer),
+		fmt.Sprintf("%#v", *synthesizer),
 	} {
 		if strings.Contains(value, apiKey) {
 			t.Fatalf("synthesizer formatting exposed API key: %q", value)
+		}
+	}
+	var nilSynthesizer *Synthesizer
+	for _, value := range []string{
+		fmt.Sprint(nilSynthesizer),
+		fmt.Sprintf("%+v", nilSynthesizer),
+		fmt.Sprintf("%#v", nilSynthesizer),
+	} {
+		if strings.Contains(value, apiKey) {
+			t.Fatalf("nil synthesizer formatting exposed API key: %q", value)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"os"
@@ -126,6 +127,15 @@ func TestTemporaryAudioVaultEnforcesCapacityAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capture first: %v", err)
 	}
+	source, err := vault.Source(actor, first.ID)
+	if err != nil {
+		t.Fatalf("source first: %v", err)
+	}
+	inFlight, err := source.Open()
+	if err != nil {
+		t.Fatalf("open first: %v", err)
+	}
+	defer inFlight.Close()
 	if _, err := vault.Capture(
 		context.Background(),
 		actor,
@@ -154,8 +164,155 @@ func TestTemporaryAudioVaultEnforcesCapacityAndExpiry(t *testing.T) {
 		actor,
 		ContentTypeWAV,
 		bytes.NewReader(payload),
+	); !errors.Is(err, ErrTemporaryAudioCapacity) {
+		t.Fatalf("expired in-flight capacity error = %v", err)
+	}
+	inFlightBytes, err := io.ReadAll(inFlight)
+	if err != nil {
+		t.Fatalf("read expired in-flight audio: %v", err)
+	}
+	if !bytes.Equal(inFlightBytes, payload) {
+		t.Fatal("expiry corrupted an authorized in-flight reader")
+	}
+	if err := inFlight.Close(); err != nil {
+		t.Fatalf("close expired in-flight audio: %v", err)
+	}
+	if _, err := vault.Capture(
+		context.Background(),
+		actor,
+		ContentTypeWAV,
+		bytes.NewReader(payload),
 	); err != nil {
 		t.Fatalf("capture after expiry: %v", err)
+	}
+}
+
+func TestTemporaryAudioVaultSharesLargeAudioWithoutOpenAmplification(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	payload := largeVaultTestWAV(t)
+	vault := newTestVault(
+		t,
+		t.TempDir(),
+		time.Minute,
+		2,
+		MaxAudioBytes,
+	)
+	actor := testActor("owner")
+	metadata, err := vault.Capture(
+		context.Background(),
+		actor,
+		ContentTypeWAV,
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		t.Fatalf("capture large audio: %v", err)
+	}
+	source, err := vault.Source(actor, metadata.ID)
+	if err != nil {
+		t.Fatalf("source large audio: %v", err)
+	}
+
+	const readerCount = 32
+	start := make(chan struct{})
+	readers := make(chan io.ReadCloser, readerCount)
+	failures := make(chan error, readerCount)
+	var wait sync.WaitGroup
+	for index := 0; index < readerCount; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			reader, openErr := source.Open()
+			if openErr != nil {
+				failures <- openErr
+				return
+			}
+			readers <- reader
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(readers)
+	close(failures)
+	opened := make([]io.ReadCloser, 0, readerCount)
+	for reader := range readers {
+		opened = append(opened, reader)
+	}
+	var openFailure error
+	for failure := range failures {
+		openFailure = errors.Join(openFailure, failure)
+	}
+	if openFailure != nil {
+		for _, reader := range opened {
+			_ = reader.Close()
+		}
+		t.Fatalf("concurrent open: %v", openFailure)
+	}
+	if len(opened) != readerCount {
+		t.Fatalf("opened readers = %d, want %d", len(opened), readerCount)
+	}
+	defer func() {
+		for _, reader := range opened {
+			_ = reader.Close()
+		}
+	}()
+	for index, reader := range opened {
+		firstByte := make([]byte, 1)
+		if _, err := io.ReadFull(reader, firstByte); err != nil {
+			t.Fatalf("read shared reader %d: %v", index, err)
+		}
+		if firstByte[0] != payload[0] {
+			t.Fatalf("shared reader %d returned changed audio", index)
+		}
+	}
+
+	vault.mu.Lock()
+	if vault.totalItems != 1 || vault.totalBytes != int64(len(payload)) {
+		t.Fatalf(
+			"concurrent opens amplified retained audio: items=%d bytes=%d",
+			vault.totalItems,
+			vault.totalBytes,
+		)
+	}
+	vault.mu.Unlock()
+
+	if err := vault.Delete(actor, metadata.ID); err != nil {
+		t.Fatalf("delete large audio: %v", err)
+	}
+	small := testWAV(t, time.Second)
+	if _, err := vault.Capture(
+		context.Background(),
+		actor,
+		ContentTypeWAV,
+		bytes.NewReader(small),
+	); !errors.Is(err, ErrTemporaryAudioCapacity) {
+		t.Fatalf("retained-reader capacity error = %v", err)
+	}
+
+	for _, reader := range opened {
+		if err := reader.Close(); err != nil {
+			t.Fatalf("close shared reader: %v", err)
+		}
+	}
+	vault.mu.Lock()
+	if vault.totalItems != 0 || vault.totalBytes != 0 {
+		t.Fatalf(
+			"reader close did not release capacity: items=%d bytes=%d",
+			vault.totalItems,
+			vault.totalBytes,
+		)
+	}
+	vault.mu.Unlock()
+	if _, err := vault.Capture(
+		context.Background(),
+		actor,
+		ContentTypeWAV,
+		bytes.NewReader(small),
+	); err != nil {
+		t.Fatalf("capture after reader close: %v", err)
 	}
 }
 
@@ -254,11 +411,12 @@ func TestTemporaryAudioVaultCloseIsIdempotent(t *testing.T) {
 		MaxAudioBytes,
 	)
 	actor := testActor("owner")
+	payload := testWAV(t, time.Second)
 	metadata, err := vault.Capture(
 		context.Background(),
 		actor,
 		ContentTypeWAV,
-		bytes.NewReader(testWAV(t, time.Second)),
+		bytes.NewReader(payload),
 	)
 	if err != nil {
 		t.Fatalf("capture: %v", err)
@@ -267,9 +425,45 @@ func TestTemporaryAudioVaultCloseIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}
+	inFlight, err := source.Open()
+	if err != nil {
+		t.Fatalf("open in-flight source: %v", err)
+	}
+	defer inFlight.Close()
 	if err := vault.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
+	vault.mu.Lock()
+	if vault.totalItems != 1 || vault.totalBytes != int64(len(payload)) {
+		t.Fatalf(
+			"vault close released in-flight audio: items=%d bytes=%d",
+			vault.totalItems,
+			vault.totalBytes,
+		)
+	}
+	vault.mu.Unlock()
+	got, err := io.ReadAll(inFlight)
+	if err != nil {
+		t.Fatalf("read in-flight source after vault close: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("vault close corrupted an authorized in-flight reader")
+	}
+	if err := inFlight.Close(); err != nil {
+		t.Fatalf("close in-flight source: %v", err)
+	}
+	if err := inFlight.Close(); err != nil {
+		t.Fatalf("second in-flight close: %v", err)
+	}
+	vault.mu.Lock()
+	if vault.totalItems != 0 || vault.totalBytes != 0 {
+		t.Fatalf(
+			"reader close did not release closed-vault capacity: items=%d bytes=%d",
+			vault.totalItems,
+			vault.totalBytes,
+		)
+	}
+	vault.mu.Unlock()
 	if err := vault.Close(); err != nil {
 		t.Fatalf("second close: %v", err)
 	}
@@ -381,4 +575,35 @@ func testActor(seed string) requestcontext.Actor {
 		UserID:    seed + "-user",
 		SessionID: seed + "-session",
 	}
+}
+
+func largeVaultTestWAV(t *testing.T) []byte {
+	t.Helper()
+	const (
+		channels      = 2
+		sampleRate    = 48_000
+		bitsPerSample = 16
+		duration      = 38*time.Second + 500*time.Millisecond
+	)
+	blockAlign := channels * bitsPerSample / 8
+	byteRate := sampleRate * blockAlign
+	dataSize := int64(duration) * int64(byteRate) / int64(time.Second)
+	payload := make([]byte, 44+dataSize)
+	copy(payload[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(payload[4:8], uint32(len(payload)-8))
+	copy(payload[8:12], "WAVE")
+	copy(payload[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(payload[16:20], 16)
+	binary.LittleEndian.PutUint16(payload[20:22], 1)
+	binary.LittleEndian.PutUint16(payload[22:24], channels)
+	binary.LittleEndian.PutUint32(payload[24:28], sampleRate)
+	binary.LittleEndian.PutUint32(payload[28:32], uint32(byteRate))
+	binary.LittleEndian.PutUint16(payload[32:34], uint16(blockAlign))
+	binary.LittleEndian.PutUint16(payload[34:36], bitsPerSample)
+	copy(payload[36:40], "data")
+	binary.LittleEndian.PutUint32(payload[40:44], uint32(dataSize))
+	if len(payload) > int(MaxAudioBytes) {
+		t.Fatalf("large test WAV exceeds limit: %d", len(payload))
+	}
+	return payload
 }

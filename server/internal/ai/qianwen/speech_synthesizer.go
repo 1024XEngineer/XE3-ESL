@@ -40,7 +40,7 @@ type Synthesizer struct {
 	languageHint  string
 	timeout       time.Duration
 	tempDirectory string
-	apiKey        string
+	apiKey        providerSecret
 	client        httpDoer
 	now           func() time.Time
 }
@@ -115,7 +115,7 @@ func newSynthesizerWithClient(
 		languageHint:  language,
 		timeout:       config.Timeout,
 		tempDirectory: strings.TrimSpace(config.TempDirectory),
-		apiKey:        apiKey,
+		apiKey:        newProviderSecret(apiKey),
 		client:        client,
 		now:           time.Now,
 	}, nil
@@ -185,7 +185,10 @@ func (synthesizer *Synthesizer) Synthesize(
 			errors.New("create Qianwen TTS request"),
 		)
 	}
-	httpRequest.Header.Set(authorizationHeaderName, "Bearer "+synthesizer.apiKey)
+	httpRequest.Header.Set(
+		authorizationHeaderName,
+		"Bearer "+synthesizer.apiKey.reveal(),
+	)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Accept", "application/json")
 

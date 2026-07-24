@@ -251,9 +251,22 @@ func TestRecognizerTimeoutAndFormattingAreSafe(t *testing.T) {
 		fmt.Sprint(recognizer),
 		fmt.Sprintf("%+v", recognizer),
 		fmt.Sprintf("%#v", recognizer),
+		fmt.Sprint(*recognizer),
+		fmt.Sprintf("%+v", *recognizer),
+		fmt.Sprintf("%#v", *recognizer),
 	} {
 		if strings.Contains(value, apiKey) {
 			t.Fatalf("recognizer formatting exposed API key: %q", value)
+		}
+	}
+	var nilRecognizer *Recognizer
+	for _, value := range []string{
+		fmt.Sprint(nilRecognizer),
+		fmt.Sprintf("%+v", nilRecognizer),
+		fmt.Sprintf("%#v", nilRecognizer),
+	} {
+		if strings.Contains(value, apiKey) {
+			t.Fatalf("nil recognizer formatting exposed API key: %q", value)
 		}
 	}
 }

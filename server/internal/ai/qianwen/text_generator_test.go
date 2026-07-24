@@ -627,9 +627,22 @@ func TestGeneratorFormattingRedactsAPIKey(t *testing.T) {
 		fmt.Sprint(generator),
 		fmt.Sprintf("%+v", generator),
 		fmt.Sprintf("%#v", generator),
+		fmt.Sprint(*generator),
+		fmt.Sprintf("%+v", *generator),
+		fmt.Sprintf("%#v", *generator),
 	} {
 		if strings.Contains(formatted, apiKey) {
 			t.Fatalf("generator formatting exposed API key: %q", formatted)
+		}
+	}
+	var nilGenerator *Generator
+	for _, formatted := range []string{
+		fmt.Sprint(nilGenerator),
+		fmt.Sprintf("%+v", nilGenerator),
+		fmt.Sprintf("%#v", nilGenerator),
+	} {
+		if strings.Contains(formatted, apiKey) {
+			t.Fatalf("nil generator formatting exposed API key: %q", formatted)
 		}
 	}
 }
