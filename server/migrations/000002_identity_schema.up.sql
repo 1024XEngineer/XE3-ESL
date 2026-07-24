@@ -33,8 +33,11 @@ CREATE TABLE identity_credentials (
         CHECK (octet_length(password_hash) BETWEEN 64 AND 512),
     CONSTRAINT identity_credentials_password_hash_ascii_check
         CHECK (password_hash !~ '[^\x21-\x7e]'),
-    CONSTRAINT identity_credentials_password_hash_algorithm_check
-        CHECK (password_hash LIKE '$argon2id$%')
+    CONSTRAINT identity_credentials_password_hash_phc_shape_check
+        CHECK (
+            password_hash ~
+            '^\$argon2id\$v=[0-9]+\$[A-Za-z0-9._-]+=[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+=[A-Za-z0-9._-]+)*\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$'
+        )
 );
 
 CREATE TABLE identity_auth_sessions (

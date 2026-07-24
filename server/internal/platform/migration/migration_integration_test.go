@@ -287,8 +287,46 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
 		[]any{secondUserID, strings.Repeat("x", 80)},
 		"23514",
-		"identity_credentials_password_hash_algorithm_check",
+		"identity_credentials_password_hash_phc_shape_check",
 	)
+	malformedPasswordHashes := []struct {
+		name string
+		hash string
+	}{
+		{
+			name: "missing version",
+			hash: "$argon2id$$m=65536,t=3,p=4$" +
+				strings.Repeat("c", 24) + "$" + strings.Repeat("d", 43),
+		},
+		{
+			name: "missing parameters",
+			hash: "$argon2id$v=19$$" +
+				strings.Repeat("c", 24) + "$" + strings.Repeat("d", 43),
+		},
+		{
+			name: "missing salt",
+			hash: "$argon2id$v=19$m=65536,t=3,p=4$$" +
+				strings.Repeat("d", 43),
+		},
+		{
+			name: "missing hash",
+			hash: "$argon2id$v=19$m=65536,t=3,p=4$" +
+				strings.Repeat("c", 64) + "$",
+		},
+	}
+	for _, malformedPasswordHash := range malformedPasswordHashes {
+		t.Run("rejects PHC "+malformedPasswordHash.name, func(t *testing.T) {
+			assertConstraintViolation(
+				t,
+				admin,
+				ctx,
+				"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
+				[]any{secondUserID, malformedPasswordHash.hash},
+				"23514",
+				"identity_credentials_password_hash_phc_shape_check",
+			)
+		})
+	}
 	assertConstraintViolation(
 		t,
 		admin,
