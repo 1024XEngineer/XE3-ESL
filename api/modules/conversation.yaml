@@ -20,6 +20,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConversationBootstrap'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
@@ -64,6 +66,8 @@ paths:
                 created_at: '2026-07-23T10:04:00Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         '409':
@@ -156,6 +160,8 @@ paths:
                     created_at: '2026-07-23T10:06:01Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '403':
           $ref: ../common/errors.yaml#/components/responses/Forbidden
         '404':
@@ -194,6 +200,8 @@ paths:
                 submitted_at: '2026-07-23T10:05:00Z'
                 created_at: '2026-07-23T10:05:00Z'
                 completed_at: '2026-07-23T10:05:02Z'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
@@ -208,9 +216,35 @@ paths:
         increasing per-session `sequence`. Reconnect with `after_sequence`; when
         retained events cannot close a gap, the server emits
         `stream.resync_required` and the client reloads REST resources.
+
+        The Upgrade request's `Authorization` header is the only credential
+        location and uses the same Bearer Session as protected REST requests.
+        Production connections require `wss`; local loopback development may use
+        `ws`. Every initial connection and reconnect authenticates again before
+        the Upgrade. Missing or invalid authentication fails with HTTP 401, while
+        a valid actor that cannot see the target Session receives HTTP 404.
+
+        `Sec-WebSocket-Protocol` only negotiates `speakup.events.v1` and never
+        carries credentials. `after_sequence` is only a replay cursor and is not
+        a credential. The accepted connection is bound to the authenticated
+        UserID, SessionID, and path PracticeSessionID and cannot switch targets.
+        Logout closes every connection bound to the revoked SessionID. Until that
+        close propagates, every replay batch and private outbound event rechecks
+        both Session validity and resource ownership. If the bound Session becomes
+        invalid after the Upgrade, the server closes the connection with code 4401
+        and reason `session_invalid` before sending further application events.
+        An ordinary network disconnect is recoverable and does not revoke the
+        Session or perform logout.
       operationId: connectPracticeSessionEvents
       parameters:
         - $ref: '#/components/parameters/PracticeSessionId'
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          description: Required application event-stream subprotocol.
+          schema:
+            type: string
+            const: speakup.events.v1
         - name: after_sequence
           in: query
           required: false
@@ -230,12 +264,65 @@ paths:
                 const: speakup.events.v1
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
       x-websocket-event-schema:
         $ref: ../websocket/conversation-events.schema.json
+      x-websocket-security:
+        credential_location: authorization_header
+        header: Authorization
+        scheme: Bearer
+        other_credential_locations_allowed: false
+        production_transport: wss
+        local_loopback_transport: ws
+        pre_upgrade:
+          validation_order:
+            - session
+            - actor
+            - resource_ownership
+            - replay_cursor
+            - subprotocol
+            - upgrade
+          authentication_failure:
+            http_status: 401
+            error_code: authentication_required
+          resource_not_visible:
+            http_status: 404
+            error_code: resource_not_found
+        reconnect:
+          reauthenticate: true
+        connection_binding:
+          actor_fields:
+            - user_id
+            - session_id
+          target_field: practice_session_id
+          target_switch_allowed: false
+        logout:
+          close_connections_by: session_id
+          all_matching_connections: true
+        active_connection:
+          authorization_recheck:
+            before_replay_batch: true
+            before_private_outbound_event: true
+            checks:
+              - session_validity
+              - resource_ownership
+          invalid_session:
+            close_code: 4401
+            close_reason: session_invalid
+            send_application_events_before_close: false
+          ordinary_disconnect:
+            is_logout: false
+        subprotocol:
+          allowed:
+            - speakup.events.v1
+          carries_credentials: false
+        after_sequence:
+          is_credential: false
 components:
   parameters:
     PracticeSessionId:
