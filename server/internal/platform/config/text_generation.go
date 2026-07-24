@@ -15,8 +15,11 @@ const (
 
 	defaultTextTimeout         = 60 * time.Second
 	defaultTextMaxOutputTokens = 512
+	defaultAgentContextChars   = 12000
 	maximumTextTimeout         = 5 * time.Minute
 	maximumTextOutputTokens    = 1_000_000
+	maximumAgentContextChars   = 1_000_000
+	minimumAgentContextChars   = 5000
 )
 
 type TextGenerationConfig struct {
@@ -25,6 +28,7 @@ type TextGenerationConfig struct {
 	Model           string
 	Timeout         time.Duration
 	MaxOutputTokens int
+	MaxContextChars int
 	APIKey          Secret
 }
 
@@ -104,6 +108,21 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 			maximumTextOutputTokens,
 		)
 	}
+	maxContextChars, err := positiveIntOrDefault(
+		"AGENT_CONTEXT_MAX_CHARACTERS",
+		defaultAgentContextChars,
+	)
+	if err != nil {
+		return TextGenerationConfig{}, err
+	}
+	if maxContextChars < minimumAgentContextChars ||
+		maxContextChars > maximumAgentContextChars {
+		return TextGenerationConfig{}, fmt.Errorf(
+			"AGENT_CONTEXT_MAX_CHARACTERS must be between %d and %d",
+			minimumAgentContextChars,
+			maximumAgentContextChars,
+		)
+	}
 
 	return TextGenerationConfig{
 		Provider:        provider,
@@ -111,6 +130,7 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 		Model:           model,
 		Timeout:         timeout,
 		MaxOutputTokens: maxOutputTokens,
+		MaxContextChars: maxContextChars,
 		APIKey:          Secret{value: apiKey},
 	}, nil
 }

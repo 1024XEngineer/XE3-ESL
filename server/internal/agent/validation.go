@@ -9,6 +9,10 @@ var (
 	clientMessageIDPattern = regexp.MustCompile(
 		`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
 	)
+	providerPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	modelPattern    = regexp.MustCompile(
+		`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
+	)
 )
 
 func validUUID(value string) bool {

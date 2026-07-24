@@ -12,6 +12,7 @@ func TestLoadTextGeneration(t *testing.T) {
 	setRequiredTextGenerationEnvironment(t)
 	t.Setenv("QIANWEN_TIMEOUT", "45s")
 	t.Setenv("QIANWEN_MAX_OUTPUT_TOKENS", "768")
+	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "24000")
 
 	cfg, err := LoadTextGeneration()
 	if err != nil {
@@ -22,6 +23,7 @@ func TestLoadTextGeneration(t *testing.T) {
 		cfg.Model != "qwen-test-model" ||
 		cfg.Timeout != 45*time.Second ||
 		cfg.MaxOutputTokens != 768 ||
+		cfg.MaxContextChars != 24000 ||
 		cfg.APIKey.Reveal() != "test-secret-value" {
 		t.Fatalf("unexpected text generation config: %#v", cfg)
 	}
@@ -31,6 +33,7 @@ func TestLoadTextGenerationUsesSafeOperationalDefaults(t *testing.T) {
 	setRequiredTextGenerationEnvironment(t)
 	t.Setenv("QIANWEN_TIMEOUT", "")
 	t.Setenv("QIANWEN_MAX_OUTPUT_TOKENS", "")
+	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "")
 
 	cfg, err := LoadTextGeneration()
 	if err != nil {
@@ -44,6 +47,13 @@ func TestLoadTextGenerationUsesSafeOperationalDefaults(t *testing.T) {
 			"max output tokens = %d, want %d",
 			cfg.MaxOutputTokens,
 			defaultTextMaxOutputTokens,
+		)
+	}
+	if cfg.MaxContextChars != defaultAgentContextChars {
+		t.Fatalf(
+			"context budget = %d, want %d",
+			cfg.MaxContextChars,
+			defaultAgentContextChars,
 		)
 	}
 }
@@ -65,9 +75,16 @@ func TestLoadTextGenerationRejectsUnsafeOrIncompleteConfiguration(t *testing.T) 
 		{name: "excessive timeout", key: "QIANWEN_TIMEOUT", value: "301s"},
 		{name: "invalid output budget", key: "QIANWEN_MAX_OUTPUT_TOKENS", value: "many"},
 		{name: "zero output budget", key: "QIANWEN_MAX_OUTPUT_TOKENS", value: "0"},
+		{name: "small context budget", key: "AGENT_CONTEXT_MAX_CHARACTERS", value: "4999"},
+		{name: "invalid context budget", key: "AGENT_CONTEXT_MAX_CHARACTERS", value: "many"},
 		{
 			name:  "excessive output budget",
 			key:   "QIANWEN_MAX_OUTPUT_TOKENS",
+			value: "1000001",
+		},
+		{
+			name:  "excessive context budget",
+			key:   "AGENT_CONTEXT_MAX_CHARACTERS",
 			value: "1000001",
 		},
 	}
@@ -109,5 +126,6 @@ func setRequiredTextGenerationEnvironment(t *testing.T) {
 	t.Setenv("QIANWEN_MODEL", "qwen-test-model")
 	t.Setenv("QIANWEN_TIMEOUT", "")
 	t.Setenv("QIANWEN_MAX_OUTPUT_TOKENS", "")
+	t.Setenv("AGENT_CONTEXT_MAX_CHARACTERS", "")
 	t.Setenv("DASHSCOPE_API_KEY", "test-secret-value")
 }

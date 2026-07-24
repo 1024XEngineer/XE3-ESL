@@ -28,6 +28,7 @@ type CorrelationIDGenerator func() string
 
 type HTTPHandler struct {
 	application   Application
+	runs          RunApplication
 	matters       matter.Application
 	authenticator identity.Authenticator
 	correlationID CorrelationIDGenerator
@@ -35,6 +36,22 @@ type HTTPHandler struct {
 
 func NewHTTPHandler(
 	application Application,
+	matters matter.Application,
+	authenticator identity.Authenticator,
+	correlationID CorrelationIDGenerator,
+) (*HTTPHandler, error) {
+	return NewHTTPHandlerWithRuns(
+		application,
+		nil,
+		matters,
+		authenticator,
+		correlationID,
+	)
+}
+
+func NewHTTPHandlerWithRuns(
+	application Application,
+	runs RunApplication,
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
@@ -47,6 +64,7 @@ func NewHTTPHandler(
 	}
 	return &HTTPHandler{
 		application:   application,
+		runs:          runs,
 		matters:       matters,
 		authenticator: authenticator,
 		correlationID: correlationID,
@@ -77,6 +95,21 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 		"/v1/agent-threads/:thread_id/messages",
 		h.listMessages,
 	)
+	if h.runs != nil {
+		protected.POST(
+			"/v1/agent-threads/:thread_id/runs",
+			h.submitRun,
+		)
+		protected.GET("/v1/agent-runs/:run_id", h.getRun)
+		protected.POST(
+			"/v1/agent-runs/:run_id/retries",
+			h.retryRun,
+		)
+		protected.GET(
+			"/v1/agent-runs/:run_id/context-manifest",
+			h.getContextManifest,
+		)
+	}
 }
 
 func (h *HTTPHandler) createMatter(c *gin.Context) {
@@ -331,6 +364,110 @@ func (h *HTTPHandler) listMessages(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"messages": result})
 }
 
+func (h *HTTPHandler) submitRun(c *gin.Context) {
+	values, ok := decodeObject(
+		c,
+		[]string{"client_message_id", "content"},
+		[]string{"client_message_id", "content"},
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	clientMessageID, clientIDOK := decodeString(values["client_message_id"])
+	content, contentOK := decodeString(values["content"])
+	if !clientIDOK || !contentOK {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	submission, err := h.runs.SubmitText(
+		c.Request.Context(),
+		actor,
+		c.Param("thread_id"),
+		clientMessageID,
+		content,
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	c.JSON(runWriteStatus(submission.Run), runResponse(submission.Run))
+}
+
+func (h *HTTPHandler) retryRun(c *gin.Context) {
+	values, ok := decodeObject(
+		c,
+		[]string{"client_retry_id"},
+		[]string{"client_retry_id"},
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	retryClientID, ok := decodeString(values["client_retry_id"])
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	retry, err := h.runs.RetryText(
+		c.Request.Context(),
+		actor,
+		c.Param("run_id"),
+		retryClientID,
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	c.JSON(runWriteStatus(retry.Run), runResponse(retry.Run))
+}
+
+func (h *HTTPHandler) getRun(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	run, err := h.runs.GetRun(
+		c.Request.Context(),
+		actor,
+		c.Param("run_id"),
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, runResponse(run))
+}
+
+func (h *HTTPHandler) getContextManifest(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	manifest, err := h.runs.GetContextManifest(
+		c.Request.Context(),
+		actor,
+		c.Param("run_id"),
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, contextManifestResponse(manifest))
+}
+
 func (h *HTTPHandler) authenticationMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, ok := bearerToken(c.Request.Header.Values("Authorization"))
@@ -480,6 +617,93 @@ func messageResponse(message Message) gin.H {
 	}
 	if message.ClientMessageID != "" {
 		result["client_message_id"] = message.ClientMessageID
+	}
+	if message.ProducedByRunID != "" {
+		result["produced_by_run_id"] = message.ProducedByRunID
+	}
+	return result
+}
+
+func runWriteStatus(run Run) int {
+	if run.Status == RunStatusPending || run.Status == RunStatusRunning {
+		return http.StatusAccepted
+	}
+	return http.StatusCreated
+}
+
+func runResponse(run Run) gin.H {
+	result := gin.H{
+		"run_id":             run.ID,
+		"thread_id":          run.ThreadID,
+		"input_message_id":   run.InputMessageID,
+		"attempt":            run.Attempt,
+		"status":             run.Status,
+		"requested_provider": run.RequestedProvider,
+		"requested_model":    run.RequestedModel,
+		"max_output_tokens":  run.MaxOutputTokens,
+		"created_at":         run.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at":         run.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if run.RetryOfRunID != "" {
+		result["retry_of_run_id"] = run.RetryOfRunID
+		result["client_retry_id"] = run.RetryClientID
+	}
+	if !run.StartedAt.IsZero() {
+		result["started_at"] = run.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !run.CompletedAt.IsZero() {
+		result["completed_at"] = run.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if run.Status == RunStatusCompleted {
+		result["assistant_message_id"] = run.AssistantMessageID
+		result["provider_completion_id"] = run.ProviderCompletionID
+		result["provider_model"] = run.ProviderModel
+		result["finish_reason"] = run.FinishReason
+		result["usage"] = gin.H{
+			"input_tokens":  run.Usage.InputTokens,
+			"output_tokens": run.Usage.OutputTokens,
+			"total_tokens":  run.Usage.TotalTokens,
+		}
+	}
+	if run.Status == RunStatusFailed {
+		result["failure"] = gin.H{
+			"kind":      run.FailureKind,
+			"retryable": run.FailureRetryable,
+		}
+	}
+	return result
+}
+
+func contextManifestResponse(manifest ContextManifest) gin.H {
+	messages := make([]gin.H, 0, len(manifest.SelectedMessages))
+	for _, message := range manifest.SelectedMessages {
+		messages = append(messages, gin.H{
+			"message_id": message.MessageID,
+			"sequence":   message.Sequence,
+			"role":       message.Role,
+		})
+	}
+	result := gin.H{
+		"run_id":                manifest.RunID,
+		"thread_id":             manifest.ThreadID,
+		"input_message_id":      manifest.InputMessageID,
+		"instruction_version":   manifest.InstructionVersion,
+		"selected_messages":     messages,
+		"omitted_message_count": manifest.OmittedMessageCount,
+		"trim_reason":           manifest.TrimReason,
+		"max_input_characters":  manifest.MaxInputCharacters,
+		"used_input_characters": manifest.UsedInputCharacters,
+		"requested_provider":    manifest.RequestedProvider,
+		"requested_model":       manifest.RequestedModel,
+		"max_output_tokens":     manifest.MaxOutputTokens,
+		"created_at":            manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if manifest.ActiveMatterID != "" {
+		result["active_matter"] = gin.H{
+			"matter_id": manifest.ActiveMatterID,
+			"version":   manifest.ActiveMatterVersion,
+			"title":     manifest.ActiveMatterTitle,
+		}
 	}
 	return result
 }

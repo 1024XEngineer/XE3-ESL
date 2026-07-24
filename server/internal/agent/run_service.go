@@ -1,0 +1,268 @@
+package agent
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+)
+
+const runPersistenceTimeout = 5 * time.Second
+
+type RunService struct {
+	repository    RunRepository
+	assembler     *ContextAssembler
+	generator     ai.TextGenerator
+	configuration RunConfiguration
+}
+
+func NewRunService(
+	repository RunRepository,
+	assembler *ContextAssembler,
+	generator ai.TextGenerator,
+	configuration RunConfiguration,
+) (*RunService, error) {
+	if repository == nil || assembler == nil || generator == nil ||
+		!validRunConfiguration(configuration) {
+		return nil, errors.New("agent: run dependency or configuration is invalid")
+	}
+	return &RunService{
+		repository:    repository,
+		assembler:     assembler,
+		generator:     generator,
+		configuration: configuration,
+	}, nil
+}
+
+func (service *RunService) SubmitText(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+	clientMessageID string,
+	content string,
+) (RunSubmission, error) {
+	if !actor.Valid() || !validUUID(threadID) {
+		return RunSubmission{}, ErrNotFound
+	}
+	if !clientMessageIDPattern.MatchString(clientMessageID) ||
+		!validMessageContent(content) {
+		return RunSubmission{}, ErrInvalidRequest
+	}
+	submission, err := service.repository.CreateInitialRun(
+		ctx,
+		actor.UserID,
+		threadID,
+		clientMessageID,
+		content,
+		service.configuration,
+	)
+	if err != nil {
+		return RunSubmission{}, err
+	}
+	submission.Run, err = service.process(ctx, actor, submission.Run)
+	if err != nil {
+		return RunSubmission{}, err
+	}
+	return submission, nil
+}
+
+func (service *RunService) RetryText(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	runID string,
+	retryClientID string,
+) (RunRetry, error) {
+	if !actor.Valid() || !validUUID(runID) {
+		return RunRetry{}, ErrNotFound
+	}
+	if !clientMessageIDPattern.MatchString(retryClientID) {
+		return RunRetry{}, ErrInvalidRequest
+	}
+	retry, err := service.repository.CreateRetryRun(
+		ctx,
+		actor.UserID,
+		runID,
+		retryClientID,
+		service.configuration,
+	)
+	if err != nil {
+		return RunRetry{}, err
+	}
+	retry.Run, err = service.process(ctx, actor, retry.Run)
+	if err != nil {
+		return RunRetry{}, err
+	}
+	return retry, nil
+}
+
+func (service *RunService) GetRun(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	runID string,
+) (Run, error) {
+	if !actor.Valid() || !validUUID(runID) {
+		return Run{}, ErrNotFound
+	}
+	return service.repository.FindRun(ctx, actor.UserID, runID)
+}
+
+func (service *RunService) GetContextManifest(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	runID string,
+) (ContextManifest, error) {
+	if !actor.Valid() || !validUUID(runID) {
+		return ContextManifest{}, ErrNotFound
+	}
+	if _, err := service.repository.FindRun(
+		ctx,
+		actor.UserID,
+		runID,
+	); err != nil {
+		return ContextManifest{}, err
+	}
+	return service.repository.FindContextManifest(ctx, actor.UserID, runID)
+}
+
+func (service *RunService) RecoverInterruptedRuns(
+	ctx context.Context,
+) (int64, error) {
+	return service.repository.RecoverInterruptedRuns(ctx)
+}
+
+func (service *RunService) process(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	run Run,
+) (Run, error) {
+	if run.Status != RunStatusPending {
+		return run, nil
+	}
+	claimed, acquired, err := service.repository.ClaimRun(
+		ctx,
+		actor.UserID,
+		run.ID,
+	)
+	if err != nil {
+		return Run{}, err
+	}
+	if !acquired {
+		return claimed, nil
+	}
+
+	manifest, request, err := service.assembler.Assemble(
+		ctx,
+		actor,
+		claimed,
+		service.configuration,
+	)
+	if err != nil {
+		kind := RunFailureInternal
+		retryable := true
+		if errors.Is(err, ErrInvalidContext) {
+			kind = RunFailureInvalidContext
+			retryable = false
+		}
+		return service.persistFailure(
+			ctx,
+			actor.UserID,
+			claimed.ID,
+			kind,
+			retryable,
+		)
+	}
+	if _, err := service.repository.SaveContextManifest(
+		ctx,
+		manifest,
+	); err != nil {
+		failed, failErr := service.persistFailure(
+			ctx,
+			actor.UserID,
+			claimed.ID,
+			RunFailureInternal,
+			true,
+		)
+		if failErr != nil {
+			return Run{}, err
+		}
+		return failed, nil
+	}
+
+	result, err := service.generator.Generate(ctx, request)
+	if err != nil {
+		kind, retryable := generationFailure(err)
+		return service.persistFailure(
+			ctx,
+			actor.UserID,
+			claimed.ID,
+			kind,
+			retryable,
+		)
+	}
+	if !validTextResult(result) ||
+		result.Provider != service.configuration.Provider {
+		return service.persistFailure(
+			ctx,
+			actor.UserID,
+			claimed.ID,
+			string(ai.ErrorInvalidResponse),
+			ai.ErrorInvalidResponse.Retryable(),
+		)
+	}
+	persistContext, cancel := runPersistenceContext(ctx)
+	defer cancel()
+	return service.repository.CompleteRun(
+		persistContext,
+		actor.UserID,
+		claimed.ID,
+		result.Content,
+		result,
+	)
+}
+
+func (service *RunService) persistFailure(
+	ctx context.Context,
+	ownerID string,
+	runID string,
+	kind string,
+	retryable bool,
+) (Run, error) {
+	persistContext, cancel := runPersistenceContext(ctx)
+	defer cancel()
+	return service.repository.FailRun(
+		persistContext,
+		ownerID,
+		runID,
+		kind,
+		retryable,
+	)
+}
+
+func runPersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(
+		context.WithoutCancel(ctx),
+		runPersistenceTimeout,
+	)
+}
+
+func generationFailure(err error) (string, bool) {
+	var generationError *ai.GenerationError
+	if errors.As(err, &generationError) {
+		return string(generationError.Kind), generationError.Retryable()
+	}
+	return string(ai.ErrorProviderUnavailable), true
+}
+
+func validTextResult(result ai.TextResult) bool {
+	return modelPattern.MatchString(result.ID) &&
+		providerPattern.MatchString(result.Provider) &&
+		modelPattern.MatchString(result.Model) &&
+		(result.FinishReason == "stop" || result.FinishReason == "length") &&
+		result.Usage.InputTokens >= 0 &&
+		result.Usage.OutputTokens >= 0 &&
+		result.Usage.TotalTokens >= 0 &&
+		validMessageContent(strings.TrimSpace(result.Content))
+}

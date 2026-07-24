@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/qianwen"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
@@ -29,6 +31,24 @@ func main() {
 func run() int {
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
+	textConfig, err := config.LoadTextGeneration()
+	if err != nil {
+		logger.Error("text generation configuration failed")
+		return 1
+	}
+	textGenerator, err := qianwen.New(
+		qianwen.Config{
+			BaseURL:         textConfig.BaseURL,
+			Model:           textConfig.Model,
+			Timeout:         textConfig.Timeout,
+			MaxOutputTokens: textConfig.MaxOutputTokens,
+		},
+		textConfig.APIKey.Reveal(),
+	)
+	if err != nil {
+		logger.Error("text generation startup failed")
+		return 1
+	}
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
@@ -44,11 +64,19 @@ func run() int {
 	}
 	defer databasePool.Close()
 
-	identityModule, agentDataModule, err :=
-		bootstrap.NewIdentityAndAgentDataModules(
+	identityModule, agentModule, err :=
+		bootstrap.NewIdentityAndAgentModules(
+			ctx,
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
 			cfg.TrustedProxyHeader,
+			textGenerator,
+			agent.RunConfiguration{
+				Provider:           textConfig.Provider,
+				Model:              textConfig.Model,
+				MaxOutputTokens:    textConfig.MaxOutputTokens,
+				MaxInputCharacters: textConfig.MaxContextChars,
+			},
 		)
 	if err != nil {
 		logger.Error("application startup failed", slog.Any("error", err))
@@ -58,7 +86,7 @@ func run() int {
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
 		logger,
 		databasePool,
-		[]bootstrap.RouteRegistrar{identityModule, agentDataModule},
+		[]bootstrap.RouteRegistrar{identityModule, agentModule},
 		preparation.New(),
 		practice.New(),
 		conversation.New(),
