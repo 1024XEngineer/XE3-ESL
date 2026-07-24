@@ -66,8 +66,27 @@ class _PreparationPageState extends State<PreparationPage> {
     }
   }
 
+  Future<void> _retryLastOperation() async {
+    final controller = widget.agentController;
+    if (controller == null || !controller.canRetry) {
+      return;
+    }
+    await controller.retryLastOperation();
+    if (!mounted ||
+        controller.errorMessage != null ||
+        controller.activeMatter == null) {
+      return;
+    }
+    if (widget.onSceneSelected case final callback?) {
+      callback();
+    } else if (widget.showBackButton) {
+      Navigator.of(context).maybePop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final controller = widget.agentController;
     return Scaffold(
       key: const Key('scenes-page'),
       backgroundColor: const Color(0xFFF3F3F0),
@@ -103,19 +122,45 @@ class _PreparationPageState extends State<PreparationPage> {
             for (final scene in agentScenes) ...[
               _SceneCard(
                 scene: scene,
-                selected: widget.agentController?.scene?.id == scene.id,
-                enabled:
-                    widget.agentController != null &&
-                    !(widget.agentController?.isBusy ?? false),
+                selected: controller?.scene?.id == scene.id,
+                enabled: controller?.canSelectScene ?? false,
                 onPressed: () => _selectScene(scene),
               ),
               const SizedBox(height: 12),
             ],
-            if (widget.agentController?.isBusy ?? false)
+            if (controller?.isBusy ?? false)
               const LinearProgressIndicator(
                 key: Key('scene-selection-progress'),
                 minHeight: 2,
               ),
+            if (controller?.errorMessage case final message?) ...[
+              const SizedBox(height: 14),
+              Material(
+                key: const Key('scene-operation-error'),
+                color: const Color(0xFFFFF3F1),
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.error_outline_rounded,
+                        size: 20,
+                        color: Color(0xFF8B2E26),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(message)),
+                      if (controller?.canRetry ?? false)
+                        TextButton(
+                          key: const Key('scene-retry-operation'),
+                          onPressed: _retryLastOperation,
+                          child: const Text('重试'),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

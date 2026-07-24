@@ -18,6 +18,7 @@ void main() {
 
       expect(controller.threadId, threadId);
       expect(controller.scene, same(agentScenes.first));
+      expect(controller.activeMatter?.id, 'matter_self-introduction');
       expect(controller.messages.single.role, AgentMessageRole.assistant);
 
       for (var turn = 1; turn <= 3; turn++) {
@@ -37,23 +38,31 @@ void main() {
 
       expect(controller.recordingState, PracticeRecordingState.completed);
       expect(controller.review, isNotNull);
-      expect(client.reviewRequests, 1);
+      expect(client.reviewClientIds, hasLength(1));
+      expect(client.turnClientIds.toSet(), hasLength(3));
 
       await controller.confirmTranscript();
-      expect(client.reviewRequests, 1);
+      expect(client.reviewClientIds, hasLength(1));
     },
   );
 
   test(
-    'does not expose a late response after private state is cleared',
+    'clears UI before awaiting client cleanup and discards a late response',
     () async {
-      final client = _ControlledAgentClient();
+      final client = _ControlledCleanupAgentClient();
       final controller = AgentController(client: client);
       await controller.initialize();
 
       final request = controller.sendText('private account message');
       await client.sendStarted.future;
-      await controller.clearPrivateState();
+      final cleanup = controller.clearPrivateState();
+      await client.cleanupStarted.future;
+
+      expect(client.cleanupCalls, 1);
+      expect(controller.threadId, isNull);
+      expect(controller.messages, isEmpty);
+      expect(controller.review, isNull);
+
       client.sendResult.complete(
         const AgentExchange(
           userMessage: AgentMessage(
@@ -70,51 +79,283 @@ void main() {
       );
       await request;
 
-      expect(controller.threadId, isNull);
+      var cleanupCompleted = false;
+      cleanup.whenComplete(() => cleanupCompleted = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(cleanupCompleted, isFalse);
       expect(controller.messages, isEmpty);
-      expect(controller.review, isNull);
+
+      client.cleanupResult.complete();
+      await cleanup;
+      expect(cleanupCompleted, isTrue);
     },
   );
 
-  test('retries Review without submitting a fourth practice turn', () async {
-    final client = _FailOnceReviewAgentClient();
+  test('retries text with one stable client Message identity', () async {
+    final client = _FailOnceTextAgentClient();
+    final controller = AgentController(client: client);
+    await controller.initialize();
+
+    await controller.sendText('retry this message');
+
+    expect(controller.messages, isEmpty);
+    expect(controller.canRetry, isTrue);
+    expect(client.messageClientIds, hasLength(1));
+
+    await controller.retryLastOperation();
+
+    expect(controller.messages, hasLength(2));
+    expect(client.messageClientIds, hasLength(2));
+    expect(client.messageClientIds.toSet(), hasLength(1));
+    expect(controller.canRetry, isFalse);
+  });
+
+  test('retries a failed Turn with one stable client Turn identity', () async {
+    final client = _FailOnceTurnAgentClient();
+    final controller = AgentController(client: client);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+
+    controller.startRecording();
+    await controller.stopRecording();
+    final transcript = controller.transcript;
+    await controller.confirmTranscript();
+
+    expect(controller.completedTurns, 0);
+    expect(controller.transcript, transcript);
+    expect(
+      controller.recordingState,
+      PracticeRecordingState.awaitingConfirmation,
+    );
+
+    await controller.confirmTranscript();
+
+    expect(controller.completedTurns, 1);
+    expect(client.turnClientIds, hasLength(2));
+    expect(client.turnClientIds.toSet(), hasLength(1));
+  });
+
+  test(
+    'retries Review with one identity and never submits a fourth Turn',
+    () async {
+      final client = _FailOnceReviewAgentClient();
+      final controller = AgentController(client: client);
+
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      for (var turn = 1; turn <= 3; turn++) {
+        controller.startRecording();
+        await controller.stopRecording();
+        await controller.confirmTranscript();
+      }
+
+      expect(controller.completedTurns, 3);
+      expect(controller.review, isNull);
+      expect(controller.recordingState, PracticeRecordingState.reviewFailed);
+      expect(client.turnClientIds, hasLength(3));
+      expect(client.reviewClientIds, hasLength(1));
+
+      await controller.retryReview();
+
+      expect(controller.completedTurns, 3);
+      expect(controller.review, isNotNull);
+      expect(controller.recordingState, PracticeRecordingState.completed);
+      expect(client.turnClientIds, hasLength(3));
+      expect(client.reviewClientIds, hasLength(2));
+      expect(client.reviewClientIds.toSet(), hasLength(1));
+    },
+  );
+
+  test(
+    'restores active Matter and continues from authoritative 2 of 3',
+    () async {
+      final scene = agentScenes.first;
+      final client = _SnapshotAgentClient(
+        AgentThreadSnapshot(
+          threadId: 'thread_server_1',
+          activeMatter: AgentMatter(id: 'matter_server_1', scene: scene),
+          practice: const AgentPracticeSnapshot(completedTurns: 2),
+          messages: const <AgentMessage>[
+            AgentMessage(
+              id: 'message_server_1',
+              role: AgentMessageRole.assistant,
+              text: 'Third question',
+            ),
+          ],
+        ),
+      );
+      final controller = AgentController(client: client);
+
+      await controller.initialize();
+
+      expect(controller.threadId, 'thread_server_1');
+      expect(controller.activeMatter?.id, 'matter_server_1');
+      expect(controller.scene, same(scene));
+      expect(controller.completedTurns, 2);
+      expect(controller.recordingState, PracticeRecordingState.idle);
+
+      controller.startRecording();
+      await controller.stopRecording();
+
+      expect(client.transcribedTurnNumbers, <int>[3]);
+      await controller.confirmTranscript();
+      expect(controller.completedTurns, 3);
+      expect(controller.review, isNotNull);
+    },
+  );
+
+  test('restores a pending Review with its stable client identity', () async {
+    final scene = agentScenes.first;
+    final client = _SnapshotAgentClient(
+      AgentThreadSnapshot(
+        threadId: 'thread_server_2',
+        activeMatter: AgentMatter(id: 'matter_server_2', scene: scene),
+        practice: const AgentPracticeSnapshot(
+          completedTurns: 3,
+          pendingReviewClientId: 'review_stable_from_snapshot',
+        ),
+      ),
+    );
     final controller = AgentController(client: client);
 
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
-    for (var turn = 1; turn <= 3; turn++) {
-      controller.startRecording();
-      await controller.stopRecording();
-      await controller.confirmTranscript();
-    }
 
     expect(controller.completedTurns, 3);
-    expect(controller.review, isNull);
     expect(controller.recordingState, PracticeRecordingState.reviewFailed);
-    expect(client.submittedTurns, 3);
-    expect(client.reviewRequests, 1);
-
     await controller.retryReview();
 
-    expect(controller.completedTurns, 3);
+    expect(client.reviewClientIds, <String>['review_stable_from_snapshot']);
     expect(controller.review, isNotNull);
-    expect(controller.recordingState, PracticeRecordingState.completed);
-    expect(client.submittedTurns, 3);
-    expect(client.reviewRequests, 2);
   });
+
+  test(
+    'restore and startScene expose executable operation-specific retries',
+    () async {
+      final client = _FailOnceRestoreAndSceneAgentClient();
+      final controller = AgentController(client: client);
+
+      await controller.initialize();
+
+      expect(controller.threadId, isNull);
+      expect(controller.canRetry, isTrue);
+      await controller.retryLastOperation();
+      expect(controller.threadId, isNotNull);
+      expect(controller.canRetry, isFalse);
+
+      await controller.selectScene(agentScenes.first);
+      expect(controller.scene, isNull);
+      expect(controller.canRetry, isTrue);
+      await controller.retryLastOperation();
+
+      expect(controller.scene, same(agentScenes.first));
+      expect(client.sceneClientIds, hasLength(2));
+      expect(client.sceneClientIds.toSet(), hasLength(1));
+      expect(controller.canRetry, isFalse);
+    },
+  );
+
+  test('serializes scene selection while transcription is in flight', () async {
+    final client = _ControlledTranscriptionAgentClient();
+    final controller = AgentController(client: client);
+    await controller.initialize();
+    controller.startRecording();
+
+    final transcription = controller.stopRecording();
+    await client.transcriptionStarted.future;
+    await controller.selectScene(agentScenes[1]);
+
+    expect(client.startSceneCalls, 0);
+    expect(controller.scene, same(agentScenes.first));
+
+    client.transcriptionResult.complete('old scene transcript');
+    await transcription;
+    controller.rerecord();
+    await controller.selectScene(agentScenes[1]);
+
+    expect(client.startSceneCalls, 1);
+    expect(controller.scene, same(agentScenes[1]));
+    expect(controller.transcript, isNull);
+  });
+
+  test(
+    'selecting a new scene preserves the same Thread message history',
+    () async {
+      final client = _SnapshotAgentClient(
+        AgentThreadSnapshot(
+          threadId: 'thread_history',
+          messages: const <AgentMessage>[
+            AgentMessage(
+              id: 'existing',
+              role: AgentMessageRole.user,
+              text: 'Existing Thread message',
+            ),
+          ],
+        ),
+      );
+      final controller = AgentController(client: client);
+      await controller.initialize();
+
+      await controller.selectScene(agentScenes.first);
+
+      expect(controller.threadId, 'thread_history');
+      expect(controller.messages, hasLength(2));
+      expect(controller.messages.first.id, 'existing');
+      expect(controller.messages.last.role, AgentMessageRole.assistant);
+    },
+  );
+
+  test(
+    'Fake client cancels old account work and reuses stable write IDs',
+    () async {
+      final client = FakeAgentClient(delay: const Duration(milliseconds: 1));
+      final staleRestore = client.restoreThread();
+
+      await client.clearAccountState();
+      await expectLater(
+        staleRestore,
+        throwsA(isA<AgentClientOperationCancelled>()),
+      );
+
+      final snapshot = await client.restoreThread();
+      final first = await client.sendText(
+        threadId: snapshot.threadId,
+        text: 'same logical message',
+        clientMessageId: 'message_stable',
+      );
+      final retried = await client.sendText(
+        threadId: snapshot.threadId,
+        text: 'same logical message',
+        clientMessageId: 'message_stable',
+      );
+
+      expect(retried, same(first));
+      await client.clearAccountState();
+      final nextAccount = await client.restoreThread();
+      expect(nextAccount.threadId, isNot(snapshot.threadId));
+    },
+  );
 }
 
-final class _CountingAgentClient implements AgentClient {
-  final FakeAgentClient _delegate = FakeAgentClient();
-  int reviewRequests = 0;
+class _DelegatingAgentClient implements AgentClient {
+  _DelegatingAgentClient([FakeAgentClient? delegate])
+    : _delegate = delegate ?? FakeAgentClient();
+
+  final FakeAgentClient _delegate;
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
 
   @override
   Future<AgentReview> createReview({
     required String threadId,
     required AgentScene scene,
+    required String clientReviewId,
   }) {
-    reviewRequests++;
-    return _delegate.createReview(threadId: threadId, scene: scene);
+    return _delegate.createReview(
+      threadId: threadId,
+      scene: scene,
+      clientReviewId: clientReviewId,
+    );
   }
 
   @override
@@ -124,16 +365,26 @@ final class _CountingAgentClient implements AgentClient {
   Future<AgentExchange> sendText({
     required String threadId,
     required String text,
+    required String clientMessageId,
   }) {
-    return _delegate.sendText(threadId: threadId, text: text);
+    return _delegate.sendText(
+      threadId: threadId,
+      text: text,
+      clientMessageId: clientMessageId,
+    );
   }
 
   @override
-  Future<AgentMessage> startScene({
+  Future<AgentSceneStart> startScene({
     required String threadId,
     required AgentScene scene,
+    required String clientOperationId,
   }) {
-    return _delegate.startScene(threadId: threadId, scene: scene);
+    return _delegate.startScene(
+      threadId: threadId,
+      scene: scene,
+      clientOperationId: clientOperationId,
+    );
   }
 
   @override
@@ -142,12 +393,14 @@ final class _CountingAgentClient implements AgentClient {
     required AgentScene scene,
     required int turnNumber,
     required String transcript,
+    required String clientTurnId,
   }) {
     return _delegate.submitPracticeTurn(
       threadId: threadId,
       scene: scene,
       turnNumber: turnNumber,
       transcript: transcript,
+      clientTurnId: clientTurnId,
     );
   }
 
@@ -155,105 +408,102 @@ final class _CountingAgentClient implements AgentClient {
   Future<String> transcribeTurn({
     required String threadId,
     required int turnNumber,
+    required String clientTurnId,
   }) {
-    return _delegate.transcribeTurn(threadId: threadId, turnNumber: turnNumber);
+    return _delegate.transcribeTurn(
+      threadId: threadId,
+      turnNumber: turnNumber,
+      clientTurnId: clientTurnId,
+    );
   }
 }
 
-final class _FailOnceReviewAgentClient implements AgentClient {
-  final FakeAgentClient _delegate = FakeAgentClient();
-  int submittedTurns = 0;
-  int reviewRequests = 0;
+final class _CountingAgentClient extends _DelegatingAgentClient {
+  final List<String> turnClientIds = <String>[];
+  final List<String> reviewClientIds = <String>[];
+
+  @override
+  Future<AgentExchange> submitPracticeTurn({
+    required String threadId,
+    required AgentScene scene,
+    required int turnNumber,
+    required String transcript,
+    required String clientTurnId,
+  }) {
+    turnClientIds.add(clientTurnId);
+    return super.submitPracticeTurn(
+      threadId: threadId,
+      scene: scene,
+      turnNumber: turnNumber,
+      transcript: transcript,
+      clientTurnId: clientTurnId,
+    );
+  }
 
   @override
   Future<AgentReview> createReview({
     required String threadId,
     required AgentScene scene,
+    required String clientReviewId,
   }) {
-    reviewRequests++;
-    if (reviewRequests == 1) {
-      throw StateError('temporary review failure');
-    }
-    return _delegate.createReview(threadId: threadId, scene: scene);
-  }
-
-  @override
-  Future<AgentThreadSnapshot> restoreThread() => _delegate.restoreThread();
-
-  @override
-  Future<AgentExchange> sendText({
-    required String threadId,
-    required String text,
-  }) {
-    return _delegate.sendText(threadId: threadId, text: text);
-  }
-
-  @override
-  Future<AgentMessage> startScene({
-    required String threadId,
-    required AgentScene scene,
-  }) {
-    return _delegate.startScene(threadId: threadId, scene: scene);
-  }
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-  }) {
-    submittedTurns++;
-    return _delegate.submitPracticeTurn(
+    reviewClientIds.add(clientReviewId);
+    return super.createReview(
       threadId: threadId,
       scene: scene,
-      turnNumber: turnNumber,
-      transcript: transcript,
+      clientReviewId: clientReviewId,
     );
-  }
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-  }) {
-    return _delegate.transcribeTurn(threadId: threadId, turnNumber: turnNumber);
   }
 }
 
-final class _ControlledAgentClient implements AgentClient {
+final class _ControlledCleanupAgentClient extends _DelegatingAgentClient {
   final sendStarted = Completer<void>();
   final sendResult = Completer<AgentExchange>();
-
-  @override
-  Future<AgentThreadSnapshot> restoreThread() async {
-    return const AgentThreadSnapshot(threadId: 'controlled-thread');
-  }
+  final cleanupStarted = Completer<void>();
+  final cleanupResult = Completer<void>();
+  int cleanupCalls = 0;
 
   @override
   Future<AgentExchange> sendText({
     required String threadId,
     required String text,
+    required String clientMessageId,
   }) {
     sendStarted.complete();
     return sendResult.future;
   }
 
   @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-  }) {
-    throw UnimplementedError();
+  Future<void> clearAccountState() async {
+    cleanupCalls++;
+    cleanupStarted.complete();
+    await cleanupResult.future;
+    await super.clearAccountState();
   }
+}
+
+final class _FailOnceTextAgentClient extends _DelegatingAgentClient {
+  final List<String> messageClientIds = <String>[];
 
   @override
-  Future<AgentMessage> startScene({
+  Future<AgentExchange> sendText({
     required String threadId,
-    required AgentScene scene,
+    required String text,
+    required String clientMessageId,
   }) {
-    throw UnimplementedError();
+    messageClientIds.add(clientMessageId);
+    if (messageClientIds.length == 1) {
+      throw StateError('temporary text failure');
+    }
+    return super.sendText(
+      threadId: threadId,
+      text: text,
+      clientMessageId: clientMessageId,
+    );
   }
+}
+
+final class _FailOnceTurnAgentClient extends _DelegatingAgentClient {
+  final List<String> turnClientIds = <String>[];
 
   @override
   Future<AgentExchange> submitPracticeTurn({
@@ -261,15 +511,161 @@ final class _ControlledAgentClient implements AgentClient {
     required AgentScene scene,
     required int turnNumber,
     required String transcript,
+    required String clientTurnId,
   }) {
-    throw UnimplementedError();
+    turnClientIds.add(clientTurnId);
+    if (turnClientIds.length == 1) {
+      throw StateError('temporary Turn failure');
+    }
+    return super.submitPracticeTurn(
+      threadId: threadId,
+      scene: scene,
+      turnNumber: turnNumber,
+      transcript: transcript,
+      clientTurnId: clientTurnId,
+    );
+  }
+}
+
+final class _FailOnceReviewAgentClient extends _CountingAgentClient {
+  @override
+  Future<AgentReview> createReview({
+    required String threadId,
+    required AgentScene scene,
+    required String clientReviewId,
+  }) {
+    reviewClientIds.add(clientReviewId);
+    if (reviewClientIds.length == 1) {
+      throw StateError('temporary Review failure');
+    }
+    return _delegateReview(
+      threadId: threadId,
+      scene: scene,
+      clientReviewId: clientReviewId,
+    );
+  }
+
+  Future<AgentReview> _delegateReview({
+    required String threadId,
+    required AgentScene scene,
+    required String clientReviewId,
+  }) {
+    return FakeAgentClient().createReview(
+      threadId: threadId,
+      scene: scene,
+      clientReviewId: clientReviewId,
+    );
+  }
+}
+
+final class _SnapshotAgentClient extends _DelegatingAgentClient {
+  _SnapshotAgentClient(this.snapshot);
+
+  final AgentThreadSnapshot snapshot;
+  final List<int> transcribedTurnNumbers = <int>[];
+  final List<String> reviewClientIds = <String>[];
+
+  @override
+  Future<AgentThreadSnapshot> restoreThread() async => snapshot;
+
+  @override
+  Future<String> transcribeTurn({
+    required String threadId,
+    required int turnNumber,
+    required String clientTurnId,
+  }) {
+    transcribedTurnNumbers.add(turnNumber);
+    return super.transcribeTurn(
+      threadId: threadId,
+      turnNumber: turnNumber,
+      clientTurnId: clientTurnId,
+    );
+  }
+
+  @override
+  Future<AgentReview> createReview({
+    required String threadId,
+    required AgentScene scene,
+    required String clientReviewId,
+  }) {
+    reviewClientIds.add(clientReviewId);
+    return super.createReview(
+      threadId: threadId,
+      scene: scene,
+      clientReviewId: clientReviewId,
+    );
+  }
+}
+
+final class _FailOnceRestoreAndSceneAgentClient extends _DelegatingAgentClient {
+  int restoreCalls = 0;
+  final List<String> sceneClientIds = <String>[];
+
+  @override
+  Future<AgentThreadSnapshot> restoreThread() {
+    restoreCalls++;
+    if (restoreCalls == 1) {
+      throw StateError('temporary restore failure');
+    }
+    return super.restoreThread();
+  }
+
+  @override
+  Future<AgentSceneStart> startScene({
+    required String threadId,
+    required AgentScene scene,
+    required String clientOperationId,
+  }) {
+    sceneClientIds.add(clientOperationId);
+    if (sceneClientIds.length == 1) {
+      throw StateError('temporary scene failure');
+    }
+    return super.startScene(
+      threadId: threadId,
+      scene: scene,
+      clientOperationId: clientOperationId,
+    );
+  }
+}
+
+final class _ControlledTranscriptionAgentClient extends _DelegatingAgentClient {
+  final transcriptionStarted = Completer<void>();
+  final transcriptionResult = Completer<String>();
+  int startSceneCalls = 0;
+
+  @override
+  Future<AgentThreadSnapshot> restoreThread() async {
+    return AgentThreadSnapshot(
+      threadId: 'thread_transcription',
+      activeMatter: AgentMatter(
+        id: 'matter_original',
+        scene: agentScenes.first,
+      ),
+      practice: const AgentPracticeSnapshot(completedTurns: 0),
+    );
   }
 
   @override
   Future<String> transcribeTurn({
     required String threadId,
     required int turnNumber,
+    required String clientTurnId,
   }) {
-    throw UnimplementedError();
+    transcriptionStarted.complete();
+    return transcriptionResult.future;
+  }
+
+  @override
+  Future<AgentSceneStart> startScene({
+    required String threadId,
+    required AgentScene scene,
+    required String clientOperationId,
+  }) {
+    startSceneCalls++;
+    return super.startScene(
+      threadId: threadId,
+      scene: scene,
+      clientOperationId: clientOperationId,
+    );
   }
 }

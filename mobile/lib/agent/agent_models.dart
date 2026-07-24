@@ -34,16 +34,57 @@ final class AgentMessage {
   final String text;
 }
 
+/// The user-owned Matter currently selected for one durable Agent Thread.
+///
+/// [scene] remains a presentation model. [id] is the opaque resource identity
+/// that a future real client obtains from the backend.
+final class AgentMatter {
+  const AgentMatter({required this.id, required this.scene});
+
+  final String id;
+  final AgentScene scene;
+}
+
+/// The smallest server-authoritative practice projection needed after restart.
+///
+/// Transient recorder states are deliberately not persisted here. A restored
+/// client resumes from the number of committed Turns and either the existing
+/// Review or the stable pending Review request identity.
+final class AgentPracticeSnapshot {
+  const AgentPracticeSnapshot({
+    required this.completedTurns,
+    this.review,
+    this.pendingReviewClientId,
+  }) : assert(completedTurns >= 0 && completedTurns <= 3),
+       assert(review == null || completedTurns == 3);
+
+  final int completedTurns;
+  final AgentReview? review;
+  final String? pendingReviewClientId;
+}
+
 final class AgentThreadSnapshot {
   const AgentThreadSnapshot({
     required this.threadId,
-    this.scene,
+    this.activeMatter,
+    this.practice,
     this.messages = const <AgentMessage>[],
-  });
+  }) : assert(practice == null || activeMatter != null);
 
   final String threadId;
-  final AgentScene? scene;
+  final AgentMatter? activeMatter;
+  final AgentPracticeSnapshot? practice;
   final List<AgentMessage> messages;
+}
+
+final class AgentSceneStart {
+  const AgentSceneStart({
+    required this.activeMatter,
+    required this.assistantMessage,
+  });
+
+  final AgentMatter activeMatter;
+  final AgentMessage assistantMessage;
 }
 
 final class AgentExchange {

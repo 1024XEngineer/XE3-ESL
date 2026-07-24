@@ -143,7 +143,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         isBusy: widget.agentController.isBusy,
         errorMessage: widget.agentController.errorMessage,
         onSubmitText: widget.agentController.sendText,
-        onRetryText: widget.agentController.retryLastText,
+        onRetryOperation: widget.agentController.canRetry
+            ? widget.agentController.retryLastOperation
+            : null,
       ),
       PreparationPage(
         showBackButton: widget.showBackButton,

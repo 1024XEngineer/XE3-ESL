@@ -12,6 +12,8 @@ void main() {
     'SPEAKUP_API_BASE_URL',
     defaultValue: 'http://127.0.0.1:8080',
   );
+  // #88 remains an explicit local preview until #86 publishes the reviewed
+  // Agent HTTP contract. Authentication is real; Agent data is still Fake.
   final agentController = AgentController(client: FakeAgentClient());
   runApp(
     SpeakUpApp(

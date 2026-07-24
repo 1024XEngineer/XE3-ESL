@@ -20,7 +20,7 @@ class ConversationPage extends StatelessWidget {
     this.isBusy = false,
     this.errorMessage,
     this.onSubmitText,
-    this.onRetryText,
+    this.onRetryOperation,
     super.key,
   });
 
@@ -36,7 +36,7 @@ class ConversationPage extends StatelessWidget {
   final bool isBusy;
   final String? errorMessage;
   final ValueChanged<String>? onSubmitText;
-  final VoidCallback? onRetryText;
+  final VoidCallback? onRetryOperation;
 
   @override
   Widget build(BuildContext context) {
@@ -123,7 +123,7 @@ class ConversationPage extends StatelessWidget {
                               const SizedBox(height: 14),
                               _InlineError(
                                 message: message,
-                                onRetry: onRetryText,
+                                onRetry: onRetryOperation,
                               ),
                             ],
                           ],
@@ -433,7 +433,7 @@ class _InlineError extends StatelessWidget {
             Expanded(child: Text(message)),
             if (onRetry != null)
               TextButton(
-                key: const Key('agent-retry-text-button'),
+                key: const Key('agent-retry-operation-button'),
                 onPressed: onRetry,
                 child: const Text('重试'),
               ),
