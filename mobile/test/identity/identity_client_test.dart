@@ -343,6 +343,70 @@ void main() {
       expect(error.toString(), isNot(contains('abc123==')));
     });
 
+    test('rejects successful responses outside the exact #77 shape', () async {
+      const privateValue = 'sess_unexpected-private-value';
+      for (final body in <String>[
+        '''
+          {
+            "user_id":"user_1",
+            "email":"UPPER@example.com"
+          }
+        ''',
+        '''
+          {
+            "user_id":"user_1",
+            "email":"learner@example.com",
+            "session_token":"$privateValue"
+          }
+        ''',
+      ]) {
+        transport.response = IdentityHttpResponse(statusCode: 200, body: body);
+
+        final error = await _captureIdentityError(
+          client.currentUser(sessionToken: 'sess_opaque-secret'),
+        );
+
+        expect(error.kind, IdentityFailureKind.invalidResponse);
+        expect(error.toString(), isNot(contains(privateValue)));
+      }
+
+      for (final expiresAt in <String>[
+        '2026-08-23',
+        '2026-08-23 10:00:00Z',
+        '2026-08-23T10:00:00',
+        '2026-02-30T10:00:00Z',
+        '2026-13-01T10:00:00Z',
+        '2026-08-23T24:00:00Z',
+        '2026-08-23T10:60:00Z',
+        '2026-08-23T10:00:61Z',
+        '2026-08-23T10:00:00+24:00',
+        '2026-08-23T10:00:00+08:60',
+      ]) {
+        transport.response = IdentityHttpResponse(
+          statusCode: 200,
+          body:
+              '''
+            {
+              "user":{"user_id":"user_1","email":"learner@example.com"},
+              "session_token":"sess_opaque-secret",
+              "token_type":"Bearer",
+              "expires_at":"$expiresAt"
+            }
+          ''',
+        );
+
+        final error = await _captureIdentityError(
+          client.login(
+            email: 'learner@example.com',
+            password: 'correct horse battery staple',
+          ),
+        );
+
+        expect(error.kind, IdentityFailureKind.invalidResponse);
+        expect(error.toString(), isNot(contains('sess_opaque-secret')));
+      }
+    });
+
     test('rejects plaintext non-loopback HTTP for all operations', () {
       expect(
         () => WireIdentityClient(
@@ -376,6 +440,33 @@ void main() {
 
       expect(transport.uri?.scheme, 'http');
       expect(transport.uri?.host, '127.0.0.1');
+    });
+
+    test('rejects unsafe base origins before sending credentials', () {
+      for (final baseUri in <Uri>[
+        Uri.parse('https://api.speak-up.test./'),
+        Uri.parse('https://t%C3%A9st.example/'),
+        Uri.parse('https://api.speak-up.test/#'),
+        Uri.parse('https://sess_configured-token.speak-up.test/'),
+      ]) {
+        final unsafeTransport = _FakeTransport();
+
+        expect(
+          () =>
+              WireIdentityClient(baseUri: baseUri, transport: unsafeTransport),
+          throwsA(
+            isA<ArgumentError>().having(
+              (error) => error.toString(),
+              'redacted error',
+              allOf(
+                isNot(contains(baseUri.toString())),
+                isNot(contains('sess_configured-token')),
+              ),
+            ),
+          ),
+        );
+        expect(unsafeTransport.uri, isNull);
+      }
     });
   });
 }

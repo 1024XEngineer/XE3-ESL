@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -34,7 +35,7 @@ void main() {
         headers: const <String, String>{'Accept': 'application/json'},
       );
 
-      expect(providerReads, 1);
+      expect(providerReads, 2);
       expect(transport.calls, 1);
       expect(
         transport.headers[HttpHeaders.authorizationHeader],
@@ -42,6 +43,50 @@ void main() {
       );
     },
   );
+
+  test('discards a private response after the Session changes', () async {
+    var currentCredential = credential;
+    final response = Completer<IdentityHttpResponse>();
+    final transport = _ControlledTransport(response.future);
+    final authenticatedTransport = SessionAuthenticatedHttpTransport(
+      transport: transport,
+      credentialProvider: () => currentCredential,
+      invalidateSession: _noInvalidation,
+      trustedBaseUri: Uri.parse('https://api.speak-up.test'),
+    );
+
+    final request = authenticatedTransport.send(
+      method: 'GET',
+      uri: Uri.parse('https://api.speak-up.test/v1/private-resource'),
+      headers: const <String, String>{},
+    );
+    await transport.started.future;
+    currentCredential = const AuthSessionCredential(
+      sessionToken: 'sess_replacement-token',
+      generation: 8,
+    );
+    response.complete(
+      const IdentityHttpResponse(
+        statusCode: HttpStatus.ok,
+        body: '{"private":"account-a"}',
+      ),
+    );
+
+    await expectLater(
+      request,
+      throwsA(
+        isA<AuthSessionSupersededException>().having(
+          (error) => error.toString(),
+          'redacted error',
+          allOf(
+            isNot(contains('sess_current-token')),
+            isNot(contains('sess_replacement-token')),
+            isNot(contains('account-a')),
+          ),
+        ),
+      ),
+    );
+  });
 
   test(
     'rejects unsafe or different origins before reading the credential',
@@ -278,5 +323,23 @@ final class _RecordingTransport implements IdentityHttpTransport {
     calls += 1;
     this.headers = headers;
     return const IdentityHttpResponse(statusCode: 200, body: '{}');
+  }
+}
+
+final class _ControlledTransport implements IdentityHttpTransport {
+  _ControlledTransport(this.response);
+
+  final Future<IdentityHttpResponse> response;
+  final started = Completer<void>();
+
+  @override
+  Future<IdentityHttpResponse> send({
+    required String method,
+    required Uri uri,
+    required Map<String, String> headers,
+    String? body,
+  }) {
+    started.complete();
+    return response;
   }
 }

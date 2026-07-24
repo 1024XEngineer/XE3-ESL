@@ -131,6 +131,15 @@ final class SessionAuthenticatedWebSocketConnector {
         uri: uri,
         sessionToken: credential.sessionToken,
       );
+      if (!isSameAuthSessionCredential(credentialProvider(), credential)) {
+        try {
+          await socket.close();
+        } catch (_) {
+          // The connection is already isolated from the caller. A close
+          // failure must not reveal or revive the superseded Session.
+        }
+        throw const AuthSessionSupersededException();
+      }
       return SessionAuthenticatedWebSocketConnection(
         socket: socket,
         credential: credential,

@@ -24,6 +24,28 @@ typedef AuthSessionInvalidator =
       required int expectedGeneration,
     });
 
+bool isSameAuthSessionCredential(
+  AuthSessionCredential? current,
+  AuthSessionCredential captured,
+) {
+  return current != null &&
+      current.generation == captured.generation &&
+      current.sessionToken == captured.sessionToken;
+}
+
+/// A redacted cancellation signal for work that completed after account
+/// switch, logout, or remote invalidation.
+///
+/// The response or connection must not be exposed to the caller because it
+/// belongs to a credential generation that is no longer active.
+final class AuthSessionSupersededException implements Exception {
+  const AuthSessionSupersededException();
+
+  @override
+  String toString() =>
+      'Authenticated operation was discarded because the session changed.';
+}
+
 sealed class AuthState {
   const AuthState();
 }

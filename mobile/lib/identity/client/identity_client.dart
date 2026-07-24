@@ -62,17 +62,19 @@ final class WireIdentityClient implements IdentityClient {
     required Uri baseUri,
     IdentityHttpTransport? transport,
   }) {
-    validateIdentityHttpBaseUri(baseUri);
+    final trustedOrigin = TrustedIdentityHttpOrigin(baseUri);
     return WireIdentityClient._(
       baseUri,
       transport ?? IoIdentityHttpTransport(),
+      trustedOrigin,
     );
   }
 
-  WireIdentityClient._(this._baseUri, this._transport);
+  WireIdentityClient._(this._baseUri, this._transport, this._trustedOrigin);
 
   final Uri _baseUri;
   final IdentityHttpTransport _transport;
+  final TrustedIdentityHttpOrigin _trustedOrigin;
 
   @override
   Future<User> register({
@@ -130,6 +132,8 @@ final class WireIdentityClient implements IdentityClient {
     String? sessionToken,
   }) async {
     final uri = _baseUri.resolve(path);
+    _trustedOrigin.validateResourceUri(uri);
+    validateNoSessionCredentialInUri(uri, sessionToken: sessionToken);
     final headers = <String, String>{
       HttpHeaders.acceptHeader: ContentType.json.mimeType,
       if (body != null)

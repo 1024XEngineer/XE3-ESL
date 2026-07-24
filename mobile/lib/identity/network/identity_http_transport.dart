@@ -82,6 +82,9 @@ final class SessionAuthenticatedHttpTransport implements IdentityHttpTransport {
       },
       body: body,
     );
+    if (!isSameAuthSessionCredential(credentialProvider(), credential)) {
+      throw const AuthSessionSupersededException();
+    }
     if (response.statusCode == HttpStatus.unauthorized) {
       await invalidateSession(
         expectedSessionToken: credential.sessionToken,

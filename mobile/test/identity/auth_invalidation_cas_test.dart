@@ -55,7 +55,7 @@ void main() {
     transport.response.complete(
       const IdentityHttpResponse(statusCode: 401, body: ''),
     );
-    await request;
+    await expectLater(request, throwsA(isA<AuthSessionSupersededException>()));
 
     expect(controller.state, isA<AuthAuthenticated>());
     expect(controller.currentCredential?.sessionToken, 'sess_account-b');
@@ -137,6 +137,49 @@ void main() {
     expect(controller.state, isA<AuthAuthenticated>());
     expect(controller.currentCredential?.sessionToken, 'sess_account-b');
   });
+
+  test(
+    'A WebSocket late successful Upgrade is closed before B sees it',
+    () async {
+      final controller = AuthController(
+        identityClient: _IdentityClient(
+          currentUserResult: userA,
+          loginResult: loginB,
+        ),
+        sessionStore: _SessionStore('sess_account-a'),
+      );
+      await controller.initialize();
+
+      final connector = _ControlledWebSocketConnector();
+      final authenticatedConnector = SessionAuthenticatedWebSocketConnector(
+        connector: connector,
+        credentialProvider: () => controller.currentCredential,
+        invalidateSession: controller.invalidateSession,
+        trustedBaseUri: Uri.parse('wss://api.speak-up.test'),
+      );
+      final connection = authenticatedConnector.connect(
+        uri: Uri.parse('wss://api.speak-up.test/events'),
+      );
+      await connector.started.future;
+
+      await controller.logout();
+      controller.showLogin();
+      await controller.login(
+        email: userB.email,
+        password: 'long password value',
+      );
+      final oldSocket = _TrackedWebSocket();
+      connector.result.complete(oldSocket);
+
+      await expectLater(
+        connection,
+        throwsA(isA<AuthSessionSupersededException>()),
+      );
+      expect(oldSocket.closeCount, 1);
+      expect(controller.state, isA<AuthAuthenticated>());
+      expect(controller.currentCredential?.sessionToken, 'sess_account-b');
+    },
+  );
 
   test('current HTTP 401 invalidates the captured session', () async {
     final controller = AuthController(
@@ -277,6 +320,18 @@ final class _ControlledWebSocketConnector
 }
 
 final class _WebSocket implements WebSocket {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _TrackedWebSocket implements WebSocket {
+  int closeCount = 0;
+
+  @override
+  Future<void> close([int? code, String? reason]) async {
+    closeCount++;
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
