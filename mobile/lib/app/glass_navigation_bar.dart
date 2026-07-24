@@ -24,18 +24,39 @@ class GlassNavigationBar extends StatelessWidget {
 
   static const height = 74.0;
   static const minimumBottomInset = 12.0;
+  static const _maximumLabelScale = 1.5;
 
   final List<GlassNavigationDestination> destinations;
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
 
+  static double heightFor(BuildContext context) {
+    final labelScale = _labelScaleFor(context);
+    return height + ((labelScale - 1) * 14);
+  }
+
+  static double _labelScaleFor(BuildContext context) {
+    return MediaQuery.textScalerOf(
+      context,
+    ).scale(1).clamp(1.0, _maximumLabelScale).toDouble();
+  }
+
   @override
   Widget build(BuildContext context) {
     final highContrast = MediaQuery.highContrastOf(context);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final navigationHeight = heightFor(context);
+    final horizontalInset = MediaQuery.sizeOf(context).width >= 390
+        ? 20.0
+        : 16.0;
 
     return SafeArea(
-      minimum: const EdgeInsets.fromLTRB(16, 0, 16, minimumBottomInset),
+      minimum: EdgeInsets.fromLTRB(
+        horizontalInset,
+        0,
+        horizontalInset,
+        minimumBottomInset,
+      ),
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(32),
@@ -53,12 +74,12 @@ class GlassNavigationBar extends StatelessWidget {
             filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
             child: Container(
               key: const Key('primary-navigation'),
-              height: height,
+              height: navigationHeight,
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
                 color: highContrast
                     ? const Color(0xFFF8F8F6)
-                    : const Color(0xE6FFFFFF),
+                    : const Color(0xDEFFFFFF),
                 borderRadius: BorderRadius.circular(32),
                 border: Border.all(
                   color: highContrast
@@ -106,6 +127,8 @@ class _NavigationItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final labelScale = GlassNavigationBar._labelScaleFor(context);
+
     return Semantics(
       key: destination.key,
       button: true,
@@ -124,7 +147,7 @@ class _NavigationItem extends StatelessWidget {
                   : const Duration(milliseconds: 180),
               curve: Curves.easeOutCubic,
               decoration: BoxDecoration(
-                color: selected ? const Color(0xFFE8E8E5) : Colors.transparent,
+                color: selected ? const Color(0xD9E8E8E5) : Colors.transparent,
                 borderRadius: BorderRadius.circular(26),
                 border: selected
                     ? Border.all(color: const Color(0xCFFFFFFF))
@@ -141,15 +164,21 @@ class _NavigationItem extends StatelessWidget {
                         : const Color(0xFF686A72),
                   ),
                   const SizedBox(height: 3),
-                  Text(
-                    destination.label,
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: selected
-                          ? const Color(0xFF111217)
-                          : const Color(0xFF686A72),
-                      fontSize: 11,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      destination.label,
+                      maxLines: 1,
+                      textScaler: TextScaler.linear(labelScale),
+                      style: TextStyle(
+                        color: selected
+                            ? const Color(0xFF111217)
+                            : const Color(0xFF686A72),
+                        fontSize: 11,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                      ),
                     ),
                   ),
                 ],

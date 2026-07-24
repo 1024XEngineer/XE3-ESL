@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
-import 'package:speakup/features/conversation/conversation.dart';
 import 'package:speakup/features/practice/practice.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/review/review.dart';
@@ -31,7 +30,7 @@ class SpeakUpApp extends StatelessWidget {
         AppRoutes.home: (_) => const SpeakUpShell(),
         AppRoutes.preparation: (_) => const PreparationPage(),
         AppRoutes.practice: (_) => const PracticePage(),
-        AppRoutes.conversation: (_) => const ConversationPage(),
+        AppRoutes.conversation: (_) => const SpeakUpShell(),
         AppRoutes.review: (_) => const ReviewPage(),
       },
     );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
@@ -39,6 +40,8 @@ void main() {
     );
     final navigationRect = tester.getRect(navigation);
     expect(navigationRect.top - composerRect.bottom, closeTo(10, 1));
+    expect(navigationRect.left, closeTo(composerRect.left, 1));
+    expect(navigationRect.right, closeTo(composerRect.right, 1));
 
     final semantics = tester.ensureSemantics();
     expect(
@@ -189,6 +192,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
+    final lastAction = find.byKey(const Key('quick-action-recent-review'));
+    await tester.ensureVisible(lastAction);
+    await tester.pumpAndSettle();
+    final lastActionRect = tester.getRect(lastAction);
+    final restingComposerRect = tester.getRect(
+      find.byKey(const Key('agent-composer-surface')),
+    );
+    expect(
+      restingComposerRect.top - lastActionRect.bottom,
+      greaterThanOrEqualTo(16),
+    );
+    expect(lastAction.hitTestable(), findsOneWidget);
+
     await tester.tap(find.byKey(const Key('primary-tab-scenes')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -209,6 +225,86 @@ void main() {
     expect(keyboardTop - composerRect.bottom, closeTo(10, 1));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('supports larger system text without covering Agent actions', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(402, 874);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpAndSettle();
+
+    final lastAction = find.byKey(const Key('quick-action-recent-review'));
+    await tester.ensureVisible(lastAction);
+    await tester.pumpAndSettle();
+
+    final lastActionRect = tester.getRect(lastAction);
+    final composerRect = tester.getRect(
+      find.byKey(const Key('agent-composer-surface')),
+    );
+    expect(composerRect.top - lastActionRect.bottom, greaterThanOrEqualTo(16));
+    expect(lastAction.hitTestable(), findsOneWidget);
+    expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'keeps navigation and drawer usable at accessibility text sizes',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      await tester.pumpWidget(const SpeakUpApp());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      final selectedLabel = tester.renderObject<RenderParagraph>(
+        find.text('SpeakUp'),
+      );
+      expect(selectedLabel.didExceedMaxLines, isFalse);
+
+      final lastAction = find.byKey(const Key('quick-action-recent-review'));
+      await tester.ensureVisible(lastAction);
+      await tester.pumpAndSettle();
+      final lastActionRect = tester.getRect(lastAction);
+      final composerRect = tester.getRect(
+        find.byKey(const Key('agent-composer-surface')),
+      );
+      expect(
+        composerRect.top - lastActionRect.bottom,
+        greaterThanOrEqualTo(16),
+      );
+      expect(lastAction.hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SpeakUpApp());
+      await tester.pumpAndSettle();
+
+      final menuButton = find.byKey(const Key('conversation-menu-button'));
+      await tester.tap(menuButton);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(Drawer), findsOneWidget);
+
+      await tester.drag(find.byType(ListView), const Offset(0, -1000));
+      await tester.pumpAndSettle();
+      final mockLabel = find.text('当前内容为 UI Mock');
+      expect(mockLabel.hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 const _primaryTabKeys = [

@@ -30,6 +30,7 @@ class ConversationPage extends StatelessWidget {
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final textScaler = MediaQuery.textScalerOf(context);
     final titleSize = width < 350 ? 30.0 : 36.0;
+    final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
 
     return Scaffold(
       key: const Key('agent-home-page'),
@@ -38,65 +39,67 @@ class ConversationPage extends StatelessWidget {
       body: Stack(
         children: [
           const Positioned.fill(child: _AgentBackground()),
-          SafeArea(
-            bottom: false,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    12,
-                    horizontalPadding,
-                    keyboardVisible ? 142 : 250,
-                  ),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: (constraints.maxHeight - 230).clamp(
-                        300,
-                        double.infinity,
+          Positioned.fill(
+            child: SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: EdgeInsets.only(bottom: composerBottom),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          12,
+                          horizontalPadding,
+                          0,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _AgentTopBar(
+                              onOpenMenu: onOpenMenu,
+                              onVoicePlaceholder: onVoicePlaceholder,
+                            ),
+                            SizedBox(height: width < 350 ? 32 : 48),
+                            const _Greeting(),
+                            const SizedBox(height: 8),
+                            Text(
+                              '我能为你做什么？',
+                              style: TextStyle(
+                                color: const Color(0xFF0B0B0D),
+                                fontSize: titleSize,
+                                fontWeight: FontWeight.w600,
+                                height: 1.12,
+                                letterSpacing: -0.8,
+                              ),
+                            ),
+                            SizedBox(height: width < 350 ? 20 : 26),
+                            _QuickActions(
+                              compact: width < 350 || textScaler.scale(1) > 1.2,
+                              onCreatePlan: onCreatePlan,
+                              onContinuePractice: onContinuePractice,
+                              onOpenReview: onOpenReview,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _AgentTopBar(
-                          onOpenMenu: onOpenMenu,
-                          onVoicePlaceholder: onVoicePlaceholder,
-                        ),
-                        SizedBox(height: width < 350 ? 32 : 48),
-                        const _Greeting(),
-                        const SizedBox(height: 8),
-                        Text(
-                          '我能为你做什么？',
-                          style: TextStyle(
-                            color: const Color(0xFF0B0B0D),
-                            fontSize: titleSize,
-                            fontWeight: FontWeight.w800,
-                            height: 1.12,
-                            letterSpacing: -1.2,
-                          ),
-                        ),
-                        SizedBox(height: width < 350 ? 20 : 26),
-                        _QuickActions(
-                          compact: width < 350 || textScaler.scale(1) > 1.2,
-                          onCreatePlan: onCreatePlan,
-                          onContinuePractice: onContinuePractice,
-                          onOpenReview: onOpenReview,
-                        ),
-                      ],
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        horizontalPadding,
+                        16,
+                        horizontalPadding,
+                        0,
+                      ),
+                      child: _AgentComposer(
+                        keyboardVisible: keyboardVisible,
+                        onVoicePlaceholder: onVoicePlaceholder,
+                      ),
                     ),
-                  ),
-                );
-              },
-            ),
-          ),
-          Positioned(
-            left: horizontalPadding,
-            right: horizontalPadding,
-            bottom: keyboardVisible ? 10 : restingComposerBottom,
-            child: _AgentComposer(
-              keyboardVisible: keyboardVisible,
-              onVoicePlaceholder: onVoicePlaceholder,
+                  ],
+                ),
+              ),
             ),
           ),
         ],
@@ -134,8 +137,6 @@ class _AgentTopBar extends StatelessWidget {
           onPressed: onOpenMenu,
         ),
         const Spacer(),
-        const _BrandCapsule(),
-        const Spacer(),
         _RoundGlassButton(
           tooltip: '语音播放，尚未接入',
           icon: Icons.volume_up_outlined,
@@ -171,34 +172,6 @@ class _RoundGlassButton extends StatelessWidget {
             icon: Icon(icon, color: const Color(0xFF15161A)),
             iconSize: 25,
             constraints: const BoxConstraints.tightFor(width: 48, height: 48),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BrandCapsule extends StatelessWidget {
-  const _BrandCapsule();
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(24),
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-        child: Container(
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 18),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: const Color(0xD9FFFFFF),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: const Color(0xBFFFFFFF)),
-          ),
-          child: const Text(
-            'SpeakUp',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
           ),
         ),
       ),
@@ -296,39 +269,34 @@ class _QuickActionButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(28),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x12000000),
-              blurRadius: 16,
-              offset: Offset(0, 7),
+              color: Color(0x10000000),
+              blurRadius: 14,
+              offset: Offset(0, 6),
             ),
           ],
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(28),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: Material(
-              color: const Color(0xE6FFFFFF),
-              child: InkWell(
-                key: actionKey,
-                onTap: onPressed,
-                child: Container(
-                  constraints: const BoxConstraints(minHeight: 50),
-                  padding: EdgeInsets.symmetric(
-                    horizontal: compact ? 18 : 22,
-                    vertical: 11,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: const Color(0xFFFFFFFF)),
-                  ),
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      color: const Color(0xFF15161A),
-                      fontSize: compact ? 15 : 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+        child: Material(
+          color: const Color(0xDEFFFFFF),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+            side: const BorderSide(color: Color(0xF2FFFFFF)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            key: actionKey,
+            onTap: onPressed,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 50),
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 18 : 22,
+                vertical: 11,
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: const Color(0xFF15161A),
+                  fontSize: compact ? 15 : 16,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
@@ -370,7 +338,7 @@ class _AgentComposer extends StatelessWidget {
             constraints: BoxConstraints(minHeight: keyboardVisible ? 82 : 104),
             padding: const EdgeInsets.fromLTRB(12, 9, 10, 9),
             decoration: BoxDecoration(
-              color: const Color(0xEFFFFFFF),
+              color: const Color(0xE6FFFFFF),
               borderRadius: BorderRadius.circular(28),
               border: Border.all(color: const Color(0xFFFFFFFF)),
             ),

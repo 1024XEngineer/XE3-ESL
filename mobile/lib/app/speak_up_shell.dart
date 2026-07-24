@@ -61,7 +61,8 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       MediaQuery.viewPaddingOf(context).bottom,
       GlassNavigationBar.minimumBottomInset,
     );
-    final composerBottomInset = GlassNavigationBar.height + safeBottom + 10;
+    final composerBottomInset =
+        GlassNavigationBar.heightFor(context) + safeBottom + 10;
     final pages = [
       ConversationPage(
         restingComposerBottom: composerBottomInset,
@@ -70,7 +71,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onContinuePractice: () =>
             Navigator.of(context).pushNamed(AppRoutes.practice),
         onOpenReview: () => _selectDestination(2),
-        onVoicePlaceholder: () => _showMockNotice('语音能力将在后续任务接入'),
+        onVoicePlaceholder: () => _showMockNotice('该能力将在后续任务接入'),
       ),
       const PreparationPage(),
       const ReviewPage(),
@@ -105,57 +106,51 @@ class _ConversationDrawer extends StatelessWidget {
       width: 300,
       backgroundColor: const Color(0xFFF5F5F2),
       child: SafeArea(
-        child: Padding(
+        child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'SpeakUp',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'SpeakUp',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
                   ),
-                  IconButton(
-                    tooltip: '关闭对话菜单',
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                key: const Key('new-conversation-button'),
-                onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.edit_square),
-                label: const Text('开始新对话'),
-              ),
-              const SizedBox(height: 28),
-              const Text(
-                '最近对话',
-                style: TextStyle(
-                  color: Color(0xFF777983),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
                 ),
+                IconButton(
+                  tooltip: '关闭对话菜单',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              key: const Key('new-conversation-button'),
+              onPressed: () => Navigator.of(context).pop(),
+              icon: const Icon(Icons.edit_square),
+              label: const Text('开始新对话'),
+            ),
+            const SizedBox(height: 28),
+            const Text(
+              '最近对话',
+              style: TextStyle(
+                color: Color(0xFF777983),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
               ),
-              const SizedBox(height: 8),
-              const _ConversationTile(title: '准备后端开发模拟面试', subtitle: '刚刚'),
-              const _ConversationTile(title: '项目经历怎么说更清楚', subtitle: '昨天'),
-              const _ConversationTile(title: '系统设计表达复盘', subtitle: '7 月 22 日'),
-              const Spacer(),
-              const Text(
-                '当前内容为 UI Mock',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFF989AA3), fontSize: 12),
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 8),
+            const _ConversationTile(title: '准备后端开发模拟面试', subtitle: '刚刚'),
+            const _ConversationTile(title: '项目经历怎么说更清楚', subtitle: '昨天'),
+            const _ConversationTile(title: '系统设计表达复盘', subtitle: '7 月 22 日'),
+            const SizedBox(height: 28),
+            const Text(
+              '当前内容为 UI Mock',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF989AA3), fontSize: 12),
+            ),
+          ],
         ),
       ),
     );
