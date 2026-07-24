@@ -13,6 +13,24 @@ import 'package:speakup/identity/session_store.dart';
 import 'package:speakup/main.dart' as production;
 
 void main() {
+  test('iOS allows local development traffic without a global ATS bypass', () {
+    final plist = File('ios/Runner/Info.plist').readAsStringSync();
+
+    expect(
+      plist,
+      matches(
+        RegExp(
+          r'<key>NSAppTransportSecurity</key>\s*'
+          r'<dict>\s*'
+          r'<key>NSAllowsLocalNetworking</key>\s*'
+          r'<true\s*/>\s*'
+          r'</dict>',
+        ),
+      ),
+    );
+    expect(plist, isNot(contains('<key>NSAllowsArbitraryLoads</key>')));
+  });
+
   testWidgets(
     'production composition restores Auth and Agent data without Fake fallback',
     (tester) async {
