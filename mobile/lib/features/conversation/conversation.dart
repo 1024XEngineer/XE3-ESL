@@ -4,6 +4,7 @@ library;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:speakup/agent/agent_models.dart';
 
 class ConversationPage extends StatelessWidget {
   const ConversationPage({
@@ -14,6 +15,12 @@ class ConversationPage extends StatelessWidget {
     this.onContinuePractice,
     this.onOpenReview,
     this.onVoicePlaceholder,
+    this.messages = const <AgentMessage>[],
+    this.activeScene,
+    this.isBusy = false,
+    this.errorMessage,
+    this.onSubmitText,
+    this.onRetryText,
     super.key,
   });
 
@@ -24,6 +31,12 @@ class ConversationPage extends StatelessWidget {
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
   final VoidCallback? onVoicePlaceholder;
+  final List<AgentMessage> messages;
+  final AgentScene? activeScene;
+  final bool isBusy;
+  final String? errorMessage;
+  final ValueChanged<String>? onSubmitText;
+  final VoidCallback? onRetryText;
 
   @override
   Widget build(BuildContext context) {
@@ -65,25 +78,54 @@ class ConversationPage extends StatelessWidget {
                               onVoicePlaceholder: onVoicePlaceholder,
                             ),
                             SizedBox(height: width < 350 ? 32 : 48),
-                            const _Greeting(),
-                            const SizedBox(height: 8),
-                            Text(
-                              '我能为你做什么？',
-                              style: TextStyle(
-                                color: const Color(0xFF0B0B0D),
-                                fontSize: titleSize,
-                                fontWeight: FontWeight.w600,
-                                height: 1.12,
-                                letterSpacing: -0.8,
+                            if (messages.isEmpty) ...[
+                              const _Greeting(),
+                              const SizedBox(height: 8),
+                              Text(
+                                '我能为你做什么？',
+                                style: TextStyle(
+                                  color: const Color(0xFF0B0B0D),
+                                  fontSize: titleSize,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.12,
+                                  letterSpacing: -0.8,
+                                ),
                               ),
-                            ),
-                            SizedBox(height: width < 350 ? 20 : 26),
-                            _QuickActions(
-                              compact: width < 350 || textScaler.scale(1) > 1.2,
-                              onCreatePlan: onCreatePlan,
-                              onContinuePractice: onContinuePractice,
-                              onOpenReview: onOpenReview,
-                            ),
+                              SizedBox(height: width < 350 ? 20 : 26),
+                              _QuickActions(
+                                compact:
+                                    width < 350 || textScaler.scale(1) > 1.2,
+                                onCreatePlan: onCreatePlan,
+                                onContinuePractice: onContinuePractice,
+                                onOpenReview: onOpenReview,
+                              ),
+                            ] else ...[
+                              Text(
+                                activeScene?.title ?? 'Agent 对话',
+                                key: const Key('agent-thread-title'),
+                                style: TextStyle(
+                                  color: const Color(0xFF0B0B0D),
+                                  fontSize: width < 350 ? 25 : 29,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                              _MessageList(messages: messages),
+                            ],
+                            if (isBusy) ...[
+                              const SizedBox(height: 14),
+                              const LinearProgressIndicator(
+                                key: Key('agent-operation-progress'),
+                                minHeight: 2,
+                              ),
+                            ],
+                            if (errorMessage case final message?) ...[
+                              const SizedBox(height: 14),
+                              _InlineError(
+                                message: message,
+                                onRetry: onRetryText,
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -98,6 +140,8 @@ class ConversationPage extends StatelessWidget {
                       child: _AgentComposer(
                         keyboardVisible: keyboardVisible,
                         onVoicePlaceholder: onVoicePlaceholder,
+                        onSubmitText: onSubmitText,
+                        isBusy: isBusy,
                       ),
                     ),
                   ],
@@ -318,14 +362,134 @@ class _QuickActionButton extends StatelessWidget {
   }
 }
 
-class _AgentComposer extends StatelessWidget {
+class _MessageList extends StatelessWidget {
+  const _MessageList({required this.messages});
+
+  final List<AgentMessage> messages;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('agent-message-list'),
+      children: [
+        for (final message in messages)
+          Align(
+            alignment: message.role == AgentMessageRole.user
+                ? Alignment.centerRight
+                : Alignment.centerLeft,
+            child: Container(
+              key: Key('agent-message-${message.id}'),
+              constraints: const BoxConstraints(maxWidth: 310),
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+              decoration: BoxDecoration(
+                color: message.role == AgentMessageRole.user
+                    ? const Color(0xFF202124)
+                    : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: message.role == AgentMessageRole.user
+                      ? const Color(0xFF202124)
+                      : const Color(0xFFE6E6E2),
+                ),
+              ),
+              child: Text(
+                message.text,
+                style: TextStyle(
+                  color: message.role == AgentMessageRole.user
+                      ? Colors.white
+                      : const Color(0xFF202124),
+                  height: 1.45,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFFFF3F1),
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.error_outline_rounded,
+              size: 20,
+              color: Color(0xFF8B2E26),
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+            if (onRetry != null)
+              TextButton(
+                key: const Key('agent-retry-text-button'),
+                onPressed: onRetry,
+                child: const Text('重试'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentComposer extends StatefulWidget {
   const _AgentComposer({
     required this.keyboardVisible,
     required this.onVoicePlaceholder,
+    required this.onSubmitText,
+    required this.isBusy,
   });
 
   final bool keyboardVisible;
   final VoidCallback? onVoicePlaceholder;
+  final ValueChanged<String>? onSubmitText;
+  final bool isBusy;
+
+  @override
+  State<_AgentComposer> createState() => _AgentComposerState();
+}
+
+class _AgentComposerState extends State<_AgentComposer> {
+  final _controller = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_handleTextChanged);
+  }
+
+  @override
+  void dispose() {
+    _controller
+      ..removeListener(_handleTextChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleTextChanged() {
+    setState(() {});
+  }
+
+  void _submit() {
+    final text = _controller.text.trim();
+    if (text.isEmpty || widget.isBusy || widget.onSubmitText == null) {
+      return;
+    }
+    widget.onSubmitText!(text);
+    _controller.clear();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -346,7 +510,9 @@ class _AgentComposer extends StatelessWidget {
           filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
           child: Container(
             key: const Key('agent-composer-surface'),
-            constraints: BoxConstraints(minHeight: keyboardVisible ? 82 : 104),
+            constraints: BoxConstraints(
+              minHeight: widget.keyboardVisible ? 82 : 104,
+            ),
             padding: const EdgeInsets.fromLTRB(12, 9, 10, 9),
             decoration: BoxDecoration(
               color: const Color(0xE6FFFFFF),
@@ -358,9 +524,12 @@ class _AgentComposer extends StatelessWidget {
               children: [
                 TextField(
                   key: const Key('agent-composer-field'),
+                  controller: _controller,
+                  enabled: !widget.isBusy,
                   minLines: 1,
                   maxLines: 2,
                   textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _submit(),
                   decoration: const InputDecoration(
                     hintText: '问问 SpeakUp',
                     hintStyle: TextStyle(
@@ -372,29 +541,29 @@ class _AgentComposer extends StatelessWidget {
                     contentPadding: EdgeInsets.fromLTRB(4, 4, 4, 2),
                   ),
                 ),
-                if (!keyboardVisible) const SizedBox(height: 5),
+                if (!widget.keyboardVisible) const SizedBox(height: 5),
                 Row(
                   children: [
                     IconButton(
                       tooltip: '添加内容，尚未接入',
-                      onPressed: onVoicePlaceholder,
+                      onPressed: widget.onVoicePlaceholder,
                       icon: const Icon(Icons.add_rounded),
                     ),
                     IconButton(
                       tooltip: '调整偏好，尚未接入',
-                      onPressed: onVoicePlaceholder,
+                      onPressed: widget.onVoicePlaceholder,
                       icon: const Icon(Icons.tune_rounded),
                     ),
                     const Spacer(),
                     Semantics(
                       key: const Key('agent-mic-placeholder'),
                       button: true,
-                      label: '语音输入，即将开放',
-                      onTap: onVoicePlaceholder,
+                      label: '开始按轮语音练习',
+                      onTap: widget.onVoicePlaceholder,
                       child: ExcludeSemantics(
                         child: IconButton.filledTonal(
-                          tooltip: '语音输入，即将开放',
-                          onPressed: onVoicePlaceholder,
+                          tooltip: '开始按轮语音练习',
+                          onPressed: widget.onVoicePlaceholder,
                           style: IconButton.styleFrom(
                             backgroundColor: const Color(0xFFE8E8E5),
                             foregroundColor: const Color(0xFF44464D),
@@ -404,10 +573,16 @@ class _AgentComposer extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    const IconButton.filled(
-                      tooltip: '发送，尚未接入',
-                      onPressed: null,
-                      icon: Icon(Icons.arrow_upward_rounded),
+                    IconButton.filled(
+                      key: const Key('agent-send-button'),
+                      tooltip: '发送',
+                      onPressed:
+                          _controller.text.trim().isEmpty ||
+                              widget.isBusy ||
+                              widget.onSubmitText == null
+                          ? null
+                          : _submit,
+                      icon: const Icon(Icons.arrow_upward_rounded),
                     ),
                   ],
                 ),

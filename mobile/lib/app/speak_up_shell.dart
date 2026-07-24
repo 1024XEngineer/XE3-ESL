@@ -1,16 +1,28 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/features/conversation/conversation.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/review/review.dart';
+import 'package:speakup/identity/auth_controller.dart';
+import 'package:speakup/identity/model/identity_models.dart';
 
 class SpeakUpShell extends StatefulWidget {
-  const SpeakUpShell({this.showBackButton = false, super.key});
+  const SpeakUpShell({
+    this.showBackButton = false,
+    this.user,
+    this.authController,
+    required this.agentController,
+    super.key,
+  });
 
   final bool showBackButton;
+  final User? user;
+  final AuthController? authController;
+  final AgentController agentController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -42,6 +54,29 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
+  bool _reviewPresented = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.agentController.addListener(_handleAgentState);
+  }
+
+  @override
+  void didUpdateWidget(covariant SpeakUpShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.agentController == widget.agentController) {
+      return;
+    }
+    oldWidget.agentController.removeListener(_handleAgentState);
+    widget.agentController.addListener(_handleAgentState);
+  }
+
+  @override
+  void dispose() {
+    widget.agentController.removeListener(_handleAgentState);
+    super.dispose();
+  }
 
   void _selectDestination(int index) {
     if (_selectedIndex == index) {
@@ -54,6 +89,33 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _openPractice() {
+    Navigator.of(context).pushNamed(AppRoutes.practice);
+  }
+
+  void _openVoicePractice() {
+    if (!widget.agentController.hasActivePractice) {
+      _selectDestination(1);
+      _showMockNotice('请先选择一个练习场景');
+      return;
+    }
+    _openPractice();
+  }
+
+  void _handleAgentState() {
+    if (!mounted) {
+      return;
+    }
+    final review = widget.agentController.review;
+    if (review == null) {
+      _reviewPresented = false;
+    } else if (!_reviewPresented) {
+      _reviewPresented = true;
+      _selectedIndex = 2;
+    }
+    setState(() {});
   }
 
   @override
@@ -73,14 +135,30 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             ? () => Navigator.of(context).maybePop()
             : null,
         onCreatePlan: () => _selectDestination(1),
-        onContinuePractice: () =>
-            Navigator.of(context).pushNamed(AppRoutes.practice),
+        onContinuePractice: _openPractice,
         onOpenReview: () => _selectDestination(2),
-        onVoicePlaceholder: () => _showMockNotice('该能力将在后续任务接入'),
+        onVoicePlaceholder: _openVoicePractice,
+        messages: widget.agentController.messages,
+        activeScene: widget.agentController.scene,
+        isBusy: widget.agentController.isBusy,
+        errorMessage: widget.agentController.errorMessage,
+        onSubmitText: widget.agentController.sendText,
+        onRetryText: widget.agentController.retryLastText,
       ),
-      PreparationPage(showBackButton: widget.showBackButton),
-      ReviewPage(showBackButton: widget.showBackButton),
-      _ProfilePage(showBackButton: widget.showBackButton),
+      PreparationPage(
+        showBackButton: widget.showBackButton,
+        agentController: widget.agentController,
+        onSceneSelected: () => _selectDestination(0),
+      ),
+      ReviewPage(
+        showBackButton: widget.showBackButton,
+        agentController: widget.agentController,
+      ),
+      _ProfilePage(
+        showBackButton: widget.showBackButton,
+        user: widget.user,
+        onLogout: widget.authController?.logout,
+      ),
     ];
 
     return Scaffold(
@@ -181,9 +259,15 @@ class _ConversationTile extends StatelessWidget {
 }
 
 class _ProfilePage extends StatelessWidget {
-  const _ProfilePage({required this.showBackButton});
+  const _ProfilePage({
+    required this.showBackButton,
+    required this.user,
+    required this.onLogout,
+  });
 
   final bool showBackButton;
+  final User? user;
+  final VoidCallback? onLogout;
 
   @override
   Widget build(BuildContext context) {
@@ -208,24 +292,36 @@ class _ProfilePage extends StatelessWidget {
         bottom: false,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 28, 20, 140),
-          children: const [
-            Text(
+          children: [
+            const Text(
               '我的',
               style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
             ),
-            SizedBox(height: 8),
-            Text(
-              '个人资料与偏好将在后续任务中接入。',
+            const SizedBox(height: 8),
+            const Text(
+              '账号、练习进度与本机 Session。',
               style: TextStyle(color: Color(0xFF696B73), fontSize: 15),
             ),
-            SizedBox(height: 28),
+            const SizedBox(height: 28),
             Card(
               elevation: 0,
+              color: Colors.white,
               child: ListTile(
-                leading: CircleAvatar(child: Icon(Icons.person_rounded)),
-                title: Text('演示用户'),
-                subtitle: Text('固定身份 · UI Mock'),
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFE8E8E5),
+                  foregroundColor: Color(0xFF35363A),
+                  child: Icon(Icons.person_rounded),
+                ),
+                title: Text(user?.email ?? '本地界面预览'),
+                subtitle: Text(user == null ? '尚未连接正式账号' : '当前登录账号'),
               ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              key: const Key('profile-logout-button'),
+              onPressed: onLogout,
+              icon: const Icon(Icons.logout_rounded),
+              label: Text(user == null ? '预览模式不可退出' : '退出登录'),
             ),
           ],
         ),
