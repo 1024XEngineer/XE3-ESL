@@ -1,10 +1,13 @@
 package identity
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -295,12 +298,295 @@ func TestIdentityRequestsRejectInvalidUTF8WithoutChangingPassword(t *testing.T) 
 		bytes.NewReader(raw),
 	)
 	request.RemoteAddr = "192.0.2.1:12345"
+	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("unexpected status: %d", response.Code)
 	}
 	assertErrorCode(t, response, "invalid_request")
+}
+
+func TestIdentityRequestsRejectUnpairedJSONSurrogates(t *testing.T) {
+	app := completeApplicationStub()
+	app.register = func(context.Context, string, string) (User, error) {
+		t.Fatal("register must not receive an unpaired surrogate")
+		return User{}, nil
+	}
+	app.login = func(context.Context, string, string) (LoginResult, error) {
+		t.Fatal("login must not receive an unpaired surrogate")
+		return LoginResult{}, nil
+	}
+	router := newTestRouter(
+		t,
+		app,
+		authenticatorStub(func(
+			context.Context,
+			string,
+		) (requestcontext.Actor, error) {
+			return requestcontext.Actor{}, ErrAuthenticationRequired
+		}),
+		defaultTestRateLimits(),
+	)
+	tests := []struct {
+		name     string
+		endpoint string
+		body     string
+	}{
+		{
+			name:     "register lone high surrogate",
+			endpoint: "/v1/auth/register",
+			body:     `{"email":"learner@example.com","password":"12345678901234\ud800"}`,
+		},
+		{
+			name:     "login lone low surrogate",
+			endpoint: "/v1/auth/login",
+			body:     `{"email":"learner@example.com","password":"12345678901234\udc00"}`,
+		},
+		{
+			name:     "login mismatched pair",
+			endpoint: "/v1/auth/login",
+			body:     `{"email":"learner@example.com","password":"12345678901234\ud800\u0041"}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := performRequest(
+				router,
+				http.MethodPost,
+				test.endpoint,
+				test.body,
+				"",
+			)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("unexpected status: %d", response.Code)
+			}
+			assertErrorCode(t, response, "invalid_request")
+		})
+	}
+}
+
+func TestIdentityRequestsPreserveValidJSONSurrogatePairs(t *testing.T) {
+	const password = "12345678901234😀"
+	app := completeApplicationStub()
+	app.register = func(
+		_ context.Context,
+		_ string,
+		gotPassword string,
+	) (User, error) {
+		if gotPassword != password {
+			t.Fatalf("register password = %q, want %q", gotPassword, password)
+		}
+		return User{ID: "user-1", Email: "learner@example.com"}, nil
+	}
+	app.login = func(
+		_ context.Context,
+		_ string,
+		gotPassword string,
+	) (LoginResult, error) {
+		if gotPassword != password {
+			t.Fatalf("login password = %q, want %q", gotPassword, password)
+		}
+		return LoginResult{
+			User:      User{ID: "user-1", Email: "learner@example.com"},
+			Token:     "sess_secret",
+			ExpiresAt: time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC),
+		}, nil
+	}
+	router := newTestRouter(
+		t,
+		app,
+		authenticatorStub(func(
+			context.Context,
+			string,
+		) (requestcontext.Actor, error) {
+			return requestcontext.Actor{}, ErrAuthenticationRequired
+		}),
+		defaultTestRateLimits(),
+	)
+	body := `{"email":"learner@example.com","password":"12345678901234\ud83d\ude00"}`
+	for _, test := range []struct {
+		endpoint string
+		status   int
+	}{
+		{"/v1/auth/register", http.StatusCreated},
+		{"/v1/auth/login", http.StatusOK},
+	} {
+		response := performRequest(
+			router,
+			http.MethodPost,
+			test.endpoint,
+			body,
+			"",
+		)
+		if response.Code != test.status {
+			t.Fatalf(
+				"%s status = %d, body = %s",
+				test.endpoint,
+				response.Code,
+				response.Body,
+			)
+		}
+	}
+}
+
+func TestJSONSurrogateValidationDoesNotRejectLiteralReplacementCharacter(t *testing.T) {
+	for _, raw := range [][]byte{
+		[]byte(`{"password":"12345678901234\ufffd"}`),
+		[]byte(`{"password":"12345678901234�"}`),
+		[]byte(`{"password":"12345678901234\\ud800"}`),
+	} {
+		if !validJSONSurrogates(raw) {
+			t.Fatalf("valid JSON string rejected: %s", raw)
+		}
+	}
+}
+
+func TestIdentityCredentialsRequireExactUnambiguousJSON(t *testing.T) {
+	app := completeApplicationStub()
+	app.register = func(context.Context, string, string) (User, error) {
+		t.Fatal("ambiguous register request reached application")
+		return User{}, nil
+	}
+	app.login = func(context.Context, string, string) (LoginResult, error) {
+		t.Fatal("ambiguous login request reached application")
+		return LoginResult{}, nil
+	}
+	router := newTestRouter(
+		t,
+		app,
+		authenticatorStub(func(context.Context, string) (requestcontext.Actor, error) {
+			return requestcontext.Actor{}, ErrAuthenticationRequired
+		}),
+		defaultTestRateLimits(),
+	)
+	bodies := []string{
+		`{"email":"first@example.com","email":"second@example.com","password":"correct horse battery staple"}`,
+		`{"Email":"learner@example.com","password":"correct horse battery staple"}`,
+		`{"email":"learner@example.com","Password":"correct horse battery staple"}`,
+	}
+	for _, endpoint := range []string{"/v1/auth/register", "/v1/auth/login"} {
+		for _, body := range bodies {
+			response := performRequest(router, http.MethodPost, endpoint, body, "")
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("%s accepted %s: %d", endpoint, body, response.Code)
+			}
+			assertErrorCode(t, response, "invalid_request")
+		}
+	}
+}
+
+func TestIdentityCredentialsRequireApplicationJSON(t *testing.T) {
+	router := newTestRouter(
+		t,
+		completeApplicationStub(),
+		authenticatorStub(func(context.Context, string) (requestcontext.Actor, error) {
+			return requestcontext.Actor{}, ErrAuthenticationRequired
+		}),
+		defaultTestRateLimits(),
+	)
+	body := `{"email":"learner@example.com","password":"correct horse battery staple"}`
+	tests := []struct {
+		name        string
+		contentType string
+		want        int
+	}{
+		{name: "missing", contentType: "", want: http.StatusBadRequest},
+		{name: "text", contentType: "text/plain", want: http.StatusBadRequest},
+		{name: "invalid charset", contentType: "application/json; charset=iso-8859-1", want: http.StatusBadRequest},
+		{name: "utf8 charset", contentType: "application/json; charset=UTF-8", want: http.StatusCreated},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/v1/auth/register",
+				strings.NewReader(body),
+			)
+			request.RemoteAddr = "192.0.2.1:12345"
+			if test.contentType != "" {
+				request.Header.Set("Content-Type", test.contentType)
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+			}
+		})
+	}
+}
+
+func TestIdentityBodyReadDeadlineRejectsSlowDrip(t *testing.T) {
+	app := completeApplicationStub()
+	app.register = func(context.Context, string, string) (User, error) {
+		t.Fatal("timed-out body reached application")
+		return User{}, nil
+	}
+	router := newTestRouterWithOptions(
+		t,
+		app,
+		authenticatorStub(func(context.Context, string) (requestcontext.Actor, error) {
+			return requestcontext.Actor{}, ErrAuthenticationRequired
+		}),
+		defaultTestRateLimits(),
+		WithBodyReadTimeout(30*time.Millisecond),
+	)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	address := strings.TrimPrefix(server.URL, "http://")
+	connection, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatalf("dial server: %v", err)
+	}
+	defer connection.Close()
+	if _, err := fmt.Fprintf(
+		connection,
+		"POST /v1/auth/register HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"email\":",
+		address,
+	); err != nil {
+		t.Fatalf("write slow request: %v", err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
+	if err != nil {
+		t.Fatalf("read timeout response: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("slow body status = %d", response.StatusCode)
+	}
+}
+
+func TestPasswordAdmissionFailureHasStablePublicBoundary(t *testing.T) {
+	app := completeApplicationStub()
+	app.register = func(context.Context, string, string) (User, error) {
+		return User{}, ErrPasswordUnavailable
+	}
+	app.login = func(context.Context, string, string) (LoginResult, error) {
+		return LoginResult{}, ErrPasswordUnavailable
+	}
+	router := newTestRouter(
+		t,
+		app,
+		authenticatorStub(func(context.Context, string) (requestcontext.Actor, error) {
+			return requestcontext.Actor{}, ErrAuthenticationRequired
+		}),
+		defaultTestRateLimits(),
+	)
+	for _, endpoint := range []string{"/v1/auth/register", "/v1/auth/login"} {
+		response := performRequest(
+			router,
+			http.MethodPost,
+			endpoint,
+			`{"email":"learner@example.com","password":"correct horse battery staple"}`,
+			"",
+		)
+		if response.Code != http.StatusTooManyRequests ||
+			response.Header().Get("Retry-After") != "1" {
+			t.Fatalf("%s unavailable response = %d %#v", endpoint, response.Code, response.Header())
+		}
+		assertErrorCode(t, response, "rate_limited")
+	}
 }
 
 func TestLoginFailuresAreIndistinguishable(t *testing.T) {
@@ -401,6 +687,16 @@ func newTestRouter(
 	authenticator Authenticator,
 	limits RateLimiters,
 ) *gin.Engine {
+	return newTestRouterWithOptions(t, app, authenticator, limits)
+}
+
+func newTestRouterWithOptions(
+	t *testing.T,
+	app Application,
+	authenticator Authenticator,
+	limits RateLimiters,
+	options ...HTTPOption,
+) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	handler, err := NewHTTPHandler(
@@ -408,6 +704,7 @@ func newTestRouter(
 		authenticator,
 		limits,
 		func() string { return "corr_test" },
+		options...,
 	)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -434,6 +731,9 @@ func performRequest(
 ) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.RemoteAddr = "192.0.2.1:12345"
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	if authorization != "" {
 		request.Header.Set("Authorization", authorization)
 	}

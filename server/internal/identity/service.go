@@ -24,7 +24,6 @@ type Service struct {
 	repository Repository
 	passwords  PasswordHasher
 	tokens     SessionTokens
-	clock      Clock
 	dummyHash  string
 }
 
@@ -32,10 +31,9 @@ func NewService(
 	repository Repository,
 	passwords PasswordHasher,
 	tokens SessionTokens,
-	clock Clock,
 	dummyHash string,
 ) (*Service, error) {
-	if repository == nil || passwords == nil || tokens == nil || clock == nil ||
+	if repository == nil || passwords == nil || tokens == nil ||
 		dummyHash == "" {
 		return nil, errors.New("identity: service dependency is required")
 	}
@@ -43,7 +41,6 @@ func NewService(
 		repository: repository,
 		passwords:  passwords,
 		tokens:     tokens,
-		clock:      clock,
 		dummyHash:  dummyHash,
 	}, nil
 }
@@ -57,7 +54,7 @@ func (s *Service) Register(
 	if err != nil || ValidatePassword(password) != nil {
 		return User{}, ErrInvalidRequest
 	}
-	passwordHash, err := s.passwords.Hash(password)
+	passwordHash, err := s.passwords.Hash(ctx, password)
 	if err != nil {
 		return User{}, err
 	}
@@ -66,7 +63,6 @@ func (s *Service) Register(
 		ctx,
 		canonicalEmail,
 		passwordHash,
-		s.clock.Now().UTC(),
 	)
 	if errors.Is(err, ErrConflict) {
 		return User{}, ErrRegistrationUnavailable
@@ -98,7 +94,7 @@ func (s *Service) Login(
 		return LoginResult{}, repositoryErr
 	}
 
-	valid, needsRehash, err := s.passwords.Verify(password, encodedHash)
+	valid, needsRehash, err := s.passwords.Verify(ctx, password, encodedHash)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -108,7 +104,7 @@ func (s *Service) Login(
 
 	var replacementHash string
 	if needsRehash {
-		replacementHash, err = s.passwords.Hash(password)
+		replacementHash, err = s.passwords.Hash(ctx, password)
 		if err != nil {
 			return LoginResult{}, err
 		}
@@ -118,16 +114,18 @@ func (s *Service) Login(
 	if err != nil {
 		return LoginResult{}, err
 	}
-	now := s.clock.Now().UTC()
 	session, err := s.repository.CreateSession(ctx, CreateSessionParams{
-		UserID:          credential.User.ID,
-		TokenDigest:     tokenDigest,
-		CreatedAt:       now,
-		ExpiresAt:       now.Add(sessionLifetime),
-		PreviousHash:    credential.PasswordHash,
-		ReplacementHash: replacementHash,
+		UserID:              credential.User.ID,
+		TokenDigest:         tokenDigest,
+		CredentialUpdatedAt: credential.UpdatedAt,
+		Lifetime:            sessionLifetime,
+		PreviousHash:        credential.PasswordHash,
+		ReplacementHash:     replacementHash,
 	})
 	if err != nil {
+		if errors.Is(err, ErrAuthenticationChanged) {
+			return LoginResult{}, ErrInvalidCredentials
+		}
 		return LoginResult{}, err
 	}
 	return LoginResult{
@@ -144,11 +142,9 @@ func (s *Service) AuthenticateSession(
 	if !s.tokens.ValidWireFormat(rawToken) {
 		return requestcontext.Actor{}, ErrAuthenticationRequired
 	}
-	now := s.clock.Now().UTC()
 	session, err := s.repository.FindSessionByTokenDigest(
 		ctx,
 		s.tokens.Digest(rawToken),
-		now,
 	)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -157,8 +153,7 @@ func (s *Service) AuthenticateSession(
 		return requestcontext.Actor{}, err
 	}
 	if session.User.Status != AccountActive ||
-		session.SessionID == "" ||
-		!session.ExpiresAt.After(now) {
+		session.SessionID == "" {
 		return requestcontext.Actor{}, ErrAuthenticationRequired
 	}
 	actor := requestcontext.Actor{
@@ -182,7 +177,6 @@ func (s *Service) Logout(
 		ctx,
 		actor.UserID,
 		actor.SessionID,
-		s.clock.Now().UTC(),
 		logoutReason,
 	)
 }
@@ -218,11 +212,6 @@ func (s *Service) RevokeAllSessionsForUser(
 	return s.repository.RevokeAllSessionsForUser(
 		ctx,
 		userID,
-		s.clock.Now().UTC(),
 		reason,
 	)
 }
-
-type SystemClock struct{}
-
-func (SystemClock) Now() time.Time { return time.Now() }

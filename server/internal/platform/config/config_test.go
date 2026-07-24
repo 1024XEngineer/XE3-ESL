@@ -7,11 +7,14 @@ func TestLoadUsesEnvironment(t *testing.T) {
 	t.Setenv("SERVER_PORT", "9000")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("DATABASE_URL", "postgres://speakup:secret@127.0.0.1:5432/speakup")
+	t.Setenv("TRUSTED_PROXY_CIDRS", "10.0.0.0/8, 2001:db8::/32")
 
 	cfg := Load()
 	if cfg.Address() != "127.0.0.1:9000" ||
 		cfg.LogLevel != "debug" ||
-		cfg.DatabaseURL != "postgres://speakup:secret@127.0.0.1:5432/speakup" {
+		cfg.DatabaseURL != "postgres://speakup:secret@127.0.0.1:5432/speakup" ||
+		len(cfg.TrustedProxyCIDRs) != 2 ||
+		cfg.TrustedProxyCIDRs[1] != "2001:db8::/32" {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
 }

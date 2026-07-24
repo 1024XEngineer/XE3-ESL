@@ -13,22 +13,21 @@ import (
 )
 
 type repositoryStub struct {
-	createUser       func(context.Context, string, string, time.Time) (User, error)
+	createUser       func(context.Context, string, string) (User, error)
 	findCredential   func(context.Context, string) (Credential, error)
 	createSession    func(context.Context, CreateSessionParams) (Session, error)
-	findSession      func(context.Context, []byte, time.Time) (SessionIdentity, error)
+	findSession      func(context.Context, []byte) (SessionIdentity, error)
 	findUser         func(context.Context, string) (User, error)
-	revokeSession    func(context.Context, string, string, time.Time, string) error
-	revokeAllSession func(context.Context, string, time.Time, string) error
+	revokeSession    func(context.Context, string, string, string) error
+	revokeAllSession func(context.Context, string, string) error
 }
 
 func (r repositoryStub) CreateUserWithCredential(
 	ctx context.Context,
 	email string,
 	hash string,
-	now time.Time,
 ) (User, error) {
-	return r.createUser(ctx, email, hash, now)
+	return r.createUser(ctx, email, hash)
 }
 
 func (r repositoryStub) FindCredentialByEmail(
@@ -48,9 +47,8 @@ func (r repositoryStub) CreateSession(
 func (r repositoryStub) FindSessionByTokenDigest(
 	ctx context.Context,
 	digest []byte,
-	now time.Time,
 ) (SessionIdentity, error) {
-	return r.findSession(ctx, digest, now)
+	return r.findSession(ctx, digest)
 }
 
 func (r repositoryStub) FindUserByID(
@@ -64,35 +62,37 @@ func (r repositoryStub) RevokeSession(
 	ctx context.Context,
 	userID string,
 	sessionID string,
-	now time.Time,
 	reason string,
 ) error {
-	return r.revokeSession(ctx, userID, sessionID, now, reason)
+	return r.revokeSession(ctx, userID, sessionID, reason)
 }
 
 func (r repositoryStub) RevokeAllSessionsForUser(
 	ctx context.Context,
 	userID string,
-	now time.Time,
 	reason string,
 ) error {
-	return r.revokeAllSession(ctx, userID, now, reason)
+	return r.revokeAllSession(ctx, userID, reason)
 }
 
 type passwordHasherStub struct {
-	hash   func(string) (string, error)
-	verify func(string, string) (bool, bool, error)
+	hash   func(context.Context, string) (string, error)
+	verify func(context.Context, string, string) (bool, bool, error)
 }
 
-func (h passwordHasherStub) Hash(password string) (string, error) {
-	return h.hash(password)
+func (h passwordHasherStub) Hash(
+	ctx context.Context,
+	password string,
+) (string, error) {
+	return h.hash(ctx, password)
 }
 
 func (h passwordHasherStub) Verify(
+	ctx context.Context,
 	password string,
 	hash string,
 ) (bool, bool, error) {
-	return h.verify(password, hash)
+	return h.verify(ctx, password, hash)
 }
 
 type tokenStub struct{}
@@ -103,37 +103,28 @@ func (tokenStub) Generate() (string, []byte, error) {
 func (tokenStub) Digest(string) []byte        { return []byte("digest") }
 func (tokenStub) ValidWireFormat(string) bool { return true }
 
-type fixedClock time.Time
-
-func (c fixedClock) Now() time.Time { return time.Time(c) }
-
 func TestRegisterNormalizesEmailAndMapsConcurrentConflict(t *testing.T) {
-	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 	var gotEmail, gotHash string
 	repository := completeRepositoryStub()
 	repository.createUser = func(
 		_ context.Context,
 		email string,
 		hash string,
-		gotNow time.Time,
 	) (User, error) {
 		gotEmail, gotHash = email, hash
-		if gotNow != now {
-			t.Fatalf("unexpected time: %v", gotNow)
-		}
 		return User{}, ErrConflict
 	}
 	service := mustService(t, repository, passwordHasherStub{
-		hash: func(password string) (string, error) {
+		hash: func(_ context.Context, password string) (string, error) {
 			if password != "correct horse battery staple" {
 				t.Fatalf("unexpected password")
 			}
 			return "phc-hash", nil
 		},
-		verify: func(string, string) (bool, bool, error) {
+		verify: func(context.Context, string, string) (bool, bool, error) {
 			return false, false, nil
 		},
-	}, now)
+	}, time.Time{})
 
 	_, err := service.Register(
 		context.Background(),
@@ -155,8 +146,8 @@ func TestLoginUsesDummyHashForUnknownAccount(t *testing.T) {
 	}
 	var verifiedHash string
 	service := mustService(t, repository, passwordHasherStub{
-		hash: func(string) (string, error) { return "hash", nil },
-		verify: func(_ string, hash string) (bool, bool, error) {
+		hash: func(context.Context, string) (string, error) { return "hash", nil },
+		verify: func(_ context.Context, _ string, hash string) (bool, bool, error) {
 			verifiedHash = hash
 			return true, false, nil
 		},
@@ -215,7 +206,11 @@ func TestLoginCreatesFiniteSessionAndCarriesRehashAtomically(t *testing.T) {
 	}
 	repository := completeRepositoryStub()
 	repository.findCredential = func(context.Context, string) (Credential, error) {
-		return Credential{User: user, PasswordHash: "old-hash"}, nil
+		return Credential{
+			User:         user,
+			PasswordHash: "old-hash",
+			UpdatedAt:    now,
+		}, nil
 	}
 	var got CreateSessionParams
 	repository.createSession = func(
@@ -226,12 +221,12 @@ func TestLoginCreatesFiniteSessionAndCarriesRehashAtomically(t *testing.T) {
 		return Session{
 			ID:        "session-1",
 			UserID:    user.ID,
-			ExpiresAt: params.ExpiresAt,
+			ExpiresAt: now.Add(params.Lifetime),
 		}, nil
 	}
 	service := mustService(t, repository, passwordHasherStub{
-		hash: func(string) (string, error) { return "new-hash", nil },
-		verify: func(_, hash string) (bool, bool, error) {
+		hash: func(context.Context, string) (string, error) { return "new-hash", nil },
+		verify: func(_ context.Context, _, hash string) (bool, bool, error) {
 			return hash == "old-hash", true, nil
 		},
 	}, now)
@@ -248,26 +243,75 @@ func TestLoginCreatesFiniteSessionAndCarriesRehashAtomically(t *testing.T) {
 		result.ExpiresAt != now.Add(30*24*time.Hour) ||
 		got.PreviousHash != "old-hash" ||
 		got.ReplacementHash != "new-hash" ||
+		got.CredentialUpdatedAt != now ||
+		got.Lifetime != sessionLifetime ||
 		!reflect.DeepEqual(got.TokenDigest, []byte("digest")) {
 		t.Fatalf("unexpected login result/params: %#v, %#v", result, got)
 	}
 }
 
-func TestAuthenticateSessionRejectsExpiredSession(t *testing.T) {
-	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+func TestLoginHidesAuthenticationStateChangedDuringSessionCommit(t *testing.T) {
+	repository := completeRepositoryStub()
+	repository.findCredential = func(context.Context, string) (Credential, error) {
+		return Credential{
+			User: User{
+				ID:     "user-1",
+				Email:  "learner@example.com",
+				Status: AccountActive,
+			},
+			PasswordHash: "stored-hash",
+			UpdatedAt:    time.Unix(1_000, 0),
+		}, nil
+	}
+	repository.createSession = func(
+		context.Context,
+		CreateSessionParams,
+	) (Session, error) {
+		return Session{}, ErrAuthenticationChanged
+	}
+	service := mustService(t, repository, defaultHasherStub(), time.Time{})
+	if _, err := service.Login(
+		context.Background(),
+		"learner@example.com",
+		"correct horse battery staple",
+	); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("authentication state change leaked: %v", err)
+	}
+}
+
+func TestServicePropagatesPasswordContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	repository := completeRepositoryStub()
+	service := mustService(t, repository, passwordHasherStub{
+		hash: func(got context.Context, _ string) (string, error) {
+			if !errors.Is(got.Err(), context.Canceled) {
+				t.Fatalf("hash context was not propagated: %v", got.Err())
+			}
+			return "", got.Err()
+		},
+		verify: func(context.Context, string, string) (bool, bool, error) {
+			return false, false, nil
+		},
+	}, time.Time{})
+	if _, err := service.Register(
+		ctx,
+		"learner@example.com",
+		"correct horse battery staple",
+	); !errors.Is(err, context.Canceled) {
+		t.Fatalf("register cancellation = %v", err)
+	}
+}
+
+func TestAuthenticateSessionMapsRepositoryExpiryToAuthenticationRequired(t *testing.T) {
 	repository := completeRepositoryStub()
 	repository.findSession = func(
 		context.Context,
 		[]byte,
-		time.Time,
 	) (SessionIdentity, error) {
-		return SessionIdentity{
-			User:      User{ID: "user-1", Status: AccountActive},
-			SessionID: "session-1",
-			ExpiresAt: now,
-		}, nil
+		return SessionIdentity{}, ErrNotFound
 	}
-	service := mustService(t, repository, defaultHasherStub(), now)
+	service := mustService(t, repository, defaultHasherStub(), time.Time{})
 
 	if _, err := service.AuthenticateSession(
 		context.Background(),
@@ -285,12 +329,11 @@ func TestLogoutUsesOnlyTrustedActor(t *testing.T) {
 		_ context.Context,
 		userID string,
 		sessionID string,
-		revokedAt time.Time,
 		reason string,
 	) error {
 		got = requestcontext.Actor{UserID: userID, SessionID: sessionID}
-		if revokedAt != now || reason != "logout" {
-			t.Fatalf("unexpected revoke metadata: %v, %q", revokedAt, reason)
+		if reason != "logout" {
+			t.Fatalf("unexpected revoke reason: %q", reason)
 		}
 		return nil
 	}
@@ -312,7 +355,6 @@ func TestConcurrentRegistrationHasOneWinner(t *testing.T) {
 		context.Context,
 		string,
 		string,
-		time.Time,
 	) (User, error) {
 		if created.Add(1) == 1 {
 			return User{
@@ -364,7 +406,6 @@ func TestRepeatedLogoutIsIdempotentAtRepositoryBoundary(t *testing.T) {
 		context.Context,
 		string,
 		string,
-		time.Time,
 		string,
 	) error {
 		calls.Add(1)
@@ -393,7 +434,6 @@ func mustService(
 		repository,
 		hasher,
 		tokenStub{},
-		fixedClock(now),
 		"dummy-hash",
 	)
 	if err != nil {
@@ -404,8 +444,8 @@ func mustService(
 
 func defaultHasherStub() PasswordHasher {
 	return passwordHasherStub{
-		hash: func(string) (string, error) { return "hash", nil },
-		verify: func(string, string) (bool, bool, error) {
+		hash: func(context.Context, string) (string, error) { return "hash", nil },
+		verify: func(context.Context, string, string) (bool, bool, error) {
 			return true, false, nil
 		},
 	}
@@ -413,7 +453,7 @@ func defaultHasherStub() PasswordHasher {
 
 func completeRepositoryStub() repositoryStub {
 	return repositoryStub{
-		createUser: func(context.Context, string, string, time.Time) (User, error) {
+		createUser: func(context.Context, string, string) (User, error) {
 			return User{}, nil
 		},
 		findCredential: func(context.Context, string) (Credential, error) {
@@ -428,7 +468,6 @@ func completeRepositoryStub() repositoryStub {
 		findSession: func(
 			context.Context,
 			[]byte,
-			time.Time,
 		) (SessionIdentity, error) {
 			return SessionIdentity{}, ErrNotFound
 		},
@@ -439,7 +478,6 @@ func completeRepositoryStub() repositoryStub {
 			context.Context,
 			string,
 			string,
-			time.Time,
 			string,
 		) error {
 			return nil
@@ -447,7 +485,6 @@ func completeRepositoryStub() repositoryStub {
 		revokeAllSession: func(
 			context.Context,
 			string,
-			time.Time,
 			string,
 		) error {
 			return nil

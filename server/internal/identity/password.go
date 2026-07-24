@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
@@ -18,6 +20,8 @@ const (
 	minPasswordCharacters  = 15
 	maxPasswordCharacters  = 128
 	defaultHashConcurrency = 2
+	defaultHashQueue       = 4
+	defaultHashWait        = 2 * time.Second
 	maxArgon2MemoryKiB     = 256 * 1024
 	maxArgon2Iterations    = 10
 	maxArgon2Parallelism   = 8
@@ -46,9 +50,11 @@ func DefaultArgon2idParams() Argon2idParams {
 }
 
 type Argon2idHasher struct {
-	params    Argon2idParams
-	random    io.Reader
-	semaphore chan struct{}
+	params        Argon2idParams
+	random        io.Reader
+	semaphore     chan struct{}
+	admission     chan struct{}
+	admissionWait time.Duration
 }
 
 func NewArgon2idHasher(
@@ -56,29 +62,49 @@ func NewArgon2idHasher(
 	random io.Reader,
 	maxConcurrent int,
 ) (*Argon2idHasher, error) {
+	return NewArgon2idHasherWithAdmission(
+		params,
+		random,
+		maxConcurrent,
+		maxConcurrent*2,
+		defaultHashWait,
+	)
+}
+
+func NewArgon2idHasherWithAdmission(
+	params Argon2idParams,
+	random io.Reader,
+	maxConcurrent int,
+	maxQueued int,
+	admissionWait time.Duration,
+) (*Argon2idHasher, error) {
 	if err := validateArgon2idParams(params); err != nil {
 		return nil, err
 	}
 	if random == nil {
 		random = rand.Reader
 	}
-	if maxConcurrent < 1 {
-		return nil, errors.New("identity: Argon2id concurrency must be positive")
+	if maxConcurrent < 1 || maxQueued < 0 || admissionWait <= 0 {
+		return nil, errors.New("identity: invalid Argon2id admission configuration")
 	}
 	return &Argon2idHasher{
-		params:    params,
-		random:    random,
-		semaphore: make(chan struct{}, maxConcurrent),
+		params:        params,
+		random:        random,
+		semaphore:     make(chan struct{}, maxConcurrent),
+		admission:     make(chan struct{}, maxConcurrent+maxQueued),
+		admissionWait: admissionWait,
 	}, nil
 }
 
 // NewDefaultArgon2idHasher caps concurrent hashes at two, bounding this
 // process's default Argon2id working set to approximately 128 MiB.
 func NewDefaultArgon2idHasher() (*Argon2idHasher, error) {
-	return NewArgon2idHasher(
+	return NewArgon2idHasherWithAdmission(
 		DefaultArgon2idParams(),
 		rand.Reader,
 		defaultHashConcurrency,
+		defaultHashQueue,
+		defaultHashWait,
 	)
 }
 
@@ -93,9 +119,21 @@ func ValidatePassword(password string) error {
 	return nil
 }
 
-func (h *Argon2idHasher) Hash(password string) (string, error) {
-	h.semaphore <- struct{}{}
-	defer func() { <-h.semaphore }()
+func (h *Argon2idHasher) Hash(
+	ctx context.Context,
+	password string,
+) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	release, err := h.acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 
 	salt := make([]byte, h.params.SaltLength)
 	if _, err := io.ReadFull(h.random, salt); err != nil {
@@ -113,6 +151,7 @@ func (h *Argon2idHasher) Hash(password string) (string, error) {
 }
 
 func (h *Argon2idHasher) Verify(
+	ctx context.Context,
 	password string,
 	encodedHash string,
 ) (bool, bool, error) {
@@ -120,8 +159,18 @@ func (h *Argon2idHasher) Verify(
 	if err != nil {
 		return false, false, err
 	}
+	if err := ctx.Err(); err != nil {
+		return false, false, err
+	}
 
-	h.semaphore <- struct{}{}
+	release, err := h.acquire(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	defer release()
+	if err := ctx.Err(); err != nil {
+		return false, false, err
+	}
 	actual := argon2.IDKey(
 		[]byte(password),
 		salt,
@@ -130,10 +179,45 @@ func (h *Argon2idHasher) Verify(
 		params.Parallelism,
 		uint32(len(expected)),
 	)
-	<-h.semaphore
-
 	valid := subtle.ConstantTimeCompare(actual, expected) == 1
 	return valid, valid && params != h.params, nil
+}
+
+func (h *Argon2idHasher) acquire(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case h.admission <- struct{}{}:
+	default:
+		return nil, ErrPasswordUnavailable
+	}
+
+	timer := time.NewTimer(h.admissionWait)
+	select {
+	case h.semaphore <- struct{}{}:
+		stopTimer(timer)
+		return func() {
+			<-h.semaphore
+			<-h.admission
+		}, nil
+	case <-ctx.Done():
+		stopTimer(timer)
+		<-h.admission
+		return nil, ctx.Err()
+	case <-timer.C:
+		<-h.admission
+		return nil, ErrPasswordUnavailable
+	}
+}
+
+func stopTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
 }
 
 func encodeArgon2id(params Argon2idParams, salt, hash []byte) string {

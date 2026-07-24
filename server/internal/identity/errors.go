@@ -11,4 +11,6 @@ var (
 	ErrNotFound                = errors.New("identity repository: not found")
 	ErrConflict                = errors.New("identity repository: conflict")
 	ErrRepository              = errors.New("identity repository: operation failed")
+	ErrAuthenticationChanged   = errors.New("identity repository: authentication state changed")
+	ErrPasswordUnavailable     = errors.New("identity: password hashing unavailable")
 )
