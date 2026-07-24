@@ -16,8 +16,8 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
     required AuthSessionCredentialProvider credentialProvider,
     required AuthSessionInvalidator invalidateSession,
     IdentityHttpTransport? transport,
-    Duration pollInterval = const Duration(milliseconds: 300),
-    int maxRunPollAttempts = 20,
+    Duration pollInterval = const Duration(seconds: 1),
+    int maxRunPollAttempts = 75,
     int maxMessagePollAttempts = 4,
     Duration requestTimeout = const Duration(seconds: 75),
   }) {
@@ -183,9 +183,9 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
           rethrow;
         }
         if (_ambiguousSubmissions.contains(operationKey)) {
-          _ambiguousSubmissions.remove(operationKey);
           if (initialRun.status == _WireRunStatus.failed &&
               initialRun.failureRetryable) {
+            _ambiguousSubmissions.remove(operationKey);
             final recoveredFailure = _FailedRun(
               runId: initialRun.id,
               threadId: threadId,
@@ -205,13 +205,36 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
         initialRun: initialRun,
       );
       _requireCurrentGeneration(generation);
+      var resolvedRun = terminalRun;
 
-      if (terminalRun.status == _WireRunStatus.failed) {
-        if (terminalRun.failureRetryable) {
+      if (_ambiguousSubmissions.contains(operationKey) &&
+          resolvedRun.status == _WireRunStatus.failed &&
+          resolvedRun.failureRetryable) {
+        _ambiguousSubmissions.remove(operationKey);
+        final recoveredFailure = _FailedRun(
+          runId: resolvedRun.id,
+          threadId: threadId,
+          inputMessageId: resolvedRun.inputMessageId,
+          content: text,
+        );
+        _failedRuns[operationKey] = recoveredFailure;
+        resolvedRun = await _pollUntilTerminal(
+          generation: generation,
+          initialRun: await _retryRun(
+            generation: generation,
+            failedRun: recoveredFailure,
+          ),
+        );
+        _requireCurrentGeneration(generation);
+      }
+      _ambiguousSubmissions.remove(operationKey);
+
+      if (resolvedRun.status == _WireRunStatus.failed) {
+        if (resolvedRun.failureRetryable) {
           _failedRuns[operationKey] = _FailedRun(
-            runId: terminalRun.id,
+            runId: resolvedRun.id,
             threadId: threadId,
-            inputMessageId: terminalRun.inputMessageId,
+            inputMessageId: resolvedRun.inputMessageId,
             content: text,
           );
         } else {
@@ -219,14 +242,13 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
         }
         throw AgentClientException(
           kind: AgentClientFailureKind.runFailed,
-          errorCode: terminalRun.failureKind,
-          retryable: terminalRun.failureRetryable,
+          errorCode: resolvedRun.failureKind,
+          retryable: resolvedRun.failureRetryable,
         );
       }
 
       _failedRuns.remove(operationKey);
-      _ambiguousSubmissions.remove(operationKey);
-      return _loadCompletedExchange(generation: generation, run: terminalRun);
+      return _loadCompletedExchange(generation: generation, run: resolvedRun);
     });
   }
 
@@ -533,9 +555,8 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
   }
 
   AgentClientException _exceptionFor(IdentityHttpResponse response) {
-    String? errorCode;
+    String? decodedErrorCode;
     String? correlationId;
-    bool? bodyRetryable;
     try {
       final root = _strictObject(
         jsonDecode(response.body),
@@ -558,20 +579,27 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
           'correlation_id',
         },
       );
-      errorCode = _strictString(error['code'], minLength: 1, maxLength: 64);
+      decodedErrorCode = _strictString(
+        error['code'],
+        minLength: 1,
+        maxLength: 64,
+      );
       _strictString(error['message'], minLength: 1, maxLength: 512);
-      bodyRetryable = _strictBool(error['retryable']);
+      _strictBool(error['retryable']);
       correlationId = _strictString(
         error['correlation_id'],
         minLength: 1,
         maxLength: 128,
       );
     } catch (_) {
-      errorCode = null;
+      decodedErrorCode = null;
       correlationId = null;
-      bodyRetryable = null;
     }
 
+    final errorCode = _normalizedAgentErrorCode(
+      statusCode: response.statusCode,
+      decodedErrorCode: decodedErrorCode,
+    );
     final kind = switch (response.statusCode) {
       HttpStatus.badRequest => AgentClientFailureKind.invalidRequest,
       HttpStatus.unauthorized => AgentClientFailureKind.authenticationRequired,
@@ -583,9 +611,7 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
     };
     final retryable =
         kind == AgentClientFailureKind.rateLimited ||
-        kind == AgentClientFailureKind.server ||
-        (bodyRetryable == true &&
-            kind != AgentClientFailureKind.authenticationRequired);
+        kind == AgentClientFailureKind.server;
     return AgentClientException(
       kind: kind,
       statusCode: response.statusCode,
@@ -593,6 +619,37 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
       retryable: retryable,
       correlationId: correlationId,
     );
+  }
+
+  String? _normalizedAgentErrorCode({
+    required int statusCode,
+    required String? decodedErrorCode,
+  }) {
+    final allowedCode = switch ((statusCode, decodedErrorCode)) {
+      (HttpStatus.badRequest, 'invalid_request') => 'invalid_request',
+      (HttpStatus.unauthorized, 'authentication_required') =>
+        'authentication_required',
+      (HttpStatus.notFound, 'resource_not_found') => 'resource_not_found',
+      (HttpStatus.conflict, 'idempotency_key_conflict') =>
+        'idempotency_key_conflict',
+      (HttpStatus.conflict, 'resource_conflict') => 'resource_conflict',
+      (HttpStatus.tooManyRequests, 'rate_limited') => 'rate_limited',
+      (>= 500, 'internal_error') => 'internal_error',
+      _ => null,
+    };
+    if (allowedCode != null) {
+      return allowedCode;
+    }
+
+    return switch (statusCode) {
+      HttpStatus.badRequest => 'invalid_request',
+      HttpStatus.unauthorized => 'authentication_required',
+      HttpStatus.notFound => 'resource_not_found',
+      HttpStatus.conflict => 'resource_conflict',
+      HttpStatus.tooManyRequests => 'rate_limited',
+      >= 500 => 'internal_error',
+      _ => null,
+    };
   }
 
   Future<T> _runAccountOperation<T>(
@@ -932,6 +989,9 @@ _WireRun _decodeRun(String body) {
             pattern: _failureKindPattern,
             maxLength: 64,
           );
+    if (failureKind != null && !_knownRunFailureKinds.contains(failureKind)) {
+      throw const _InvalidAgentResponse();
+    }
     final failureRetryable = failureObject == null
         ? false
         : _strictBool(failureObject['retryable']);
@@ -1156,6 +1216,21 @@ final RegExp _clientIdentityPattern = RegExp(
 );
 final RegExp _providerPattern = RegExp(r'^[a-z][a-z0-9_-]{0,63}$');
 final RegExp _failureKindPattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');
+const Set<String> _knownRunFailureKinds = <String>{
+  'interrupted',
+  'invalid_context',
+  'internal_error',
+  'invalid_request',
+  'configuration',
+  'authentication',
+  'authorization',
+  'quota_exhausted',
+  'rate_limited',
+  'timeout',
+  'provider_unavailable',
+  'invalid_response',
+  'cancelled',
+};
 
 final class _InvalidAgentResponse implements Exception {
   const _InvalidAgentResponse();

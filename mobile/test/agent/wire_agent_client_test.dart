@@ -343,6 +343,86 @@ void main() {
       },
     );
 
+    test(
+      'one retry recovers an ambiguous pending run that later fails',
+      () async {
+        const text = 'Recover this pending interrupted request.';
+        final transport = _ScriptedTransport([
+          const _Step(
+            method: 'POST',
+            path: '/v1/agent-threads/$_threadId/runs',
+            error: SocketException('connection interrupted'),
+          ),
+          _Step(
+            method: 'POST',
+            path: '/v1/agent-threads/$_threadId/runs',
+            response: _jsonResponse(
+              HttpStatus.accepted,
+              _runJson(status: 'pending'),
+            ),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-runs/$_runId',
+            response: _jsonResponse(
+              HttpStatus.ok,
+              _runJson(
+                status: 'failed',
+                failureKind: 'interrupted',
+                failureRetryable: true,
+              ),
+            ),
+          ),
+          _Step(
+            method: 'POST',
+            path: '/v1/agent-runs/$_runId/retries',
+            response: _jsonResponse(
+              HttpStatus.created,
+              _runJson(
+                id: _retryRunId,
+                status: 'completed',
+                retryOfRunId: _runId,
+                clientRetryId: 'retry:$_runId',
+              ),
+            ),
+          ),
+          _messagesStep(userContent: text, assistantRunId: _retryRunId),
+        ]);
+        final harness = _Harness(transport);
+
+        await expectLater(
+          harness.client.sendText(
+            threadId: _threadId,
+            text: text,
+            clientMessageId: 'message_ambiguous_pending',
+          ),
+          throwsA(
+            isA<AgentClientException>().having(
+              (error) => error.kind,
+              'kind',
+              AgentClientFailureKind.network,
+            ),
+          ),
+        );
+
+        final exchange = await harness.client.sendText(
+          threadId: _threadId,
+          text: text,
+          clientMessageId: 'message_ambiguous_pending',
+        );
+
+        expect(exchange.assistantMessage, isNotNull);
+        expect(transport.calls.map((call) => call.path), [
+          '/v1/agent-threads/$_threadId/runs',
+          '/v1/agent-threads/$_threadId/runs',
+          '/v1/agent-runs/$_runId',
+          '/v1/agent-runs/$_runId/retries',
+          '/v1/agent-threads/$_threadId/messages',
+        ]);
+        transport.expectDone();
+      },
+    );
+
     test('advances retry identity after each failed attempt', () async {
       const text = 'This may need more than one attempt.';
       final transport = _ScriptedTransport([
@@ -562,7 +642,7 @@ void main() {
       'diagnostics never retain credentials or response body text',
       () async {
         const sensitiveBody =
-            '{"error":{"code":"internal_error","message":"sess_account-a '
+            '{"error":{"code":"sess_account-a","message":"private prompt '
             'private prompt","retryable":true,"correlation_id":"corr_safe"}}';
         final transport = _ScriptedTransport([
           const _Step(
@@ -584,6 +664,7 @@ void main() {
           captured = error;
         }
 
+        expect(captured.errorCode, 'internal_error');
         expect(captured.toString(), isNot(contains('sess_account-a')));
         expect(captured.toString(), isNot(contains('private prompt')));
         expect(captured.toString(), isNot(contains(sensitiveBody)));
