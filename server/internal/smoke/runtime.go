@@ -6,6 +6,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
 const (
@@ -22,110 +26,32 @@ const (
 )
 
 var (
-	ErrInvalidAnswer       = errors.New("answer_text must not be empty")
-	ErrRecoverableFailure  = errors.New("deterministic provider temporarily unavailable")
-	ErrSessionCompleted    = errors.New("practice session is already completed")
-	ErrQuestionNotFound    = errors.New("question not found")
-	ErrTurnNotFound        = errors.New("turn not found")
-	ErrFeedbackNotFound    = errors.New("feedback item not found")
-	ErrIdempotencyConflict = errors.New("idempotency key was reused with a different request")
+	ErrInvalidAnswer      = errors.New("answer_text must not be empty")
+	ErrRecoverableFailure = errors.New("deterministic provider temporarily unavailable")
+	ErrScenarioNotFound   = errors.New("scenario definition not found")
+	ErrProfileNotFound    = errors.New("preparation profile not found")
+	ErrSnapshotNotFound   = errors.New("preparation snapshot not found")
+	ErrPlanNotFound       = errors.New("practice plan not found")
+	ErrSessionNotFound    = errors.New("practice session not found")
+	ErrSessionCompleted   = errors.New("practice session is already completed")
+	ErrQuestionNotFound   = errors.New("question not found")
+	ErrTurnNotFound       = errors.New("turn not found")
+	ErrAnalysisNotFound   = errors.New("turn analysis not found")
+	ErrFeedbackNotFound   = errors.New("feedback item not found")
+	ErrRetryNotFound      = errors.New("retry request not found")
+	ErrRetryConflict      = errors.New("retry request already exists for feedback item")
+	ErrVersionConflict    = errors.New("resource version does not match")
+	ErrInvalidSelection   = errors.New("request does not match the deterministic scenario")
+	ErrResourceConflict   = errors.New("resource already exists")
 )
 
-type Question struct {
-	ID               string   `json:"question_id"`
-	SessionID        string   `json:"practice_session_id"`
-	SpeakerID        string   `json:"speaker_participant_id"`
-	AddresseeIDs     []string `json:"addressee_participant_ids"`
-	ObjectiveID      string   `json:"objective_id"`
-	Type             string   `json:"question_type"`
-	ParentQuestionID string   `json:"parent_question_id,omitempty"`
-	Content          string   `json:"content"`
-	Sequence         int      `json:"sequence"`
-	CreatedAt        string   `json:"created_at"`
-}
-
-type Turn struct {
-	ID              string `json:"turn_id"`
-	SessionID       string `json:"practice_session_id"`
-	QuestionID      string `json:"question_id"`
-	RespondentID    string `json:"respondent_participant_id"`
-	Sequence        int    `json:"sequence"`
-	InteractionMode string `json:"interaction_mode"`
-	AnswerText      string `json:"answer_text,omitempty"`
-	Status          string `json:"turn_status"`
-	IsRetry         bool   `json:"-"`
-	SubmittedAt     string `json:"submitted_at,omitempty"`
-	CreatedAt       string `json:"created_at"`
-	CompletedAt     string `json:"completed_at,omitempty"`
-}
-
-type Analysis struct {
-	ID                 string `json:"turn_analysis_id"`
-	TurnID             string `json:"turn_id"`
-	EvaluatorVersion   string `json:"evaluator_version"`
-	Status             string `json:"analysis_status"`
-	Score              int    `json:"score"`
-	Summary            string `json:"summary"`
-	AnalysisTranscript string `json:"analysis_transcript"`
-	CreatedAt          string `json:"created_at"`
-	CompletedAt        string `json:"completed_at"`
-}
-
-type Feedback struct {
-	ID         string           `json:"feedback_item_id"`
-	AnalysisID string           `json:"turn_analysis_id"`
-	Category   string           `json:"feedback_category"`
-	Message    string           `json:"message"`
-	Suggestion string           `json:"suggestion"`
-	Evidence   []map[string]any `json:"evidence"`
-	Retryable  bool             `json:"retryable"`
-	CreatedAt  string           `json:"created_at"`
-}
-
-type RetryRequest struct {
-	ID             string `json:"retry_request_id"`
-	OriginalTurnID string `json:"original_turn_id"`
-	FeedbackID     string `json:"feedback_item_id"`
-	NewTurnID      string `json:"new_turn_id"`
-	Status         string `json:"retry_status"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
-}
-
-type HistoryRecord struct {
-	ID             string `json:"history_record_id"`
-	SessionID      string `json:"practice_session_id"`
-	TurnID         string `json:"turn_id"`
-	AnalysisID     string `json:"turn_analysis_id"`
-	RetryRequestID string `json:"retry_request_id,omitempty"`
-	Score          int    `json:"score"`
-	Summary        string `json:"summary"`
-	ReviewedAt     string `json:"reviewed_at"`
-}
-
-type Event struct {
-	ID            string         `json:"event_id"`
-	Type          string         `json:"event_type"`
-	Version       int            `json:"event_version"`
-	OccurredAt    string         `json:"occurred_at"`
-	SessionID     string         `json:"practice_session_id"`
-	Sequence      int            `json:"sequence,omitempty"`
-	CorrelationID string         `json:"correlation_id"`
-	CausationID   string         `json:"causation_id,omitempty"`
-	Replayable    bool           `json:"replayable"`
-	Payload       map[string]any `json:"payload"`
-}
-
-type submitResult struct {
-	Turn     Turn     `json:"turn"`
-	Analysis Analysis `json:"turn_analysis"`
-	Feedback Feedback `json:"feedback_item"`
-}
-
-type idempotentTurn struct {
-	answer string
-	result submitResult
-}
+type Question = conversation.Question
+type Turn = conversation.Turn
+type Event = conversation.Event
+type Analysis = review.Analysis
+type Feedback = review.Feedback
+type RetryRequest = review.RetryRequest
+type HistoryRecord = review.HistoryRecord
 
 type Runtime struct {
 	mu sync.Mutex
@@ -137,6 +63,8 @@ type Runtime struct {
 	planCreated     bool
 	sessionCreated  bool
 	sessionStatus   string
+	sessionVersion  int
+	effectiveTurns  int
 
 	questions []Question
 	turns     []Turn
@@ -146,20 +74,20 @@ type Runtime struct {
 	history   []HistoryRecord
 	events    []Event
 
-	failedOnce  map[string]bool
-	submitted   map[string]idempotentTurn
-	retryByKey  map[string]RetryRequest
-	subscribers map[chan Event]struct{}
+	retryTurnByRequest     map[string]string
+	retryOriginalByRequest map[string]string
+	turnDecisions          map[string]practice.TurnDecision
+	subscribers            map[chan Event]struct{}
 }
 
 func NewRuntime() *Runtime {
 	return &Runtime{
-		now:           time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC),
-		failedOnce:    make(map[string]bool),
-		submitted:     make(map[string]idempotentTurn),
-		retryByKey:    make(map[string]RetryRequest),
-		subscribers:   make(map[chan Event]struct{}),
-		sessionStatus: "not_started",
+		now:                    time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC),
+		retryTurnByRequest:     make(map[string]string),
+		retryOriginalByRequest: make(map[string]string),
+		turnDecisions:          make(map[string]practice.TurnDecision),
+		subscribers:            make(map[chan Event]struct{}),
+		sessionStatus:          "not_started",
 	}
 }
 
@@ -186,7 +114,7 @@ func (r *Runtime) createSnapshot() (map[string]any, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.profileCreated {
-		return nil, errors.New("preparation profile must be created first")
+		return nil, ErrResourceConflict
 	}
 	r.snapshotCreated = true
 	return map[string]any{
@@ -203,9 +131,6 @@ func (r *Runtime) createSnapshot() (map[string]any, error) {
 func (r *Runtime) createPlan() (map[string]any, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.snapshotCreated {
-		return nil, errors.New("preparation snapshot must be created first")
-	}
 	r.planCreated = true
 	return map[string]any{
 		"practice_plan_id":            demoPracticePlan,
@@ -228,10 +153,14 @@ func (r *Runtime) createSession() (map[string]any, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.planCreated {
-		return nil, errors.New("practice plan must be created first")
+		return nil, ErrResourceConflict
+	}
+	if r.sessionCreated {
+		return nil, ErrResourceConflict
 	}
 	r.sessionCreated = true
 	r.sessionStatus = "starting"
+	r.sessionVersion = 1
 	return map[string]any{
 		"practice_session": r.sessionLocked(),
 		"snapshot":         r.snapshotLocked(),
@@ -245,53 +174,29 @@ func (r *Runtime) sessionLocked() map[string]any {
 		"scenario_type":           "INTERVIEW",
 		"snapshot_id":             "snapshot_session_demo_001",
 		"practice_session_status": r.sessionStatus,
-		"session_version":         1,
+		"session_version":         r.sessionVersion,
 		"created_at":              r.timestamp(4),
 	}
 	if r.sessionStatus != "starting" {
 		session["started_at"] = r.timestamp(5)
-		session["session_version"] = 2
 	}
 	if r.sessionStatus == "completed" {
-		session["session_version"] = 6
 		session["ended_at"] = r.timestamp(80)
 		session["end_reason"] = "COVERAGE_SATISFIED_AT_CHECKPOINT"
 	}
 	return session
 }
 
-func (r *Runtime) bootstrap() (map[string]any, error) {
+func (r *Runtime) conversationBootstrap() map[string]any {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.sessionCreated {
-		return nil, errors.New("practice session must be created first")
-	}
 	result := map[string]any{
-		"practice_session":    r.sessionLocked(),
-		"snapshot":            r.snapshotLocked(),
 		"last_event_sequence": r.lastEventSequenceLocked(),
 	}
 	if len(r.questions) > 0 {
 		result["current_question"] = r.questions[len(r.questions)-1]
 	}
-	return result, nil
-}
-
-func (r *Runtime) ensureCurrentQuestion() (Question, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.sessionCreated {
-		return Question{}, errors.New("practice session must be created first")
-	}
-	if len(r.questions) == 0 {
-		r.sessionStatus = "in_progress"
-		r.appendEventLocked("practice_session.started", map[string]any{
-			"practice_session_status": r.sessionStatus,
-			"session_version":         2,
-		})
-		r.questions = append(r.questions, r.newQuestionLocked(1))
-	}
-	return r.questions[len(r.questions)-1], nil
+	return result
 }
 
 func (r *Runtime) currentQuestion() (Question, error) {
@@ -303,170 +208,203 @@ func (r *Runtime) currentQuestion() (Question, error) {
 	return r.questions[len(r.questions)-1], nil
 }
 
-func (r *Runtime) submitTurn(questionID, answer, retryRequestID, key string, failOnce bool) (submitResult, error) {
+func (r *Runtime) saveQuestion(
+	sessionID string,
+	sequence int,
+	draft conversation.QuestionDraft,
+) (Question, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if sessionID != demoPracticeSession {
+		return Question{}, ErrSessionNotFound
+	}
+	if sequence != len(r.questions)+1 {
+		return Question{}, ErrResourceConflict
+	}
+	question := Question{
+		ID:               fmt.Sprintf("question_demo_%03d", sequence),
+		SessionID:        demoPracticeSession,
+		SpeakerID:        demoInterviewerID,
+		AddresseeIDs:     []string{demoCandidateID},
+		ObjectiveID:      draft.ObjectiveID,
+		Type:             draft.Type,
+		ParentQuestionID: draft.ParentQuestionID,
+		Content:          draft.Content,
+		Sequence:         sequence,
+		CreatedAt:        r.timestamp(10 + sequence*12),
+	}
+	r.questions = append(r.questions, question)
+	payload := map[string]any{
+		"question_id":               question.ID,
+		"speaker_participant_id":    question.SpeakerID,
+		"addressee_participant_ids": question.AddresseeIDs,
+		"objective_id":              question.ObjectiveID,
+		"question_type":             question.Type,
+		"content":                   question.Content,
+		"sequence":                  question.Sequence,
+	}
+	if question.ParentQuestionID != "" {
+		payload["parent_question_id"] = question.ParentQuestionID
+	}
+	r.appendEventLocked("question.created", payload)
+	return question, nil
+}
+
+func (r *Runtime) prepareTurn(
+	questionID string,
+	request conversation.SubmitTurnRequest,
+) (Turn, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	answer = strings.TrimSpace(answer)
+	answer := strings.TrimSpace(request.AnswerText)
 	if answer == "" {
-		return submitResult{}, ErrInvalidAnswer
-	}
-	if existing, ok := r.submitted[key]; ok {
-		if existing.answer != answer {
-			return submitResult{}, ErrIdempotencyConflict
-		}
-		return existing.result, nil
-	}
-	if failOnce && !r.failedOnce[key] {
-		r.failedOnce[key] = true
-		r.appendEventLocked("answer.processing_failed", map[string]any{
-			"question_id": questionID,
-			"code":        "mock_provider_temporarily_unavailable",
-			"message":     "The deterministic provider failed once; retry the same answer.",
-			"retryable":   true,
-		})
-		return submitResult{}, ErrRecoverableFailure
-	}
-	isRetry := retryRequestID != ""
-	if r.sessionStatus == "completed" && !isRetry {
-		return submitResult{}, ErrSessionCompleted
+		return Turn{}, ErrInvalidAnswer
 	}
 	question, ok := r.findQuestionLocked(questionID)
 	if !ok {
-		return submitResult{}, ErrQuestionNotFound
+		return Turn{}, ErrQuestionNotFound
 	}
 
 	turnNumber := len(r.turns) + 1
-	effectiveSequence := r.effectiveTurnCountLocked() + 1
 	turn := Turn{}
-	if isRetry {
-		retry, ok := r.findRetryLocked(retryRequestID)
+	if request.RetryRequestID != "" {
+		retryTurnID, ok := r.retryTurnByRequest[request.RetryRequestID]
 		if !ok {
-			return submitResult{}, errors.New("retry request not found")
+			return Turn{}, ErrRetryNotFound
 		}
-		retryTurn, ok := r.findTurnLocked(retry.NewTurnID)
-		if !ok || retryTurn.QuestionID != questionID {
-			return submitResult{}, errors.New("retry turn does not match question")
+		retryTurn, ok := r.findTurnLocked(retryTurnID)
+		if !ok || retryTurn.QuestionID != questionID || retryTurn.Status != "answering" {
+			return Turn{}, ErrRetryConflict
 		}
 		turn = retryTurn
 		turn.AnswerText = answer
-		turn.InteractionMode = "PUSH_TO_TALK"
+		turn.AudioAssetID = request.AudioAssetID
+		turn.InteractionMode = request.InteractionMode
 		turn.Status = "completed"
-		turn.SubmittedAt = r.timestamp(20 + turnNumber*3)
-		turn.CompletedAt = r.timestamp(21 + turnNumber*3)
-		r.replaceTurnLocked(turn)
+		turn.SubmittedAt = r.timestamp(72 + len(r.retryTurnByRequest)*2)
+		turn.CompletedAt = r.timestamp(73 + len(r.retryTurnByRequest)*2)
 	} else {
+		for _, existing := range r.turns {
+			if !existing.IsRetry && existing.QuestionID == questionID {
+				return Turn{}, ErrResourceConflict
+			}
+		}
 		turn = Turn{
 			ID:              fmt.Sprintf("turn_demo_%03d", turnNumber),
 			SessionID:       demoPracticeSession,
 			QuestionID:      question.ID,
 			RespondentID:    demoCandidateID,
 			Sequence:        question.Sequence,
-			InteractionMode: "PUSH_TO_TALK",
+			InteractionMode: request.InteractionMode,
 			AnswerText:      answer,
+			AudioAssetID:    request.AudioAssetID,
 			Status:          "completed",
 			IsRetry:         false,
-			SubmittedAt:     r.timestamp(20 + turnNumber*3),
-			CreatedAt:       r.timestamp(20 + turnNumber*3),
-			CompletedAt:     r.timestamp(21 + turnNumber*3),
+			SubmittedAt:     r.timestamp(13 + question.Sequence*12),
+			CreatedAt:       r.timestamp(13 + question.Sequence*12),
+			CompletedAt:     r.timestamp(14 + question.Sequence*12),
+		}
+	}
+	return turn, nil
+}
+
+func (r *Runtime) commitTurn(turn Turn) (Turn, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.findQuestionLocked(turn.QuestionID); !ok {
+		return Turn{}, ErrQuestionNotFound
+	}
+	if turn.IsRetry {
+		existing, ok := r.findTurnLocked(turn.ID)
+		if !ok || existing.Status != "answering" {
+			return Turn{}, ErrResourceConflict
+		}
+		r.replaceTurnLocked(turn)
+	} else {
+		for _, existing := range r.turns {
+			if !existing.IsRetry && existing.QuestionID == turn.QuestionID {
+				return Turn{}, ErrResourceConflict
+			}
 		}
 		r.turns = append(r.turns, turn)
 	}
 	r.appendEventLocked("turn.submitted", map[string]any{
-		"turn_id": turn.ID, "question_id": question.ID, "turn_status": "submitted",
+		"turn_id": turn.ID, "question_id": turn.QuestionID, "turn_status": "submitted",
 	})
 	r.appendEventLocked("turn.processing", map[string]any{
-		"turn_id": turn.ID, "question_id": question.ID, "turn_status": "processing",
+		"turn_id": turn.ID, "question_id": turn.QuestionID, "turn_status": "processing",
 	})
 	r.appendEventLocked("turn.completed", map[string]any{
 		"turn_id":                   turn.ID,
-		"question_id":               question.ID,
+		"question_id":               turn.QuestionID,
 		"respondent_participant_id": turn.RespondentID,
 		"turn_status":               "completed",
 		"completed_at":              turn.CompletedAt,
 	})
-
-	analysisNumber := len(r.analyses) + 1
-	analysis := Analysis{
-		ID:                 fmt.Sprintf("analysis_demo_%03d", analysisNumber),
-		TurnID:             turn.ID,
-		EvaluatorVersion:   "mock-review-v1",
-		Status:             "completed",
-		Score:              80 + effectiveSequence,
-		Summary:            "Deterministic review completed for the submitted answer.",
-		AnalysisTranscript: answer,
-		CreatedAt:          r.timestamp(22 + turnNumber*3),
-		CompletedAt:        r.timestamp(23 + turnNumber*3),
-	}
-	feedback := Feedback{
-		ID:         fmt.Sprintf("feedback_demo_%03d", analysisNumber),
-		AnalysisID: analysis.ID,
-		Category:   "STRUCTURE",
-		Message:    "The answer is clear and grounded in an example.",
-		Suggestion: "State the trade-off and measurable outcome explicitly.",
-		Evidence:   []map[string]any{{"transcript_text": answer}},
-		Retryable:  true,
-		CreatedAt:  analysis.CompletedAt,
-	}
-	r.analyses = append(r.analyses, analysis)
-	r.feedback = append(r.feedback, feedback)
-	r.history = append(r.history, HistoryRecord{
-		ID:         fmt.Sprintf("history_demo_%03d", analysisNumber),
-		SessionID:  demoPracticeSession,
-		TurnID:     turn.ID,
-		AnalysisID: analysis.ID,
-		Score:      analysis.Score,
-		Summary:    analysis.Summary,
-		ReviewedAt: analysis.CompletedAt,
-	})
-	r.appendEventLocked("turn_analysis.completed", map[string]any{
-		"turn_id": turn.ID, "turn_analysis_id": analysis.ID,
-		"score": analysis.Score, "summary": analysis.Summary,
-	})
-
-	if !isRetry {
-		if r.effectiveTurnCountLocked() == 4 {
-			r.sessionStatus = "completed"
-			r.appendEventLocked("practice_session.completed", map[string]any{
-				"practice_session_status": "completed",
-				"session_version":         6,
-				"end_reason":              "COVERAGE_SATISFIED_AT_CHECKPOINT",
-			})
-		} else {
-			next := r.newQuestionLocked(len(r.questions) + 1)
-			r.questions = append(r.questions, next)
-		}
-	}
-
-	result := submitResult{Turn: turn, Analysis: analysis, Feedback: feedback}
-	r.submitted[key] = idempotentTurn{answer: answer, result: result}
-	return result, nil
+	return turn, nil
 }
 
-func (r *Runtime) createRetry(feedbackID, key string) (RetryRequest, Turn, error) {
+func (r *Runtime) publishProcessingFailure(questionID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.appendEventLocked("answer.processing_failed", map[string]any{
+		"question_id": questionID,
+		"code":        "mock_provider_temporarily_unavailable",
+		"message":     "The deterministic provider failed once; retry the same answer.",
+		"retryable":   true,
+	})
+}
 
-	if retry, ok := r.retryByKey[key]; ok {
-		turn, _ := r.findTurnLocked(retry.NewTurnID)
-		return retry, turn, nil
-	}
-	feedback, ok := r.findFeedbackLocked(feedbackID)
-	if !ok {
-		return RetryRequest{}, Turn{}, ErrFeedbackNotFound
-	}
-	var original Turn
-	for _, analysis := range r.analyses {
-		if analysis.ID == feedback.AnalysisID {
-			original, ok = r.findTurnLocked(analysis.TurnID)
-			break
+func (r *Runtime) publishReviewCompleted(analysis Analysis) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.appendEventLocked("turn_analysis.completed", map[string]any{
+		"turn_id": analysis.TurnID, "turn_analysis_id": analysis.ID,
+		"score": analysis.Score, "summary": analysis.Summary,
+	})
+}
+
+func (r *Runtime) publishSessionStarted(version int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.appendEventLocked("practice_session.started", map[string]any{
+		"practice_session_status": "in_progress",
+		"session_version":         version,
+	})
+}
+
+func (r *Runtime) publishSessionCompleted(version int, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.appendEventLocked("practice_session.completed", map[string]any{
+		"practice_session_status": "completed",
+		"session_version":         version,
+		"end_reason":              reason,
+	})
+}
+
+func (r *Runtime) createRetryTurn(retryID, originalTurnID string) (Turn, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existingID, ok := r.retryTurnByRequest[retryID]; ok {
+		if r.retryOriginalByRequest[retryID] != originalTurnID {
+			return Turn{}, ErrRetryConflict
 		}
+		turn, found := r.findTurnLocked(existingID)
+		if !found {
+			return Turn{}, ErrTurnNotFound
+		}
+		return turn, nil
 	}
+	original, ok := r.findTurnLocked(originalTurnID)
 	if !ok {
-		return RetryRequest{}, Turn{}, ErrTurnNotFound
+		return Turn{}, ErrTurnNotFound
 	}
-	retryNumber := len(r.retries) + 1
-	retryID := fmt.Sprintf("retry_demo_%03d", retryNumber)
+	if original.Status != "completed" {
+		return Turn{}, ErrRetryConflict
+	}
+	retryNumber := len(r.retryTurnByRequest) + 1
 	retryTurn := Turn{
 		ID:              fmt.Sprintf("turn_retry_demo_%03d", retryNumber),
 		SessionID:       original.SessionID,
@@ -476,34 +414,22 @@ func (r *Runtime) createRetry(feedbackID, key string) (RetryRequest, Turn, error
 		InteractionMode: "PUSH_TO_TALK",
 		Status:          "answering",
 		IsRetry:         true,
-		CreatedAt:       r.timestamp(60 + retryNumber),
+		CreatedAt:       r.timestamp(70 + retryNumber),
 	}
 	r.turns = append(r.turns, retryTurn)
-	retry := RetryRequest{
-		ID:             retryID,
-		OriginalTurnID: original.ID,
-		FeedbackID:     feedback.ID,
-		NewTurnID:      retryTurn.ID,
-		Status:         "turn_created",
-		CreatedAt:      r.timestamp(59 + retryNumber),
-		UpdatedAt:      retryTurn.CreatedAt,
-	}
-	r.retries = append(r.retries, retry)
-	r.retryByKey[key] = retry
-	for index := range r.history {
-		if r.history[index].TurnID == original.ID {
-			r.history[index].RetryRequestID = retry.ID
-		}
-	}
-	return retry, retryTurn, nil
+	r.retryTurnByRequest[retryID] = retryTurn.ID
+	r.retryOriginalByRequest[retryID] = originalTurnID
+	return retryTurn, nil
 }
 
-func (r *Runtime) historyRecords() []HistoryRecord {
+func (r *Runtime) historyRecordsForSession(sessionID string) []HistoryRecord {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	result := make([]HistoryRecord, len(r.history))
-	for index := range r.history {
-		result[len(r.history)-1-index] = r.history[index]
+	result := make([]HistoryRecord, 0, len(r.history))
+	for index := len(r.history) - 1; index >= 0; index-- {
+		if r.history[index].SessionID == sessionID {
+			result = append(result, r.history[index])
+		}
 	}
 	return result
 }
@@ -628,51 +554,9 @@ func practiceOption() map[string]any {
 	}
 }
 
-func (r *Runtime) newQuestionLocked(sequence int) Question {
-	objectives := []string{"introduction", "system_design", "project_depth", "collaboration"}
-	contents := []string{
-		"Please introduce yourself and the backend project you are most proud of.",
-		"How did you design the reliability controls for that API?",
-		"Which design decision was yours, and what trade-off did you make?",
-		"How did you align the rollout with the teams that consumed the API?",
-	}
-	questionType := "PRIMARY"
-	parentID := ""
-	if sequence == 3 {
-		questionType = "FOLLOW_UP"
-		parentID = "question_demo_002"
-	}
-	question := Question{
-		ID:               fmt.Sprintf("question_demo_%03d", sequence),
-		SessionID:        demoPracticeSession,
-		SpeakerID:        demoInterviewerID,
-		AddresseeIDs:     []string{demoCandidateID},
-		ObjectiveID:      objectives[sequence-1],
-		Type:             questionType,
-		ParentQuestionID: parentID,
-		Content:          contents[sequence-1],
-		Sequence:         sequence,
-		CreatedAt:        r.timestamp(10 + sequence*4),
-	}
-	payload := map[string]any{
-		"question_id":               question.ID,
-		"speaker_participant_id":    question.SpeakerID,
-		"addressee_participant_ids": question.AddresseeIDs,
-		"objective_id":              question.ObjectiveID,
-		"question_type":             question.Type,
-		"content":                   question.Content,
-		"sequence":                  question.Sequence,
-	}
-	if question.ParentQuestionID != "" {
-		payload["parent_question_id"] = question.ParentQuestionID
-	}
-	r.appendEventLocked("question.created", payload)
-	return question
-}
-
 func (r *Runtime) appendEventLocked(eventType string, payload map[string]any) {
 	eventNumber := len(r.events) + 1
-	replayable := eventType != "answer.processing_failed"
+	replayable := isReplayableEvent(eventType)
 	sequence := 0
 	if replayable {
 		for _, event := range r.events {
@@ -698,7 +582,28 @@ func (r *Runtime) appendEventLocked(eventType string, payload map[string]any) {
 		select {
 		case subscriber <- event:
 		default:
+			delete(r.subscribers, subscriber)
+			close(subscriber)
 		}
+	}
+}
+
+func isReplayableEvent(eventType string) bool {
+	switch eventType {
+	case "question.created",
+		"turn.submitted",
+		"turn.processing",
+		"turn.completed",
+		"turn_analysis.completed",
+		"practice_session.started",
+		"practice_session.completed":
+		return true
+	case "answer.processing_failed":
+		return false
+	case "stream.ready":
+		return false
+	default:
+		panic("unclassified smoke event type: " + eventType)
 	}
 }
 
@@ -711,7 +616,7 @@ func (r *Runtime) subscribe(afterSequence int) ([]Event, <-chan Event, func()) {
 			replay = append(replay, event)
 		}
 	}
-	channel := make(chan Event, 64)
+	channel := make(chan Event, 128)
 	r.subscribers[channel] = struct{}{}
 	unsubscribe := func() {
 		r.mu.Lock()
@@ -764,6 +669,12 @@ func (r *Runtime) getTurn(id string) (Turn, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.findTurnLocked(id)
+}
+
+func (r *Runtime) getQuestion(id string) (Question, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.findQuestionLocked(id)
 }
 
 func (r *Runtime) analysesForTurn(turnID string) []Analysis {

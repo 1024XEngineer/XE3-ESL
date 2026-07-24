@@ -16,33 +16,49 @@ import (
 )
 
 type flowClient struct {
-	baseURL string
-	client  *http.Client
+	baseURL   string
+	client    *http.Client
+	exchanges *[]httpExchange
 }
 
-type flowSummary struct {
-	SessionID          string
-	EffectiveTurns     int
-	RetryTurnID        string
-	HistoryCount       int
-	EventTypes         []string
-	RecoverableFailure bool
+type httpExchange struct {
+	Method string
+	Path   string
+	Status int
+	Body   string
+}
+
+type flowTrace struct {
+	Exchanges    []httpExchange
+	Events       []Event
+	ReplayEvents []Event
+	Turns        []Turn
+	Analyses     []Analysis
+	Feedback     []Feedback
+	Retry        RetryRequest
+	History      []HistoryRecord
+	FinalSession map[string]any
 }
 
 func TestDeterministicMainFlow(t *testing.T) {
 	first := runMainFlow(t)
 	second := runMainFlow(t)
 	if !reflect.DeepEqual(first, second) {
-		t.Fatalf("same input produced different results:\nfirst:  %#v\nsecond: %#v", first, second)
+		t.Fatalf("same input produced a different complete trace:\nfirst:  %#v\nsecond: %#v", first, second)
 	}
 }
 
-func runMainFlow(t *testing.T) flowSummary {
+func runMainFlow(t *testing.T) flowTrace {
 	t.Helper()
 	server := NewServer(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.Handler())
 	t.Cleanup(httpServer.Close)
-	client := flowClient{baseURL: httpServer.URL, client: httpServer.Client()}
+	trace := flowTrace{}
+	client := flowClient{
+		baseURL:   httpServer.URL,
+		client:    httpServer.Client(),
+		exchanges: &trace.Exchanges,
+	}
 
 	client.expect(t, http.MethodGet, "/v1/scenario-definitions/"+DemoScenarioDefinition, nil, nil, http.StatusOK, nil)
 	client.expect(t, http.MethodGet, "/v1/scenario-definitions/"+DemoScenarioDefinition+"/role-definitions", nil, nil, http.StatusOK, nil)
@@ -74,13 +90,19 @@ func runMainFlow(t *testing.T) flowSummary {
 		"Idempotency-Key": "question-key-1",
 	}, http.StatusOK, nil)
 	client.expect(t, http.MethodGet, "/v1/practice-sessions/"+demoPracticeSession+"/bootstrap", nil, nil, http.StatusOK, nil)
-	events := startEventCollector(t, WebSocketURL(httpServer.URL)+"/v1/practice-sessions/"+demoPracticeSession+"/events?after_sequence=0")
+	events := startEventCollector(
+		t,
+		WebSocketURL(httpServer.URL)+"/v1/practice-sessions/"+demoPracticeSession+"/events?after_sequence=0",
+	)
 
-	var invalidError map[string]any
+	var invalidError errorEnvelope
 	client.expect(t, http.MethodPost, "/v1/questions/question_demo_001/turns", map[string]any{
 		"interaction_mode": "PUSH_TO_TALK",
 		"answer_text":      " ",
-	}, map[string]string{"Idempotency-Key": "invalid-turn"}, http.StatusBadRequest, &invalidError)
+	}, map[string]string{"Idempotency-Key": "invalid-turn-key"}, http.StatusBadRequest, &invalidError)
+	if invalidError.Error.Code != "answer_invalid" {
+		t.Fatalf("invalid answer returned %q", invalidError.Error.Code)
+	}
 
 	answers := []string{
 		"I led a Go API reliability project and reduced incident recovery time.",
@@ -89,116 +111,217 @@ func runMainFlow(t *testing.T) flowSummary {
 		"I published the error budget, ran a canary review, and agreed rollback signals.",
 	}
 	feedbackID := ""
-	recoverableFailure := false
 	for index, answer := range answers {
 		questionID := fmt.Sprintf("question_demo_%03d", index+1)
-		headers := map[string]string{"Idempotency-Key": fmt.Sprintf("turn-key-%d", index+1)}
 		if index == 1 {
-			headers["X-Mock-Fail-Once"] = "true"
-			client.expect(t, http.MethodPost, "/v1/questions/"+questionID+"/turns", map[string]any{
+			var failure errorEnvelope
+			failureBody := client.expect(t, http.MethodPost, "/v1/questions/"+questionID+"/turns", map[string]any{
 				"interaction_mode": "PUSH_TO_TALK",
 				"answer_text":      answer,
-			}, headers, http.StatusUnprocessableEntity, nil)
-			recoverableFailure = true
+			}, map[string]string{
+				"Idempotency-Key":  "turn-failure-key-2",
+				"X-Mock-Fail-Once": "true",
+			}, http.StatusUnprocessableEntity, &failure)
+			if failure.Error.Code != "transcript_unavailable" || !failure.Error.Retryable {
+				t.Fatalf("recoverable failure is not contract-shaped: %#v", failure)
+			}
+			replayedFailure := client.expect(t, http.MethodPost, "/v1/questions/"+questionID+"/turns", map[string]any{
+				"interaction_mode": "PUSH_TO_TALK",
+				"answer_text":      answer,
+			}, map[string]string{"Idempotency-Key": "turn-failure-key-2"}, http.StatusUnprocessableEntity, nil)
+			if !bytes.Equal(failureBody, replayedFailure) {
+				t.Fatal("the first 422 response was not replayed byte-for-byte")
+			}
 		}
-		var turn Turn
-		client.expect(t, http.MethodPost, "/v1/questions/"+questionID+"/turns", map[string]any{
+
+		var submitted Turn
+		key := fmt.Sprintf("turn-success-key-%d", index+1)
+		firstBody := client.expect(t, http.MethodPost, "/v1/questions/"+questionID+"/turns", map[string]any{
 			"interaction_mode": "PUSH_TO_TALK",
 			"answer_text":      answer,
-		}, headers, http.StatusAccepted, &turn)
+		}, map[string]string{"Idempotency-Key": key}, http.StatusAccepted, &submitted)
+		if submitted.Status != "submitted" || submitted.QuestionID != questionID {
+			t.Fatalf("unexpected submitted Turn: %#v", submitted)
+		}
+		if index == 0 {
+			replayedBody := client.expect(t, http.MethodPost, "/v1/questions/"+questionID+"/turns", map[string]any{
+				"answer_text":      answer,
+				"interaction_mode": "PUSH_TO_TALK",
+			}, map[string]string{"Idempotency-Key": key}, http.StatusAccepted, nil)
+			if !bytes.Equal(firstBody, replayedBody) {
+				t.Fatal("successful Turn response was not replayed byte-for-byte")
+			}
+		}
+		trace.Turns = append(trace.Turns, submitted)
+
+		var pending Analysis
+		client.expect(t, http.MethodPost, "/v1/turns/"+submitted.ID+"/turn-analyses", nil, map[string]string{
+			"Idempotency-Key": fmt.Sprintf("analysis-key-%d", index+1),
+		}, http.StatusAccepted, &pending)
+		if pending.Status != "pending" || pending.TurnID != submitted.ID {
+			t.Fatalf("unexpected pending analysis: %#v", pending)
+		}
 		var analyses struct {
 			Analyses []Analysis `json:"analyses"`
 		}
-		client.expect(t, http.MethodGet, "/v1/turns/"+turn.ID+"/turn-analyses", nil, nil, http.StatusOK, &analyses)
-		if len(analyses.Analyses) != 1 {
-			t.Fatalf("turn %s did not produce one analysis", turn.ID)
+		client.expect(t, http.MethodGet, "/v1/turns/"+submitted.ID+"/turn-analyses", nil, nil, http.StatusOK, &analyses)
+		if len(analyses.Analyses) != 1 || analyses.Analyses[0].Status != "completed" {
+			t.Fatalf("turn %s did not produce one completed analysis: %#v", submitted.ID, analyses)
 		}
+		trace.Analyses = append(trace.Analyses, analyses.Analyses[0])
 		var feedback struct {
 			Items []Feedback `json:"feedback_items"`
 		}
-		client.expect(t, http.MethodGet, "/v1/turn-analyses/"+analyses.Analyses[0].ID+"/feedback-items", nil, nil, http.StatusOK, &feedback)
+		client.expect(
+			t,
+			http.MethodGet,
+			"/v1/turn-analyses/"+analyses.Analyses[0].ID+"/feedback-items",
+			nil,
+			nil,
+			http.StatusOK,
+			&feedback,
+		)
 		if len(feedback.Items) != 1 {
-			t.Fatalf("analysis %s did not produce feedback", analyses.Analyses[0].ID)
+			t.Fatalf("analysis %s did not produce one feedback item", analyses.Analyses[0].ID)
 		}
+		trace.Feedback = append(trace.Feedback, feedback.Items[0])
 		if index == 0 {
 			feedbackID = feedback.Items[0].ID
-			var replay Turn
-			client.expect(t, http.MethodPost, "/v1/questions/"+questionID+"/turns", map[string]any{
-				"interaction_mode": "PUSH_TO_TALK",
-				"answer_text":      answer,
-			}, headers, http.StatusAccepted, &replay)
-			if replay.ID != turn.ID {
-				t.Fatalf("idempotent replay created a different turn: %s != %s", replay.ID, turn.ID)
-			}
 		}
 	}
 
-	var retryResponse RetryRequest
 	retryHeaders := map[string]string{"Idempotency-Key": "retry-key-1"}
-	client.expect(t, http.MethodPost, "/v1/feedback-items/"+feedbackID+"/retry-requests", map[string]any{}, retryHeaders, http.StatusCreated, &retryResponse)
+	client.expect(
+		t,
+		http.MethodPost,
+		"/v1/feedback-items/"+feedbackID+"/retry-requests",
+		nil,
+		retryHeaders,
+		http.StatusCreated,
+		&trace.Retry,
+	)
 	var replayRetry RetryRequest
-	client.expect(t, http.MethodPost, "/v1/feedback-items/"+feedbackID+"/retry-requests", map[string]any{}, retryHeaders, http.StatusCreated, &replayRetry)
-	if replayRetry.NewTurnID != retryResponse.NewTurnID {
-		t.Fatalf("idempotent retry created a different turn: %s != %s", replayRetry.NewTurnID, retryResponse.NewTurnID)
+	client.expect(
+		t,
+		http.MethodPost,
+		"/v1/feedback-items/"+feedbackID+"/retry-requests",
+		nil,
+		retryHeaders,
+		http.StatusCreated,
+		&replayRetry,
+	)
+	if replayRetry != trace.Retry {
+		t.Fatalf("retry replay changed the resource: %#v != %#v", replayRetry, trace.Retry)
 	}
+
+	var retryTurn Turn
 	client.expect(t, http.MethodPost, "/v1/questions/question_demo_001/turns", map[string]any{
 		"interaction_mode": "PUSH_TO_TALK",
 		"answer_text":      "I selected tracing after comparing cost and coverage, then reduced recovery time.",
-		"retry_request_id": retryResponse.ID,
-	}, map[string]string{"Idempotency-Key": "retry-turn-key-1"}, http.StatusAccepted, nil)
-
-	var finalSession map[string]any
-	client.expect(t, http.MethodGet, "/v1/practice-sessions/"+demoPracticeSession, nil, nil, http.StatusOK, &finalSession)
-	if finalSession["practice_session_status"] != "completed" {
-		t.Fatalf("session did not complete: %#v", finalSession)
+		"retry_request_id": trace.Retry.ID,
+	}, map[string]string{"Idempotency-Key": "retry-turn-key-1"}, http.StatusAccepted, &retryTurn)
+	trace.Turns = append(trace.Turns, retryTurn)
+	var retryPending Analysis
+	client.expect(t, http.MethodPost, "/v1/turns/"+retryTurn.ID+"/turn-analyses", nil, map[string]string{
+		"Idempotency-Key": "retry-analysis-key-1",
+	}, http.StatusAccepted, &retryPending)
+	var retryAnalyses struct {
+		Analyses []Analysis `json:"analyses"`
 	}
+	client.expect(t, http.MethodGet, "/v1/turns/"+retryTurn.ID+"/turn-analyses", nil, nil, http.StatusOK, &retryAnalyses)
+	if len(retryAnalyses.Analyses) != 1 {
+		t.Fatalf("retry Turn did not produce one analysis: %#v", retryAnalyses)
+	}
+	trace.Analyses = append(trace.Analyses, retryAnalyses.Analyses[0])
 
+	client.expect(
+		t,
+		http.MethodGet,
+		"/v1/practice-sessions/"+demoPracticeSession,
+		nil,
+		nil,
+		http.StatusOK,
+		&trace.FinalSession,
+	)
+	if trace.FinalSession["practice_session_status"] != "completed" {
+		t.Fatalf("session did not complete: %#v", trace.FinalSession)
+	}
 	var history struct {
 		Items []HistoryRecord `json:"history_records"`
 	}
-	client.expect(t, http.MethodGet, "/v1/history-records?practice_session_id="+demoPracticeSession, nil, nil, http.StatusOK, &history)
-	if len(history.Items) != 5 {
-		t.Fatalf("history does not contain four original turns and one retry: %d", len(history.Items))
+	client.expect(
+		t,
+		http.MethodGet,
+		"/v1/history-records?practice_session_id="+demoPracticeSession,
+		nil,
+		nil,
+		http.StatusOK,
+		&history,
+	)
+	if len(history.Items) != 5 || len(trace.Turns) != 5 {
+		t.Fatalf("expected four effective Turns and one retry: turns=%d history=%d", len(trace.Turns), len(history.Items))
 	}
+	trace.History = history.Items
 
-	requiredEvents := []string{
+	expectedTypes := []string{
+		"stream.ready",
 		"practice_session.started",
+		"question.created",
+		"turn.submitted", "turn.processing", "turn.completed", "question.created", "turn_analysis.completed",
 		"answer.processing_failed",
-		"turn.completed",
-		"turn_analysis.completed",
-		"practice_session.completed",
+		"turn.submitted", "turn.processing", "turn.completed", "question.created", "turn_analysis.completed",
+		"turn.submitted", "turn.processing", "turn.completed", "question.created", "turn_analysis.completed",
+		"turn.submitted", "turn.processing", "turn.completed", "practice_session.completed", "turn_analysis.completed",
+		"turn.submitted", "turn.processing", "turn.completed", "turn_analysis.completed",
 	}
-	eventTypes := events.awaitAndStop(t, requiredEvents)
-	for _, required := range requiredEvents {
-		if !contains(eventTypes, required) {
-			t.Fatalf("event stream does not contain %q: %#v", required, eventTypes)
-		}
-	}
+	trace.Events = events.awaitAndStop(t, expectedTypes)
+	assertEventTrace(t, trace.Events, expectedTypes)
+
 	var bootstrap struct {
 		LastEventSequence int `json:"last_event_sequence"`
 	}
-	client.expect(t, http.MethodGet, "/v1/practice-sessions/"+demoPracticeSession+"/bootstrap", nil, nil, http.StatusOK, &bootstrap)
-	replayed := readOneEvent(t, fmt.Sprintf(
-		"%s/v1/practice-sessions/%s/events?after_sequence=%d",
-		WebSocketURL(httpServer.URL),
-		demoPracticeSession,
-		bootstrap.LastEventSequence-1,
-	))
-	if !replayed.Replayable || replayed.Sequence != bootstrap.LastEventSequence {
-		t.Fatalf("event cursor replay is inconsistent: %#v", replayed)
+	client.expect(
+		t,
+		http.MethodGet,
+		"/v1/practice-sessions/"+demoPracticeSession+"/bootstrap",
+		nil,
+		nil,
+		http.StatusOK,
+		&bootstrap,
+	)
+	trace.ReplayEvents = readEvents(
+		t,
+		fmt.Sprintf(
+			"%s/v1/practice-sessions/%s/events?after_sequence=%d",
+			WebSocketURL(httpServer.URL),
+			demoPracticeSession,
+			bootstrap.LastEventSequence-1,
+		),
+		2,
+	)
+	if trace.ReplayEvents[0].Type != "stream.ready" ||
+		trace.ReplayEvents[1].Sequence != bootstrap.LastEventSequence {
+		t.Fatalf("cursor replay is inconsistent: %#v", trace.ReplayEvents)
 	}
-
-	return flowSummary{
-		SessionID:          sessionBootstrap.Session["practice_session_id"].(string),
-		EffectiveTurns:     len(answers),
-		RetryTurnID:        retryResponse.NewTurnID,
-		HistoryCount:       len(history.Items),
-		EventTypes:         eventTypes,
-		RecoverableFailure: recoverableFailure,
-	}
+	return trace
 }
 
-func (c flowClient) expect(t *testing.T, method, path string, body any, headers map[string]string, status int, target any) {
+type errorEnvelope struct {
+	Error struct {
+		Code      string `json:"code"`
+		Retryable bool   `json:"retryable"`
+	} `json:"error"`
+}
+
+func (c *flowClient) expect(
+	t *testing.T,
+	method string,
+	path string,
+	body any,
+	headers map[string]string,
+	status int,
+	target any,
+) []byte {
 	t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -230,95 +353,125 @@ func (c flowClient) expect(t *testing.T, method, path string, body any, headers 
 	if response.StatusCode != status {
 		t.Fatalf("%s %s returned %d, want %d: %s", method, path, response.StatusCode, status, payload)
 	}
+	*c.exchanges = append(*c.exchanges, httpExchange{
+		Method: method,
+		Path:   path,
+		Status: response.StatusCode,
+		Body:   string(payload),
+	})
 	if target != nil {
 		if err := json.Unmarshal(payload, target); err != nil {
 			t.Fatalf("decode %s %s: %v\n%s", method, path, err, payload)
 		}
 	}
+	return payload
 }
 
 type eventCollector struct {
 	connection *websocket.Conn
-	types      chan string
+	events     chan Event
 	done       chan struct{}
 }
 
 func startEventCollector(t *testing.T, url string) *eventCollector {
 	t.Helper()
-	connection, _, err := websocket.DefaultDialer.Dial(url, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	connection := dialEvents(t, url)
 	collector := &eventCollector{
 		connection: connection,
-		types:      make(chan string, 64),
+		events:     make(chan Event, 64),
 		done:       make(chan struct{}),
 	}
 	go func() {
 		defer close(collector.done)
-		defer close(collector.types)
+		defer close(collector.events)
 		for {
 			var event Event
 			if err := connection.ReadJSON(&event); err != nil {
 				return
 			}
-			collector.types <- event.Type
+			collector.events <- event
 		}
 	}()
 	return collector
 }
 
-func readOneEvent(t *testing.T, url string) Event {
+func dialEvents(t *testing.T, url string) *websocket.Conn {
 	t.Helper()
-	connection, _, err := websocket.DefaultDialer.Dial(url, nil)
+	dialer := websocket.Dialer{Subprotocols: []string{eventProtocol}}
+	connection, response, err := dialer.Dial(url, nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("dial event stream: %v", err)
 	}
-	defer connection.Close()
-	_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
-	var event Event
-	if err := connection.ReadJSON(&event); err != nil {
-		t.Fatalf("read replayed event: %v", err)
+	if response == nil || response.Header.Get("Sec-WebSocket-Protocol") != eventProtocol ||
+		connection.Subprotocol() != eventProtocol {
+		_ = connection.Close()
+		t.Fatalf("event protocol was not negotiated: %#v", response)
 	}
-	return event
+	return connection
 }
 
-func (c *eventCollector) awaitAndStop(t *testing.T, required []string) []string {
+func readEvents(t *testing.T, url string, count int) []Event {
+	t.Helper()
+	connection := dialEvents(t, url)
+	defer connection.Close()
+	_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+	events := make([]Event, 0, count)
+	for len(events) < count {
+		var event Event
+		if err := connection.ReadJSON(&event); err != nil {
+			t.Fatalf("read replayed event: %v", err)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func (c *eventCollector) awaitAndStop(t *testing.T, expectedTypes []string) []Event {
 	t.Helper()
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
-	var eventTypes []string
-	for {
-		complete := true
-		for _, requiredType := range required {
-			if !contains(eventTypes, requiredType) {
-				complete = false
-				break
-			}
-		}
-		if complete {
-			break
-		}
+	events := make([]Event, 0, len(expectedTypes))
+	for len(events) < len(expectedTypes) {
 		select {
-		case eventType := <-c.types:
-			eventTypes = append(eventTypes, eventType)
+		case event, open := <-c.events:
+			if !open {
+				t.Fatalf("event stream closed after %d events", len(events))
+			}
+			events = append(events, event)
 		case <-timer.C:
-			t.Fatalf("timed out waiting for events; received %#v", eventTypes)
+			t.Fatalf("timed out waiting for events; received %#v", events)
 		}
 	}
 	_ = c.connection.Close()
 	<-c.done
-	for eventType := range c.types {
-		eventTypes = append(eventTypes, eventType)
+	for event := range c.events {
+		events = append(events, event)
 	}
-	return eventTypes
+	if len(events) != len(expectedTypes) {
+		t.Fatalf("event stream produced %d events, want %d: %#v", len(events), len(expectedTypes), events)
+	}
+	return events
 }
 
-func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
+func assertEventTrace(t *testing.T, events []Event, expectedTypes []string) {
+	t.Helper()
+	nextSequence := 1
+	for index, event := range events {
+		if event.Type != expectedTypes[index] {
+			t.Fatalf("event %d type=%q, want %q", index, event.Type, expectedTypes[index])
+		}
+		if event.Version != 1 || event.SessionID != demoPracticeSession ||
+			event.ID == "" || event.OccurredAt == "" || event.CorrelationID == "" ||
+			event.Payload == nil {
+			t.Fatalf("event %d has an invalid envelope: %#v", index, event)
+		}
+		if event.Replayable {
+			if event.Sequence != nextSequence {
+				t.Fatalf("event %d sequence=%d, want %d", index, event.Sequence, nextSequence)
+			}
+			nextSequence++
+		} else if event.Sequence != 0 {
+			t.Fatalf("non-replayable event %d exposed sequence %d", index, event.Sequence)
 		}
 	}
-	return false
 }
