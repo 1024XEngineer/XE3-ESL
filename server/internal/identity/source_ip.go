@@ -23,11 +23,23 @@ func (directSourceIPResolver) Resolve(request *http.Request) string {
 	return address.String()
 }
 
+type trustedProxyHeader uint8
+
+const (
+	trustedProxyHeaderNone trustedProxyHeader = iota
+	trustedProxyHeaderXForwardedFor
+	trustedProxyHeaderForwarded
+)
+
 type TrustedProxyResolver struct {
 	trusted []netip.Prefix
+	header  trustedProxyHeader
 }
 
-func NewTrustedProxyResolver(cidrs []string) (*TrustedProxyResolver, error) {
+func NewTrustedProxyResolver(
+	cidrs []string,
+	headerName string,
+) (*TrustedProxyResolver, error) {
 	trusted := make([]netip.Prefix, 0, len(cidrs))
 	for _, raw := range cidrs {
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
@@ -36,34 +48,123 @@ func NewTrustedProxyResolver(cidrs []string) (*TrustedProxyResolver, error) {
 		}
 		trusted = append(trusted, prefix.Masked())
 	}
-	return &TrustedProxyResolver{trusted: trusted}, nil
+
+	var header trustedProxyHeader
+	switch strings.ToLower(strings.TrimSpace(headerName)) {
+	case "":
+		header = trustedProxyHeaderNone
+	case "x-forwarded-for":
+		header = trustedProxyHeaderXForwardedFor
+	case "forwarded":
+		header = trustedProxyHeaderForwarded
+	default:
+		return nil, errors.New("identity: invalid trusted proxy header")
+	}
+	if (header == trustedProxyHeaderNone) != (len(trusted) == 0) {
+		return nil, errors.New("identity: incomplete trusted proxy configuration")
+	}
+	return &TrustedProxyResolver{trusted: trusted, header: header}, nil
 }
 
 func (r *TrustedProxyResolver) Resolve(request *http.Request) string {
 	peer, ok := parseIP(request.RemoteAddr)
-	if !ok || !r.isTrusted(peer) {
+	if !ok || !r.isTrusted(peer) || r.header == trustedProxyHeaderNone {
 		return directSourceIPResolver{}.Resolve(request)
 	}
 
-	var chain []netip.Addr
-	if forwarded := request.Header.Values("Forwarded"); len(forwarded) > 0 {
-		chain, ok = forwardedChain(forwarded)
+	switch r.header {
+	case trustedProxyHeaderXForwardedFor:
+		return r.resolveXForwardedFor(
+			peer,
+			request.Header.Values("X-Forwarded-For"),
+		)
+	case trustedProxyHeaderForwarded:
+		return r.resolveForwarded(peer, request.Header.Values("Forwarded"))
+	default:
+		return peer.String()
+	}
+}
+
+// resolveXForwardedFor peels the proxy-appended chain from right to left.
+// Once the first valid non-trusted address is found, client-controlled values
+// further left are irrelevant and are deliberately not parsed.
+func (r *TrustedProxyResolver) resolveXForwardedFor(
+	peer netip.Addr,
+	values []string,
+) string {
+	elements := commaSeparatedElements(values)
+	if len(elements) == 0 {
+		return peer.String()
+	}
+	var leftmost netip.Addr
+	for index := len(elements) - 1; index >= 0; index-- {
+		address, ok := parseIP(strings.TrimSpace(elements[index]))
 		if !ok {
 			return peer.String()
 		}
-	} else {
-		chain, ok = xForwardedForChain(request.Header.Values("X-Forwarded-For"))
-	}
-	if !ok || len(chain) == 0 {
-		return peer.String()
-	}
-	chain = append(chain, peer)
-	for index := len(chain) - 1; index >= 0; index-- {
-		if !r.isTrusted(chain[index]) {
-			return chain[index].String()
+		leftmost = address
+		if !r.isTrusted(address) {
+			return address.String()
 		}
 	}
-	return chain[0].String()
+	return leftmost.String()
+}
+
+func (r *TrustedProxyResolver) resolveForwarded(
+	peer netip.Addr,
+	values []string,
+) string {
+	elements := commaSeparatedElements(values)
+	if len(elements) == 0 {
+		return peer.String()
+	}
+	var leftmost netip.Addr
+	for index := len(elements) - 1; index >= 0; index-- {
+		address, ok := forwardedAddress(elements[index])
+		if !ok {
+			return peer.String()
+		}
+		leftmost = address
+		if !r.isTrusted(address) {
+			return address.String()
+		}
+	}
+	return leftmost.String()
+}
+
+func commaSeparatedElements(values []string) []string {
+	var elements []string
+	for _, value := range values {
+		elements = append(elements, strings.Split(value, ",")...)
+	}
+	return elements
+}
+
+func forwardedAddress(element string) (netip.Addr, bool) {
+	var rawAddress string
+	found := false
+	for _, parameter := range strings.Split(element, ";") {
+		name, raw, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+		if !ok || !strings.EqualFold(name, "for") {
+			continue
+		}
+		if found {
+			return netip.Addr{}, false
+		}
+		found = true
+		rawAddress = strings.TrimSpace(raw)
+	}
+	if !found || rawAddress == "" {
+		return netip.Addr{}, false
+	}
+	if strings.HasPrefix(rawAddress, `"`) {
+		unquoted, err := strconv.Unquote(rawAddress)
+		if err != nil {
+			return netip.Addr{}, false
+		}
+		rawAddress = unquoted
+	}
+	return parseIP(rawAddress)
 }
 
 func (r *TrustedProxyResolver) isTrusted(address netip.Addr) bool {
@@ -73,59 +174,6 @@ func (r *TrustedProxyResolver) isTrusted(address netip.Addr) bool {
 		}
 	}
 	return false
-}
-
-func forwardedChain(values []string) ([]netip.Addr, bool) {
-	if len(values) == 0 {
-		return nil, true
-	}
-	var result []netip.Addr
-	for _, value := range values {
-		for _, element := range strings.Split(value, ",") {
-			var found bool
-			for _, parameter := range strings.Split(element, ";") {
-				name, raw, ok := strings.Cut(strings.TrimSpace(parameter), "=")
-				if !ok || !strings.EqualFold(name, "for") {
-					continue
-				}
-				if found {
-					return nil, false
-				}
-				found = true
-				raw = strings.TrimSpace(raw)
-				if strings.HasPrefix(raw, `"`) {
-					unquoted, err := strconv.Unquote(raw)
-					if err != nil {
-						return nil, false
-					}
-					raw = unquoted
-				}
-				address, ok := parseIP(raw)
-				if !ok {
-					return nil, false
-				}
-				result = append(result, address)
-			}
-			if !found {
-				return nil, false
-			}
-		}
-	}
-	return result, true
-}
-
-func xForwardedForChain(values []string) ([]netip.Addr, bool) {
-	var result []netip.Addr
-	for _, value := range values {
-		for _, raw := range strings.Split(value, ",") {
-			address, ok := parseIP(strings.TrimSpace(raw))
-			if !ok {
-				return nil, false
-			}
-			result = append(result, address)
-		}
-	}
-	return result, true
 }
 
 func parseIP(raw string) (netip.Addr, bool) {

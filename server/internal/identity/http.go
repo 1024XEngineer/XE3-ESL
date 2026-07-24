@@ -155,7 +155,7 @@ func (h *HTTPHandler) login(c *gin.Context) {
 		"user":          userResponse(result.User),
 		"session_token": result.Token,
 		"token_type":    "Bearer",
-		"expires_at":    result.ExpiresAt.UTC().Format(time.RFC3339),
+		"expires_at":    result.ExpiresAt.UTC().Format(time.RFC3339Nano),
 	})
 }
 

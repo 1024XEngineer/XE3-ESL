@@ -47,6 +47,7 @@ func run() int {
 	identityModule, err := bootstrap.NewIdentityModule(
 		databasePool.Native(),
 		cfg.TrustedProxyCIDRs,
+		cfg.TrustedProxyHeader,
 	)
 	if err != nil {
 		logger.Error("identity startup failed", slog.Any("error", err))

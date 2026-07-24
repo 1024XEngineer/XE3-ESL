@@ -91,7 +91,16 @@ func (l denyLimiter) Allow(string) RateLimitDecision {
 }
 
 func TestIdentityHTTPContract(t *testing.T) {
-	expiresAt := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	expiresAt := time.Date(
+		2026,
+		8,
+		23,
+		12,
+		0,
+		0,
+		123456000,
+		time.UTC,
+	)
 	actor := requestcontext.Actor{UserID: "user-1", SessionID: "session-1"}
 	app := completeApplicationStub()
 	app.register = func(
@@ -165,7 +174,7 @@ func TestIdentityHTTPContract(t *testing.T) {
 		t,
 		login,
 		http.StatusOK,
-		`{"expires_at":"2026-08-23T12:00:00Z","session_token":"sess_secret","token_type":"Bearer","user":{"email":"learner@example.com","user_id":"user-1"}}`,
+		`{"expires_at":"2026-08-23T12:00:00.123456Z","session_token":"sess_secret","token_type":"Bearer","user":{"email":"learner@example.com","user_id":"user-1"}}`,
 	)
 	if login.Header().Get("Cache-Control") != "no-store" ||
 		login.Header().Get("Pragma") != "no-cache" {
