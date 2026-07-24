@@ -73,6 +73,36 @@ void main() {
       );
     });
 
+    test(
+      'login accepts the complete RFC3339 separator and leap-second range',
+      () async {
+        for (final expiresAt in <String>[
+          '2026-08-23t10:00:00z',
+          '2026-12-31T23:59:60Z',
+        ]) {
+          transport.response = IdentityHttpResponse(
+            statusCode: 200,
+            body:
+                '''
+            {
+              "user":{"user_id":"user_1","email":"learner@example.com"},
+              "session_token":"sess_opaque-secret",
+              "token_type":"Bearer",
+              "expires_at":"$expiresAt"
+            }
+          ''',
+          );
+
+          final result = await client.login(
+            email: 'learner@example.com',
+            password: 'correct horse battery staple',
+          );
+
+          expect(result.sessionToken, 'sess_opaque-secret');
+        }
+      },
+    );
+
     test('currentUser injects Bearer only in Authorization header', () async {
       const token = 'sess_opaque-secret';
       transport.response = const IdentityHttpResponse(
@@ -378,7 +408,7 @@ void main() {
         '2026-13-01T10:00:00Z',
         '2026-08-23T24:00:00Z',
         '2026-08-23T10:60:00Z',
-        '2026-08-23T10:00:61Z',
+        '2026-08-23T10:00:62Z',
         '2026-08-23T10:00:00+24:00',
         '2026-08-23T10:00:00+08:60',
       ]) {

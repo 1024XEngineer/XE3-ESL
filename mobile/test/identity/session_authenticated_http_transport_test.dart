@@ -89,6 +89,43 @@ void main() {
   });
 
   test(
+    'discards an ABA response when the Token is reused by a new Session',
+    () async {
+      var currentCredential = credential;
+      final response = Completer<IdentityHttpResponse>();
+      final transport = _ControlledTransport(response.future);
+      final authenticatedTransport = SessionAuthenticatedHttpTransport(
+        transport: transport,
+        credentialProvider: () => currentCredential,
+        invalidateSession: _noInvalidation,
+        trustedBaseUri: Uri.parse('https://api.speak-up.test'),
+      );
+
+      final request = authenticatedTransport.send(
+        method: 'GET',
+        uri: Uri.parse('https://api.speak-up.test/v1/private-resource'),
+        headers: const <String, String>{},
+      );
+      await transport.started.future;
+      currentCredential = const AuthSessionCredential(
+        sessionToken: 'sess_current-token',
+        generation: 8,
+      );
+      response.complete(
+        const IdentityHttpResponse(
+          statusCode: HttpStatus.ok,
+          body: '{"private":"old-generation"}',
+        ),
+      );
+
+      await expectLater(
+        request,
+        throwsA(isA<AuthSessionSupersededException>()),
+      );
+    },
+  );
+
+  test(
     'rejects unsafe or different origins before reading the credential',
     () async {
       final unsafeUris = <Uri>[

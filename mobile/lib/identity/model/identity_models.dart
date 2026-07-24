@@ -5,8 +5,8 @@ final RegExp _opaqueSessionTokenPattern = RegExp(
 );
 final RegExp _userIdPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]*$');
 final RegExp _rfc3339DateTimePattern = RegExp(
-  r'^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})'
-  r'(?:\.(\d+))?(?:Z|[+-](\d{2}):(\d{2}))$',
+  r'^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})'
+  r'(?:\.(\d+))?(?:[Zz]|[+-](\d{2}):(\d{2}))$',
 );
 
 bool isValidOpaqueSessionToken(String sessionToken) {
@@ -115,12 +115,14 @@ DateTime? _tryParseStrictRfc3339(String value) {
       day > _daysInMonth(year, month) ||
       hour > 23 ||
       minute > 59 ||
-      second > 59 ||
+      second > 60 ||
       offsetHour > 23 ||
       offsetMinute > 59) {
     return null;
   }
-  return DateTime.tryParse(value);
+  return DateTime.tryParse(
+    value.replaceRange(10, 11, 'T').replaceAll(RegExp(r'z$'), 'Z'),
+  );
 }
 
 int _daysInMonth(int year, int month) {

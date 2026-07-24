@@ -181,6 +181,52 @@ void main() {
     },
   );
 
+  test(
+    'a successful Upgrade is discarded when a new Session reuses the Token',
+    () async {
+      final controller = AuthController(
+        identityClient: _IdentityClient(
+          currentUserResult: userA,
+          loginResult: LoginResult(
+            user: userB,
+            sessionToken: 'sess_account-a',
+            expiresAt: DateTime.utc(2030),
+          ),
+        ),
+        sessionStore: _SessionStore('sess_account-a'),
+      );
+      await controller.initialize();
+
+      final connector = _ControlledWebSocketConnector();
+      final authenticatedConnector = SessionAuthenticatedWebSocketConnector(
+        connector: connector,
+        credentialProvider: () => controller.currentCredential,
+        invalidateSession: controller.invalidateSession,
+        trustedBaseUri: Uri.parse('wss://api.speak-up.test'),
+      );
+      final connection = authenticatedConnector.connect(
+        uri: Uri.parse('wss://api.speak-up.test/events'),
+      );
+      await connector.started.future;
+
+      await controller.logout();
+      controller.showLogin();
+      await controller.login(
+        email: userB.email,
+        password: 'long password value',
+      );
+      final oldSocket = _TrackedWebSocket();
+      connector.result.complete(oldSocket);
+
+      await expectLater(
+        connection,
+        throwsA(isA<AuthSessionSupersededException>()),
+      );
+      expect(oldSocket.closeCount, 1);
+      expect(controller.currentCredential?.sessionToken, 'sess_account-a');
+    },
+  );
+
   test('current HTTP 401 invalidates the captured session', () async {
     final controller = AuthController(
       identityClient: _IdentityClient(
