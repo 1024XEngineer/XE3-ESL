@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
@@ -84,6 +85,81 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('clears retained text after an external retry is accepted', (
+    tester,
+  ) async {
+    var messages = const <AgentMessage>[];
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              messages: messages,
+              onSubmitText: (_) async => false,
+            );
+          },
+        ),
+      ),
+    );
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    await tester.enterText(composer, 'retry this retained text');
+    expect(tester.widget<TextField>(composer).controller?.text, isNotEmpty);
+
+    update(() {
+      messages = const <AgentMessage>[
+        AgentMessage(
+          id: 'accepted-user-message',
+          role: AgentMessageRole.user,
+          text: 'retry this retained text',
+        ),
+      ];
+    });
+    await tester.pump();
+
+    expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
+  });
+
+  testWidgets('preserves a new draft when an older retry is accepted', (
+    tester,
+  ) async {
+    var messages = const <AgentMessage>[];
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              messages: messages,
+              onSubmitText: (_) async => false,
+            );
+          },
+        ),
+      ),
+    );
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    await tester.enterText(composer, 'a newer draft');
+    update(() {
+      messages = const <AgentMessage>[
+        AgentMessage(
+          id: 'accepted-older-message',
+          role: AgentMessageRole.user,
+          text: 'the older failed text',
+        ),
+      ];
+    });
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(composer).controller?.text,
+      'a newer draft',
+    );
+  });
+
   testWidgets('keeps all four Agent actions above the composer on iPhone', (
     tester,
   ) async {
@@ -131,11 +207,19 @@ void main() {
         of: drawer,
         matching: find.byKey(const Key('new-conversation-button')),
       ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: drawer, matching: find.text('开始新对话')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: drawer, matching: find.text('当前对话')),
       findsOneWidget,
     );
     expect(
-      find.descendant(of: drawer, matching: find.text('最近对话')),
-      findsOneWidget,
+      find.descendant(of: drawer, matching: find.text('当前内容为 UI Mock')),
+      findsNothing,
     );
     expect(
       find.descendant(of: drawer, matching: find.text('场景')),
@@ -358,8 +442,8 @@ void main() {
 
       await tester.drag(find.byType(ListView), const Offset(0, -1000));
       await tester.pumpAndSettle();
-      final mockLabel = find.text('当前内容为 UI Mock');
-      expect(mockLabel.hitTestable(), findsOneWidget);
+      final accountLabel = find.text('已连接当前账号');
+      expect(accountLabel.hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

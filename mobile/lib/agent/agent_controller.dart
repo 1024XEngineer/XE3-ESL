@@ -127,10 +127,23 @@ final class AgentController extends ChangeNotifier {
         _ => PracticeRecordingState.idle,
       };
       _initialized = true;
-      _retry = null;
-      _errorMessage = _completedTurns == 3 && _review == null
-          ? '三轮回答已保存，但复盘暂时没有生成，可以重试。'
-          : null;
+      final textRecovery = snapshot.textRecovery;
+      if (textRecovery != null) {
+        _retry = textRecovery.retryable
+            ? _TextRetry(
+                text: textRecovery.text,
+                clientMessageId: textRecovery.clientMessageId,
+              )
+            : null;
+        _errorMessage = textRecovery.retryable
+            ? '上次 Agent 运行未能完成，可以继续重试。'
+            : '上次 Agent 运行未能完成，服务端不允许重试。';
+      } else {
+        _retry = null;
+        _errorMessage = _completedTurns == 3 && _review == null
+            ? '三轮回答已保存，但复盘暂时没有生成，可以重试。'
+            : null;
+      }
     } catch (_) {
       if (_isCurrent(epoch)) {
         _retry = const _RestoreRetry();
@@ -199,24 +212,26 @@ final class AgentController extends ChangeNotifier {
     }
   }
 
-  Future<void> sendText(String value) async {
+  Future<bool> sendText(String value) async {
     final text = value.trim();
     if (text.isEmpty) {
-      return;
+      return false;
     }
     await _ensureInitialized();
     if (_threadId == null || isBusy || _disposed) {
-      return;
+      return false;
     }
-    await _sendText(
-      _TextRetry(text: text, clientMessageId: _newClientId('message')),
-    );
+    final retry = _retry;
+    final operation = retry is _TextRetry && retry.text == text
+        ? retry
+        : _TextRetry(text: text, clientMessageId: _newClientId('message'));
+    return _sendText(operation);
   }
 
-  Future<void> _sendText(_TextRetry operation) async {
+  Future<bool> _sendText(_TextRetry operation) async {
     final threadId = _threadId;
     if (threadId == null || isBusy || _disposed) {
-      return;
+      return false;
     }
     final epoch = _epoch;
     _retry = null;
@@ -229,11 +244,12 @@ final class AgentController extends ChangeNotifier {
         clientMessageId: operation.clientMessageId,
       );
       if (!_isCurrent(epoch)) {
-        return;
+        return false;
       }
       _appendExchange(exchange);
       _retry = null;
       _errorMessage = null;
+      return true;
     } catch (error) {
       if (_isCurrent(epoch)) {
         _retry = _canRetry(error) ? operation : null;
@@ -242,8 +258,11 @@ final class AgentController extends ChangeNotifier {
                 error.kind == AgentClientFailureKind.runFailed &&
                 !error.retryable
             ? '这次 Agent 运行未能完成，服务端不允许重试。'
+            : error is AgentClientException && !error.retryable
+            ? '消息未发送，请检查内容后再试。'
             : '消息没有发送成功，可以重试。';
       }
+      return false;
     } finally {
       if (_isCurrent(epoch)) {
         _setBusy(false);
@@ -488,11 +507,17 @@ final class AgentController extends ChangeNotifier {
   }
 
   void _appendExchange(AgentExchange exchange) {
-    _messages = <AgentMessage>[
-      ..._messages,
+    final messages = List<AgentMessage>.from(_messages);
+    final messageIds = {for (final message in messages) message.id};
+    for (final message in <AgentMessage>[
       exchange.userMessage,
       ?exchange.assistantMessage,
-    ];
+    ]) {
+      if (messageIds.add(message.id)) {
+        messages.add(message);
+      }
+    }
+    _messages = messages;
   }
 
   bool _isCurrent(int epoch) => !_disposed && epoch == _epoch;
@@ -567,6 +592,7 @@ final class AgentController extends ChangeNotifier {
     final activeMatter = snapshot.activeMatter;
     final review = practice?.review;
     final pendingReviewClientId = practice?.pendingReviewClientId;
+    final textRecovery = snapshot.textRecovery;
     final messageIds = <String>{};
     final invalidMessages = snapshot.messages.any(
       (message) =>
@@ -593,6 +619,11 @@ final class AgentController extends ChangeNotifier {
             review.summary.trim().isEmpty ||
             review.strength.trim().isEmpty ||
             review.nextFocus.trim().isEmpty);
+    final invalidTextRecovery =
+        textRecovery != null &&
+        (textRecovery.text.trim().isEmpty ||
+            textRecovery.clientMessageId.trim().isEmpty ||
+            textRecovery.failureKind.trim().isEmpty);
     if (snapshot.threadId.trim().isEmpty ||
         (activeMatter != null &&
             (activeMatter.id.trim().isEmpty ||
@@ -601,6 +632,7 @@ final class AgentController extends ChangeNotifier {
         (practice != null && snapshot.activeMatter == null) ||
         invalidPractice ||
         invalidReview ||
+        invalidTextRecovery ||
         invalidMessages) {
       throw StateError('Invalid Agent Thread snapshot.');
     }

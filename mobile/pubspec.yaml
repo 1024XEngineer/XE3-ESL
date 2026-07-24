@@ -12,6 +12,8 @@ dependencies:
   flutter_secure_storage: ^10.3.1
 
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0

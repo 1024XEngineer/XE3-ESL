@@ -110,6 +110,54 @@ void main() {
     expect(controller.canRetry, isFalse);
   });
 
+  test('resubmits retained failed text with its original identity', () async {
+    final client = _FailOnceTextAgentClient();
+    final controller = AgentController(client: client);
+    await controller.initialize();
+
+    expect(await controller.sendText('retry from the composer'), isFalse);
+    expect(await controller.sendText('retry from the composer'), isTrue);
+
+    expect(client.messageClientIds, hasLength(2));
+    expect(client.messageClientIds.toSet(), hasLength(1));
+    expect(controller.messages, hasLength(2));
+    expect(controller.canRetry, isFalse);
+  });
+
+  test('restores a failed text operation with its server identity', () async {
+    final client = _SnapshotAgentClient(
+      const AgentThreadSnapshot(
+        threadId: 'thread_restored_text',
+        textRecovery: AgentTextRecovery(
+          text: 'retry the restored text',
+          clientMessageId: 'message_restored_stable',
+          failureKind: 'timeout',
+          retryable: true,
+        ),
+        messages: <AgentMessage>[
+          AgentMessage(
+            id: 'message_restored_user',
+            role: AgentMessageRole.user,
+            text: 'retry the restored text',
+          ),
+        ],
+      ),
+    );
+    final controller = AgentController(client: client);
+
+    await controller.initialize();
+
+    expect(controller.canRetry, isTrue);
+    expect(controller.messages, hasLength(1));
+    expect(controller.errorMessage, contains('继续重试'));
+
+    await controller.retryLastOperation();
+
+    expect(client.messageClientIds, <String>['message_restored_stable']);
+    expect(controller.messages, hasLength(2));
+    expect(controller.canRetry, isFalse);
+  });
+
   test('retries a failed Turn with one stable client Turn identity', () async {
     final client = _FailOnceTurnAgentClient();
     final controller = AgentController(client: client);
@@ -646,9 +694,36 @@ final class _SnapshotAgentClient extends _DelegatingAgentClient {
   final AgentThreadSnapshot snapshot;
   final List<int> transcribedTurnNumbers = <int>[];
   final List<String> reviewClientIds = <String>[];
+  final List<String> messageClientIds = <String>[];
 
   @override
   Future<AgentThreadSnapshot> restoreThread() async => snapshot;
+
+  @override
+  Future<AgentExchange> sendText({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+  }) {
+    messageClientIds.add(clientMessageId);
+    if (snapshot.textRecovery != null) {
+      return Future<AgentExchange>.value(
+        AgentExchange(
+          userMessage: snapshot.messages.last,
+          assistantMessage: const AgentMessage(
+            id: 'message_restored_assistant',
+            role: AgentMessageRole.assistant,
+            text: 'restored answer',
+          ),
+        ),
+      );
+    }
+    return super.sendText(
+      threadId: threadId,
+      text: text,
+      clientMessageId: clientMessageId,
+    );
+  }
 
   @override
   Future<String> transcribeTurn({

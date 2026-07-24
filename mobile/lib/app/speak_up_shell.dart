@@ -236,16 +236,9 @@ class _ConversationDrawer extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              key: const Key('new-conversation-button'),
-              onPressed: () => Navigator.of(context).pop(),
-              icon: const Icon(Icons.edit_square),
-              label: const Text('开始新对话'),
-            ),
             const SizedBox(height: 28),
             const Text(
-              '最近对话',
+              '当前对话',
               style: TextStyle(
                 color: Color(0xFF777983),
                 fontSize: 13,
@@ -253,36 +246,15 @@ class _ConversationDrawer extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            const _ConversationTile(title: '准备后端开发模拟面试', subtitle: '刚刚'),
-            const _ConversationTile(title: '项目经历怎么说更清楚', subtitle: '昨天'),
-            const _ConversationTile(title: '系统设计表达复盘', subtitle: '7 月 22 日'),
-            const SizedBox(height: 28),
-            const Text(
-              '当前内容为 UI Mock',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF989AA3), fontSize: 12),
+            const ListTile(
+              contentPadding: EdgeInsets.symmetric(horizontal: 8),
+              leading: Icon(Icons.chat_bubble_outline_rounded),
+              title: Text('Agent 对话'),
+              subtitle: Text('已连接当前账号'),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _ConversationTile extends StatelessWidget {
-  const _ConversationTile({required this.title, required this.subtitle});
-
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-      leading: const Icon(Icons.chat_bubble_outline_rounded),
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(subtitle),
-      onTap: () => Navigator.of(context).pop(),
     );
   }
 }

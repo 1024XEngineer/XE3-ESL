@@ -93,6 +93,153 @@ void main() {
       transport.expectDone();
     });
 
+    test('restores a failed Run and its stable retry identity', () async {
+      const text = 'Restore this failed request.';
+      const clientMessageId = 'message_cold_restore';
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads',
+          response: _jsonResponse(HttpStatus.ok, {
+            'threads': [_threadJson()],
+          }),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': [
+              _messageJson(
+                id: _userMessageId,
+                sequence: 1,
+                role: 'user',
+                content: text,
+                clientMessageId: clientMessageId,
+              ),
+            ],
+          }),
+        ),
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-threads/$_threadId/runs',
+          verify: (call) {
+            expect(jsonDecode(call.body!), {
+              'client_message_id': clientMessageId,
+              'content': text,
+            });
+          },
+          response: _jsonResponse(
+            HttpStatus.created,
+            _runJson(
+              status: 'failed',
+              failureKind: 'timeout',
+              failureRetryable: true,
+            ),
+          ),
+        ),
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-runs/$_runId/retries',
+          response: _jsonResponse(
+            HttpStatus.created,
+            _runJson(
+              id: _retryRunId,
+              status: 'completed',
+              retryOfRunId: _runId,
+              clientRetryId: 'retry:$_runId',
+            ),
+          ),
+        ),
+        _messagesStep(
+          userContent: text,
+          clientMessageId: clientMessageId,
+          assistantRunId: _retryRunId,
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final snapshot = await harness.client.restoreThread();
+
+      expect(snapshot.messages, hasLength(1));
+      expect(snapshot.textRecovery?.clientMessageId, clientMessageId);
+      expect(snapshot.textRecovery?.retryable, isTrue);
+
+      final exchange = await harness.client.sendText(
+        threadId: _threadId,
+        text: text,
+        clientMessageId: clientMessageId,
+      );
+
+      expect(exchange.assistantMessage, isNotNull);
+      expect(
+        transport.calls
+            .where((call) => call.path == '/v1/agent-threads/$_threadId/runs')
+            .length,
+        1,
+      );
+      transport.expectDone();
+    });
+
+    test(
+      'finishes a restored pending Message without duplicating it',
+      () async {
+        const text = 'Finish this restored request.';
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            response: _jsonResponse(HttpStatus.ok, {
+              'threads': [_threadJson()],
+            }),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads/$_threadId/messages',
+            response: _jsonResponse(HttpStatus.ok, {
+              'messages': [
+                _messageJson(
+                  id: _userMessageId,
+                  sequence: 1,
+                  role: 'user',
+                  content: text,
+                  clientMessageId: 'message_pending_restore',
+                ),
+              ],
+            }),
+          ),
+          _Step(
+            method: 'POST',
+            path: '/v1/agent-threads/$_threadId/runs',
+            response: _jsonResponse(
+              HttpStatus.accepted,
+              _runJson(status: 'pending'),
+            ),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-runs/$_runId',
+            response: _jsonResponse(
+              HttpStatus.ok,
+              _runJson(status: 'completed'),
+            ),
+          ),
+          _messagesStep(
+            userContent: text,
+            clientMessageId: 'message_pending_restore',
+          ),
+        ]);
+        final harness = _Harness(transport, maxRunPollAttempts: 2);
+
+        final snapshot = await harness.client.restoreThread();
+
+        expect(snapshot.textRecovery, isNull);
+        expect(snapshot.messages, hasLength(2));
+        expect(snapshot.messages.first.id, _userMessageId);
+        expect(snapshot.messages.last.id, _assistantMessageId);
+        transport.expectDone();
+      },
+    );
+
     test('rejects unknown response fields and unsafe ordering', () async {
       final malformedThread = _threadJson()..['unexpected'] = true;
       final transport = _ScriptedTransport([
@@ -122,6 +269,34 @@ void main() {
 
   group('WireAgentClient text Run', () {
     test(
+      'accepts 3000 astral Unicode scalars within the API byte cap',
+      () async {
+        final text = List<String>.filled(3000, '😀').join();
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'POST',
+            path: '/v1/agent-threads/$_threadId/runs',
+            response: _jsonResponse(
+              HttpStatus.created,
+              _runJson(status: 'completed'),
+            ),
+          ),
+          _messagesStep(userContent: text, clientMessageId: 'message_unicode'),
+        ]);
+        final harness = _Harness(transport);
+
+        final exchange = await harness.client.sendText(
+          threadId: _threadId,
+          text: text,
+          clientMessageId: 'message_unicode',
+        );
+
+        expect(exchange.userMessage.text.runes, hasLength(3000));
+        transport.expectDone();
+      },
+    );
+
+    test(
       'submits a 201 Run and returns committed PostgreSQL Messages',
       () async {
         const text = 'How can I make this answer specific?';
@@ -140,7 +315,7 @@ void main() {
               _runJson(status: 'completed'),
             ),
           ),
-          _messagesStep(userContent: text),
+          _messagesStep(userContent: text, clientMessageId: 'message_201'),
         ]);
         final harness = _Harness(transport);
 
@@ -155,6 +330,117 @@ void main() {
         expect(exchange.assistantMessage?.id, _assistantMessageId);
         expect(exchange.assistantMessage?.text, 'Use one measurable result.');
         transport.expectDone();
+      },
+    );
+
+    test(
+      'rejects completed Messages that do not match the submitted request',
+      () async {
+        const text = 'Keep this request paired.';
+        const clientMessageId = 'message_pairing';
+        final cases =
+            <
+              ({
+                String name,
+                String userContent,
+                String userClientMessageId,
+                int userSequence,
+                int assistantSequence,
+                String assistantRunId,
+                bool assistantFirst,
+              })
+            >[
+              (
+                name: 'user content differs',
+                userContent: 'Tampered request.',
+                userClientMessageId: clientMessageId,
+                userSequence: 1,
+                assistantSequence: 2,
+                assistantRunId: _runId,
+                assistantFirst: false,
+              ),
+              (
+                name: 'client Message identity differs',
+                userContent: text,
+                userClientMessageId: 'message_other',
+                userSequence: 1,
+                assistantSequence: 2,
+                assistantRunId: _runId,
+                assistantFirst: false,
+              ),
+              (
+                name: 'assistant precedes the user Message',
+                userContent: text,
+                userClientMessageId: clientMessageId,
+                userSequence: 2,
+                assistantSequence: 1,
+                assistantRunId: _runId,
+                assistantFirst: true,
+              ),
+              (
+                name: 'assistant belongs to another Run',
+                userContent: text,
+                userClientMessageId: clientMessageId,
+                userSequence: 1,
+                assistantSequence: 2,
+                assistantRunId: _thirdRunId,
+                assistantFirst: false,
+              ),
+            ];
+
+        for (final pairingCase in cases) {
+          final userMessage = _messageJson(
+            id: _userMessageId,
+            sequence: pairingCase.userSequence,
+            role: 'user',
+            content: pairingCase.userContent,
+            clientMessageId: pairingCase.userClientMessageId,
+          );
+          final assistantMessage = _messageJson(
+            id: _assistantMessageId,
+            sequence: pairingCase.assistantSequence,
+            role: 'assistant',
+            content: 'This response must remain paired.',
+            producedByRunId: pairingCase.assistantRunId,
+          );
+          final transport = _ScriptedTransport([
+            _Step(
+              method: 'POST',
+              path: '/v1/agent-threads/$_threadId/runs',
+              response: _jsonResponse(
+                HttpStatus.created,
+                _runJson(status: 'completed'),
+              ),
+            ),
+            _Step(
+              method: 'GET',
+              path: '/v1/agent-threads/$_threadId/messages',
+              response: _jsonResponse(HttpStatus.ok, {
+                'messages': pairingCase.assistantFirst
+                    ? [assistantMessage, userMessage]
+                    : [userMessage, assistantMessage],
+              }),
+            ),
+          ]);
+          final harness = _Harness(transport, maxMessagePollAttempts: 1);
+
+          await expectLater(
+            harness.client.sendText(
+              threadId: _threadId,
+              text: text,
+              clientMessageId: clientMessageId,
+            ),
+            throwsA(
+              isA<AgentClientException>().having(
+                (error) => error.kind,
+                'kind',
+                AgentClientFailureKind.invalidResponse,
+              ),
+            ),
+            reason: pairingCase.name,
+          );
+          transport.expectDone();
+        }
       },
     );
 
@@ -184,7 +470,7 @@ void main() {
               _runJson(status: 'completed'),
             ),
           ),
-          _messagesStep(userContent: text),
+          _messagesStep(userContent: text, clientMessageId: 'message_202'),
         ]);
         final harness = _Harness(transport, maxRunPollAttempts: 3);
 
@@ -234,7 +520,11 @@ void main() {
               ),
             ),
           ),
-          _messagesStep(userContent: text, assistantRunId: _retryRunId),
+          _messagesStep(
+            userContent: text,
+            clientMessageId: 'message_retry',
+            assistantRunId: _retryRunId,
+          ),
         ]);
         final harness = _Harness(transport);
 
@@ -307,7 +597,11 @@ void main() {
               ),
             ),
           ),
-          _messagesStep(userContent: text, assistantRunId: _retryRunId),
+          _messagesStep(
+            userContent: text,
+            clientMessageId: 'message_ambiguous',
+            assistantRunId: _retryRunId,
+          ),
         ]);
         final harness = _Harness(transport);
 
@@ -386,7 +680,11 @@ void main() {
               ),
             ),
           ),
-          _messagesStep(userContent: text, assistantRunId: _retryRunId),
+          _messagesStep(
+            userContent: text,
+            clientMessageId: 'message_ambiguous_pending',
+            assistantRunId: _retryRunId,
+          ),
         ]);
         final harness = _Harness(transport);
 
@@ -471,7 +769,11 @@ void main() {
             ),
           ),
         ),
-        _messagesStep(userContent: text, assistantRunId: _thirdRunId),
+        _messagesStep(
+          userContent: text,
+          clientMessageId: 'message_retry_chain',
+          assistantRunId: _thirdRunId,
+        ),
       ]);
       final harness = _Harness(transport);
 
@@ -750,7 +1052,11 @@ void main() {
 }
 
 final class _Harness {
-  _Harness(IdentityHttpTransport transport, {int maxRunPollAttempts = 20}) {
+  _Harness(
+    IdentityHttpTransport transport, {
+    int maxRunPollAttempts = 20,
+    int maxMessagePollAttempts = 4,
+  }) {
     client = WireAgentClient(
       baseUri: Uri.parse('https://api.speak-up.test'),
       credentialProvider: () => credential,
@@ -766,6 +1072,7 @@ final class _Harness {
       transport: transport,
       pollInterval: Duration.zero,
       maxRunPollAttempts: maxRunPollAttempts,
+      maxMessagePollAttempts: maxMessagePollAttempts,
     );
   }
 
@@ -886,6 +1193,7 @@ final class _ControlledTransport implements IdentityHttpTransport {
 
 _Step _messagesStep({
   required String userContent,
+  required String clientMessageId,
   String assistantRunId = _runId,
 }) {
   return _Step(
@@ -898,7 +1206,7 @@ _Step _messagesStep({
           sequence: 1,
           role: 'user',
           content: userContent,
-          clientMessageId: 'message_server',
+          clientMessageId: clientMessageId,
         ),
         _messageJson(
           id: _assistantMessageId,

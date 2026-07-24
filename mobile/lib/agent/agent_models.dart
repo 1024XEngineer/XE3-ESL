@@ -68,13 +68,33 @@ final class AgentThreadSnapshot {
     required this.threadId,
     this.activeMatter,
     this.practice,
+    this.textRecovery,
     this.messages = const <AgentMessage>[],
   }) : assert(practice == null || activeMatter != null);
 
   final String threadId;
   final AgentMatter? activeMatter;
   final AgentPracticeSnapshot? practice;
+  final AgentTextRecovery? textRecovery;
   final List<AgentMessage> messages;
+}
+
+/// A server-restored failed text operation that keeps its idempotency identity.
+///
+/// This is a transient presentation projection. The durable Message and Run
+/// remain authoritative on the server.
+final class AgentTextRecovery {
+  const AgentTextRecovery({
+    required this.text,
+    required this.clientMessageId,
+    required this.failureKind,
+    required this.retryable,
+  });
+
+  final String text;
+  final String clientMessageId;
+  final String failureKind;
+  final bool retryable;
 }
 
 final class AgentSceneStart {

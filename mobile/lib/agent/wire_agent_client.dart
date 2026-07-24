@@ -124,11 +124,98 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
         threadId: thread.id,
       );
       _requireCurrentGeneration(generation);
+      final recovery = await _restoreLastTextRun(
+        generation: generation,
+        threadId: thread.id,
+        messages: messages,
+      );
       return AgentThreadSnapshot(
         threadId: thread.id,
-        messages: [for (final message in messages) message.presentation],
+        textRecovery: recovery.failure,
+        messages: [
+          for (final message in messages) message.presentation,
+          ?recovery.completedAssistant,
+        ],
       );
     });
+  }
+
+  Future<_RestoredTextRun> _restoreLastTextRun({
+    required int generation,
+    required String threadId,
+    required List<_WireMessage> messages,
+  }) async {
+    if (messages.isEmpty || messages.last.role != AgentMessageRole.user) {
+      return const _RestoredTextRun();
+    }
+    final userMessage = messages.last;
+    final clientMessageId = userMessage.clientMessageId;
+    if (clientMessageId == null) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
+    }
+    final operationKey = '$threadId\u{0}$clientMessageId';
+    final terminalRun = await _pollUntilTerminal(
+      generation: generation,
+      initialRun: await _submitRun(
+        generation: generation,
+        threadId: threadId,
+        text: userMessage.content,
+        clientMessageId: clientMessageId,
+      ),
+    );
+    _requireCurrentGeneration(generation);
+    if (terminalRun.inputMessageId != userMessage.id) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
+    }
+    if (terminalRun.status == _WireRunStatus.completed) {
+      _failedRuns.remove(operationKey);
+      final exchange = await _loadCompletedExchange(
+        generation: generation,
+        run: terminalRun,
+        expectedUserContent: userMessage.content,
+        expectedClientMessageId: clientMessageId,
+      );
+      if (exchange.userMessage.id != userMessage.id ||
+          exchange.assistantMessage == null) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidResponse,
+          retryable: true,
+        );
+      }
+      return _RestoredTextRun(completedAssistant: exchange.assistantMessage);
+    }
+
+    final failureKind = terminalRun.failureKind;
+    if (failureKind == null) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
+    }
+    if (terminalRun.failureRetryable) {
+      _failedRuns[operationKey] = _FailedRun(
+        runId: terminalRun.id,
+        threadId: threadId,
+        inputMessageId: terminalRun.inputMessageId,
+        content: userMessage.content,
+      );
+    } else {
+      _failedRuns.remove(operationKey);
+    }
+    return _RestoredTextRun(
+      failure: AgentTextRecovery(
+        text: userMessage.content,
+        clientMessageId: clientMessageId,
+        failureKind: failureKind,
+        retryable: terminalRun.failureRetryable,
+      ),
+    );
   }
 
   Future<_WireThread> _createThread(int generation) async {
@@ -248,7 +335,12 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
       }
 
       _failedRuns.remove(operationKey);
-      return _loadCompletedExchange(generation: generation, run: resolvedRun);
+      return _loadCompletedExchange(
+        generation: generation,
+        run: resolvedRun,
+        expectedUserContent: text,
+        expectedClientMessageId: clientMessageId,
+      );
     });
   }
 
@@ -351,6 +443,8 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
   Future<AgentExchange> _loadCompletedExchange({
     required int generation,
     required _WireRun run,
+    required String expectedUserContent,
+    required String expectedClientMessageId,
   }) async {
     final assistantMessageId = run.assistantMessageId;
     if (assistantMessageId == null) {
@@ -376,8 +470,11 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
       }
       if (userMessage != null &&
           userMessage.role == AgentMessageRole.user &&
+          userMessage.content == expectedUserContent &&
+          userMessage.clientMessageId == expectedClientMessageId &&
           assistantMessage != null &&
           assistantMessage.role == AgentMessageRole.assistant &&
+          assistantMessage.sequence > userMessage.sequence &&
           assistantMessage.producedByRunId == run.id) {
         return AgentExchange(
           userMessage: userMessage.presentation,
@@ -708,6 +805,7 @@ final class _WireMessage {
     required this.role,
     required this.content,
     required this.sequence,
+    this.clientMessageId,
     this.producedByRunId,
   });
 
@@ -715,10 +813,18 @@ final class _WireMessage {
   final AgentMessageRole role;
   final String content;
   final int sequence;
+  final String? clientMessageId;
   final String? producedByRunId;
 
   AgentMessage get presentation =>
       AgentMessage(id: id, role: role, text: content);
+}
+
+final class _RestoredTextRun {
+  const _RestoredTextRun({this.failure, this.completedAssistant});
+
+  final AgentTextRecovery? failure;
+  final AgentMessage? completedAssistant;
 }
 
 enum _WireRunStatus { pending, running, completed, failed }
@@ -880,6 +986,7 @@ _WireMessage _decodeMessageObject(
     role: role,
     content: content,
     sequence: sequence,
+    clientMessageId: clientMessageId,
     producedByRunId: producedByRunId,
   );
 }
@@ -1127,9 +1234,11 @@ String _strictString(
   required int minLength,
   required int maxLength,
 }) {
-  if (value is! String ||
-      value.length < minLength ||
-      value.length > maxLength) {
+  if (value is! String) {
+    throw const _InvalidAgentResponse();
+  }
+  final length = value.runes.length;
+  if (length < minLength || length > maxLength) {
     throw const _InvalidAgentResponse();
   }
   return value;
@@ -1200,7 +1309,7 @@ void _requireClientIdentity(String value) {
 
 void _requireContent(String value) {
   if (value.trim().isEmpty ||
-      value.length > 4096 ||
+      value.runes.length > 4096 ||
       utf8.encode(value).length > 16384) {
     throw const AgentClientException(
       kind: AgentClientFailureKind.invalidRequest,

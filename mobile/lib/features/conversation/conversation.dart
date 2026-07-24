@@ -1,9 +1,11 @@
 /// Conversation module boundary.
 library;
 
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:speakup/agent/agent_models.dart';
 
 class ConversationPage extends StatelessWidget {
@@ -35,7 +37,7 @@ class ConversationPage extends StatelessWidget {
   final AgentScene? activeScene;
   final bool isBusy;
   final String? errorMessage;
-  final ValueChanged<String>? onSubmitText;
+  final Future<bool> Function(String)? onSubmitText;
   final VoidCallback? onRetryOperation;
 
   @override
@@ -46,6 +48,7 @@ class ConversationPage extends StatelessWidget {
     final textScaler = MediaQuery.textScalerOf(context);
     final titleSize = width < 350 ? 30.0 : 36.0;
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
+    final acceptedUserMessage = _lastUserMessage(messages);
 
     return Scaffold(
       key: const Key('agent-home-page'),
@@ -139,6 +142,8 @@ class ConversationPage extends StatelessWidget {
                       ),
                       child: _AgentComposer(
                         keyboardVisible: keyboardVisible,
+                        acceptedUserMessageId: acceptedUserMessage?.id,
+                        acceptedUserMessageText: acceptedUserMessage?.text,
                         onVoicePlaceholder: onVoicePlaceholder,
                         onSubmitText: onSubmitText,
                         isBusy: isBusy,
@@ -447,14 +452,18 @@ class _InlineError extends StatelessWidget {
 class _AgentComposer extends StatefulWidget {
   const _AgentComposer({
     required this.keyboardVisible,
+    required this.acceptedUserMessageId,
+    required this.acceptedUserMessageText,
     required this.onVoicePlaceholder,
     required this.onSubmitText,
     required this.isBusy,
   });
 
   final bool keyboardVisible;
+  final String? acceptedUserMessageId;
+  final String? acceptedUserMessageText;
   final VoidCallback? onVoicePlaceholder;
-  final ValueChanged<String>? onSubmitText;
+  final Future<bool> Function(String)? onSubmitText;
   final bool isBusy;
 
   @override
@@ -463,11 +472,24 @@ class _AgentComposer extends StatefulWidget {
 
 class _AgentComposerState extends State<_AgentComposer> {
   final _controller = TextEditingController();
+  bool _suppressControllerNotifications = false;
 
   @override
   void initState() {
     super.initState();
     _controller.addListener(_handleTextChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _AgentComposer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.acceptedUserMessageId != null &&
+        widget.acceptedUserMessageId != oldWidget.acceptedUserMessageId &&
+        _controller.text.trim() == widget.acceptedUserMessageText) {
+      _suppressControllerNotifications = true;
+      _controller.clear();
+      _suppressControllerNotifications = false;
+    }
   }
 
   @override
@@ -479,16 +501,20 @@ class _AgentComposerState extends State<_AgentComposer> {
   }
 
   void _handleTextChanged() {
-    setState(() {});
+    if (!_suppressControllerNotifications) {
+      setState(() {});
+    }
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final text = _controller.text.trim();
     if (text.isEmpty || widget.isBusy || widget.onSubmitText == null) {
       return;
     }
-    widget.onSubmitText!(text);
-    _controller.clear();
+    final sent = await widget.onSubmitText!(text);
+    if (mounted && sent) {
+      _controller.clear();
+    }
   }
 
   @override
@@ -528,6 +554,7 @@ class _AgentComposerState extends State<_AgentComposer> {
                   enabled: !widget.isBusy,
                   minLines: 1,
                   maxLines: 2,
+                  inputFormatters: <TextInputFormatter>[_agentContentFormatter],
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _submit(),
                   decoration: const InputDecoration(
@@ -593,4 +620,21 @@ class _AgentComposerState extends State<_AgentComposer> {
       ),
     );
   }
+}
+
+final TextInputFormatter _agentContentFormatter =
+    TextInputFormatter.withFunction((oldValue, newValue) {
+      final text = newValue.text;
+      return text.runes.length <= 4096 && utf8.encode(text).length <= 16384
+          ? newValue
+          : oldValue;
+    });
+
+AgentMessage? _lastUserMessage(List<AgentMessage> messages) {
+  for (final message in messages.reversed) {
+    if (message.role == AgentMessageRole.user) {
+      return message;
+    }
+  }
+  return null;
 }
