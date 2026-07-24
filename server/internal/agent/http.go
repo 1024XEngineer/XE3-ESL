@@ -87,10 +87,8 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 		"/v1/agent-threads/:thread_id/active-matter",
 		h.setActiveMatter,
 	)
-	protected.POST(
-		"/v1/agent-threads/:thread_id/messages",
-		h.appendMessage,
-	)
+	// User Message writes are intentionally exposed only through /runs so the
+	// Message and its initial pending Run cannot be committed independently.
 	protected.GET(
 		"/v1/agent-threads/:thread_id/messages",
 		h.listMessages,
@@ -305,41 +303,6 @@ func (h *HTTPHandler) setActiveMatter(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, linkResponse(link))
-}
-
-func (h *HTTPHandler) appendMessage(c *gin.Context) {
-	values, ok := decodeObject(
-		c,
-		[]string{"client_message_id", "content"},
-		[]string{"client_message_id", "content"},
-	)
-	if !ok {
-		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
-		return
-	}
-	clientMessageID, clientIDOK := decodeString(values["client_message_id"])
-	content, contentOK := decodeString(values["content"])
-	if !clientIDOK || !contentOK {
-		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
-		return
-	}
-	actor, ok := trustedActor(c)
-	if !ok {
-		h.writeAuthenticationRequired(c)
-		return
-	}
-	message, err := h.application.AppendUserMessage(
-		c.Request.Context(),
-		actor,
-		c.Param("thread_id"),
-		clientMessageID,
-		content,
-	)
-	if err != nil {
-		h.writeAgentError(c, err)
-		return
-	}
-	c.JSON(http.StatusCreated, messageResponse(message))
 }
 
 func (h *HTTPHandler) listMessages(c *gin.Context) {

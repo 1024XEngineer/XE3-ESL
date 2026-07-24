@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -347,6 +349,202 @@ SELECT
 	}
 	if messages != 2 || runs != 1 {
 		t.Fatalf("concurrent replay counts = messages %d runs %d", messages, runs)
+	}
+}
+
+func TestPostgresAgentRunRejectsConcurrentDifferentInputOnThread(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	generator := newBlockingTextGenerator()
+	t.Cleanup(func() {
+		select {
+		case <-generator.release:
+		default:
+			close(generator.release)
+		}
+	})
+	_, dataService, runService, _ := newAgentRunServices(
+		t,
+		database.pool,
+		generator,
+		testRunConfiguration,
+	)
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+
+	type submitResult struct {
+		submission RunSubmission
+		err        error
+	}
+	firstResult := make(chan submitResult, 1)
+	go func() {
+		submission, submitErr := runService.SubmitText(
+			context.Background(),
+			actor,
+			thread.ID,
+			"concurrent-distinct-message-1",
+			"Keep this Run active while a second input arrives.",
+		)
+		firstResult <- submitResult{submission: submission, err: submitErr}
+	}()
+	<-generator.started
+
+	if _, err := runService.SubmitText(
+		context.Background(),
+		actor,
+		thread.ID,
+		"concurrent-distinct-message-2",
+		"This input must roll back while the first Run is active.",
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("concurrent distinct input error = %v, want conflict", err)
+	}
+	var messages int
+	var runs int
+	var nonterminalRuns int
+	if err := database.pool.QueryRow(context.Background(), `
+SELECT
+    (SELECT COUNT(*) FROM agent_messages
+     WHERE owner_user_id = $1 AND thread_id = $2),
+    (SELECT COUNT(*) FROM agent_runs
+     WHERE owner_user_id = $1 AND thread_id = $2),
+    (SELECT COUNT(*) FROM agent_runs
+     WHERE owner_user_id = $1
+       AND thread_id = $2
+       AND status IN ('pending', 'running'))`,
+		actor.UserID,
+		thread.ID,
+	).Scan(&messages, &runs, &nonterminalRuns); err != nil {
+		t.Fatalf("count concurrent distinct records: %v", err)
+	}
+	if messages != 1 || runs != 1 || nonterminalRuns != 1 {
+		t.Fatalf(
+			"concurrent distinct counts = messages %d runs %d nonterminal %d",
+			messages,
+			runs,
+			nonterminalRuns,
+		)
+	}
+
+	close(generator.release)
+	first := <-firstResult
+	if first.err != nil || first.submission.Run.Status != RunStatusCompleted {
+		t.Fatalf("first submission = %#v, %v", first.submission, first.err)
+	}
+	if generator.CallCount() != 1 {
+		t.Fatalf("provider calls = %d, want 1", generator.CallCount())
+	}
+}
+
+func TestPostgresAgentRunRejectsConcurrentRetryOnThread(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	matterService, dataService := newAgentDataServices(t, database.pool)
+	repository, err := NewPostgresRepository(
+		database.pool,
+		identity.NewUUIDv4Generator(nil),
+	)
+	if err != nil {
+		t.Fatalf("new Agent repository: %v", err)
+	}
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	failingService := newRunService(
+		t,
+		repository,
+		matterService,
+		fake.NewFailingTextGenerator(ai.NewGenerationError(
+			ai.ErrorTimeout,
+			0,
+			"",
+			"",
+			context.DeadlineExceeded,
+		)),
+		testRunConfiguration,
+	)
+	original, err := failingService.SubmitText(
+		context.Background(),
+		actor,
+		thread.ID,
+		"concurrent-retry-message",
+		"Create one retryable failed Run.",
+	)
+	if err != nil || original.Run.Status != RunStatusFailed {
+		t.Fatalf("create failed Run = %#v, %v", original, err)
+	}
+
+	generator := newBlockingTextGenerator()
+	t.Cleanup(func() {
+		select {
+		case <-generator.release:
+		default:
+			close(generator.release)
+		}
+	})
+	retryService := newRunService(
+		t,
+		repository,
+		matterService,
+		generator,
+		testRunConfiguration,
+	)
+	type retryResult struct {
+		retry RunRetry
+		err   error
+	}
+	firstResult := make(chan retryResult, 1)
+	go func() {
+		retry, retryErr := retryService.RetryText(
+			context.Background(),
+			actor,
+			original.Run.ID,
+			"concurrent-retry-command-1",
+		)
+		firstResult <- retryResult{retry: retry, err: retryErr}
+	}()
+	<-generator.started
+
+	if _, err := retryService.RetryText(
+		context.Background(),
+		actor,
+		original.Run.ID,
+		"concurrent-retry-command-2",
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("concurrent retry error = %v, want conflict", err)
+	}
+	var runs int
+	var nonterminalRuns int
+	if err := database.pool.QueryRow(context.Background(), `
+SELECT
+    COUNT(*),
+    COUNT(*) FILTER (WHERE status IN ('pending', 'running'))
+FROM agent_runs
+WHERE owner_user_id = $1 AND thread_id = $2`,
+		actor.UserID,
+		thread.ID,
+	).Scan(&runs, &nonterminalRuns); err != nil {
+		t.Fatalf("count concurrent retry records: %v", err)
+	}
+	if runs != 2 || nonterminalRuns != 1 {
+		t.Fatalf(
+			"concurrent retry counts = runs %d nonterminal %d",
+			runs,
+			nonterminalRuns,
+		)
+	}
+
+	close(generator.release)
+	first := <-firstResult
+	if first.err != nil ||
+		first.retry.Run.Status != RunStatusCompleted ||
+		first.retry.Run.Attempt != 2 {
+		t.Fatalf("first retry = %#v, %v", first.retry, first.err)
+	}
+	if generator.CallCount() != 1 {
+		t.Fatalf("retry provider calls = %d, want 1", generator.CallCount())
 	}
 }
 
@@ -739,6 +937,112 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 		original.Status != RunStatusFailed ||
 		original.FailureKind != string(ai.ErrorTimeout) {
 		t.Fatalf("original retry history changed: %#v, %v", original, err)
+	}
+}
+
+func TestPostgresAgentRunPersistsCallerCancellationAsRetryable(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	generator := newBlockingTextGenerator()
+	t.Cleanup(func() {
+		select {
+		case <-generator.release:
+		default:
+			close(generator.release)
+		}
+	})
+	matterService, dataService, runService, repository := newAgentRunServices(
+		t,
+		database.pool,
+		generator,
+		testRunConfiguration,
+	)
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	handler, err := NewHTTPHandlerWithRuns(
+		dataService,
+		runService,
+		matterService,
+		authenticatorFunc(func(
+			_ context.Context,
+			token string,
+		) (requestcontext.Actor, error) {
+			if token != "token-a" {
+				return requestcontext.Actor{}, identity.ErrAuthenticationRequired
+			}
+			return actor, nil
+		}),
+		func() string { return "corr_cancelled_agent_run_test" },
+	)
+	if err != nil {
+		t.Fatalf("new HTTP handler: %v", err)
+	}
+	module, err := NewModule(handler)
+	if err != nil {
+		t.Fatalf("new Agent module: %v", err)
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	module.RegisterRoutes(router)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/agent-threads/"+thread.ID+"/runs",
+		strings.NewReader(
+			`{"client_message_id":"cancelled-caller-message",`+
+				`"content":"Allow this request to be retried after the caller disconnects."}`,
+		),
+	).WithContext(ctx)
+	request.Header.Set("Authorization", "Bearer token-a")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	served := make(chan struct{})
+	go func() {
+		router.ServeHTTP(response, request)
+		close(served)
+	}()
+	<-generator.started
+	cancel()
+	<-served
+
+	var cancelled struct {
+		ID      string    `json:"run_id"`
+		Status  RunStatus `json:"status"`
+		Failure struct {
+			Kind      string `json:"kind"`
+			Retryable bool   `json:"retryable"`
+		} `json:"failure"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &cancelled); err != nil {
+		t.Fatalf("decode cancelled HTTP Run: %v", err)
+	}
+	if response.Code != http.StatusCreated ||
+		cancelled.Status != RunStatusFailed ||
+		cancelled.Failure.Kind != string(ai.ErrorCancelled) ||
+		!cancelled.Failure.Retryable {
+		t.Fatalf("cancelled HTTP Run = %d %#v", response.Code, cancelled)
+	}
+
+	successService := newRunService(
+		t,
+		repository,
+		matterService,
+		fake.NewTextGenerator(successfulTextResult()),
+		testRunConfiguration,
+	)
+	retry, err := successService.RetryText(
+		context.Background(),
+		actor,
+		cancelled.ID,
+		"cancelled-caller-retry",
+	)
+	if err != nil ||
+		retry.Run.Status != RunStatusCompleted ||
+		retry.Run.Attempt != 2 {
+		t.Fatalf("retry cancelled Run = %#v, %v", retry, err)
 	}
 }
 
@@ -1177,7 +1481,13 @@ func (generator *blockingTextGenerator) Generate(
 	generator.once.Do(func() { close(generator.started) })
 	select {
 	case <-ctx.Done():
-		return ai.TextResult{}, ctx.Err()
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorCancelled,
+			0,
+			"",
+			"",
+			ctx.Err(),
+		)
 	case <-generator.release:
 		return successfulTextResult(), nil
 	}

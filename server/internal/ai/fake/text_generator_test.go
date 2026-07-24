@@ -45,7 +45,9 @@ func TestTextGeneratorRespectsCancellation(t *testing.T) {
 
 	_, err := NewTextGenerator(ai.TextResult{}).Generate(ctx, ai.TextRequest{})
 	var generationError *ai.GenerationError
-	if !errors.As(err, &generationError) || generationError.Kind != ai.ErrorCancelled {
+	if !errors.As(err, &generationError) ||
+		generationError.Kind != ai.ErrorCancelled ||
+		!generationError.Retryable() {
 		t.Fatalf("expected cancelled generation error, got %v", err)
 	}
 }

@@ -363,7 +363,7 @@ func TestGenerateClassifiesCallerCancellationAndTimeout(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err := generator.Generate(ctx, validRequest())
-		assertGenerationErrorKind(t, err, ai.ErrorCancelled, false)
+		assertGenerationErrorKind(t, err, ai.ErrorCancelled, true)
 	})
 
 	t.Run("configured timeout", func(t *testing.T) {

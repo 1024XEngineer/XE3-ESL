@@ -194,6 +194,10 @@ CREATE TABLE agent_runs (
         )
 );
 
+CREATE UNIQUE INDEX agent_runs_one_nonterminal_per_thread_idx
+    ON agent_runs (owner_user_id, thread_id)
+    WHERE status IN ('pending', 'running');
+
 CREATE UNIQUE INDEX agent_runs_retry_client_key
     ON agent_runs (owner_user_id, thread_id, retry_client_id)
     WHERE retry_client_id IS NOT NULL;

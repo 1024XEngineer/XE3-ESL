@@ -85,7 +85,13 @@ const (
 
 func (kind ErrorKind) Retryable() bool {
 	switch kind {
-	case ErrorRateLimited, ErrorTimeout, ErrorProviderUnavailable, ErrorInvalidResponse:
+	case ErrorRateLimited,
+		ErrorTimeout,
+		ErrorProviderUnavailable,
+		ErrorInvalidResponse,
+		// ErrorCancelled currently means caller/transport cancellation. There
+		// is no accepted business-level Run cancellation command.
+		ErrorCancelled:
 		return true
 	default:
 		return false

@@ -77,7 +77,7 @@ func TestErrorKindRetryability(t *testing.T) {
 		ErrorTimeout:             true,
 		ErrorProviderUnavailable: true,
 		ErrorInvalidResponse:     true,
-		ErrorCancelled:           false,
+		ErrorCancelled:           true,
 	}
 	for kind, expected := range tests {
 		if got := kind.Retryable(); got != expected {

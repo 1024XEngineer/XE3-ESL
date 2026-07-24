@@ -201,45 +201,13 @@ paths:
   /v1/agent-threads/{thread_id}/messages:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'
-    post:
-      tags:
-        - Agent
-      summary: Append one idempotent user Message
-      description: |
-        `client_message_id` is the Message-specific business idempotency key.
-        The same Actor and Thread replaying the same ID and content receives
-        the original Message. Reusing it with different content returns 409.
-        This does not implement the cross-module REST Idempotency-Key platform.
-      operationId: appendAgentUserMessage
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AppendAgentMessageRequest'
-      responses:
-        '201':
-          description: |
-            The original or replayed durable Message. Both paths return the
-            same status and body.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentMessage'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
     get:
       tags:
         - Agent
       summary: Restore committed Messages in stable Thread order
+      description: |
+        User Messages are created only through the Run submission command so
+        an initial pending Run is committed in the same transaction.
       operationId: listAgentMessages
       responses:
         '200':
