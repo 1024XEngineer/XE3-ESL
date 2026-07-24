@@ -234,16 +234,18 @@ components:
           $ref: '#/components/schemas/Password'
     OpaqueSessionToken:
       type: string
-      minLength: 1
-      pattern: '^[A-Za-z0-9._~+/-]+={0,}$'
+      minLength: 6
+      pattern: '^sess_[A-Za-z0-9._~+/-]+={0,}$'
       readOnly: true
       description: |
         A high-entropy first-party opaque Session Token returned only by a
-        successful login response. Its wire representation follows the RFC 6750
-        `b64token` character set so it can be carried safely by the Bearer
-        Authorization scheme. It is not a JWT and must not be logged or persisted
-        by the server in raw form. Its generated entropy and exact length are
-        frozen by the runtime implementation Issue, not by this contract.
+        successful login response. Its wire representation uses the fixed
+        `sess_` credential marker followed by the RFC 6750 `b64token` character
+        set so it can be carried safely by the Bearer Authorization scheme and
+        detected reliably by credential-leak validation. It is not a JWT and
+        must not be logged or persisted by the server in raw form. Its generated
+        entropy and exact length are frozen by the runtime implementation Issue,
+        not by this contract.
     LoginResponse:
       type: object
       additionalProperties: false

@@ -238,6 +238,13 @@ paths:
       operationId: connectPracticeSessionEvents
       parameters:
         - $ref: '#/components/parameters/PracticeSessionId'
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          description: Required application event-stream subprotocol.
+          schema:
+            type: string
+            const: speakup.events.v1
         - name: after_sequence
           in: query
           required: false

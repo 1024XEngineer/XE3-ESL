@@ -596,10 +596,16 @@ const opaqueSessionTokenPattern = new RegExp(
   opaqueSessionToken?.pattern,
   'u',
 );
-for (const token of ['abc123-._~+/', 'abc123==']) {
+for (const token of ['sess_abc123-._~+/', 'sess_abc123==']) {
   assert.match(token, opaqueSessionTokenPattern);
 }
-for (const token of ['contains whitespace', 'line\nbreak', 'padding=inside']) {
+for (const token of [
+  'abc123==',
+  'sess_',
+  'sess_contains whitespace',
+  'sess_line\nbreak',
+  'sess_padding=inside',
+]) {
   assert.doesNotMatch(token, opaqueSessionTokenPattern);
 }
 
@@ -834,6 +840,14 @@ const websocketParameters = Object.fromEntries(
     const parameter = resolveLocalReference(parameterValue);
     return [parameter.name, parameter];
   }),
+);
+assert.equal(websocketParameters['Sec-WebSocket-Protocol']?.in, 'header');
+assert.equal(websocketParameters['Sec-WebSocket-Protocol']?.required, true);
+assert.equal(
+  resolveLocalReference(
+    websocketParameters['Sec-WebSocket-Protocol']?.schema,
+  )?.const,
+  'speakup.events.v1',
 );
 assert.equal(
   resolveLocalReference(websocket.responses?.['101'])?.headers?.[
