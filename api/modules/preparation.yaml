@@ -5,6 +5,7 @@ paths:
         - Preparation
       summary: Get an active scenario definition and its MS1 configuration
       operationId: getScenarioDefinition
+      security: []
       parameters:
         - $ref: '#/components/parameters/ScenarioDefinitionId'
       responses:
@@ -55,6 +56,7 @@ paths:
         - Preparation
       summary: List role definitions available for a scenario
       operationId: listRoleDefinitions
+      security: []
       parameters:
         - $ref: '#/components/parameters/ScenarioDefinitionId'
       responses:
@@ -116,8 +118,9 @@ paths:
         - Preparation
       summary: Create or return the preparation profile for one intent
       description: |
-        The fixed MS1 user is resolved from server-side context. The request does
-        not accept a trusted `user_id`.
+        The authenticated actor is resolved from the Bearer Session and owns the
+        created profile. The request does not accept a trusted `user_id`. A fixed
+        actor may be supplied only by an explicit Mock or Test adapter.
       operationId: createPreparationProfile
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -152,6 +155,8 @@ paths:
                 updated_at: '2026-07-23T10:00:00Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '409':
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
@@ -192,6 +197,8 @@ paths:
                 created_at: '2026-07-23T10:01:00Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         '409':
