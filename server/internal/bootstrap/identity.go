@@ -13,6 +13,7 @@ import (
 func NewIdentityModule(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
 ) (*identity.Module, error) {
 	if database == nil {
 		return nil, errors.New("bootstrap: identity database is required")
@@ -51,7 +52,10 @@ func NewIdentityModule(
 	if err != nil {
 		return nil, err
 	}
-	sourceIPs, err := identity.NewTrustedProxyResolver(trustedProxyCIDRs)
+	sourceIPs, err := identity.NewTrustedProxyResolver(
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+	)
 	if err != nil {
 		return nil, err
 	}

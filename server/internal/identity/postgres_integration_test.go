@@ -27,12 +27,15 @@ const integrationPasswordHash = "$argon2id$v=19$m=8,t=1,p=1$MDEyMzQ1Njc4OWFiY2Rl
 
 func TestPostgresIdentityVerticalSlice(t *testing.T) {
 	pool := identityTestDatabase(t)
-	repository, err := NewPostgresRepository(
+	postgresRepository, err := NewPostgresRepository(
 		pool,
 		NewUUIDv4Generator(nil),
 	)
 	if err != nil {
 		t.Fatalf("new repository: %v", err)
+	}
+	repository := &sessionRecordingRepository{
+		Repository: postgresRepository,
 	}
 	integrationParams := testArgon2idParams
 	integrationParams.SaltLength = 16
@@ -210,7 +213,7 @@ WHERE token_digest = $1`,
 
 	testConcurrentPostgresRegistration(t, service)
 	testConcurrentPostgresLogin(t, service)
-	testPostgresHTTPVerticalSlice(t, service)
+	testPostgresHTTPVerticalSlice(t, service, repository, pool)
 }
 
 func TestPostgresCreateSessionRejectsSecurityEventInterleaving(t *testing.T) {
@@ -453,8 +456,10 @@ WHERE user_id = $1`,
 
 func TestPostgresCreateUserRollsBackAllFailurePaths(t *testing.T) {
 	tests := []struct {
-		name    string
-		install string
+		name        string
+		install     string
+		wantCommit  bool
+		probeCommit bool
 	}{
 		{
 			name: "second write",
@@ -463,17 +468,26 @@ CREATE FUNCTION reject_credential_insert() RETURNS trigger
 LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'credential failure'; END $$;
 CREATE TRIGGER reject_credential
 BEFORE INSERT ON identity_credentials
-FOR EACH ROW EXECUTE FUNCTION reject_credential_insert()`,
+			FOR EACH ROW EXECUTE FUNCTION reject_credential_insert()`,
+			wantCommit: false,
 		},
 		{
 			name: "commit",
 			install: `
+CREATE SEQUENCE commit_trigger_probe;
 CREATE FUNCTION reject_user_commit() RETURNS trigger
-LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'commit failure'; END $$;
+LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM nextval('commit_trigger_probe');
+    RAISE EXCEPTION 'commit failure';
+END
+$$;
 CREATE CONSTRAINT TRIGGER reject_user
 AFTER INSERT ON identity_users
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION reject_user_commit()`,
+			wantCommit:  true,
+			probeCommit: true,
 		},
 	}
 	for _, test := range tests {
@@ -482,16 +496,39 @@ FOR EACH ROW EXECUTE FUNCTION reject_user_commit()`,
 			if _, err := pool.Exec(context.Background(), test.install); err != nil {
 				t.Fatalf("install failure: %v", err)
 			}
-			repository, err := NewPostgresRepository(pool, NewUUIDv4Generator(nil))
+			database := &commitRecordingDatabase{pool: pool}
+			repository, err := NewPostgresRepository(
+				database,
+				NewUUIDv4Generator(nil),
+			)
 			if err != nil {
 				t.Fatalf("new repository: %v", err)
 			}
 			if _, err := repository.CreateUserWithCredential(
 				context.Background(),
 				test.name+"@example.com",
-				"stored-hash",
+				integrationPasswordHash,
 			); !errors.Is(err, ErrRepository) {
 				t.Fatalf("create failure = %v", err)
+			}
+			if database.commitCalled.Load() != test.wantCommit {
+				t.Fatalf(
+					"Commit called = %v, want %v",
+					database.commitCalled.Load(),
+					test.wantCommit,
+				)
+			}
+			if test.probeCommit {
+				var commitTriggerCalled bool
+				if err := pool.QueryRow(
+					context.Background(),
+					"SELECT is_called FROM commit_trigger_probe",
+				).Scan(&commitTriggerCalled); err != nil {
+					t.Fatalf("read commit trigger probe: %v", err)
+				}
+				if !commitTriggerCalled {
+					t.Fatal("deferred failure did not execute during Commit")
+				}
 			}
 			assertNoIdentityRows(t, pool)
 		})
@@ -509,11 +546,73 @@ func TestPostgresCreateUserHonorsCanceledContext(t *testing.T) {
 	if _, err := repository.CreateUserWithCredential(
 		ctx,
 		"canceled@example.com",
-		"stored-hash",
+		integrationPasswordHash,
 	); !errors.Is(err, ErrRepository) {
 		t.Fatalf("canceled create = %v", err)
 	}
 	assertNoIdentityRows(t, pool)
+}
+
+type commitRecordingDatabase struct {
+	pool         *pgxpool.Pool
+	commitCalled atomic.Bool
+}
+
+type sessionRecordingRepository struct {
+	Repository
+	mu        sync.Mutex
+	latest    Session
+	hasLatest bool
+}
+
+func (r *sessionRecordingRepository) CreateSession(
+	ctx context.Context,
+	params CreateSessionParams,
+) (Session, error) {
+	session, err := r.Repository.CreateSession(ctx, params)
+	if err != nil {
+		return Session{}, err
+	}
+	r.mu.Lock()
+	r.latest = session
+	r.hasLatest = true
+	r.mu.Unlock()
+	return session, nil
+}
+
+func (r *sessionRecordingRepository) LatestSession() (Session, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.latest, r.hasLatest
+}
+
+func (d *commitRecordingDatabase) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &commitRecordingTx{
+		Tx:           tx,
+		commitCalled: &d.commitCalled,
+	}, nil
+}
+
+func (d *commitRecordingDatabase) QueryRow(
+	ctx context.Context,
+	query string,
+	args ...any,
+) pgx.Row {
+	return d.pool.QueryRow(ctx, query, args...)
+}
+
+type commitRecordingTx struct {
+	pgx.Tx
+	commitCalled *atomic.Bool
+}
+
+func (tx *commitRecordingTx) Commit(ctx context.Context) error {
+	tx.commitCalled.Store(true)
+	return tx.Tx.Commit(ctx)
 }
 
 func waitForBlockedPostgresQuery(
@@ -635,8 +734,34 @@ func testConcurrentPostgresLogin(
 	}
 }
 
-func testPostgresHTTPVerticalSlice(t *testing.T, service *Service) {
+func testPostgresHTTPVerticalSlice(
+	t *testing.T,
+	service *Service,
+	repository *sessionRecordingRepository,
+	pool *pgxpool.Pool,
+) {
 	t.Helper()
+	if _, err := pool.Exec(
+		context.Background(),
+		`CREATE FUNCTION stabilize_http_session_time() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    session_lifetime interval;
+BEGIN
+    session_lifetime := NEW.expires_at - NEW.created_at;
+    NEW.created_at := date_trunc('second', NEW.created_at)
+        - INTERVAL '1 second'
+        + INTERVAL '123456 microseconds';
+    NEW.expires_at := NEW.created_at + session_lifetime;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER stabilize_http_session
+BEFORE INSERT ON identity_auth_sessions
+FOR EACH ROW EXECUTE FUNCTION stabilize_http_session_time()`,
+	); err != nil {
+		t.Fatalf("install deterministic session time: %v", err)
+	}
 	handler, err := NewHTTPHandler(
 		service,
 		service,
@@ -675,13 +800,44 @@ func testPostgresHTTPVerticalSlice(t *testing.T, service *Service) {
 		t.Fatalf("unexpected login response: %d %s", login.Code, login.Body)
 	}
 	var loginBody struct {
-		Token string `json:"session_token"`
+		Token     string `json:"session_token"`
+		ExpiresAt string `json:"expires_at"`
 	}
 	if err := json.Unmarshal(login.Body.Bytes(), &loginBody); err != nil {
 		t.Fatalf("decode login response: %v", err)
 	}
 	if !strings.HasPrefix(loginBody.Token, "sess_") {
 		t.Fatalf("unexpected token: %q", loginBody.Token)
+	}
+	responseExpiresAt, err := time.Parse(time.RFC3339Nano, loginBody.ExpiresAt)
+	if err != nil {
+		t.Fatalf("parse HTTP expires_at: %v", err)
+	}
+	repositorySession, ok := repository.LatestSession()
+	if !ok {
+		t.Fatal("repository did not return the HTTP session")
+	}
+	var databaseExpiresAt time.Time
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT expires_at
+FROM identity_auth_sessions
+WHERE id = $1`,
+		repositorySession.ID,
+	).Scan(&databaseExpiresAt); err != nil {
+		t.Fatalf("read HTTP session expiry: %v", err)
+	}
+	if !responseExpiresAt.Equal(repositorySession.ExpiresAt) ||
+		!responseExpiresAt.Equal(databaseExpiresAt) ||
+		loginBody.ExpiresAt != repositorySession.ExpiresAt.UTC().Format(time.RFC3339Nano) ||
+		loginBody.ExpiresAt != databaseExpiresAt.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf(
+			"HTTP expires_at %q (%v) differs from repository %v or database %v",
+			loginBody.ExpiresAt,
+			responseExpiresAt,
+			repositorySession.ExpiresAt,
+			databaseExpiresAt,
+		)
 	}
 
 	me := performRequest(
