@@ -36,7 +36,12 @@ CREATE TABLE identity_credentials (
     CONSTRAINT identity_credentials_password_hash_phc_shape_check
         CHECK (
             password_hash ~
-            '^\$argon2id\$v=[0-9]+\$[A-Za-z0-9._-]+=[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+=[A-Za-z0-9._-]+)*\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$'
+            '^\$argon2id\$v=[0-9]+\$[A-Za-z0-9._-]+=[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+=[A-Za-z0-9._-]+)*\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$'
+        ),
+    CONSTRAINT identity_credentials_password_hash_base64_length_check
+        CHECK (
+            octet_length(split_part(password_hash, '$', 5)) % 4 <> 1
+            AND octet_length(split_part(password_hash, '$', 6)) % 4 <> 1
         )
 );
 

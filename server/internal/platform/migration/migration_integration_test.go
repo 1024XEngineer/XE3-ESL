@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -140,7 +141,11 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		firstSessionID  = "20000000-0000-4000-8000-000000000001"
 		secondSessionID = "20000000-0000-4000-8000-000000000002"
 		thirdSessionID  = "20000000-0000-4000-8000-000000000003"
-		passwordHash    = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo"
+	)
+	goRawStdEncodedPasswordHash := fmt.Sprintf(
+		"$argon2id$v=19$m=65536,t=3,p=2$%s$%s",
+		base64.RawStdEncoding.EncodeToString([]byte("1234567890abcdef")),
+		base64.RawStdEncoding.EncodeToString(bytesOf(0x42, 32)),
 	)
 	createdAt := time.Date(2026, time.July, 24, 10, 0, 0, 0, time.UTC)
 	expiresAt := createdAt.Add(24 * time.Hour)
@@ -169,7 +174,7 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		ctx,
 		"INSERT INTO "+credentials+" (user_id, password_hash, updated_at) VALUES ($1, $2, $3)",
 		firstUserID,
-		passwordHash,
+		goRawStdEncodedPasswordHash,
 		createdAt,
 	); err != nil {
 		t.Fatalf("insert credential: %v", err)
@@ -267,7 +272,7 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		admin,
 		ctx,
 		"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
-		[]any{firstUserID, passwordHash},
+		[]any{firstUserID, goRawStdEncodedPasswordHash},
 		"23505",
 		"identity_credentials_pkey",
 	)
@@ -276,7 +281,7 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		admin,
 		ctx,
 		"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
-		[]any{unknownUserID, passwordHash},
+		[]any{unknownUserID, goRawStdEncodedPasswordHash},
 		"23503",
 		"identity_credentials_user_id_fkey",
 	)
@@ -324,6 +329,49 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 				[]any{secondUserID, malformedPasswordHash.hash},
 				"23514",
 				"identity_credentials_password_hash_phc_shape_check",
+			)
+		})
+	}
+	malformedBase64Segments := []struct {
+		name       string
+		hash       string
+		constraint string
+	}{
+		{
+			name: "salt length modulo four is one",
+			hash: "$argon2id$v=19$m=65536,t=3,p=2$A$" +
+				strings.Repeat("d", 43),
+			constraint: "identity_credentials_password_hash_base64_length_check",
+		},
+		{
+			name: "hash length modulo four is one",
+			hash: "$argon2id$v=19$m=65536,t=3,p=2$" +
+				strings.Repeat("c", 22) + "$" + strings.Repeat("d", 41),
+			constraint: "identity_credentials_password_hash_base64_length_check",
+		},
+		{
+			name: "salt contains padding",
+			hash: "$argon2id$v=19$m=65536,t=3,p=2$" +
+				strings.Repeat("c", 22) + "==$" + strings.Repeat("d", 43),
+			constraint: "identity_credentials_password_hash_phc_shape_check",
+		},
+		{
+			name: "hash contains padding",
+			hash: "$argon2id$v=19$m=65536,t=3,p=2$" +
+				strings.Repeat("c", 22) + "$" + strings.Repeat("d", 43) + "=",
+			constraint: "identity_credentials_password_hash_phc_shape_check",
+		},
+	}
+	for _, malformedBase64Segment := range malformedBase64Segments {
+		t.Run("rejects PHC "+malformedBase64Segment.name, func(t *testing.T) {
+			assertConstraintViolation(
+				t,
+				admin,
+				ctx,
+				"INSERT INTO "+credentials+" (user_id, password_hash) VALUES ($1, $2)",
+				[]any{secondUserID, malformedBase64Segment.hash},
+				"23514",
+				malformedBase64Segment.constraint,
 			)
 		})
 	}
