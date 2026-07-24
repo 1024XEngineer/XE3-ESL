@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -14,7 +15,31 @@ type Module interface {
 	Name() string
 }
 
+// ReadinessChecker reports whether an external dependency can currently
+// accept work. pgxpool.Pool satisfies this interface.
+type ReadinessChecker interface {
+	Ping(context.Context) error
+}
+
+const readinessTimeout = 2 * time.Second
+
 func NewRouter(logger *slog.Logger, modules ...Module) *gin.Engine {
+	return newRouter(logger, nil, modules...)
+}
+
+func NewRouterWithReadiness(
+	logger *slog.Logger,
+	readiness ReadinessChecker,
+	modules ...Module,
+) *gin.Engine {
+	return newRouter(logger, readiness, modules...)
+}
+
+func newRouter(
+	logger *slog.Logger,
+	readiness ReadinessChecker,
+	modules ...Module,
+) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery(), requestLogger(logger))
@@ -31,6 +56,28 @@ func NewRouter(logger *slog.Logger, modules ...Module) *gin.Engine {
 		})
 	})
 
+	router.GET("/readyz", func(c *gin.Context) {
+		if readiness == nil {
+			writeUnavailableReadiness(c)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), readinessTimeout)
+		defer cancel()
+
+		if err := readiness.Ping(ctx); err != nil {
+			writeUnavailableReadiness(c)
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ready",
+			"checks": gin.H{
+				"database": "ready",
+			},
+		})
+	})
+
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": gin.H{
@@ -41,6 +88,15 @@ func NewRouter(logger *slog.Logger, modules ...Module) *gin.Engine {
 	})
 
 	return router
+}
+
+func writeUnavailableReadiness(c *gin.Context) {
+	c.JSON(http.StatusServiceUnavailable, gin.H{
+		"status": "unavailable",
+		"checks": gin.H{
+			"database": "unavailable",
+		},
+	})
 }
 
 func requestLogger(logger *slog.Logger) gin.HandlerFunc {

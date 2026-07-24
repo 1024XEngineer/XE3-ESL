@@ -13,6 +13,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/database"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
@@ -22,10 +23,28 @@ import (
 const shutdownTimeout = 5 * time.Second
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
 
-	router := bootstrap.NewRouter(logger,
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	databasePool, err := database.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("database startup failed", slog.Any("error", err))
+		return 1
+	}
+	defer databasePool.Close()
+
+	router := bootstrap.NewRouterWithReadiness(logger, databasePool,
 		preparation.New(),
 		practice.New(),
 		conversation.New(),
@@ -38,9 +57,6 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	serverErrors := make(chan error, 1)
 	go func() {
 		logger.Info("server started", slog.String("address", cfg.Address()))
@@ -51,7 +67,7 @@ func main() {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server stopped unexpectedly", slog.Any("error", err))
-			os.Exit(1)
+			return 1
 		}
 	case <-ctx.Done():
 		logger.Info("shutdown requested")
@@ -61,6 +77,8 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", slog.Any("error", err))
-		os.Exit(1)
+		return 1
 	}
+
+	return 0
 }
