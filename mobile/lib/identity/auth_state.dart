@@ -2,7 +2,27 @@ import 'package:speakup/identity/model/identity_models.dart';
 
 enum AuthForm { login, register }
 
-enum AuthRetryAction { restoreSession, logout, clearSession }
+enum AuthRetryAction { restoreSession, clearLocalState }
+
+final class AuthSessionCredential {
+  const AuthSessionCredential({
+    required this.sessionToken,
+    required this.generation,
+  });
+
+  final String sessionToken;
+  final int generation;
+
+  @override
+  String toString() => 'AuthSessionCredential(generation: $generation)';
+}
+
+typedef AuthSessionCredentialProvider = AuthSessionCredential? Function();
+typedef AuthSessionInvalidator =
+    Future<void> Function({
+      required String expectedSessionToken,
+      required int expectedGeneration,
+    });
 
 sealed class AuthState {
   const AuthState();

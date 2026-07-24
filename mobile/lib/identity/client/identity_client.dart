@@ -19,6 +19,8 @@ enum IdentityFailureKind {
   unexpected,
 }
 
+enum _IdentityOperation { register, login, currentUser, logout }
+
 final class IdentityClientException implements Exception {
   const IdentityClientException({
     required this.kind,
@@ -82,7 +84,7 @@ final class WireIdentityClient implements IdentityClient {
       path: '/v1/auth/register',
       body: <String, Object?>{'email': email, 'password': password},
     );
-    _requireStatus(response, 201);
+    _requireStatus(response, 201, _IdentityOperation.register);
     return _decode(response, (json) => User.fromJson(json));
   }
 
@@ -96,7 +98,7 @@ final class WireIdentityClient implements IdentityClient {
       path: '/v1/auth/login',
       body: <String, Object?>{'email': email, 'password': password},
     );
-    _requireStatus(response, 200);
+    _requireStatus(response, 200, _IdentityOperation.login);
     return _decode(response, (json) => LoginResult.fromJson(json));
   }
 
@@ -107,7 +109,7 @@ final class WireIdentityClient implements IdentityClient {
       path: '/v1/me',
       sessionToken: sessionToken,
     );
-    _requireStatus(response, 200);
+    _requireStatus(response, 200, _IdentityOperation.currentUser);
     return _decode(response, (json) => User.fromJson(json));
   }
 
@@ -118,7 +120,7 @@ final class WireIdentityClient implements IdentityClient {
       path: '/v1/auth/logout',
       sessionToken: sessionToken,
     );
-    _requireStatus(response, 204);
+    _requireStatus(response, 204, _IdentityOperation.logout);
   }
 
   Future<IdentityHttpResponse> _send({
@@ -170,16 +172,22 @@ final class WireIdentityClient implements IdentityClient {
     }
   }
 
-  void _requireStatus(IdentityHttpResponse response, int expected) {
+  void _requireStatus(
+    IdentityHttpResponse response,
+    int expected,
+    _IdentityOperation operation,
+  ) {
     if (response.statusCode == expected) {
       return;
     }
-    throw _exceptionFor(response);
+    throw _exceptionFor(response, operation);
   }
 
-  IdentityClientException _exceptionFor(IdentityHttpResponse response) {
-    String? errorCode;
-    bool retryable = response.statusCode >= 500;
+  IdentityClientException _exceptionFor(
+    IdentityHttpResponse response,
+    _IdentityOperation operation,
+  ) {
+    String? decodedErrorCode;
     String? correlationId;
     try {
       final decoded = jsonDecode(response.body);
@@ -187,13 +195,9 @@ final class WireIdentityClient implements IdentityClient {
         final error = decoded['error'];
         if (error is Map<String, Object?>) {
           final decodedCode = error['code'];
-          final decodedRetryable = error['retryable'];
           final decodedCorrelationId = error['correlation_id'];
           if (decodedCode is String) {
-            errorCode = decodedCode;
-          }
-          if (decodedRetryable is bool) {
-            retryable = decodedRetryable;
+            decodedErrorCode = decodedCode;
           }
           if (decodedCorrelationId is String) {
             correlationId = decodedCorrelationId;
@@ -204,6 +208,11 @@ final class WireIdentityClient implements IdentityClient {
       // Status remains authoritative when an intermediary returns non-JSON.
     }
 
+    final errorCode = _normalizedErrorCode(
+      operation: operation,
+      statusCode: response.statusCode,
+      decodedErrorCode: decodedErrorCode,
+    );
     final kind = switch (errorCode) {
       'invalid_request' => IdentityFailureKind.invalidRequest,
       'invalid_credentials' => IdentityFailureKind.invalidCredentials,
@@ -211,12 +220,7 @@ final class WireIdentityClient implements IdentityClient {
       'account_registration_unavailable' =>
         IdentityFailureKind.registrationUnavailable,
       'rate_limited' => IdentityFailureKind.rateLimited,
-      _ when response.statusCode == 401 =>
-        IdentityFailureKind.authenticationRequired,
-      _ when response.statusCode == 409 =>
-        IdentityFailureKind.registrationUnavailable,
-      _ when response.statusCode == 429 => IdentityFailureKind.rateLimited,
-      _ when response.statusCode >= 500 => IdentityFailureKind.server,
+      'internal_error' => IdentityFailureKind.server,
       _ => IdentityFailureKind.unexpected,
     };
 
@@ -224,9 +228,60 @@ final class WireIdentityClient implements IdentityClient {
       kind: kind,
       statusCode: response.statusCode,
       errorCode: errorCode,
-      retryable: retryable,
+      retryable:
+          kind == IdentityFailureKind.rateLimited ||
+          kind == IdentityFailureKind.server,
       correlationId: correlationId,
     );
+  }
+
+  String? _normalizedErrorCode({
+    required _IdentityOperation operation,
+    required int statusCode,
+    required String? decodedErrorCode,
+  }) {
+    final allowedCode = switch ((operation, statusCode, decodedErrorCode)) {
+      (
+        _IdentityOperation.register || _IdentityOperation.login,
+        400,
+        'invalid_request',
+      ) =>
+        'invalid_request',
+      (_IdentityOperation.login, 401, 'invalid_credentials') =>
+        'invalid_credentials',
+      (
+        _IdentityOperation.currentUser || _IdentityOperation.logout,
+        401,
+        'authentication_required',
+      ) =>
+        'authentication_required',
+      (_IdentityOperation.register, 409, 'account_registration_unavailable') =>
+        'account_registration_unavailable',
+      (
+        _IdentityOperation.register || _IdentityOperation.login,
+        429,
+        'rate_limited',
+      ) =>
+        'rate_limited',
+      (_, >= 500, 'internal_error') => 'internal_error',
+      _ => null,
+    };
+    if (allowedCode != null) {
+      return allowedCode;
+    }
+
+    return switch ((operation, statusCode)) {
+      (_IdentityOperation.register || _IdentityOperation.login, 400) =>
+        'invalid_request',
+      (_IdentityOperation.login, 401) => 'invalid_credentials',
+      (_IdentityOperation.currentUser || _IdentityOperation.logout, 401) =>
+        'authentication_required',
+      (_IdentityOperation.register, 409) => 'account_registration_unavailable',
+      (_IdentityOperation.register || _IdentityOperation.login, 429) =>
+        'rate_limited',
+      (_, >= 500) => 'internal_error',
+      _ => null,
+    };
   }
 
   T _decode<T>(

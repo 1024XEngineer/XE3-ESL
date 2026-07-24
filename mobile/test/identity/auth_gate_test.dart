@@ -11,6 +11,49 @@ import 'package:speakup/identity/session_store.dart';
 void main() {
   const user = User(id: 'user-1', email: 'learner@example.com');
 
+  for (final scalarCount in [14, 15, 128, 129]) {
+    testWidgets(
+      'password validation counts $scalarCount Unicode scalars and preserves input',
+      (tester) async {
+        final client = GateIdentityClient(user: user);
+        final controller = AuthController(
+          identityClient: client,
+          sessionStore: MemorySessionStore(),
+        );
+        final password = scalarPassword(scalarCount);
+        expect(password.runes.length, scalarCount);
+
+        await tester.pumpWidget(testApp(controller));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.widgetWithText(TextFormField, 'Email'),
+          'learner@example.com',
+        );
+        await tester.enterText(
+          find.widgetWithText(TextFormField, 'Password'),
+          password,
+        );
+        await tester.tap(find.text('Sign in'));
+        await tester.pumpAndSettle();
+
+        if (scalarCount >= 15 && scalarCount <= 128) {
+          expect(client.lastLoginPassword, password);
+          expect(client.lastLoginPassword!.codeUnits, password.codeUnits);
+          expect(
+            find.text('Password must be between 15 and 128 characters.'),
+            findsNothing,
+          );
+        } else {
+          expect(client.lastLoginPassword, isNull);
+          expect(
+            find.text('Password must be between 15 and 128 characters.'),
+            findsOneWidget,
+          );
+        }
+      },
+    );
+  }
+
   testWidgets('shows loading while the stored session is read', (tester) async {
     final store = ControlledSessionStore();
     final controller = AuthController(
@@ -159,6 +202,7 @@ final class GateIdentityClient implements IdentityClient {
 
   final User user;
   IdentityClientException? currentUserError;
+  String? lastLoginPassword;
 
   @override
   Future<User> currentUser({required String sessionToken}) async {
@@ -174,6 +218,7 @@ final class GateIdentityClient implements IdentityClient {
     required String email,
     required String password,
   }) async {
+    lastLoginPassword = password;
     return LoginResult(
       user: user,
       sessionToken: 'sess_new-session-token',
@@ -191,4 +236,10 @@ final class GateIdentityClient implements IdentityClient {
   }) async {
     return user;
   }
+}
+
+String scalarPassword(int scalarCount) {
+  const boundary = ' e\u0301';
+  const suffix = ' ';
+  return '$boundary${List.filled(scalarCount - 4, '😀').join()}$suffix';
 }

@@ -210,7 +210,7 @@ class AuthPasswordField extends StatelessWidget {
         ),
       ),
       validator: (value) {
-        final length = value?.length ?? 0;
+        final length = value?.runes.length ?? 0;
         if (length < 15 || length > 128) {
           return 'Password must be between 15 and 128 characters.';
         }
