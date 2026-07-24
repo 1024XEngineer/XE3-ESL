@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -15,14 +17,19 @@ void main() {
 
   group('cold-start session restoration', () {
     test('shows login when no token exists', () async {
+      var cleanupCount = 0;
+      final store = FakeSessionStore();
       final controller = AuthController(
         identityClient: FakeIdentityClient(),
-        sessionStore: FakeSessionStore(),
+        sessionStore: store,
+        clearPrivateState: () => cleanupCount++,
       );
 
       await controller.initialize();
 
       expect(controller.state, isA<AuthSignedOut>());
+      expect(store.deleteCount, 1);
+      expect(cleanupCount, 1);
     });
 
     test('authenticates when the stored token is valid', () async {
@@ -109,6 +116,153 @@ void main() {
       expect(client.currentUserTokens, isEmpty);
       expect(cleanupCount, 1);
     });
+
+    test('delayed initialize success cannot restore after logout', () async {
+      final currentUser = Completer<User>();
+      final store = FakeSessionStore(token: 'sess_stored-token');
+      final client = FakeIdentityClient(currentUserFuture: currentUser.future);
+      final controller = AuthController(
+        identityClient: client,
+        sessionStore: store,
+      );
+
+      final initialize = controller.initialize();
+      await _waitFor(() => client.currentUserTokens.isNotEmpty);
+      expect(controller.currentCredential, isNull);
+      await controller.logout();
+      currentUser.complete(user);
+      await initialize;
+
+      expect(controller.state, isA<AuthSignedOut>());
+      expect(store.token, isNull);
+    });
+
+    test(
+      '4401 during delayed session revalidation prevents stale success',
+      () async {
+        final currentUser = Completer<User>();
+        final store = FakeSessionStore(token: 'sess_stored-token');
+        final client = FakeIdentityClient(currentUserResult: user);
+        final controller = AuthController(
+          identityClient: client,
+          sessionStore: store,
+        );
+        await controller.initialize();
+        final socketCredential = controller.currentCredential!;
+
+        client.currentUserFuture = currentUser.future;
+        final revalidation = controller.initialize();
+        await _waitFor(() => client.currentUserTokens.length == 2);
+
+        await controller.invalidateSession(
+          expectedSessionToken: socketCredential.sessionToken,
+          expectedGeneration: socketCredential.generation,
+        );
+        currentUser.complete(user);
+        await revalidation;
+
+        expect(controller.state, isA<AuthSignedOut>());
+        expect(controller.currentCredential, isNull);
+        expect(store.token, isNull);
+      },
+    );
+
+    test('form navigation cannot bypass delayed session restoration', () async {
+      final currentUser = Completer<User>();
+      final client = FakeIdentityClient(currentUserFuture: currentUser.future);
+      final controller = AuthController(
+        identityClient: client,
+        sessionStore: FakeSessionStore(token: 'sess_stored-token'),
+      );
+
+      final initialize = controller.initialize();
+      await _waitFor(() => client.currentUserTokens.isNotEmpty);
+      controller.showLogin();
+      expect(controller.state, isA<AuthLoading>());
+      currentUser.complete(user);
+      await initialize;
+
+      expect(controller.state, isA<AuthAuthenticated>());
+    });
+
+    test('old session 401 cannot delete a newer login token', () async {
+      final oldCurrentUser = Completer<User>();
+      final store = FakeSessionStore(token: 'sess_account-a');
+      final client = FakeIdentityClient(
+        currentUserFuture: oldCurrentUser.future,
+        loginResult: loginResult,
+      );
+      final controller = AuthController(
+        identityClient: client,
+        sessionStore: store,
+      );
+
+      final initialize = controller.initialize();
+      await _waitFor(() => client.currentUserTokens.isNotEmpty);
+      await controller.logout();
+      controller.showLogin();
+      await controller.login(
+        email: 'learner@example.com',
+        password: 'a sufficiently long password',
+      );
+
+      oldCurrentUser.completeError(
+        const IdentityClientException(
+          kind: IdentityFailureKind.authenticationRequired,
+          statusCode: 401,
+        ),
+      );
+      await initialize;
+
+      expect(controller.state, isA<AuthAuthenticated>());
+      expect(store.token, 'sess_new-session-token');
+      expect(store.deleteCount, 1);
+    });
+
+    test(
+      'login is blocked until older private-state cleanup completes',
+      () async {
+        final cleanupStarted = Completer<void>();
+        final allowCleanup = Completer<void>();
+        final store = FakeSessionStore();
+        final client = FakeIdentityClient(loginResult: loginResult);
+        final controller = AuthController(
+          identityClient: client,
+          sessionStore: store,
+          clearPrivateState: () async {
+            cleanupStarted.complete();
+            await allowCleanup.future;
+          },
+        );
+
+        final initialize = controller.initialize();
+        await cleanupStarted.future;
+        controller.showLogin();
+        controller.showRegister();
+        await controller.login(
+          email: 'learner@example.com',
+          password: 'a sufficiently long password',
+        );
+
+        expect(store.writtenTokens, isEmpty);
+        expect(client.loginCount, 0);
+        expect(controller.state, isA<AuthLoading>());
+
+        allowCleanup.complete();
+        await initialize;
+        expect(controller.state, isA<AuthSignedOut>());
+
+        controller.showLogin();
+        await controller.login(
+          email: 'learner@example.com',
+          password: 'a sufficiently long password',
+        );
+
+        expect(client.loginCount, 1);
+        expect(store.token, 'sess_new-session-token');
+        expect(controller.state, isA<AuthAuthenticated>());
+      },
+    );
   });
 
   group('registration and login', () {
@@ -118,7 +272,9 @@ void main() {
       final controller = AuthController(
         identityClient: client,
         sessionStore: store,
-      )..showRegister();
+      );
+      await controller.initialize();
+      controller.showRegister();
 
       await controller.register(
         email: 'learner@example.com',
@@ -136,7 +292,9 @@ void main() {
       final controller = AuthController(
         identityClient: FakeIdentityClient(loginResult: loginResult),
         sessionStore: store,
-      )..showLogin();
+      );
+      await controller.initialize();
+      controller.showLogin();
 
       await controller.login(
         email: 'learner@example.com',
@@ -155,7 +313,9 @@ void main() {
           ),
         ),
         sessionStore: FakeSessionStore(),
-      )..showLogin();
+      );
+      await controller.initialize();
+      controller.showLogin();
 
       await controller.login(
         email: 'learner@example.com',
@@ -176,7 +336,10 @@ void main() {
           identityClient: client,
           sessionStore: store,
           clearPrivateState: () => cleanupCount++,
-        )..showLogin();
+        );
+        await controller.initialize();
+        expect(cleanupCount, 1);
+        controller.showLogin();
 
         await controller.login(
           email: 'learner@example.com',
@@ -185,7 +348,7 @@ void main() {
 
         expect(client.logoutTokens, ['sess_new-session-token']);
         expect(controller.state, isA<AuthSignedOut>());
-        expect(cleanupCount, 1);
+        expect(cleanupCount, 2);
       },
     );
   });
@@ -220,6 +383,35 @@ void main() {
     );
 
     test(
+      'logout isolates UI and deletes credentials before cleanup completes',
+      () async {
+        final cleanupStarted = Completer<void>();
+        final allowCleanup = Completer<void>();
+        final store = FakeSessionStore(token: 'sess_stored-token');
+        final controller = AuthController(
+          identityClient: FakeIdentityClient(currentUserResult: user),
+          sessionStore: store,
+          clearPrivateState: () async {
+            cleanupStarted.complete();
+            await allowCleanup.future;
+          },
+        );
+        await controller.initialize();
+
+        final logout = controller.logout();
+
+        expect(controller.state, isNot(isA<AuthAuthenticated>()));
+        await cleanupStarted.future;
+        expect(store.token, isNull);
+        expect(controller.state, isNot(isA<AuthAuthenticated>()));
+
+        allowCleanup.complete();
+        await logout;
+        expect(controller.state, isA<AuthSignedOut>());
+      },
+    );
+
+    test(
       'remote invalidation and account switching use shared cleanup',
       () async {
         var cleanupCount = 0;
@@ -231,7 +423,7 @@ void main() {
         );
         await controller.initialize();
 
-        await controller.invalidateSession();
+        await _invalidateCurrentSession(controller);
         store.token = 'sess_replacement-token';
         await controller.switchAccount();
 
@@ -242,15 +434,17 @@ void main() {
     );
 
     test(
-      'logout network failure preserves token until a retry succeeds',
+      'A logout failure after B login and logout cannot restore state',
       () async {
-        final store = FakeSessionStore(token: 'sess_stored-token');
+        final revokeA = Completer<void>();
+        final store = FakeSessionStore(token: 'sess_account-a');
         final client = FakeIdentityClient(
           currentUserResult: user,
-          logoutError: const IdentityClientException(
-            kind: IdentityFailureKind.network,
-            retryable: true,
-          ),
+          loginResult: loginResult,
+          logoutFutures: {
+            'sess_account-a': revokeA.future,
+            'sess_new-session-token': Future<void>.value(),
+          },
         );
         final controller = AuthController(
           identityClient: client,
@@ -259,16 +453,30 @@ void main() {
         await controller.initialize();
 
         await controller.logout();
+        controller.showLogin();
+        await controller.login(
+          email: 'learner@example.com',
+          password: 'a sufficiently long password',
+        );
+        expect(controller.state, isA<AuthAuthenticated>());
+        await controller.logout();
 
-        final retryState = controller.state as AuthRetryableError;
-        expect(retryState.action, AuthRetryAction.logout);
-        expect(store.token, 'sess_stored-token');
-        expect(store.deleteCount, 0);
-
-        client.logoutError = null;
-        await controller.retry();
-        expect(store.token, isNull);
         expect(controller.state, isA<AuthSignedOut>());
+        expect(store.token, isNull);
+        expect(client.logoutTokens, [
+          'sess_account-a',
+          'sess_new-session-token',
+        ]);
+
+        revokeA.completeError(
+          const IdentityClientException(
+            kind: IdentityFailureKind.network,
+            retryable: true,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.state, isA<AuthSignedOut>());
+        expect(store.token, isNull);
       },
     );
 
@@ -292,14 +500,69 @@ void main() {
 
         await controller.initialize();
 
-        final retryState = controller.state as AuthRetryableError;
-        expect(retryState.action, AuthRetryAction.clearSession);
+        final failedState = controller.state as AuthRetryableError;
+        expect(failedState.action, AuthRetryAction.clearLocalState);
         expect(cleanupCount, 1);
 
         store.throwOnDelete = false;
         await controller.retry();
         expect(controller.state, isA<AuthSignedOut>());
+        expect(store.token, isNull);
         expect(cleanupCount, 2);
+      },
+    );
+
+    test(
+      'failed A cleanup blocks B login until local isolation succeeds',
+      () async {
+        var cleanupCount = 0;
+        final store = FakeSessionStore(token: 'sess_account-a');
+        final client = FakeIdentityClient(
+          currentUserResult: user,
+          loginResult: loginResult,
+        );
+        final controller = AuthController(
+          identityClient: client,
+          sessionStore: store,
+          clearPrivateState: () {
+            cleanupCount++;
+            if (cleanupCount == 1) {
+              throw StateError('simulated private-state cleanup failure');
+            }
+          },
+        );
+        await controller.initialize();
+
+        await controller.logout();
+
+        final failedState = controller.state as AuthRetryableError;
+        expect(failedState.action, AuthRetryAction.clearLocalState);
+        expect(store.token, isNull);
+        expect(cleanupCount, 1);
+
+        controller.showLogin();
+        await controller.login(
+          email: 'second@example.com',
+          password: 'a sufficiently long password',
+        );
+
+        expect(controller.state, same(failedState));
+        expect(client.loginCount, 0);
+        expect(store.token, isNull);
+
+        await controller.retry();
+        expect(controller.state, isA<AuthSignedOut>());
+        expect(cleanupCount, 2);
+
+        controller.showLogin();
+        await controller.login(
+          email: 'second@example.com',
+          password: 'a sufficiently long password',
+        );
+
+        expect(client.loginCount, 1);
+        expect(store.token, 'sess_new-session-token');
+        expect(controller.state, isA<AuthAuthenticated>());
       },
     );
   });
@@ -348,7 +611,10 @@ final class FakeIdentityClient implements IdentityClient {
     this.loginError,
     this.currentUserResult,
     this.currentUserError,
+    this.currentUserFuture,
     this.logoutError,
+    this.logoutFuture,
+    this.logoutFutures = const {},
   });
 
   User? registerResult;
@@ -357,9 +623,13 @@ final class FakeIdentityClient implements IdentityClient {
   IdentityClientException? loginError;
   User? currentUserResult;
   IdentityClientException? currentUserError;
+  Future<User>? currentUserFuture;
   IdentityClientException? logoutError;
+  Future<void>? logoutFuture;
+  Map<String, Future<void>> logoutFutures;
   final List<String> currentUserTokens = [];
   final List<String> logoutTokens = [];
+  int loginCount = 0;
 
   @override
   Future<User> register({
@@ -378,6 +648,7 @@ final class FakeIdentityClient implements IdentityClient {
     required String email,
     required String password,
   }) async {
+    loginCount++;
     final error = loginError;
     if (error != null) {
       throw error;
@@ -388,6 +659,10 @@ final class FakeIdentityClient implements IdentityClient {
   @override
   Future<User> currentUser({required String sessionToken}) async {
     currentUserTokens.add(sessionToken);
+    final future = currentUserFuture;
+    if (future != null) {
+      return future;
+    }
     final error = currentUserError;
     if (error != null) {
       throw error;
@@ -398,9 +673,31 @@ final class FakeIdentityClient implements IdentityClient {
   @override
   Future<void> logout({required String sessionToken}) async {
     logoutTokens.add(sessionToken);
+    final tokenFuture = logoutFutures[sessionToken];
+    if (tokenFuture != null) {
+      return tokenFuture;
+    }
+    final future = logoutFuture;
+    if (future != null) {
+      return future;
+    }
     final error = logoutError;
     if (error != null) {
       throw error;
     }
   }
+}
+
+Future<void> _waitFor(bool Function() condition) async {
+  while (!condition()) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
+Future<void> _invalidateCurrentSession(AuthController controller) async {
+  final credential = controller.currentCredential!;
+  await controller.invalidateSession(
+    expectedSessionToken: credential.sessionToken,
+    expectedGeneration: credential.generation,
+  );
 }

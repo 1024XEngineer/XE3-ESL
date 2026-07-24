@@ -202,6 +202,90 @@ void main() {
       expect(error.retryable, isTrue);
     });
 
+    test(
+      'normalizes unknown error code by login operation and status',
+      () async {
+        const unknownCode = 'unknown_sess_server_code';
+        transport.response = const IdentityHttpResponse(
+          statusCode: 401,
+          body:
+              '''
+          {"error":{
+            "code":"$unknownCode",
+            "message":"Untrusted server error.",
+            "retryable":true,
+            "correlation_id":"corr_unknown"
+          }}
+        ''',
+        );
+
+        final error = await _captureIdentityError(
+          client.login(
+            email: 'learner@example.com',
+            password: 'incorrect password',
+          ),
+        );
+
+        expect(error.kind, IdentityFailureKind.invalidCredentials);
+        expect(error.errorCode, 'invalid_credentials');
+        expect(error.retryable, isFalse);
+        expect(error.toString(), isNot(contains(unknownCode)));
+      },
+    );
+
+    test('does not accept a stable code from the wrong operation', () async {
+      transport.response = const IdentityHttpResponse(
+        statusCode: 401,
+        body: '''
+          {"error":{
+            "code":"invalid_credentials",
+            "message":"Untrusted server error.",
+            "retryable":false,
+            "correlation_id":"corr_wrong_operation"
+          }}
+        ''',
+      );
+
+      final error = await _captureIdentityError(
+        client.currentUser(sessionToken: 'sess_opaque-secret'),
+      );
+
+      expect(error.kind, IdentityFailureKind.authenticationRequired);
+      expect(error.errorCode, 'authentication_required');
+      expect(error.toString(), isNot(contains('invalid_credentials')));
+    });
+
+    test(
+      'drops unknown code when status has no safe operation mapping',
+      () async {
+        const unknownCode = 'future_unknown_code';
+        transport.response = const IdentityHttpResponse(
+          statusCode: 418,
+          body:
+              '''
+          {"error":{
+            "code":"$unknownCode",
+            "message":"Untrusted server error.",
+            "retryable":true,
+            "correlation_id":"corr_unknown_status"
+          }}
+        ''',
+        );
+
+        final error = await _captureIdentityError(
+          client.register(
+            email: 'learner@example.com',
+            password: 'correct horse battery staple',
+          ),
+        );
+
+        expect(error.kind, IdentityFailureKind.unexpected);
+        expect(error.errorCode, isNull);
+        expect(error.retryable, isFalse);
+        expect(error.toString(), isNot(contains(unknownCode)));
+      },
+    );
+
     test('network failures are retryable and do not become 401', () async {
       transport.failure = const SocketException('offline');
 
