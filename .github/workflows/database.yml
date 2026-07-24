@@ -1,0 +1,173 @@
+name: Database
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+    paths:
+      - ".github/workflows/database.yml"
+      - ".env.example"
+      - "compose.yaml"
+      - "server/**"
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - ".github/workflows/database.yml"
+      - ".env.example"
+      - "compose.yaml"
+      - "server/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres:
+    name: PostgreSQL migrations and readiness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:18.4-bookworm@sha256:1961f96e6029a02c3812d7cb329a3b03a3ac2bb067058dec17b0f5596aca9296
+        env:
+          POSTGRES_DB: xe3_esl
+          POSTGRES_USER: xe3_esl
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=xe3_esl --dbname=xe3_esl"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 5s
+
+    env:
+      DATABASE_URL: postgres://xe3_esl:ci-only-password@127.0.0.1:5432/xe3_esl?sslmode=disable
+      MIGRATION_ENV: test
+      TEST_DATABASE_URL: postgres://xe3_esl:ci-only-password@127.0.0.1:5432/xe3_esl?sslmode=disable
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: server/go.sum
+
+      - name: Validate local database definition
+        run: docker compose config --quiet
+
+      - name: Enforce append-only migration history
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          invalid_changes=$(
+            git diff --name-status "$BASE_SHA"...HEAD -- "server/migrations/*.sql" |
+              awk '$1 !~ /^A/ { print }'
+          )
+          if [[ -n "$invalid_changes" ]]; then
+            echo "Merged SQL migrations are append-only:"
+            echo "$invalid_changes"
+            exit 1
+          fi
+
+      - name: Verify explicit migration lifecycle
+        working-directory: server
+        run: |
+          go run ./cmd/migrate up
+          go run ./cmd/migrate status
+          go run ./cmd/migrate up
+          go run ./cmd/migrate down-one --local-test-only
+          go run ./cmd/migrate up
+          go run ./cmd/migrate status
+
+      - name: Test against PostgreSQL
+        working-directory: server
+        run: go test -count=1 ./...
+
+      - name: Vet Go service
+        working-directory: server
+        run: go vet ./...
+
+      - name: Scan reachable Go vulnerabilities
+        working-directory: server
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+      - name: Verify liveness and readiness lifecycle
+        working-directory: server
+        env:
+          SERVER_HOST: 127.0.0.1
+          SERVER_PORT: "8080"
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+
+          go build -o "$RUNNER_TEMP/speakup-server" ./cmd/server
+          "$RUNNER_TEMP/speakup-server" >"$RUNNER_TEMP/speakup-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
+
+          wait_for_status() {
+            local endpoint=$1
+            local expected=$2
+            local response_file=$3
+
+            for _ in {1..30}; do
+              actual=$(curl \
+                --silent \
+                --output "$response_file" \
+                --write-out "%{http_code}" \
+                "$endpoint" || true)
+              if [[ "$actual" == "$expected" ]]; then
+                return 0
+              fi
+              sleep 1
+            done
+
+            cat "$RUNNER_TEMP/speakup-server.log"
+            return 1
+          }
+
+          wait_for_status \
+            "http://127.0.0.1:8080/readyz" \
+            "200" \
+            "$RUNNER_TEMP/ready.json"
+          curl --fail --silent "http://127.0.0.1:8080/health" >/dev/null
+
+          docker stop "$POSTGRES_SERVICE_ID"
+          wait_for_status \
+            "http://127.0.0.1:8080/readyz" \
+            "503" \
+            "$RUNNER_TEMP/unavailable.json"
+          curl --fail --silent "http://127.0.0.1:8080/health" >/dev/null
+
+          docker start "$POSTGRES_SERVICE_ID"
+          for _ in {1..30}; do
+            if docker exec "$POSTGRES_SERVICE_ID" \
+              pg_isready --username=xe3_esl --dbname=xe3_esl
+            then
+              break
+            fi
+            sleep 1
+          done
+          docker exec "$POSTGRES_SERVICE_ID" \
+            pg_isready --username=xe3_esl --dbname=xe3_esl
+
+          wait_for_status \
+            "http://127.0.0.1:8080/readyz" \
+            "200" \
+            "$RUNNER_TEMP/recovered.json"

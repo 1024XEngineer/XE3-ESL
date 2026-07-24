@@ -3,16 +3,18 @@ package config
 import "os"
 
 type Config struct {
-	Host     string
-	Port     string
-	LogLevel string
+	Host        string
+	Port        string
+	LogLevel    string
+	DatabaseURL string
 }
 
 func Load() Config {
 	return Config{
-		Host:     valueOrDefault("SERVER_HOST", "0.0.0.0"),
-		Port:     valueOrDefault("SERVER_PORT", "8080"),
-		LogLevel: valueOrDefault("LOG_LEVEL", "info"),
+		Host:        valueOrDefault("SERVER_HOST", "0.0.0.0"),
+		Port:        valueOrDefault("SERVER_PORT", "8080"),
+		LogLevel:    valueOrDefault("LOG_LEVEL", "info"),
+		DatabaseURL: os.Getenv("DATABASE_URL"),
 	}
 }
 
