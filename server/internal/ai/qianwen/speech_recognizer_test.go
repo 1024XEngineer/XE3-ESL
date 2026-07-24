@@ -37,9 +37,10 @@ func TestTranscribeUsesDocumentedFunASRFlashContract(t *testing.T) {
 		}
 		return jsonResponse(http.StatusOK, `{
 			"output":{
-				"output":{"sentence":{"text":"I am preparing for an interview."}},
+				"sentence":{"text":"I am preparing for an interview."},
 				"text":"I am preparing for an interview."
 			},
+			"usage":{"duration":4},
 			"request_id":"fun-asr-safe-1"
 		}`), nil
 	})
@@ -69,6 +70,9 @@ func TestTranscribeUsesDocumentedFunASRFlashContract(t *testing.T) {
 		Provider:   providerName,
 		Model:      "fun-asr-flash-2026-06-15",
 		Transcript: "I am preparing for an interview.",
+		Usage: ai.SpeechUsage{
+			AudioSeconds: 4,
+		},
 	}
 	if result != expected {
 		t.Fatalf("result = %#v, want %#v", result, expected)
@@ -83,8 +87,12 @@ func TestTranscribeAcceptsEachDocumentedTranscriptLocation(t *testing.T) {
 			"output":{"text":"Hello from the top level."},
 			"request_id":"fun-asr-top"
 		}`,
-		"nested sentence text": `{
-			"output":{"output":{"sentence":{"text":"Hello from the sentence."}}},
+		"documented sentence text": `{
+			"output":{"sentence":{"text":"Hello from the sentence."}},
+			"request_id":"fun-asr-sentence"
+		}`,
+		"legacy nested sentence text": `{
+			"output":{"output":{"sentence":{"text":"Hello from the nested sentence."}}},
 			"request_id":"fun-asr-nested"
 		}`,
 	}
@@ -109,6 +117,33 @@ func TestTranscribeAcceptsEachDocumentedTranscriptLocation(t *testing.T) {
 	}
 }
 
+func TestTranscribePrefersCumulativeTextAndMapsDurationUsage(t *testing.T) {
+	t.Parallel()
+
+	recognizer := mustRecognizer(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{
+			"output":{
+				"text":"This is the first sentence. This is the second sentence.",
+				"sentence":{"text":"This is the second sentence."}
+			},
+			"usage":{"duration":7},
+			"request_id":"fun-asr-cumulative"
+		}`), nil
+	}), "test-api-key")
+	result, err := recognizer.Transcribe(
+		context.Background(),
+		ai.TranscriptionRequest{Audio: &asrTestAudio{data: []byte("wav")}},
+	)
+	if err != nil {
+		t.Fatalf("transcribe: %v", err)
+	}
+	if result.Transcript !=
+		"This is the first sentence. This is the second sentence." ||
+		result.Usage.AudioSeconds != 7 {
+		t.Fatalf("unexpected cumulative result: %#v", result)
+	}
+}
+
 func TestTranscribeRejectsInvalidAudioBeforeProviderCall(t *testing.T) {
 	t.Parallel()
 
@@ -124,18 +159,16 @@ func TestTranscribeRejectsInvalidAudioBeforeProviderCall(t *testing.T) {
 	}
 }
 
-func TestTranscribeRejectsInvalidOrConflictingResponse(t *testing.T) {
+func TestTranscribeRejectsInvalidResponse(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
 		"malformed":          `{`,
 		"missing request ID": `{"output":{"text":"hello"}}`,
 		"blank transcript":   `{"output":{},"request_id":"fun-asr-1"}`,
-		"conflicting transcripts": `{
-			"output":{
-				"text":"one",
-				"output":{"sentence":{"text":"two"}}
-			},
+		"negative duration usage": `{
+			"output":{"text":"one"},
+			"usage":{"duration":-1},
 			"request_id":"fun-asr-1"
 		}`,
 	}

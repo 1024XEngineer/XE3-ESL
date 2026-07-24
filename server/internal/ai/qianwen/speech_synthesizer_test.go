@@ -305,6 +305,15 @@ func TestNewSynthesizerRejectsUnsupportedConfiguration(t *testing.T) {
 		{name: "wrong base path", mutate: func(config *TTSConfig) {
 			config.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 		}},
+		{name: "Singapore legacy endpoint", mutate: func(config *TTSConfig) {
+			config.BaseURL = "https://dashscope-intl.aliyuncs.com/api/v1"
+		}},
+		{name: "Singapore workspace endpoint", mutate: func(config *TTSConfig) {
+			config.BaseURL = "https://workspace.ap-southeast-1.maas.aliyuncs.com/api/v1"
+		}},
+		{name: "US endpoint", mutate: func(config *TTSConfig) {
+			config.BaseURL = "https://dashscope-us.aliyuncs.com/api/v1"
+		}},
 		{name: "zero timeout", mutate: func(config *TTSConfig) {
 			config.Timeout = 0
 		}},
@@ -319,6 +328,27 @@ func TestNewSynthesizerRejectsUnsupportedConfiguration(t *testing.T) {
 				t.Fatal("expected configuration error")
 			}
 		})
+	}
+}
+
+func TestNewSynthesizerAcceptsBeijingWorkspaceEndpoint(t *testing.T) {
+	t.Parallel()
+
+	synthesizer, err := newSynthesizerWithClient(TTSConfig{
+		BaseURL:      "https://workspace-123.cn-beijing.maas.aliyuncs.com/api/v1",
+		Model:        "qwen-audio-3.0-tts-flash",
+		Voice:        "loongeva_v3.6",
+		LanguageHint: "en",
+		Timeout:      time.Second,
+	}, "test-api-key", doerFunc(func(*http.Request) (*http.Response, error) {
+		return nil, nil
+	}))
+	if err != nil {
+		t.Fatalf("new synthesizer: %v", err)
+	}
+	if synthesizer.endpoint != "https://workspace-123.cn-beijing.maas.aliyuncs.com"+
+		"/api/v1/services/audio/tts/SpeechSynthesizer" {
+		t.Fatalf("unexpected Beijing endpoint: %s", synthesizer.endpoint)
 	}
 }
 

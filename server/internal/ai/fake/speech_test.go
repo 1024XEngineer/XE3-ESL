@@ -40,15 +40,18 @@ func TestSpeechRecognizerReturnsDeterministicResult(t *testing.T) {
 func TestSpeechSynthesizerReturnsDeterministicMetadata(t *testing.T) {
 	t.Parallel()
 
-	audio := &fakeManagedAudio{}
 	expected := ai.SynthesisResult{
 		RequestID: "fake-tts-1",
 		Provider:  "fake",
 		Model:     "deterministic",
 		AudioID:   "audio-fake-1",
-		Audio:     audio,
 	}
-	synthesizer := NewSpeechSynthesizer(expected)
+	synthesizer := NewSpeechSynthesizer(
+		expected,
+		func() platformmedia.ManagedAudioSource {
+			return &fakeManagedAudio{}
+		},
+	)
 
 	first, err := synthesizer.Synthesize(
 		context.Background(),
@@ -66,9 +69,36 @@ func TestSpeechSynthesizerReturnsDeterministicMetadata(t *testing.T) {
 	}
 	if first.RequestID != expected.RequestID ||
 		second.RequestID != expected.RequestID ||
-		first.Audio != audio ||
-		second.Audio != audio {
+		first.Audio == nil ||
+		second.Audio == nil ||
+		first.Audio == second.Audio {
 		t.Fatalf("fake result changed: first=%#v second=%#v", first, second)
+	}
+	if err := first.Audio.Close(); err != nil {
+		t.Fatalf("close first audio: %v", err)
+	}
+	if _, err := first.Audio.Open(); !errors.Is(
+		err,
+		platformmedia.ErrAudioClosed,
+	) {
+		t.Fatalf("first audio remained open after close: %v", err)
+	}
+	reader, err := second.Audio.Open()
+	if err != nil {
+		t.Fatalf("second audio was affected by first close: %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read second audio: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close second reader: %v", err)
+	}
+	if string(data) != "audio" {
+		t.Fatalf("second audio bytes = %q", data)
+	}
+	if err := second.Audio.Close(); err != nil {
+		t.Fatalf("close second audio: %v", err)
 	}
 }
 
@@ -84,7 +114,7 @@ func TestFakeSpeechProvidersRespectCancellationAndValidation(t *testing.T) {
 	)
 	assertFakeSpeechError(t, err, ai.ErrorCancelled)
 
-	_, err = NewSpeechSynthesizer(ai.SynthesisResult{}).Synthesize(
+	_, err = NewSpeechSynthesizer(ai.SynthesisResult{}, nil).Synthesize(
 		context.Background(),
 		ai.SynthesisRequest{},
 	)
@@ -136,6 +166,17 @@ func (fakeAudioSource) SampleRate() int         { return 16_000 }
 
 type fakeManagedAudio struct {
 	fakeAudioSource
+	closed bool
 }
 
-func (*fakeManagedAudio) Close() error { return nil }
+func (audio *fakeManagedAudio) Open() (io.ReadCloser, error) {
+	if audio.closed {
+		return nil, platformmedia.ErrAudioClosed
+	}
+	return audio.fakeAudioSource.Open()
+}
+
+func (audio *fakeManagedAudio) Close() error {
+	audio.closed = true
+	return nil
+}

@@ -91,6 +91,11 @@ func TestCaptureTemporaryAudioRejectsUntrustedInputAndCleansUp(t *testing.T) {
 			payload:     bytes.Repeat([]byte("not-wav"), 10),
 		},
 		{
+			name:        "partial PCM frame",
+			contentType: ContentTypeWAV,
+			payload:     incompletePCMFrameWAV(),
+		},
+		{
 			name:        "over duration",
 			contentType: ContentTypeWAV,
 			payload:     testWAV(t, MaxAudioDuration+time.Second),
@@ -117,6 +122,26 @@ func TestCaptureTemporaryAudioRejectsUntrustedInputAndCleansUp(t *testing.T) {
 			}
 		})
 	}
+}
+
+func incompletePCMFrameWAV() []byte {
+	payload := make([]byte, 46)
+	copy(payload[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(payload[4:8], uint32(len(payload)-8))
+	copy(payload[8:12], "WAVE")
+	copy(payload[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(payload[16:20], 16)
+	binary.LittleEndian.PutUint16(payload[20:22], 1)
+	binary.LittleEndian.PutUint16(payload[22:24], 1)
+	binary.LittleEndian.PutUint32(payload[24:28], 8_000)
+	binary.LittleEndian.PutUint32(payload[28:32], 16_000)
+	binary.LittleEndian.PutUint16(payload[32:34], 2)
+	binary.LittleEndian.PutUint16(payload[34:36], 16)
+	copy(payload[36:40], "data")
+	binary.LittleEndian.PutUint32(payload[40:44], 1)
+	payload[44] = 1
+	payload[45] = 0 // RIFF padding for the odd-sized data chunk.
+	return payload
 }
 
 func TestCaptureTemporaryAudioRejectsOversizedStreamWithoutRetainingIt(t *testing.T) {

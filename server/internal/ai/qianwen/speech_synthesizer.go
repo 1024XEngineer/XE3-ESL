@@ -81,6 +81,11 @@ func newSynthesizerWithClient(
 	if err != nil {
 		return nil, err
 	}
+	if !isBeijingDashScopeAPIBaseURL(baseURL) {
+		return nil, errors.New(
+			"Qwen-Audio-TTS is available only through a China (Beijing) endpoint",
+		)
+	}
 	model, err := normalizeTTSModel(config.Model)
 	if err != nil {
 		return nil, err
@@ -469,6 +474,38 @@ func normalizeTTSModel(raw string) (string, error) {
 		return "", errors.New("Qianwen TTS adapter only accepts qwen-audio-3.0-tts-flash")
 	}
 	return "qwen-audio-3.0-tts-flash", nil
+}
+
+func isBeijingDashScopeAPIBaseURL(baseURL string) bool {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "dashscope.aliyuncs.com" {
+		return true
+	}
+	const suffix = ".cn-beijing.maas.aliyuncs.com"
+	workspaceID := strings.TrimSuffix(host, suffix)
+	return workspaceID != host &&
+		validDNSLabel(workspaceID)
+}
+
+func validDNSLabel(value string) bool {
+	if value == "" ||
+		len(value) > 63 ||
+		value[0] == '-' ||
+		value[len(value)-1] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') &&
+			character != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeTTSVoice(raw string) (string, error) {

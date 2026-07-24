@@ -246,6 +246,7 @@ func validatePCMWAV(path string, size int64) (wavMetadata, error) {
 		byteRate   uint32
 		dataSize   uint32
 		sampleRate uint32
+		blockAlign uint16
 		foundFmt   bool
 		foundData  bool
 	)
@@ -278,7 +279,7 @@ func validatePCMWAV(path string, size int64) (wavMetadata, error) {
 			channels := binary.LittleEndian.Uint16(format[2:4])
 			sampleRate = binary.LittleEndian.Uint32(format[4:8])
 			byteRate = binary.LittleEndian.Uint32(format[8:12])
-			blockAlign := binary.LittleEndian.Uint16(format[12:14])
+			blockAlign = binary.LittleEndian.Uint16(format[12:14])
 			bitsPerSample := binary.LittleEndian.Uint16(format[14:16])
 			if audioFormat != 1 ||
 				(channels != 1 && channels != 2) ||
@@ -319,6 +320,9 @@ func validatePCMWAV(path string, size int64) (wavMetadata, error) {
 	}
 	if !foundFmt || !foundData || byteRate == 0 {
 		return wavMetadata{}, errors.New("WAV is missing required format or data chunks")
+	}
+	if blockAlign == 0 || dataSize%uint32(blockAlign) != 0 {
+		return wavMetadata{}, errors.New("WAV audio data does not contain complete PCM frames")
 	}
 	duration := time.Duration(dataSize) * time.Second / time.Duration(byteRate)
 	if duration <= 0 {

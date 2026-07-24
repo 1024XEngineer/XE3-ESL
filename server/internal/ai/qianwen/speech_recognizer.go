@@ -284,13 +284,19 @@ type asrParameters struct {
 type asrResponse struct {
 	RequestID string `json:"request_id"`
 	Output    struct {
-		Text   string `json:"text"`
+		Text     string `json:"text"`
+		Sentence struct {
+			Text string `json:"text"`
+		} `json:"sentence"`
 		Output struct {
 			Sentence struct {
 				Text string `json:"text"`
 			} `json:"sentence"`
 		} `json:"output"`
 	} `json:"output"`
+	Usage struct {
+		Duration int `json:"duration"`
+	} `json:"usage"`
 }
 
 func (response asrResponse) result(model string) (ai.TranscriptionResult, error) {
@@ -298,11 +304,18 @@ func (response asrResponse) result(model string) (ai.TranscriptionResult, error)
 	if requestID == "" {
 		return ai.TranscriptionResult{}, errors.New("Fun-ASR response has no valid request ID")
 	}
-	text := strings.TrimSpace(response.Output.Text)
-	sentenceText := strings.TrimSpace(response.Output.Output.Sentence.Text)
-	if text != "" && sentenceText != "" && text != sentenceText {
-		return ai.TranscriptionResult{}, errors.New("Fun-ASR response contains conflicting transcripts")
+	if response.Usage.Duration < 0 {
+		return ai.TranscriptionResult{}, errors.New("Fun-ASR response has invalid audio usage")
 	}
+	text := strings.TrimSpace(response.Output.Text)
+	sentenceText := strings.TrimSpace(response.Output.Sentence.Text)
+	if sentenceText == "" {
+		// Retain compatibility with the previously observed nested response
+		// while preferring the shape in the current official API reference.
+		sentenceText = strings.TrimSpace(response.Output.Output.Sentence.Text)
+	}
+	// output.text is the cumulative full transcript. sentence.text is only
+	// the current sentence, so differing non-empty values are expected.
 	if text == "" {
 		text = sentenceText
 	}
@@ -314,6 +327,9 @@ func (response asrResponse) result(model string) (ai.TranscriptionResult, error)
 		Provider:   providerName,
 		Model:      model,
 		Transcript: text,
+		Usage: ai.SpeechUsage{
+			AudioSeconds: response.Usage.Duration,
+		},
 	}, nil
 }
 

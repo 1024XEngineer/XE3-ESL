@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 )
 
 // SpeechRecognizer is an explicit deterministic provider for offline tests.
@@ -45,14 +46,24 @@ func (recognizer *SpeechRecognizer) Transcribe(
 }
 
 // SpeechSynthesizer is an explicit deterministic provider for offline tests.
-// The configured result owns any ManagedAudioSource it carries.
+// Its audio factory is invoked for every call, so callers never receive a
+// ManagedAudioSource that a previous result may already have closed.
 type SpeechSynthesizer struct {
-	result ai.SynthesisResult
-	err    error
+	result       ai.SynthesisResult
+	audioFactory func() platformmedia.ManagedAudioSource
+	err          error
 }
 
-func NewSpeechSynthesizer(result ai.SynthesisResult) *SpeechSynthesizer {
-	return &SpeechSynthesizer{result: result}
+func NewSpeechSynthesizer(
+	result ai.SynthesisResult,
+	audioFactory func() platformmedia.ManagedAudioSource,
+) *SpeechSynthesizer {
+	// Audio is a per-call owned resource, never static result metadata.
+	result.Audio = nil
+	return &SpeechSynthesizer{
+		result:       result,
+		audioFactory: audioFactory,
+	}
 }
 
 func NewFailingSpeechSynthesizer(err error) *SpeechSynthesizer {
@@ -79,7 +90,11 @@ func (synthesizer *SpeechSynthesizer) Synthesize(
 	if synthesizer.err != nil {
 		return ai.SynthesisResult{}, synthesizer.err
 	}
-	return synthesizer.result, nil
+	result := synthesizer.result
+	if synthesizer.audioFactory != nil {
+		result.Audio = synthesizer.audioFactory()
+	}
+	return result, nil
 }
 
 func speechContextError(ctx context.Context, operation ai.SpeechOperation) error {
