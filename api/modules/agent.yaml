@@ -1,0 +1,479 @@
+paths:
+  /v1/matters:
+    post:
+      tags:
+        - Matter
+      summary: Create a user-owned real-world Matter
+      operationId: createMatter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMatterRequest'
+            example:
+              title: Customer renewal meeting
+      responses:
+        '201':
+          description: The Matter was created for the trusted Actor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Matter'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    get:
+      tags:
+        - Matter
+      summary: List Matters owned by the trusted Actor
+      operationId: listMatters
+      responses:
+        '200':
+          description: The Actor's Matters ordered by latest update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatterList'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/matters/{matter_id}:
+    parameters:
+      - $ref: '#/components/parameters/MatterId'
+    patch:
+      tags:
+        - Matter
+      summary: Complete, archive, or reopen an owned Matter
+      operationId: changeMatterStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeMatterStatusRequest'
+      responses:
+        '200':
+          description: The Matter lifecycle transition was committed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Matter'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads:
+    post:
+      tags:
+        - Agent
+      summary: Create a durable Agent Thread
+      description: |
+        The optional active Matter must belong to the trusted Actor and be
+        active. The Thread can start without a Matter for direct expression
+        help. This operation does not create a Run or call a model.
+      operationId: createAgentThread
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentThreadRequest'
+            example:
+              active_matter_id: 10000000-0000-4000-8000-000000000001
+      responses:
+        '201':
+          description: The durable Thread was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentThread'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    get:
+      tags:
+        - Agent
+      summary: List durable Agent Threads owned by the trusted Actor
+      operationId: listAgentThreads
+      responses:
+        '200':
+          description: The Actor's Threads ordered by latest update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentThreadList'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
+    get:
+      tags:
+        - Agent
+      summary: Restore one durable Agent Thread
+      operationId: getAgentThread
+      responses:
+        '200':
+          description: The owned Thread and its selected active Matter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentThread'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/active-matter:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
+    put:
+      tags:
+        - Agent
+      summary: Select one active Matter for a Thread
+      description: |
+        The link is owned by Agent Runtime. Matter remains authoritative for
+        its lifecycle and must be revalidated by every future Run.
+      operationId: setAgentThreadActiveMatter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetActiveMatterRequest'
+      responses:
+        '200':
+          description: The Matter is now the Thread's single selected Matter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreadMatterLink'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
+    post:
+      tags:
+        - Agent
+      summary: Append one idempotent user Message
+      description: |
+        `client_message_id` is the Message-specific business idempotency key.
+        The same Actor and Thread replaying the same ID and content receives
+        the original Message. Reusing it with different content returns 409.
+        This does not implement the cross-module REST Idempotency-Key platform.
+      operationId: appendAgentUserMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppendAgentMessageRequest'
+      responses:
+        '201':
+          description: |
+            The original or replayed durable Message. Both paths return the
+            same status and body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMessage'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    get:
+      tags:
+        - Agent
+      summary: Restore committed Messages in stable Thread order
+      operationId: listAgentMessages
+      responses:
+        '200':
+          description: Messages ordered by the server-assigned sequence.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMessageList'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  parameters:
+    MatterId:
+      name: matter_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AgentThreadId:
+      name: thread_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    MatterStatus:
+      type: string
+      enum:
+        - active
+        - completed
+        - archived
+    Matter:
+      type: object
+      additionalProperties: false
+      required:
+        - matter_id
+        - title
+        - status
+        - version
+        - created_at
+        - updated_at
+      properties:
+        matter_id:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          x-max-utf8-bytes: 512
+        status:
+          $ref: '#/components/schemas/MatterStatus'
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    MatterList:
+      type: object
+      additionalProperties: false
+      required:
+        - matters
+      properties:
+        matters:
+          type: array
+          items:
+            $ref: '#/components/schemas/Matter'
+    CreateMatterRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          x-max-utf8-bytes: 512
+    ChangeMatterStatusRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - expected_version
+      properties:
+        status:
+          $ref: '#/components/schemas/MatterStatus'
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+    AgentThread:
+      type: object
+      additionalProperties: false
+      required:
+        - thread_id
+        - created_at
+        - updated_at
+      properties:
+        thread_id:
+          type: string
+          format: uuid
+          readOnly: true
+        active_matter_id:
+          type: string
+          format: uuid
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    AgentThreadList:
+      type: object
+      additionalProperties: false
+      required:
+        - threads
+      properties:
+        threads:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentThread'
+    CreateAgentThreadRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        active_matter_id:
+          type: string
+          format: uuid
+    SetActiveMatterRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - matter_id
+      properties:
+        matter_id:
+          type: string
+          format: uuid
+    ThreadMatterLink:
+      type: object
+      additionalProperties: false
+      required:
+        - thread_id
+        - matter_id
+        - active
+        - linked_at
+        - updated_at
+      properties:
+        thread_id:
+          type: string
+          format: uuid
+          readOnly: true
+        matter_id:
+          type: string
+          format: uuid
+          readOnly: true
+        active:
+          type: boolean
+          const: true
+          readOnly: true
+        linked_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    AgentMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - message_id
+        - thread_id
+        - sequence
+        - role
+        - client_message_id
+        - content
+        - created_at
+      properties:
+        message_id:
+          type: string
+          format: uuid
+          readOnly: true
+        thread_id:
+          type: string
+          format: uuid
+          readOnly: true
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        role:
+          type: string
+          const: user
+          readOnly: true
+        client_message_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+        content:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          x-max-utf8-bytes: 16384
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+    AgentMessageList:
+      type: object
+      additionalProperties: false
+      required:
+        - messages
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentMessage'
+    AppendAgentMessageRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - client_message_id
+        - content
+      properties:
+        client_message_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+        content:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          x-max-utf8-bytes: 16384

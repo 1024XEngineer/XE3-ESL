@@ -500,6 +500,48 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		t.Fatalf("session count after user delete = %d, want 0", sessionCount)
 	}
 
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("read version before identity down migration: %v", err)
+	}
+	for status.Present && status.Version > 2 {
+		changed, err = runner.DownOne()
+		if err != nil {
+			t.Fatalf("revert migration newer than identity: %v", err)
+		}
+		if !changed {
+			t.Fatal("newer migration down reported no change")
+		}
+		status, err = runner.Version()
+		if err != nil {
+			t.Fatalf("read version while reverting newer migrations: %v", err)
+		}
+	}
+	if !status.Present || status.Version != 2 || status.Dirty {
+		t.Fatalf(
+			"status before identity down migration = %+v, want version 2 clean",
+			status,
+		)
+	}
+	for _, table := range []string{
+		"matters",
+		"agent_threads",
+		"agent_thread_matter_links",
+		"agent_messages",
+	} {
+		var relation *string
+		if err := admin.QueryRow(
+			ctx,
+			"SELECT to_regclass($1)",
+			schema+"."+table,
+		).Scan(&relation); err != nil {
+			t.Fatalf("inspect %s after newer migrations down: %v", table, err)
+		}
+		if relation != nil {
+			t.Fatalf("%s still exists after its down migration as %q", table, *relation)
+		}
+	}
+
 	changed, err = runner.DownOne()
 	if err != nil {
 		t.Fatalf("revert identity migration: %v", err)
@@ -507,7 +549,7 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 	if !changed {
 		t.Fatal("identity down migration reported no change")
 	}
-	status, err := runner.Version()
+	status, err = runner.Version()
 	if err != nil {
 		t.Fatalf("read version after identity down migration: %v", err)
 	}
