@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/practice/practice.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
@@ -259,6 +261,122 @@ void main() {
       ),
     );
   });
+
+  testWidgets('practice shows actionable iOS microphone permission guidance', (
+    tester,
+  ) async {
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: _TwoTurnPracticeClient(),
+      recorder: _PermissionDeniedRecorder(),
+    );
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+
+    await tester.tap(find.byKey(const Key('practice-record')));
+    await tester.pump();
+
+    expect(find.text('需要麦克风权限；请在 iOS“设置”中允许 SpeakUp 使用麦克风。'), findsOneWidget);
+  });
+
+  testWidgets('practice surfaces free voice quota without counting the turn', (
+    tester,
+  ) async {
+    final practice = _TwoTurnPracticeClient()
+      ..transcribeFailure = const AgentClientException(
+        kind: AgentClientFailureKind.rateLimited,
+        statusCode: 429,
+        errorCode: 'quota_exhausted',
+        retryable: false,
+      );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+
+    await tester.tap(find.byKey(const Key('practice-record')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('practice-stop-recording')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('今日免费语音额度已用完，本轮未计入进度。'), findsOneWidget);
+    expect(controller.completedTurns, 0);
+    expect(controller.recordingState, PracticeRecordingState.idle);
+  });
+
+  testWidgets('practice keeps candidate text after a confirm network error', (
+    tester,
+  ) async {
+    final practice = _TwoTurnPracticeClient()
+      ..confirmFailure = const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await controller.startRecording();
+    await controller.stopRecording();
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+
+    await tester.tap(find.byKey(const Key('practice-confirm-turn')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('网络连接不稳定，这一轮尚未确认，请重试。'), findsOneWidget);
+    expect(find.text('Answer 1'), findsOneWidget);
+    expect(
+      controller.recordingState,
+      PracticeRecordingState.awaitingConfirmation,
+    );
+  });
+
+  testWidgets('nullable Review offers retry and surfaces a network failure', (
+    tester,
+  ) async {
+    final practice = _TwoTurnPracticeClient()..omitReview = true;
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    for (var turn = 0; turn < 2; turn++) {
+      await controller.startRecording();
+      await controller.stopRecording();
+      await controller.confirmTranscript();
+    }
+    practice.restoreFailure = const AgentClientException(
+      kind: AgentClientFailureKind.network,
+      retryable: true,
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+
+    expect(find.byKey(const Key('practice-retry-review')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('practice-retry-review')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('网络连接不稳定，暂时无法刷新复盘。'), findsOneWidget);
+    expect(controller.review, isNull);
+    expect(controller.recordingState, PracticeRecordingState.reviewFailed);
+  });
 }
 
 final class _TwoTurnPracticeClient implements PracticeClient {
@@ -268,6 +386,9 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   final List<String> confirmationKeys = [];
   bool failConfirmOnce = false;
   bool omitReview = false;
+  Object? transcribeFailure;
+  Object? confirmFailure;
+  Object? restoreFailure;
   int transcribeCount = 0;
 
   @override
@@ -280,7 +401,12 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   Future<PracticeSessionSnapshot?> restorePractice({
     required String threadId,
     AgentMatter? activeMatter,
-  }) async => null;
+  }) async {
+    if (restoreFailure case final failure?) {
+      throw failure;
+    }
+    return null;
+  }
 
   @override
   Future<PracticeStartResult> startPractice({
@@ -309,6 +435,9 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     PracticeTranscriptionRequest request,
   ) async {
     transcribeCount++;
+    if (transcribeFailure case final failure?) {
+      throw failure;
+    }
     return TranscriptionCandidate(
       id: 'candidate-${completed + 1}',
       sessionId: request.sessionId,
@@ -325,6 +454,9 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     required String idempotencyKey,
   }) async {
     confirmationKeys.add(idempotencyKey);
+    if (confirmFailure case final failure?) {
+      throw failure;
+    }
     if (failConfirmOnce) {
       failConfirmOnce = false;
       throw StateError('ambiguous confirmation');
@@ -364,6 +496,31 @@ final class _TwoTurnPracticeClient implements PracticeClient {
           : null,
     );
   }
+}
+
+final class _PermissionDeniedRecorder implements PracticeRecorder {
+  @override
+  Future<void> start() {
+    throw const PracticeRecordingException(
+      PracticeRecordingFailureKind.permissionDenied,
+    );
+  }
+
+  @override
+  Future<RecordedPracticeAudio> stop() {
+    throw const PracticeRecordingException(
+      PracticeRecordingFailureKind.notRecording,
+    );
+  }
+
+  @override
+  Future<void> discard(RecordedPracticeAudio audio) async {}
+
+  @override
+  Future<void> discardCurrent() async {}
+
+  @override
+  Future<void> clearAccountState() async {}
 }
 
 final class _ControlledStopRecorder implements PracticeRecorder {

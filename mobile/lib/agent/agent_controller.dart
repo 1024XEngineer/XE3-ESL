@@ -224,9 +224,7 @@ final class AgentController extends ChangeNotifier {
     } catch (error) {
       if (_isCurrent(epoch)) {
         _retry = _canRetry(error) ? operation : null;
-        _errorMessage = error is AgentClientException && error.isUnavailable
-            ? '场景与语音练习尚未开放，当前可以继续使用 Agent 文本对话。'
-            : '暂时无法开始这个场景，请稍后重试。';
+        _errorMessage = _sceneFailureMessage(error);
       }
     } finally {
       if (_isCurrent(epoch)) {
@@ -349,7 +347,7 @@ final class AgentController extends ChangeNotifier {
       _recordingState = PracticeRecordingState.idle;
       _errorMessage =
           error.kind == PracticeRecordingFailureKind.permissionDenied
-          ? '需要麦克风权限才能开始这一轮录音。'
+          ? '需要麦克风权限；请在 iOS“设置”中允许 SpeakUp 使用麦克风。'
           : '暂时无法开始录音，请稍后重试。';
     } catch (_) {
       _recordingState = PracticeRecordingState.idle;
@@ -432,7 +430,7 @@ final class AgentController extends ChangeNotifier {
       _activeConfirmationId = null;
       _recordingState = PracticeRecordingState.awaitingConfirmation;
       _errorMessage = null;
-    } catch (_) {
+    } catch (error) {
       if (_isCurrentPractice(
         epoch: epoch,
         generation: generation,
@@ -441,7 +439,7 @@ final class AgentController extends ChangeNotifier {
       )) {
         _candidate = null;
         _recordingState = PracticeRecordingState.idle;
-        _errorMessage = '没有识别出这一轮，请重新录音。';
+        _errorMessage = _transcriptionFailureMessage(error);
       }
     } finally {
       if (audio != null) {
@@ -528,7 +526,7 @@ final class AgentController extends ChangeNotifier {
       } else {
         _recordingState = PracticeRecordingState.idle;
       }
-    } catch (_) {
+    } catch (error) {
       if (_isCurrentPractice(
         epoch: epoch,
         generation: generation,
@@ -536,7 +534,7 @@ final class AgentController extends ChangeNotifier {
         questionId: question.id,
       )) {
         _recordingState = PracticeRecordingState.awaitingConfirmation;
-        _errorMessage = '这一轮没有提交成功，请重试。';
+        _errorMessage = _confirmationFailureMessage(error);
       }
     }
     if (_isCurrent(epoch)) {
@@ -574,10 +572,10 @@ final class AgentController extends ChangeNotifier {
       if (_review == null) {
         throw StateError('Review is not ready.');
       }
-    } catch (_) {
+    } catch (error) {
       if (_isCurrent(epoch)) {
         _recordingState = PracticeRecordingState.reviewFailed;
-        _errorMessage = '复盘仍在生成，请稍后重试。';
+        _errorMessage = _reviewFailureMessage(error);
       }
     }
     if (_isCurrent(epoch)) {
@@ -694,6 +692,74 @@ final class AgentController extends ChangeNotifier {
   void _cancelRecordingLimit() {
     _recordingLimitTimer?.cancel();
     _recordingLimitTimer = null;
+  }
+
+  String _sceneFailureMessage(Object error) {
+    if (error is! AgentClientException) {
+      return '暂时无法开始这个场景，请稍后重试。';
+    }
+    if (error.isUnavailable) {
+      return '场景与语音练习尚未开放，当前可以继续使用 Agent 文本对话。';
+    }
+    if (_isFreeQuotaExhausted(error)) {
+      return '今日免费练习额度已用完，请稍后再试。';
+    }
+    if (error.kind == AgentClientFailureKind.network) {
+      return '网络连接不稳定，暂时无法开始练习。';
+    }
+    if (error.kind == AgentClientFailureKind.rateLimited) {
+      return '请求过于频繁，请稍后再开始练习。';
+    }
+    return '暂时无法开始这个场景，请稍后重试。';
+  }
+
+  String _transcriptionFailureMessage(Object error) {
+    if (error is AgentClientException) {
+      if (_isFreeQuotaExhausted(error)) {
+        return '今日免费语音额度已用完，本轮未计入进度。';
+      }
+      if (error.kind == AgentClientFailureKind.network) {
+        return '网络连接不稳定，未能转写；请重新录音。';
+      }
+      if (error.kind == AgentClientFailureKind.rateLimited) {
+        return '语音请求过于频繁，请稍后重新录音。';
+      }
+    }
+    return '没有识别出这一轮，请重新录音。';
+  }
+
+  String _confirmationFailureMessage(Object error) {
+    if (error is AgentClientException) {
+      if (_isFreeQuotaExhausted(error)) {
+        return '今日免费练习额度已用完，这一轮尚未确认。';
+      }
+      if (error.kind == AgentClientFailureKind.network) {
+        return '网络连接不稳定，这一轮尚未确认，请重试。';
+      }
+      if (error.kind == AgentClientFailureKind.rateLimited) {
+        return '提交过于频繁，请稍后重试；转写内容已保留。';
+      }
+    }
+    return '这一轮没有提交成功，请重试。';
+  }
+
+  String _reviewFailureMessage(Object error) {
+    if (error is AgentClientException) {
+      if (_isFreeQuotaExhausted(error)) {
+        return '今日免费复盘额度已用完，请稍后刷新。';
+      }
+      if (error.kind == AgentClientFailureKind.network) {
+        return '网络连接不稳定，暂时无法刷新复盘。';
+      }
+      if (error.kind == AgentClientFailureKind.rateLimited) {
+        return '复盘刷新过于频繁，请稍后再试。';
+      }
+    }
+    return '复盘仍在生成，请稍后重试。';
+  }
+
+  bool _isFreeQuotaExhausted(AgentClientException error) {
+    return error.errorCode == 'quota_exhausted';
   }
 
   bool _isCurrentPractice({

@@ -60,9 +60,12 @@ class _AuthGateState extends State<AuthGate> {
       AuthSignedOut(
         form: AuthForm.register,
       ) => _buildSignedOut(widget.controller.state as AuthSignedOut),
-      AuthRetryableError(:final message) => _RetryPage(
+      AuthRetryableError(:final message, :final action) => _RetryPage(
         message: message,
         onRetry: widget.controller.retry,
+        onSwitchAccount: action == AuthRetryAction.restoreSession
+            ? widget.controller.switchAccount
+            : null,
       ),
       AuthAuthenticated(:final user) => widget.authenticatedBuilder(
         context,
@@ -105,10 +108,15 @@ class _LoadingPage extends StatelessWidget {
 }
 
 class _RetryPage extends StatelessWidget {
-  const _RetryPage({required this.message, required this.onRetry});
+  const _RetryPage({
+    required this.message,
+    required this.onRetry,
+    required this.onSwitchAccount,
+  });
 
   final String message;
   final VoidCallback onRetry;
+  final VoidCallback? onSwitchAccount;
 
   @override
   Widget build(BuildContext context) {
@@ -132,6 +140,14 @@ class _RetryPage extends StatelessWidget {
                   Text(message, textAlign: TextAlign.center),
                   const SizedBox(height: 24),
                   FilledButton(onPressed: onRetry, child: const Text('重试')),
+                  if (onSwitchAccount != null) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      key: const Key('auth-switch-account'),
+                      onPressed: onSwitchAccount,
+                      child: const Text('使用其他账号'),
+                    ),
+                  ],
                 ],
               ),
             ),

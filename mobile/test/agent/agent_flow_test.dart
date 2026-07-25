@@ -112,6 +112,13 @@ void main() {
       expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
       expect(agentController.threadId, isNotNull);
 
+      await tester.tap(find.byKey(const Key('conversation-menu-button')));
+      await tester.pumpAndSettle();
+      expect(find.text('已连接当前账号'), findsOneWidget);
+      expect(find.textContaining('UI Mock'), findsNothing);
+      Navigator.of(tester.element(find.byType(Drawer))).pop();
+      await tester.pumpAndSettle();
+
       await tester.tap(find.byKey(const Key('primary-tab-profile')));
       await tester.pumpAndSettle();
       expect(find.text('learner@example.com'), findsOneWidget);

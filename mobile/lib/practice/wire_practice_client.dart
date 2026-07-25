@@ -702,8 +702,11 @@ PracticeTurnSnapshot _decodeTurn(Map<String, Object?> value) {
       'effective_turns',
       'session_completed',
     },
-    optional: const {'review_id'},
+    optional: const {'review_id', 'audio_asset_id'},
   );
+  if (root['audio_asset_id'] != null) {
+    _string(root, 'audio_asset_id');
+  }
   final turn = PracticeTurnSnapshot(
     id: _string(root, 'turn_id'),
     sessionId: _string(root, 'practice_session_id'),

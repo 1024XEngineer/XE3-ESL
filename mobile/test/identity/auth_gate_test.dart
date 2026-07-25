@@ -131,12 +131,39 @@ void main() {
 
     expect(find.text('需要网络连接'), findsOneWidget);
     expect(find.text('重试'), findsOneWidget);
+    expect(find.text('使用其他账号'), findsOneWidget);
     expect(store.token, 'sess_stored-token');
 
     client.currentUserError = null;
     await tester.tap(find.text('重试'));
     await tester.pumpAndSettle();
     expect(find.text('Agent home for learner@example.com'), findsOneWidget);
+  });
+
+  testWidgets('network recovery can explicitly switch to another account', (
+    tester,
+  ) async {
+    final store = MemorySessionStore(token: 'sess_stored-token');
+    final controller = AuthController(
+      identityClient: GateIdentityClient(
+        user: user,
+        currentUserError: const IdentityClientException(
+          kind: IdentityFailureKind.network,
+          retryable: true,
+        ),
+      ),
+      sessionStore: store,
+    );
+    await tester.pumpWidget(testApp(controller));
+    await tester.pumpAndSettle();
+
+    expect(store.token, 'sess_stored-token');
+    await tester.tap(find.byKey(const Key('auth-switch-account')));
+    await tester.pumpAndSettle();
+
+    expect(store.token, isNull);
+    expect(find.text('欢迎回来'), findsOneWidget);
+    expect(find.text('需要网络连接'), findsNothing);
   });
 
   testWidgets('authenticated builder receives restored user', (tester) async {
