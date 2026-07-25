@@ -15,8 +15,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
@@ -33,6 +36,7 @@ type CorrelationIDGenerator func() string
 type HTTPHandler struct {
 	application   Application
 	runs          RunApplication
+	voice         *VoiceSessionApplication
 	matters       matter.Application
 	authenticator identity.Authenticator
 	correlationID CorrelationIDGenerator
@@ -60,6 +64,24 @@ func NewHTTPHandlerWithRuns(
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
 ) (*HTTPHandler, error) {
+	return NewHTTPHandlerWithRunsAndVoice(
+		application,
+		runs,
+		nil,
+		matters,
+		authenticator,
+		correlationID,
+	)
+}
+
+func NewHTTPHandlerWithRunsAndVoice(
+	application Application,
+	runs RunApplication,
+	voice *VoiceSessionApplication,
+	matters matter.Application,
+	authenticator identity.Authenticator,
+	correlationID CorrelationIDGenerator,
+) (*HTTPHandler, error) {
 	if application == nil || matters == nil || authenticator == nil {
 		return nil, errors.New("agent: HTTP dependency is required")
 	}
@@ -69,6 +91,7 @@ func NewHTTPHandlerWithRuns(
 	return &HTTPHandler{
 		application:   application,
 		runs:          runs,
+		voice:         voice,
 		matters:       matters,
 		authenticator: authenticator,
 		correlationID: correlationID,
@@ -114,6 +137,29 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 			"/v1/agent-runs/:run_id/context-manifest",
 			h.getContextManifest,
 		)
+	}
+	if h.voice != nil {
+		protected.POST(
+			"/v1/agent-threads/:thread_id/voice-practice-sessions",
+			h.startVoiceSession,
+		)
+		protected.GET(
+			"/v1/agent-threads/:thread_id/voice-practice-session",
+			h.resumeVoiceSession,
+		)
+		protected.POST(
+			"/v1/voice-practice-sessions/:practice_session_id/questions/:question_id/transcription-candidates",
+			h.transcribeVoiceCandidate,
+		)
+		protected.POST(
+			"/v1/transcription-candidates/:candidate_id/confirmations",
+			h.confirmVoiceCandidate,
+		)
+		protected.GET(
+			"/v1/voice-questions/:question_id/speech",
+			h.questionSpeech,
+		)
+		protected.GET("/v1/formal-reviews/:review_id", h.getFormalReview)
 	}
 }
 
@@ -582,6 +628,202 @@ func (h *HTTPHandler) getContextManifest(c *gin.Context) {
 	c.JSON(http.StatusOK, contextManifestResponse(manifest))
 }
 
+func (h *HTTPHandler) startVoiceSession(c *gin.Context) {
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	key, ok := voiceIdempotencyKey(c)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	thread, err := h.application.GetThread(
+		c.Request.Context(),
+		actor,
+		c.Param("thread_id"),
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	if thread.ActiveMatterID == "" {
+		h.writeError(c, http.StatusConflict, "resource_conflict", false)
+		return
+	}
+	state, err := h.voice.Start(
+		c.Request.Context(),
+		actor,
+		thread.ID,
+		thread.ActiveMatterID,
+		key,
+	)
+	if err != nil {
+		h.writeVoiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, voiceSessionStateResponse(state))
+}
+
+func (h *HTTPHandler) resumeVoiceSession(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	thread, err := h.application.GetThread(
+		c.Request.Context(),
+		actor,
+		c.Param("thread_id"),
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	state, err := h.voice.Resume(
+		c.Request.Context(),
+		actor,
+		thread.ID,
+		"",
+	)
+	if err != nil {
+		h.writeVoiceError(c, err)
+		return
+	}
+	ownedMatter, err := h.matters.ReadOwned(
+		c.Request.Context(),
+		actor,
+		state.Matter.ID,
+	)
+	if err != nil || ownedMatter.ID != state.Matter.ID {
+		h.writeError(c, http.StatusNotFound, "resource_not_found", false)
+		return
+	}
+	c.JSON(http.StatusOK, voiceSessionStateResponse(state))
+}
+
+func (h *HTTPHandler) transcribeVoiceCandidate(c *gin.Context) {
+	key, ok := voiceIdempotencyKey(c)
+	if !ok || c.Request.Body == nil ||
+		!strings.EqualFold(
+			strings.TrimSpace(c.GetHeader("Content-Type")),
+			platformmedia.ContentTypeWAV,
+		) {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	candidate, err := h.voice.Transcribe(
+		c.Request.Context(),
+		actor,
+		conversation.TranscribeVoiceCommand{
+			SessionID:      c.Param("practice_session_id"),
+			QuestionID:     c.Param("question_id"),
+			IdempotencyKey: key,
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          c.Request.Body,
+		},
+	)
+	if err != nil {
+		h.writeVoiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, transcriptionCandidateResponse(candidate))
+}
+
+func (h *HTTPHandler) confirmVoiceCandidate(c *gin.Context) {
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	key, ok := voiceIdempotencyKey(c)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	state, err := h.voice.Confirm(
+		c.Request.Context(),
+		actor,
+		conversation.ConfirmVoiceTurnCommand{
+			CandidateID:    c.Param("candidate_id"),
+			IdempotencyKey: key,
+		},
+	)
+	if err != nil {
+		h.writeVoiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, voiceSessionStateResponse(state))
+}
+
+func (h *HTTPHandler) questionSpeech(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	speech, err := h.voice.QuestionSpeech(
+		c.Request.Context(),
+		actor,
+		c.Param("question_id"),
+	)
+	if err != nil {
+		h.writeVoiceError(c, err)
+		return
+	}
+	if speech.Audio == nil {
+		c.Header("Retry-After", "1")
+		h.writeError(c, http.StatusServiceUnavailable, "provider_unavailable", true)
+		return
+	}
+	defer func() { _ = speech.Audio.Close() }()
+	reader, err := speech.Audio.Open()
+	if err != nil {
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+		return
+	}
+	defer reader.Close()
+	c.DataFromReader(
+		http.StatusOK,
+		speech.Audio.Size(),
+		speech.Audio.MediaType(),
+		reader,
+		nil,
+	)
+}
+
+func (h *HTTPHandler) getFormalReview(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	formalReview, err := h.voice.GetReview(
+		c.Request.Context(),
+		actor,
+		c.Param("review_id"),
+	)
+	if err != nil {
+		h.writeVoiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, formalReviewResponse(formalReview))
+}
+
 func (h *HTTPHandler) authenticationMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, ok := bearerToken(c.Request.Header.Values("Authorization"))
@@ -658,6 +900,33 @@ func (h *HTTPHandler) writeAgentError(c *gin.Context, err error) {
 	}
 }
 
+func (h *HTTPHandler) writeVoiceError(c *gin.Context, err error) {
+	var speechError *ai.SpeechError
+	var generationError *ai.GenerationError
+	switch {
+	case errors.Is(err, ErrInvalidRequest),
+		errors.Is(err, ErrInvalidContext),
+		errors.Is(err, conversation.ErrVoiceRoundInvalid):
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+	case errors.Is(err, ErrNotFound),
+		errors.Is(err, conversation.ErrVoiceRoundNotFound):
+		h.writeError(c, http.StatusNotFound, "resource_not_found", false)
+	case errors.Is(err, ErrIdempotencyConflict),
+		errors.Is(err, conversation.ErrVoiceRoundConflict):
+		h.writeError(c, http.StatusConflict, "idempotency_key_conflict", false)
+	case errors.Is(err, ErrConflict):
+		h.writeError(c, http.StatusConflict, "resource_conflict", false)
+	case errors.Is(err, conversation.ErrVoiceRoundProcessing):
+		c.Header("Retry-After", "1")
+		h.writeError(c, http.StatusConflict, "resource_processing", true)
+	case errors.As(err, &speechError), errors.As(err, &generationError):
+		c.Header("Retry-After", "1")
+		h.writeError(c, http.StatusServiceUnavailable, "provider_unavailable", true)
+	default:
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+	}
+}
+
 func (h *HTTPHandler) writeAuthenticationRequired(c *gin.Context) {
 	c.Header("WWW-Authenticate", "Bearer")
 	h.writeError(c, http.StatusUnauthorized, "authentication_required", false)
@@ -675,6 +944,8 @@ func (h *HTTPHandler) writeError(
 		"resource_not_found":       "Resource was not found.",
 		"resource_conflict":        "Resource state conflicts with this operation.",
 		"idempotency_key_conflict": "Idempotency key conflicts with the original request.",
+		"resource_processing":      "Resource processing is still in progress.",
+		"provider_unavailable":     "The configured provider is temporarily unavailable.",
 		"internal_error":           "An internal error occurred.",
 	}
 	c.JSON(status, gin.H{
@@ -685,6 +956,103 @@ func (h *HTTPHandler) writeError(
 			"correlation_id": h.correlationID(),
 		},
 	})
+}
+
+func voiceIdempotencyKey(c *gin.Context) (string, bool) {
+	values := c.Request.Header.Values("Idempotency-Key")
+	if len(values) != 1 {
+		return "", false
+	}
+	key := strings.TrimSpace(values[0])
+	return key, len(key) >= 8 && len(key) <= 128 &&
+		!strings.ContainsAny(key, "\r\n\x00")
+}
+
+func voiceSessionStateResponse(state VoiceSessionState) gin.H {
+	result := gin.H{
+		"practice_session_id": state.Session.ID,
+		"practice_plan_id":    state.Session.PlanID,
+		"thread_id":           state.Session.ThreadID,
+		"matter":              matterResponse(state.Matter),
+		"session_version":     state.Session.SessionVersion,
+		"effective_turns":     state.Session.EffectiveTurns,
+		"turn_limit":          state.Session.TurnLimit,
+		"session_completed":   state.Session.Completed,
+	}
+	if state.Question != nil {
+		result["current_question"] = voiceQuestionResponse(*state.Question)
+	}
+	if state.Turn != nil {
+		result["current_turn"] = confirmedVoiceTurnResponse(*state.Turn)
+	}
+	if state.Review != nil {
+		result["review"] = formalReviewResponse(*state.Review)
+	}
+	return result
+}
+
+func voiceQuestionResponse(question conversation.VoiceQuestion) gin.H {
+	return gin.H{
+		"question_id":               question.ID,
+		"practice_session_id":       question.SessionID,
+		"content":                   question.Text,
+		"speaker_participant_id":    question.SpeakerParticipantID,
+		"addressee_participant_ids": question.AddresseeParticipantIDs,
+		"speech_path":               "/v1/voice-questions/" + question.ID + "/speech",
+	}
+}
+
+func transcriptionCandidateResponse(
+	candidate conversation.TranscriptionCandidate,
+) gin.H {
+	return gin.H{
+		"candidate_id":              candidate.ID,
+		"practice_session_id":       candidate.SessionID,
+		"question_id":               candidate.QuestionID,
+		"respondent_participant_id": candidate.RespondentParticipantID,
+		"transcript_id":             candidate.TranscriptID,
+		"evidence_version":          candidate.EvidenceVersion,
+		"transcript":                candidate.Transcript,
+		"created_at":                candidate.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func confirmedVoiceTurnResponse(turn conversation.ConfirmedVoiceTurn) gin.H {
+	result := gin.H{
+		"turn_id":                   turn.ID,
+		"practice_session_id":       turn.SessionID,
+		"question_id":               turn.QuestionID,
+		"respondent_participant_id": turn.RespondentParticipantID,
+		"candidate_id":              turn.CandidateID,
+		"answer_text":               turn.AnswerText,
+		"evidence_version":          turn.EvidenceVersion,
+		"effective_turns":           turn.EffectiveTurns,
+		"session_completed":         turn.SessionCompleted,
+	}
+	if turn.ReviewID != "" {
+		result["review_id"] = turn.ReviewID
+	}
+	return result
+}
+
+func formalReviewResponse(item VoiceSessionReview) gin.H {
+	result := gin.H{
+		"review_id":              item.ID,
+		"practice_session_id":    item.SessionID,
+		"status":                 item.Status,
+		"implementation_version": item.ImplementationVersion,
+		"source_turn_id":         item.SourceTurnID,
+		"source_turn_version":    item.SourceTurnVersion,
+		"created_at":             item.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at":             item.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if item.Result != nil {
+		result["result"] = item.Result
+	}
+	if item.CompletedAt != nil {
+		result["completed_at"] = item.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return result
 }
 
 func matterResponse(item matter.Matter) gin.H {

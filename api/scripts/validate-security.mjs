@@ -625,11 +625,24 @@ for (const [errorName, status] of expectedIdentityErrors) {
     `${errorName} must map to HTTP ${status}.`,
   );
 }
+for (const [errorName, status] of new Map([
+  ['resource_processing', 409],
+  ['provider_unavailable', 503],
+])) {
+  assert.ok(errorCode?.enum?.includes(errorName), `Missing ${errorName}.`);
+  assert.equal(
+    errorCode?.['x-http-status-map']?.[errorName],
+    status,
+    `${errorName} must map to HTTP ${status}.`,
+  );
+}
 assert.equal(
   responses.Unauthorized?.headers?.['WWW-Authenticate']?.schema?.const,
   'Bearer',
 );
 assert.ok(responses.TooManyRequests?.headers?.['Retry-After']);
+assert.ok(responses.Conflict?.headers?.['Retry-After']);
+assert.ok(responses.DefaultError?.headers?.['Retry-After']);
 assert.equal(
   responses.Unauthorized?.content?.['application/json']?.example?.error?.code,
   'authentication_required',

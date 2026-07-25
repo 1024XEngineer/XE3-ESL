@@ -535,7 +535,7 @@ func (store *voiceTestStore) CompleteTranscription(
 		AddresseeParticipantIDs: []string{"participant-a"},
 		RespondentParticipantID: "participant-a",
 		TranscriptID:            command.TranscriptID,
-		TranscriptVersion:       command.TranscriptVersion,
+		EvidenceVersion:         command.EvidenceVersion,
 		Transcript:              command.Transcript,
 		Provider:                command.Provider,
 		Model:                   command.Model,
@@ -618,8 +618,9 @@ func (store *voiceTestStore) ReserveConfirmation(
 			candidate.AddresseeParticipantIDs...,
 		),
 		RespondentParticipantID: candidate.RespondentParticipantID,
+		CandidateID:             candidate.ID,
 		TranscriptID:            candidate.TranscriptID,
-		TranscriptVersion:       candidate.TranscriptVersion,
+		EvidenceVersion:         candidate.EvidenceVersion,
 		AnswerText:              candidate.Transcript,
 	}
 	store.confirmations[command.IdempotencyKey] = turn

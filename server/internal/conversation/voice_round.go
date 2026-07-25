@@ -37,8 +37,9 @@ type TranscriptionCandidate struct {
 	QuestionSpeakerID       string
 	AddresseeParticipantIDs []string
 	RespondentParticipantID string
+	CandidateID             string
 	TranscriptID            string
-	TranscriptVersion       string
+	EvidenceVersion         int64
 	Transcript              string
 	Provider                string
 	Model                   string
@@ -53,8 +54,9 @@ type ConfirmedVoiceTurn struct {
 	QuestionSpeakerID       string
 	AddresseeParticipantIDs []string
 	RespondentParticipantID string
+	CandidateID             string
 	TranscriptID            string
-	TranscriptVersion       string
+	EvidenceVersion         int64
 	AnswerText              string
 	EffectiveTurns          int
 	SessionCompleted        bool
@@ -97,7 +99,7 @@ type CompleteTranscriptionCommand struct {
 	ReservationID     string
 	LeaseToken        string
 	TranscriptID      string
-	TranscriptVersion string
+	EvidenceVersion   int64
 	Transcript        string
 	Provider          string
 	Model             string
@@ -268,7 +270,10 @@ func (service *VoiceRoundService) Transcribe(
 		command.Audio,
 	)
 	if err != nil {
-		return TranscriptionCandidate{}, err
+		if contextErr := ctx.Err(); contextErr != nil {
+			return TranscriptionCandidate{}, contextErr
+		}
+		return TranscriptionCandidate{}, ErrVoiceRoundInvalid
 	}
 	defer func() {
 		if cleanupErr := service.vault.Delete(
@@ -282,7 +287,7 @@ func (service *VoiceRoundService) Transcribe(
 
 	source, err := service.vault.Source(actor, metadata.ID)
 	if err != nil {
-		return TranscriptionCandidate{}, err
+		return TranscriptionCandidate{}, ErrVoiceRoundInvalid
 	}
 	fingerprint, err := voiceInputFingerprint(
 		source,
@@ -368,10 +373,12 @@ func (service *VoiceRoundService) Transcribe(
 		ctx,
 		actor,
 		CompleteTranscriptionCommand{
-			ReservationID:     reservation.ID,
-			LeaseToken:        reservation.LeaseToken,
-			TranscriptID:      result.ID,
-			TranscriptVersion: result.Model,
+			ReservationID: reservation.ID,
+			LeaseToken:    reservation.LeaseToken,
+			TranscriptID:  result.ID,
+			// Evidence versions describe the immutable Conversation snapshot,
+			// not the provider model. The first completed candidate is v1.
+			EvidenceVersion:   1,
 			Transcript:        transcript,
 			Provider:          result.Provider,
 			Model:             result.Model,
@@ -443,8 +450,7 @@ func (service *VoiceRoundService) SaveTurnProgress(
 ) (ConfirmedVoiceTurn, error) {
 	if err := validateVoiceContext(ctx, actor); err != nil ||
 		strings.TrimSpace(turnID) == "" ||
-		progress.EffectiveTurns < 1 ||
-		progress.EffectiveTurns > 3 {
+		progress.EffectiveTurns < 1 {
 		return ConfirmedVoiceTurn{}, ErrVoiceRoundInvalid
 	}
 	return service.store.SaveTurnProgress(

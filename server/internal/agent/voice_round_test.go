@@ -10,6 +10,47 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
+func TestVoiceTurnProgressRequiresAuthoritativeLimitCompletionEquivalence(
+	t *testing.T,
+) {
+	valid := VoiceTurnProgress{
+		EffectiveTurns:   3,
+		SessionVersion:   4,
+		TurnLimit:        3,
+		SessionCompleted: true,
+	}
+	if !validVoiceTurnProgress(valid) {
+		t.Fatal("authoritative completed Practice progress was rejected")
+	}
+	for name, progress := range map[string]VoiceTurnProgress{
+		"limit reached but not completed": {
+			EffectiveTurns: 3,
+			SessionVersion: 4,
+			TurnLimit:      3,
+		},
+		"completed before limit": {
+			EffectiveTurns:   2,
+			SessionVersion:   3,
+			TurnLimit:        3,
+			SessionCompleted: true,
+		},
+		"missing limit": {
+			EffectiveTurns: 1,
+			SessionVersion: 2,
+		},
+		"missing persisted version": {
+			EffectiveTurns: 1,
+			TurnLimit:      3,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if validVoiceTurnProgress(progress) {
+				t.Fatalf("invalid Practice progress accepted: %#v", progress)
+			}
+		})
+	}
+}
+
 func TestVoiceRoundOrchestratorOwnsThreeTurnReviewSaga(t *testing.T) {
 	conversations := newAgentVoiceConversation(3)
 	practice := newAgentVoicePractice(0)
@@ -305,7 +346,7 @@ func newAgentVoiceConversation(count int) *agentVoiceConversation {
 			AddresseeParticipantIDs: []string{"participant-a"},
 			RespondentParticipantID: "participant-a",
 			TranscriptID:            "transcript-" + string(rune('0'+round)),
-			TranscriptVersion:       "fake-asr-v1",
+			EvidenceVersion:         1,
 			Transcript:              "Confirmed answer.",
 			Provider:                "fake",
 			Model:                   "fake-asr-v1",
@@ -361,6 +402,12 @@ func (port *agentVoiceConversation) Confirm(
 	if turnID, ok := port.confirmations[command.IdempotencyKey]; ok {
 		return port.turns[turnID], nil
 	}
+	for turnID, existing := range port.turns {
+		if existing.CandidateID == candidate.ID {
+			port.confirmations[command.IdempotencyKey] = turnID
+			return existing, nil
+		}
+	}
 	turn := conversation.ConfirmedVoiceTurn{
 		ID:                "turn-" + candidate.QuestionID,
 		SessionID:         candidate.SessionID,
@@ -371,8 +418,9 @@ func (port *agentVoiceConversation) Confirm(
 			candidate.AddresseeParticipantIDs...,
 		),
 		RespondentParticipantID: candidate.RespondentParticipantID,
+		CandidateID:             candidate.ID,
 		TranscriptID:            candidate.TranscriptID,
-		TranscriptVersion:       candidate.TranscriptVersion,
+		EvidenceVersion:         candidate.EvidenceVersion,
 		AnswerText:              candidate.Transcript,
 	}
 	port.confirmations[command.IdempotencyKey] = turn.ID
@@ -485,6 +533,8 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	practice.effectiveTurns++
 	result := VoiceTurnProgress{
 		EffectiveTurns:   practice.effectiveTurns,
+		SessionVersion:   practice.effectiveTurns + 1,
+		TurnLimit:        3,
 		SessionCompleted: practice.effectiveTurns == 3,
 	}
 	practice.turns[turnID] = result
@@ -498,14 +548,14 @@ var errAgentVoiceCheckpoint = errors.New("conversation checkpoint failed")
 
 type agentVoiceReview struct {
 	mu              sync.Mutex
-	bySession       map[string]VoiceSessionReview
+	bySession       map[string]VoiceReviewCheckpoint
 	creations       int
 	failAfterCreate bool
 }
 
 func newAgentVoiceReview() *agentVoiceReview {
 	return &agentVoiceReview{
-		bySession: make(map[string]VoiceSessionReview),
+		bySession: make(map[string]VoiceReviewCheckpoint),
 	}
 }
 
@@ -513,27 +563,27 @@ func (reviews *agentVoiceReview) EnsureSessionReview(
 	_ context.Context,
 	actor requestcontext.Actor,
 	source VoiceReviewSource,
-) (VoiceSessionReview, error) {
+) (VoiceReviewCheckpoint, error) {
 	reviews.mu.Lock()
 	defer reviews.mu.Unlock()
 	if actor.UserID != "user-a" ||
-		source.TranscriptID == "" ||
-		source.TranscriptVersion == "" {
-		return VoiceSessionReview{}, conversation.ErrVoiceRoundNotFound
+		source.TurnID == "" ||
+		source.SessionID == "" {
+		return VoiceReviewCheckpoint{}, conversation.ErrVoiceRoundNotFound
 	}
 	if existing, found := reviews.bySession[source.SessionID]; found {
 		return existing, nil
 	}
-	result := VoiceSessionReview{
-		ID:        "review-" + source.SessionID,
-		SessionID: source.SessionID,
-		TurnID:    source.TurnID,
+	result := VoiceReviewCheckpoint{
+		ID:           "review-" + source.SessionID,
+		SessionID:    source.SessionID,
+		SourceTurnID: source.TurnID,
 	}
 	reviews.bySession[source.SessionID] = result
 	reviews.creations++
 	if reviews.failAfterCreate {
 		reviews.failAfterCreate = false
-		return VoiceSessionReview{}, errAgentVoiceLostAcknowledgement
+		return VoiceReviewCheckpoint{}, errAgentVoiceLostAcknowledgement
 	}
 	return result, nil
 }

@@ -12,7 +12,9 @@ import (
 )
 
 // NewIdentityAndAgentModules builds the production Identity, Agent data, and
-// text-generation composition. It has no Fake-provider fallback.
+// text-generation composition. An optional voice composition is enabled only
+// when every owning module supplies its explicit Port; there is no Fake
+// fallback.
 func NewIdentityAndAgentModules(
 	ctx context.Context,
 	database *pgxpool.Pool,
@@ -20,8 +22,10 @@ func NewIdentityAndAgentModules(
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
 	runConfiguration agent.RunConfiguration,
+	voiceConfigurations ...VoiceConfiguration,
 ) (*identity.Module, *agent.Module, error) {
-	if ctx == nil || database == nil || generator == nil {
+	if ctx == nil || database == nil || generator == nil ||
+		len(voiceConfigurations) > 1 {
 		return nil, nil, errors.New(
 			"bootstrap: Agent Run dependencies are required",
 		)
@@ -70,9 +74,20 @@ func NewIdentityAndAgentModules(
 	if _, err := runService.RecoverInterruptedRuns(ctx); err != nil {
 		return nil, nil, err
 	}
-	handler, err := agent.NewHTTPHandlerWithRuns(
+	var voiceApplication *agent.VoiceSessionApplication
+	if len(voiceConfigurations) == 1 {
+		voiceApplication, err = buildVoiceApplication(
+			matterService,
+			voiceConfigurations[0],
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	handler, err := agent.NewHTTPHandlerWithRunsAndVoice(
 		agentService,
 		runService,
+		voiceApplication,
 		matterService,
 		authenticator,
 		nil,

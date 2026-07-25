@@ -66,6 +66,8 @@ type VoicePracticePort interface {
 
 type VoiceTurnProgress struct {
 	EffectiveTurns   int
+	SessionVersion   int
+	TurnLimit        int
 	SessionCompleted bool
 }
 
@@ -76,28 +78,18 @@ type VoiceReviewPort interface {
 		context.Context,
 		requestcontext.Actor,
 		VoiceReviewSource,
-	) (VoiceSessionReview, error)
+	) (VoiceReviewCheckpoint, error)
 }
 
-type VoiceSessionReview struct {
-	ID        string
-	SessionID string
-	TurnID    string
+type VoiceReviewCheckpoint struct {
+	ID           string
+	SessionID    string
+	SourceTurnID string
 }
 
 type VoiceReviewSource struct {
-	TurnID                  string
-	SessionID               string
-	QuestionID              string
-	QuestionSpeakerID       string
-	AddresseeParticipantIDs []string
-	RespondentParticipantID string
-	TranscriptID            string
-	TranscriptVersion       string
-	Transcript              string
-	TranscriptionProvider   string
-	TranscriptionModel      string
-	TranscriptionRequestID  string
+	TurnID    string
+	SessionID string
 }
 
 // VoiceRoundOrchestrator owns the cross-module voice-round saga. It never
@@ -189,7 +181,7 @@ func (orchestrator *VoiceRoundOrchestrator) Confirm(
 			return conversation.ConfirmedVoiceTurn{}, err
 		}
 	}
-	if !turn.SessionCompleted || turn.ReviewID != "" {
+	if !turn.SessionCompleted {
 		return turn, nil
 	}
 
@@ -208,20 +200,8 @@ func (orchestrator *VoiceRoundOrchestrator) Confirm(
 		ctx,
 		actor,
 		VoiceReviewSource{
-			TurnID:            turn.ID,
-			SessionID:         turn.SessionID,
-			QuestionID:        turn.QuestionID,
-			QuestionSpeakerID: turn.QuestionSpeakerID,
-			AddresseeParticipantIDs: slices.Clone(
-				turn.AddresseeParticipantIDs,
-			),
-			RespondentParticipantID: turn.RespondentParticipantID,
-			TranscriptID:            turn.TranscriptID,
-			TranscriptVersion:       turn.TranscriptVersion,
-			Transcript:              turn.AnswerText,
-			TranscriptionProvider:   candidate.Provider,
-			TranscriptionModel:      candidate.Model,
-			TranscriptionRequestID:  candidate.ProviderRequestID,
+			TurnID:    turn.ID,
+			SessionID: turn.SessionID,
 		},
 	)
 	if err != nil {
@@ -229,7 +209,7 @@ func (orchestrator *VoiceRoundOrchestrator) Confirm(
 	}
 	if sessionReview.ID == "" ||
 		sessionReview.SessionID != turn.SessionID ||
-		sessionReview.TurnID != turn.ID {
+		sessionReview.SourceTurnID != turn.ID {
 		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
 	}
 	return orchestrator.conversations.SaveTurnReview(
@@ -273,13 +253,15 @@ func candidateMatchesTurn(
 			turn.AddresseeParticipantIDs,
 		) &&
 		candidate.RespondentParticipantID == turn.RespondentParticipantID &&
-		candidate.TranscriptID == turn.TranscriptID &&
-		candidate.TranscriptVersion == turn.TranscriptVersion &&
+		candidate.ID == turn.CandidateID &&
+		candidate.EvidenceVersion == turn.EvidenceVersion &&
 		candidate.Transcript == turn.AnswerText
 }
 
 func validVoiceTurnProgress(progress VoiceTurnProgress) bool {
 	return progress.EffectiveTurns >= 1 &&
-		progress.EffectiveTurns <= 3 &&
-		progress.SessionCompleted == (progress.EffectiveTurns == 3)
+		progress.SessionVersion > 1 &&
+		progress.TurnLimit >= progress.EffectiveTurns &&
+		progress.SessionCompleted ==
+			(progress.EffectiveTurns == progress.TurnLimit)
 }
