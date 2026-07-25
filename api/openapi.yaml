@@ -139,6 +139,10 @@ paths:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1questions~1{question_id}~1turns
   /v1/turns/{turn_id}:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1turns~1{turn_id}
+  /v1/audio-assets/{audio_asset_id}:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1audio-assets~1{audio_asset_id}
+  /v1/audio-assets/{audio_asset_id}/playback:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1audio-assets~1{audio_asset_id}~1playback
   /v1/practice-sessions/{practice_session_id}/events:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1events
   /v1/turns/{turn_id}/turn-analyses:
@@ -238,6 +242,8 @@ components:
       $ref: ./modules/conversation.yaml#/components/schemas/TranscriptSnapshot
     AudioReference:
       $ref: ./modules/conversation.yaml#/components/schemas/AudioReference
+    AudioAssetPlayback:
+      $ref: ./modules/conversation.yaml#/components/schemas/AudioAssetPlayback
     TurnReviewSource:
       $ref: ./modules/conversation.yaml#/components/schemas/TurnReviewSource
     CreateRetryTurnCommand:
