@@ -96,6 +96,7 @@ type TurnResult struct {
 	Round           int
 	EffectiveTurns  int
 	SessionVersion  int
+	TurnLimit       int
 	Completed       bool
 	CompletionToken string
 	CreatedAt       time.Time

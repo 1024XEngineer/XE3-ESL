@@ -71,6 +71,9 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	if first.EffectiveTurns != 1 || first.SessionCompleted {
 		t.Fatalf("first progress = %#v", first)
 	}
+	if first.SessionVersion != 2 || first.TurnLimit != 3 {
+		t.Fatalf("first progress evidence = %#v", first)
+	}
 
 	restarted, err := practice.NewVoiceApplication(
 		practicepostgres.New(pool),

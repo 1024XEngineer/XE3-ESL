@@ -98,6 +98,8 @@ func TestVoiceApplicationAppliesStableTurnWithoutContent(t *testing.T) {
 			SessionID:      "practice-session",
 			TurnID:         "confirmed-turn",
 			EffectiveTurns: 3,
+			SessionVersion: 4,
+			TurnLimit:      3,
 			Completed:      true,
 		},
 	}
@@ -115,7 +117,10 @@ func TestVoiceApplicationAppliesStableTurnWithoutContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyEffectiveTurn: %v", err)
 	}
-	if progress.EffectiveTurns != 3 || !progress.SessionCompleted {
+	if progress.EffectiveTurns != 3 ||
+		progress.SessionVersion != 4 ||
+		progress.TurnLimit != 3 ||
+		!progress.SessionCompleted {
 		t.Fatalf("progress = %#v", progress)
 	}
 	if repository.consumed.SessionID != "practice-session" ||
@@ -133,6 +138,34 @@ func TestNewVoiceApplicationRejectsInvalidNamespace(t *testing.T) {
 		); !errors.Is(err, persistence.ErrInvalidArgument) {
 			t.Fatalf("namespace %q error = %v", namespace, err)
 		}
+	}
+}
+
+func TestVoiceApplicationRejectsIncompleteProgressEvidence(t *testing.T) {
+	actor := persistence.Actor{
+		UserID:    "10000000-0000-4000-8000-000000000005",
+		SessionID: "20000000-0000-4000-8000-000000000005",
+	}
+	application, err := NewVoiceApplication(
+		&voiceRepositoryStub{turnResult: persistence.TurnResult{
+			SessionID:      "practice-session",
+			TurnID:         "confirmed-turn",
+			EffectiveTurns: 1,
+			SessionVersion: 2,
+		}},
+		"speakup.user",
+	)
+	if err != nil {
+		t.Fatalf("NewVoiceApplication: %v", err)
+	}
+
+	if _, err := application.ApplyEffectiveTurn(
+		context.Background(),
+		actor,
+		"practice-session",
+		"confirmed-turn",
+	); !errors.Is(err, persistence.ErrConflict) {
+		t.Fatalf("ApplyEffectiveTurn error = %v", err)
 	}
 }
 

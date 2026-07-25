@@ -29,6 +29,8 @@ type VoiceRepository interface {
 // application orchestrator after Conversation confirms an effective Turn.
 type VoiceTurnProgress struct {
 	EffectiveTurns   int
+	SessionVersion   int
+	TurnLimit        int
 	SessionCompleted bool
 }
 
@@ -123,8 +125,18 @@ func (a *VoiceApplication) ApplyEffectiveTurn(
 	if err != nil {
 		return VoiceTurnProgress{}, err
 	}
+	if result.SessionID != sessionID ||
+		result.TurnID != turnID ||
+		result.EffectiveTurns < 1 ||
+		result.SessionVersion <= 1 ||
+		result.TurnLimit < result.EffectiveTurns ||
+		result.Completed != (result.EffectiveTurns == result.TurnLimit) {
+		return VoiceTurnProgress{}, persistence.ErrConflict
+	}
 	return VoiceTurnProgress{
 		EffectiveTurns:   result.EffectiveTurns,
+		SessionVersion:   result.SessionVersion,
+		TurnLimit:        result.TurnLimit,
 		SessionCompleted: result.Completed,
 	}, nil
 }

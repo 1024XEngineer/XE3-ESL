@@ -247,6 +247,7 @@ func (r *Repository) ConsumeTurn(
 		Round:           round,
 		EffectiveTurns:  round,
 		SessionVersion:  nextVersion,
+		TurnLimit:       turnLimit,
 		Completed:       completed,
 		CompletionToken: completionToken,
 	}
@@ -481,11 +482,16 @@ func loadTurnResult(
 	var fingerprint []byte
 	err := tx.QueryRow(ctx, `
 		SELECT
-			session_id, turn_id, payload_fingerprint, round_number,
-			effective_turns, session_version, completed,
-			completion_token, created_at
-		FROM practice_turn_results
-		WHERE owner_user_id = $1 AND turn_id = $2
+			result.session_id, result.turn_id,
+			result.payload_fingerprint, result.round_number,
+			result.effective_turns, result.session_version,
+			snapshot.turn_limit, result.completed,
+			result.completion_token, result.created_at
+		FROM practice_turn_results AS result
+		JOIN practice_session_snapshots AS snapshot
+		  ON snapshot.owner_user_id = result.owner_user_id
+		 AND snapshot.session_id = result.session_id
+		WHERE result.owner_user_id = $1 AND result.turn_id = $2
 	`, ownerUserID, turnID).Scan(
 		&result.SessionID,
 		&result.TurnID,
@@ -493,6 +499,7 @@ func loadTurnResult(
 		&result.Round,
 		&result.EffectiveTurns,
 		&result.SessionVersion,
+		&result.TurnLimit,
 		&result.Completed,
 		&result.CompletionToken,
 		&result.CreatedAt,
