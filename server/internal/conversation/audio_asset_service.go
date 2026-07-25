@@ -403,6 +403,47 @@ func (s *AudioAssetService) Confirm(
 	return AudioAsset{}, ErrAudioAssetConcurrentUpdate
 }
 
+// ConfirmUploadRequest resolves the staged recording through the durable
+// Conversation reservation ID. This lets confirmation recover after a process
+// restart without adding an object-storage foreign key to Conversation's
+// transcription tables.
+func (s *AudioAssetService) ConfirmUploadRequest(
+	ctx context.Context,
+	actor AudioAssetActor,
+	uploadRequestID string,
+	candidateID string,
+	turnID string,
+) (AudioAsset, error) {
+	rawOwnerID := actor.UserID
+	ownerID := strings.TrimSpace(rawOwnerID)
+	rawRequestID := uploadRequestID
+	uploadRequestID = strings.TrimSpace(rawRequestID)
+	if rawOwnerID != ownerID ||
+		rawRequestID != uploadRequestID ||
+		!validAudioAssetIdentifier(ownerID) ||
+		!validAudioAssetIdentifier(uploadRequestID) {
+		return AudioAsset{}, ErrAudioAssetInvalid
+	}
+	asset, err := s.repository.GetByUploadRequest(
+		ctx,
+		ownerID,
+		uploadRequestID,
+	)
+	if err != nil {
+		return AudioAsset{}, err
+	}
+	if err := asset.ownedBy(ownerID); err != nil {
+		return AudioAsset{}, err
+	}
+	return s.Confirm(
+		ctx,
+		actor,
+		asset.ID,
+		candidateID,
+		turnID,
+	)
+}
+
 func (s *AudioAssetService) Playback(
 	ctx context.Context,
 	actor AudioAssetActor,
@@ -428,6 +469,34 @@ func (s *AudioAssetService) Playback(
 		return objectstore.SignedGetResult{}, ErrAudioAssetPlaybackURL
 	}
 	return result, nil
+}
+
+func (s *AudioAssetService) GetReadableByTurn(
+	ctx context.Context,
+	actor AudioAssetActor,
+	turnID string,
+) (AudioAsset, error) {
+	rawOwnerID := actor.UserID
+	ownerID := strings.TrimSpace(rawOwnerID)
+	rawTurnID := turnID
+	turnID = strings.TrimSpace(rawTurnID)
+	if rawOwnerID != ownerID ||
+		rawTurnID != turnID ||
+		!validAudioAssetIdentifier(ownerID) ||
+		!validAudioAssetIdentifier(turnID) {
+		return AudioAsset{}, ErrAudioAssetInvalid
+	}
+	asset, err := s.repository.GetByTurn(ctx, ownerID, turnID)
+	if err != nil {
+		return AudioAsset{}, err
+	}
+	if err := asset.ownedBy(ownerID); err != nil {
+		return AudioAsset{}, err
+	}
+	if asset.Status != AudioAssetReadable {
+		return AudioAsset{}, ErrAudioAssetInvalidTransition
+	}
+	return asset, nil
 }
 
 // Delete persists deleting before touching object storage. If object deletion

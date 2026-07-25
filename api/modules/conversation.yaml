@@ -795,6 +795,8 @@ components:
           type: boolean
         review_id:
           $ref: '#/components/schemas/ResourceId'
+        audio_asset_id:
+          $ref: '#/components/schemas/ResourceId'
     FormalReview:
       type: object
       additionalProperties: false

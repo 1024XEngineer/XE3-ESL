@@ -105,6 +105,96 @@ func TestVoiceRoundTranscriptionAndConfirmationAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestVoiceRoundPersistsRecordingThroughReservationAndTurn(t *testing.T) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	recordings := newVoiceTestRecordings()
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         2,
+			MaxBytes:         platformmedia.MaxAudioBytes * 2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	newService := func() *VoiceRoundService {
+		service, serviceErr := NewVoiceRoundServiceWithRecordings(
+			store,
+			vault,
+			&voiceTestRecognizer{},
+			&voiceTestSynthesizer{},
+			recordings,
+		)
+		if serviceErr != nil {
+			t.Fatalf("new service: %v", serviceErr)
+		}
+		return service
+	}
+	actor := voiceTestActor("a")
+	command := func() TranscribeVoiceCommand {
+		return TranscribeVoiceCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-1",
+			IdempotencyKey: "transcribe-question-1",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(voiceTestWAV()),
+		}
+	}
+
+	candidate, err := newService().Transcribe(
+		context.Background(),
+		actor,
+		"participant-a",
+		command(),
+	)
+	if err != nil {
+		t.Fatalf("transcribe: %v", err)
+	}
+	if candidate.ReservationID != "reservation-question-1" {
+		t.Fatalf("candidate reservation = %#v", candidate)
+	}
+	turn, err := newService().Confirm(
+		context.Background(),
+		actor,
+		ConfirmVoiceTurnCommand{
+			CandidateID:    candidate.ID,
+			IdempotencyKey: "confirm-question-1",
+		},
+	)
+	if err != nil {
+		t.Fatalf("confirm after restart: %v", err)
+	}
+	if turn.AudioAssetID != "audio-reservation-question-1" {
+		t.Fatalf("confirmed turn recording = %#v", turn)
+	}
+
+	replayed, err := newService().Transcribe(
+		context.Background(),
+		actor,
+		"participant-a",
+		command(),
+	)
+	if err != nil || replayed.ID != candidate.ID {
+		t.Fatalf("transcribe replay = %#v, %v", replayed, err)
+	}
+	progress, err := newService().SaveTurnProgress(
+		context.Background(),
+		actor,
+		turn.ID,
+		VoiceTurnProgress{EffectiveTurns: 1},
+	)
+	if err != nil || progress.AudioAssetID != turn.AudioAssetID {
+		t.Fatalf("progress recording = %#v, %v", progress, err)
+	}
+	if recordings.uniqueUploads() != 1 {
+		t.Fatalf("unique uploads = %d", recordings.uniqueUploads())
+	}
+}
+
 func TestVoiceRoundFailureAndForeignActorStayConversationScoped(t *testing.T) {
 	store := newVoiceTestStore()
 	store.addQuestion("question-1")
@@ -576,6 +666,81 @@ type voiceTestStore struct {
 	nextTurn      int
 }
 
+type voiceTestRecordings struct {
+	mu      sync.Mutex
+	uploads map[string]AudioAsset
+}
+
+func newVoiceTestRecordings() *voiceTestRecordings {
+	return &voiceTestRecordings{uploads: make(map[string]AudioAsset)}
+}
+
+func (recordings *voiceTestRecordings) Upload(
+	_ context.Context,
+	actor AudioAssetActor,
+	request UploadRecordingRequest,
+) (AudioAsset, error) {
+	recordings.mu.Lock()
+	defer recordings.mu.Unlock()
+	key := actor.UserID + "/" + request.RequestID
+	if asset, found := recordings.uploads[key]; found {
+		return asset, nil
+	}
+	audio, err := io.ReadAll(request.Body)
+	if err != nil || int64(len(audio)) != request.Size {
+		return AudioAsset{}, ErrAudioAssetInvalid
+	}
+	asset := AudioAsset{
+		ID:              "audio-" + request.RequestID,
+		OwnerID:         actor.UserID,
+		UploadRequestID: request.RequestID,
+		ObjectKey:       "audio/v1/assets/audio.wav",
+		ContentType:     request.ContentType,
+		Size:            request.Size,
+		ChecksumSHA256:  request.ChecksumSHA256,
+		Duration:        request.Duration,
+		ETag:            "etag",
+		Status:          AudioAssetMetadataCommitted,
+		Version:         2,
+	}
+	recordings.uploads[key] = asset
+	return asset, nil
+}
+
+func (recordings *voiceTestRecordings) ConfirmUploadRequest(
+	_ context.Context,
+	actor AudioAssetActor,
+	requestID string,
+	candidateID string,
+	turnID string,
+) (AudioAsset, error) {
+	recordings.mu.Lock()
+	defer recordings.mu.Unlock()
+	key := actor.UserID + "/" + requestID
+	asset, found := recordings.uploads[key]
+	if !found {
+		return AudioAsset{}, ErrAudioAssetNotFound
+	}
+	if asset.Status == AudioAssetReadable {
+		if asset.CandidateID != candidateID || asset.TurnID != turnID {
+			return AudioAsset{}, ErrAudioAssetAlreadyBound
+		}
+		return asset, nil
+	}
+	asset.CandidateID = candidateID
+	asset.TurnID = turnID
+	asset.Status = AudioAssetReadable
+	asset.Version++
+	recordings.uploads[key] = asset
+	return asset, nil
+}
+
+func (recordings *voiceTestRecordings) uniqueUploads() int {
+	recordings.mu.Lock()
+	defer recordings.mu.Unlock()
+	return len(recordings.uploads)
+}
+
 type voiceTestReservation struct {
 	ID          string
 	Fingerprint string
@@ -707,6 +872,7 @@ func (store *voiceTestStore) CompleteTranscription(
 	questionID := string([]byte(command.ReservationID)[len("reservation-"):])
 	candidate := TranscriptionCandidate{
 		ID:                      "candidate-" + questionID,
+		ReservationID:           command.ReservationID,
 		SessionID:               "session-1",
 		QuestionID:              questionID,
 		QuestionSpeakerID:       "participant-interviewer",

@@ -77,6 +77,7 @@ type AudioAssetRepository struct {
 
 var (
 	_ conversation.AudioAssetLifecycleRepository = (*AudioAssetRepository)(nil)
+	_ conversation.AudioAssetTurnVerifier        = (*AudioAssetRepository)(nil)
 )
 
 func NewAudioAssetRepository(
@@ -86,6 +87,40 @@ func NewAudioAssetRepository(
 		return nil, conversation.ErrAudioAssetInvalidDependency
 	}
 	return &AudioAssetRepository{pool: pool}, nil
+}
+
+func (r *AudioAssetRepository) VerifyOwnedTurn(
+	ctx context.Context,
+	ownerID string,
+	turnID string,
+	candidateID string,
+) error {
+	if !validOwnerID(ownerID) ||
+		!validAudioAssetIdentifier(turnID) ||
+		!validAudioAssetIdentifier(candidateID) {
+		return conversation.ErrAudioAssetInvalid
+	}
+	var exists bool
+	err := r.pool.QueryRow(
+		ctx,
+		`SELECT EXISTS (
+			SELECT 1
+			FROM conversation_confirmed_turns
+			WHERE owner_user_id = $1
+			  AND turn_id = $2
+			  AND candidate_id = $3
+		)`,
+		ownerID,
+		turnID,
+		candidateID,
+	).Scan(&exists)
+	if err != nil {
+		return safeAudioAssetDatabaseError(err)
+	}
+	if !exists {
+		return conversation.ErrAudioAssetTurnNotFound
+	}
+	return nil
 }
 
 func (r *AudioAssetRepository) Create(
