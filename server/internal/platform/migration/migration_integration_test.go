@@ -106,6 +106,157 @@ func TestRunnerAppliesIdempotentlyAndRevertsLatestMigration(t *testing.T) {
 	}
 }
 
+func TestAgentDataMigrationUpgradesIdentitySchemaAndReapplies(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.migrate.Steps(2); err != nil {
+		t.Fatalf("apply migrations through Identity: %v", err)
+	}
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("read Identity migration version: %v", err)
+	}
+	if !status.Present || status.Version != 2 || status.Dirty {
+		t.Fatalf("Identity migration status = %+v, want clean version 2", status)
+	}
+
+	scoped, err := pgx.ConnectConfig(context.Background(), migrationConfig)
+	if err != nil {
+		t.Fatalf("connect to Identity schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := scoped.Close(context.Background()); err != nil {
+			t.Errorf("close Identity schema connection: %v", err)
+		}
+	})
+	const existingUserID = "10000000-0000-4000-8000-000000000085"
+	if _, err := scoped.Exec(
+		context.Background(),
+		`INSERT INTO identity_users (id, canonical_email)
+VALUES ($1, 'agent-data-upgrade@example.com')`,
+		existingUserID,
+	); err != nil {
+		t.Fatalf("insert pre-upgrade Identity user: %v", err)
+	}
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("upgrade Identity schema to Agent data: %v", err)
+	}
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("read Agent data migration version: %v", err)
+	}
+	if !status.Present || status.Version != 3 || status.Dirty {
+		t.Fatalf("Agent data migration status = %+v, want clean version 3", status)
+	}
+	assertAgentDataTables(t, admin, schema, true)
+	assertIdentityUserPreserved(t, scoped, existingUserID)
+
+	changed, err := runner.DownOne()
+	if err != nil {
+		t.Fatalf("revert Agent data migration: %v", err)
+	}
+	if !changed {
+		t.Fatal("Agent data down migration reported no change")
+	}
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("read version after Agent data down: %v", err)
+	}
+	if !status.Present || status.Version != 2 || status.Dirty {
+		t.Fatalf("status after Agent data down = %+v, want clean version 2", status)
+	}
+	assertAgentDataTables(t, admin, schema, false)
+	assertIdentityUserPreserved(t, scoped, existingUserID)
+
+	changed, err = runner.Up()
+	if err != nil {
+		t.Fatalf("reapply Agent data migration: %v", err)
+	}
+	if !changed {
+		t.Fatal("Agent data reapply reported no change")
+	}
+	assertAgentDataTables(t, admin, schema, true)
+	assertIdentityUserPreserved(t, scoped, existingUserID)
+
+	changed, err = runner.Up()
+	if err != nil {
+		t.Fatalf("repeat Agent data migration: %v", err)
+	}
+	if changed {
+		t.Fatal("repeat Agent data migration unexpectedly changed the schema")
+	}
+}
+
+func assertAgentDataTables(
+	t *testing.T,
+	admin *pgx.Conn,
+	schema string,
+	wantPresent bool,
+) {
+	t.Helper()
+	var tableCount int
+	if err := admin.QueryRow(
+		context.Background(),
+		`SELECT count(*)
+FROM information_schema.tables
+WHERE table_schema = $1
+  AND table_name IN (
+      'matters',
+      'agent_threads',
+      'agent_thread_matter_links',
+      'agent_messages'
+  )`,
+		schema,
+	).Scan(&tableCount); err != nil {
+		t.Fatalf("inspect Agent data tables: %v", err)
+	}
+	wantCount := 0
+	if wantPresent {
+		wantCount = 4
+	}
+	if tableCount != wantCount {
+		t.Fatalf(
+			"Agent data table count = %d, want %d",
+			tableCount,
+			wantCount,
+		)
+	}
+}
+
+func assertIdentityUserPreserved(
+	t *testing.T,
+	scoped *pgx.Conn,
+	userID string,
+) {
+	t.Helper()
+	var canonicalEmail string
+	if err := scoped.QueryRow(
+		context.Background(),
+		`SELECT canonical_email
+FROM identity_users
+WHERE id = $1`,
+		userID,
+	).Scan(&canonicalEmail); err != nil {
+		t.Fatalf("read preserved Identity user: %v", err)
+	}
+	if canonicalEmail != "agent-data-upgrade@example.com" {
+		t.Fatalf(
+			"preserved canonical email = %q, want agent-data-upgrade@example.com",
+			canonicalEmail,
+		)
+	}
+}
+
 func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 	migrationConfig, admin, schema := isolatedMigrationConfig(t)
 

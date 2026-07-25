@@ -431,7 +431,18 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	}
 	database.pool.Close()
 	reopenedPool := database.reopen(t)
-	_, recoveredService := newAgentDataServices(t, reopenedPool)
+	recoveredMatterService, recoveredService := newAgentDataServices(t, reopenedPool)
+	recoveredMatter, err := recoveredMatterService.ReadOwned(
+		context.Background(),
+		actorA,
+		matterA.ID,
+	)
+	if err != nil ||
+		recoveredMatter.Title != reopened.Title ||
+		recoveredMatter.Status != reopened.Status ||
+		recoveredMatter.Version != reopened.Version {
+		t.Fatalf("recovered Matter = %#v, %v", recoveredMatter, err)
+	}
 	recoveredThread, err := recoveredService.GetThread(
 		context.Background(),
 		actorA,
