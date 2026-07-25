@@ -187,6 +187,15 @@ func (r *Repository) ReserveTranscription(
 	if question.SessionID != command.SessionID {
 		return conversation.TranscriptionReservation{}, conversation.ErrPersistenceNotFound
 	}
+	// Proposal #47 keeps respondent off Question and resolves it from the
+	// trusted Actor. Persistence still enforces that the resolved participant
+	// was an addressee of this immutable Question snapshot.
+	if !containsParticipant(
+		question.AddresseeParticipantIDs,
+		command.RespondentParticipantID,
+	) {
+		return conversation.TranscriptionReservation{}, conversation.ErrPersistenceNotFound
+	}
 
 	reservation, found, err := findReservationByKey(
 		ctx,
@@ -1528,6 +1537,15 @@ func validDeletion(deletion conversation.DeletionContext) bool {
 func validUUID(value string) bool {
 	var identifier pgtype.UUID
 	return identifier.Scan(value) == nil && identifier.Valid
+}
+
+func containsParticipant(participants []string, participantID string) bool {
+	for _, candidate := range participants {
+		if candidate == participantID {
+			return true
+		}
+	}
+	return false
 }
 
 func validQuestion(question conversation.PersistentQuestion) bool {

@@ -78,11 +78,13 @@ const (
 )
 
 type TranscriptionReservation struct {
-	ID                      string
-	QuestionID              string
-	SessionID               string
-	IdempotencyKey          string
-	InputFingerprint        string
+	ID               string
+	QuestionID       string
+	SessionID        string
+	IdempotencyKey   string
+	InputFingerprint string
+	// RespondentParticipantID is resolved from the trusted Actor by the
+	// application layer; it is never accepted from a client request body.
 	RespondentParticipantID string
 	Status                  TranscriptionStatus
 	FencingToken            int64

@@ -462,7 +462,7 @@ func TestConcurrentConfirmationCreatesExactlyOneTurn(t *testing.T) {
 }
 
 func TestInvalidOwnerAndDuplicateAddresseesAreRejected(t *testing.T) {
-	repository, _ := newIntegrationRepository(t)
+	repository, pool := newIntegrationRepository(t)
 	invalidActor := conversation.Actor{
 		UserID:    "not-a-uuid",
 		SessionID: "trusted-session",
@@ -503,6 +503,45 @@ func TestInvalidOwnerAndDuplicateAddresseesAreRejected(t *testing.T) {
 		question,
 	); !errors.Is(err, conversation.ErrPersistenceInvalid) {
 		t.Fatalf("duplicate addressee error = %v", err)
+	}
+
+	actor := testActor(testUserA)
+	validQuestion := saveTestQuestion(
+		t,
+		repository,
+		actor,
+		"unrelated-respondent",
+		"session-unrelated-respondent",
+	)
+	command := reserveCommand(validQuestion, "reserve-unrelated-respondent")
+	command.RespondentParticipantID = "unrelated-participant"
+	if _, err := repository.ReserveTranscription(
+		context.Background(),
+		actor,
+		command,
+	); !errors.Is(err, conversation.ErrPersistenceNotFound) {
+		t.Fatalf("unrelated respondent error = %v, want not found", err)
+	}
+	var reservationCount int
+	var attemptCount int
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT
+			(SELECT count(*) FROM conversation_transcription_reservations
+			 WHERE owner_user_id = $1 AND question_id = $2),
+			(SELECT count(*) FROM conversation_processing_attempts
+			 WHERE owner_user_id = $1)`,
+		actor.UserID,
+		validQuestion.ID,
+	).Scan(&reservationCount, &attemptCount); err != nil {
+		t.Fatalf("count rejected respondent state: %v", err)
+	}
+	if reservationCount != 0 || attemptCount != 0 {
+		t.Fatalf(
+			"rejected respondent created reservations=%d attempts=%d",
+			reservationCount,
+			attemptCount,
+		)
 	}
 }
 
@@ -1064,7 +1103,7 @@ func testQuestion(id string, sessionID string) conversation.PersistentQuestion {
 		ID:                      id,
 		SessionID:               sessionID,
 		SpeakerParticipantID:    "interviewer",
-		AddresseeParticipantIDs: []string{"candidate"},
+		AddresseeParticipantIDs: []string{"actual-candidate"},
 		ObjectiveID:             "objective-1",
 		Type:                    "PRIMARY",
 		Content:                 "Tell me about a difficult recovery.",
