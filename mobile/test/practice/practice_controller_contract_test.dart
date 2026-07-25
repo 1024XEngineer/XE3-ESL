@@ -180,7 +180,8 @@ void main() {
 
   test('recording deadline stops before the server audio limit', () async {
     final practice = _TwoTurnPracticeClient();
-    final recorder = _Recorder();
+    final deadlineCompleted = Completer<void>();
+    final recorder = _Recorder(discardSignal: deadlineCompleted);
     final controller = AgentController(
       client: FakeAgentClient(),
       practiceClient: practice,
@@ -192,7 +193,7 @@ void main() {
 
     await controller.startRecording();
     expect(recorder.recording, isTrue);
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await deadlineCompleted.future.timeout(const Duration(seconds: 2));
 
     expect(recorder.recording, isFalse);
     expect(practice.transcribeCount, 1);
@@ -594,6 +595,9 @@ final class _ControlledStartRecorder implements PracticeRecorder {
 }
 
 final class _Recorder implements PracticeRecorder {
+  _Recorder({this.discardSignal});
+
+  final Completer<void>? discardSignal;
   int discarded = 0;
   int cleanupCount = 0;
   bool recording = false;
@@ -616,6 +620,10 @@ final class _Recorder implements PracticeRecorder {
   @override
   Future<void> discard(RecordedPracticeAudio audio) async {
     discarded++;
+    final signal = discardSignal;
+    if (signal != null && !signal.isCompleted) {
+      signal.complete();
+    }
   }
 
   @override
