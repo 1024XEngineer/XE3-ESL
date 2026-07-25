@@ -240,6 +240,32 @@ func TestVoiceRoundTTSFailurePreservesQuestionText(t *testing.T) {
 	}
 }
 
+func TestVoiceRoundTTSGenericFailureUsesSynthesisAuditOperation(t *testing.T) {
+	service, err := NewVoiceRoundService(
+		newVoiceTestStore(),
+		&voiceTestPractice{turns: make(map[string]VoiceTurnProgress)},
+		&voiceTestReview{bySession: make(map[string]VoiceSessionReview)},
+		voiceNoopVault{},
+		&voiceTestRecognizer{},
+		&voiceTestSynthesizer{err: errors.New("private provider detail")},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	result, err := service.SynthesizeQuestion(
+		context.Background(),
+		"Tell me about a difficult project.",
+	)
+	if err != nil {
+		t.Fatalf("synthesize question: %v", err)
+	}
+	if result.Failure == nil ||
+		result.Failure.Operation != ai.SpeechOperationSynthesis ||
+		result.Failure.Kind != ai.ErrorProviderUnavailable {
+		t.Fatalf("unexpected generic TTS audit: %#v", result.Failure)
+	}
+}
+
 type voiceTestStore struct {
 	mu            sync.Mutex
 	questions     map[string]VoiceQuestion

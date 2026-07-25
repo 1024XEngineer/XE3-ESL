@@ -363,7 +363,12 @@ func (service *VoiceRoundService) Transcribe(
 		ai.TranscriptionRequest{Audio: source},
 	)
 	if err != nil {
-		attempt := safeAttempt(err, service.now().Sub(startedAt), service.now())
+		attempt := safeAttempt(
+			err,
+			ai.SpeechOperationTranscription,
+			service.now().Sub(startedAt),
+			service.now(),
+		)
 		if saveErr := service.store.FailTranscription(
 			ctx,
 			actor,
@@ -518,7 +523,12 @@ func (service *VoiceRoundService) SynthesizeQuestion(
 		ai.SynthesisRequest{Text: text},
 	)
 	if err != nil {
-		attempt := safeAttempt(err, service.now().Sub(startedAt), service.now())
+		attempt := safeAttempt(
+			err,
+			ai.SpeechOperationSynthesis,
+			service.now().Sub(startedAt),
+			service.now(),
+		)
 		return QuestionSpeech{Text: text, Failure: &attempt}, nil
 	}
 	return QuestionSpeech{Text: text, Audio: result.Audio}, nil
@@ -561,11 +571,12 @@ func voiceInputFingerprint(
 
 func safeAttempt(
 	err error,
+	defaultOperation ai.SpeechOperation,
 	duration time.Duration,
 	occurredAt time.Time,
 ) SafeProcessingAttempt {
 	attempt := SafeProcessingAttempt{
-		Operation:  ai.SpeechOperationTranscription,
+		Operation:  defaultOperation,
 		Kind:       ai.ErrorProviderUnavailable,
 		Retryable:  true,
 		Duration:   duration,
