@@ -90,6 +90,15 @@ func run() int {
 		return 1
 	}
 
+	storageConfig, err := config.LoadObjectStorage()
+	if err != nil {
+		logger.Error(
+			"object storage configuration invalid",
+			slog.String("error_kind", "configuration"),
+		)
+		return 1
+	}
+
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -133,6 +142,29 @@ func run() int {
 		return 1
 	}
 
+	cleanupWorker, err := buildAudioCleanupWorker(
+		ctx,
+		storageConfig,
+		databasePool.Native(),
+		logger,
+		productionAudioCleanupFactories,
+	)
+	if err != nil {
+		logger.Error(
+			"audio cleanup startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	var cleanupDone chan struct{}
+	if cleanupWorker != nil {
+		cleanupDone = make(chan struct{})
+		go func() {
+			defer close(cleanupDone)
+			cleanupWorker.Run(ctx)
+		}()
+	}
+
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
 		logger,
 		databasePool,
@@ -156,22 +188,35 @@ func run() int {
 		serverErrors <- server.ListenAndServe()
 	}()
 
+	exitCode := 0
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server stopped unexpectedly", slog.Any("error", err))
-			return 1
+			exitCode = 1
 		}
 	case <-ctx.Done():
 		logger.Info("shutdown requested")
 	}
+	stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", slog.Any("error", err))
-		return 1
+		exitCode = 1
+	}
+	if cleanupDone != nil {
+		select {
+		case <-cleanupDone:
+		case <-shutdownCtx.Done():
+			logger.Error(
+				"audio cleanup shutdown failed",
+				slog.String("error_kind", "timeout"),
+			)
+			exitCode = 1
+		}
 	}
 
-	return 0
+	return exitCode
 }
