@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	maxAgentDataRequestBody = 32768
+	maxAgentDataRequestBody = 64 * 1024
 	agentDataReadTimeout    = 5 * time.Second
 )
 

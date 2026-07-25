@@ -154,7 +154,8 @@ paths:
       summary: Select one active Matter for a Thread
       description: |
         The link is owned by Agent Runtime. Matter remains authoritative for
-        its lifecycle and must be revalidated by every future Run.
+        its lifecycle and must be revalidated by every future Run. Replaying an
+        unchanged eligible selection is idempotent and preserves its timestamps.
       operationId: setAgentThreadActiveMatter
       requestBody:
         required: true
@@ -277,6 +278,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: '^[^\u0000]*$'
           x-max-utf8-bytes: 512
         status:
           $ref: '#/components/schemas/MatterStatus'
@@ -313,6 +315,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: '^[^\u0000]*$'
           x-max-utf8-bytes: 512
     ChangeMatterStatusRequest:
       type: object
@@ -445,6 +448,7 @@ components:
           type: string
           minLength: 1
           maxLength: 4096
+          pattern: '^[^\u0000]*$'
           x-max-utf8-bytes: 16384
         created_at:
           type: string
@@ -476,4 +480,5 @@ components:
           type: string
           minLength: 1
           maxLength: 4096
+          pattern: '^[^\u0000]*$'
           x-max-utf8-bytes: 16384

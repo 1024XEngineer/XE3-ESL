@@ -36,7 +36,7 @@ func (r *PostgresRepository) CreateThread(
 	ctx context.Context,
 	ownerID string,
 	activeMatterID string,
-) (_ Thread, resultErr error) {
+) (Thread, error) {
 	threadID, err := r.ids.NewID()
 	if err != nil {
 		return Thread{}, ErrRepository
@@ -45,11 +45,7 @@ func (r *PostgresRepository) CreateThread(
 	if err != nil {
 		return Thread{}, ErrRepository
 	}
-	defer func() {
-		if resultErr != nil {
-			rollback(tx)
-		}
-	}()
+	defer rollback(tx)
 
 	var result Thread
 	if err := tx.QueryRow(ctx, `
@@ -190,16 +186,12 @@ func (r *PostgresRepository) SetActiveMatter(
 	ownerID string,
 	threadID string,
 	matterID string,
-) (_ ThreadMatterLink, resultErr error) {
+) (ThreadMatterLink, error) {
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
 		return ThreadMatterLink{}, ErrRepository
 	}
-	defer func() {
-		if resultErr != nil {
-			rollback(tx)
-		}
-	}()
+	defer rollback(tx)
 
 	var lockedThreadID string
 	if err := tx.QueryRow(ctx, `
@@ -210,6 +202,39 @@ FOR UPDATE`,
 		threadID,
 		ownerID,
 	).Scan(&lockedThreadID); err != nil {
+		return ThreadMatterLink{}, mapPostgresError(err)
+	}
+
+	var current ThreadMatterLink
+	err = tx.QueryRow(ctx, `
+SELECT
+    owner_user_id::text,
+    thread_id::text,
+    matter_id::text,
+    is_active,
+    linked_at,
+    updated_at
+FROM agent_thread_matter_links
+WHERE thread_id = $1
+  AND owner_user_id = $2
+  AND is_active`,
+		threadID,
+		ownerID,
+	).Scan(
+		&current.OwnerID,
+		&current.ThreadID,
+		&current.MatterID,
+		&current.Active,
+		&current.LinkedAt,
+		&current.UpdatedAt,
+	)
+	if err == nil && current.MatterID == matterID {
+		if err := tx.Commit(ctx); err != nil {
+			return ThreadMatterLink{}, ErrRepository
+		}
+		return current, nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return ThreadMatterLink{}, mapPostgresError(err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -291,16 +316,12 @@ func (r *PostgresRepository) AppendUserMessage(
 	threadID string,
 	clientMessageID string,
 	content string,
-) (_ Message, resultErr error) {
+) (Message, error) {
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
 		return Message{}, ErrRepository
 	}
-	defer func() {
-		if resultErr != nil {
-			rollback(tx)
-		}
-	}()
+	defer rollback(tx)
 
 	var nextSequence int64
 	if err := tx.QueryRow(ctx, `

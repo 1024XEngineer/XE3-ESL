@@ -100,6 +100,7 @@ func normalizeTitle(title string) (string, bool) {
 	}
 	title = strings.TrimSpace(title)
 	if title == "" ||
+		strings.ContainsRune(title, '\x00') ||
 		utf8.RuneCountInString(title) > maxMatterTitleRunes ||
 		len(title) > maxMatterTitleBytes {
 		return "", false

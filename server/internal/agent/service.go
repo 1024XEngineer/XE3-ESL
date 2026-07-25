@@ -154,5 +154,6 @@ func validMessageContent(value string) bool {
 		len(value) >= 1 &&
 		utf8.RuneCountInString(value) <= maxMessageContentRunes &&
 		len(value) <= maxMessageContentBytes &&
+		!strings.ContainsRune(value, '\x00') &&
 		strings.TrimSpace(value) != ""
 }

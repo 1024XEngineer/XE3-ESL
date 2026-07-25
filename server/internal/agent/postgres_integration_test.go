@@ -264,6 +264,58 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 		}
 	}
 
+	panicThread, err := service.CreateThread(
+		context.Background(),
+		actorA,
+		"",
+	)
+	if err != nil {
+		t.Fatalf("create panic rollback thread: %v", err)
+	}
+	panicRepository, err := NewPostgresRepository(
+		database.pool,
+		idGeneratorFunc(func() (string, error) {
+			panic("test ID generator panic")
+		}),
+	)
+	if err != nil {
+		t.Fatalf("new panic repository: %v", err)
+	}
+	acquiredBeforePanic := database.pool.Stat().AcquiredConns()
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		_, _ = panicRepository.AppendUserMessage(
+			context.Background(),
+			actorA.UserID,
+			panicThread.ID,
+			"panic-rolls-back",
+			"this transaction must be released",
+		)
+	}()
+	if recovered == nil {
+		t.Fatal("panic ID generator did not panic")
+	}
+	if acquiredAfterPanic := database.pool.Stat().AcquiredConns(); acquiredAfterPanic !=
+		acquiredBeforePanic {
+		t.Fatalf(
+			"acquired connections after panic = %d, want %d",
+			acquiredAfterPanic,
+			acquiredBeforePanic,
+		)
+	}
+	if _, err := service.AppendUserMessage(
+		context.Background(),
+		actorA,
+		panicThread.ID,
+		"after-panic",
+		"the Thread lock was released",
+	); err != nil {
+		t.Fatalf("append after repository panic: %v", err)
+	}
+
 	link, err := service.SetActiveMatter(
 		context.Background(),
 		actorA,
@@ -275,6 +327,40 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	}
 	if !link.Active || link.MatterID != secondMatterA.ID {
 		t.Fatalf("unexpected active link: %#v", link)
+	}
+	threadAfterSelection, err := service.GetThread(
+		context.Background(),
+		actorA,
+		threadA.ID,
+	)
+	if err != nil {
+		t.Fatalf("get Thread after active Matter selection: %v", err)
+	}
+	replayedLink, err := service.SetActiveMatter(
+		context.Background(),
+		actorA,
+		threadA.ID,
+		secondMatterA.ID,
+	)
+	if err != nil {
+		t.Fatalf("replay active Matter selection: %v", err)
+	}
+	threadAfterSelectionReplay, err := service.GetThread(
+		context.Background(),
+		actorA,
+		threadA.ID,
+	)
+	if err != nil {
+		t.Fatalf("get Thread after active Matter replay: %v", err)
+	}
+	if !replayedLink.LinkedAt.Equal(link.LinkedAt) ||
+		!replayedLink.UpdatedAt.Equal(link.UpdatedAt) ||
+		!threadAfterSelectionReplay.UpdatedAt.Equal(threadAfterSelection.UpdatedAt) {
+		t.Fatalf(
+			"replayed active Matter changed timestamps: %#v / %#v",
+			link,
+			replayedLink,
+		)
 	}
 	if _, err := service.SetActiveMatter(
 		context.Background(),
@@ -451,6 +537,16 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 	if err := json.Unmarshal(createdMatter.Body.Bytes(), &matterBody); err != nil {
 		t.Fatalf("decode Matter response: %v", err)
 	}
+	nulMatter := performAgentRequest(
+		router,
+		http.MethodPost,
+		"/v1/matters",
+		`{"title":"invalid\u0000title"}`,
+		"token-a",
+	)
+	if nulMatter.Code != http.StatusBadRequest {
+		t.Fatalf("NUL Matter response: %d %s", nulMatter.Code, nulMatter.Body)
+	}
 
 	createdThread := performAgentRequest(
 		router,
@@ -496,6 +592,50 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 			firstMessage.Body,
 			replayedMessage.Code,
 			replayedMessage.Body,
+		)
+	}
+	conflictingReplay := performAgentRequest(
+		router,
+		http.MethodPost,
+		"/v1/agent-threads/"+threadBody.ID+"/messages",
+		`{"client_message_id":"mobile-0001","content":"Changed content"}`,
+		"token-a",
+	)
+	if conflictingReplay.Code != http.StatusConflict ||
+		!strings.Contains(
+			conflictingReplay.Body.String(),
+			`"code":"idempotency_key_conflict"`,
+		) {
+		t.Fatalf(
+			"idempotency conflict response: %d %s",
+			conflictingReplay.Code,
+			conflictingReplay.Body,
+		)
+	}
+	nulMessage := performAgentRequest(
+		router,
+		http.MethodPost,
+		"/v1/agent-threads/"+threadBody.ID+"/messages",
+		`{"client_message_id":"mobile-nul","content":"invalid\u0000content"}`,
+		"token-a",
+	)
+	if nulMessage.Code != http.StatusBadRequest {
+		t.Fatalf("NUL Message response: %d %s", nulMessage.Code, nulMessage.Body)
+	}
+	maxEscapedMessage := performAgentRequest(
+		router,
+		http.MethodPost,
+		"/v1/agent-threads/"+threadBody.ID+"/messages",
+		`{"client_message_id":"mobile-max-escaped","content":"`+
+			strings.Repeat(`\ud83d\ude00`, maxMessageContentRunes)+
+			`"}`,
+		"token-a",
+	)
+	if maxEscapedMessage.Code != http.StatusCreated {
+		t.Fatalf(
+			"maximum escaped Message response: %d %s",
+			maxEscapedMessage.Code,
+			maxEscapedMessage.Body,
 		)
 	}
 
@@ -550,6 +690,12 @@ func (f authenticatorFunc) AuthenticateSession(
 	token string,
 ) (requestcontext.Actor, error) {
 	return f(ctx, token)
+}
+
+type idGeneratorFunc func() (string, error)
+
+func (f idGeneratorFunc) NewID() (string, error) {
+	return f()
 }
 
 type agentTestDatabase struct {
