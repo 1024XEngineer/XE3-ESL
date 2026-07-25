@@ -50,6 +50,10 @@ components:
       description: Stable machine-readable Delivery error code.
       enum:
         - invalid_request
+        - authentication_required
+        - invalid_credentials
+        - account_registration_unavailable
+        - rate_limited
         - resource_not_found
         - resource_conflict
         - idempotency_key_conflict
@@ -86,6 +90,8 @@ components:
         invalid_request: 400
         answer_invalid: 400
         unsupported_message: 400
+        authentication_required: 401
+        invalid_credentials: 401
         practice_participant_not_authorized: 403
         scenario_definition_not_found: 404
         role_definition_not_found: 404
@@ -98,6 +104,7 @@ components:
         feedback_item_not_found: 404
         retry_request_not_found: 404
         resource_not_found: 404
+        account_registration_unavailable: 409
         idempotency_key_conflict: 409
         resource_conflict: 409
         preparation_version_conflict: 409
@@ -115,6 +122,7 @@ components:
         turn_analysis_conflict: 409
         retry_request_conflict: 409
         transcript_unavailable: 422
+        rate_limited: 429
         internal_error: 500
   responses:
     BadRequest:
@@ -132,6 +140,25 @@ components:
               details:
                 - field: body
                   reason: One or more fields are invalid.
+    Unauthorized:
+      description: A valid Bearer Session is required for this operation.
+      headers:
+        WWW-Authenticate:
+          description: Authentication scheme required by the API.
+          schema:
+            type: string
+            const: Bearer
+          example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: authentication_required
+              message: Authentication is required.
+              retryable: false
+              correlation_id: corr_authentication_required
     NotFound:
       description: The requested resource does not exist for the current actor.
       content:
@@ -168,6 +195,25 @@ components:
               message: Resource state conflicts with this operation.
               retryable: false
               correlation_id: corr_conflict
+    TooManyRequests:
+      description: The caller must wait before attempting this operation again.
+      headers:
+        Retry-After:
+          description: Minimum number of seconds before the caller retries.
+          schema:
+            type: integer
+            minimum: 1
+          example: 60
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: rate_limited
+              message: Too many requests. Try again later.
+              retryable: true
+              correlation_id: corr_rate_limited
     DefaultError:
       description: A stable error response.
       content:

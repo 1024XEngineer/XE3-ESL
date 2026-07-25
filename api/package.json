@@ -4,8 +4,9 @@
   "private": true,
   "description": "Validation entrypoint for the SpeakUp REST and WebSocket contracts.",
   "scripts": {
-    "check": "npm run lint:openapi && npm run validate:websocket && npm run validate:fixture",
+    "check": "npm run lint:openapi && npm run validate:security && npm run validate:websocket && npm run validate:fixture",
     "lint:openapi": "redocly lint openapi.yaml --config redocly.yaml",
+    "validate:security": "node scripts/validate-security.mjs",
     "validate:websocket": "node scripts/validate-events.mjs",
     "validate:fixture": "node scripts/validate-main-flow.mjs"
   },

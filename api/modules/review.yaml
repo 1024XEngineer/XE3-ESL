@@ -26,6 +26,8 @@ paths:
                 created_at: '2026-07-23T10:05:03Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         '409':
@@ -59,6 +61,8 @@ paths:
                       recovery time through tracing and a staged rollout.
                     created_at: '2026-07-23T10:05:03Z'
                     completed_at: '2026-07-23T10:05:04Z'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
@@ -89,6 +93,8 @@ paths:
                       - transcript_text: I introduced request tracing, defined an error budget.
                     retryable: true
                     created_at: '2026-07-23T10:05:04Z'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
@@ -131,6 +137,8 @@ paths:
                 updated_at: '2026-07-23T10:06:01Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         '409':
@@ -152,6 +160,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RetryRequest'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
@@ -187,6 +197,8 @@ paths:
                     reviewed_at: '2026-07-23T10:05:04Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:

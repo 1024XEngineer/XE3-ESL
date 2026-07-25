@@ -5,9 +5,13 @@ info:
   version: 0.1.0
   description: |
     Language-neutral REST contract for the deterministic MS1 practice flow.
-    Authentication is intentionally out of scope. The MS1 adapter supplies a
-    fixed demo identity from server-side context; clients never submit trusted
-    user or respondent participant identifiers.
+    User-private operations require a first-party opaque Bearer Session. Only
+    explicitly marked public operations accept anonymous requests. Fixed demo
+    identities remain limited to explicit Mock and Test composition roots;
+    production requests derive their trusted actor from the validated Session.
+    Clients never submit trusted user or respondent participant identifiers.
+    The formal `Idempotency-Key` scope for protected writes is the trusted
+    Actor, HTTP method, canonical path, and key.
 
     Optional JSON properties use absent-only semantics: clients omit values that
     are not present and must not serialize them as explicit `null`.
@@ -17,9 +21,12 @@ info:
 servers:
   - url: http://localhost:8080
     description: Local deterministic MS1 server
-security: []
+security:
+  - BearerSession: []
 x-json-null-policy: omit
 tags:
+  - name: Identity
+    description: Minimal account registration, opaque Session, and current-user operations.
   - name: Preparation
     description: Scenario, role, profile, and immutable preparation snapshot resources.
   - name: Practice
@@ -33,6 +40,7 @@ paths:
     get:
       summary: Check the modular monolith process
       operationId: getHealth
+      security: []
       responses:
         '200':
           description: Process health and registered business modules.
@@ -51,6 +59,14 @@ paths:
           $ref: ./common/errors.yaml#/components/responses/BadRequest
         default:
           $ref: ./common/errors.yaml#/components/responses/DefaultError
+  /v1/auth/register:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1auth~1register
+  /v1/auth/login:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1auth~1login
+  /v1/auth/logout:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1auth~1logout
+  /v1/me:
+    $ref: ./modules/identity.yaml#/paths/~1v1~1me
   /v1/scenario-definitions/{scenario_definition_id}:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions~1{scenario_definition_id}
   /v1/scenario-definitions/{scenario_definition_id}/role-definitions:
@@ -96,6 +112,15 @@ paths:
   /v1/history-records:
     $ref: ./modules/review.yaml#/paths/~1v1~1history-records
 components:
+  securitySchemes:
+    BearerSession:
+      type: http
+      scheme: bearer
+      bearerFormat: OpaqueSessionToken
+      description: |
+        A first-party, high-entropy opaque Session Token supplied only as
+        `Authorization: Bearer <opaque-session-token>`. It is not a JWT and must
+        not appear in URLs, request bodies, logs, telemetry, or error details.
   schemas:
     Health:
       type: object
@@ -119,6 +144,14 @@ components:
               - review
     ErrorResponse:
       $ref: ./common/errors.yaml#/components/schemas/ErrorResponse
+    User:
+      $ref: ./modules/identity.yaml#/components/schemas/User
+    RegisterRequest:
+      $ref: ./modules/identity.yaml#/components/schemas/RegisterRequest
+    LoginRequest:
+      $ref: ./modules/identity.yaml#/components/schemas/LoginRequest
+    LoginResponse:
+      $ref: ./modules/identity.yaml#/components/schemas/LoginResponse
     ScenarioDefinition:
       $ref: ./modules/preparation.yaml#/components/schemas/ScenarioDefinition
     ScenarioConfig:

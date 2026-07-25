@@ -45,6 +45,8 @@ paths:
                 updated_at: '2026-07-23T10:02:00Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '409':
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
@@ -64,6 +66,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PracticePlan'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
@@ -200,6 +204,8 @@ paths:
                   created_at: '2026-07-23T10:03:00Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         '409':
@@ -230,6 +236,8 @@ paths:
                 session_version: 2
                 started_at: '2026-07-23T10:04:00Z'
                 created_at: '2026-07-23T10:03:00Z'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
@@ -269,6 +277,8 @@ paths:
                 created_at: '2026-07-23T10:03:00Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         '409':
@@ -310,6 +320,8 @@ paths:
                 created_at: '2026-07-23T10:03:00Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         '409':
@@ -353,6 +365,8 @@ paths:
                 created_at: '2026-07-23T10:03:00Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         '409':
@@ -374,6 +388,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PracticeSessionSnapshot'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
