@@ -228,6 +228,173 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
+
+  testWidgets(
+    'late Review retries a blocked Practice exit before exposing the shell',
+    (tester) async {
+      final agentController = AgentController(client: FakeAgentClient());
+      await agentController.initialize();
+      await agentController.selectScene(agentScenes.first);
+      final rejectedPops = ValueNotifier<int>(0);
+      addTearDown(rejectedPops.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SpeakUpShell(
+            previewMode: true,
+            agentController: agentController,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final navigatorContext = tester.element(find.byType(SpeakUpShell));
+      Navigator.of(navigatorContext).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _RejectFirstPracticePop(
+            rejectedPops: rejectedPops,
+            child: PracticePage(agentController: agentController),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('practice-page')), findsOneWidget);
+
+      for (var turn = 0; turn < 3; turn++) {
+        await agentController.startRecording();
+        await agentController.stopRecording();
+        await agentController.confirmTranscript();
+        await tester.pump();
+      }
+      expect(agentController.review, isNotNull);
+
+      await tester.pumpAndSettle();
+
+      expect(rejectedPops.value, 1);
+      expect(find.byKey(const Key('practice-page')), findsNothing);
+      expect(
+        find.byKey(const Key('review-content')).hitTestable(),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('primary-tab-profile')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('profile-page')), findsOneWidget);
+    },
+  );
+
+  testWidgets('completed root Practice route keeps a safe destination', (
+    tester,
+  ) async {
+    final agentController = AgentController(client: FakeAgentClient());
+    await agentController.initialize();
+    await agentController.selectScene(agentScenes.first);
+    for (var turn = 0; turn < 3; turn++) {
+      await agentController.startRecording();
+      await agentController.stopRecording();
+      await agentController.confirmTranscript();
+    }
+    expect(agentController.review, isNotNull);
+
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: agentController)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byKey(const Key('practice-page')), findsOneWidget);
+    expect(find.text('复盘已生成，正在打开'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('late Review waits until Practice is the current route', (
+    tester,
+  ) async {
+    final agentController = AgentController(client: FakeAgentClient());
+    await agentController.initialize();
+    await agentController.selectScene(agentScenes.first);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SpeakUpShell(previewMode: true, agentController: agentController),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final navigator = Navigator.of(tester.element(find.byType(SpeakUpShell)));
+    navigator.push(
+      MaterialPageRoute<void>(
+        builder: (_) => PracticePage(agentController: agentController),
+      ),
+    );
+    await tester.pumpAndSettle();
+    navigator.push(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(key: Key('temporary-practice-overlay')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (var turn = 0; turn < 3; turn++) {
+      await agentController.startRecording();
+      await agentController.stopRecording();
+      await agentController.confirmTranscript();
+    }
+    await tester.pump();
+
+    expect(agentController.review, isNotNull);
+    expect(find.byKey(const Key('temporary-practice-overlay')), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-page'), skipOffstage: false),
+      findsOneWidget,
+    );
+    for (var frame = 0; frame < 75; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    navigator.pop();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('temporary-practice-overlay')), findsNothing);
+    expect(find.byKey(const Key('practice-page')), findsNothing);
+    expect(
+      find.byKey(const Key('review-content')).hitTestable(),
+      findsOneWidget,
+    );
+  });
+}
+
+final class _RejectFirstPracticePop extends StatefulWidget {
+  const _RejectFirstPracticePop({
+    required this.rejectedPops,
+    required this.child,
+  });
+
+  final ValueNotifier<int> rejectedPops;
+  final Widget child;
+
+  @override
+  State<_RejectFirstPracticePop> createState() =>
+      _RejectFirstPracticePopState();
+}
+
+final class _RejectFirstPracticePopState
+    extends State<_RejectFirstPracticePop> {
+  bool _canPop = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope<void>(
+      canPop: _canPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop || _canPop) {
+          return;
+        }
+        widget.rejectedPops.value++;
+        setState(() => _canPop = true);
+      },
+      child: widget.child,
+    );
+  }
 }
 
 final class _AuthenticatedIdentityClient implements IdentityClient {

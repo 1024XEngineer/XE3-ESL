@@ -1,6 +1,8 @@
 /// Practice module boundary.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
@@ -20,7 +22,12 @@ class PracticePage extends StatefulWidget {
 }
 
 class _PracticePageState extends State<PracticePage> {
+  static const _maxReviewExitFrameAttempts = 60;
+
   bool _scheduledReviewExit = false;
+  int _reviewExitAttempts = 0;
+  Animation<double>? _observedSecondaryAnimation;
+  AnimationStatusListener? _reviewRouteStatusListener;
 
   @override
   void initState() {
@@ -36,7 +43,7 @@ class _PracticePageState extends State<PracticePage> {
       return;
     }
     oldWidget.agentController?.removeListener(_handleState);
-    _scheduledReviewExit = false;
+    _resetReviewExit();
     widget.agentController?.addListener(_handleState);
     _scheduleReviewExitIfNeeded();
   }
@@ -44,6 +51,7 @@ class _PracticePageState extends State<PracticePage> {
   @override
   void dispose() {
     widget.agentController?.removeListener(_handleState);
+    _clearReviewRouteWait();
     super.dispose();
   }
 
@@ -53,27 +61,125 @@ class _PracticePageState extends State<PracticePage> {
     }
     setState(() {});
     if (widget.agentController?.review == null) {
-      _scheduledReviewExit = false;
+      _resetReviewExit();
       return;
     }
     _scheduleReviewExitIfNeeded();
   }
 
   void _scheduleReviewExitIfNeeded() {
-    if (widget.agentController?.review == null || _scheduledReviewExit) {
+    if (widget.agentController?.review == null ||
+        _scheduledReviewExit ||
+        _reviewExitAttempts >= _maxReviewExitFrameAttempts) {
       return;
     }
     _scheduledReviewExit = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      if (widget.agentController?.review == null) {
-        _scheduledReviewExit = false;
-        return;
-      }
-      Navigator.of(context).maybePop();
+      unawaited(_attemptReviewExit());
     });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  Future<void> _attemptReviewExit() async {
+    if (!mounted) {
+      return;
+    }
+    if (widget.agentController?.review == null) {
+      _resetReviewExit();
+      return;
+    }
+
+    final route = ModalRoute.of(context);
+    if (route == null) {
+      _scheduledReviewExit = false;
+      return;
+    }
+    final navigator = Navigator.of(context);
+    if (!route.isCurrent) {
+      _waitForRouteToBecomeCurrent(route);
+      return;
+    }
+    if (!navigator.canPop()) {
+      // A deep-linked or standalone Practice route has no safe destination.
+      // Keep it visible rather than removing the app's only route.
+      _scheduledReviewExit = false;
+      _reviewExitAttempts = _maxReviewExitFrameAttempts;
+      return;
+    }
+
+    _reviewExitAttempts++;
+    final disposition = route.popDisposition;
+    late final bool handled;
+    try {
+      handled = await navigator.maybePop();
+    } catch (_) {
+      if (mounted) {
+        _retryReviewExitOnNextFrame();
+      }
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    if (widget.agentController?.review == null) {
+      _resetReviewExit();
+      return;
+    }
+    final popStarted = handled && disposition == RoutePopDisposition.pop;
+    if (popStarted) {
+      await route.completed;
+    } else if (route.isCurrent) {
+      _retryReviewExitOnNextFrame();
+    }
+  }
+
+  void _retryReviewExitOnNextFrame() {
+    _scheduledReviewExit = false;
+    _scheduleReviewExitIfNeeded();
+  }
+
+  void _waitForRouteToBecomeCurrent(ModalRoute<dynamic> route) {
+    _scheduledReviewExit = false;
+    _clearReviewRouteWait();
+    final animation = route.secondaryAnimation;
+    if (animation == null) {
+      return;
+    }
+    late final AnimationStatusListener listener;
+    listener = (_) {
+      if (!mounted || widget.agentController?.review == null) {
+        _clearReviewRouteWait();
+        return;
+      }
+      if (!route.isCurrent) {
+        return;
+      }
+      _clearReviewRouteWait();
+      _scheduleReviewExitIfNeeded();
+    };
+    _observedSecondaryAnimation = animation;
+    _reviewRouteStatusListener = listener;
+    animation.addStatusListener(listener);
+    if (route.isCurrent) {
+      _clearReviewRouteWait();
+      _scheduleReviewExitIfNeeded();
+    }
+  }
+
+  void _clearReviewRouteWait() {
+    final animation = _observedSecondaryAnimation;
+    final listener = _reviewRouteStatusListener;
+    if (animation != null && listener != null) {
+      animation.removeStatusListener(listener);
+    }
+    _observedSecondaryAnimation = null;
+    _reviewRouteStatusListener = null;
+  }
+
+  void _resetReviewExit() {
+    _clearReviewRouteWait();
+    _scheduledReviewExit = false;
+    _reviewExitAttempts = 0;
   }
 
   @override
