@@ -26,6 +26,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -39,6 +40,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	synthesizer := fake.NewFailingSpeechSynthesizer(
 		fmt.Errorf("tts unavailable"),
 	)
+	objects := newVoiceObjectStore()
 	vault := newVoiceTestVault(t)
 	identityModule, agentModule, err := NewIdentityAndAgentModules(
 		context.Background(),
@@ -56,6 +58,8 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			Recognizer:              recognizer,
 			Synthesizer:             synthesizer,
 			TemporaryAudio:          vault,
+			ObjectStore:             objects,
+			AudioStagedTTL:          time.Hour,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
 		},
@@ -362,6 +366,10 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"confirm-round-1-0001",
 		http.StatusOK,
 	)
+	firstAudioAssetID, _ := state["current_turn"].(map[string]any)["audio_asset_id"].(string)
+	if firstAudioAssetID == "" {
+		t.Fatalf("first confirmed Turn has no AudioAsset: %#v", state)
+	}
 	competingConfirm, err := voiceRawRequest(
 		server.URL,
 		token,
@@ -465,6 +473,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Error(failure)
 	}
 	var reviewID string
+	var completedAudioAssetID string
 	var thirdTurnID string
 	for result := range results {
 		if result["effective_turns"] != float64(3) ||
@@ -490,6 +499,15 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		}
 		if turn["review_id"] != currentReviewID {
 			t.Errorf("current Turn does not link its Review: %#v", result)
+		}
+		currentAudioAssetID, _ := turn["audio_asset_id"].(string)
+		if currentAudioAssetID == "" {
+			t.Errorf("current Turn does not link its AudioAsset: %#v", result)
+		}
+		if completedAudioAssetID == "" {
+			completedAudioAssetID = currentAudioAssetID
+		} else if completedAudioAssetID != currentAudioAssetID {
+			t.Errorf("concurrent confirmations returned different AudioAssets")
 		}
 		if reviewID == "" {
 			reviewID = currentReviewID
@@ -558,6 +576,22 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			voiceTurnLimit,
 		)
 	}
+	playback := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodGet,
+		"/v1/audio-assets/"+completedAudioAssetID+"/playback",
+		"",
+		"",
+		http.StatusOK,
+	)
+	if !strings.HasPrefix(
+		playback["playback_url"].(string),
+		"https://private-audio.example.invalid/",
+	) {
+		t.Fatalf("unexpected protected playback capability: %#v", playback)
+	}
 	otherToken := registerAndLoginVoiceUser(
 		t,
 		server.URL,
@@ -566,6 +600,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	for _, path := range []string{
 		"/v1/agent-threads/" + threadID + "/voice-practice-session",
 		"/v1/formal-reviews/" + reviewID,
+		"/v1/audio-assets/" + completedAudioAssetID + "/playback",
 	} {
 		response, requestErr := voiceRawRequest(
 			server.URL,
@@ -606,6 +641,8 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			Recognizer:              recognizer,
 			Synthesizer:             synthesizer,
 			TemporaryAudio:          restartedVault,
+			ObjectStore:             objects,
+			AudioStagedTTL:          time.Hour,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
 		},
@@ -657,6 +694,52 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			"restart lost formal Review evidence identity: %#v",
 			recoveredFormalReview,
 		)
+	}
+	recoveredTurn := recovered["current_turn"].(map[string]any)
+	if recoveredTurn["audio_asset_id"] != completedAudioAssetID {
+		t.Fatalf("restart lost AudioAsset checkpoint: %#v", recovered)
+	}
+	voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodDelete,
+		"/v1/audio-assets/"+completedAudioAssetID,
+		"",
+		"",
+		http.StatusNoContent,
+	)
+	deletedPlayback, err := voiceRawRequest(
+		restartedServer.URL,
+		token,
+		http.MethodGet,
+		"/v1/audio-assets/"+completedAudioAssetID+"/playback",
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = deletedPlayback.Body.Close()
+	if deletedPlayback.StatusCode != http.StatusNotFound {
+		t.Fatalf(
+			"deleted AudioAsset playback status = %d",
+			deletedPlayback.StatusCode,
+		)
+	}
+	afterAudioDelete := voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodGet,
+		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"",
+		"",
+		http.StatusOK,
+	)
+	if _, present := afterAudioDelete["current_turn"].(map[string]any)["audio_asset_id"]; present {
+		t.Fatalf("deleted AudioAsset remained in restored state: %#v", afterAudioDelete)
 	}
 	nextSession := voiceJSONRequest(
 		t,
@@ -1160,6 +1243,62 @@ func (recognizer *voiceRecognizer) Transcribe(
 		Model:      "fake-asr-v1",
 		Transcript: fmt.Sprintf("Confirmed answer number %d.", call),
 	}, nil
+}
+
+type voiceObjectStore struct {
+	mu      sync.Mutex
+	objects map[string][]byte
+}
+
+func newVoiceObjectStore() *voiceObjectStore {
+	return &voiceObjectStore{objects: make(map[string][]byte)}
+}
+
+func (store *voiceObjectStore) Put(
+	_ context.Context,
+	request objectstore.PutRequest,
+) (objectstore.PutResult, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	audio, err := io.ReadAll(request.Body)
+	if err != nil || int64(len(audio)) != request.Size {
+		return objectstore.PutResult{}, objectstore.ErrInvalidObject
+	}
+	if existing, found := store.objects[request.Key]; found {
+		if !bytes.Equal(existing, audio) {
+			return objectstore.PutResult{}, objectstore.ErrAlreadyExists
+		}
+		return objectstore.PutResult{ETag: "voice-etag"}, nil
+	}
+	store.objects[request.Key] = bytes.Clone(audio)
+	return objectstore.PutResult{ETag: "voice-etag"}, nil
+}
+
+func (store *voiceObjectStore) SignedGet(
+	_ context.Context,
+	key string,
+) (objectstore.SignedGetResult, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if _, found := store.objects[key]; !found {
+		return objectstore.SignedGetResult{},
+			objectstore.ErrOperationFailed
+	}
+	return objectstore.SignedGetResult{
+		URL: "https://private-audio.example.invalid/" +
+			url.PathEscape(key),
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}, nil
+}
+
+func (store *voiceObjectStore) Delete(
+	_ context.Context,
+	key string,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	delete(store.objects, key)
+	return nil
 }
 
 func newVoiceTestVault(t *testing.T) *platformmedia.TemporaryAudioVault {
