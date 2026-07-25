@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -178,7 +179,7 @@ func TestPostgresReviewFailureRetryPendingAndLostResponseRecovery(t *testing.T) 
 	if err != nil {
 		t.Fatalf("persist stalled Review: %v", err)
 	}
-	_, _, claimed, err := repository.ClaimGeneration(
+	_, oldStalledJob, claimed, err := repository.ClaimGeneration(
 		context.Background(),
 		stalledCommand.Actor,
 		stalled.ID,
@@ -188,6 +189,22 @@ func TestPostgresReviewFailureRetryPendingAndLostResponseRecovery(t *testing.T) 
 		t.Fatalf("claim stalled Review: claimed=%v err=%v", claimed, err)
 	}
 	time.Sleep(40 * time.Millisecond)
+	oldStalledJob.LeaseUntil = time.Now().Add(time.Hour)
+	if err := repository.FailGeneration(
+		context.Background(),
+		oldStalledJob,
+		"late_worker",
+	); !errors.Is(err, review.ErrGenerationClaimLost) {
+		t.Fatalf("expired worker failure write error = %v", err)
+	}
+	if _, err := repository.CompleteGeneration(
+		context.Background(),
+		oldStalledJob,
+		validResult(),
+		validEvidence(),
+	); !errors.Is(err, review.ErrGenerationClaimLost) {
+		t.Fatalf("expired worker completion error = %v", err)
+	}
 	recoveredStalled, err := review.NewEnsureService(
 		review.NewPostgresRepository(pool),
 		sourceReader{},
@@ -227,6 +244,7 @@ func TestPostgresReviewFailureRetryPendingAndLostResponseRecovery(t *testing.T) 
 	if err != nil || !claimed {
 		t.Fatalf("claim lost-response Review: claimed=%v err=%v", claimed, err)
 	}
+	job.LeaseUntil = time.Unix(0, 0)
 	committed, err := repository.CompleteGeneration(
 		context.Background(),
 		job,
@@ -302,24 +320,52 @@ func TestPostgresReviewOwnerIsolationDeletionAndOldWorkerFence(t *testing.T) {
 		t.Fatalf("user B list = %+v, err = %v", listB, err)
 	}
 
-	setAccountStatus(t, pool, userB, "deleting")
 	if err := repository.DeleteUserData(context.Background(), review.DeleteUserReviewsCommand{
 		UserID:             userB,
 		DeletionGeneration: 1,
+	}); !errors.Is(err, review.ErrInvalidReview) {
+		t.Fatalf("active-account deletion error = %v", err)
+	}
+	if _, err := repository.Get(
+		context.Background(),
+		actor(userB),
+		reviewB.ID,
+	); err != nil {
+		t.Fatalf("rejected active deletion changed Review: %v", err)
+	}
+	setAccountStatus(t, pool, userB, "deleting")
+	if err := repository.DeleteUserData(context.Background(), review.DeleteUserReviewsCommand{
+		UserID:             userB,
+		DeletionGeneration: 2,
 	}); err != nil {
 		t.Fatalf("delete user B Review data: %v", err)
 	}
 	if err := repository.DeleteUserData(context.Background(), review.DeleteUserReviewsCommand{
 		UserID:             userB,
-		DeletionGeneration: 1,
+		DeletionGeneration: 2,
 	}); err != nil {
 		t.Fatalf("repeat delete user B Review data: %v", err)
 	}
+	if err := repository.DeleteUserData(context.Background(), review.DeleteUserReviewsCommand{
+		UserID:             userB,
+		DeletionGeneration: 1,
+	}); !errors.Is(err, review.ErrDeletionGenerationStale) {
+		t.Fatalf("stale deletion generation error = %v", err)
+	}
+	// Even an invalid external status rollback cannot reopen Review writes once
+	// this module has persisted its deletion fence.
+	setAccountStatus(t, pool, userB, "active")
 	if _, err := repository.List(
 		context.Background(),
 		actor(userB),
 	); !errors.Is(err, review.ErrAccountDeleted) {
 		t.Fatalf("deleted user B list error = %v", err)
+	}
+	if _, err := service.EnsureReview(
+		context.Background(),
+		ensureCommand(userB, "post-fence-session"),
+	); !errors.Is(err, review.ErrAccountDeleted) {
+		t.Fatalf("deletion fence allowed new Review write: %v", err)
 	}
 	if recoveredA, err := repository.Get(
 		context.Background(),
@@ -473,6 +519,20 @@ func TestPostgresCompletedReviewAndEvidenceOwnershipConstraints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensure constraint Review: %v", err)
 	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE reviews
+		SET status = 'failed'
+		WHERE id = $1
+	`, pending.ID); err == nil {
+		t.Fatal("failed Review without stable error unexpectedly passed CHECK")
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE reviews
+		SET stable_error_category = 'unexpected_error'
+		WHERE id = $1
+	`, pending.ID); err == nil {
+		t.Fatal("pending Review with stable error unexpectedly passed CHECK")
+	}
 
 	tx, err := pool.Begin(context.Background())
 	if err != nil {
@@ -510,6 +570,23 @@ func TestPostgresCompletedReviewAndEvidenceOwnershipConstraints(t *testing.T) {
 
 func TestReviewMigrationRevertsAndReappliesAfterIdentityPrerequisite(t *testing.T) {
 	pool := reviewDatabase(t)
+	var evidenceIndexDefinition string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT indexdef
+		FROM pg_indexes
+		WHERE schemaname = current_schema()
+		  AND indexname = 'review_evidence_source_idx'
+	`).Scan(&evidenceIndexDefinition); err != nil {
+		t.Fatalf("read Evidence source index: %v", err)
+	}
+	const ownerFirstIndex = "(owner_user_id, source_type"
+	if !strings.Contains(evidenceIndexDefinition, ownerFirstIndex) {
+		t.Fatalf(
+			"Evidence source index = %q, want owner-first prefix %q",
+			evidenceIndexDefinition,
+			ownerFirstIndex,
+		)
+	}
 	down, err := migrations.Files.ReadFile(
 		"000008_review_formal_reviews.down.sql",
 	)

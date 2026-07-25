@@ -28,19 +28,28 @@ CREATE TABLE reviews (
     completed_at timestamptz,
     UNIQUE (owner_user_id, practice_session_id, implementation_version),
     UNIQUE (id, owner_user_id),
-    CHECK (
-        (status = 'completed'
+    CONSTRAINT reviews_state_shape_check CHECK (
+        (
+            status IN ('pending', 'generating')
+            AND result IS NULL
+            AND completed_at IS NULL
+            AND stable_error_category IS NULL
+        )
+        OR
+        (
+            status = 'completed'
             AND result IS NOT NULL
             AND completed_at IS NOT NULL
-            AND stable_error_category IS NULL)
+            AND stable_error_category IS NULL
+        )
         OR
-        (status <> 'completed'
+        (
+            status = 'failed'
             AND result IS NULL
-            AND completed_at IS NULL)
-    ),
-    CHECK (
-        stable_error_category IS NULL
-        OR stable_error_category <> ''
+            AND completed_at IS NULL
+            AND stable_error_category IS NOT NULL
+            AND stable_error_category <> ''
+        )
     )
 );
 
@@ -110,6 +119,7 @@ CREATE TABLE review_evidence (
 
 CREATE INDEX review_evidence_source_idx
     ON review_evidence (
+        owner_user_id,
         source_type,
         source_id,
         source_version,

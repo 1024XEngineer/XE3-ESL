@@ -165,8 +165,9 @@ func (r *PostgresRepository) ClaimGeneration(
 
 	var runningID string
 	var leaseUntil time.Time
+	var leaseValid bool
 	err = tx.QueryRow(ctx, `
-		SELECT id::text, lease_until
+		SELECT id::text, lease_until, lease_until > now()
 		FROM review_generation_attempts
 		WHERE review_id = $1
 		  AND owner_user_id = $2
@@ -174,9 +175,13 @@ func (r *PostgresRepository) ClaimGeneration(
 		ORDER BY attempt_number DESC
 		LIMIT 1
 		FOR UPDATE
-	`, review.ID, actor.UserID).Scan(&runningID, &leaseUntil)
+	`, review.ID, actor.UserID).Scan(
+		&runningID,
+		&leaseUntil,
+		&leaseValid,
+	)
 	switch {
-	case err == nil && leaseUntil.After(time.Now()):
+	case err == nil && leaseValid:
 		if err := tx.Commit(ctx); err != nil {
 			return FormalReview{}, GenerationJobContext{}, false, err
 		}
@@ -295,12 +300,14 @@ func (r *PostgresRepository) CompleteGeneration(
 	var attemptStatus string
 	var persistedGeneration int64
 	var leaseUntil time.Time
+	var leaseValid bool
 	var latestAttemptID string
 	err = tx.QueryRow(ctx, `
 		SELECT
 			attempt.status,
 			attempt.deletion_generation,
 			attempt.lease_until,
+			attempt.lease_until > now(),
 			(
 				SELECT latest.id::text
 				FROM review_generation_attempts latest
@@ -323,6 +330,7 @@ func (r *PostgresRepository) CompleteGeneration(
 		&attemptStatus,
 		&persistedGeneration,
 		&leaseUntil,
+		&leaseValid,
 		&latestAttemptID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -334,7 +342,7 @@ func (r *PostgresRepository) CompleteGeneration(
 	if attemptStatus != "running" ||
 		persistedGeneration != claim.DeletionGeneration ||
 		latestAttemptID != claim.AttemptID ||
-		!leaseUntil.After(time.Now()) {
+		!leaseValid {
 		return FormalReview{}, ErrGenerationClaimLost
 	}
 
@@ -462,6 +470,7 @@ func (r *PostgresRepository) FailGeneration(
 		  AND worker_token = $5
 		  AND deletion_generation = $6
 		  AND status = 'running'
+		  AND lease_until > now()
 		  AND id = (
 			SELECT id
 			FROM review_generation_attempts
@@ -649,8 +658,22 @@ func (r *PostgresRepository) DeleteUserData(
 		}
 		return err
 	}
-	if accountStatus == "active" {
+	if accountStatus != "deleting" && accountStatus != "deleted" {
 		return ErrInvalidReview
+	}
+
+	var persistedGeneration int64
+	err = tx.QueryRow(ctx, `
+		SELECT deletion_generation
+		FROM review_deletion_fences
+		WHERE owner_user_id = $1
+		FOR UPDATE
+	`, command.UserID).Scan(&persistedGeneration)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err == nil && command.DeletionGeneration < persistedGeneration {
+		return ErrDeletionGenerationStale
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO review_deletion_fences (
@@ -660,10 +683,7 @@ func (r *PostgresRepository) DeleteUserData(
 		)
 		VALUES ($1, $2, now())
 		ON CONFLICT (owner_user_id) DO UPDATE
-		SET deletion_generation = greatest(
-		        review_deletion_fences.deletion_generation,
-		        EXCLUDED.deletion_generation
-		    ),
+		SET deletion_generation = EXCLUDED.deletion_generation,
 		    deleted_at = least(
 		        review_deletion_fences.deleted_at,
 		        EXCLUDED.deleted_at
