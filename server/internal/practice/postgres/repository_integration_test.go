@@ -161,6 +161,60 @@ func TestRepositoryContract(t *testing.T) {
 	}
 }
 
+func TestTurnIDCannotAdvanceTwoSessions(t *testing.T) {
+	repository, pool := newRepository(t)
+	ctx := context.Background()
+	actor := persistence.Actor{
+		UserID:    "10000000-0000-4000-8000-00000000000d",
+		SessionID: "20000000-0000-4000-8000-00000000000d",
+	}
+	ensureIdentityUsers(t, pool, actor)
+	firstSession := newSession("turn-scope-first", "turn-scope-plan-first", 3)
+	secondSession := newSession("turn-scope-second", "turn-scope-plan-second", 3)
+	for _, command := range []persistence.CreateSessionCommand{
+		firstSession,
+		secondSession,
+	} {
+		if _, err := repository.CreateSession(ctx, actor, command); err != nil {
+			t.Fatalf("CreateSession %s: %v", command.SessionID, err)
+		}
+	}
+
+	turnID := "globally-scoped-turn"
+	if _, err := repository.ConsumeTurn(
+		ctx,
+		actor,
+		persistence.ConsumeTurnCommand{
+			SessionID: firstSession.SessionID,
+			TurnID:    turnID,
+			Payload:   []byte("first-session"),
+		},
+	); err != nil {
+		t.Fatalf("first ConsumeTurn: %v", err)
+	}
+	if _, err := repository.ConsumeTurn(
+		ctx,
+		actor,
+		persistence.ConsumeTurnCommand{
+			SessionID: secondSession.SessionID,
+			TurnID:    turnID,
+			Payload:   []byte("second-session"),
+		},
+	); !errors.Is(err, persistence.ErrIdempotencyConflict) {
+		t.Fatalf(
+			"cross-session ConsumeTurn error = %v, want idempotency conflict",
+			err,
+		)
+	}
+	second, err := repository.GetSession(ctx, actor, secondSession.SessionID)
+	if err != nil {
+		t.Fatalf("GetSession second: %v", err)
+	}
+	if second.EffectiveTurns != 0 || second.Version != 1 {
+		t.Fatalf("second session advanced: %+v", second)
+	}
+}
+
 func TestConcurrentSameTurnAdvancesExactlyOnce(t *testing.T) {
 	repository, pool := newRepository(t)
 	ctx := context.Background()
@@ -349,16 +403,58 @@ func TestActorIsolationAndDeletion(t *testing.T) {
 		UserID:     ownerA.UserID,
 		Generation: 7,
 	}
+	if err := repository.DeleteUserData(ctx, deletion); !errors.Is(
+		err,
+		persistence.ErrNotFound,
+	) {
+		t.Fatalf("active-user DeleteUserData error = %v, want not found", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE identity_users SET account_status = 'deleting' WHERE id = $1
 	`, ownerA.UserID); err != nil {
 		t.Fatalf("fence owner A for deletion: %v", err)
+	}
+	if _, err := repository.GetSession(
+		ctx,
+		ownerA,
+		"shared-session-id",
+	); !errors.Is(err, persistence.ErrNotFound) {
+		t.Fatalf("deleting owner GetSession error = %v, want not found", err)
+	}
+	hidden, err := repository.ListSessions(ctx, ownerA)
+	if err != nil {
+		t.Fatalf("deleting owner ListSessions: %v", err)
+	}
+	if len(hidden) != 0 {
+		t.Fatalf("deleting owner list length = %d, want 0", len(hidden))
+	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM identity_users WHERE id = $1
+	`, ownerA.UserID); err == nil {
+		t.Fatal("Identity physical delete bypassed Practice owner cleanup")
 	}
 	if err := repository.DeleteUserData(ctx, deletion); err != nil {
 		t.Fatalf("first DeleteUserData: %v", err)
 	}
 	if err := repository.DeleteUserData(ctx, deletion); err != nil {
 		t.Fatalf("repeated DeleteUserData: %v", err)
+	}
+	if err := repository.DeleteUserData(ctx, persistence.DeletionContext{
+		UserID:     ownerA.UserID,
+		Generation: 6,
+	}); !errors.Is(err, persistence.ErrDeletionGeneration) {
+		t.Fatalf("stale DeleteUserData error = %v, want generation conflict", err)
+	}
+	var storedGeneration int64
+	if err := pool.QueryRow(ctx, `
+		SELECT deletion_generation
+		FROM practice_deletion_fences
+		WHERE owner_user_id = $1
+	`, ownerA.UserID).Scan(&storedGeneration); err != nil {
+		t.Fatalf("read deletion generation: %v", err)
+	}
+	if storedGeneration != 7 {
+		t.Fatalf("deletion generation = %d, want 7", storedGeneration)
 	}
 	if _, err := repository.GetSession(
 		ctx,
@@ -384,6 +480,18 @@ func TestActorIsolationAndDeletion(t *testing.T) {
 		"shared-session-id",
 	); err != nil {
 		t.Fatalf("owner B session was affected by deletion: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM identity_users WHERE id = $1
+	`, ownerA.UserID); err != nil {
+		t.Fatalf("physical delete after Practice cleanup: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT deletion_generation
+		FROM practice_deletion_fences
+		WHERE owner_user_id = $1
+	`, ownerA.UserID).Scan(&storedGeneration); err != nil {
+		t.Fatalf("deletion fence did not survive Identity removal: %v", err)
 	}
 }
 
@@ -456,12 +564,30 @@ func TestDeletionFenceSerializesWithStaleActorWrite(t *testing.T) {
 	); !errors.Is(err, persistence.ErrNotFound) {
 		t.Fatalf("stale CreateSession error = %v, want not found", err)
 	}
-	session, err := repository.GetSession(ctx, actor, existing.SessionID)
-	if err != nil {
-		t.Fatalf("GetSession after fenced write: %v", err)
+	if _, err := repository.GetSession(
+		ctx,
+		actor,
+		existing.SessionID,
+	); !errors.Is(err, persistence.ErrNotFound) {
+		t.Fatalf("GetSession after identity fence error = %v", err)
 	}
-	if session.EffectiveTurns != 0 || session.Version != 1 {
-		t.Fatalf("session changed across deletion fence: %+v", session)
+	var effectiveTurns, version int
+	if err := pool.QueryRow(ctx, `
+		SELECT effective_turns, version
+		FROM practice_sessions
+		WHERE owner_user_id = $1 AND session_id = $2
+	`, actor.UserID, existing.SessionID).Scan(
+		&effectiveTurns,
+		&version,
+	); err != nil {
+		t.Fatalf("inspect session after fenced write: %v", err)
+	}
+	if effectiveTurns != 0 || version != 1 {
+		t.Fatalf(
+			"session turns/version changed across deletion fence: %d/%d",
+			effectiveTurns,
+			version,
+		)
 	}
 
 	if err := repository.DeleteUserData(ctx, persistence.DeletionContext{
@@ -469,6 +595,68 @@ func TestDeletionFenceSerializesWithStaleActorWrite(t *testing.T) {
 		Generation: 9,
 	}); err != nil {
 		t.Fatalf("DeleteUserData after fence: %v", err)
+	}
+}
+
+func TestModuleDeletionFenceBlocksReadsAndWrites(t *testing.T) {
+	repository, pool := newRepository(t)
+	ctx := context.Background()
+	actor := persistence.Actor{
+		UserID:    "10000000-0000-4000-8000-00000000000c",
+		SessionID: "20000000-0000-4000-8000-00000000000c",
+	}
+	ensureIdentityUsers(t, pool, actor)
+	session := newSession("module-fenced-session", "module-fenced-plan", 3)
+	if _, err := repository.CreateSession(ctx, actor, session); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO practice_deletion_fences (
+			owner_user_id, deletion_generation
+		)
+		VALUES ($1, 1)
+	`, actor.UserID); err != nil {
+		t.Fatalf("insert module deletion fence: %v", err)
+	}
+
+	if _, err := repository.GetSession(
+		ctx,
+		actor,
+		session.SessionID,
+	); !errors.Is(err, persistence.ErrNotFound) {
+		t.Fatalf("fenced GetSession error = %v, want not found", err)
+	}
+	sessions, err := repository.ListSessions(ctx, actor)
+	if err != nil {
+		t.Fatalf("fenced ListSessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("fenced list length = %d, want 0", len(sessions))
+	}
+	if _, err := repository.ConsumeTurn(
+		ctx,
+		actor,
+		persistence.ConsumeTurnCommand{
+			SessionID: session.SessionID,
+			TurnID:    "fenced-turn",
+			Payload:   []byte("blocked"),
+		},
+	); !errors.Is(err, persistence.ErrNotFound) {
+		t.Fatalf("fenced ConsumeTurn error = %v, want not found", err)
+	}
+	if _, err := repository.CreateSession(
+		ctx,
+		actor,
+		newSession("module-fenced-new", "module-fenced-new-plan", 3),
+	); !errors.Is(err, persistence.ErrNotFound) {
+		t.Fatalf("fenced CreateSession error = %v, want not found", err)
+	}
+	if err := repository.DeleteSession(
+		ctx,
+		actor,
+		session.SessionID,
+	); !errors.Is(err, persistence.ErrNotFound) {
+		t.Fatalf("fenced DeleteSession error = %v, want not found", err)
 	}
 }
 
@@ -633,6 +821,50 @@ func TestCreateSessionRollbackLeavesNoPartialAggregate(t *testing.T) {
 			sessionCount,
 			snapshotCount,
 		)
+	}
+}
+
+func TestCreateSessionRejectsEmptyOrDuplicateSnapshotMembers(t *testing.T) {
+	repository, pool := newRepository(t)
+	ctx := context.Background()
+	actor := persistence.Actor{
+		UserID:    "10000000-0000-4000-8000-00000000000e",
+		SessionID: "20000000-0000-4000-8000-00000000000e",
+	}
+	ensureIdentityUsers(t, pool, actor)
+
+	tests := map[string]func(*persistence.SessionSnapshot){
+		"no targets": func(snapshot *persistence.SessionSnapshot) {
+			snapshot.TargetIDs = []string{}
+		},
+		"empty target": func(snapshot *persistence.SessionSnapshot) {
+			snapshot.TargetIDs = []string{"target-1", " "}
+		},
+		"duplicate target": func(snapshot *persistence.SessionSnapshot) {
+			snapshot.TargetIDs = []string{"target-1", "target-1"}
+		},
+		"no participants": func(snapshot *persistence.SessionSnapshot) {
+			snapshot.Participants = []persistence.ParticipantSnapshot{}
+		},
+	}
+	index := 0
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			index++
+			command := newSession(
+				fmt.Sprintf("invalid-snapshot-%d", index),
+				fmt.Sprintf("invalid-snapshot-plan-%d", index),
+				3,
+			)
+			mutate(&command.Snapshot)
+			if _, err := repository.CreateSession(
+				ctx,
+				actor,
+				command,
+			); !errors.Is(err, persistence.ErrInvalidArgument) {
+				t.Fatalf("CreateSession error = %v, want invalid argument", err)
+			}
+		})
 	}
 }
 

@@ -6,5 +6,6 @@ DROP TRIGGER IF EXISTS practice_session_snapshots_immutable
 DROP FUNCTION IF EXISTS reject_practice_snapshot_mutation();
 DROP TABLE IF EXISTS practice_session_snapshots;
 DROP TABLE IF EXISTS practice_sessions;
+DROP TABLE IF EXISTS practice_deletion_fences;
 
 COMMIT;

@@ -15,11 +15,21 @@ CREATE TABLE practice_sessions (
     CONSTRAINT practice_sessions_owner_user_id_fkey
         FOREIGN KEY (owner_user_id)
         REFERENCES identity_users (id)
-        ON DELETE CASCADE,
+        ON DELETE RESTRICT,
     CHECK (
         (status = 'active' AND completed_at IS NULL)
         OR (status = 'completed' AND completed_at IS NOT NULL)
     )
+);
+
+CREATE TABLE practice_deletion_fences (
+    -- Deliberately has no Identity FK: the module tombstone must survive
+    -- physical removal of the authoritative Identity row.
+    owner_user_id uuid PRIMARY KEY,
+    deletion_generation bigint NOT NULL CHECK (deletion_generation > 0),
+    created_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
+    CHECK (updated_at >= created_at)
 );
 
 CREATE UNIQUE INDEX practice_one_active_session_per_plan
@@ -70,6 +80,8 @@ CREATE TABLE practice_turn_results (
     completion_token text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     PRIMARY KEY (owner_user_id, session_id, turn_id),
+    CONSTRAINT practice_turn_results_owner_turn_key
+        UNIQUE (owner_user_id, turn_id),
     UNIQUE (owner_user_id, session_id, round_number),
     FOREIGN KEY (owner_user_id, session_id)
         REFERENCES practice_sessions (owner_user_id, session_id)

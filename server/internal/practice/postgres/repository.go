@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -116,7 +117,10 @@ func (r *Repository) GetSession(
 	}
 
 	return scanSession(r.pool.QueryRow(ctx, sessionSelect+`
-		WHERE s.owner_user_id = $1 AND s.session_id = $2
+		WHERE s.owner_user_id = $1
+		  AND s.session_id = $2
+		  AND owner.account_status = 'active'
+		  AND fence.owner_user_id IS NULL
 	`, actor.UserID, sessionID))
 }
 
@@ -130,6 +134,8 @@ func (r *Repository) ListSessions(
 
 	rows, err := r.pool.Query(ctx, sessionSelect+`
 		WHERE s.owner_user_id = $1
+		  AND owner.account_status = 'active'
+		  AND fence.owner_user_id IS NULL
 		ORDER BY s.created_at, s.session_id
 	`, actor.UserID)
 	if err != nil {
@@ -201,10 +207,13 @@ func (r *Repository) ConsumeTurn(
 		ctx,
 		tx,
 		actor.UserID,
-		command.SessionID,
 		command.TurnID,
 	)
 	if err == nil {
+		if result.SessionID != command.SessionID {
+			return persistence.TurnResult{},
+				persistence.ErrIdempotencyConflict
+		}
 		if !bytes.Equal(storedFingerprint, fingerprint[:]) {
 			return persistence.TurnResult{}, persistence.ErrIdempotencyConflict
 		}
@@ -332,14 +341,70 @@ func (r *Repository) DeleteUserData(
 	deletion persistence.DeletionContext,
 ) error {
 	if r == nil || r.pool == nil || !validUserID(deletion.UserID) ||
-		deletion.Generation == 0 {
+		deletion.Generation == 0 || deletion.Generation > math.MaxInt64 {
 		return persistence.ErrInvalidArgument
 	}
+	generation := int64(deletion.Generation)
 
-	if _, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin delete practice user data: %w", err)
+	}
+	defer rollback(ctx, tx)
+
+	var accountStatus string
+	err = tx.QueryRow(ctx, `
+		SELECT account_status
+		FROM identity_users
+		WHERE id = $1 AND account_status IN ('deleting', 'deleted')
+		FOR SHARE
+	`, deletion.UserID).Scan(&accountStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return persistence.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("verify practice deletion identity state: %w", err)
+	}
+
+	var currentGeneration int64
+	err = tx.QueryRow(ctx, `
+		SELECT deletion_generation
+		FROM practice_deletion_fences
+		WHERE owner_user_id = $1
+		FOR UPDATE
+	`, deletion.UserID).Scan(&currentGeneration)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO practice_deletion_fences (
+				owner_user_id, deletion_generation
+			)
+			VALUES ($1, $2)
+		`, deletion.UserID, generation); err != nil {
+			return classifyWriteError("create practice deletion fence", err)
+		}
+	case err != nil:
+		return fmt.Errorf("read practice deletion fence: %w", err)
+	case generation < currentGeneration:
+		return persistence.ErrDeletionGeneration
+	case generation > currentGeneration:
+		if _, err := tx.Exec(ctx, `
+			UPDATE practice_deletion_fences
+			SET deletion_generation = $2,
+			    updated_at = transaction_timestamp()
+			WHERE owner_user_id = $1
+		`, deletion.UserID, generation); err != nil {
+			return fmt.Errorf("advance practice deletion fence: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
 		DELETE FROM practice_sessions WHERE owner_user_id = $1
 	`, deletion.UserID); err != nil {
 		return fmt.Errorf("delete practice user data: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit practice user deletion: %w", err)
 	}
 	return nil
 }
@@ -355,6 +420,10 @@ const sessionSelect = `
 	JOIN practice_session_snapshots AS snapshot
 	  ON snapshot.owner_user_id = s.owner_user_id
 	 AND snapshot.session_id = s.session_id
+	JOIN identity_users AS owner
+	  ON owner.id = s.owner_user_id
+	LEFT JOIN practice_deletion_fences AS fence
+	  ON fence.owner_user_id = s.owner_user_id
 `
 
 type rowScanner interface {
@@ -399,7 +468,6 @@ func loadTurnResult(
 	ctx context.Context,
 	tx pgx.Tx,
 	ownerUserID string,
-	sessionID string,
 	turnID string,
 ) (persistence.TurnResult, []byte, error) {
 	var result persistence.TurnResult
@@ -410,8 +478,8 @@ func loadTurnResult(
 			effective_turns, session_version, completed,
 			completion_token, created_at
 		FROM practice_turn_results
-		WHERE owner_user_id = $1 AND session_id = $2 AND turn_id = $3
-	`, ownerUserID, sessionID, turnID).Scan(
+		WHERE owner_user_id = $1 AND turn_id = $2
+	`, ownerUserID, turnID).Scan(
 		&result.SessionID,
 		&result.TurnID,
 		&fingerprint,
@@ -440,9 +508,15 @@ func lockActiveActor(
 	var active bool
 	err := tx.QueryRow(ctx, `
 		SELECT true
-		FROM identity_users
-		WHERE id = $1 AND account_status = 'active'
-		FOR SHARE
+		FROM identity_users AS owner
+		WHERE owner.id = $1
+		  AND owner.account_status = 'active'
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM practice_deletion_fences AS fence
+		      WHERE fence.owner_user_id = owner.id
+		  )
+		FOR SHARE OF owner
 	`, userID).Scan(&active)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return persistence.ErrNotFound
@@ -464,8 +538,18 @@ func validUserID(userID string) bool {
 
 func validSnapshot(snapshot persistence.SessionSnapshot) bool {
 	if strings.TrimSpace(snapshot.Mode) == "" || snapshot.TurnLimit <= 0 ||
-		snapshot.TargetIDs == nil || snapshot.Participants == nil {
+		len(snapshot.TargetIDs) == 0 || len(snapshot.Participants) == 0 {
 		return false
+	}
+	targetIDs := make(map[string]struct{}, len(snapshot.TargetIDs))
+	for _, targetID := range snapshot.TargetIDs {
+		if strings.TrimSpace(targetID) == "" {
+			return false
+		}
+		if _, exists := targetIDs[targetID]; exists {
+			return false
+		}
+		targetIDs[targetID] = struct{}{}
 	}
 	participantIDs := make(map[string]struct{}, len(snapshot.Participants))
 	subjects := make(map[string]struct{}, len(snapshot.Participants))
@@ -512,6 +596,10 @@ func classifyWriteError(operation string, err error) error {
 		case "23503":
 			return persistence.ErrNotFound
 		case "23505":
+			if postgresError.ConstraintName ==
+				"practice_turn_results_owner_turn_key" {
+				return persistence.ErrIdempotencyConflict
+			}
 			return persistence.ErrConflict
 		}
 	}
