@@ -20,6 +20,7 @@ import (
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
@@ -59,6 +60,9 @@ type VoiceConfiguration struct {
 	Synthesizer             ai.SpeechSynthesizer
 	TemporaryAudio          conversation.TemporaryAudioVault
 	Ports                   VoicePorts
+	Recordings              conversation.VoiceRecordingLifecycle
+	ObjectStore             objectstore.Store
+	AudioStagedTTL          time.Duration
 	ASRLease                time.Duration
 	ReviewGenerationTimeout time.Duration
 	AudioReadTimeout        time.Duration
@@ -123,11 +127,12 @@ func buildVoiceApplication(
 		ports.Reviews == nil {
 		return nil, errors.New("bootstrap: voice dependencies are required")
 	}
-	conversations, err := conversation.NewVoiceRoundService(
+	conversations, err := conversation.NewVoiceRoundServiceWithRecordings(
 		ports.ConversationStore,
 		configuration.TemporaryAudio,
 		configuration.Recognizer,
 		configuration.Synthesizer,
+		configuration.Recordings,
 	)
 	if err != nil {
 		return nil, err
@@ -155,7 +160,11 @@ func buildProductionVoiceApplication(
 	textGenerator ai.TextGenerator,
 	matters matter.Reader,
 	configuration VoiceConfiguration,
-) (*agent.VoiceSessionApplication, error) {
+) (
+	*agent.VoiceSessionApplication,
+	*conversation.AudioAssetService,
+	error,
+) {
 	if database == nil || textGenerator == nil || matters == nil ||
 		configuration.Recognizer == nil ||
 		configuration.Synthesizer == nil ||
@@ -163,7 +172,8 @@ func buildProductionVoiceApplication(
 		configuration.ASRLease <= 0 ||
 		configuration.ReviewGenerationTimeout <= 0 ||
 		configuration.ReviewGenerationTimeout > voiceReviewMaxGeneration {
-		return nil, errors.New("bootstrap: voice dependencies are required")
+		return nil, nil,
+			errors.New("bootstrap: voice dependencies are required")
 	}
 
 	practiceRepository := practicepostgres.New(database)
@@ -172,28 +182,53 @@ func buildProductionVoiceApplication(
 		"speakup.user",
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	practiceProgressPort, err := NewPracticeVoicePort(practiceApplication)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	conversationRepository, err := conversationpostgres.New(database)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	conversationStore := &voiceConversationStore{
 		repository: conversationRepository,
 		asrLease:   configuration.ASRLease,
 	}
-	conversationService, err := conversation.NewVoiceRoundService(
-		conversationStore,
-		configuration.TemporaryAudio,
-		configuration.Recognizer,
-		configuration.Synthesizer,
-	)
+	var audioAssets *conversation.AudioAssetService
+	if configuration.ObjectStore != nil {
+		audioRepository, repositoryErr :=
+			conversationpostgres.NewAudioAssetRepository(database)
+		if repositoryErr != nil {
+			return nil, nil, repositoryErr
+		}
+		audioAssets, err = conversation.NewAudioAssetService(
+			audioRepository,
+			configuration.ObjectStore,
+			conversation.SecureAudioAssetIDGenerator{},
+			conversation.NewAudioAssetSystemClock(),
+			audioRepository,
+			configuration.AudioStagedTTL,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	var recordingLifecycle conversation.VoiceRecordingLifecycle
+	if audioAssets != nil {
+		recordingLifecycle = audioAssets
+	}
+	conversationService, err :=
+		conversation.NewVoiceRoundServiceWithRecordings(
+			conversationStore,
+			configuration.TemporaryAudio,
+			configuration.Recognizer,
+			configuration.Synthesizer,
+			recordingLifecycle,
+		)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	practiceAdapter := &voicePracticeAdapter{
 		repository: practiceRepository,
@@ -204,7 +239,10 @@ func buildProductionVoiceApplication(
 		generator:  textGenerator,
 		speech:     conversationService,
 	}
-	checkpointAdapter := &voiceCheckpointAdapter{repository: conversationRepository}
+	checkpointAdapter := &voiceCheckpointAdapter{
+		repository:  conversationRepository,
+		audioAssets: audioAssets,
+	}
 	sourceReader := &voiceReviewSourceReader{
 		conversations: conversationRepository,
 		practice:      practiceRepository,
@@ -230,7 +268,7 @@ func buildProductionVoiceApplication(
 		reviewAdapter,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	application, err := agent.NewVoiceSessionApplication(
 		practiceAdapter,
@@ -241,9 +279,9 @@ func buildProductionVoiceApplication(
 		matters,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return application, nil
+	return application, audioAssets, nil
 }
 
 type voicePracticeAdapter struct {
@@ -766,6 +804,7 @@ func (store *voiceConversationStore) mapCandidate(
 	}
 	return conversation.TranscriptionCandidate{
 		ID:                      candidate.ID,
+		ReservationID:           candidate.ReservationID,
 		SessionID:               candidate.SessionID,
 		QuestionID:              candidate.QuestionID,
 		QuestionSpeakerID:       question.SpeakerParticipantID,
@@ -1063,7 +1102,8 @@ func (adapter *voiceQuestionAdapter) SynthesizeQuestion(
 }
 
 type voiceCheckpointAdapter struct {
-	repository conversationpersistence.PersistenceStore
+	repository  conversationpersistence.PersistenceStore
+	audioAssets *conversation.AudioAssetService
 }
 
 func (adapter *voiceCheckpointAdapter) LatestTurn(
@@ -1097,6 +1137,22 @@ func (adapter *voiceCheckpointAdapter) LatestTurn(
 	if err != nil {
 		return conversation.ConfirmedVoiceTurn{}, false, err
 	}
+	if adapter.audioAssets == nil {
+		return turn, true, nil
+	}
+	asset, err := adapter.audioAssets.GetReadableByTurn(
+		ctx,
+		conversation.AudioAssetActor{UserID: actor.UserID},
+		turn.ID,
+	)
+	if errors.Is(err, conversation.ErrAudioAssetNotFound) ||
+		errors.Is(err, conversation.ErrAudioAssetInvalidTransition) {
+		return turn, true, nil
+	}
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, false, err
+	}
+	turn.AudioAssetID = asset.ID
 	return turn, true, nil
 }
 

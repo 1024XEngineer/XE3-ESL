@@ -42,6 +42,7 @@ type HTTPHandler struct {
 	application      Application
 	runs             RunApplication
 	voice            *VoiceSessionApplication
+	audioAssets      conversation.AudioAssetHTTPService
 	matters          matter.Application
 	authenticator    identity.Authenticator
 	correlationID    CorrelationIDGenerator
@@ -60,6 +61,7 @@ func NewHTTPHandler(
 		matters,
 		authenticator,
 		correlationID,
+		voiceOptions...,
 	)
 }
 
@@ -69,6 +71,7 @@ func NewHTTPHandlerWithRuns(
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
+	voiceOptions ...VoiceHTTPOptions,
 ) (*HTTPHandler, error) {
 	return NewHTTPHandlerWithRunsAndVoice(
 		application,
@@ -88,6 +91,26 @@ func NewHTTPHandlerWithRunsAndVoice(
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
 	voiceOptions ...VoiceHTTPOptions,
+) (*HTTPHandler, error) {
+	return NewHTTPHandlerWithRunsVoiceAndAudio(
+		application,
+		runs,
+		voice,
+		nil,
+		matters,
+		authenticator,
+		correlationID,
+	)
+}
+
+func NewHTTPHandlerWithRunsVoiceAndAudio(
+	application Application,
+	runs RunApplication,
+	voice *VoiceSessionApplication,
+	audioAssets conversation.AudioAssetHTTPService,
+	matters matter.Application,
+	authenticator identity.Authenticator,
+	correlationID CorrelationIDGenerator,
 ) (*HTTPHandler, error) {
 	if application == nil || matters == nil || authenticator == nil {
 		return nil, errors.New("agent: HTTP dependency is required")
@@ -109,6 +132,7 @@ func NewHTTPHandlerWithRunsAndVoice(
 		application:      application,
 		runs:             runs,
 		voice:            voice,
+		audioAssets:      audioAssets,
 		matters:          matters,
 		authenticator:    authenticator,
 		correlationID:    correlationID,
@@ -178,6 +202,25 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 			h.questionSpeech,
 		)
 		protected.GET("/v1/formal-reviews/:review_id", h.getFormalReview)
+	}
+	if h.audioAssets != nil {
+		_ = conversation.RegisterAudioAssetRoutes(
+			protected,
+			h.audioAssets,
+			conversation.AudioAssetActorResolverFunc(
+				func(request *http.Request) (
+					conversation.AudioAssetActor,
+					bool,
+				) {
+					actor, ok := requestcontext.ActorFromContext(
+						request.Context(),
+					)
+					return conversation.AudioAssetActor{
+						UserID: actor.UserID,
+					}, ok && actor.Valid()
+				},
+			),
+		)
 	}
 }
 
@@ -1105,6 +1148,9 @@ func confirmedVoiceTurnResponse(turn conversation.ConfirmedVoiceTurn) gin.H {
 	}
 	if turn.ReviewID != "" {
 		result["review_id"] = turn.ReviewID
+	}
+	if turn.AudioAssetID != "" {
+		result["audio_asset_id"] = turn.AudioAssetID
 	}
 	return result
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -75,8 +76,9 @@ func NewIdentityAndAgentModules(
 		return nil, nil, err
 	}
 	var voiceApplication *agent.VoiceSessionApplication
+	var audioAssets *conversation.AudioAssetService
 	if len(voiceConfigurations) == 1 {
-		voiceApplication, err = buildProductionVoiceApplication(
+		voiceApplication, audioAssets, err = buildProductionVoiceApplication(
 			database,
 			generator,
 			matterService,
@@ -96,10 +98,11 @@ func NewIdentityAndAgentModules(
 			},
 		)
 	}
-	handler, err := agent.NewHTTPHandlerWithRunsAndVoice(
+	handler, err := agent.NewHTTPHandlerWithRunsVoiceAndAudio(
 		agentService,
 		runService,
 		voiceApplication,
+		audioAssets,
 		matterService,
 		authenticator,
 		nil,

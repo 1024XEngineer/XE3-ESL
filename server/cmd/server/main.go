@@ -17,6 +17,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/database"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
@@ -113,6 +114,21 @@ func run() int {
 	}
 	defer databasePool.Close()
 
+	var recordingStore objectstore.Store
+	if storageConfig.Enabled {
+		recordingStore, err = productionAudioCleanupFactories.newStore(
+			ctx,
+			storageConfig,
+		)
+		if err != nil {
+			logger.Error(
+				"object storage startup failed",
+				slog.String("error_kind", "dependency"),
+			)
+			return 1
+		}
+	}
+
 	identityModule, agentModule, err :=
 		bootstrap.NewIdentityAndAgentModules(
 			ctx,
@@ -130,6 +146,8 @@ func run() int {
 				Recognizer:     recognizer,
 				Synthesizer:    synthesizer,
 				TemporaryAudio: audioVault,
+				ObjectStore:    recordingStore,
+				AudioStagedTTL: 24 * time.Hour,
 				ASRLease:       asrConfig.Timeout + 15*time.Second,
 				// The existing Review lease is 30s. Bound the parent context
 				// below it even when the shared provider client allows 60s.
