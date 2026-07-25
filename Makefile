@@ -26,7 +26,7 @@ help:
 		'  make check          Run Flutter, Go, API, and deterministic smoke checks' \
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-go       Run Go format, vet, and test checks' \
-		'  make check-oss-live Run the explicit real OSS object lifecycle test' \
+		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-smoke    Run the deterministic Mock main flow'
 
@@ -70,6 +70,7 @@ check-oss-live:
 		if [[ -z "$${!name:-}" ]]; then missing+=("$$name"); fi; \
 	done; \
 	if (( $${#missing[@]} > 0 )); then \
+		printf '%s\n' 'This target intentionally does not load or execute .env.'; \
 		printf 'Export the required OSS variables before running this target. Missing:'; \
 		printf ' %s' "$${missing[@]}"; \
 		printf '\n'; \
