@@ -26,7 +26,7 @@ CREATE TABLE reviews (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     completed_at timestamptz,
-    UNIQUE (owner_user_id, practice_session_id, implementation_version),
+    UNIQUE (owner_user_id, practice_session_id),
     UNIQUE (id, owner_user_id),
     CONSTRAINT reviews_state_shape_check CHECK (
         (

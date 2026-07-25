@@ -62,8 +62,7 @@ func (r *PostgresRepository) EnsurePending(
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
 		ON CONFLICT (
 			owner_user_id,
-			practice_session_id,
-			implementation_version
+			practice_session_id
 		) DO NOTHING
 	`, command.Actor.UserID, command.PracticeSessionID,
 		command.ImplementationVersion, command.SourceTurnID,
@@ -76,15 +75,16 @@ func (r *PostgresRepository) EnsurePending(
 	row := tx.QueryRow(ctx, reviewSelect+`
 		WHERE owner_user_id = $1
 		  AND practice_session_id = $2
-		  AND implementation_version = $3
-	`, command.Actor.UserID, command.PracticeSessionID,
-		command.ImplementationVersion)
+	`, command.Actor.UserID, command.PracticeSessionID)
 	review, err := scanReview(row)
 	if err != nil {
 		return FormalReview{}, err
 	}
 	if review.DeletionGeneration != command.Actor.DeletionGeneration {
 		return FormalReview{}, ErrAccountDeleted
+	}
+	if review.ImplementationVersion != command.ImplementationVersion {
+		return FormalReview{}, ErrReviewImplementationConflict
 	}
 	if review.SourceTurnID != command.SourceTurnID ||
 		review.SourceTurnVersion != command.SourceTurnVersion ||

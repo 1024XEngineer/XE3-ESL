@@ -20,14 +20,15 @@ const (
 )
 
 var (
-	ErrInvalidReview           = errors.New("invalid review")
-	ErrReviewNotFound          = errors.New("review not found")
-	ErrAccountDeleted          = errors.New("review account data deleted")
-	ErrGenerationFailed        = errors.New("review generation failed")
-	ErrGenerationClaimLost     = errors.New("review generation claim lost")
-	ErrEvidenceRequired        = errors.New("review evidence required")
-	ErrReviewSourceConflict    = errors.New("review source conflict")
-	ErrDeletionGenerationStale = errors.New("review deletion generation stale")
+	ErrInvalidReview                = errors.New("invalid review")
+	ErrReviewNotFound               = errors.New("review not found")
+	ErrAccountDeleted               = errors.New("review account data deleted")
+	ErrGenerationFailed             = errors.New("review generation failed")
+	ErrGenerationClaimLost          = errors.New("review generation claim lost")
+	ErrEvidenceRequired             = errors.New("review evidence required")
+	ErrReviewSourceConflict         = errors.New("review source conflict")
+	ErrReviewImplementationConflict = errors.New("review implementation conflict")
+	ErrDeletionGenerationStale      = errors.New("review deletion generation stale")
 )
 
 // Actor is the trusted identity projection consumed by Review. Delivery and

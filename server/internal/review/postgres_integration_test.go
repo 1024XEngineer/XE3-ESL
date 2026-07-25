@@ -94,6 +94,102 @@ func TestPostgresEnsureReviewConcurrentAndRestartRecovery(t *testing.T) {
 	}
 }
 
+func TestPostgresEnsureReviewImplementationConflictConcurrent(t *testing.T) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+
+	repository := review.NewPostgresRepository(pool)
+	generator := &countingGenerator{delay: 50 * time.Millisecond}
+	service := review.NewEnsureService(repository, sourceReader{}, generator)
+
+	type ensureResult struct {
+		review review.FormalReview
+		err    error
+	}
+	const callerCount = 16
+	start := make(chan struct{})
+	results := make(chan ensureResult, callerCount)
+	var callers sync.WaitGroup
+	callers.Add(callerCount)
+	for caller := range callerCount {
+		implementationVersion := "review-v1"
+		if caller%2 == 1 {
+			implementationVersion = "review-v2"
+		}
+		go func() {
+			defer callers.Done()
+			<-start
+			command := ensureCommand(userA, "implementation-conflict")
+			command.ImplementationVersion = implementationVersion
+			formalReview, err := service.EnsureReview(
+				context.Background(),
+				command,
+			)
+			results <- ensureResult{review: formalReview, err: err}
+		}()
+	}
+	close(start)
+	callers.Wait()
+	close(results)
+
+	var winnerVersion string
+	var winnerID string
+	successes := 0
+	conflicts := 0
+	for result := range results {
+		switch {
+		case result.err == nil:
+			successes++
+			if winnerVersion == "" {
+				winnerVersion = result.review.ImplementationVersion
+				winnerID = result.review.ID
+			} else if result.review.ImplementationVersion != winnerVersion ||
+				result.review.ID != winnerID {
+				t.Fatalf(
+					"successful Ensure returned %+v, want version %s id %s",
+					result.review,
+					winnerVersion,
+					winnerID,
+				)
+			}
+		case errors.Is(result.err, review.ErrReviewImplementationConflict):
+			conflicts++
+		default:
+			t.Fatalf("concurrent implementation Ensure error = %v", result.err)
+		}
+	}
+	if successes == 0 || conflicts == 0 {
+		t.Fatalf(
+			"successes = %d, conflicts = %d, want both outcomes",
+			successes,
+			conflicts,
+		)
+	}
+	if got := generator.calls.Load(); got != 1 {
+		t.Fatalf("generator calls = %d, want 1", got)
+	}
+	assertSessionReviewCount(
+		t,
+		pool,
+		userA,
+		"implementation-conflict",
+		1,
+	)
+
+	losingVersion := "review-v1"
+	if winnerVersion == losingVersion {
+		losingVersion = "review-v2"
+	}
+	losingCommand := ensureCommand(userA, "implementation-conflict")
+	losingCommand.ImplementationVersion = losingVersion
+	if _, err := service.EnsureReview(
+		context.Background(),
+		losingCommand,
+	); !errors.Is(err, review.ErrReviewImplementationConflict) {
+		t.Fatalf("sequential implementation conflict error = %v", err)
+	}
+}
+
 func TestPostgresReviewFailureRetryPendingAndLostResponseRecovery(t *testing.T) {
 	pool := reviewDatabase(t)
 	insertUsers(t, pool, userA)
@@ -829,6 +925,27 @@ func assertReviewCount(
 	}
 	if count != want {
 		t.Fatalf("Review row count = %d, want %d", count, want)
+	}
+}
+
+func assertSessionReviewCount(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	userID string,
+	sessionID string,
+	want int,
+) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM reviews
+		WHERE owner_user_id = $1 AND practice_session_id = $2
+	`, userID, sessionID).Scan(&count); err != nil {
+		t.Fatalf("count Session Review rows: %v", err)
+	}
+	if count != want {
+		t.Fatalf("Session Review row count = %d, want %d", count, want)
 	}
 }
 
