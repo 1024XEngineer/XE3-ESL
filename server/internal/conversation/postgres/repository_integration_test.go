@@ -78,6 +78,29 @@ func TestRepositoryRecoversQuestionCandidateAttemptAndTurn(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(recoveredCandidate, candidate) {
 		t.Fatalf("recovered candidate = %#v, %v; want %#v", recoveredCandidate, err, candidate)
 	}
+	if recoveredCandidate.ReservationID != reservation.ID {
+		t.Fatalf(
+			"recovered candidate reservation = %q, want %q",
+			recoveredCandidate.ReservationID,
+			reservation.ID,
+		)
+	}
+	recoveredReservation, err := restarted.GetReservation(
+		context.Background(),
+		actor,
+		recoveredCandidate.ReservationID,
+	)
+	if err != nil {
+		t.Fatalf("recover candidate reservation: %v", err)
+	}
+	if recoveredReservation.IdempotencyKey != reservation.IdempotencyKey ||
+		recoveredReservation.CandidateID != recoveredCandidate.ID {
+		t.Fatalf(
+			"recovered candidate correlation = reservation %#v, candidate %#v",
+			recoveredReservation,
+			recoveredCandidate,
+		)
+	}
 	attempts, err := restarted.ListProcessingAttempts(
 		context.Background(),
 		actor,
@@ -135,6 +158,13 @@ func TestRepositoryRecoversQuestionCandidateAttemptAndTurn(t *testing.T) {
 	)
 	if err != nil || !reflect.DeepEqual(recoveredTurn, turn) {
 		t.Fatalf("recovered turn = %#v, %v; want %#v", recoveredTurn, err, turn)
+	}
+	if recoveredTurn.CandidateID != recoveredCandidate.ID {
+		t.Fatalf(
+			"recovered turn candidate = %q, want %q",
+			recoveredTurn.CandidateID,
+			recoveredCandidate.ID,
+		)
 	}
 }
 
