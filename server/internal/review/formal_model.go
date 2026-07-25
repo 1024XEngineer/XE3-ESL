@@ -157,6 +157,42 @@ type DeleteUserReviewsCommand struct {
 	DeletionGeneration int64
 }
 
+type persistedGenerationFailure struct {
+	category string
+}
+
+func (failure persistedGenerationFailure) Error() string {
+	return "review generation failed: " + failure.category
+}
+
+func (failure persistedGenerationFailure) StableCategory() string {
+	return failure.category
+}
+
+func failedGenerationError(category string) error {
+	category = strings.TrimSpace(category)
+	if !validStableErrorCategory(category) {
+		return ErrGenerationFailed
+	}
+	return errors.Join(
+		ErrGenerationFailed,
+		persistedGenerationFailure{category: category},
+	)
+}
+
+func terminalGenerationCategory(category string) bool {
+	switch strings.TrimSpace(category) {
+	case "invalid_request",
+		"configuration",
+		"authentication",
+		"authorization",
+		"quota_exhausted":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c EnsureReviewCommand) validate() error {
 	if err := c.Actor.validate(); err != nil {
 		return err

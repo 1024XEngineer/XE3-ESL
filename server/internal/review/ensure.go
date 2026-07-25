@@ -56,6 +56,10 @@ func (s *EnsureService) EnsureReview(
 	if current.Status == FormalReviewCompleted {
 		return current, nil
 	}
+	if current.Status == FormalReviewFailed &&
+		terminalGenerationCategory(current.StableErrorCategory) {
+		return current, failedGenerationError(current.StableErrorCategory)
+	}
 
 	for {
 		current, claim, claimed, err := s.repository.ClaimGeneration(
@@ -74,7 +78,9 @@ func (s *EnsureService) EnsureReview(
 			return current, nil
 		}
 		if current.Status == FormalReviewFailed {
-			return current, ErrGenerationFailed
+			return current, failedGenerationError(
+				current.StableErrorCategory,
+			)
 		}
 
 		timer := time.NewTimer(s.pollInterval)

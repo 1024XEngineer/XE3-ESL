@@ -369,6 +369,77 @@ func TestPostgresReviewFailureRetryPendingAndLostResponseRecovery(t *testing.T) 
 	}
 }
 
+func TestPostgresReviewTerminalFailureDoesNotCallGeneratorAfterRestart(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	command := ensureCommand(userA, "session-quota-exhausted")
+	generator := &terminalCountingGenerator{}
+
+	firstService := review.NewEnsureService(
+		review.NewPostgresRepository(pool),
+		sourceReader{},
+		generator,
+	)
+	if _, err := firstService.EnsureReview(
+		context.Background(),
+		command,
+	); !errors.Is(err, review.ErrGenerationFailed) {
+		t.Fatalf("first quota failure error = %v", err)
+	}
+
+	// Rebuild both service and Repository to exercise the persisted restart
+	// path. Repeated resumes must surface the same terminal classification
+	// without creating a new attempt or spending provider quota.
+	restarted := review.NewEnsureService(
+		review.NewPostgresRepository(pool),
+		sourceReader{},
+		generator,
+	)
+	for attempt := 0; attempt < 3; attempt++ {
+		_, err := restarted.EnsureReview(context.Background(), command)
+		if !errors.Is(err, review.ErrGenerationFailed) {
+			t.Fatalf("resume %d error = %v", attempt+1, err)
+		}
+		var categorized review.StableGenerationError
+		if !errors.As(err, &categorized) ||
+			categorized.StableCategory() != "quota_exhausted" {
+			t.Fatalf("resume %d lost quota classification: %v", attempt+1, err)
+		}
+	}
+	if got := generator.calls.Load(); got != 1 {
+		t.Fatalf("generator calls = %d, want 1", got)
+	}
+
+	repository := review.NewPostgresRepository(pool)
+	persisted, err := repository.EnsurePending(
+		context.Background(),
+		command,
+	)
+	if err != nil {
+		t.Fatalf("read persisted quota failure: %v", err)
+	}
+	attempts, err := repository.ListAttempts(
+		context.Background(),
+		command.Actor,
+		persisted.ID,
+	)
+	if err != nil {
+		t.Fatalf("list quota attempts: %v", err)
+	}
+	if persisted.Status != review.FormalReviewFailed ||
+		persisted.StableErrorCategory != "quota_exhausted" ||
+		len(attempts) != 1 ||
+		attempts[0].StableErrorCategory != "quota_exhausted" {
+		t.Fatalf(
+			"persisted terminal failure = %+v, attempts = %+v",
+			persisted,
+			attempts,
+		)
+	}
+}
+
 func TestPostgresReviewOwnerIsolationDeletionAndOldWorkerFence(t *testing.T) {
 	pool := reviewDatabase(t)
 	insertUsers(t, pool, userA, userB, userC)
@@ -877,6 +948,28 @@ type categorizedError struct{}
 
 func (categorizedError) Error() string          { return "temporary provider failure" }
 func (categorizedError) StableCategory() string { return "provider_timeout" }
+
+type terminalCountingGenerator struct {
+	calls atomic.Int32
+}
+
+func (generator *terminalCountingGenerator) GenerateReview(
+	context.Context,
+	review.ReviewGenerationInput,
+) (review.GeneratedReview, error) {
+	generator.calls.Add(1)
+	return review.GeneratedReview{}, terminalCategorizedError{}
+}
+
+type terminalCategorizedError struct{}
+
+func (terminalCategorizedError) Error() string {
+	return "free quota exhausted"
+}
+
+func (terminalCategorizedError) StableCategory() string {
+	return "quota_exhausted"
+}
 
 func validResult() review.ReviewResult {
 	return review.ReviewResult{
