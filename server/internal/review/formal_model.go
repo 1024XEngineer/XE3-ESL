@@ -212,11 +212,8 @@ func validateGenerated(
 	source ReviewSourceSnapshot,
 	generated GeneratedReview,
 ) ([]ReviewEvidence, error) {
-	if generated.Result.OverallScore < 0 ||
-		generated.Result.OverallScore > 100 ||
-		strings.TrimSpace(generated.Result.Summary) == "" ||
-		len(generated.Result.Conclusions) == 0 {
-		return nil, ErrInvalidReview
+	if err := validateReviewResult(generated.Result); err != nil {
+		return nil, err
 	}
 
 	sourceByKey := make(map[string]SourceObject, len(source.Sources))
@@ -283,6 +280,82 @@ func validateGenerated(
 		}
 	}
 	return evidence, nil
+}
+
+func validateCompletionPayload(
+	result ReviewResult,
+	evidence []ReviewEvidence,
+) error {
+	if err := validateReviewResult(result); err != nil {
+		return err
+	}
+	if len(evidence) == 0 {
+		return ErrEvidenceRequired
+	}
+
+	conclusions := make(map[string]bool, len(result.Conclusions))
+	for _, conclusion := range result.Conclusions {
+		conclusions[conclusion.Key] = false
+	}
+	for _, item := range evidence {
+		if strings.TrimSpace(item.ConclusionKey) == "" ||
+			strings.TrimSpace(item.SourceType) == "" ||
+			strings.TrimSpace(item.SourceID) == "" ||
+			strings.TrimSpace(item.SourceVersion) == "" ||
+			len(item.Snapshot) > 16*1024 ||
+			(len(item.Snapshot) > 0 && !json.Valid(item.Snapshot)) {
+			return ErrInvalidReview
+		}
+		if _, exists := conclusions[item.ConclusionKey]; !exists {
+			return ErrInvalidReview
+		}
+		conclusions[item.ConclusionKey] = true
+	}
+	for key, covered := range conclusions {
+		if !covered {
+			return fmt.Errorf("%w: conclusion %q", ErrEvidenceRequired, key)
+		}
+	}
+	return nil
+}
+
+func validateReviewResult(result ReviewResult) error {
+	if result.OverallScore < 0 ||
+		result.OverallScore > 100 ||
+		strings.TrimSpace(result.Summary) == "" ||
+		len(result.Conclusions) == 0 {
+		return ErrInvalidReview
+	}
+	conclusions := make(map[string]struct{}, len(result.Conclusions))
+	for _, conclusion := range result.Conclusions {
+		key := strings.TrimSpace(conclusion.Key)
+		if key == "" ||
+			key != conclusion.Key ||
+			strings.TrimSpace(conclusion.Category) == "" ||
+			strings.TrimSpace(conclusion.Message) == "" {
+			return ErrInvalidReview
+		}
+		if _, exists := conclusions[key]; exists {
+			return ErrInvalidReview
+		}
+		conclusions[key] = struct{}{}
+	}
+	return nil
+}
+
+func validStableErrorCategory(category string) bool {
+	if len(category) == 0 || len(category) > 64 {
+		return false
+	}
+	for index, character := range category {
+		if (character >= 'a' && character <= 'z') ||
+			(index > 0 && character >= '0' && character <= '9') ||
+			(index > 0 && character == '_') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func sourceKey(sourceType, sourceID, sourceVersion string) string {

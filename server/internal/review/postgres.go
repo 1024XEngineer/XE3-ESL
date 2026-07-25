@@ -270,9 +270,11 @@ func (r *PostgresRepository) CompleteGeneration(
 	result ReviewResult,
 	evidence []ReviewEvidence,
 ) (FormalReview, error) {
-	if r == nil || r.pool == nil || errInvalidClaim(claim) ||
-		len(evidence) == 0 {
+	if r == nil || r.pool == nil || errInvalidClaim(claim) {
 		return FormalReview{}, ErrInvalidReview
+	}
+	if err := validateCompletionPayload(result, evidence); err != nil {
+		return FormalReview{}, err
 	}
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
@@ -347,12 +349,6 @@ func (r *PostgresRepository) CompleteGeneration(
 	}
 
 	for _, item := range evidence {
-		if strings.TrimSpace(item.ConclusionKey) == "" ||
-			strings.TrimSpace(item.SourceType) == "" ||
-			strings.TrimSpace(item.SourceID) == "" ||
-			strings.TrimSpace(item.SourceVersion) == "" {
-			return FormalReview{}, ErrInvalidReview
-		}
 		var snapshot any
 		if len(item.Snapshot) > 0 {
 			if !json.Valid(item.Snapshot) {

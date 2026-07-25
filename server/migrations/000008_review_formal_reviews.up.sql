@@ -22,7 +22,10 @@ CREATE TABLE reviews (
         status IN ('pending', 'generating', 'completed', 'failed')
     ),
     result jsonb,
-    stable_error_category text,
+    stable_error_category text CHECK (
+        stable_error_category IS NULL
+        OR octet_length(stable_error_category) BETWEEN 1 AND 128
+    ),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     completed_at timestamptz,
@@ -67,7 +70,10 @@ CREATE TABLE review_generation_attempts (
         status IN ('running', 'succeeded', 'failed', 'cancelled')
     ),
     lease_until timestamptz NOT NULL,
-    stable_error_category text,
+    stable_error_category text CHECK (
+        stable_error_category IS NULL
+        OR octet_length(stable_error_category) BETWEEN 1 AND 128
+    ),
     started_at timestamptz NOT NULL DEFAULT now(),
     finished_at timestamptz,
     UNIQUE (review_id, attempt_number),
@@ -114,7 +120,17 @@ CREATE TABLE review_evidence (
     FOREIGN KEY (review_id, owner_user_id)
         REFERENCES reviews (id, owner_user_id)
         ON DELETE CASCADE,
-    CHECK (source_checksum IS NULL OR source_checksum <> '')
+    CHECK (
+        source_checksum IS NULL
+        OR (
+            source_checksum <> ''
+            AND octet_length(source_checksum) <= 512
+        )
+    ),
+    CHECK (
+        evidence_snapshot IS NULL
+        OR octet_length(evidence_snapshot::text) <= 16384
+    )
 );
 
 CREATE INDEX review_evidence_source_idx
@@ -143,8 +159,28 @@ BEGIN
         RETURN;
     END IF;
 
-    IF jsonb_typeof(target_result -> 'conclusions') <> 'array'
-       OR jsonb_array_length(target_result -> 'conclusions') = 0 THEN
+    IF jsonb_typeof(target_result) IS DISTINCT FROM 'object'
+       OR jsonb_typeof(target_result -> 'overall_score') IS DISTINCT FROM 'number'
+       OR jsonb_typeof(target_result -> 'summary') IS DISTINCT FROM 'string'
+       OR btrim(target_result ->> 'summary') = '' THEN
+        RAISE EXCEPTION 'completed review result has invalid structure'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF (target_result ->> 'overall_score')::numeric < 0
+       OR (target_result ->> 'overall_score')::numeric > 100
+       OR (target_result ->> 'overall_score')::numeric
+            <> trunc((target_result ->> 'overall_score')::numeric) THEN
+        RAISE EXCEPTION 'completed review score must be an integer from 0 to 100'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF jsonb_typeof(target_result -> 'conclusions') IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'completed review must contain conclusions'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF jsonb_array_length(target_result -> 'conclusions') = 0 THEN
         RAISE EXCEPTION 'completed review must contain conclusions'
             USING ERRCODE = '23514';
     END IF;
@@ -152,7 +188,13 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM jsonb_array_elements(target_result -> 'conclusions') conclusion
-        WHERE coalesce(conclusion ->> 'key', '') = ''
+        WHERE jsonb_typeof(conclusion) IS DISTINCT FROM 'object'
+           OR jsonb_typeof(conclusion -> 'key') IS DISTINCT FROM 'string'
+           OR btrim(conclusion ->> 'key') = ''
+           OR jsonb_typeof(conclusion -> 'category') IS DISTINCT FROM 'string'
+           OR btrim(conclusion ->> 'category') = ''
+           OR jsonb_typeof(conclusion -> 'message') IS DISTINCT FROM 'string'
+           OR btrim(conclusion ->> 'message') = ''
            OR NOT EXISTS (
                 SELECT 1
                 FROM review_evidence evidence
@@ -166,6 +208,17 @@ BEGIN
            )
     ) THEN
         RAISE EXCEPTION 'each completed review conclusion requires evidence'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF (
+        SELECT count(*)
+        FROM jsonb_array_elements(target_result -> 'conclusions')
+    ) <> (
+        SELECT count(DISTINCT conclusion ->> 'key')
+        FROM jsonb_array_elements(target_result -> 'conclusions') conclusion
+    ) THEN
+        RAISE EXCEPTION 'completed review conclusion keys must be unique'
             USING ERRCODE = '23514';
     END IF;
 END;

@@ -14,6 +14,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -661,6 +662,97 @@ func TestPostgresCompletedReviewAndEvidenceOwnershipConstraints(t *testing.T) {
 		VALUES ($1, $2, 'summary', 'turn', 'turn-1', 'v1')
 	`, pending.ID, userB); err == nil {
 		t.Fatal("cross-owner evidence unexpectedly passed composite foreign key")
+	}
+}
+
+func TestPostgresCompletedReviewRejectsInvalidResultShapes(t *testing.T) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	repository := review.NewPostgresRepository(pool)
+	cases := []struct {
+		name   string
+		result string
+	}{
+		{
+			name:   "score above range",
+			result: `{"overall_score":101,"summary":"Summary","conclusions":[{"key":"summary","category":"clarity","message":"Clear."}]}`,
+		},
+		{
+			name:   "fractional score",
+			result: `{"overall_score":82.5,"summary":"Summary","conclusions":[{"key":"summary","category":"clarity","message":"Clear."}]}`,
+		},
+		{
+			name:   "blank summary",
+			result: `{"overall_score":82,"summary":" ","conclusions":[{"key":"summary","category":"clarity","message":"Clear."}]}`,
+		},
+		{
+			name:   "missing category",
+			result: `{"overall_score":82,"summary":"Summary","conclusions":[{"key":"summary","message":"Clear."}]}`,
+		},
+		{
+			name:   "duplicate conclusion key",
+			result: `{"overall_score":82,"summary":"Summary","conclusions":[{"key":"summary","category":"clarity","message":"Clear."},{"key":"summary","category":"structure","message":"Structured."}]}`,
+		},
+	}
+	for index, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			pending, err := repository.EnsurePending(
+				context.Background(),
+				ensureCommand(
+					userA,
+					fmt.Sprintf("invalid-result-%d", index),
+				),
+			)
+			if err != nil {
+				t.Fatalf("ensure pending Review: %v", err)
+			}
+			tx, err := pool.Begin(context.Background())
+			if err != nil {
+				t.Fatalf("begin invalid result transaction: %v", err)
+			}
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			if _, err := tx.Exec(context.Background(), `
+				INSERT INTO review_evidence (
+					review_id,
+					owner_user_id,
+					conclusion_key,
+					source_type,
+					source_id,
+					source_version
+				)
+				VALUES ($1, $2, 'summary', 'conversation_turn', 'turn-3', 'v1')
+			`, pending.ID, userA); err != nil {
+				t.Fatalf("insert evidence: %v", err)
+			}
+			if _, err := tx.Exec(context.Background(), `
+				UPDATE reviews
+				SET status = 'completed',
+				    result = $2::jsonb,
+				    completed_at = now()
+				WHERE id = $1
+			`, pending.ID, test.result); err != nil {
+				t.Fatalf("stage invalid completed result: %v", err)
+			}
+			err = tx.Commit(context.Background())
+			var postgresError *pgconn.PgError
+			if !errors.As(err, &postgresError) ||
+				postgresError.Code != "23514" {
+				t.Fatalf("commit error = %v, want PostgreSQL check violation", err)
+			}
+			recovered, err := repository.Get(
+				context.Background(),
+				actor(userA),
+				pending.ID,
+			)
+			if err != nil {
+				t.Fatalf("recover rejected Review: %v", err)
+			}
+			if recovered.Status != review.FormalReviewPending ||
+				recovered.Result != nil ||
+				len(recovered.Evidence) != 0 {
+				t.Fatalf("rejected Review changed state: %+v", recovered)
+			}
+		})
 	}
 }
 

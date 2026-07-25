@@ -149,7 +149,7 @@ func (s *EnsureService) fail(
 func stableCategory(err error, fallback string) string {
 	var categorized StableGenerationError
 	if errors.As(err, &categorized) {
-		if category := strings.TrimSpace(categorized.StableCategory()); category != "" {
+		if category := strings.TrimSpace(categorized.StableCategory()); validStableErrorCategory(category) {
 			return category
 		}
 	}
