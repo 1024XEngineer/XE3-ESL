@@ -276,17 +276,13 @@ func TestAgentTrustBoundaryMigrationUpgradePaths(t *testing.T) {
 		assertMigrationStatus(t, runner, 4)
 		assertVersionFourAgentSchema(t, admin, schema)
 
-		changed, err := runner.Up()
-		if err != nil {
+		if err := runner.migrate.Steps(1); err != nil {
 			t.Fatalf("apply version five: %v", err)
-		}
-		if !changed {
-			t.Fatal("version five reported no change")
 		}
 		assertMigrationStatus(t, runner, 5)
 		assertAgentTrustBoundarySchema(t, admin, schema)
 
-		changed, err = runner.DownOne()
+		changed, err := runner.DownOne()
 		if err != nil {
 			t.Fatalf("revert version five: %v", err)
 		}
@@ -296,12 +292,8 @@ func TestAgentTrustBoundaryMigrationUpgradePaths(t *testing.T) {
 		assertMigrationStatus(t, runner, 4)
 		assertVersionFourAgentSchema(t, admin, schema)
 
-		changed, err = runner.Up()
-		if err != nil {
+		if err := runner.migrate.Steps(1); err != nil {
 			t.Fatalf("reapply version five: %v", err)
-		}
-		if !changed {
-			t.Fatal("reapplying version five reported no change")
 		}
 		assertMigrationStatus(t, runner, 5)
 		assertAgentTrustBoundarySchema(t, admin, schema)
@@ -326,7 +318,16 @@ func TestAgentTrustBoundaryMigrationUpgradePaths(t *testing.T) {
 		if !changed {
 			t.Fatal("empty-schema migration reported no change")
 		}
-		assertMigrationStatus(t, runner, 5)
+		status, err := runner.Version()
+		if err != nil {
+			t.Fatalf("read empty-schema migration status: %v", err)
+		}
+		if !status.Present || status.Dirty || status.Version < 5 {
+			t.Fatalf(
+				"migration status = %+v, want a clean version at or after 5",
+				status,
+			)
+		}
 		assertAgentTrustBoundarySchema(t, admin, schema)
 	})
 }
@@ -433,12 +434,8 @@ COMMIT;
 			t.Errorf("close fixed version-five runner: %v", err)
 		}
 	})
-	changed, err := retryRunner.Up()
-	if err != nil {
+	if err := retryRunner.migrate.Steps(1); err != nil {
 		t.Fatalf("retry fixed version five: %v", err)
-	}
-	if !changed {
-		t.Fatal("fixed version-five retry reported no change")
 	}
 	assertMigrationStatus(t, retryRunner, 5)
 	assertAgentTrustBoundarySchema(t, admin, schema)
