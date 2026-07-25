@@ -3,14 +3,16 @@ package agent
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-const runPersistenceTimeout = 5 * time.Second
+const (
+	runPersistenceTimeout  = 5 * time.Second
+	maxPersistedTokenCount = 1<<31 - 1
+)
 
 type RunService struct {
 	repository    RunRepository
@@ -262,7 +264,10 @@ func validTextResult(result ai.TextResult) bool {
 		modelPattern.MatchString(result.Model) &&
 		(result.FinishReason == "stop" || result.FinishReason == "length") &&
 		result.Usage.InputTokens >= 0 &&
+		result.Usage.InputTokens <= maxPersistedTokenCount &&
 		result.Usage.OutputTokens >= 0 &&
+		result.Usage.OutputTokens <= maxPersistedTokenCount &&
 		result.Usage.TotalTokens >= 0 &&
-		validMessageContent(strings.TrimSpace(result.Content))
+		result.Usage.TotalTokens <= maxPersistedTokenCount &&
+		validMessageContent(result.Content)
 }

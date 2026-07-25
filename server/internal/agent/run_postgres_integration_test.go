@@ -793,6 +793,13 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 			context.DeadlineExceeded,
 		),
 	}
+	oversizedUsage := successfulTextResult()
+	oversizedUsage.Usage.InputTokens = maxPersistedTokenCount + 1
+	oversizedContent := successfulTextResult()
+	oversizedContent.Content = strings.Repeat(
+		" ",
+		maxMessageContentBytes,
+	) + "visible"
 
 	tests := []struct {
 		name      string
@@ -818,6 +825,16 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 		{
 			name:      "invalid response",
 			generator: fake.NewTextGenerator(ai.TextResult{}),
+			wantKind:  string(ai.ErrorInvalidResponse),
+		},
+		{
+			name:      "token usage exceeds persistence range",
+			generator: fake.NewTextGenerator(oversizedUsage),
+			wantKind:  string(ai.ErrorInvalidResponse),
+		},
+		{
+			name:      "raw content exceeds persistence range",
+			generator: fake.NewTextGenerator(oversizedContent),
 			wantKind:  string(ai.ErrorInvalidResponse),
 		},
 	}
