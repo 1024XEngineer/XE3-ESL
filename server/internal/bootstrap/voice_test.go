@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
@@ -9,6 +10,38 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
+
+func TestMapRecordingConfirmationError(t *testing.T) {
+	terminalConflicts := []error{
+		conversation.ErrAudioAssetNotFound,
+		conversation.ErrAudioAssetForbidden,
+		conversation.ErrAudioAssetAlreadyBound,
+		conversation.ErrAudioAssetInvalidTransition,
+		conversation.ErrAudioAssetUploadTerminated,
+	}
+	for _, input := range terminalConflicts {
+		if mapped := mapRecordingConfirmationError(input); !errors.Is(
+			mapped,
+			agent.ErrConflict,
+		) {
+			t.Errorf("map terminal recording error %v = %v", input, mapped)
+		}
+	}
+
+	if mapped := mapRecordingConfirmationError(
+		conversation.ErrAudioAssetConcurrentUpdate,
+	); !errors.Is(mapped, conversation.ErrVoiceRoundProcessing) {
+		t.Errorf("map concurrent recording update = %v", mapped)
+	}
+
+	fallback := errors.New("recording database failed")
+	if mapped := mapRecordingConfirmationError(fallback); !errors.Is(
+		mapped,
+		fallback,
+	) {
+		t.Errorf("map recording fallback = %v", mapped)
+	}
+}
 
 func TestSpeechProviderRegistryUsesOnlyConfiguredQianwen(t *testing.T) {
 	setSpeechRegistryEnvironment(t)

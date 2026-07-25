@@ -109,6 +109,7 @@ func TestVoiceRoundPersistsRecordingThroughReservationAndTurn(t *testing.T) {
 	store := newVoiceTestStore()
 	store.addQuestion("question-1")
 	recordings := newVoiceTestRecordings()
+	store.recordings = recordings
 	vault, err := platformmedia.NewTemporaryAudioVault(
 		platformmedia.TemporaryAudioVaultConfig{
 			ScratchDirectory: t.TempDir(),
@@ -192,6 +193,96 @@ func TestVoiceRoundPersistsRecordingThroughReservationAndTurn(t *testing.T) {
 	}
 	if recordings.uniqueUploads() != 1 {
 		t.Fatalf("unique uploads = %d", recordings.uniqueUploads())
+	}
+}
+
+func TestVoiceRoundRejectsInvalidAtomicRecordingProjection(
+	t *testing.T,
+) {
+	base := newVoiceTestStore()
+	base.addQuestion("question-1")
+	recordings := newVoiceTestRecordings()
+	base.recordings = recordings
+	store := &voiceProjectionStore{voiceTestStore: base}
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	service, err := NewVoiceRoundServiceWithRecordings(
+		store,
+		vault,
+		&voiceTestRecognizer{},
+		&voiceTestSynthesizer{},
+		recordings,
+	)
+	if err != nil {
+		t.Fatalf("new recording service: %v", err)
+	}
+	actor := voiceTestActor("a")
+	candidate, err := service.Transcribe(
+		context.Background(),
+		actor,
+		"participant-a",
+		TranscribeVoiceCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-1",
+			IdempotencyKey: "transcribe-projection",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(voiceTestWAV()),
+		},
+	)
+	if err != nil {
+		t.Fatalf("transcribe projection fixture: %v", err)
+	}
+	valid := ConfirmedVoiceTurn{
+		ID:                      "turn-projection",
+		SessionID:               candidate.SessionID,
+		QuestionID:              candidate.QuestionID,
+		QuestionSpeakerID:       candidate.QuestionSpeakerID,
+		AddresseeParticipantIDs: candidate.AddresseeParticipantIDs,
+		RespondentParticipantID: candidate.RespondentParticipantID,
+		CandidateID:             candidate.ID,
+		TranscriptID:            candidate.TranscriptID,
+		EvidenceVersion:         candidate.EvidenceVersion,
+		AnswerText:              candidate.Transcript,
+		AudioAssetID:            "audio-projection",
+	}
+	for name, mutate := range map[string]func(*voiceProjectionStore){
+		"candidate projection mismatch": func(store *voiceProjectionStore) {
+			store.result = valid
+			store.result.SessionID = "other-session"
+		},
+		"missing live recording": func(store *voiceProjectionStore) {
+			store.result = valid
+			store.result.AudioAssetID = ""
+		},
+		"deleted marker with capability": func(store *voiceProjectionStore) {
+			store.result = valid
+			store.recordingDeleted = true
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store.recordingDeleted = false
+			mutate(store)
+			if _, err := service.Confirm(
+				context.Background(),
+				actor,
+				ConfirmVoiceTurnCommand{
+					CandidateID:    candidate.ID,
+					IdempotencyKey: "confirm-projection",
+				},
+			); !errors.Is(err, ErrVoiceRoundConflict) {
+				t.Fatalf("invalid atomic projection error = %v", err)
+			}
+		})
 	}
 }
 
@@ -656,6 +747,7 @@ func TestVoiceRoundClosesInvalidTTSProviderAudio(t *testing.T) {
 
 type voiceTestStore struct {
 	mu            sync.Mutex
+	recordings    *voiceTestRecordings
 	questions     map[string]VoiceQuestion
 	reservations  map[string]voiceTestReservation
 	candidates    map[string]TranscriptionCandidate
@@ -664,6 +756,24 @@ type voiceTestStore struct {
 	attempts      []SafeProcessingAttempt
 	nextCandidate int
 	nextTurn      int
+}
+
+type voiceProjectionStore struct {
+	*voiceTestStore
+	result           ConfirmedVoiceTurn
+	recordingDeleted bool
+}
+
+func (store *voiceProjectionStore) ReserveRecordingConfirmation(
+	_ context.Context,
+	_ requestcontext.Actor,
+	_ ConfirmVoiceTurnCommand,
+	_ string,
+) (VoiceRecordingConfirmation, error) {
+	return VoiceRecordingConfirmation{
+		Turn:             store.result,
+		RecordingDeleted: store.recordingDeleted,
+	}, nil
 }
 
 type voiceTestRecordings struct {
@@ -733,6 +843,25 @@ func (recordings *voiceTestRecordings) ConfirmUploadRequest(
 	asset.Version++
 	recordings.uploads[key] = asset
 	return asset, nil
+}
+
+func (recordings *voiceTestRecordings) GetReadableByTurn(
+	_ context.Context,
+	actor AudioAssetActor,
+	turnID string,
+) (AudioAsset, error) {
+	recordings.mu.Lock()
+	defer recordings.mu.Unlock()
+	for _, asset := range recordings.uploads {
+		if asset.OwnerID != actor.UserID || asset.TurnID != turnID {
+			continue
+		}
+		if asset.Status != AudioAssetReadable {
+			return AudioAsset{}, ErrAudioAssetInvalidTransition
+		}
+		return asset, nil
+	}
+	return AudioAsset{}, ErrAudioAssetNotFound
 }
 
 func (recordings *voiceTestRecordings) uniqueUploads() int {
@@ -970,6 +1099,37 @@ func (store *voiceTestStore) ReserveConfirmation(
 	store.confirmations[command.IdempotencyKey] = turn
 	store.turns[turn.ID] = turn
 	return turn, nil
+}
+
+func (store *voiceTestStore) ReserveRecordingConfirmation(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command ConfirmVoiceTurnCommand,
+	uploadRequestID string,
+) (VoiceRecordingConfirmation, error) {
+	turn, err := store.ReserveConfirmation(
+		ctx,
+		actor,
+		ReserveConfirmationCommand(command),
+	)
+	if err != nil {
+		return VoiceRecordingConfirmation{}, err
+	}
+	if store.recordings == nil {
+		return VoiceRecordingConfirmation{}, ErrVoiceRoundInvalid
+	}
+	asset, err := store.recordings.ConfirmUploadRequest(
+		ctx,
+		AudioAssetActor{UserID: actor.UserID},
+		uploadRequestID,
+		command.CandidateID,
+		turn.ID,
+	)
+	if err != nil {
+		return VoiceRecordingConfirmation{}, err
+	}
+	turn.AudioAssetID = asset.ID
+	return VoiceRecordingConfirmation{Turn: turn}, nil
 }
 
 func (store *voiceTestStore) SaveTurnProgress(

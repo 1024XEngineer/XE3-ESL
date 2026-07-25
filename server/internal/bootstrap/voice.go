@@ -194,6 +194,7 @@ func buildProductionVoiceApplication(
 	}
 	conversationStore := &voiceConversationStore{
 		repository: conversationRepository,
+		recordings: conversationRepository,
 		asrLease:   configuration.ASRLease,
 	}
 	var audioAssets *conversation.AudioAssetService
@@ -599,6 +600,7 @@ func mapPracticeError(err error) error {
 
 type voiceConversationStore struct {
 	repository conversationpersistence.PersistenceStore
+	recordings conversationpersistence.RecordingConfirmationStore
 	asrLease   time.Duration
 }
 
@@ -847,6 +849,72 @@ func (store *voiceConversationStore) ReserveConfirmation(
 		return conversation.ConfirmedVoiceTurn{}, mapConversationError(err)
 	}
 	return mapVoiceTurnWithCandidate(turn, candidate)
+}
+
+func (store *voiceConversationStore) ReserveRecordingConfirmation(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command conversation.ConfirmVoiceTurnCommand,
+	uploadRequestID string,
+) (conversation.VoiceRecordingConfirmation, error) {
+	if store.recordings == nil {
+		return conversation.VoiceRecordingConfirmation{},
+			conversation.ErrVoiceRoundInvalid
+	}
+	candidate, err := store.repository.GetCandidate(
+		ctx,
+		conversationActor(actor),
+		command.CandidateID,
+	)
+	if err != nil {
+		return conversation.VoiceRecordingConfirmation{},
+			mapConversationError(err)
+	}
+	persisted, err :=
+		store.recordings.ConfirmTurnWithRecording(
+			ctx,
+			conversationActor(actor),
+			conversationpersistence.ConfirmTurnCommand{
+				CandidateID:     candidate.ID,
+				EvidenceVersion: candidate.EvidenceVersion,
+				ConfirmedText:   candidate.Text,
+				IdempotencyKey:  command.IdempotencyKey,
+			},
+			uploadRequestID,
+		)
+	if err != nil {
+		return conversation.VoiceRecordingConfirmation{},
+			mapRecordingConfirmationError(err)
+	}
+	mapped, err := mapVoiceTurnWithCandidate(persisted.Turn, candidate)
+	if err != nil {
+		return conversation.VoiceRecordingConfirmation{}, err
+	}
+	mapped.AudioAssetID = persisted.AudioAssetID
+	return conversation.VoiceRecordingConfirmation{
+		Turn:             mapped,
+		RecordingDeleted: persisted.RecordingDeleted,
+	}, nil
+}
+
+func mapRecordingConfirmationError(err error) error {
+	switch {
+	case errors.Is(err, conversation.ErrAudioAssetNotFound),
+		errors.Is(err, conversation.ErrAudioAssetForbidden),
+		errors.Is(err, conversation.ErrAudioAssetAlreadyBound),
+		errors.Is(err, conversation.ErrAudioAssetInvalidTransition),
+		errors.Is(err, conversation.ErrAudioAssetUploadTerminated):
+		// A recording that cleanup removed, another Turn already bound, or
+		// otherwise left the confirmable state is a terminal request conflict.
+		return agent.ErrConflict
+	case errors.Is(err, conversation.ErrAudioAssetConcurrentUpdate):
+		// A lost optimistic update can be retried safely with the same
+		// idempotency key. The HTTP boundary exposes resource_processing,
+		// Retry-After: 1, and retryable=true for this sentinel.
+		return conversation.ErrVoiceRoundProcessing
+	default:
+		return mapConversationError(err)
+	}
 }
 
 func (store *voiceConversationStore) SaveTurnProgress(

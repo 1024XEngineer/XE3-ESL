@@ -192,6 +192,23 @@ type VoiceRoundStore interface {
 	) (ConfirmedVoiceTurn, error)
 }
 
+// VoiceRecordingConfirmationStore is implemented by a production
+// Conversation store that can create or replay a Turn and bind its durable
+// recording in one transaction.
+type VoiceRecordingConfirmation struct {
+	Turn             ConfirmedVoiceTurn
+	RecordingDeleted bool
+}
+
+type VoiceRecordingConfirmationStore interface {
+	ReserveRecordingConfirmation(
+		context.Context,
+		requestcontext.Actor,
+		ConfirmVoiceTurnCommand,
+		string,
+	) (VoiceRecordingConfirmation, error)
+}
+
 type TemporaryAudioVault interface {
 	Capture(
 		context.Context,
@@ -239,6 +256,13 @@ func NewVoiceRoundServiceWithRecordings(
 ) (*VoiceRoundService, error) {
 	if store == nil || vault == nil || recognizer == nil || synthesizer == nil {
 		return nil, errors.New("conversation voice round dependencies are required")
+	}
+	if recordings != nil {
+		if _, ok := store.(VoiceRecordingConfirmationStore); !ok {
+			return nil, errors.New(
+				"conversation recording confirmation transaction is required",
+			)
+		}
 	}
 	return &VoiceRoundService{
 		store:       store,
@@ -489,6 +513,26 @@ func (service *VoiceRoundService) Confirm(
 	if err != nil {
 		return ConfirmedVoiceTurn{}, err
 	}
+	if service.recordings != nil {
+		result, err := service.store.(VoiceRecordingConfirmationStore).
+			ReserveRecordingConfirmation(
+				ctx,
+				actor,
+				command,
+				candidate.ReservationID,
+			)
+		if err != nil {
+			return ConfirmedVoiceTurn{}, err
+		}
+		if !validRecordedVoiceTurn(
+			candidate,
+			result.Turn,
+			result.RecordingDeleted,
+		) {
+			return ConfirmedVoiceTurn{}, ErrVoiceRoundConflict
+		}
+		return result.Turn, nil
+	}
 	turn, err := service.store.ReserveConfirmation(
 		ctx,
 		actor,
@@ -500,7 +544,7 @@ func (service *VoiceRoundService) Confirm(
 	if err != nil {
 		return ConfirmedVoiceTurn{}, err
 	}
-	return service.withRecording(ctx, actor, candidate, turn)
+	return turn, nil
 }
 
 // GetTranscriptionCandidate exposes an Actor-scoped Conversation resource to
@@ -548,7 +592,7 @@ func (service *VoiceRoundService) SaveTurnProgress(
 	if err != nil {
 		return ConfirmedVoiceTurn{}, err
 	}
-	return service.withRecording(ctx, actor, candidate, turn)
+	return service.withReadableRecording(ctx, actor, candidate, turn)
 }
 
 // SaveTurnReview records only Conversation's reference to a Review resource.
@@ -581,7 +625,7 @@ func (service *VoiceRoundService) SaveTurnReview(
 	if err != nil {
 		return ConfirmedVoiceTurn{}, err
 	}
-	return service.withRecording(ctx, actor, candidate, turn)
+	return service.withReadableRecording(ctx, actor, candidate, turn)
 }
 
 type QuestionSpeech struct {
@@ -696,6 +740,32 @@ func validTranscriptionCandidate(
 		validVoiceIdentifier(candidate.Model) &&
 		validVoiceIdentifier(candidate.ProviderRequestID) &&
 		!candidate.CreatedAt.IsZero()
+}
+
+func validRecordedVoiceTurn(
+	candidate TranscriptionCandidate,
+	turn ConfirmedVoiceTurn,
+	recordingDeleted bool,
+) bool {
+	if !validVoiceIdentifier(turn.ID) ||
+		turn.SessionID != candidate.SessionID ||
+		turn.QuestionID != candidate.QuestionID ||
+		turn.QuestionSpeakerID != candidate.QuestionSpeakerID ||
+		!slices.Equal(
+			turn.AddresseeParticipantIDs,
+			candidate.AddresseeParticipantIDs,
+		) ||
+		turn.RespondentParticipantID != candidate.RespondentParticipantID ||
+		turn.CandidateID != candidate.ID ||
+		turn.TranscriptID != candidate.TranscriptID ||
+		turn.EvidenceVersion != candidate.EvidenceVersion ||
+		turn.AnswerText != candidate.Transcript {
+		return false
+	}
+	if recordingDeleted {
+		return turn.AudioAssetID == ""
+	}
+	return validVoiceIdentifier(turn.AudioAssetID)
 }
 
 func validSynthesisResult(result ai.SynthesisResult) bool {

@@ -216,6 +216,29 @@ func TestVoiceHTTPCapacityErrorIsStableAndRetryable(t *testing.T) {
 	}
 }
 
+func TestVoiceHTTPProcessingErrorIsStableAndRetryable(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	handler := &HTTPHandler{
+		correlationID: func() string { return "corr_processing" },
+	}
+	handler.writeVoiceError(context, conversation.ErrVoiceRoundProcessing)
+	if recorder.Code != http.StatusConflict ||
+		recorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf(
+			"processing response = %d %#v",
+			recorder.Code,
+			recorder.Header(),
+		)
+	}
+	failure := decodeVoiceJSONObject(t, recorder)["error"].(map[string]any)
+	if failure["code"] != "resource_processing" ||
+		failure["retryable"] != true {
+		t.Fatalf("processing failure = %#v", failure)
+	}
+}
+
 func TestVoiceHTTPReadDeadlineInterruptsStalledUpload(t *testing.T) {
 	conversations := newAgentVoiceConversation(3)
 	practice := newAgentVoicePractice(0)

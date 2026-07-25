@@ -29,7 +29,7 @@ func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) 
 	t.Setenv("OSS_ENABLED", "1")
 	t.Setenv("OSS_REGION", "cn-shanghai")
 	t.Setenv("OSS_ENDPOINT", "https://oss-cn-shanghai.aliyuncs.com")
-	t.Setenv("OSS_BUCKET", "speakup-audio-dev-cn-shanghai-lq0412")
+	t.Setenv("OSS_BUCKET", "example-private-audio-bucket")
 	t.Setenv("OSS_AUDIO_PREFIX", "audio/v1/")
 	t.Setenv("OSS_SIGNED_URL_TTL", "90s")
 	t.Setenv("OSS_ACCESS_KEY_ID", "must-not-be-copied")
@@ -42,7 +42,7 @@ func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) 
 	if !config.Enabled ||
 		config.Region != "cn-shanghai" ||
 		config.Endpoint != "https://oss-cn-shanghai.aliyuncs.com" ||
-		config.Bucket != "speakup-audio-dev-cn-shanghai-lq0412" ||
+		config.Bucket != "example-private-audio-bucket" ||
 		config.AudioPrefix != "audio/v1" ||
 		config.SignedURLTTL != 90*time.Second {
 		t.Fatalf("unexpected enabled config: %#v", config)
@@ -78,6 +78,12 @@ func TestLoadObjectStorageRejectsUnsafeValues(t *testing.T) {
 			name:     "prefix traversal",
 			key:      "OSS_AUDIO_PREFIX",
 			value:    "../audio/v1",
+			expected: ErrObjectStoragePrefix,
+		},
+		{
+			name:     "unsupported normalized prefix",
+			key:      "OSS_AUDIO_PREFIX",
+			value:    "custom/audio",
 			expected: ErrObjectStoragePrefix,
 		},
 		{

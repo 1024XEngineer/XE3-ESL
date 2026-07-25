@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
@@ -19,11 +20,9 @@ type VoiceRecordingLifecycle interface {
 		AudioAssetActor,
 		UploadRecordingRequest,
 	) (AudioAsset, error)
-	ConfirmUploadRequest(
+	GetReadableByTurn(
 		context.Context,
 		AudioAssetActor,
-		string,
-		string,
 		string,
 	) (AudioAsset, error)
 }
@@ -70,7 +69,7 @@ func (service *VoiceRoundService) stageRecording(
 	)
 }
 
-func (service *VoiceRoundService) withRecording(
+func (service *VoiceRoundService) withReadableRecording(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	candidate TranscriptionCandidate,
@@ -85,13 +84,15 @@ func (service *VoiceRoundService) withRecording(
 		turn.CandidateID != candidate.ID {
 		return ConfirmedVoiceTurn{}, ErrVoiceRoundInvalid
 	}
-	asset, err := service.recordings.ConfirmUploadRequest(
+	asset, err := service.recordings.GetReadableByTurn(
 		ctx,
 		AudioAssetActor{UserID: actor.UserID},
-		candidate.ReservationID,
-		candidate.ID,
 		turn.ID,
 	)
+	if errors.Is(err, ErrAudioAssetNotFound) ||
+		errors.Is(err, ErrAudioAssetInvalidTransition) {
+		return turn, nil
+	}
 	if err != nil {
 		return ConfirmedVoiceTurn{}, err
 	}

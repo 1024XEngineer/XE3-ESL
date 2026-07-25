@@ -20,7 +20,7 @@ var (
 	ErrObjectStorageRegionRequired = errors.New("OSS_REGION is required when object storage is enabled")
 	ErrObjectStorageEndpoint       = errors.New("OSS_ENDPOINT must be an HTTPS origin without credentials, query, or fragment")
 	ErrObjectStorageBucketRequired = errors.New("OSS_BUCKET is required when object storage is enabled")
-	ErrObjectStoragePrefix         = errors.New("OSS_AUDIO_PREFIX must be a normalized relative object prefix")
+	ErrObjectStoragePrefix         = errors.New("OSS_AUDIO_PREFIX must be audio/v1")
 	ErrObjectStorageSignedURLTTL   = errors.New("OSS_SIGNED_URL_TTL must be positive and no greater than 2m")
 )
 
@@ -64,6 +64,9 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 	config.AudioPrefix = strings.TrimSuffix(strings.TrimSpace(config.AudioPrefix), "/")
 	if err := validateObjectStoragePrefix(config.AudioPrefix); err != nil {
 		return ObjectStorageConfig{}, err
+	}
+	if config.AudioPrefix != defaultObjectStoragePrefix {
+		return ObjectStorageConfig{}, ErrObjectStoragePrefix
 	}
 	if config.SignedURLTTL <= 0 || config.SignedURLTTL > maxSignedURLTTL {
 		return ObjectStorageConfig{}, ErrObjectStorageSignedURLTTL
