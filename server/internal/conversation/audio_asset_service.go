@@ -325,7 +325,8 @@ func (s *AudioAssetService) ReclaimExpired(
 	if limit <= 0 {
 		limit = defaultCleanupLimit
 	}
-	expired, err := s.repository.ListExpiredUnconfirmed(ctx, s.clock.Now(), limit)
+	cutoff := s.clock.Now()
+	expired, err := s.repository.ListExpiredUnconfirmed(ctx, cutoff, limit)
 	if err != nil {
 		return AudioAssetCleanupResult{}, err
 	}
@@ -336,16 +337,26 @@ func (s *AudioAssetService) ReclaimExpired(
 
 	result := AudioAssetCleanupResult{}
 	seen := make(map[string]struct{}, len(expired)+len(deleting))
-	for _, asset := range append(expired, deleting...) {
-		if _, found := seen[asset.ID]; found {
-			continue
-		}
+	for _, asset := range expired {
 		seen[asset.ID] = struct{}{}
-		if _, err := s.deleteAsset(ctx, asset); err != nil {
+		deleted, err := s.deleteExpiredUnconfirmed(ctx, asset, cutoff)
+		if err != nil {
 			result.Failed++
 			continue
 		}
-		result.Deleted++
+		if deleted {
+			result.Deleted++
+		}
+	}
+	for _, asset := range deleting {
+		if _, found := seen[asset.ID]; found {
+			continue
+		}
+		if _, err := s.deleteAsset(ctx, asset); err != nil {
+			result.Failed++
+		} else {
+			result.Deleted++
+		}
 	}
 	return result, nil
 }
@@ -457,6 +468,47 @@ func (s *AudioAssetService) deleteAsset(
 		}
 	}
 	return AudioAsset{}, ErrAudioAssetConcurrentUpdate
+}
+
+// deleteExpiredUnconfirmed claims only an asset that is still expired and
+// unbound. A concurrent Confirm that wins the version race makes the asset
+// ineligible and is therefore a successful skip, never a deletion.
+func (s *AudioAssetService) deleteExpiredUnconfirmed(
+	ctx context.Context,
+	asset AudioAsset,
+	cutoff time.Time,
+) (bool, error) {
+	var err error
+	for range maxConflictReloads {
+		if !isExpiredUnconfirmed(asset, cutoff) {
+			return false, nil
+		}
+		expectedVersion := asset.Version
+		if err := asset.beginDeleting(s.clock.Now()); err != nil {
+			return false, err
+		}
+		if err := s.repository.Save(ctx, asset, expectedVersion); err == nil {
+			if _, err := s.deleteAsset(ctx, asset); err != nil {
+				return false, err
+			}
+			return true, nil
+		} else if !errors.Is(err, ErrAudioAssetConcurrentUpdate) {
+			return false, err
+		}
+		asset, err = s.repository.Get(ctx, asset.ID)
+		if err != nil {
+			return false, err
+		}
+	}
+	return false, ErrAudioAssetConcurrentUpdate
+}
+
+func isExpiredUnconfirmed(asset AudioAsset, cutoff time.Time) bool {
+	unconfirmed := asset.CandidateID == "" &&
+		asset.TurnID == "" &&
+		(asset.Status == AudioAssetStaged ||
+			asset.Status == AudioAssetMetadataCommitted)
+	return unconfirmed && !asset.StagedUntil.After(cutoff)
 }
 
 func (s *AudioAssetService) commitUploadedMetadata(

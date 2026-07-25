@@ -308,6 +308,110 @@ func TestAudioAssetReclaimExpiredUnconfirmedAndDeleting(t *testing.T) {
 	}
 }
 
+func TestAudioAssetReclaimSkipsWhenConfirmWinsClaimRace(t *testing.T) {
+	fixture := newAudioAssetFixture()
+	asset := fixture.upload(t, fixture.alice, "confirm-wins")
+	fixture.clock.now = fixture.clock.now.Add(2 * time.Hour)
+
+	claimReady := make(chan struct{})
+	allowClaim := make(chan struct{})
+	var once sync.Once
+	fixture.repository.beforeSave = func(candidate AudioAsset) {
+		if candidate.ID == asset.ID && candidate.Status == AudioAssetDeleting {
+			once.Do(func() {
+				close(claimReady)
+				<-allowClaim
+			})
+		}
+	}
+	type reclaimOutcome struct {
+		result AudioAssetCleanupResult
+		err    error
+	}
+	outcome := make(chan reclaimOutcome, 1)
+	go func() {
+		result, err := fixture.service.ReclaimExpired(fixture.ctx, 10)
+		outcome <- reclaimOutcome{result: result, err: err}
+	}()
+
+	<-claimReady
+	confirmed, err := fixture.service.Confirm(
+		fixture.ctx,
+		fixture.alice,
+		asset.ID,
+		"candidate-1",
+		"turn-1",
+	)
+	if err != nil {
+		t.Fatalf("Confirm() error = %v", err)
+	}
+	close(allowClaim)
+	reclaimed := <-outcome
+	fixture.repository.beforeSave = nil
+
+	if reclaimed.err != nil {
+		t.Fatalf("ReclaimExpired() error = %v", reclaimed.err)
+	}
+	if reclaimed.result.Deleted != 0 || reclaimed.result.Failed != 0 {
+		t.Fatalf("ReclaimExpired() = %#v", reclaimed.result)
+	}
+	if confirmed.Status != AudioAssetReadable {
+		t.Fatalf("Confirm() asset = %#v", confirmed)
+	}
+	assertAudioAssetStatus(t, fixture, asset.ID, AudioAssetReadable)
+	if fixture.store.deleteCallCount() != 0 {
+		t.Fatal("cleanup deleted an asset after Confirm won the claim race")
+	}
+}
+
+func TestAudioAssetConfirmFailsWhenReclaimClaimsFirst(t *testing.T) {
+	fixture := newAudioAssetFixture()
+	asset := fixture.upload(t, fixture.alice, "cleanup-wins")
+	fixture.clock.now = fixture.clock.now.Add(2 * time.Hour)
+
+	claimed := make(chan struct{})
+	allowDelete := make(chan struct{})
+	var once sync.Once
+	fixture.store.beforeDelete = func(key string) {
+		if key == asset.ObjectKey {
+			once.Do(func() {
+				close(claimed)
+				<-allowDelete
+			})
+		}
+	}
+	type reclaimOutcome struct {
+		result AudioAssetCleanupResult
+		err    error
+	}
+	outcome := make(chan reclaimOutcome, 1)
+	go func() {
+		result, err := fixture.service.ReclaimExpired(fixture.ctx, 10)
+		outcome <- reclaimOutcome{result: result, err: err}
+	}()
+
+	<-claimed
+	if _, err := fixture.service.Confirm(
+		fixture.ctx,
+		fixture.alice,
+		asset.ID,
+		"candidate-1",
+		"turn-1",
+	); !errors.Is(err, ErrAudioAssetInvalidTransition) {
+		t.Fatalf("Confirm() error = %v", err)
+	}
+	close(allowDelete)
+	reclaimed := <-outcome
+	fixture.store.beforeDelete = nil
+
+	if reclaimed.err != nil ||
+		reclaimed.result.Deleted != 1 ||
+		reclaimed.result.Failed != 0 {
+		t.Fatalf("ReclaimExpired() = %#v, %v", reclaimed.result, reclaimed.err)
+	}
+	assertAudioAssetStatus(t, fixture, asset.ID, AudioAssetDeleted)
+}
+
 func TestAudioAssetAccountDataCleanupIsOwnerScopedAndRetriesFailures(t *testing.T) {
 	fixture := newAudioAssetFixture()
 	aliceUnconfirmed := fixture.upload(t, fixture.alice, "alice-unconfirmed")
@@ -573,8 +677,9 @@ func assertAudioAssetStatus(
 }
 
 type memoryAudioAssetRepository struct {
-	mu     sync.RWMutex
-	assets map[string]AudioAsset
+	mu         sync.RWMutex
+	assets     map[string]AudioAsset
+	beforeSave func(AudioAsset)
 }
 
 func (r *memoryAudioAssetRepository) Create(_ context.Context, asset AudioAsset) error {
@@ -652,6 +757,9 @@ func (r *memoryAudioAssetRepository) Save(
 	asset AudioAsset,
 	expectedVersion uint64,
 ) error {
+	if r.beforeSave != nil {
+		r.beforeSave(asset)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	current, found := r.assets[asset.ID]
@@ -684,7 +792,8 @@ func (r *memoryAudioAssetRepository) ListExpiredUnconfirmed(
 	defer r.mu.RUnlock()
 	var assets []AudioAsset
 	for _, asset := range r.assets {
-		unconfirmed := asset.TurnID == "" &&
+		unconfirmed := asset.CandidateID == "" &&
+			asset.TurnID == "" &&
 			(asset.Status == AudioAssetStaged ||
 				asset.Status == AudioAssetMetadataCommitted)
 		if unconfirmed && !asset.StagedUntil.After(now) {
@@ -746,6 +855,7 @@ type fakeAudioObjectStore struct {
 	deleteErrors map[string]error
 	signedResult objectstore.SignedGetResult
 	onPut        func(objectstore.PutRequest)
+	beforeDelete func(string)
 }
 
 func (s *fakeAudioObjectStore) Put(
@@ -777,6 +887,12 @@ func (s *fakeAudioObjectStore) SignedGet(
 
 func (s *fakeAudioObjectStore) Delete(_ context.Context, key string) error {
 	s.mu.Lock()
+	beforeDelete := s.beforeDelete
+	s.mu.Unlock()
+	if beforeDelete != nil {
+		beforeDelete(key)
+	}
+	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deleteCalls++
 	if err := s.deleteErrors[key]; err != nil {
@@ -789,6 +905,12 @@ func (s *fakeAudioObjectStore) putCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.putCalls
+}
+
+func (s *fakeAudioObjectStore) deleteCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.deleteCalls
 }
 
 type sequenceAudioAssetIDs struct {
