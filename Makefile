@@ -75,8 +75,10 @@ check-oss-live:
 		printf '\n'; \
 		exit 1; \
 	fi; \
-	enabled="$${OSS_ENABLED,,}"; \
-	if [[ "$$enabled" != "1" && "$$enabled" != "true" ]]; then \
+	if [[ "$${OSS_ENABLED}" != "1" && \
+	      "$${OSS_ENABLED}" != "true" && \
+	      "$${OSS_ENABLED}" != "TRUE" && \
+	      "$${OSS_ENABLED}" != "True" ]]; then \
 		printf '%s\n' 'Set and export OSS_ENABLED=1 for the real OSS lifecycle test.'; \
 		exit 1; \
 	fi; \
