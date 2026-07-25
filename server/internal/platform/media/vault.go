@@ -24,10 +24,14 @@ var (
 // TemporaryAudioVaultConfig makes the operational retention and capacity
 // limits explicit. The vault has no permissive production defaults.
 type TemporaryAudioVaultConfig struct {
-	ScratchDirectory string
-	Lifetime         time.Duration
-	MaxItems         int
-	MaxBytes         int64
+	ScratchDirectory              string
+	Lifetime                      time.Duration
+	MaxItems                      int
+	MaxBytes                      int64
+	MaxItemsPerActor              int
+	MaxBytesPerActor              int64
+	MaxConcurrentCaptures         int
+	MaxConcurrentCapturesPerActor int
 }
 
 // TemporaryAudioMetadata is safe to return across the media capability
@@ -49,6 +53,14 @@ type temporaryAudioEntry struct {
 	removed bool
 }
 
+type actorAudioUsage struct {
+	items         int
+	bytes         int64
+	captures      int
+	reservedBytes int64
+	reservedItems int
+}
+
 // TemporaryAudioVault is an actor-bound, process-local holding area for an
 // unconfirmed recording. It keeps bytes only in memory, removes validation
 // scratch files immediately, and never exposes a storage path or public URL.
@@ -57,33 +69,61 @@ type temporaryAudioEntry struct {
 // only supplies the narrow temporary file-content capability needed before
 // the accepted Conversation persistence contract is implemented.
 type TemporaryAudioVault struct {
-	mu        sync.Mutex
-	captureMu sync.Mutex
+	mu       sync.Mutex
+	captures sync.WaitGroup
 
-	config     TemporaryAudioVaultConfig
-	entries    map[string]*temporaryAudioEntry
-	totalItems int
-	totalBytes int64
-	closed     bool
-	wake       chan struct{}
-	done       chan struct{}
-	stopped    chan struct{}
+	config         TemporaryAudioVaultConfig
+	entries        map[string]*temporaryAudioEntry
+	actorUsage     map[string]*actorAudioUsage
+	totalItems     int
+	totalBytes     int64
+	activeCaptures int
+	reservedItems  int
+	reservedBytes  int64
+	closed         bool
+	wake           chan struct{}
+	done           chan struct{}
+	stopped        chan struct{}
 }
 
 func NewTemporaryAudioVault(
 	config TemporaryAudioVaultConfig,
 ) (*TemporaryAudioVault, error) {
+	// Preserve explicit legacy test/composition callers while production
+	// supplies the stricter actor-aware values from platform configuration.
+	if config.MaxItemsPerActor == 0 {
+		config.MaxItemsPerActor = config.MaxItems
+	}
+	if config.MaxBytesPerActor == 0 {
+		config.MaxBytesPerActor = config.MaxBytes
+	}
+	if config.MaxConcurrentCaptures == 0 {
+		config.MaxConcurrentCaptures = 1
+	}
+	if config.MaxConcurrentCapturesPerActor == 0 {
+		config.MaxConcurrentCapturesPerActor =
+			config.MaxConcurrentCaptures
+	}
 	if config.Lifetime <= 0 ||
 		config.MaxItems <= 0 ||
-		config.MaxBytes < MaxAudioBytes {
+		config.MaxBytes < MaxAudioBytes ||
+		config.MaxItemsPerActor <= 0 ||
+		config.MaxItemsPerActor > config.MaxItems ||
+		config.MaxBytesPerActor < MaxAudioBytes ||
+		config.MaxBytesPerActor > config.MaxBytes ||
+		config.MaxConcurrentCaptures <= 0 ||
+		config.MaxConcurrentCapturesPerActor <= 0 ||
+		config.MaxConcurrentCapturesPerActor >
+			config.MaxConcurrentCaptures {
 		return nil, errors.New("temporary audio vault configuration is invalid")
 	}
 	vault := &TemporaryAudioVault{
-		config:  config,
-		entries: make(map[string]*temporaryAudioEntry),
-		wake:    make(chan struct{}, 1),
-		done:    make(chan struct{}),
-		stopped: make(chan struct{}),
+		config:     config,
+		entries:    make(map[string]*temporaryAudioEntry),
+		actorUsage: make(map[string]*actorAudioUsage),
+		wake:       make(chan struct{}, 1),
+		done:       make(chan struct{}),
+		stopped:    make(chan struct{}),
 	}
 	go vault.reap()
 	return vault, nil
@@ -112,14 +152,10 @@ func (vault *TemporaryAudioVault) Capture(
 		return TemporaryAudioMetadata{}, err
 	}
 
-	// Serialize validation so concurrent callers cannot create an unbounded
-	// number of maximum-size scratch files before capacity is checked.
-	vault.captureMu.Lock()
-	defer vault.captureMu.Unlock()
-
-	if vault.isClosed() {
-		return TemporaryAudioMetadata{}, ErrTemporaryAudioClosed
+	if err := vault.reserveCapture(actor.UserID); err != nil {
+		return TemporaryAudioMetadata{}, err
 	}
+	defer vault.releaseCapture(actor.UserID)
 	audio, err := CaptureTemporaryAudio(
 		vault.config.ScratchDirectory,
 		claimedContentType,
@@ -161,8 +197,12 @@ func (vault *TemporaryAudioVault) Capture(
 		return TemporaryAudioMetadata{}, ErrTemporaryAudioClosed
 	}
 	vault.purgeExpiredLocked(time.Now())
-	if vault.totalItems >= vault.config.MaxItems ||
-		int64(len(data)) > vault.config.MaxBytes-vault.totalBytes {
+	usage := vault.actorUsage[actor.UserID]
+	if usage == nil ||
+		vault.totalItems >= vault.config.MaxItems ||
+		int64(len(data)) > vault.config.MaxBytes-vault.totalBytes ||
+		usage.items >= vault.config.MaxItemsPerActor ||
+		int64(len(data)) > vault.config.MaxBytesPerActor-usage.bytes {
 		clear(data)
 		return TemporaryAudioMetadata{}, ErrTemporaryAudioCapacity
 	}
@@ -188,6 +228,8 @@ func (vault *TemporaryAudioVault) Capture(
 	}
 	vault.totalItems++
 	vault.totalBytes += int64(len(data))
+	usage.items++
+	usage.bytes += int64(len(data))
 	vault.signalWake()
 	return metadata, nil
 }
@@ -247,11 +289,6 @@ func (vault *TemporaryAudioVault) Close() error {
 	if vault == nil {
 		return nil
 	}
-	// Wait for any in-flight validation so Close does not return while an
-	// upload can still create or retain a scratch file.
-	vault.captureMu.Lock()
-	defer vault.captureMu.Unlock()
-
 	vault.mu.Lock()
 	if !vault.closed {
 		vault.closed = true
@@ -261,6 +298,9 @@ func (vault *TemporaryAudioVault) Close() error {
 		close(vault.done)
 	}
 	vault.mu.Unlock()
+	// The closed flag and capture admission share vault.mu, so no WaitGroup Add
+	// can race with this Wait after the flag becomes visible.
+	vault.captures.Wait()
 	<-vault.stopped
 	return nil
 }
@@ -329,12 +369,6 @@ func (vault *TemporaryAudioVault) open(
 	}, nil
 }
 
-func (vault *TemporaryAudioVault) isClosed() bool {
-	vault.mu.Lock()
-	defer vault.mu.Unlock()
-	return vault.closed
-}
-
 func (vault *TemporaryAudioVault) unusedIDLocked() (string, error) {
 	for attempt := 0; attempt < 8; attempt++ {
 		random := make([]byte, 24)
@@ -391,8 +425,73 @@ func (vault *TemporaryAudioVault) releaseEntryLocked(
 ) {
 	vault.totalItems--
 	vault.totalBytes -= int64(len(entry.data))
+	if usage := vault.actorUsage[entry.ownerID]; usage != nil {
+		usage.items--
+		usage.bytes -= int64(len(entry.data))
+		vault.removeActorUsageIfEmptyLocked(entry.ownerID, usage)
+	}
 	clear(entry.data)
 	entry.data = nil
+}
+
+func (vault *TemporaryAudioVault) reserveCapture(ownerID string) error {
+	vault.mu.Lock()
+	defer vault.mu.Unlock()
+	if vault.closed {
+		return ErrTemporaryAudioClosed
+	}
+	vault.purgeExpiredLocked(time.Now())
+	usage := vault.actorUsage[ownerID]
+	if usage == nil {
+		usage = &actorAudioUsage{}
+		vault.actorUsage[ownerID] = usage
+	}
+	if vault.activeCaptures >= vault.config.MaxConcurrentCaptures ||
+		usage.captures >= vault.config.MaxConcurrentCapturesPerActor ||
+		vault.totalItems+vault.reservedItems >= vault.config.MaxItems ||
+		MaxAudioBytes > vault.config.MaxBytes-
+			vault.totalBytes-vault.reservedBytes ||
+		usage.items+usage.reservedItems >=
+			vault.config.MaxItemsPerActor ||
+		MaxAudioBytes > vault.config.MaxBytesPerActor-
+			usage.bytes-usage.reservedBytes {
+		vault.removeActorUsageIfEmptyLocked(ownerID, usage)
+		return ErrTemporaryAudioCapacity
+	}
+	vault.activeCaptures++
+	vault.reservedItems++
+	vault.reservedBytes += MaxAudioBytes
+	usage.captures++
+	usage.reservedItems++
+	usage.reservedBytes += MaxAudioBytes
+	vault.captures.Add(1)
+	return nil
+}
+
+func (vault *TemporaryAudioVault) releaseCapture(ownerID string) {
+	vault.mu.Lock()
+	vault.activeCaptures--
+	vault.reservedItems--
+	vault.reservedBytes -= MaxAudioBytes
+	if usage := vault.actorUsage[ownerID]; usage != nil {
+		usage.captures--
+		usage.reservedItems--
+		usage.reservedBytes -= MaxAudioBytes
+		vault.removeActorUsageIfEmptyLocked(ownerID, usage)
+	}
+	vault.mu.Unlock()
+	vault.captures.Done()
+}
+
+func (vault *TemporaryAudioVault) removeActorUsageIfEmptyLocked(
+	ownerID string,
+	usage *actorAudioUsage,
+) {
+	if usage.items == 0 && usage.bytes == 0 &&
+		usage.captures == 0 && usage.reservedItems == 0 &&
+		usage.reservedBytes == 0 {
+		delete(vault.actorUsage, ownerID)
+	}
 }
 
 func (vault *TemporaryAudioVault) signalWake() {

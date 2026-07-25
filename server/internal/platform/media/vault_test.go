@@ -187,6 +187,142 @@ func TestTemporaryAudioVaultEnforcesCapacityAndExpiry(t *testing.T) {
 	}
 }
 
+func TestTemporaryAudioVaultSlowActorDoesNotBlockAnotherActor(t *testing.T) {
+	t.Parallel()
+
+	vault, err := NewTemporaryAudioVault(TemporaryAudioVaultConfig{
+		ScratchDirectory:              t.TempDir(),
+		Lifetime:                      time.Minute,
+		MaxItems:                      2,
+		MaxBytes:                      2 * MaxAudioBytes,
+		MaxItemsPerActor:              1,
+		MaxBytesPerActor:              MaxAudioBytes,
+		MaxConcurrentCaptures:         2,
+		MaxConcurrentCapturesPerActor: 1,
+	})
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+
+	stalled := newStalledReader()
+	slowResult := make(chan error, 1)
+	go func() {
+		_, captureErr := vault.Capture(
+			context.Background(),
+			testActor("slow"),
+			ContentTypeWAV,
+			stalled,
+		)
+		slowResult <- captureErr
+	}()
+	<-stalled.entered
+
+	// Per-Actor admission fails immediately while another Actor still has a
+	// fair slot and can finish without waiting for the slow network reader.
+	if _, err := vault.Capture(
+		context.Background(),
+		testActor("slow"),
+		ContentTypeWAV,
+		bytes.NewReader(testWAV(t, time.Second)),
+	); !errors.Is(err, ErrTemporaryAudioCapacity) {
+		t.Fatalf("same actor capacity error = %v", err)
+	}
+	fast, err := vault.Capture(
+		context.Background(),
+		testActor("fast"),
+		ContentTypeWAV,
+		bytes.NewReader(testWAV(t, time.Second)),
+	)
+	if err != nil {
+		t.Fatalf("fast actor was blocked by slow upload: %v", err)
+	}
+
+	close(stalled.release)
+	if err := <-slowResult; err == nil {
+		t.Fatal("stalled invalid upload unexpectedly succeeded")
+	}
+	if err := vault.Delete(testActor("fast"), fast.ID); err != nil {
+		t.Fatalf("delete fast audio: %v", err)
+	}
+	if _, err := vault.Capture(
+		context.Background(),
+		testActor("slow"),
+		ContentTypeWAV,
+		bytes.NewReader(testWAV(t, time.Second)),
+	); err != nil {
+		t.Fatalf("released reservation did not restore capacity: %v", err)
+	}
+}
+
+func TestTemporaryAudioVaultGlobalCaptureSaturationReleasesOnCancel(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	vault, err := NewTemporaryAudioVault(TemporaryAudioVaultConfig{
+		ScratchDirectory:              t.TempDir(),
+		Lifetime:                      time.Minute,
+		MaxItems:                      2,
+		MaxBytes:                      2 * MaxAudioBytes,
+		MaxItemsPerActor:              1,
+		MaxBytesPerActor:              MaxAudioBytes,
+		MaxConcurrentCaptures:         1,
+		MaxConcurrentCapturesPerActor: 1,
+	})
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stalled := newContextStalledReader(ctx)
+	result := make(chan error, 1)
+	go func() {
+		_, captureErr := vault.Capture(
+			ctx,
+			testActor("first"),
+			ContentTypeWAV,
+			stalled,
+		)
+		result <- captureErr
+	}()
+	<-stalled.entered
+	if _, err := vault.Capture(
+		context.Background(),
+		testActor("second"),
+		ContentTypeWAV,
+		bytes.NewReader(testWAV(t, time.Second)),
+	); !errors.Is(err, ErrTemporaryAudioCapacity) {
+		t.Fatalf("global capture capacity error = %v", err)
+	}
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled capture error = %v", err)
+	}
+	if _, err := vault.Capture(
+		context.Background(),
+		testActor("second"),
+		ContentTypeWAV,
+		bytes.NewReader(testWAV(t, time.Second)),
+	); err != nil {
+		t.Fatalf("capture after cancelled reservation: %v", err)
+	}
+
+	vault.mu.Lock()
+	if vault.activeCaptures != 0 ||
+		vault.reservedItems != 0 ||
+		vault.reservedBytes != 0 {
+		t.Fatalf(
+			"capture reservation leaked: active=%d items=%d bytes=%d",
+			vault.activeCaptures,
+			vault.reservedItems,
+			vault.reservedBytes,
+		)
+	}
+	vault.mu.Unlock()
+}
+
 func TestTemporaryAudioVaultSharesLargeAudioWithoutOpenAmplification(
 	t *testing.T,
 ) {
@@ -575,6 +711,44 @@ func testActor(seed string) requestcontext.Actor {
 		UserID:    seed + "-user",
 		SessionID: seed + "-session",
 	}
+}
+
+type stalledReader struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newStalledReader() *stalledReader {
+	return &stalledReader{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (reader *stalledReader) Read([]byte) (int, error) {
+	reader.once.Do(func() { close(reader.entered) })
+	<-reader.release
+	return 0, io.ErrUnexpectedEOF
+}
+
+type contextStalledReader struct {
+	ctx     context.Context
+	entered chan struct{}
+	once    sync.Once
+}
+
+func newContextStalledReader(ctx context.Context) *contextStalledReader {
+	return &contextStalledReader{
+		ctx:     ctx,
+		entered: make(chan struct{}),
+	}
+}
+
+func (reader *contextStalledReader) Read([]byte) (int, error) {
+	reader.once.Do(func() { close(reader.entered) })
+	<-reader.ctx.Done()
+	return 0, reader.ctx.Err()
 }
 
 func largeVaultTestWAV(t *testing.T) []byte {

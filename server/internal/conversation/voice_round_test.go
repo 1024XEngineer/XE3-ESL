@@ -197,6 +197,43 @@ func TestVoiceRoundFailureAndForeignActorStayConversationScoped(t *testing.T) {
 	}
 }
 
+func TestVoiceRoundCapacityFailsBeforeReservationAndProvider(t *testing.T) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	recognizer := &voiceTestRecognizer{}
+	service, err := NewVoiceRoundService(
+		store,
+		voiceCapacityVault{},
+		recognizer,
+		&voiceTestSynthesizer{},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	_, err = service.Transcribe(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		TranscribeVoiceCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-1",
+			IdempotencyKey: "capacity-before-reservation",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(voiceTestWAV()),
+		},
+	)
+	if !errors.Is(err, ErrVoiceRoundCapacity) {
+		t.Fatalf("capacity error = %v", err)
+	}
+	if recognizer.calls != 0 || len(store.reservations) != 0 {
+		t.Fatalf(
+			"capacity reached persistence/provider: ASR=%d reservations=%d",
+			recognizer.calls,
+			len(store.reservations),
+		)
+	}
+}
+
 func TestVoiceRoundPersistsProviderOutcomeAfterCallerCancellation(t *testing.T) {
 	for _, test := range []struct {
 		name        string
@@ -950,6 +987,20 @@ func (voiceNoopVault) Source(
 
 func (voiceNoopVault) Delete(requestcontext.Actor, string) error {
 	return nil
+}
+
+type voiceCapacityVault struct {
+	voiceNoopVault
+}
+
+func (voiceCapacityVault) Capture(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	io.Reader,
+) (platformmedia.TemporaryAudioMetadata, error) {
+	return platformmedia.TemporaryAudioMetadata{},
+		platformmedia.ErrTemporaryAudioCapacity
 }
 
 func voiceTestActor(seed string) requestcontext.Actor {

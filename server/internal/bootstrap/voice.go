@@ -61,6 +61,7 @@ type VoiceConfiguration struct {
 	Ports                   VoicePorts
 	ASRLease                time.Duration
 	ReviewGenerationTimeout time.Duration
+	AudioReadTimeout        time.Duration
 }
 
 // NewSpeechRecognizer is the server-side ASR registration boundary. Production
@@ -1164,6 +1165,31 @@ func mapReviewError(err error) error {
 	var generationError *ai.GenerationError
 	if errors.As(err, &generationError) {
 		return err
+	}
+	var categorized review.StableGenerationError
+	if errors.As(err, &categorized) {
+		kind := ai.ErrorKind(strings.TrimSpace(
+			categorized.StableCategory(),
+		))
+		switch kind {
+		case ai.ErrorInvalidRequest,
+			ai.ErrorConfiguration,
+			ai.ErrorAuthentication,
+			ai.ErrorAuthorization,
+			ai.ErrorQuotaExhausted,
+			ai.ErrorRateLimited,
+			ai.ErrorTimeout,
+			ai.ErrorProviderUnavailable,
+			ai.ErrorInvalidResponse,
+			ai.ErrorCancelled:
+			return ai.NewGenerationError(
+				kind,
+				0,
+				"",
+				"",
+				review.ErrGenerationFailed,
+			)
+		}
 	}
 	switch {
 	case err == nil:

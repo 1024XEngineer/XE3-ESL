@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
@@ -189,6 +193,112 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 	}
 }
 
+func TestVoiceHTTPCapacityErrorIsStableAndRetryable(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	handler := &HTTPHandler{
+		correlationID: func() string { return "corr_capacity" },
+	}
+	handler.writeVoiceError(context, conversation.ErrVoiceRoundCapacity)
+	if recorder.Code != http.StatusServiceUnavailable ||
+		recorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf(
+			"capacity response = %d %#v",
+			recorder.Code,
+			recorder.Header(),
+		)
+	}
+	failure := decodeVoiceJSONObject(t, recorder)["error"].(map[string]any)
+	if failure["code"] != "voice_capacity_exhausted" ||
+		failure["retryable"] != true {
+		t.Fatalf("capacity failure = %#v", failure)
+	}
+}
+
+func TestVoiceHTTPReadDeadlineInterruptsStalledUpload(t *testing.T) {
+	conversations := newAgentVoiceConversation(3)
+	practice := newAgentVoicePractice(0)
+	reviews := newAgentVoiceReview()
+	reading := &readingVoiceConversation{
+		agentVoiceConversation: conversations,
+	}
+	orchestrator, err := NewVoiceRoundOrchestrator(
+		reading,
+		practice,
+		reviews,
+	)
+	if err != nil {
+		t.Fatalf("new voice orchestrator: %v", err)
+	}
+	voice := newVoiceSessionTestApplication(
+		t,
+		conversations,
+		practice,
+		reviews,
+		orchestrator,
+	)
+	handler, err := NewHTTPHandlerWithRunsAndVoice(
+		voiceHTTPApplication{},
+		nil,
+		voice,
+		voiceHTTPMatters{},
+		voiceHTTPAuthenticator{},
+		func() string { return "corr_voice_timeout" },
+		VoiceHTTPOptions{AudioReadTimeout: 100 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("new voice HTTP handler: %v", err)
+	}
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	handler.RegisterRoutes(router)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	reader, writer := io.Pipe()
+	request, err := http.NewRequest(
+		http.MethodPost,
+		server.URL+
+			"/v1/voice-practice-sessions/session-1/questions/question-1/transcription-candidates",
+		reader,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer voice-token-a")
+	request.Header.Set("Content-Type", "audio/wav")
+	request.Header.Set("Idempotency-Key", "stalled-upload-1")
+	result := make(chan *http.Response, 1)
+	failures := make(chan error, 1)
+	go func() {
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			failures <- requestErr
+			return
+		}
+		result <- response
+	}()
+
+	select {
+	case response := <-result:
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("stalled upload status = %d", response.StatusCode)
+		}
+	case err := <-failures:
+		// A read deadline may close the client connection before a JSON error
+		// can be written. Either outcome proves the stalled body was bounded.
+		if !errors.Is(err, io.ErrUnexpectedEOF) &&
+			!strings.Contains(err.Error(), "timeout") {
+			t.Fatalf("stalled upload client error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stalled voice upload was not interrupted by read deadline")
+	}
+	_ = writer.Close()
+}
+
 func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 	conversations := newAgentVoiceConversation(1)
 	conversations.speech = conversation.QuestionSpeech{
@@ -350,4 +460,31 @@ func requireVoiceKeys(
 	if !slices.Equal(actual, expected) {
 		t.Fatalf("keys = %v, want %v; value = %#v", actual, expected, value)
 	}
+}
+
+type readingVoiceConversation struct {
+	*agentVoiceConversation
+}
+
+func (conversationPort *readingVoiceConversation) Transcribe(
+	_ context.Context,
+	_ requestcontext.Actor,
+	_ string,
+	command conversation.TranscribeVoiceCommand,
+) (conversation.TranscriptionCandidate, error) {
+	if _, err := io.ReadAll(command.Audio); err != nil {
+		return conversation.TranscriptionCandidate{},
+			conversation.ErrVoiceRoundInvalid
+	}
+	return conversation.TranscriptionCandidate{
+		ID:                      "candidate-read",
+		SessionID:               command.SessionID,
+		QuestionID:              command.QuestionID,
+		AddresseeParticipantIDs: []string{"candidate-a"},
+		RespondentParticipantID: "candidate-a",
+		TranscriptID:            "transcript-read",
+		EvidenceVersion:         1,
+		Transcript:              "read",
+		CreatedAt:               time.Now().UTC(),
+	}, nil
 }

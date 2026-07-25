@@ -29,17 +29,23 @@ const (
 	agentDataReadTimeout    = 5 * time.Second
 	defaultThreadPageSize   = 20
 	defaultMessagePageSize  = 50
+	defaultVoiceReadTimeout = 15 * time.Second
 )
 
 type CorrelationIDGenerator func() string
 
+type VoiceHTTPOptions struct {
+	AudioReadTimeout time.Duration
+}
+
 type HTTPHandler struct {
-	application   Application
-	runs          RunApplication
-	voice         *VoiceSessionApplication
-	matters       matter.Application
-	authenticator identity.Authenticator
-	correlationID CorrelationIDGenerator
+	application      Application
+	runs             RunApplication
+	voice            *VoiceSessionApplication
+	matters          matter.Application
+	authenticator    identity.Authenticator
+	correlationID    CorrelationIDGenerator
+	voiceReadTimeout time.Duration
 }
 
 func NewHTTPHandler(
@@ -81,6 +87,7 @@ func NewHTTPHandlerWithRunsAndVoice(
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
+	voiceOptions ...VoiceHTTPOptions,
 ) (*HTTPHandler, error) {
 	if application == nil || matters == nil || authenticator == nil {
 		return nil, errors.New("agent: HTTP dependency is required")
@@ -88,13 +95,24 @@ func NewHTTPHandlerWithRunsAndVoice(
 	if correlationID == nil {
 		correlationID = newCorrelationID
 	}
+	voiceReadTimeout := defaultVoiceReadTimeout
+	if len(voiceOptions) > 1 {
+		return nil, errors.New("agent: duplicate voice HTTP options")
+	}
+	if len(voiceOptions) == 1 {
+		if voiceOptions[0].AudioReadTimeout <= 0 {
+			return nil, errors.New("agent: voice audio read timeout is required")
+		}
+		voiceReadTimeout = voiceOptions[0].AudioReadTimeout
+	}
 	return &HTTPHandler{
-		application:   application,
-		runs:          runs,
-		voice:         voice,
-		matters:       matters,
-		authenticator: authenticator,
-		correlationID: correlationID,
+		application:      application,
+		runs:             runs,
+		voice:            voice,
+		matters:          matters,
+		authenticator:    authenticator,
+		correlationID:    correlationID,
+		voiceReadTimeout: voiceReadTimeout,
 	}, nil
 }
 
@@ -710,6 +728,7 @@ func (h *HTTPHandler) resumeVoiceSession(c *gin.Context) {
 func (h *HTTPHandler) transcribeVoiceCandidate(c *gin.Context) {
 	key, ok := voiceIdempotencyKey(c)
 	if !ok || c.Request.Body == nil ||
+		c.Request.ContentLength > platformmedia.MaxAudioBytes ||
 		!strings.EqualFold(
 			strings.TrimSpace(c.GetHeader("Content-Type")),
 			platformmedia.ContentTypeWAV,
@@ -722,6 +741,21 @@ func (h *HTTPHandler) transcribeVoiceCandidate(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
+	controller := http.NewResponseController(c.Writer)
+	if err := controller.SetReadDeadline(
+		time.Now().Add(h.voiceReadTimeout),
+	); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+		return
+	}
+	defer func() {
+		_ = controller.SetReadDeadline(time.Time{})
+	}()
+	body := http.MaxBytesReader(
+		c.Writer,
+		c.Request.Body,
+		platformmedia.MaxAudioBytes,
+	)
 	candidate, err := h.voice.Transcribe(
 		c.Request.Context(),
 		actor,
@@ -730,7 +764,7 @@ func (h *HTTPHandler) transcribeVoiceCandidate(c *gin.Context) {
 			QuestionID:     c.Param("question_id"),
 			IdempotencyKey: key,
 			ContentType:    platformmedia.ContentTypeWAV,
-			Audio:          c.Request.Body,
+			Audio:          body,
 		},
 	)
 	if err != nil {
@@ -928,6 +962,14 @@ func (h *HTTPHandler) writeVoiceError(c *gin.Context, err error) {
 	case errors.Is(err, conversation.ErrVoiceRoundProcessing):
 		c.Header("Retry-After", "1")
 		h.writeError(c, http.StatusConflict, "resource_processing", true)
+	case errors.Is(err, conversation.ErrVoiceRoundCapacity):
+		c.Header("Retry-After", "1")
+		h.writeError(
+			c,
+			http.StatusServiceUnavailable,
+			"voice_capacity_exhausted",
+			true,
+		)
 	case errors.As(err, &speechError):
 		h.writeProviderError(c, speechError.Kind)
 	case errors.As(err, &generationError):
@@ -977,6 +1019,7 @@ func (h *HTTPHandler) writeError(
 		"resource_processing":      "Resource processing is still in progress.",
 		"provider_unavailable":     "The configured provider is temporarily unavailable.",
 		"quota_exhausted":          "The configured free quota is exhausted.",
+		"voice_capacity_exhausted": "Voice processing capacity is temporarily exhausted.",
 		"internal_error":           "An internal error occurred.",
 	}
 	c.JSON(status, gin.H{

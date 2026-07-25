@@ -21,6 +21,7 @@ var (
 	ErrVoiceRoundNotFound   = errors.New("voice_round_not_found")
 	ErrVoiceRoundConflict   = errors.New("voice_round_idempotency_conflict")
 	ErrVoiceRoundProcessing = errors.New("voice_round_processing")
+	ErrVoiceRoundCapacity   = errors.New("voice_round_capacity")
 )
 
 const voicePersistenceTimeout = 5 * time.Second
@@ -278,6 +279,9 @@ func (service *VoiceRoundService) Transcribe(
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return TranscriptionCandidate{}, contextErr
+		}
+		if errors.Is(err, platformmedia.ErrTemporaryAudioCapacity) {
+			return TranscriptionCandidate{}, ErrVoiceRoundCapacity
 		}
 		return TranscriptionCandidate{}, ErrVoiceRoundInvalid
 	}

@@ -86,6 +86,16 @@ func NewIdentityAndAgentModules(
 			return nil, nil, err
 		}
 	}
+	var voiceHTTPOptions []agent.VoiceHTTPOptions
+	if len(voiceConfigurations) == 1 &&
+		voiceConfigurations[0].AudioReadTimeout > 0 {
+		voiceHTTPOptions = append(
+			voiceHTTPOptions,
+			agent.VoiceHTTPOptions{
+				AudioReadTimeout: voiceConfigurations[0].AudioReadTimeout,
+			},
+		)
+	}
 	handler, err := agent.NewHTTPHandlerWithRunsAndVoice(
 		agentService,
 		runService,
@@ -93,6 +103,7 @@ func NewIdentityAndAgentModules(
 		matterService,
 		authenticator,
 		nil,
+		voiceHTTPOptions...,
 	)
 	if err != nil {
 		return nil, nil, err

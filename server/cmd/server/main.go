@@ -61,12 +61,21 @@ func run() int {
 		logger.Error("speech synthesis startup failed")
 		return 1
 	}
+	temporaryAudioConfig, err := config.LoadTemporaryAudio()
+	if err != nil {
+		logger.Error("temporary audio configuration failed")
+		return 1
+	}
 	audioVault, err := platformmedia.NewTemporaryAudioVault(
 		platformmedia.TemporaryAudioVaultConfig{
-			ScratchDirectory: ttsConfig.TempDirectory,
-			Lifetime:         2 * time.Minute,
-			MaxItems:         64,
-			MaxBytes:         64 * platformmedia.MaxAudioBytes,
+			ScratchDirectory:              ttsConfig.TempDirectory,
+			Lifetime:                      temporaryAudioConfig.Lifetime,
+			MaxItems:                      temporaryAudioConfig.MaxItems,
+			MaxBytes:                      temporaryAudioConfig.MaxBytes,
+			MaxItemsPerActor:              temporaryAudioConfig.MaxItemsPerUser,
+			MaxBytesPerActor:              temporaryAudioConfig.MaxBytesPerUser,
+			MaxConcurrentCaptures:         temporaryAudioConfig.MaxConcurrentCaptures,
+			MaxConcurrentCapturesPerActor: temporaryAudioConfig.MaxConcurrentCapturesPerUser,
 		},
 	)
 	if err != nil {
@@ -116,6 +125,7 @@ func run() int {
 				// The existing Review lease is 30s. Bound the parent context
 				// below it even when the shared provider client allows 60s.
 				ReviewGenerationTimeout: 20 * time.Second,
+				AudioReadTimeout:        temporaryAudioConfig.ReadTimeout,
 			},
 		)
 	if err != nil {

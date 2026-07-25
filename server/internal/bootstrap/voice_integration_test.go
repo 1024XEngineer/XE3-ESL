@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -766,6 +767,142 @@ WHERE review_id = $1`,
 	if recoveredAttempts != 2 {
 		t.Fatalf("recovered Review attempts = %d, want 2", recoveredAttempts)
 	}
+
+	quotaSession := voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodPost,
+		startPath,
+		"",
+		"start-voice-session-quota",
+		http.StatusCreated,
+	)
+	for round := 1; round <= 2; round++ {
+		quotaSession = transcribeAndConfirmVoiceRound(
+			t,
+			restartedServer.URL,
+			token,
+			quotaSession,
+			fmt.Sprintf("quota-review-round-%d", round),
+		)
+	}
+	quotaCandidate := createVoiceCandidate(
+		t,
+		restartedServer.URL,
+		token,
+		quotaSession,
+		"quota-review-round-3",
+	)
+	text.FailNextQuotaReview()
+	quotaConfirm, err := voiceRawRequest(
+		restartedServer.URL,
+		token,
+		http.MethodPost,
+		"/v1/transcription-candidates/"+
+			quotaCandidate["candidate_id"].(string)+"/confirmations",
+		nil,
+		"confirm-quota-review-round-3",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertQuotaExhaustedVoiceResponse(t, quotaConfirm)
+	quotaReviewCalls := text.ReviewCalls()
+
+	// A fresh composition root exercises a real service restart. The failed
+	// Review row must remain terminal across every subsequent Resume.
+	restartedServer.Close()
+	if err := restartedVault.Close(); err != nil {
+		t.Fatalf("close retry audio vault: %v", err)
+	}
+	terminalVault := newVoiceTestVault(t)
+	terminalIdentity, terminalAgent, err := NewIdentityAndAgentModules(
+		context.Background(),
+		pool,
+		nil,
+		"",
+		text,
+		agent.RunConfiguration{
+			Provider:           "fake",
+			Model:              "fake-text-v1",
+			MaxOutputTokens:    256,
+			MaxInputCharacters: 12000,
+		},
+		VoiceConfiguration{
+			Recognizer:              recognizer,
+			Synthesizer:             synthesizer,
+			TemporaryAudio:          terminalVault,
+			ASRLease:                5 * time.Second,
+			ReviewGenerationTimeout: 2 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("restart terminal Review composition: %v", err)
+	}
+	terminalServer := httptest.NewServer(NewRouterWithReadinessAndRoutes(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pool,
+		[]RouteRegistrar{terminalIdentity, terminalAgent},
+	).Handler())
+	t.Cleanup(terminalServer.Close)
+	for resume := 0; resume < 3; resume++ {
+		response, err := voiceRawRequest(
+			terminalServer.URL,
+			token,
+			http.MethodGet,
+			"/v1/agent-threads/"+threadID+"/voice-practice-session",
+			nil,
+			"",
+			"",
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertQuotaExhaustedVoiceResponse(t, response)
+	}
+	if got := text.ReviewCalls(); got != quotaReviewCalls {
+		t.Fatalf(
+			"terminal Review Resume calls = %d, want unchanged %d",
+			got,
+			quotaReviewCalls,
+		)
+	}
+}
+
+func assertQuotaExhaustedVoiceResponse(
+	t *testing.T,
+	response *http.Response,
+) {
+	t.Helper()
+	defer response.Body.Close()
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusServiceUnavailable ||
+		response.Header.Get("Retry-After") != "" {
+		t.Fatalf(
+			"quota response status = %d, Retry-After = %q: %s",
+			response.StatusCode,
+			response.Header.Get("Retry-After"),
+			raw,
+		)
+	}
+	var payload struct {
+		Error struct {
+			Code      string `json:"code"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode quota response: %v", err)
+	}
+	if payload.Error.Code != "quota_exhausted" ||
+		payload.Error.Retryable {
+		t.Fatalf("quota response = %#v", payload)
+	}
 }
 
 func registerAndLoginVoiceUser(
@@ -944,6 +1081,7 @@ type voiceTextGenerator struct {
 	questionCalls         atomic.Int64
 	reviewCalls           atomic.Int64
 	reviewFailuresPending atomic.Int64
+	quotaReviewPending    atomic.Bool
 }
 
 func (generator *voiceTextGenerator) Generate(
@@ -953,6 +1091,15 @@ func (generator *voiceTextGenerator) Generate(
 	last := request.Messages[len(request.Messages)-1].Content
 	if strings.HasPrefix(last, "Review these ") {
 		generator.reviewCalls.Add(1)
+		if generator.quotaReviewPending.CompareAndSwap(true, false) {
+			return ai.TextResult{}, ai.NewGenerationError(
+				ai.ErrorQuotaExhausted,
+				http.StatusTooManyRequests,
+				"FreeTierOnly",
+				"review-quota-request",
+				errors.New("free quota exhausted"),
+			)
+		}
 		for {
 			pending := generator.reviewFailuresPending.Load()
 			if pending == 0 {
@@ -989,6 +1136,10 @@ func (generator *voiceTextGenerator) ReviewCalls() int64 {
 
 func (generator *voiceTextGenerator) FailNextReviews(count int64) {
 	generator.reviewFailuresPending.Store(count)
+}
+
+func (generator *voiceTextGenerator) FailNextQuotaReview() {
+	generator.quotaReviewPending.Store(true)
 }
 
 type voiceRecognizer struct {
