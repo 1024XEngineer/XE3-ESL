@@ -461,6 +461,136 @@ func TestConcurrentConfirmationCreatesExactlyOneTurn(t *testing.T) {
 	}
 }
 
+func TestConcurrentCandidatesForOneQuestionCreateOneFormalTurn(t *testing.T) {
+	repository, pool := newIntegrationRepository(t)
+	actor := testActor(testUserA)
+	question := saveTestQuestion(
+		t,
+		repository,
+		actor,
+		"question-candidate-race",
+		"session-candidate-race",
+	)
+	const candidateCount = 4
+	candidates := make([]conversation.TranscriptCandidate, 0, candidateCount)
+	for index := 1; index <= candidateCount; index++ {
+		reservation := reserveTestTranscription(
+			t,
+			repository,
+			actor,
+			question,
+			fmt.Sprintf("reserve-candidate-race-%d", index),
+		)
+		candidates = append(
+			candidates,
+			completeTestTranscription(
+				t,
+				repository,
+				reservation,
+				fmt.Sprintf("transcript-candidate-race-%d", index),
+			),
+		)
+	}
+	commands := make(
+		[]conversation.ConfirmTurnCommand,
+		0,
+		len(candidates),
+	)
+	for index, candidate := range candidates {
+		commands = append(commands, conversation.ConfirmTurnCommand{
+			CandidateID:     candidate.ID,
+			EvidenceVersion: candidate.EvidenceVersion,
+			ConfirmedText:   candidate.Text,
+			IdempotencyKey: fmt.Sprintf(
+				"confirm-candidate-race-%d",
+				index+1,
+			),
+		})
+	}
+
+	type result struct {
+		index int
+		turn  conversation.ConfirmedTurn
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan result, len(commands))
+	for index, command := range commands {
+		index := index
+		command := command
+		go func() {
+			<-start
+			turn, err := repository.ConfirmTurn(
+				context.Background(),
+				actor,
+				command,
+			)
+			results <- result{index: index, turn: turn, err: err}
+		}()
+	}
+	close(start)
+
+	successes := 0
+	conflicts := 0
+	var winner result
+	for range commands {
+		outcome := <-results
+		switch {
+		case outcome.err == nil:
+			successes++
+			winner = outcome
+		case errors.Is(outcome.err, conversation.ErrPersistenceConflict):
+			conflicts++
+		default:
+			t.Fatalf("candidate confirmation error = %v", outcome.err)
+		}
+	}
+	if successes != 1 || conflicts != candidateCount-1 {
+		t.Fatalf(
+			"candidate race successes=%d conflicts=%d, want 1/%d",
+			successes,
+			conflicts,
+			candidateCount-1,
+		)
+	}
+	turns, err := repository.ListSessionTurns(
+		context.Background(),
+		actor,
+		question.SessionID,
+	)
+	if err != nil {
+		t.Fatalf("list candidate-race turns: %v", err)
+	}
+	if len(turns) != 1 || turns[0].ID != winner.turn.ID {
+		t.Fatalf("candidate-race turns = %#v, winner = %#v", turns, winner.turn)
+	}
+	replayed, err := repository.ConfirmTurn(
+		context.Background(),
+		actor,
+		commands[winner.index],
+	)
+	if err != nil || !reflect.DeepEqual(replayed, winner.turn) {
+		t.Fatalf("winner replay = %#v, %v; want %#v", replayed, err, winner.turn)
+	}
+	var turnCount int
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT count(*)
+		 FROM conversation_confirmed_turns
+		 WHERE owner_user_id = $1
+		   AND practice_session_id = $2
+		   AND question_id = $3`,
+		actor.UserID,
+		question.SessionID,
+		question.ID,
+	).Scan(&turnCount); err != nil {
+		t.Fatalf("count formal turns: %v", err)
+	}
+	if turnCount != 1 {
+		t.Fatalf("formal turn count = %d, want 1", turnCount)
+	}
+}
+
 func TestInvalidOwnerAndDuplicateAddresseesAreRejected(t *testing.T) {
 	repository, pool := newIntegrationRepository(t)
 	invalidActor := conversation.Actor{

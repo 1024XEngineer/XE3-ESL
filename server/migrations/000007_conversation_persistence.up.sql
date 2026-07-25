@@ -159,6 +159,7 @@ CREATE TABLE conversation_confirmed_turns (
     created_at timestamptz NOT NULL,
     PRIMARY KEY (owner_user_id, turn_id),
     UNIQUE (owner_user_id, candidate_id),
+    UNIQUE (owner_user_id, practice_session_id, question_id),
     FOREIGN KEY (owner_user_id, candidate_id)
         REFERENCES conversation_transcript_candidates (owner_user_id, candidate_id)
         ON DELETE CASCADE,
