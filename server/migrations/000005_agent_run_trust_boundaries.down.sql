@@ -1,5 +1,8 @@
 BEGIN;
 
+SET LOCAL lock_timeout = '15s';
+SET LOCAL statement_timeout = '2min';
+
 ALTER TABLE agent_context_manifests
     DROP CONSTRAINT agent_context_manifests_matter_shape_check,
     ADD COLUMN active_matter_title text;

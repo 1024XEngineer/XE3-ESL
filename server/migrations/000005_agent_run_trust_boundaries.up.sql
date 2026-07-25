@@ -1,5 +1,8 @@
 BEGIN;
 
+SET LOCAL lock_timeout = '15s';
+SET LOCAL statement_timeout = '2min';
+
 ALTER TABLE agent_runs
     ADD CONSTRAINT agent_runs_id_owner_thread_input_key
         UNIQUE (id, owner_user_id, thread_id, input_message_id),
@@ -35,11 +38,15 @@ ALTER TABLE agent_runs
             provider_model IS NULL
             OR provider_model = requested_model
         ),
+    -- Version four permitted providers to report more output usage than the
+    -- requested generation budget. Preserve those immutable audit facts while
+    -- enforcing the corrected invariant for every post-migration write.
     ADD CONSTRAINT agent_runs_result_budget_check
         CHECK (
             output_tokens IS NULL
             OR output_tokens <= max_output_tokens
-        ),
+        )
+        NOT VALID,
     DROP CONSTRAINT agent_runs_state_shape_check,
     ADD CONSTRAINT agent_runs_state_shape_check
         CHECK (

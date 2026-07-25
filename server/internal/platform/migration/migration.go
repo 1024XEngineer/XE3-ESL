@@ -5,6 +5,7 @@ package migration
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"strings"
 	"time"
@@ -199,6 +200,26 @@ func (d *boundedLockDriver) Unlock() error {
 	unlockErr := d.Driver.Unlock()
 	resetErr := d.setStatementTimeout(0)
 	return errors.Join(unlockErr, resetErr)
+}
+
+func (d *boundedLockDriver) Run(migration io.Reader) error {
+	err := d.Driver.Run(migration)
+	if err == nil {
+		return nil
+	}
+
+	// Repository migrations use explicit transactions. PostgreSQL leaves the
+	// pinned migration connection inside an aborted transaction after a
+	// statement fails, so recover it before migrate tries to release its
+	// advisory lock or inspect the durable dirty marker.
+	rollbackErr := d.Driver.Run(strings.NewReader("ROLLBACK"))
+	if rollbackErr != nil {
+		return errors.Join(
+			err,
+			fmt.Errorf("rollback failed migration transaction: %w", rollbackErr),
+		)
+	}
+	return err
 }
 
 func (d *boundedLockDriver) setStatementTimeout(timeout time.Duration) error {
