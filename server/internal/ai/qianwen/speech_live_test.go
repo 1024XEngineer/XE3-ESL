@@ -5,11 +5,31 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformconfig "github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 )
+
+const defaultASRLiveFixture = "testdata/asr-live-fixture.wav"
+
+func TestASRLiveFixturePassesUploadBoundary(t *testing.T) {
+	audio := captureLiveASRFixture(t, defaultASRLiveFixture)
+	defer audio.Close()
+
+	if audio.MediaType() != platformmedia.ContentTypeWAV ||
+		audio.SampleRate() != 16_000 ||
+		audio.Duration() <= 0 ||
+		audio.Duration() > 60*time.Second {
+		t.Fatalf(
+			"unexpected ASR fixture metadata: type=%q rate=%d duration=%s",
+			audio.MediaType(),
+			audio.SampleRate(),
+			audio.Duration(),
+		)
+	}
+}
 
 func TestLiveSpeechRecognition(t *testing.T) {
 	if os.Getenv("QIANWEN_ASR_LIVE_TEST") != "1" {
@@ -18,21 +38,9 @@ func TestLiveSpeechRecognition(t *testing.T) {
 	requireConfirmedVoiceFreeQuota(t)
 	audioPath := os.Getenv("QIANWEN_ASR_LIVE_TEST_AUDIO")
 	if audioPath == "" {
-		t.Fatal("QIANWEN_ASR_LIVE_TEST_AUDIO is required")
+		audioPath = defaultASRLiveFixture
 	}
-	input, err := os.Open(audioPath)
-	if err != nil {
-		t.Fatal("open live ASR test audio")
-	}
-	defer input.Close()
-	audio, err := platformmedia.CaptureTemporaryAudio(
-		t.TempDir(),
-		platformmedia.ContentTypeWAV,
-		input,
-	)
-	if err != nil {
-		t.Fatalf("validate live ASR test audio: %v", err)
-	}
+	audio := captureLiveASRFixture(t, audioPath)
 	defer audio.Close()
 
 	cfg, err := platformconfig.LoadSpeechRecognition()
@@ -102,6 +110,27 @@ func TestLiveSpeechSynthesis(t *testing.T) {
 	if string(buffer[:4]) != "RIFF" || string(buffer[8:12]) != "WAVE" {
 		t.Fatal("live Qianwen TTS output is not a validated WAV")
 	}
+}
+
+func captureLiveASRFixture(
+	t *testing.T,
+	audioPath string,
+) *platformmedia.TemporaryAudio {
+	t.Helper()
+	input, err := os.Open(audioPath)
+	if err != nil {
+		t.Fatalf("open live ASR test audio: %v", err)
+	}
+	defer input.Close()
+	audio, err := platformmedia.CaptureTemporaryAudio(
+		t.TempDir(),
+		platformmedia.ContentTypeWAV,
+		input,
+	)
+	if err != nil {
+		t.Fatalf("validate live ASR test audio: %v", err)
+	}
+	return audio
 }
 
 func requireConfirmedVoiceFreeQuota(t *testing.T) {
