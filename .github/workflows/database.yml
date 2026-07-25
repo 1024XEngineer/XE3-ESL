@@ -113,6 +113,13 @@ jobs:
           SERVER_HOST: 127.0.0.1
           SERVER_PORT: "8080"
           POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+          # The readiness probe never invokes model generation. Supply an
+          # explicit, non-secret test registration so production startup can
+          # remain fail-closed when its real provider configuration is absent.
+          TEXT_GENERATION_PROVIDER: qianwen
+          QIANWEN_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
+          QIANWEN_MODEL: qwen-ci-readiness-not-invoked
+          DASHSCOPE_API_KEY: ci-readiness-not-a-secret
         run: |
           set -euo pipefail
 
