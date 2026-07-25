@@ -17,8 +17,16 @@ const (
 	audioObjectPrefix   = "audio/v1/assets/"
 	MaxPlaybackURLTTL   = 2 * time.Minute
 	defaultStagedTTL    = 24 * time.Hour
-	defaultCleanupLimit = 100
-	maxConflictReloads  = 3
+	defaultCleanupLimit = 4
+	// Upload is bounded below its write lease. A claim-aware Repository keeps
+	// cleanup and an active object write mutually exclusive with database time.
+	audioUploadOperationTimeout = 2 * time.Minute
+	defaultUploadLease          = 5 * time.Minute
+	defaultCleanupLease         = 5 * time.Minute
+	maxConflictReloads          = 3
+	uploadClaimReloadAttempts   = 10
+	uploadClaimReloadDelay      = 5 * time.Millisecond
+	_                           = uint64(defaultUploadLease - audioUploadOperationTimeout - 1)
 )
 
 // AudioAssetRepository persists metadata only. Create maps an ID or
@@ -29,18 +37,11 @@ const (
 // ErrAudioAssetAlreadyBound.
 type AudioAssetRepository interface {
 	Create(context.Context, AudioAsset) error
-	Get(context.Context, string) (AudioAsset, error)
+	GetOwned(context.Context, string, string) (AudioAsset, error)
 	GetByUploadRequest(context.Context, string, string) (AudioAsset, error)
 	GetByCandidate(context.Context, string, string) (AudioAsset, error)
 	GetByTurn(context.Context, string, string) (AudioAsset, error)
 	Save(context.Context, AudioAsset, uint64) error
-	// ListExpiredUnconfirmed returns expired assets with no Turn whose status
-	// is staged or metadata_committed.
-	ListExpiredUnconfirmed(context.Context, time.Time, int) ([]AudioAsset, error)
-	ListDeleting(context.Context, int) ([]AudioAsset, error)
-	// ListOwnerAssetsForAccountCleanup returns a bounded batch of one owner's
-	// assets in any state except deleted.
-	ListOwnerAssetsForAccountCleanup(context.Context, string, int) ([]AudioAsset, error)
 }
 
 type AudioAssetIDGenerator interface {
@@ -75,19 +76,22 @@ type UploadRecordingRequest struct {
 type AudioAssetCleanupResult struct {
 	Deleted int
 	Failed  int
+	Purged  int
+	Pending bool
 }
 
 type AudioAssetService struct {
-	repository AudioAssetRepository
+	repository AudioAssetLifecycleRepository
 	store      objectstore.Store
 	ids        AudioAssetIDGenerator
 	clock      AudioAssetClock
 	turns      AudioAssetTurnVerifier
+	reclaimer  *AudioAssetReclaimer
 	stagedTTL  time.Duration
 }
 
 func NewAudioAssetService(
-	repository AudioAssetRepository,
+	repository AudioAssetLifecycleRepository,
 	store objectstore.Store,
 	ids AudioAssetIDGenerator,
 	clock AudioAssetClock,
@@ -104,12 +108,17 @@ func NewAudioAssetService(
 	if stagedTTL <= 0 {
 		stagedTTL = defaultStagedTTL
 	}
+	reclaimer, err := NewAudioAssetReclaimer(repository, store, clock)
+	if err != nil {
+		return nil, err
+	}
 	return &AudioAssetService{
 		repository: repository,
 		store:      store,
 		ids:        ids,
 		clock:      clock,
 		turns:      turns,
+		reclaimer:  reclaimer,
 		stagedTTL:  stagedTTL,
 	}, nil
 }
@@ -121,9 +130,13 @@ func (s *AudioAssetService) Upload(
 	actor AudioAssetActor,
 	request UploadRecordingRequest,
 ) (AudioAsset, error) {
-	ownerID := strings.TrimSpace(actor.UserID)
+	rawOwnerID := actor.UserID
+	ownerID := strings.TrimSpace(rawOwnerID)
 	requestID := strings.TrimSpace(request.RequestID)
-	if ownerID == "" || requestID == "" || request.Body == nil {
+	if rawOwnerID != ownerID ||
+		!validAudioAssetIdentifier(ownerID) ||
+		!validAudioAssetIdentifier(requestID) ||
+		request.Body == nil {
 		return AudioAsset{}, ErrAudioAssetInvalid
 	}
 
@@ -133,8 +146,14 @@ func (s *AudioAssetService) Upload(
 		if !asset.sameUpload(request) {
 			return AudioAsset{}, ErrAudioAssetIdempotencyConflict
 		}
-		if asset.Status != AudioAssetStaged {
+		switch asset.Status {
+		case AudioAssetMetadataCommitted, AudioAssetReadable:
 			return asset, nil
+		case AudioAssetStaged:
+		case AudioAssetDeleting, AudioAssetDeleted:
+			return AudioAsset{}, ErrAudioAssetUploadTerminated
+		default:
+			return AudioAsset{}, ErrAudioAssetInvalidTransition
 		}
 	case errors.Is(err, ErrAudioAssetNotFound):
 		asset, err = s.createStaged(ctx, ownerID, request)
@@ -144,25 +163,136 @@ func (s *AudioAssetService) Upload(
 		if !asset.sameUpload(request) {
 			return AudioAsset{}, ErrAudioAssetIdempotencyConflict
 		}
-		if asset.Status != AudioAssetStaged {
+		switch asset.Status {
+		case AudioAssetMetadataCommitted, AudioAssetReadable:
 			return asset, nil
+		case AudioAssetStaged:
+		case AudioAssetDeleting, AudioAssetDeleted:
+			return AudioAsset{}, ErrAudioAssetUploadTerminated
+		default:
+			return AudioAsset{}, ErrAudioAssetInvalidTransition
 		}
 	default:
 		return AudioAsset{}, err
 	}
 
-	putResult, err := s.store.Put(ctx, objectstore.PutRequest{
+	uploadCtx, cancelUpload := context.WithTimeout(
+		ctx,
+		audioUploadOperationTimeout,
+	)
+	defer cancelUpload()
+	claim, err := s.repository.ClaimUpload(
+		uploadCtx,
+		ownerID,
+		requestID,
+		defaultUploadLease,
+	)
+	if err != nil {
+		if errors.Is(err, ErrAudioAssetConcurrentUpdate) {
+			return s.waitForConcurrentUpload(
+				uploadCtx,
+				ownerID,
+				requestID,
+				request,
+			)
+		}
+		return AudioAsset{}, err
+	}
+	asset = claim.Asset
+	if asset.OwnerID != ownerID ||
+		asset.UploadRequestID != requestID ||
+		!asset.sameUpload(request) ||
+		asset.Status != AudioAssetStaged ||
+		claim.FencingToken == 0 ||
+		claim.LeaseExpiresAt.IsZero() {
+		return AudioAsset{}, ErrAudioAssetInvalid
+	}
+	if err := uploadCtx.Err(); err != nil {
+		return AudioAsset{}, err
+	}
+
+	putResult, err := s.store.Put(uploadCtx, objectstore.PutRequest{
 		Key:            asset.ObjectKey,
 		Body:           request.Body,
 		Size:           asset.Size,
 		ContentType:    asset.ContentType,
 		ChecksumSHA256: asset.ChecksumSHA256,
 	})
-	if err != nil && !errors.Is(err, objectstore.ErrAlreadyExists) {
+	if err != nil {
+		if safeToReleaseUploadClaim(err) {
+			releaseErr := s.repository.ReleaseUploadClaim(
+				ctx,
+				asset.OwnerID,
+				asset.ID,
+				claim.FencingToken,
+			)
+			return AudioAsset{}, errors.Join(err, releaseErr)
+		}
 		return AudioAsset{}, err
 	}
 
-	return s.commitUploadedMetadata(ctx, asset, request, putResult.ETag)
+	expectedVersion := asset.Version
+	if err := asset.commitMetadata(putResult.ETag, s.clock.Now()); err != nil {
+		return AudioAsset{}, err
+	}
+	if err := s.repository.CommitUploadClaim(
+		ctx,
+		asset,
+		expectedVersion,
+		claim.FencingToken,
+	); err == nil {
+		return asset, nil
+	} else {
+		if compensationErr := s.compensateLateUploadAfterDeletion(
+			ctx,
+			asset.OwnerID,
+			asset.ID,
+		); compensationErr != nil {
+			return AudioAsset{}, errors.Join(err, compensationErr)
+		}
+		return AudioAsset{}, err
+	}
+}
+
+func (s *AudioAssetService) waitForConcurrentUpload(
+	ctx context.Context,
+	ownerID string,
+	requestID string,
+	request UploadRecordingRequest,
+) (AudioAsset, error) {
+	for attempt := range uploadClaimReloadAttempts {
+		current, err := s.repository.GetByUploadRequest(
+			ctx,
+			ownerID,
+			requestID,
+		)
+		if err != nil {
+			return AudioAsset{}, err
+		}
+		if !current.sameUpload(request) {
+			return AudioAsset{}, ErrAudioAssetIdempotencyConflict
+		}
+		switch current.Status {
+		case AudioAssetMetadataCommitted, AudioAssetReadable:
+			return current, nil
+		case AudioAssetDeleting, AudioAssetDeleted:
+			return AudioAsset{}, ErrAudioAssetUploadTerminated
+		case AudioAssetStaged:
+		default:
+			return AudioAsset{}, ErrAudioAssetInvalidTransition
+		}
+		if attempt == uploadClaimReloadAttempts-1 {
+			break
+		}
+		timer := time.NewTimer(uploadClaimReloadDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return AudioAsset{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return AudioAsset{}, ErrAudioAssetConcurrentUpdate
 }
 
 func (s *AudioAssetService) createStaged(
@@ -210,7 +340,8 @@ func (s *AudioAssetService) Confirm(
 ) (AudioAsset, error) {
 	candidateID = strings.TrimSpace(candidateID)
 	turnID = strings.TrimSpace(turnID)
-	if candidateID == "" || turnID == "" {
+	if !validAudioAssetIdentifier(candidateID) ||
+		!validAudioAssetIdentifier(turnID) {
 		return AudioAsset{}, ErrAudioAssetInvalid
 	}
 	asset, err := s.ownedAsset(ctx, actor, assetID)
@@ -264,7 +395,7 @@ func (s *AudioAssetService) Confirm(
 			!errors.Is(err, ErrAudioAssetAlreadyBound) {
 			return AudioAsset{}, err
 		}
-		asset, err = s.repository.Get(ctx, asset.ID)
+		asset, err = s.repository.GetOwned(ctx, asset.OwnerID, asset.ID)
 		if err != nil {
 			return AudioAsset{}, err
 		}
@@ -322,80 +453,30 @@ func (s *AudioAssetService) ReclaimExpired(
 	ctx context.Context,
 	limit int,
 ) (AudioAssetCleanupResult, error) {
-	if limit <= 0 {
-		limit = defaultCleanupLimit
-	}
-	cutoff := s.clock.Now()
-	expired, err := s.repository.ListExpiredUnconfirmed(ctx, cutoff, limit)
-	if err != nil {
-		return AudioAssetCleanupResult{}, err
-	}
-	deleting, err := s.repository.ListDeleting(ctx, limit)
-	if err != nil {
-		return AudioAssetCleanupResult{}, err
-	}
-
-	result := AudioAssetCleanupResult{}
-	seen := make(map[string]struct{}, len(expired)+len(deleting))
-	for _, asset := range expired {
-		seen[asset.ID] = struct{}{}
-		deleted, err := s.deleteExpiredUnconfirmed(ctx, asset, cutoff)
-		if err != nil {
-			result.Failed++
-			continue
-		}
-		if deleted {
-			result.Deleted++
-		}
-	}
-	for _, asset := range deleting {
-		if _, found := seen[asset.ID]; found {
-			continue
-		}
-		if _, err := s.deleteAsset(ctx, asset); err != nil {
-			result.Failed++
-		} else {
-			result.Deleted++
-		}
-	}
-	return result, nil
+	return s.reclaimer.ReclaimExpired(ctx, limit)
 }
 
 // CleanupAccountData is Conversation's module boundary for account-data
-// cleanup. Identity orchestration calls it with a trusted actor; this service
-// owns only the deletion of that actor's AudioAssets.
+// cleanup. The #72 Identity orchestrator must first atomically mark the account
+// deleting, revoke its Sessions, and prevent new Actor-backed writes; otherwise
+// a new row could appear after the final Has query. Conversation neither reads
+// nor writes Identity tables. The orchestrator retries this method while
+// ErrAudioAssetCleanupPending is returned.
 func (s *AudioAssetService) CleanupAccountData(
 	ctx context.Context,
 	actor AudioAssetActor,
 	limit int,
 ) (AudioAssetCleanupResult, error) {
-	ownerID := strings.TrimSpace(actor.UserID)
-	if ownerID == "" {
+	rawOwnerID := actor.UserID
+	ownerID := strings.TrimSpace(rawOwnerID)
+	if rawOwnerID != ownerID ||
+		!validAudioAssetIdentifier(ownerID) {
 		return AudioAssetCleanupResult{}, ErrAudioAssetInvalid
 	}
 	if limit <= 0 {
 		limit = defaultCleanupLimit
 	}
-	assets, err := s.repository.ListOwnerAssetsForAccountCleanup(ctx, ownerID, limit)
-	if err != nil {
-		return AudioAssetCleanupResult{}, err
-	}
-
-	result := AudioAssetCleanupResult{}
-	for _, asset := range assets {
-		// Defend the ownership boundary even if a Repository implementation
-		// accidentally returns a row outside the requested owner.
-		if asset.OwnerID != ownerID {
-			result.Failed++
-			continue
-		}
-		if _, err := s.deleteAsset(ctx, asset); err != nil {
-			result.Failed++
-			continue
-		}
-		result.Deleted++
-	}
-	return result, nil
+	return s.reclaimer.cleanupAccountClaims(ctx, ownerID, limit)
 }
 
 func (s *AudioAssetService) ownedAsset(
@@ -403,14 +484,21 @@ func (s *AudioAssetService) ownedAsset(
 	actor AudioAssetActor,
 	assetID string,
 ) (AudioAsset, error) {
-	if strings.TrimSpace(assetID) == "" {
+	rawOwnerID := actor.UserID
+	ownerID := strings.TrimSpace(rawOwnerID)
+	rawAssetID := assetID
+	assetID = strings.TrimSpace(rawAssetID)
+	if rawOwnerID != ownerID ||
+		rawAssetID != assetID ||
+		!validAudioAssetIdentifier(ownerID) ||
+		!validAudioAssetIdentifier(assetID) {
 		return AudioAsset{}, ErrAudioAssetInvalid
 	}
-	asset, err := s.repository.Get(ctx, assetID)
+	asset, err := s.repository.GetOwned(ctx, ownerID, assetID)
 	if err != nil {
 		return AudioAsset{}, err
 	}
-	if err := asset.ownedBy(strings.TrimSpace(actor.UserID)); err != nil {
+	if err := asset.ownedBy(ownerID); err != nil {
 		return AudioAsset{}, err
 	}
 	return asset, nil
@@ -437,7 +525,7 @@ func (s *AudioAssetService) deleteAsset(
 		} else if !errors.Is(err, ErrAudioAssetConcurrentUpdate) {
 			return AudioAsset{}, err
 		}
-		asset, err = s.repository.Get(ctx, asset.ID)
+		asset, err = s.repository.GetOwned(ctx, asset.OwnerID, asset.ID)
 		if err != nil {
 			return AudioAsset{}, err
 		}
@@ -462,45 +550,12 @@ func (s *AudioAssetService) deleteAsset(
 		} else if !errors.Is(err, ErrAudioAssetConcurrentUpdate) {
 			return AudioAsset{}, err
 		}
-		asset, err = s.repository.Get(ctx, asset.ID)
+		asset, err = s.repository.GetOwned(ctx, asset.OwnerID, asset.ID)
 		if err != nil {
 			return AudioAsset{}, err
 		}
 	}
 	return AudioAsset{}, ErrAudioAssetConcurrentUpdate
-}
-
-// deleteExpiredUnconfirmed claims only an asset that is still expired and
-// unbound. A concurrent Confirm that wins the version race makes the asset
-// ineligible and is therefore a successful skip, never a deletion.
-func (s *AudioAssetService) deleteExpiredUnconfirmed(
-	ctx context.Context,
-	asset AudioAsset,
-	cutoff time.Time,
-) (bool, error) {
-	var err error
-	for range maxConflictReloads {
-		if !isExpiredUnconfirmed(asset, cutoff) {
-			return false, nil
-		}
-		expectedVersion := asset.Version
-		if err := asset.beginDeleting(s.clock.Now()); err != nil {
-			return false, err
-		}
-		if err := s.repository.Save(ctx, asset, expectedVersion); err == nil {
-			if _, err := s.deleteAsset(ctx, asset); err != nil {
-				return false, err
-			}
-			return true, nil
-		} else if !errors.Is(err, ErrAudioAssetConcurrentUpdate) {
-			return false, err
-		}
-		asset, err = s.repository.Get(ctx, asset.ID)
-		if err != nil {
-			return false, err
-		}
-	}
-	return false, ErrAudioAssetConcurrentUpdate
 }
 
 func isExpiredUnconfirmed(asset AudioAsset, cutoff time.Time) bool {
@@ -511,40 +566,50 @@ func isExpiredUnconfirmed(asset AudioAsset, cutoff time.Time) bool {
 	return unconfirmed && !asset.StagedUntil.After(cutoff)
 }
 
-func (s *AudioAssetService) commitUploadedMetadata(
+// compensateLateUploadAfterDeletion closes the race where cleanup deletes an
+// absent object and commits its tombstone while Put is still in flight. A
+// successful late Put makes that tombstone stale, so deleted is first reopened
+// to deleting with a version check. This keeps a failed compensation visible to
+// ClaimDeleting and therefore retryable by ReclaimExpired.
+func (s *AudioAssetService) compensateLateUploadAfterDeletion(
 	ctx context.Context,
-	asset AudioAsset,
-	request UploadRecordingRequest,
-	etag string,
-) (AudioAsset, error) {
-	for range maxConflictReloads {
-		if !asset.sameUpload(request) {
-			return AudioAsset{}, ErrAudioAssetIdempotencyConflict
-		}
-		switch asset.Status {
-		case AudioAssetMetadataCommitted, AudioAssetReadable:
-			return asset, nil
-		case AudioAssetStaged:
-		default:
-			return AudioAsset{}, ErrAudioAssetInvalidTransition
-		}
+	ownerID string,
+	assetID string,
+) error {
+	asset, err := s.repository.GetOwned(ctx, ownerID, assetID)
+	if err != nil {
+		return fmt.Errorf("reload audio asset after upload commit failure: %w", err)
+	}
 
-		expectedVersion := asset.Version
-		if err := asset.commitMetadata(etag, s.clock.Now()); err != nil {
-			return AudioAsset{}, err
-		}
-		if err := s.repository.Save(ctx, asset, expectedVersion); err == nil {
-			return asset, nil
-		} else if !errors.Is(err, ErrAudioAssetConcurrentUpdate) {
-			return AudioAsset{}, err
-		}
-		var err error
-		asset, err = s.repository.Get(ctx, asset.ID)
-		if err != nil {
-			return AudioAsset{}, err
+	for range maxConflictReloads {
+		switch asset.Status {
+		case AudioAssetDeleting:
+			if _, err := s.deleteAsset(ctx, asset); err != nil {
+				return fmt.Errorf("compensate late audio upload: %w", err)
+			}
+			return nil
+		case AudioAssetDeleted:
+			expectedVersion := asset.Version
+			if err := asset.resumeDeletingForLateObject(s.clock.Now()); err != nil {
+				return fmt.Errorf("resume late audio upload cleanup: %w", err)
+			}
+			if err := s.repository.Save(ctx, asset, expectedVersion); err == nil {
+				if _, err := s.deleteAsset(ctx, asset); err != nil {
+					return fmt.Errorf("compensate late audio upload: %w", err)
+				}
+				return nil
+			} else if !errors.Is(err, ErrAudioAssetConcurrentUpdate) {
+				return fmt.Errorf("persist late audio upload cleanup: %w", err)
+			}
+			asset, err = s.repository.GetOwned(ctx, asset.OwnerID, asset.ID)
+			if err != nil {
+				return fmt.Errorf("reload late audio upload cleanup: %w", err)
+			}
+		default:
+			return nil
 		}
 	}
-	return AudioAsset{}, ErrAudioAssetConcurrentUpdate
+	return fmt.Errorf("persist late audio upload cleanup: %w", ErrAudioAssetConcurrentUpdate)
 }
 
 func nilDependency(dependency any) bool {
@@ -558,4 +623,9 @@ func nilDependency(dependency any) bool {
 	default:
 		return false
 	}
+}
+
+func safeToReleaseUploadClaim(err error) bool {
+	return errors.Is(err, objectstore.ErrInvalidKey) ||
+		errors.Is(err, objectstore.ErrInvalidObject)
 }

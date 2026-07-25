@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type AudioAssetStatus string
@@ -13,10 +14,11 @@ const (
 	AudioAssetStaged AudioAssetStatus = "staged"
 	// AudioAssetMetadataCommitted means object upload completed, but the asset
 	// remains unconfirmed until it is bound to a Turn and becomes readable.
-	AudioAssetMetadataCommitted AudioAssetStatus = "metadata_committed"
-	AudioAssetReadable          AudioAssetStatus = "readable"
-	AudioAssetDeleting          AudioAssetStatus = "deleting"
-	AudioAssetDeleted           AudioAssetStatus = "deleted"
+	AudioAssetMetadataCommitted  AudioAssetStatus = "metadata_committed"
+	AudioAssetReadable           AudioAssetStatus = "readable"
+	AudioAssetDeleting           AudioAssetStatus = "deleting"
+	AudioAssetDeleted            AudioAssetStatus = "deleted"
+	maxAudioAssetIdentifierBytes                  = 128
 )
 
 var (
@@ -28,7 +30,9 @@ var (
 	ErrAudioAssetInvalidTransition   = errors.New("invalid audio asset state transition")
 	ErrAudioAssetAlreadyBound        = errors.New("audio asset or turn is already bound")
 	ErrAudioAssetIdempotencyConflict = errors.New("audio asset idempotency key was reused")
+	ErrAudioAssetUploadTerminated    = errors.New("audio asset upload is no longer active")
 	ErrAudioAssetConcurrentUpdate    = errors.New("audio asset was concurrently updated")
+	ErrAudioAssetCleanupPending      = errors.New("audio asset cleanup is still pending")
 	ErrAudioAssetPlaybackTTL         = errors.New("signed playback URL lifetime exceeds two minutes")
 	ErrAudioAssetPlaybackURL         = errors.New("signed playback URL must be a non-empty HTTPS URL")
 )
@@ -89,9 +93,9 @@ func newStagedAudioAsset(
 }
 
 func (a AudioAsset) validateStaged() error {
-	if a.ID == "" ||
-		a.OwnerID == "" ||
-		a.UploadRequestID == "" ||
+	if !validAudioAssetIdentifier(a.ID) ||
+		!validAudioAssetIdentifier(a.OwnerID) ||
+		!validAudioAssetIdentifier(a.UploadRequestID) ||
 		a.ObjectKey == "" ||
 		(a.ContentType != "audio/wav" && a.ContentType != "audio/x-wav") ||
 		a.Size <= 0 ||
@@ -118,7 +122,8 @@ func validSHA256(checksum string) bool {
 }
 
 func (a AudioAsset) ownedBy(actorID string) error {
-	if strings.TrimSpace(actorID) == "" || a.OwnerID != actorID {
+	actorID = strings.TrimSpace(actorID)
+	if !validAudioAssetIdentifier(actorID) || a.OwnerID != actorID {
 		return ErrAudioAssetForbidden
 	}
 	return nil
@@ -132,15 +137,19 @@ func (a AudioAsset) sameUpload(request UploadRecordingRequest) bool {
 }
 
 func (a *AudioAsset) commitMetadata(etag string, now time.Time) error {
+	etag = strings.TrimSpace(etag)
+	if etag == "" || len(etag) > 512 {
+		return ErrAudioAssetInvalid
+	}
 	if a.Status == AudioAssetMetadataCommitted || a.Status == AudioAssetReadable {
 		return nil
 	}
 	if a.Status != AudioAssetStaged {
 		return fmt.Errorf("%w: %s to %s", ErrAudioAssetInvalidTransition, a.Status, AudioAssetMetadataCommitted)
 	}
-	a.ETag = strings.TrimSpace(etag)
+	a.ETag = etag
 	a.Status = AudioAssetMetadataCommitted
-	a.UpdatedAt = now
+	a.UpdatedAt = a.effectiveMutationTime(now)
 	a.Version++
 	return nil
 }
@@ -148,7 +157,8 @@ func (a *AudioAsset) commitMetadata(etag string, now time.Time) error {
 func (a *AudioAsset) bindTurn(candidateID string, turnID string, now time.Time) error {
 	candidateID = strings.TrimSpace(candidateID)
 	turnID = strings.TrimSpace(turnID)
-	if candidateID == "" || turnID == "" {
+	if !validAudioAssetIdentifier(candidateID) ||
+		!validAudioAssetIdentifier(turnID) {
 		return ErrAudioAssetInvalid
 	}
 	if a.Status == AudioAssetReadable &&
@@ -168,7 +178,7 @@ func (a *AudioAsset) bindTurn(candidateID string, turnID string, now time.Time) 
 	a.CandidateID = candidateID
 	a.TurnID = turnID
 	a.Status = AudioAssetReadable
-	a.UpdatedAt = now
+	a.UpdatedAt = a.effectiveMutationTime(now)
 	a.Version++
 	return nil
 }
@@ -180,7 +190,7 @@ func (a *AudioAsset) beginDeleting(now time.Time) error {
 	switch a.Status {
 	case AudioAssetStaged, AudioAssetMetadataCommitted, AudioAssetReadable:
 		a.Status = AudioAssetDeleting
-		a.UpdatedAt = now
+		a.UpdatedAt = a.effectiveMutationTime(now)
 		a.Version++
 		return nil
 	default:
@@ -195,9 +205,41 @@ func (a *AudioAsset) finishDeleting(now time.Time) error {
 	if a.Status != AudioAssetDeleting {
 		return fmt.Errorf("%w: %s to %s", ErrAudioAssetInvalidTransition, a.Status, AudioAssetDeleted)
 	}
+	now = a.effectiveMutationTime(now)
 	a.Status = AudioAssetDeleted
 	a.DeletedAt = now
 	a.UpdatedAt = now
 	a.Version++
 	return nil
+}
+
+// resumeDeletingForLateObject repairs a deletion tombstone after an in-flight
+// Put succeeds too late. The object is no longer deleted, so the durable state
+// must become retryable cleanup work before compensating object deletion.
+func (a *AudioAsset) resumeDeletingForLateObject(now time.Time) error {
+	if a.Status != AudioAssetDeleted {
+		return fmt.Errorf("%w: %s to %s", ErrAudioAssetInvalidTransition, a.Status, AudioAssetDeleting)
+	}
+	a.Status = AudioAssetDeleting
+	a.DeletedAt = time.Time{}
+	a.UpdatedAt = a.effectiveMutationTime(now)
+	a.Version++
+	return nil
+}
+
+func validAudioAssetIdentifier(value string) bool {
+	return value != "" &&
+		len(value) <= maxAudioAssetIdentifierBytes &&
+		utf8.ValidString(value)
+}
+
+func (a AudioAsset) effectiveMutationTime(now time.Time) time.Time {
+	now = now.UTC()
+	if now.Before(a.CreatedAt) {
+		now = a.CreatedAt
+	}
+	if now.Before(a.UpdatedAt) {
+		now = a.UpdatedAt
+	}
+	return now
 }

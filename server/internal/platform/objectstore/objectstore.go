@@ -40,6 +40,12 @@ type SignedGetResult struct {
 }
 
 type Store interface {
+	// Put is synchronous and must honor context cancellation. Once it returns,
+	// including because ctx ended, no provider-side write from that call may
+	// materialize later. Callers keep a durable upload lease beyond their Put
+	// deadline before cleanup may delete or purge the owning metadata. An
+	// asynchronous or multipart implementation requires a stronger lifecycle
+	// protocol and cannot implement this interface as-is.
 	Put(context.Context, PutRequest) (PutResult, error)
 	SignedGet(context.Context, string) (SignedGetResult, error)
 	Delete(context.Context, string) error
