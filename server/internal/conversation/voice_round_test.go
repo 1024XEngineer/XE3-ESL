@@ -204,6 +204,172 @@ func TestVoiceRoundFailureAndForeignActorDoNotAdvancePractice(t *testing.T) {
 	if practice.effectiveTurns != 0 || reviews.calls != 0 {
 		t.Fatal("foreign actor advanced practice")
 	}
+	if _, err := service.Confirm(
+		context.Background(),
+		voiceTestActor("b"),
+		ConfirmVoiceTurnCommand{
+			CandidateID:    "candidate-question-1",
+			IdempotencyKey: "foreign-confirm",
+		},
+	); !errors.Is(err, ErrVoiceRoundNotFound) {
+		t.Fatalf("foreign confirmation error = %v", err)
+	}
+}
+
+func TestVoiceRoundExpiredASRLeaseFencesLateWorker(t *testing.T) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         2,
+			MaxBytes:         platformmedia.MaxAudioBytes * 2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	recognizer := &leaseTestRecognizer{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	service, err := NewVoiceRoundService(
+		store,
+		&voiceTestPractice{turns: make(map[string]VoiceTurnProgress)},
+		&voiceTestReview{bySession: make(map[string]VoiceSessionReview)},
+		vault,
+		recognizer,
+		&voiceTestSynthesizer{},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	command := func() TranscribeVoiceCommand {
+		return TranscribeVoiceCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-1",
+			IdempotencyKey: "crash-recovery",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(voiceTestWAV()),
+		}
+	}
+	firstResult := make(chan error, 1)
+	go func() {
+		_, err := service.Transcribe(
+			context.Background(),
+			voiceTestActor("a"),
+			command(),
+		)
+		firstResult <- err
+	}()
+	<-recognizer.firstStarted
+	store.expireReservation("crash-recovery")
+
+	recovered, err := service.Transcribe(
+		context.Background(),
+		voiceTestActor("a"),
+		command(),
+	)
+	if err != nil || recovered.TranscriptID != "asr-2" {
+		t.Fatalf("recovered transcription = %#v, %v", recovered, err)
+	}
+	close(recognizer.releaseFirst)
+	if err := <-firstResult; !errors.Is(err, ErrVoiceRoundConflict) {
+		t.Fatalf("late worker error = %v", err)
+	}
+}
+
+func TestVoiceRoundConcurrentThirdTurnConfirmationCreatesOneReview(t *testing.T) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-3")
+	practice := &voiceTestPractice{
+		turns:          make(map[string]VoiceTurnProgress),
+		effectiveTurns: 2,
+	}
+	reviews := &voiceTestReview{bySession: make(map[string]VoiceSessionReview)}
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	service, err := NewVoiceRoundService(
+		store,
+		practice,
+		reviews,
+		vault,
+		&voiceTestRecognizer{},
+		&voiceTestSynthesizer{},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	candidate, err := service.Transcribe(
+		context.Background(),
+		voiceTestActor("a"),
+		TranscribeVoiceCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-3",
+			IdempotencyKey: "transcribe-question-3",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(voiceTestWAV()),
+		},
+	)
+	if err != nil {
+		t.Fatalf("transcribe: %v", err)
+	}
+
+	const callers = 16
+	results := make(chan ConfirmedVoiceTurn, callers)
+	failures := make(chan error, callers)
+	var group sync.WaitGroup
+	for range callers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			turn, err := service.Confirm(
+				context.Background(),
+				voiceTestActor("a"),
+				ConfirmVoiceTurnCommand{
+					CandidateID:    candidate.ID,
+					IdempotencyKey: "confirm-question-3",
+				},
+			)
+			if err != nil {
+				failures <- err
+				return
+			}
+			results <- turn
+		}()
+	}
+	group.Wait()
+	close(results)
+	close(failures)
+	for err := range failures {
+		t.Errorf("concurrent confirm: %v", err)
+	}
+	for turn := range results {
+		if turn.EffectiveTurns != 3 ||
+			!turn.SessionCompleted ||
+			turn.ReviewID != "review-session-1" {
+			t.Errorf("concurrent result = %#v", turn)
+		}
+	}
+	if practice.effectiveTurns != 3 || reviews.calls != 1 {
+		t.Fatalf(
+			"effective turns=%d review calls=%d",
+			practice.effectiveTurns,
+			reviews.calls,
+		)
+	}
 }
 
 func TestVoiceRoundTTSFailurePreservesQuestionText(t *testing.T) {
@@ -283,6 +449,8 @@ type voiceTestReservation struct {
 	Fingerprint string
 	CandidateID string
 	Failed      bool
+	LeaseToken  string
+	LeaseNumber int
 }
 
 func newVoiceTestStore() *voiceTestStore {
@@ -303,6 +471,14 @@ func (store *voiceTestStore) addQuestion(id string) {
 		SpeakerParticipantID:    "participant-interviewer",
 		AddresseeParticipantIDs: []string{"participant-a"},
 	}
+}
+
+func (store *voiceTestStore) expireReservation(key string) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	reservation := store.reservations[key]
+	reservation.Failed = true
+	store.reservations[key] = reservation
 }
 
 func (store *voiceTestStore) GetVoiceQuestion(
@@ -348,18 +524,27 @@ func (store *voiceTestStore) ReserveTranscription(
 			}, nil
 		}
 		existing.Failed = false
+		existing.LeaseNumber++
+		existing.LeaseToken = voiceLeaseToken(existing.LeaseNumber)
 		store.reservations[command.IdempotencyKey] = existing
 		return TranscriptionReservation{
-			ID:     existing.ID,
-			Status: TranscriptionReserved,
+			ID:         existing.ID,
+			LeaseToken: existing.LeaseToken,
+			Status:     TranscriptionReserved,
 		}, nil
 	}
 	id := "reservation-" + command.QuestionID
 	store.reservations[command.IdempotencyKey] = voiceTestReservation{
 		ID:          id,
 		Fingerprint: command.InputFingerprint,
+		LeaseToken:  voiceLeaseToken(1),
+		LeaseNumber: 1,
 	}
-	return TranscriptionReservation{ID: id, Status: TranscriptionReserved}, nil
+	return TranscriptionReservation{
+		ID:         id,
+		LeaseToken: voiceLeaseToken(1),
+		Status:     TranscriptionReserved,
+	}, nil
 }
 
 func (store *voiceTestStore) CompleteTranscription(
@@ -382,6 +567,9 @@ func (store *voiceTestStore) CompleteTranscription(
 	}
 	if key == "" {
 		return TranscriptionCandidate{}, ErrVoiceRoundNotFound
+	}
+	if reservation.LeaseToken != command.LeaseToken {
+		return TranscriptionCandidate{}, ErrVoiceRoundConflict
 	}
 	store.nextCandidate++
 	questionID := string([]byte(command.ReservationID)[len("reservation-"):])
@@ -409,20 +597,26 @@ func (store *voiceTestStore) CompleteTranscription(
 func (store *voiceTestStore) FailTranscription(
 	_ context.Context,
 	_ requestcontext.Actor,
-	reservationID string,
-	attempt SafeProcessingAttempt,
+	command FailTranscriptionCommand,
 ) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	for key, reservation := range store.reservations {
-		if reservation.ID == reservationID {
+		if reservation.ID == command.ReservationID {
+			if reservation.LeaseToken != command.LeaseToken {
+				return ErrVoiceRoundConflict
+			}
 			reservation.Failed = true
 			store.reservations[key] = reservation
-			store.attempts = append(store.attempts, attempt)
+			store.attempts = append(store.attempts, command.Attempt)
 			return nil
 		}
 	}
 	return ErrVoiceRoundNotFound
+}
+
+func voiceLeaseToken(number int) string {
+	return "lease-" + string(rune('0'+number))
 }
 
 func (store *voiceTestStore) GetTranscriptionCandidate(
@@ -597,6 +791,36 @@ func (reviews *voiceTestReview) EnsureSessionReview(
 type voiceTestRecognizer struct {
 	calls int
 	err   error
+}
+
+type leaseTestRecognizer struct {
+	mu           sync.Mutex
+	calls        int
+	firstStarted chan struct{}
+	releaseFirst chan struct{}
+}
+
+func (recognizer *leaseTestRecognizer) Transcribe(
+	_ context.Context,
+	request ai.TranscriptionRequest,
+) (ai.TranscriptionResult, error) {
+	if err := ai.ValidateTranscriptionRequest(request); err != nil {
+		return ai.TranscriptionResult{}, err
+	}
+	recognizer.mu.Lock()
+	recognizer.calls++
+	call := recognizer.calls
+	recognizer.mu.Unlock()
+	if call == 1 {
+		close(recognizer.firstStarted)
+		<-recognizer.releaseFirst
+	}
+	return ai.TranscriptionResult{
+		ID:         "asr-" + string(rune('0'+call)),
+		Provider:   "fake",
+		Model:      "fake-asr-v1",
+		Transcript: "Recovered answer.",
+	}, nil
 }
 
 func (recognizer *voiceTestRecognizer) Transcribe(

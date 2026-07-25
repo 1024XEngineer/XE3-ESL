@@ -100,9 +100,10 @@ const (
 )
 
 type TranscriptionReservation struct {
-	ID        string
-	Status    TranscriptionReservationStatus
-	Candidate TranscriptionCandidate
+	ID         string
+	LeaseToken string
+	Status     TranscriptionReservationStatus
+	Candidate  TranscriptionCandidate
 }
 
 type ReserveTranscriptionCommand struct {
@@ -115,6 +116,7 @@ type ReserveTranscriptionCommand struct {
 
 type CompleteTranscriptionCommand struct {
 	ReservationID     string
+	LeaseToken        string
 	TranscriptID      string
 	TranscriptVersion string
 	Transcript        string
@@ -122,6 +124,12 @@ type CompleteTranscriptionCommand struct {
 	Model             string
 	ProviderRequestID string
 	CompletedAt       time.Time
+}
+
+type FailTranscriptionCommand struct {
+	ReservationID string
+	LeaseToken    string
+	Attempt       SafeProcessingAttempt
 }
 
 type ReserveConfirmationCommand struct {
@@ -137,6 +145,19 @@ type VoiceTurnProgress struct {
 // VoiceRoundStore is owned by Conversation. Implementations must scope every
 // lookup and write to actor.UserID, atomically enforce idempotency, and return
 // not-found for foreign resources without revealing their existence.
+//
+// ReserveTranscription also owns the crash-recovery lease. For the same
+// actor/session/key/fingerprint it must return Completed, return Processing
+// while the current lease is live, or atomically replace an expired lease and
+// return Reserved with a new opaque LeaseToken. Complete/Fail must reject a
+// stale LeaseToken so a timed-out worker cannot overwrite the recovered result.
+//
+// Confirmation persistence is a recoverable local saga, not a cross-module
+// transaction. ReserveConfirmation must atomically bind actor + operation +
+// IdempotencyKey to CandidateID, replay the same Turn for an identical
+// request, and reject a different CandidateID. SaveTurnProgress and
+// SaveTurnReview must be monotonic idempotent updates so concurrent retries
+// cannot erase an already saved Practice decision or Review ID.
 type VoiceRoundStore interface {
 	GetVoiceQuestion(
 		context.Context,
@@ -157,8 +178,7 @@ type VoiceRoundStore interface {
 	FailTranscription(
 		context.Context,
 		requestcontext.Actor,
-		string,
-		SafeProcessingAttempt,
+		FailTranscriptionCommand,
 	) error
 	GetTranscriptionCandidate(
 		context.Context,
@@ -372,8 +392,11 @@ func (service *VoiceRoundService) Transcribe(
 		if saveErr := service.store.FailTranscription(
 			ctx,
 			actor,
-			reservation.ID,
-			attempt,
+			FailTranscriptionCommand{
+				ReservationID: reservation.ID,
+				LeaseToken:    reservation.LeaseToken,
+				Attempt:       attempt,
+			},
 		); saveErr != nil {
 			return TranscriptionCandidate{}, saveErr
 		}
@@ -392,8 +415,11 @@ func (service *VoiceRoundService) Transcribe(
 		if saveErr := service.store.FailTranscription(
 			ctx,
 			actor,
-			reservation.ID,
-			attempt,
+			FailTranscriptionCommand{
+				ReservationID: reservation.ID,
+				LeaseToken:    reservation.LeaseToken,
+				Attempt:       attempt,
+			},
 		); saveErr != nil {
 			return TranscriptionCandidate{}, saveErr
 		}
@@ -404,6 +430,7 @@ func (service *VoiceRoundService) Transcribe(
 		actor,
 		CompleteTranscriptionCommand{
 			ReservationID:     reservation.ID,
+			LeaseToken:        reservation.LeaseToken,
 			TranscriptID:      result.ID,
 			TranscriptVersion: result.Model,
 			Transcript:        transcript,
