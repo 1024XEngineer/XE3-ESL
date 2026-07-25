@@ -975,6 +975,7 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		t.Fatalf("session count after user delete = %d, want 0", sessionCount)
 	}
 
+	var changed bool
 	status, err := runner.Version()
 	if err != nil {
 		t.Fatalf("read version before identity down migration: %v", err)
@@ -1017,7 +1018,7 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		}
 	}
 
-	changed, err := runner.DownOne()
+	changed, err = runner.DownOne()
 	if err != nil {
 		t.Fatalf("revert identity migration: %v", err)
 	}
