@@ -18,17 +18,17 @@ void main() {
     await _waitUntil(
       tester,
       () =>
-          find.text('Welcome back').evaluate().isNotEmpty ||
-          find.text('Connection needed').evaluate().isNotEmpty ||
+          find.text('欢迎回来').evaluate().isNotEmpty ||
+          find.text('需要网络连接').evaluate().isNotEmpty ||
           find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty,
       const Duration(seconds: 15),
     );
-    if (find.text('Connection needed').evaluate().isNotEmpty) {
-      await tester.tap(find.text('Try again'));
+    if (find.text('需要网络连接').evaluate().isNotEmpty) {
+      await tester.tap(find.text('重试'));
       await _waitUntil(
         tester,
         () =>
-            find.text('Welcome back').evaluate().isNotEmpty ||
+            find.text('欢迎回来').evaluate().isNotEmpty ||
             find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty,
         const Duration(seconds: 15),
       );
@@ -37,39 +37,30 @@ void main() {
     if (find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty) {
       await _verifySignedInAccount(tester, email);
     } else {
-      await tester.tap(find.text('Create an account'));
+      await tester.tap(find.text('创建账号'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextFormField).at(0), email);
       await tester.enterText(find.byType(TextFormField).at(1), password);
-      await tester.tap(find.text('Create account'));
+      await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
       await _waitUntil(
         tester,
         () =>
-            find
-                .text('Account created. Sign in to continue.')
-                .evaluate()
-                .isNotEmpty ||
-            find
-                .text('An account cannot be created with these details.')
-                .evaluate()
-                .isNotEmpty,
+            find.text('账号创建成功，请登录后继续。').evaluate().isNotEmpty ||
+            find.text('无法使用这些信息创建账号。').evaluate().isNotEmpty,
         const Duration(seconds: 15),
       );
-      if (find
-          .text('An account cannot be created with these details.')
-          .evaluate()
-          .isNotEmpty) {
-        await tester.tap(find.text('Back to sign in'));
+      if (find.text('无法使用这些信息创建账号。').evaluate().isNotEmpty) {
+        await tester.tap(find.text('返回登录'));
         await _waitUntil(
           tester,
-          () => find.text('Welcome back').evaluate().isNotEmpty,
+          () => find.text('欢迎回来').evaluate().isNotEmpty,
           const Duration(seconds: 5),
         );
       }
 
       await tester.enterText(find.byType(TextFormField).at(0), email);
       await tester.enterText(find.byType(TextFormField).at(1), password);
-      await tester.tap(find.text('Sign in'));
+      await tester.tap(find.text('登录'));
       await _waitUntil(
         tester,
         () =>
@@ -147,7 +138,7 @@ Future<void> _signOut(WidgetTester tester) async {
   await tester.tap(find.byKey(const Key('profile-logout-button')));
   await _waitUntil(
     tester,
-    () => find.text('Welcome back').evaluate().isNotEmpty,
+    () => find.text('欢迎回来').evaluate().isNotEmpty,
     const Duration(seconds: 15),
   );
 }

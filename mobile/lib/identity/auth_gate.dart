@@ -96,7 +96,7 @@ class _LoadingPage extends StatelessWidget {
     return Scaffold(
       body: Center(
         child: Semantics(
-          label: 'Restoring your session',
+          label: '正在恢复登录状态',
           child: const CircularProgressIndicator(),
         ),
       ),
@@ -125,16 +125,13 @@ class _RetryPage extends StatelessWidget {
                   const Icon(Icons.cloud_off_outlined, size: 40),
                   const SizedBox(height: 20),
                   Text(
-                    'Connection needed',
+                    '需要网络连接',
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                   const SizedBox(height: 8),
                   Text(message, textAlign: TextAlign.center),
                   const SizedBox(height: 24),
-                  FilledButton(
-                    onPressed: onRetry,
-                    child: const Text('Try again'),
-                  ),
+                  FilledButton(onPressed: onRetry, child: const Text('重试')),
                 ],
               ),
             ),

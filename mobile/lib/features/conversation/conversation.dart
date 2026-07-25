@@ -279,7 +279,7 @@ class _Greeting extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Text(
-      'Hi, 智',
+      '你好',
       style: TextStyle(
         color: Color(0xFF5F6064),
         fontSize: 29,

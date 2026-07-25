@@ -283,7 +283,7 @@ void main() {
 
       final state = controller.state as AuthSignedOut;
       expect(state.form, AuthForm.login);
-      expect(state.noticeMessage, contains('Account created'));
+      expect(state.noticeMessage, '账号创建成功，请登录后继续。');
       expect(store.writtenTokens, isEmpty);
     });
 
@@ -323,7 +323,7 @@ void main() {
       );
 
       final state = controller.state as AuthSignedOut;
-      expect(state.errorMessage, 'The email or password is incorrect.');
+      expect(state.errorMessage, '邮箱或密码不正确。');
     });
 
     test(

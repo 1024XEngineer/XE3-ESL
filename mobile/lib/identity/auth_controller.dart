@@ -124,11 +124,7 @@ final class AuthController extends ChangeNotifier {
       if (!_isCurrent(epoch)) {
         return;
       }
-      _setState(
-        const AuthSignedOut(
-          noticeMessage: 'Account created. Sign in to continue.',
-        ),
-      );
+      _setState(const AuthSignedOut(noticeMessage: '账号创建成功，请登录后继续。'));
     } on IdentityClientException catch (error) {
       if (_isCurrent(epoch)) {
         _finishSubmission(AuthForm.register, _registrationMessage(error));
@@ -165,8 +161,7 @@ final class AuthController extends ChangeNotifier {
         unawaited(_bestEffortRevoke(result.sessionToken));
         _setState(
           const AuthRetryableError(
-            message:
-                'We could not remove private data from the previous session. Try again.',
+            message: '暂时无法清理上一个账号的本地数据，请重试。',
             action: AuthRetryAction.clearLocalState,
           ),
         );
@@ -194,8 +189,7 @@ final class AuthController extends ChangeNotifier {
         await _completeLocalSignOut(
           epoch: epoch,
           expectedStoredToken: result.sessionToken,
-          signedOutError:
-              'We could not securely save your session. Sign in again.',
+          signedOutError: '无法安全保存登录状态，请重新登录。',
         );
         return;
       }
@@ -315,8 +309,7 @@ final class AuthController extends ChangeNotifier {
     if (!cleared) {
       _setState(
         const AuthRetryableError(
-          message:
-              'We could not fully remove the local session. Try again before signing in.',
+          message: '暂时无法完整清理本机登录状态，请重试后再登录。',
           action: AuthRetryAction.clearLocalState,
         ),
       );
@@ -388,29 +381,22 @@ final class AuthController extends ChangeNotifier {
 
 Future<void> _noCleanup() async {}
 
-const _tryAgainMessage =
-    'Something went wrong. Check your connection and try again.';
+const _tryAgainMessage = '操作未完成，请检查网络后重试。';
 
 String _loginMessage(IdentityClientException error) {
   return switch (error.kind) {
-    IdentityFailureKind.invalidCredentials =>
-      'The email or password is incorrect.',
-    IdentityFailureKind.rateLimited =>
-      'Too many attempts. Wait a moment and try again.',
-    IdentityFailureKind.invalidRequest =>
-      'Check your email and password, then try again.',
+    IdentityFailureKind.invalidCredentials => '邮箱或密码不正确。',
+    IdentityFailureKind.rateLimited => '尝试次数过多，请稍后重试。',
+    IdentityFailureKind.invalidRequest => '请检查邮箱和密码后重试。',
     _ => _tryAgainMessage,
   };
 }
 
 String _registrationMessage(IdentityClientException error) {
   return switch (error.kind) {
-    IdentityFailureKind.registrationUnavailable =>
-      'An account cannot be created with these details.',
-    IdentityFailureKind.rateLimited =>
-      'Too many attempts. Wait a moment and try again.',
-    IdentityFailureKind.invalidRequest =>
-      'Use a valid email and a password between 15 and 128 characters.',
+    IdentityFailureKind.registrationUnavailable => '无法使用这些信息创建账号。',
+    IdentityFailureKind.rateLimited => '尝试次数过多，请稍后重试。',
+    IdentityFailureKind.invalidRequest => '请输入有效邮箱和 15–128 个字符的密码。',
     _ => _tryAgainMessage,
   };
 }

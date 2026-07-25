@@ -119,7 +119,7 @@ void main() {
       await tester.tap(find.byKey(const Key('profile-logout-button')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Welcome back'), findsOneWidget);
+      expect(find.text('欢迎回来'), findsOneWidget);
       expect(find.byKey(const Key('primary-navigation')), findsNothing);
       expect(agentController.threadId, isNull);
       expect(agentController.messages, isEmpty);
@@ -154,7 +154,7 @@ void main() {
     expect(find.byKey(const Key('practice-page')), findsNothing);
     expect(find.byType(SpeakUpShell), findsNothing);
     expect(find.byKey(const Key('primary-navigation')), findsNothing);
-    expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.text('欢迎回来'), findsOneWidget);
   });
 
   testWidgets(

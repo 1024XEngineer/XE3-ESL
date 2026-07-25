@@ -85,8 +85,7 @@ final class AuthSignedOut extends AuthState {
 
 final class AuthRetryableError extends AuthState {
   const AuthRetryableError({
-    this.message =
-        'We could not confirm your session. Check your connection and try again.',
+    this.message = '暂时无法确认登录状态，请检查网络后重试。',
     this.action = AuthRetryAction.restoreSession,
   });
 

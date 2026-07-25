@@ -34,8 +34,8 @@ class _RegisterPageState extends State<RegisterPage> {
   @override
   Widget build(BuildContext context) {
     return AuthFormScaffold(
-      title: 'Create your account',
-      subtitle: 'Use your email and a secure password to get started.',
+      title: '创建账号',
+      subtitle: '使用邮箱和安全密码开始使用 SpeakUp。',
       errorMessage: widget.state.errorMessage,
       child: Form(
         key: _formKey,
@@ -55,14 +55,14 @@ class _RegisterPageState extends State<RegisterPage> {
               onPressed: widget.state.isSubmitting ? null : _submit,
               child: widget.state.isSubmitting
                   ? const AuthButtonProgress()
-                  : const Text('Create account'),
+                  : const Text('创建账号'),
             ),
             const SizedBox(height: 12),
             TextButton(
               onPressed: widget.state.isSubmitting
                   ? null
                   : widget.controller.showLogin,
-              child: const Text('Back to sign in'),
+              child: const Text('返回登录'),
             ),
           ],
         ),

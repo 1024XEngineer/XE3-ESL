@@ -26,29 +26,23 @@ void main() {
         await tester.pumpWidget(testApp(controller));
         await tester.pumpAndSettle();
         await tester.enterText(
-          find.widgetWithText(TextFormField, 'Email'),
+          find.widgetWithText(TextFormField, '邮箱'),
           'learner@example.com',
         );
         await tester.enterText(
-          find.widgetWithText(TextFormField, 'Password'),
+          find.widgetWithText(TextFormField, '密码'),
           password,
         );
-        await tester.tap(find.text('Sign in'));
+        await tester.tap(find.text('登录'));
         await tester.pumpAndSettle();
 
         if (scalarCount >= 15 && scalarCount <= 128) {
           expect(client.lastLoginPassword, password);
           expect(client.lastLoginPassword!.codeUnits, password.codeUnits);
-          expect(
-            find.text('Password must be between 15 and 128 characters.'),
-            findsNothing,
-          );
+          expect(find.text('密码长度需为 15–128 个字符。'), findsNothing);
         } else {
           expect(client.lastLoginPassword, isNull);
-          expect(
-            find.text('Password must be between 15 and 128 characters.'),
-            findsOneWidget,
-          );
+          expect(find.text('密码长度需为 15–128 个字符。'), findsOneWidget);
         }
       },
     );
@@ -66,7 +60,7 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     store.readCompleter.complete(null);
     await tester.pumpAndSettle();
-    expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.text('欢迎回来'), findsOneWidget);
   });
 
   testWidgets('switches between login and registration', (tester) async {
@@ -77,15 +71,15 @@ void main() {
 
     await tester.pumpWidget(testApp(controller));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Create an account'));
+    await tester.tap(find.text('创建账号'));
     await tester.pump();
 
-    expect(find.text('Create your account'), findsOneWidget);
-    expect(find.text('Back to sign in'), findsOneWidget);
+    expect(find.text('创建账号'), findsNWidgets(2));
+    expect(find.text('返回登录'), findsOneWidget);
 
-    await tester.tap(find.text('Back to sign in'));
+    await tester.tap(find.text('返回登录'));
     await tester.pump();
-    expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.text('欢迎回来'), findsOneWidget);
   });
 
   testWidgets('registration returns to login and does not authenticate', (
@@ -98,22 +92,22 @@ void main() {
     );
     await tester.pumpWidget(testApp(controller));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Create an account'));
+    await tester.tap(find.text('创建账号'));
     await tester.pump();
 
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Email'),
+      find.widgetWithText(TextFormField, '邮箱'),
       'learner@example.com',
     );
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Password'),
+      find.widgetWithText(TextFormField, '密码'),
       'a sufficiently long password',
     );
-    await tester.tap(find.text('Create account'));
+    await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Welcome back'), findsOneWidget);
-    expect(find.text('Account created. Sign in to continue.'), findsOneWidget);
+    expect(find.text('欢迎回来'), findsOneWidget);
+    expect(find.text('账号创建成功，请登录后继续。'), findsOneWidget);
     expect(store.token, isNull);
   });
 
@@ -135,12 +129,12 @@ void main() {
     await tester.pumpWidget(testApp(controller));
     await tester.pumpAndSettle();
 
-    expect(find.text('Connection needed'), findsOneWidget);
-    expect(find.text('Try again'), findsOneWidget);
+    expect(find.text('需要网络连接'), findsOneWidget);
+    expect(find.text('重试'), findsOneWidget);
     expect(store.token, 'sess_stored-token');
 
     client.currentUserError = null;
-    await tester.tap(find.text('Try again'));
+    await tester.tap(find.text('重试'));
     await tester.pumpAndSettle();
     expect(find.text('Agent home for learner@example.com'), findsOneWidget);
   });
@@ -155,7 +149,43 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Agent home for learner@example.com'), findsOneWidget);
-    expect(find.text('Welcome back'), findsNothing);
+    expect(find.text('欢迎回来'), findsNothing);
+  });
+
+  testWidgets('login remains usable at 320pt with 3x text and keyboard', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final controller = AuthController(
+      identityClient: GateIdentityClient(user: user),
+      sessionStore: MemorySessionStore(),
+    );
+    await tester.pumpWidget(testApp(controller));
+    await tester.pumpAndSettle();
+
+    final emailField = find.widgetWithText(TextFormField, '邮箱');
+    await tester.ensureVisible(emailField);
+    await tester.showKeyboard(emailField);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 240);
+    await tester.pumpAndSettle();
+    expect(emailField.hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    tester.view.viewInsets = FakeViewPadding.zero;
+    tester.testTextInput.hide();
+    await tester.pumpAndSettle();
+    final createAccount = find.widgetWithText(TextButton, '创建账号');
+    await tester.ensureVisible(createAccount);
+    await tester.pumpAndSettle();
+    expect(createAccount.hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }
 
