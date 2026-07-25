@@ -61,27 +61,6 @@ type ConfirmedVoiceTurn struct {
 	ReviewID                string
 }
 
-type VoiceSessionReview struct {
-	ID        string
-	SessionID string
-	TurnID    string
-}
-
-type VoiceReviewSource struct {
-	TurnID                  string
-	SessionID               string
-	QuestionID              string
-	QuestionSpeakerID       string
-	AddresseeParticipantIDs []string
-	RespondentParticipantID string
-	TranscriptID            string
-	TranscriptVersion       string
-	Transcript              string
-	TranscriptionProvider   string
-	TranscriptionModel      string
-	TranscriptionRequestID  string
-}
-
 type SafeProcessingAttempt struct {
 	Operation  ai.SpeechOperation
 	Kind       ai.ErrorKind
@@ -152,10 +131,10 @@ type VoiceTurnProgress struct {
 // return Reserved with a new opaque LeaseToken. Complete/Fail must reject a
 // stale LeaseToken so a timed-out worker cannot overwrite the recovered result.
 //
-// Confirmation persistence is a recoverable local saga, not a cross-module
-// transaction. ReserveConfirmation must atomically bind actor + operation +
-// IdempotencyKey to CandidateID, replay the same Turn for an identical
-// request, and reject a different CandidateID. SaveTurnProgress and
+// Confirmation persistence supplies local checkpoints to the Agent-owned
+// cross-module saga. ReserveConfirmation must atomically bind actor +
+// operation + IdempotencyKey to CandidateID, replay the same Turn for an
+// identical request, and reject a different CandidateID. SaveTurnProgress and
 // SaveTurnReview must be monotonic idempotent updates so concurrent retries
 // cannot erase an already saved Practice decision or Review ID.
 type VoiceRoundStore interface {
@@ -204,33 +183,6 @@ type VoiceRoundStore interface {
 	) (ConfirmedVoiceTurn, error)
 }
 
-// VoicePracticePort is the Conversation-owned view of Practice. Practice
-// remains authoritative for participant resolution and effective-turn count.
-type VoicePracticePort interface {
-	ResolveActorParticipant(
-		context.Context,
-		requestcontext.Actor,
-		string,
-	) (string, error)
-	ApplyEffectiveTurn(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		string,
-	) (VoiceTurnProgress, error)
-}
-
-// VoiceReviewPort is the Conversation-owned view of Review. Review must use
-// sessionID as the uniqueness scope so retries after the third Turn return the
-// same formal Review instead of creating another one.
-type VoiceReviewPort interface {
-	EnsureSessionReview(
-		context.Context,
-		requestcontext.Actor,
-		VoiceReviewSource,
-	) (VoiceSessionReview, error)
-}
-
 type TemporaryAudioVault interface {
 	Capture(
 		context.Context,
@@ -247,8 +199,6 @@ type TemporaryAudioVault interface {
 
 type VoiceRoundService struct {
 	store       VoiceRoundStore
-	practice    VoicePracticePort
-	review      VoiceReviewPort
 	vault       TemporaryAudioVault
 	recognizer  ai.SpeechRecognizer
 	synthesizer ai.SpeechSynthesizer
@@ -257,20 +207,15 @@ type VoiceRoundService struct {
 
 func NewVoiceRoundService(
 	store VoiceRoundStore,
-	practice VoicePracticePort,
-	review VoiceReviewPort,
 	vault TemporaryAudioVault,
 	recognizer ai.SpeechRecognizer,
 	synthesizer ai.SpeechSynthesizer,
 ) (*VoiceRoundService, error) {
-	if store == nil || practice == nil || review == nil || vault == nil ||
-		recognizer == nil || synthesizer == nil {
+	if store == nil || vault == nil || recognizer == nil || synthesizer == nil {
 		return nil, errors.New("conversation voice round dependencies are required")
 	}
 	return &VoiceRoundService{
 		store:       store,
-		practice:    practice,
-		review:      review,
 		vault:       vault,
 		recognizer:  recognizer,
 		synthesizer: synthesizer,
@@ -289,9 +234,11 @@ type TranscribeVoiceCommand struct {
 func (service *VoiceRoundService) Transcribe(
 	ctx context.Context,
 	actor requestcontext.Actor,
+	respondentParticipantID string,
 	command TranscribeVoiceCommand,
 ) (candidate TranscriptionCandidate, returnErr error) {
 	if err := validateVoiceContext(ctx, actor); err != nil ||
+		strings.TrimSpace(respondentParticipantID) == "" ||
 		strings.TrimSpace(command.SessionID) == "" ||
 		strings.TrimSpace(command.QuestionID) == "" ||
 		strings.TrimSpace(command.IdempotencyKey) == "" ||
@@ -307,17 +254,9 @@ func (service *VoiceRoundService) Transcribe(
 	if err != nil {
 		return TranscriptionCandidate{}, err
 	}
-	participantID, err := service.practice.ResolveActorParticipant(
-		ctx,
-		actor,
-		command.SessionID,
-	)
-	if err != nil {
-		return TranscriptionCandidate{}, err
-	}
 	if !slices.Contains(
 		question.AddresseeParticipantIDs,
-		participantID,
+		respondentParticipantID,
 	) {
 		return TranscriptionCandidate{}, ErrVoiceRoundNotFound
 	}
@@ -359,7 +298,7 @@ func (service *VoiceRoundService) Transcribe(
 		ReserveTranscriptionCommand{
 			SessionID:               command.SessionID,
 			QuestionID:              command.QuestionID,
-			RespondentParticipantID: participantID,
+			RespondentParticipantID: respondentParticipantID,
 			IdempotencyKey:          command.IdempotencyKey,
 			InputFingerprint:        fingerprint,
 		},
@@ -476,57 +415,64 @@ func (service *VoiceRoundService) Confirm(
 	if err != nil {
 		return ConfirmedVoiceTurn{}, err
 	}
-	if turn.EffectiveTurns == 0 {
-		progress, err := service.practice.ApplyEffectiveTurn(
-			ctx,
-			actor,
-			turn.SessionID,
-			turn.ID,
-		)
-		if err != nil {
-			return ConfirmedVoiceTurn{}, err
-		}
-		turn, err = service.store.SaveTurnProgress(
-			ctx,
-			actor,
-			turn.ID,
-			progress,
-		)
-		if err != nil {
-			return ConfirmedVoiceTurn{}, err
-		}
+	return turn, nil
+}
+
+// GetTranscriptionCandidate exposes an Actor-scoped Conversation resource to
+// the Agent application layer so it can assemble downstream evidence without
+// reaching into the Conversation Store.
+func (service *VoiceRoundService) GetTranscriptionCandidate(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	candidateID string,
+) (TranscriptionCandidate, error) {
+	if err := validateVoiceContext(ctx, actor); err != nil ||
+		strings.TrimSpace(candidateID) == "" {
+		return TranscriptionCandidate{}, ErrVoiceRoundInvalid
 	}
-	if !turn.SessionCompleted || turn.ReviewID != "" {
-		return turn, nil
+	return service.store.GetTranscriptionCandidate(ctx, actor, candidateID)
+}
+
+// SaveTurnProgress records only Conversation's local saga checkpoint. The
+// Agent application layer owns the cross-module ordering and recovery.
+func (service *VoiceRoundService) SaveTurnProgress(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	turnID string,
+	progress VoiceTurnProgress,
+) (ConfirmedVoiceTurn, error) {
+	if err := validateVoiceContext(ctx, actor); err != nil ||
+		strings.TrimSpace(turnID) == "" ||
+		progress.EffectiveTurns < 1 ||
+		progress.EffectiveTurns > 3 {
+		return ConfirmedVoiceTurn{}, ErrVoiceRoundInvalid
 	}
-	sessionReview, err := service.review.EnsureSessionReview(
+	return service.store.SaveTurnProgress(
 		ctx,
 		actor,
-		VoiceReviewSource{
-			TurnID:            turn.ID,
-			SessionID:         turn.SessionID,
-			QuestionID:        turn.QuestionID,
-			QuestionSpeakerID: turn.QuestionSpeakerID,
-			AddresseeParticipantIDs: slices.Clone(
-				turn.AddresseeParticipantIDs,
-			),
-			RespondentParticipantID: turn.RespondentParticipantID,
-			TranscriptID:            turn.TranscriptID,
-			TranscriptVersion:       turn.TranscriptVersion,
-			Transcript:              turn.AnswerText,
-			TranscriptionProvider:   candidate.Provider,
-			TranscriptionModel:      candidate.Model,
-			TranscriptionRequestID:  candidate.ProviderRequestID,
-		},
+		turnID,
+		progress,
 	)
-	if err != nil {
-		return ConfirmedVoiceTurn{}, err
+}
+
+// SaveTurnReview records only Conversation's reference to a Review resource.
+// Review creation and exactly-once semantics remain outside Conversation.
+func (service *VoiceRoundService) SaveTurnReview(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	turnID string,
+	reviewID string,
+) (ConfirmedVoiceTurn, error) {
+	if err := validateVoiceContext(ctx, actor); err != nil ||
+		strings.TrimSpace(turnID) == "" ||
+		strings.TrimSpace(reviewID) == "" {
+		return ConfirmedVoiceTurn{}, ErrVoiceRoundInvalid
 	}
 	return service.store.SaveTurnReview(
 		ctx,
 		actor,
-		turn.ID,
-		sessionReview.ID,
+		turnID,
+		reviewID,
 	)
 }
 

@@ -16,10 +16,9 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-func TestVoiceRoundThreeTurnsAreConfirmedOnceAndTriggerOneReview(t *testing.T) {
+func TestVoiceRoundTranscriptionAndConfirmationAreIdempotent(t *testing.T) {
 	store := newVoiceTestStore()
-	practice := &voiceTestPractice{turns: make(map[string]VoiceTurnProgress)}
-	reviews := &voiceTestReview{bySession: make(map[string]VoiceSessionReview)}
+	store.addQuestion("question-1")
 	recognizer := &voiceTestRecognizer{}
 	vault, err := platformmedia.NewTemporaryAudioVault(
 		platformmedia.TemporaryAudioVaultConfig{
@@ -39,8 +38,6 @@ func TestVoiceRoundThreeTurnsAreConfirmedOnceAndTriggerOneReview(t *testing.T) {
 	})
 	service, err := NewVoiceRoundService(
 		store,
-		practice,
-		reviews,
 		vault,
 		recognizer,
 		&voiceTestSynthesizer{},
@@ -50,97 +47,67 @@ func TestVoiceRoundThreeTurnsAreConfirmedOnceAndTriggerOneReview(t *testing.T) {
 	}
 	actor := voiceTestActor("a")
 	audio := voiceTestWAV()
-
-	var thirdCandidate TranscriptionCandidate
-	var thirdTurn ConfirmedVoiceTurn
-	for round := 1; round <= 3; round++ {
-		questionID := "question-" + string(rune('0'+round))
-		store.addQuestion(questionID)
-		candidate, err := service.Transcribe(
-			context.Background(),
-			actor,
-			TranscribeVoiceCommand{
-				SessionID:      "session-1",
-				QuestionID:     questionID,
-				IdempotencyKey: "transcribe-" + questionID,
-				ContentType:    platformmedia.ContentTypeWAV,
-				Audio:          bytes.NewReader(audio),
-			},
-		)
-		if err != nil {
-			t.Fatalf("round %d transcribe: %v", round, err)
-		}
-		turn, err := service.Confirm(
-			context.Background(),
-			actor,
-			ConfirmVoiceTurnCommand{
-				CandidateID:    candidate.ID,
-				IdempotencyKey: "confirm-" + questionID,
-			},
-		)
-		if err != nil {
-			t.Fatalf("round %d confirm: %v", round, err)
-		}
-		if turn.EffectiveTurns != round {
-			t.Fatalf(
-				"round %d effective turns = %d",
-				round,
-				turn.EffectiveTurns,
-			)
-		}
-		if round < 3 && (turn.SessionCompleted || turn.ReviewID != "") {
-			t.Fatalf("round %d completed early: %#v", round, turn)
-		}
-		if round == 3 {
-			thirdCandidate = candidate
-			thirdTurn = turn
-		}
+	candidate, err := service.Transcribe(
+		context.Background(),
+		actor,
+		"participant-a",
+		TranscribeVoiceCommand{
+			SessionID:      "session-1",
+			QuestionID:     "question-1",
+			IdempotencyKey: "transcribe-question-1",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(audio),
+		},
+	)
+	if err != nil {
+		t.Fatalf("transcribe: %v", err)
 	}
-	if !thirdTurn.SessionCompleted || thirdTurn.ReviewID != "review-session-1" {
-		t.Fatalf("third Turn did not create one Review: %#v", thirdTurn)
+	turn, err := service.Confirm(
+		context.Background(),
+		actor,
+		ConfirmVoiceTurnCommand{
+			CandidateID:    candidate.ID,
+			IdempotencyKey: "confirm-question-1",
+		},
+	)
+	if err != nil {
+		t.Fatalf("confirm: %v", err)
 	}
 
 	replayedCandidate, err := service.Transcribe(
 		context.Background(),
 		actor,
+		"participant-a",
 		TranscribeVoiceCommand{
 			SessionID:      "session-1",
-			QuestionID:     thirdCandidate.QuestionID,
-			IdempotencyKey: "transcribe-" + thirdCandidate.QuestionID,
+			QuestionID:     candidate.QuestionID,
+			IdempotencyKey: "transcribe-" + candidate.QuestionID,
 			ContentType:    platformmedia.ContentTypeWAV,
 			Audio:          bytes.NewReader(audio),
 		},
 	)
-	if err != nil || replayedCandidate.ID != thirdCandidate.ID {
+	if err != nil || replayedCandidate.ID != candidate.ID {
 		t.Fatalf("transcription replay = %#v, %v", replayedCandidate, err)
 	}
 	replayedTurn, err := service.Confirm(
 		context.Background(),
 		actor,
 		ConfirmVoiceTurnCommand{
-			CandidateID:    thirdCandidate.ID,
-			IdempotencyKey: "confirm-" + thirdCandidate.QuestionID,
+			CandidateID:    candidate.ID,
+			IdempotencyKey: "confirm-" + candidate.QuestionID,
 		},
 	)
-	if err != nil || !reflect.DeepEqual(replayedTurn, thirdTurn) {
+	if err != nil || !reflect.DeepEqual(replayedTurn, turn) {
 		t.Fatalf("confirmation replay = %#v, %v", replayedTurn, err)
 	}
-	if recognizer.calls != 3 || practice.effectiveTurns != 3 ||
-		reviews.calls != 1 {
-		t.Fatalf(
-			"calls: ASR=%d effective=%d review=%d",
-			recognizer.calls,
-			practice.effectiveTurns,
-			reviews.calls,
-		)
+	if recognizer.calls != 1 || store.nextTurn != 1 {
+		t.Fatalf("calls: ASR=%d turns=%d", recognizer.calls, store.nextTurn)
 	}
 }
 
-func TestVoiceRoundFailureAndForeignActorDoNotAdvancePractice(t *testing.T) {
+func TestVoiceRoundFailureAndForeignActorStayConversationScoped(t *testing.T) {
 	store := newVoiceTestStore()
 	store.addQuestion("question-1")
-	practice := &voiceTestPractice{turns: make(map[string]VoiceTurnProgress)}
-	reviews := &voiceTestReview{bySession: make(map[string]VoiceSessionReview)}
 	vault, err := platformmedia.NewTemporaryAudioVault(
 		platformmedia.TemporaryAudioVaultConfig{
 			ScratchDirectory: t.TempDir(),
@@ -163,8 +130,6 @@ func TestVoiceRoundFailureAndForeignActorDoNotAdvancePractice(t *testing.T) {
 	)
 	service, err := NewVoiceRoundService(
 		store,
-		practice,
-		reviews,
 		vault,
 		&voiceTestRecognizer{err: providerError},
 		&voiceTestSynthesizer{},
@@ -179,12 +144,16 @@ func TestVoiceRoundFailureAndForeignActorDoNotAdvancePractice(t *testing.T) {
 		ContentType:    platformmedia.ContentTypeWAV,
 		Audio:          bytes.NewReader(voiceTestWAV()),
 	}
-	_, err = service.Transcribe(context.Background(), voiceTestActor("a"), command)
+	_, err = service.Transcribe(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		command,
+	)
 	if !errors.Is(err, providerError) {
 		t.Fatalf("provider failure = %v", err)
 	}
-	if practice.effectiveTurns != 0 || reviews.calls != 0 ||
-		len(store.attempts) != 1 ||
+	if len(store.attempts) != 1 ||
 		store.attempts[0].RequestID != "safe-request" {
 		t.Fatalf(
 			"failure changed progress or lost safe audit: %#v",
@@ -196,13 +165,11 @@ func TestVoiceRoundFailureAndForeignActorDoNotAdvancePractice(t *testing.T) {
 	_, err = service.Transcribe(
 		context.Background(),
 		voiceTestActor("b"),
+		"participant-b",
 		command,
 	)
 	if !errors.Is(err, ErrVoiceRoundNotFound) {
 		t.Fatalf("foreign actor error = %v", err)
-	}
-	if practice.effectiveTurns != 0 || reviews.calls != 0 {
-		t.Fatal("foreign actor advanced practice")
 	}
 	if _, err := service.Confirm(
 		context.Background(),
@@ -237,8 +204,6 @@ func TestVoiceRoundExpiredASRLeaseFencesLateWorker(t *testing.T) {
 	}
 	service, err := NewVoiceRoundService(
 		store,
-		&voiceTestPractice{turns: make(map[string]VoiceTurnProgress)},
-		&voiceTestReview{bySession: make(map[string]VoiceSessionReview)},
 		vault,
 		recognizer,
 		&voiceTestSynthesizer{},
@@ -260,6 +225,7 @@ func TestVoiceRoundExpiredASRLeaseFencesLateWorker(t *testing.T) {
 		_, err := service.Transcribe(
 			context.Background(),
 			voiceTestActor("a"),
+			"participant-a",
 			command(),
 		)
 		firstResult <- err
@@ -270,6 +236,7 @@ func TestVoiceRoundExpiredASRLeaseFencesLateWorker(t *testing.T) {
 	recovered, err := service.Transcribe(
 		context.Background(),
 		voiceTestActor("a"),
+		"participant-a",
 		command(),
 	)
 	if err != nil || recovered.TranscriptID != "asr-2" {
@@ -281,14 +248,9 @@ func TestVoiceRoundExpiredASRLeaseFencesLateWorker(t *testing.T) {
 	}
 }
 
-func TestVoiceRoundConcurrentThirdTurnConfirmationCreatesOneReview(t *testing.T) {
+func TestVoiceRoundConcurrentConfirmationCreatesOneConversationTurn(t *testing.T) {
 	store := newVoiceTestStore()
 	store.addQuestion("question-3")
-	practice := &voiceTestPractice{
-		turns:          make(map[string]VoiceTurnProgress),
-		effectiveTurns: 2,
-	}
-	reviews := &voiceTestReview{bySession: make(map[string]VoiceSessionReview)}
 	vault, err := platformmedia.NewTemporaryAudioVault(
 		platformmedia.TemporaryAudioVaultConfig{
 			ScratchDirectory: t.TempDir(),
@@ -303,8 +265,6 @@ func TestVoiceRoundConcurrentThirdTurnConfirmationCreatesOneReview(t *testing.T)
 	t.Cleanup(func() { _ = vault.Close() })
 	service, err := NewVoiceRoundService(
 		store,
-		practice,
-		reviews,
 		vault,
 		&voiceTestRecognizer{},
 		&voiceTestSynthesizer{},
@@ -315,6 +275,7 @@ func TestVoiceRoundConcurrentThirdTurnConfirmationCreatesOneReview(t *testing.T)
 	candidate, err := service.Transcribe(
 		context.Background(),
 		voiceTestActor("a"),
+		"participant-a",
 		TranscribeVoiceCommand{
 			SessionID:      "session-1",
 			QuestionID:     "question-3",
@@ -357,26 +318,21 @@ func TestVoiceRoundConcurrentThirdTurnConfirmationCreatesOneReview(t *testing.T)
 		t.Errorf("concurrent confirm: %v", err)
 	}
 	for turn := range results {
-		if turn.EffectiveTurns != 3 ||
-			!turn.SessionCompleted ||
-			turn.ReviewID != "review-session-1" {
+		if turn.ID != "turn-question-3" ||
+			turn.EffectiveTurns != 0 ||
+			turn.SessionCompleted ||
+			turn.ReviewID != "" {
 			t.Errorf("concurrent result = %#v", turn)
 		}
 	}
-	if practice.effectiveTurns != 3 || reviews.calls != 1 {
-		t.Fatalf(
-			"effective turns=%d review calls=%d",
-			practice.effectiveTurns,
-			reviews.calls,
-		)
+	if store.nextTurn != 1 {
+		t.Fatalf("conversation turns=%d", store.nextTurn)
 	}
 }
 
 func TestVoiceRoundTTSFailurePreservesQuestionText(t *testing.T) {
 	service, err := NewVoiceRoundService(
 		newVoiceTestStore(),
-		&voiceTestPractice{turns: make(map[string]VoiceTurnProgress)},
-		&voiceTestReview{bySession: make(map[string]VoiceSessionReview)},
 		voiceNoopVault{},
 		&voiceTestRecognizer{},
 		&voiceTestSynthesizer{err: ai.NewSpeechError(
@@ -409,8 +365,6 @@ func TestVoiceRoundTTSFailurePreservesQuestionText(t *testing.T) {
 func TestVoiceRoundTTSGenericFailureUsesSynthesisAuditOperation(t *testing.T) {
 	service, err := NewVoiceRoundService(
 		newVoiceTestStore(),
-		&voiceTestPractice{turns: make(map[string]VoiceTurnProgress)},
-		&voiceTestReview{bySession: make(map[string]VoiceSessionReview)},
 		voiceNoopVault{},
 		&voiceTestRecognizer{},
 		&voiceTestSynthesizer{err: errors.New("private provider detail")},
@@ -715,77 +669,6 @@ func (store *voiceTestStore) replaceTurn(turn ConfirmedVoiceTurn) {
 			store.confirmations[key] = turn
 		}
 	}
-}
-
-type voiceTestPractice struct {
-	mu             sync.Mutex
-	turns          map[string]VoiceTurnProgress
-	effectiveTurns int
-}
-
-func (*voiceTestPractice) ResolveActorParticipant(
-	_ context.Context,
-	actor requestcontext.Actor,
-	sessionID string,
-) (string, error) {
-	if actor.UserID != "user-a" || sessionID != "session-1" {
-		return "", ErrVoiceRoundNotFound
-	}
-	return "participant-a", nil
-}
-
-func (practice *voiceTestPractice) ApplyEffectiveTurn(
-	_ context.Context,
-	actor requestcontext.Actor,
-	sessionID string,
-	turnID string,
-) (VoiceTurnProgress, error) {
-	practice.mu.Lock()
-	defer practice.mu.Unlock()
-	if actor.UserID != "user-a" || sessionID != "session-1" {
-		return VoiceTurnProgress{}, ErrVoiceRoundNotFound
-	}
-	if result, found := practice.turns[turnID]; found {
-		return result, nil
-	}
-	practice.effectiveTurns++
-	result := VoiceTurnProgress{
-		EffectiveTurns:   practice.effectiveTurns,
-		SessionCompleted: practice.effectiveTurns == 3,
-	}
-	practice.turns[turnID] = result
-	return result, nil
-}
-
-type voiceTestReview struct {
-	mu        sync.Mutex
-	bySession map[string]VoiceSessionReview
-	calls     int
-}
-
-func (reviews *voiceTestReview) EnsureSessionReview(
-	_ context.Context,
-	actor requestcontext.Actor,
-	source VoiceReviewSource,
-) (VoiceSessionReview, error) {
-	reviews.mu.Lock()
-	defer reviews.mu.Unlock()
-	if actor.UserID != "user-a" ||
-		source.TranscriptID == "" ||
-		source.TranscriptVersion == "" {
-		return VoiceSessionReview{}, ErrVoiceRoundNotFound
-	}
-	if existing, found := reviews.bySession[source.SessionID]; found {
-		return existing, nil
-	}
-	reviews.calls++
-	result := VoiceSessionReview{
-		ID:        "review-" + source.SessionID,
-		SessionID: source.SessionID,
-		TurnID:    source.TurnID,
-	}
-	reviews.bySession[source.SessionID] = result
-	return result, nil
 }
 
 type voiceTestRecognizer struct {
