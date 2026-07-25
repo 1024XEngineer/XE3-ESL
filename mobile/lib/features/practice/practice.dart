@@ -6,8 +6,13 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 
 class PracticePage extends StatefulWidget {
-  const PracticePage({this.agentController, super.key});
+  const PracticePage({
+    this.previewMode = false,
+    this.agentController,
+    super.key,
+  });
 
+  final bool previewMode;
   final AgentController? agentController;
 
   @override
@@ -116,11 +121,12 @@ class _PracticePageState extends State<PracticePage> {
                     ),
                   ],
                   const SizedBox(height: 18),
-                  const Text(
-                    '当前页面仅供显式 Fake 预览，不代表生产语音服务已经接入。',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Color(0xFF85878E), fontSize: 12),
-                  ),
+                  if (widget.previewMode)
+                    const Text(
+                      '当前页面仅供显式 Fake 预览，不代表生产语音服务已经接入。',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Color(0xFF85878E), fontSize: 12),
+                    ),
                 ],
               ),
       ),

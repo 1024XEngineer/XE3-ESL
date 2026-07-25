@@ -8,11 +8,13 @@ import 'package:speakup/agent/agent_models.dart';
 class ReviewPage extends StatefulWidget {
   const ReviewPage({
     this.showBackButton = false,
+    this.previewMode = false,
     this.agentController,
     super.key,
   });
 
   final bool showBackButton;
+  final bool previewMode;
   final AgentController? agentController;
 
   @override
@@ -80,9 +82,11 @@ class _ReviewPageState extends State<ReviewPage> {
               style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
-            const Text(
-              '练习记录、证据反馈和下一步建议集中在这里。',
-              style: TextStyle(color: Color(0xFF696B73), fontSize: 15),
+            Text(
+              widget.previewMode
+                  ? '本地 UI Mock；复盘结果不会写入正式服务。'
+                  : '练习记录、证据反馈和下一步建议集中在这里。',
+              style: const TextStyle(color: Color(0xFF696B73), fontSize: 15),
             ),
             const SizedBox(height: 28),
             if (review == null)

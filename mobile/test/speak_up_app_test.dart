@@ -25,6 +25,7 @@ void main() {
     );
     expect(find.byKey(const Key('quick-action-recent-review')), findsOneWidget);
     expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
+    expect(find.byKey(const Key('agent-preview-label')), findsOneWidget);
 
     for (final key in _primaryTabKeys) {
       expect(find.byKey(Key(key)), findsOneWidget);
@@ -77,6 +78,7 @@ void main() {
       key: 'primary-tab-profile',
       expectedPageKey: 'profile-page',
     );
+    expect(find.text('当前账号与本机登录状态。'), findsOneWidget);
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-agent',
@@ -218,8 +220,8 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.descendant(of: drawer, matching: find.text('当前内容为 UI Mock')),
-      findsNothing,
+      find.descendant(of: drawer, matching: find.text('本地界面预览 · UI Mock')),
+      findsOneWidget,
     );
     expect(
       find.descendant(of: drawer, matching: find.text('场景')),
@@ -242,11 +244,13 @@ void main() {
 
     await _tapVisible(tester, 'quick-action-create-plan');
     expect(find.byKey(const Key('scenes-page')), findsOneWidget);
+    expect(find.text('本地 UI Mock；练习结果不会写入正式服务。'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
     await _tapVisible(tester, 'quick-action-recent-review');
     expect(find.byKey(const Key('review-page')), findsOneWidget);
+    expect(find.text('本地 UI Mock；复盘结果不会写入正式服务。'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
@@ -442,7 +446,7 @@ void main() {
 
       await tester.drag(find.byType(ListView), const Offset(0, -1000));
       await tester.pumpAndSettle();
-      final accountLabel = find.text('已连接当前账号');
+      final accountLabel = find.text('本地界面预览 · UI Mock');
       expect(accountLabel.hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

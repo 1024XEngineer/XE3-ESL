@@ -8,12 +8,14 @@ import 'package:speakup/agent/agent_models.dart';
 class PreparationPage extends StatefulWidget {
   const PreparationPage({
     this.showBackButton = false,
+    this.previewMode = false,
     this.agentController,
     this.onSceneSelected,
     super.key,
   });
 
   final bool showBackButton;
+  final bool previewMode;
   final AgentController? agentController;
   final VoidCallback? onSceneSelected;
 
@@ -117,7 +119,9 @@ class _PreparationPageState extends State<PreparationPage> {
             const SizedBox(height: 8),
             Text(
               practiceAvailable
-                  ? '直接进入已经开放的练习；未实现的场景不会提前展示。'
+                  ? widget.previewMode
+                        ? '本地 UI Mock；练习结果不会写入正式服务。'
+                        : '直接进入已经开放的练习；未实现的场景不会提前展示。'
                   : '服务端场景与语音契约尚未开放，当前仅提供 Agent 文本对话。',
               key: const Key('practice-availability-message'),
               style: const TextStyle(color: Color(0xFF696B73), fontSize: 15),

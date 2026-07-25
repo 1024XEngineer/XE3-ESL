@@ -13,6 +13,7 @@ import 'package:speakup/identity/model/identity_models.dart';
 class SpeakUpShell extends StatefulWidget {
   const SpeakUpShell({
     this.showBackButton = false,
+    this.previewMode = false,
     this.user,
     this.authController,
     required this.agentController,
@@ -20,6 +21,7 @@ class SpeakUpShell extends StatefulWidget {
   });
 
   final bool showBackButton;
+  final bool previewMode;
   final User? user;
   final AuthController? authController;
   final AgentController agentController;
@@ -147,6 +149,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   @override
   Widget build(BuildContext context) {
+    final practiceAvailable = widget.agentController.supportsPracticeFlow;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final safeBottom = math.max(
       MediaQuery.viewPaddingOf(context).bottom,
@@ -156,6 +159,8 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         GlassNavigationBar.heightFor(context) + safeBottom + 10;
     final pages = [
       ConversationPage(
+        previewMode: widget.previewMode,
+        practiceAvailable: practiceAvailable,
         restingComposerBottom: composerBottomInset,
         onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
         onNavigateBack: widget.showBackButton
@@ -164,7 +169,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onCreatePlan: () => _selectDestination(1),
         onContinuePractice: _openPractice,
         onOpenReview: () => _selectDestination(2),
-        onVoicePlaceholder: _openVoicePractice,
+        onVoicePlaceholder: practiceAvailable ? _openVoicePractice : null,
         messages: widget.agentController.messages,
         activeScene: widget.agentController.scene,
         isBusy: widget.agentController.isBusy,
@@ -176,11 +181,13 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ),
       PreparationPage(
         showBackButton: widget.showBackButton,
+        previewMode: widget.previewMode,
         agentController: widget.agentController,
         onSceneSelected: () => _selectDestination(0),
       ),
       ReviewPage(
         showBackButton: widget.showBackButton,
+        previewMode: widget.previewMode,
         agentController: widget.agentController,
       ),
       _ProfilePage(
@@ -195,7 +202,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       extendBody: true,
       resizeToAvoidBottomInset: false,
       backgroundColor: Colors.transparent,
-      drawer: const _ConversationDrawer(),
+      drawer: _ConversationDrawer(previewMode: widget.previewMode),
       drawerScrimColor: const Color(0x330E1120),
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: keyboardVisible
@@ -210,7 +217,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 }
 
 class _ConversationDrawer extends StatelessWidget {
-  const _ConversationDrawer();
+  const _ConversationDrawer({required this.previewMode});
+
+  final bool previewMode;
 
   @override
   Widget build(BuildContext context) {
@@ -246,11 +255,11 @@ class _ConversationDrawer extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            const ListTile(
-              contentPadding: EdgeInsets.symmetric(horizontal: 8),
-              leading: Icon(Icons.chat_bubble_outline_rounded),
-              title: Text('Agent 对话'),
-              subtitle: Text('已连接当前账号'),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+              leading: const Icon(Icons.chat_bubble_outline_rounded),
+              title: const Text('Agent 对话'),
+              subtitle: Text(previewMode ? '本地界面预览 · UI Mock' : '已连接当前账号'),
             ),
           ],
         ),
@@ -300,7 +309,7 @@ class _ProfilePage extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             const Text(
-              '账号、练习进度与本机 Session。',
+              '当前账号与本机登录状态。',
               style: TextStyle(color: Color(0xFF696B73), fontSize: 15),
             ),
             const SizedBox(height: 28),

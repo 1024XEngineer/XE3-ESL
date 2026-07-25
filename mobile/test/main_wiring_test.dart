@@ -86,6 +86,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
+      expect(
+        find.byKey(const Key('agent-practice-unavailable')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('agent-mic-placeholder')), findsNothing);
+      expect(find.byKey(const Key('agent-preview-label')), findsNothing);
+      expect(find.byKey(const Key('quick-action-create-plan')), findsNothing);
       expect(dependencies.agentController.threadId, _threadId);
       expect(dependencies.authController.state, isA<AuthAuthenticated>());
       expect(

@@ -114,23 +114,30 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       onGenerateRoute: (settings) {
         final page = switch (settings.name) {
           AppRoutes.home => SpeakUpShell(
+            previewMode: widget.allowFakePreview,
             user: widget.user,
             authController: widget.authController,
             agentController: _agentController,
           ),
           AppRoutes.preparation => PreparationPage(
             showBackButton: true,
+            previewMode: widget.allowFakePreview,
             agentController: _agentController,
           ),
-          AppRoutes.practice => PracticePage(agentController: _agentController),
+          AppRoutes.practice => PracticePage(
+            previewMode: widget.allowFakePreview,
+            agentController: _agentController,
+          ),
           AppRoutes.conversation => SpeakUpShell(
             showBackButton: true,
+            previewMode: widget.allowFakePreview,
             user: widget.user,
             authController: widget.authController,
             agentController: _agentController,
           ),
           AppRoutes.review => ReviewPage(
             showBackButton: true,
+            previewMode: widget.allowFakePreview,
             agentController: _agentController,
           ),
           _ => null,

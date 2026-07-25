@@ -10,6 +10,8 @@ import 'package:speakup/agent/agent_models.dart';
 
 class ConversationPage extends StatelessWidget {
   const ConversationPage({
+    this.previewMode = false,
+    this.practiceAvailable = true,
     this.restingComposerBottom = 16,
     this.onOpenMenu,
     this.onNavigateBack,
@@ -26,6 +28,8 @@ class ConversationPage extends StatelessWidget {
     super.key,
   });
 
+  final bool previewMode;
+  final bool practiceAvailable;
   final double restingComposerBottom;
   final VoidCallback? onOpenMenu;
   final VoidCallback? onNavigateBack;
@@ -76,9 +80,9 @@ class ConversationPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             _AgentTopBar(
+                              previewMode: previewMode,
                               onOpenMenu: onOpenMenu,
                               onNavigateBack: onNavigateBack,
-                              onVoicePlaceholder: onVoicePlaceholder,
                             ),
                             SizedBox(height: width < 350 ? 32 : 48),
                             if (messages.isEmpty) ...[
@@ -95,13 +99,16 @@ class ConversationPage extends StatelessWidget {
                                 ),
                               ),
                               SizedBox(height: width < 350 ? 20 : 26),
-                              _QuickActions(
-                                compact:
-                                    width < 350 || textScaler.scale(1) > 1.2,
-                                onCreatePlan: onCreatePlan,
-                                onContinuePractice: onContinuePractice,
-                                onOpenReview: onOpenReview,
-                              ),
+                              if (practiceAvailable)
+                                _QuickActions(
+                                  compact:
+                                      width < 350 || textScaler.scale(1) > 1.2,
+                                  onCreatePlan: onCreatePlan,
+                                  onContinuePractice: onContinuePractice,
+                                  onOpenReview: onOpenReview,
+                                )
+                              else
+                                const _PracticeUnavailableNotice(),
                             ] else ...[
                               Text(
                                 activeScene?.title ?? 'Agent 对话',
@@ -171,14 +178,14 @@ class _AgentBackground extends StatelessWidget {
 
 class _AgentTopBar extends StatelessWidget {
   const _AgentTopBar({
+    required this.previewMode,
     required this.onOpenMenu,
     required this.onNavigateBack,
-    required this.onVoicePlaceholder,
   });
 
+  final bool previewMode;
   final VoidCallback? onOpenMenu;
   final VoidCallback? onNavigateBack;
-  final VoidCallback? onVoicePlaceholder;
 
   @override
   Widget build(BuildContext context) {
@@ -196,13 +203,40 @@ class _AgentTopBar extends StatelessWidget {
               : Icons.arrow_back_rounded,
           onPressed: onNavigateBack ?? onOpenMenu,
         ),
+        if (previewMode) ...[
+          const SizedBox(width: 12),
+          Semantics(
+            label: '当前为 UI Mock',
+            child: ExcludeSemantics(
+              child: MediaQuery.withNoTextScaling(
+                child: const Text(
+                  'UI Mock',
+                  key: Key('agent-preview-label'),
+                  style: TextStyle(
+                    color: Color(0xFF6C6E75),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
         const Spacer(),
-        _RoundGlassButton(
-          tooltip: '语音播放，尚未接入',
-          icon: Icons.volume_up_outlined,
-          onPressed: onVoicePlaceholder,
-        ),
       ],
+    );
+  }
+}
+
+class _PracticeUnavailableNotice extends StatelessWidget {
+  const _PracticeUnavailableNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Text(
+      '当前已开放 Agent 文本对话；场景、语音练习与复盘待正式服务契约接入。',
+      key: Key('agent-practice-unavailable'),
+      style: TextStyle(color: Color(0xFF6C6E75), height: 1.45),
     );
   }
 }
@@ -571,35 +605,27 @@ class _AgentComposerState extends State<_AgentComposer> {
                 if (!widget.keyboardVisible) const SizedBox(height: 5),
                 Row(
                   children: [
-                    IconButton(
-                      tooltip: '添加内容，尚未接入',
-                      onPressed: widget.onVoicePlaceholder,
-                      icon: const Icon(Icons.add_rounded),
-                    ),
-                    IconButton(
-                      tooltip: '调整偏好，尚未接入',
-                      onPressed: widget.onVoicePlaceholder,
-                      icon: const Icon(Icons.tune_rounded),
-                    ),
                     const Spacer(),
-                    Semantics(
-                      key: const Key('agent-mic-placeholder'),
-                      button: true,
-                      label: '开始按轮语音练习',
-                      onTap: widget.onVoicePlaceholder,
-                      child: ExcludeSemantics(
-                        child: IconButton.filledTonal(
-                          tooltip: '开始按轮语音练习',
-                          onPressed: widget.onVoicePlaceholder,
-                          style: IconButton.styleFrom(
-                            backgroundColor: const Color(0xFFE8E8E5),
-                            foregroundColor: const Color(0xFF44464D),
+                    if (widget.onVoicePlaceholder != null) ...[
+                      Semantics(
+                        key: const Key('agent-mic-placeholder'),
+                        button: true,
+                        label: '开始按轮语音练习',
+                        onTap: widget.onVoicePlaceholder,
+                        child: ExcludeSemantics(
+                          child: IconButton.filledTonal(
+                            tooltip: '开始按轮语音练习',
+                            onPressed: widget.onVoicePlaceholder,
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFFE8E8E5),
+                              foregroundColor: const Color(0xFF44464D),
+                            ),
+                            icon: const Icon(Icons.mic_none_rounded),
                           ),
-                          icon: const Icon(Icons.mic_none_rounded),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
+                      const SizedBox(width: 6),
+                    ],
                     IconButton.filled(
                       key: const Key('agent-send-button'),
                       tooltip: '发送',
