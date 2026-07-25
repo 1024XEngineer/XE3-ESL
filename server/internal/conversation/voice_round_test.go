@@ -1,0 +1,663 @@
+package conversation
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"io"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+)
+
+func TestVoiceRoundThreeTurnsAreConfirmedOnceAndTriggerOneReview(t *testing.T) {
+	store := newVoiceTestStore()
+	practice := &voiceTestPractice{turns: make(map[string]VoiceTurnProgress)}
+	reviews := &voiceTestReview{bySession: make(map[string]VoiceSessionReview)}
+	recognizer := &voiceTestRecognizer{}
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         2,
+			MaxBytes:         platformmedia.MaxAudioBytes * 2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := vault.Close(); err != nil {
+			t.Errorf("close vault: %v", err)
+		}
+	})
+	service, err := NewVoiceRoundService(
+		store,
+		practice,
+		reviews,
+		vault,
+		recognizer,
+		&voiceTestSynthesizer{},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	actor := voiceTestActor("a")
+	audio := voiceTestWAV()
+
+	var thirdCandidate TranscriptionCandidate
+	var thirdTurn ConfirmedVoiceTurn
+	for round := 1; round <= 3; round++ {
+		questionID := "question-" + string(rune('0'+round))
+		store.addQuestion(questionID)
+		candidate, err := service.Transcribe(
+			context.Background(),
+			actor,
+			TranscribeVoiceCommand{
+				SessionID:      "session-1",
+				QuestionID:     questionID,
+				IdempotencyKey: "transcribe-" + questionID,
+				ContentType:    platformmedia.ContentTypeWAV,
+				Audio:          bytes.NewReader(audio),
+			},
+		)
+		if err != nil {
+			t.Fatalf("round %d transcribe: %v", round, err)
+		}
+		turn, err := service.Confirm(
+			context.Background(),
+			actor,
+			ConfirmVoiceTurnCommand{
+				CandidateID:    candidate.ID,
+				IdempotencyKey: "confirm-" + questionID,
+			},
+		)
+		if err != nil {
+			t.Fatalf("round %d confirm: %v", round, err)
+		}
+		if turn.EffectiveTurns != round {
+			t.Fatalf(
+				"round %d effective turns = %d",
+				round,
+				turn.EffectiveTurns,
+			)
+		}
+		if round < 3 && (turn.SessionCompleted || turn.ReviewID != "") {
+			t.Fatalf("round %d completed early: %#v", round, turn)
+		}
+		if round == 3 {
+			thirdCandidate = candidate
+			thirdTurn = turn
+		}
+	}
+	if !thirdTurn.SessionCompleted || thirdTurn.ReviewID != "review-session-1" {
+		t.Fatalf("third Turn did not create one Review: %#v", thirdTurn)
+	}
+
+	replayedCandidate, err := service.Transcribe(
+		context.Background(),
+		actor,
+		TranscribeVoiceCommand{
+			SessionID:      "session-1",
+			QuestionID:     thirdCandidate.QuestionID,
+			IdempotencyKey: "transcribe-" + thirdCandidate.QuestionID,
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(audio),
+		},
+	)
+	if err != nil || replayedCandidate.ID != thirdCandidate.ID {
+		t.Fatalf("transcription replay = %#v, %v", replayedCandidate, err)
+	}
+	replayedTurn, err := service.Confirm(
+		context.Background(),
+		actor,
+		ConfirmVoiceTurnCommand{
+			CandidateID:    thirdCandidate.ID,
+			IdempotencyKey: "confirm-" + thirdCandidate.QuestionID,
+		},
+	)
+	if err != nil || !reflect.DeepEqual(replayedTurn, thirdTurn) {
+		t.Fatalf("confirmation replay = %#v, %v", replayedTurn, err)
+	}
+	if recognizer.calls != 3 || practice.effectiveTurns != 3 ||
+		reviews.calls != 1 {
+		t.Fatalf(
+			"calls: ASR=%d effective=%d review=%d",
+			recognizer.calls,
+			practice.effectiveTurns,
+			reviews.calls,
+		)
+	}
+}
+
+func TestVoiceRoundFailureAndForeignActorDoNotAdvancePractice(t *testing.T) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	practice := &voiceTestPractice{turns: make(map[string]VoiceTurnProgress)}
+	reviews := &voiceTestReview{bySession: make(map[string]VoiceSessionReview)}
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	providerError := ai.NewSpeechError(
+		ai.SpeechOperationTranscription,
+		ai.ErrorTimeout,
+		0,
+		"",
+		"safe-request",
+		context.DeadlineExceeded,
+	)
+	service, err := NewVoiceRoundService(
+		store,
+		practice,
+		reviews,
+		vault,
+		&voiceTestRecognizer{err: providerError},
+		&voiceTestSynthesizer{},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	command := TranscribeVoiceCommand{
+		SessionID:      "session-1",
+		QuestionID:     "question-1",
+		IdempotencyKey: "transcribe-failure",
+		ContentType:    platformmedia.ContentTypeWAV,
+		Audio:          bytes.NewReader(voiceTestWAV()),
+	}
+	_, err = service.Transcribe(context.Background(), voiceTestActor("a"), command)
+	if !errors.Is(err, providerError) {
+		t.Fatalf("provider failure = %v", err)
+	}
+	if practice.effectiveTurns != 0 || reviews.calls != 0 ||
+		len(store.attempts) != 1 ||
+		store.attempts[0].RequestID != "safe-request" {
+		t.Fatalf(
+			"failure changed progress or lost safe audit: %#v",
+			store.attempts,
+		)
+	}
+
+	command.Audio = bytes.NewReader(voiceTestWAV())
+	_, err = service.Transcribe(
+		context.Background(),
+		voiceTestActor("b"),
+		command,
+	)
+	if !errors.Is(err, ErrVoiceRoundNotFound) {
+		t.Fatalf("foreign actor error = %v", err)
+	}
+	if practice.effectiveTurns != 0 || reviews.calls != 0 {
+		t.Fatal("foreign actor advanced practice")
+	}
+}
+
+func TestVoiceRoundTTSFailurePreservesQuestionText(t *testing.T) {
+	service, err := NewVoiceRoundService(
+		newVoiceTestStore(),
+		&voiceTestPractice{turns: make(map[string]VoiceTurnProgress)},
+		&voiceTestReview{bySession: make(map[string]VoiceSessionReview)},
+		voiceNoopVault{},
+		&voiceTestRecognizer{},
+		&voiceTestSynthesizer{err: ai.NewSpeechError(
+			ai.SpeechOperationSynthesis,
+			ai.ErrorProviderUnavailable,
+			0,
+			"",
+			"",
+			errors.New("private provider detail"),
+		)},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	result, err := service.SynthesizeQuestion(
+		context.Background(),
+		"Tell me about a difficult project.",
+	)
+	if err != nil {
+		t.Fatalf("synthesize question: %v", err)
+	}
+	if result.Text != "Tell me about a difficult project." ||
+		result.Audio != nil ||
+		result.Failure == nil ||
+		result.Failure.Kind != ai.ErrorProviderUnavailable {
+		t.Fatalf("unexpected text fallback: %#v", result)
+	}
+}
+
+type voiceTestStore struct {
+	mu            sync.Mutex
+	questions     map[string]VoiceQuestion
+	reservations  map[string]voiceTestReservation
+	candidates    map[string]TranscriptionCandidate
+	confirmations map[string]ConfirmedVoiceTurn
+	turns         map[string]ConfirmedVoiceTurn
+	attempts      []SafeProcessingAttempt
+	nextCandidate int
+	nextTurn      int
+}
+
+type voiceTestReservation struct {
+	ID          string
+	Fingerprint string
+	CandidateID string
+	Failed      bool
+}
+
+func newVoiceTestStore() *voiceTestStore {
+	return &voiceTestStore{
+		questions:     make(map[string]VoiceQuestion),
+		reservations:  make(map[string]voiceTestReservation),
+		candidates:    make(map[string]TranscriptionCandidate),
+		confirmations: make(map[string]ConfirmedVoiceTurn),
+		turns:         make(map[string]ConfirmedVoiceTurn),
+	}
+}
+
+func (store *voiceTestStore) addQuestion(id string) {
+	store.questions[id] = VoiceQuestion{
+		ID:                      id,
+		SessionID:               "session-1",
+		Text:                    "Question",
+		SpeakerParticipantID:    "participant-interviewer",
+		AddresseeParticipantIDs: []string{"participant-a"},
+	}
+}
+
+func (store *voiceTestStore) GetVoiceQuestion(
+	_ context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+	questionID string,
+) (VoiceQuestion, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	question, found := store.questions[questionID]
+	if actor.UserID != "user-a" || !found || question.SessionID != sessionID {
+		return VoiceQuestion{}, ErrVoiceRoundNotFound
+	}
+	return question, nil
+}
+
+func (store *voiceTestStore) ReserveTranscription(
+	_ context.Context,
+	actor requestcontext.Actor,
+	command ReserveTranscriptionCommand,
+) (TranscriptionReservation, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if actor.UserID != "user-a" {
+		return TranscriptionReservation{}, ErrVoiceRoundNotFound
+	}
+	if existing, found := store.reservations[command.IdempotencyKey]; found {
+		if existing.Fingerprint != command.InputFingerprint {
+			return TranscriptionReservation{}, ErrVoiceRoundConflict
+		}
+		if candidate, completed := store.candidates[existing.CandidateID]; completed {
+			return TranscriptionReservation{
+				ID:        existing.ID,
+				Status:    TranscriptionCompleted,
+				Candidate: candidate,
+			}, nil
+		}
+		if !existing.Failed {
+			return TranscriptionReservation{
+				ID:     existing.ID,
+				Status: TranscriptionProcessing,
+			}, nil
+		}
+		existing.Failed = false
+		store.reservations[command.IdempotencyKey] = existing
+		return TranscriptionReservation{
+			ID:     existing.ID,
+			Status: TranscriptionReserved,
+		}, nil
+	}
+	id := "reservation-" + command.QuestionID
+	store.reservations[command.IdempotencyKey] = voiceTestReservation{
+		ID:          id,
+		Fingerprint: command.InputFingerprint,
+	}
+	return TranscriptionReservation{ID: id, Status: TranscriptionReserved}, nil
+}
+
+func (store *voiceTestStore) CompleteTranscription(
+	_ context.Context,
+	actor requestcontext.Actor,
+	command CompleteTranscriptionCommand,
+) (TranscriptionCandidate, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if actor.UserID != "user-a" {
+		return TranscriptionCandidate{}, ErrVoiceRoundNotFound
+	}
+	var key string
+	var reservation voiceTestReservation
+	for candidateKey, value := range store.reservations {
+		if value.ID == command.ReservationID {
+			key, reservation = candidateKey, value
+			break
+		}
+	}
+	if key == "" {
+		return TranscriptionCandidate{}, ErrVoiceRoundNotFound
+	}
+	store.nextCandidate++
+	questionID := string([]byte(command.ReservationID)[len("reservation-"):])
+	candidate := TranscriptionCandidate{
+		ID:                      "candidate-" + questionID,
+		SessionID:               "session-1",
+		QuestionID:              questionID,
+		QuestionSpeakerID:       "participant-interviewer",
+		AddresseeParticipantIDs: []string{"participant-a"},
+		RespondentParticipantID: "participant-a",
+		TranscriptID:            command.TranscriptID,
+		TranscriptVersion:       command.TranscriptVersion,
+		Transcript:              command.Transcript,
+		Provider:                command.Provider,
+		Model:                   command.Model,
+		ProviderRequestID:       command.ProviderRequestID,
+		CreatedAt:               command.CompletedAt,
+	}
+	store.candidates[candidate.ID] = candidate
+	reservation.CandidateID = candidate.ID
+	store.reservations[key] = reservation
+	return candidate, nil
+}
+
+func (store *voiceTestStore) FailTranscription(
+	_ context.Context,
+	_ requestcontext.Actor,
+	reservationID string,
+	attempt SafeProcessingAttempt,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for key, reservation := range store.reservations {
+		if reservation.ID == reservationID {
+			reservation.Failed = true
+			store.reservations[key] = reservation
+			store.attempts = append(store.attempts, attempt)
+			return nil
+		}
+	}
+	return ErrVoiceRoundNotFound
+}
+
+func (store *voiceTestStore) GetTranscriptionCandidate(
+	_ context.Context,
+	actor requestcontext.Actor,
+	id string,
+) (TranscriptionCandidate, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	candidate, found := store.candidates[id]
+	if actor.UserID != "user-a" || !found {
+		return TranscriptionCandidate{}, ErrVoiceRoundNotFound
+	}
+	return candidate, nil
+}
+
+func (store *voiceTestStore) ReserveConfirmation(
+	_ context.Context,
+	actor requestcontext.Actor,
+	command ReserveConfirmationCommand,
+) (ConfirmedVoiceTurn, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if actor.UserID != "user-a" {
+		return ConfirmedVoiceTurn{}, ErrVoiceRoundNotFound
+	}
+	if turn, found := store.confirmations[command.IdempotencyKey]; found {
+		if turn.TranscriptID != store.candidates[command.CandidateID].TranscriptID {
+			return ConfirmedVoiceTurn{}, ErrVoiceRoundConflict
+		}
+		return turn, nil
+	}
+	candidate, found := store.candidates[command.CandidateID]
+	if !found {
+		return ConfirmedVoiceTurn{}, ErrVoiceRoundNotFound
+	}
+	store.nextTurn++
+	turn := ConfirmedVoiceTurn{
+		ID:                "turn-" + candidate.QuestionID,
+		SessionID:         candidate.SessionID,
+		QuestionID:        candidate.QuestionID,
+		QuestionSpeakerID: candidate.QuestionSpeakerID,
+		AddresseeParticipantIDs: append(
+			[]string(nil),
+			candidate.AddresseeParticipantIDs...,
+		),
+		RespondentParticipantID: candidate.RespondentParticipantID,
+		TranscriptID:            candidate.TranscriptID,
+		TranscriptVersion:       candidate.TranscriptVersion,
+		AnswerText:              candidate.Transcript,
+	}
+	store.confirmations[command.IdempotencyKey] = turn
+	store.turns[turn.ID] = turn
+	return turn, nil
+}
+
+func (store *voiceTestStore) SaveTurnProgress(
+	_ context.Context,
+	_ requestcontext.Actor,
+	turnID string,
+	progress VoiceTurnProgress,
+) (ConfirmedVoiceTurn, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	turn, found := store.turns[turnID]
+	if !found {
+		return ConfirmedVoiceTurn{}, ErrVoiceRoundNotFound
+	}
+	turn.EffectiveTurns = progress.EffectiveTurns
+	turn.SessionCompleted = progress.SessionCompleted
+	store.replaceTurn(turn)
+	return turn, nil
+}
+
+func (store *voiceTestStore) SaveTurnReview(
+	_ context.Context,
+	_ requestcontext.Actor,
+	turnID string,
+	reviewID string,
+) (ConfirmedVoiceTurn, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	turn, found := store.turns[turnID]
+	if !found {
+		return ConfirmedVoiceTurn{}, ErrVoiceRoundNotFound
+	}
+	turn.ReviewID = reviewID
+	store.replaceTurn(turn)
+	return turn, nil
+}
+
+func (store *voiceTestStore) replaceTurn(turn ConfirmedVoiceTurn) {
+	store.turns[turn.ID] = turn
+	for key, candidate := range store.confirmations {
+		if candidate.ID == turn.ID {
+			store.confirmations[key] = turn
+		}
+	}
+}
+
+type voiceTestPractice struct {
+	mu             sync.Mutex
+	turns          map[string]VoiceTurnProgress
+	effectiveTurns int
+}
+
+func (*voiceTestPractice) ResolveActorParticipant(
+	_ context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) (string, error) {
+	if actor.UserID != "user-a" || sessionID != "session-1" {
+		return "", ErrVoiceRoundNotFound
+	}
+	return "participant-a", nil
+}
+
+func (practice *voiceTestPractice) ApplyEffectiveTurn(
+	_ context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+	turnID string,
+) (VoiceTurnProgress, error) {
+	practice.mu.Lock()
+	defer practice.mu.Unlock()
+	if actor.UserID != "user-a" || sessionID != "session-1" {
+		return VoiceTurnProgress{}, ErrVoiceRoundNotFound
+	}
+	if result, found := practice.turns[turnID]; found {
+		return result, nil
+	}
+	practice.effectiveTurns++
+	result := VoiceTurnProgress{
+		EffectiveTurns:   practice.effectiveTurns,
+		SessionCompleted: practice.effectiveTurns == 3,
+	}
+	practice.turns[turnID] = result
+	return result, nil
+}
+
+type voiceTestReview struct {
+	mu        sync.Mutex
+	bySession map[string]VoiceSessionReview
+	calls     int
+}
+
+func (reviews *voiceTestReview) EnsureSessionReview(
+	_ context.Context,
+	actor requestcontext.Actor,
+	source VoiceReviewSource,
+) (VoiceSessionReview, error) {
+	reviews.mu.Lock()
+	defer reviews.mu.Unlock()
+	if actor.UserID != "user-a" ||
+		source.TranscriptID == "" ||
+		source.TranscriptVersion == "" {
+		return VoiceSessionReview{}, ErrVoiceRoundNotFound
+	}
+	if existing, found := reviews.bySession[source.SessionID]; found {
+		return existing, nil
+	}
+	reviews.calls++
+	result := VoiceSessionReview{
+		ID:        "review-" + source.SessionID,
+		SessionID: source.SessionID,
+		TurnID:    source.TurnID,
+	}
+	reviews.bySession[source.SessionID] = result
+	return result, nil
+}
+
+type voiceTestRecognizer struct {
+	calls int
+	err   error
+}
+
+func (recognizer *voiceTestRecognizer) Transcribe(
+	_ context.Context,
+	request ai.TranscriptionRequest,
+) (ai.TranscriptionResult, error) {
+	recognizer.calls++
+	if recognizer.err != nil {
+		return ai.TranscriptionResult{}, recognizer.err
+	}
+	return ai.TranscriptionResult{
+		ID:         "asr-request",
+		Provider:   "fake",
+		Model:      "fake-asr-v1",
+		Transcript: "A confirmed English answer.",
+	}, ai.ValidateTranscriptionRequest(request)
+}
+
+type voiceTestSynthesizer struct {
+	err error
+}
+
+func (synthesizer *voiceTestSynthesizer) Synthesize(
+	_ context.Context,
+	_ ai.SynthesisRequest,
+) (ai.SynthesisResult, error) {
+	return ai.SynthesisResult{}, synthesizer.err
+}
+
+type voiceNoopVault struct{}
+
+func (voiceNoopVault) Capture(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	io.Reader,
+) (platformmedia.TemporaryAudioMetadata, error) {
+	return platformmedia.TemporaryAudioMetadata{}, errors.New("unused")
+}
+
+func (voiceNoopVault) Source(
+	requestcontext.Actor,
+	string,
+) (platformmedia.AudioSource, error) {
+	return nil, errors.New("unused")
+}
+
+func (voiceNoopVault) Delete(requestcontext.Actor, string) error {
+	return nil
+}
+
+func voiceTestActor(seed string) requestcontext.Actor {
+	return requestcontext.Actor{
+		UserID:    "user-" + seed,
+		SessionID: "auth-" + seed,
+	}
+}
+
+func voiceTestWAV() []byte {
+	const (
+		sampleRate    = 8_000
+		bitsPerSample = 16
+		channels      = 1
+		samples       = 80
+	)
+	dataSize := samples * channels * bitsPerSample / 8
+	buffer := bytes.NewBuffer(make([]byte, 0, 44+dataSize))
+	buffer.WriteString("RIFF")
+	_ = binary.Write(buffer, binary.LittleEndian, uint32(36+dataSize))
+	buffer.WriteString("WAVEfmt ")
+	_ = binary.Write(buffer, binary.LittleEndian, uint32(16))
+	_ = binary.Write(buffer, binary.LittleEndian, uint16(1))
+	_ = binary.Write(buffer, binary.LittleEndian, uint16(channels))
+	_ = binary.Write(buffer, binary.LittleEndian, uint32(sampleRate))
+	_ = binary.Write(
+		buffer,
+		binary.LittleEndian,
+		uint32(sampleRate*channels*bitsPerSample/8),
+	)
+	_ = binary.Write(
+		buffer,
+		binary.LittleEndian,
+		uint16(channels*bitsPerSample/8),
+	)
+	_ = binary.Write(buffer, binary.LittleEndian, uint16(bitsPerSample))
+	buffer.WriteString("data")
+	_ = binary.Write(buffer, binary.LittleEndian, uint32(dataSize))
+	buffer.Write(make([]byte, dataSize))
+	return buffer.Bytes()
+}
