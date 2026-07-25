@@ -408,10 +408,14 @@ paths:
           description: |
             The owned recording was deleted and is no longer readable. The
             response has no body.
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/audio-assets/{audio_asset_id}/playback:
@@ -452,10 +456,14 @@ paths:
               example:
                 playback_url: https://media.example.invalid/temporary-playback
                 expires_at: '2026-07-25T12:02:00Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-sessions/{practice_session_id}/events:
@@ -617,6 +625,10 @@ components:
       name: audio_asset_id
       in: path
       required: true
+      description: |
+        Opaque server-generated identifier. The UTF-8 encoded path value is
+        accepted only when it is between 1 and 128 bytes and has no leading or
+        trailing whitespace.
       schema:
         $ref: '#/components/schemas/ResourceId'
     IdempotencyKey:
