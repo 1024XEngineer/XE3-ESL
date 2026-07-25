@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -169,6 +170,9 @@ func (application *VoiceSessionApplication) Start(
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
+	if session.ThreadID != threadID || session.MatterID != matterID {
+		return VoiceSessionState{}, ErrInvalidContext
+	}
 	return application.state(ctx, actor, session)
 }
 
@@ -190,6 +194,10 @@ func (application *VoiceSessionApplication) Resume(
 	)
 	if err != nil {
 		return VoiceSessionState{}, err
+	}
+	if session.ThreadID != threadID ||
+		(matterID != "" && session.MatterID != matterID) {
+		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return application.state(ctx, actor, session)
 }
@@ -255,7 +263,14 @@ func (application *VoiceSessionApplication) GetReview(
 		strings.TrimSpace(reviewID) == "" {
 		return VoiceSessionReview{}, ErrInvalidRequest
 	}
-	return application.reviews.GetReview(ctx, actor, reviewID)
+	item, err := application.reviews.GetReview(ctx, actor, reviewID)
+	if err != nil {
+		return VoiceSessionReview{}, err
+	}
+	if !validVoiceSessionReview(item, reviewID) {
+		return VoiceSessionReview{}, ErrInvalidContext
+	}
+	return item, nil
 }
 
 func (application *VoiceSessionApplication) state(
@@ -263,10 +278,18 @@ func (application *VoiceSessionApplication) state(
 	actor requestcontext.Actor,
 	session VoicePracticeSession,
 ) (VoiceSessionState, error) {
-	if session.ID == "" || session.TurnLimit <= 0 ||
+	if session.ID == "" ||
+		session.PlanID == "" ||
+		session.ThreadID == "" ||
+		session.MatterID == "" ||
+		session.SessionVersion < 1 ||
+		session.TurnLimit != 3 ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > session.TurnLimit ||
-		session.Completed != (session.EffectiveTurns == session.TurnLimit) {
+		session.Completed != (session.EffectiveTurns == session.TurnLimit) ||
+		session.InterviewerParticipantID == "" ||
+		session.CandidateParticipantID == "" ||
+		session.InterviewerParticipantID == session.CandidateParticipantID {
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	state := VoiceSessionState{Session: session}
@@ -289,6 +312,9 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, err
 	}
 	if found {
+		if latest.SessionID != session.ID {
+			return VoiceSessionState{}, ErrInvalidContext
+		}
 		state.Turn = &latest
 	}
 	if found && (latest.EffectiveTurns == 0 ||
@@ -329,13 +355,17 @@ func (application *VoiceSessionApplication) state(
 		}
 	}
 	if state.Turn != nil && state.Turn.ReviewID != "" {
-		formalReview, reviewErr := application.reviews.GetReview(
+		formalReview, reviewErr := application.GetReview(
 			ctx,
 			actor,
 			state.Turn.ReviewID,
 		)
 		if reviewErr != nil {
 			return VoiceSessionState{}, reviewErr
+		}
+		if formalReview.SessionID != session.ID ||
+			formalReview.SourceTurnID != state.Turn.ID {
+			return VoiceSessionState{}, ErrInvalidContext
 		}
 		state.Review = &formalReview
 	}
@@ -345,7 +375,7 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	if state.Session.Completed {
-		if state.Turn == nil {
+		if state.Turn == nil || state.Review == nil {
 			return VoiceSessionState{}, ErrInvalidContext
 		}
 		return state, nil
@@ -360,8 +390,67 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, err
 	}
 	state.Question = &question
-	if state.Question == nil {
+	if state.Question == nil ||
+		question.SessionID != session.ID ||
+		strings.TrimSpace(question.Text) == "" ||
+		question.SpeakerParticipantID !=
+			session.InterviewerParticipantID ||
+		len(question.AddresseeParticipantIDs) != 1 ||
+		question.AddresseeParticipantIDs[0] !=
+			session.CandidateParticipantID {
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return state, nil
+}
+
+func validVoiceSessionReview(
+	item VoiceSessionReview,
+	expectedID string,
+) bool {
+	if item.ID != expectedID ||
+		item.SessionID == "" ||
+		item.ImplementationVersion == "" ||
+		item.SourceTurnID == "" ||
+		!validVoiceSourceTurnVersion(item.SourceTurnVersion) ||
+		item.CreatedAt.IsZero() ||
+		item.UpdatedAt.Before(item.CreatedAt) {
+		return false
+	}
+	switch item.Status {
+	case "pending", "generating", "failed":
+		return item.Result == nil && item.CompletedAt == nil
+	case "completed":
+	default:
+		return false
+	}
+	if item.Result == nil ||
+		item.Result.OverallScore < 0 ||
+		item.Result.OverallScore > 100 ||
+		strings.TrimSpace(item.Result.Summary) == "" ||
+		len(item.Result.Conclusions) == 0 ||
+		item.CompletedAt == nil ||
+		item.CompletedAt.Before(item.CreatedAt) {
+		return false
+	}
+	for _, conclusion := range item.Result.Conclusions {
+		if strings.TrimSpace(conclusion.Key) == "" ||
+			strings.TrimSpace(conclusion.Category) == "" ||
+			strings.TrimSpace(conclusion.Message) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func validVoiceSourceTurnVersion(value string) bool {
+	const prefix = "conversation-turn:evidence-v"
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	version, err := strconv.ParseInt(
+		strings.TrimPrefix(value, prefix),
+		10,
+		64,
+	)
+	return err == nil && version >= 1
 }

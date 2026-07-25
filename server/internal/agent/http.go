@@ -786,8 +786,16 @@ func (h *HTTPHandler) questionSpeech(c *gin.Context) {
 		return
 	}
 	if speech.Audio == nil {
-		c.Header("Retry-After", "1")
-		h.writeError(c, http.StatusServiceUnavailable, "provider_unavailable", true)
+		retryable := speech.Failure == nil || speech.Failure.Retryable
+		if retryable {
+			c.Header("Retry-After", "1")
+		}
+		h.writeError(
+			c,
+			http.StatusServiceUnavailable,
+			"provider_unavailable",
+			retryable,
+		)
 		return
 	}
 	defer func() { _ = speech.Audio.Close() }()
@@ -919,12 +927,29 @@ func (h *HTTPHandler) writeVoiceError(c *gin.Context, err error) {
 	case errors.Is(err, conversation.ErrVoiceRoundProcessing):
 		c.Header("Retry-After", "1")
 		h.writeError(c, http.StatusConflict, "resource_processing", true)
-	case errors.As(err, &speechError), errors.As(err, &generationError):
-		c.Header("Retry-After", "1")
-		h.writeError(c, http.StatusServiceUnavailable, "provider_unavailable", true)
+	case errors.As(err, &speechError):
+		h.writeProviderError(c, speechError.Kind)
+	case errors.As(err, &generationError):
+		h.writeProviderError(c, generationError.Kind)
 	default:
 		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
 	}
+}
+
+func (h *HTTPHandler) writeProviderError(
+	c *gin.Context,
+	kind ai.ErrorKind,
+) {
+	retryable := kind.Retryable()
+	if retryable {
+		c.Header("Retry-After", "1")
+	}
+	h.writeError(
+		c,
+		http.StatusServiceUnavailable,
+		"provider_unavailable",
+		retryable,
+	)
 }
 
 func (h *HTTPHandler) writeAuthenticationRequired(c *gin.Context) {

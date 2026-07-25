@@ -183,6 +183,97 @@ func TestVoiceRoundFailureAndForeignActorStayConversationScoped(t *testing.T) {
 	}
 }
 
+func TestVoiceRoundPersistsProviderOutcomeAfterCallerCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		providerErr error
+		wantFailed  bool
+	}{
+		{
+			name: "failure audit",
+			providerErr: ai.NewSpeechError(
+				ai.SpeechOperationTranscription,
+				ai.ErrorCancelled,
+				0,
+				"",
+				"safe-cancelled-request",
+				context.Canceled,
+			),
+			wantFailed: true,
+		},
+		{name: "successful candidate"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inner := newVoiceTestStore()
+			inner.addQuestion("question-1")
+			store := &voiceCancellationAuditStore{
+				voiceTestStore: inner,
+			}
+			vault, err := platformmedia.NewTemporaryAudioVault(
+				platformmedia.TemporaryAudioVaultConfig{
+					ScratchDirectory: t.TempDir(),
+					Lifetime:         time.Minute,
+					MaxItems:         1,
+					MaxBytes:         platformmedia.MaxAudioBytes,
+				},
+			)
+			if err != nil {
+				t.Fatalf("new vault: %v", err)
+			}
+			t.Cleanup(func() { _ = vault.Close() })
+			ctx, cancel := context.WithCancel(context.Background())
+			service, err := NewVoiceRoundService(
+				store,
+				vault,
+				&cancelingVoiceRecognizer{
+					cancel: cancel,
+					err:    test.providerErr,
+				},
+				&voiceTestSynthesizer{},
+			)
+			if err != nil {
+				t.Fatalf("new service: %v", err)
+			}
+			candidate, err := service.Transcribe(
+				ctx,
+				voiceTestActor("a"),
+				"participant-a",
+				TranscribeVoiceCommand{
+					SessionID:      "session-1",
+					QuestionID:     "question-1",
+					IdempotencyKey: "cancelled-provider",
+					ContentType:    platformmedia.ContentTypeWAV,
+					Audio:          bytes.NewReader(voiceTestWAV()),
+				},
+			)
+			if test.wantFailed {
+				if !errors.Is(err, test.providerErr) ||
+					len(inner.attempts) != 1 ||
+					!store.failureContextLive {
+					t.Fatalf(
+						"failure result = %#v, %v, attempts=%#v live=%t",
+						candidate,
+						err,
+						inner.attempts,
+						store.failureContextLive,
+					)
+				}
+				return
+			}
+			if err != nil ||
+				candidate.ID == "" ||
+				!store.completionContextLive {
+				t.Fatalf(
+					"completion result = %#v, %v, live=%t",
+					candidate,
+					err,
+					store.completionContextLive,
+				)
+			}
+		})
+	}
+}
+
 func TestVoiceRoundExpiredASRLeaseFencesLateWorker(t *testing.T) {
 	store := newVoiceTestStore()
 	store.addQuestion("question-1")
@@ -383,6 +474,42 @@ func TestVoiceRoundTTSGenericFailureUsesSynthesisAuditOperation(t *testing.T) {
 		result.Failure.Operation != ai.SpeechOperationSynthesis ||
 		result.Failure.Kind != ai.ErrorProviderUnavailable {
 		t.Fatalf("unexpected generic TTS audit: %#v", result.Failure)
+	}
+}
+
+func TestVoiceRoundClosesInvalidTTSProviderAudio(t *testing.T) {
+	audio, err := platformmedia.CaptureTemporaryAudio(
+		t.TempDir(),
+		platformmedia.ContentTypeWAV,
+		bytes.NewReader(voiceTestWAV()),
+	)
+	if err != nil {
+		t.Fatalf("capture provider audio: %v", err)
+	}
+	service, err := NewVoiceRoundService(
+		newVoiceTestStore(),
+		voiceNoopVault{},
+		&voiceTestRecognizer{},
+		&voiceTestSynthesizer{result: ai.SynthesisResult{
+			// Missing the required request/provider/model/audio identifiers.
+			Audio: audio,
+		}},
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	result, err := service.SynthesizeQuestion(
+		context.Background(),
+		"Tell me about a difficult project.",
+	)
+	if err != nil ||
+		result.Audio != nil ||
+		result.Failure == nil ||
+		result.Failure.Kind != ai.ErrorInvalidResponse {
+		t.Fatalf("invalid provider result = %#v, %v", result, err)
+	}
+	if _, err := audio.Open(); err == nil {
+		t.Fatal("invalid provider audio was not closed")
 	}
 }
 
@@ -677,6 +804,60 @@ type voiceTestRecognizer struct {
 	err   error
 }
 
+type cancelingVoiceRecognizer struct {
+	cancel context.CancelFunc
+	err    error
+}
+
+func (recognizer *cancelingVoiceRecognizer) Transcribe(
+	_ context.Context,
+	request ai.TranscriptionRequest,
+) (ai.TranscriptionResult, error) {
+	if err := ai.ValidateTranscriptionRequest(request); err != nil {
+		return ai.TranscriptionResult{}, err
+	}
+	recognizer.cancel()
+	if recognizer.err != nil {
+		return ai.TranscriptionResult{}, recognizer.err
+	}
+	return ai.TranscriptionResult{
+		ID:         "asr-cancelled-request",
+		Provider:   "fake",
+		Model:      "fake-asr-v1",
+		Transcript: "Persist this answer.",
+	}, nil
+}
+
+type voiceCancellationAuditStore struct {
+	*voiceTestStore
+	failureContextLive    bool
+	completionContextLive bool
+}
+
+func (store *voiceCancellationAuditStore) FailTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command FailTranscriptionCommand,
+) error {
+	store.failureContextLive = ctx.Err() == nil
+	if !store.failureContextLive {
+		return ctx.Err()
+	}
+	return store.voiceTestStore.FailTranscription(ctx, actor, command)
+}
+
+func (store *voiceCancellationAuditStore) CompleteTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command CompleteTranscriptionCommand,
+) (TranscriptionCandidate, error) {
+	store.completionContextLive = ctx.Err() == nil
+	if !store.completionContextLive {
+		return TranscriptionCandidate{}, ctx.Err()
+	}
+	return store.voiceTestStore.CompleteTranscription(ctx, actor, command)
+}
+
 type leaseTestRecognizer struct {
 	mu           sync.Mutex
 	calls        int
@@ -724,14 +905,15 @@ func (recognizer *voiceTestRecognizer) Transcribe(
 }
 
 type voiceTestSynthesizer struct {
-	err error
+	result ai.SynthesisResult
+	err    error
 }
 
 func (synthesizer *voiceTestSynthesizer) Synthesize(
 	_ context.Context,
 	_ ai.SynthesisRequest,
 ) (ai.SynthesisResult, error) {
-	return ai.SynthesisResult{}, synthesizer.err
+	return synthesizer.result, synthesizer.err
 }
 
 type voiceNoopVault struct{}

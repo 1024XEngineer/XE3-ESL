@@ -9,6 +9,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -189,6 +191,14 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 
 func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 	conversations := newAgentVoiceConversation(1)
+	conversations.speech = conversation.QuestionSpeech{
+		Text: "What happened next?",
+		Failure: &conversation.SafeProcessingAttempt{
+			Operation: ai.SpeechOperationSynthesis,
+			Kind:      ai.ErrorQuotaExhausted,
+			Retryable: false,
+		},
+	}
 	practice := newAgentVoicePractice(0)
 	reviews := newAgentVoiceReview()
 	orchestrator := newAgentVoiceOrchestrator(
@@ -228,8 +238,13 @@ func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 		nil,
 	)
 	if speech.Code != http.StatusServiceUnavailable ||
-		speech.Header().Get("Retry-After") != "1" {
+		speech.Header().Get("Retry-After") != "" {
 		t.Fatalf("speech response = %d %#v", speech.Code, speech.Header())
+	}
+	failure := decodeVoiceJSONObject(t, speech)["error"].(map[string]any)
+	if failure["code"] != "provider_unavailable" ||
+		failure["retryable"] != false {
+		t.Fatalf("quota failure = %#v", failure)
 	}
 	session := voiceHTTPRequest(
 		t,

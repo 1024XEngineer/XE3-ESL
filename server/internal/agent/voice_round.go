@@ -155,6 +155,19 @@ func (orchestrator *VoiceRoundOrchestrator) Confirm(
 	if err != nil {
 		return conversation.ConfirmedVoiceTurn{}, err
 	}
+	candidate, err := orchestrator.conversations.GetTranscriptionCandidate(
+		ctx,
+		actor,
+		command.CandidateID,
+	)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	if candidate.ID != command.CandidateID ||
+		!candidateMatchesTurn(candidate, turn) ||
+		!validVoiceTurnCheckpoint(turn) {
+		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+	}
 	if turn.EffectiveTurns == 0 {
 		progress, applyErr := orchestrator.practice.ApplyEffectiveTurn(
 			ctx,
@@ -180,22 +193,17 @@ func (orchestrator *VoiceRoundOrchestrator) Confirm(
 		if err != nil {
 			return conversation.ConfirmedVoiceTurn{}, err
 		}
+		if turn.EffectiveTurns != progress.EffectiveTurns ||
+			turn.SessionCompleted != progress.SessionCompleted ||
+			!candidateMatchesTurn(candidate, turn) ||
+			!validVoiceTurnCheckpoint(turn) {
+			return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+		}
 	}
 	if !turn.SessionCompleted {
 		return turn, nil
 	}
 
-	candidate, err := orchestrator.conversations.GetTranscriptionCandidate(
-		ctx,
-		actor,
-		command.CandidateID,
-	)
-	if err != nil {
-		return conversation.ConfirmedVoiceTurn{}, err
-	}
-	if !candidateMatchesTurn(candidate, turn) {
-		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
-	}
 	sessionReview, err := orchestrator.reviews.EnsureSessionReview(
 		ctx,
 		actor,
@@ -212,12 +220,21 @@ func (orchestrator *VoiceRoundOrchestrator) Confirm(
 		sessionReview.SourceTurnID != turn.ID {
 		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
 	}
-	return orchestrator.conversations.SaveTurnReview(
+	turn, err = orchestrator.conversations.SaveTurnReview(
 		ctx,
 		actor,
 		turn.ID,
 		sessionReview.ID,
 	)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	if turn.ReviewID != sessionReview.ID ||
+		!candidateMatchesTurn(candidate, turn) ||
+		!validVoiceTurnCheckpoint(turn) {
+		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+	}
+	return turn, nil
 }
 
 func (orchestrator *VoiceRoundOrchestrator) SynthesizeQuestion(
@@ -245,6 +262,7 @@ func candidateMatchesTurn(
 	turn conversation.ConfirmedVoiceTurn,
 ) bool {
 	return candidate.ID != "" &&
+		turn.ID != "" &&
 		candidate.SessionID == turn.SessionID &&
 		candidate.QuestionID == turn.QuestionID &&
 		candidate.QuestionSpeakerID == turn.QuestionSpeakerID &&
@@ -254,14 +272,38 @@ func candidateMatchesTurn(
 		) &&
 		candidate.RespondentParticipantID == turn.RespondentParticipantID &&
 		candidate.ID == turn.CandidateID &&
+		candidate.TranscriptID == turn.TranscriptID &&
 		candidate.EvidenceVersion == turn.EvidenceVersion &&
 		candidate.Transcript == turn.AnswerText
 }
 
 func validVoiceTurnProgress(progress VoiceTurnProgress) bool {
 	return progress.EffectiveTurns >= 1 &&
+		progress.EffectiveTurns <= 3 &&
 		progress.SessionVersion > 1 &&
-		progress.TurnLimit >= progress.EffectiveTurns &&
+		progress.TurnLimit == 3 &&
 		progress.SessionCompleted ==
 			(progress.EffectiveTurns == progress.TurnLimit)
+}
+
+func validVoiceTurnCheckpoint(turn conversation.ConfirmedVoiceTurn) bool {
+	if turn.ID == "" || turn.SessionID == "" || turn.QuestionID == "" ||
+		turn.QuestionSpeakerID == "" ||
+		len(turn.AddresseeParticipantIDs) == 0 ||
+		turn.RespondentParticipantID == "" ||
+		turn.CandidateID == "" ||
+		turn.TranscriptID == "" ||
+		turn.EvidenceVersion < 1 ||
+		strings.TrimSpace(turn.AnswerText) == "" ||
+		turn.EffectiveTurns < 0 ||
+		turn.EffectiveTurns > 3 {
+		return false
+	}
+	if turn.EffectiveTurns == 0 {
+		return !turn.SessionCompleted && turn.ReviewID == ""
+	}
+	if turn.SessionCompleted != (turn.EffectiveTurns == 3) {
+		return false
+	}
+	return turn.ReviewID == "" || turn.SessionCompleted
 }

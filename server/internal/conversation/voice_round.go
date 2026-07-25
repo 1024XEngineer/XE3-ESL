@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
@@ -21,6 +22,8 @@ var (
 	ErrVoiceRoundConflict   = errors.New("voice_round_idempotency_conflict")
 	ErrVoiceRoundProcessing = errors.New("voice_round_processing")
 )
+
+const voicePersistenceTimeout = 5 * time.Second
 
 type VoiceQuestion struct {
 	ID                      string
@@ -37,7 +40,6 @@ type TranscriptionCandidate struct {
 	QuestionSpeakerID       string
 	AddresseeParticipantIDs []string
 	RespondentParticipantID string
-	CandidateID             string
 	TranscriptID            string
 	EvidenceVersion         int64
 	Transcript              string
@@ -256,8 +258,10 @@ func (service *VoiceRoundService) Transcribe(
 	if err != nil {
 		return TranscriptionCandidate{}, err
 	}
-	if !slices.Contains(
-		question.AddresseeParticipantIDs,
+	if !validVoiceQuestion(
+		question,
+		command.SessionID,
+		command.QuestionID,
 		respondentParticipantID,
 	) {
 		return TranscriptionCandidate{}, ErrVoiceRoundNotFound
@@ -313,10 +317,26 @@ func (service *VoiceRoundService) Transcribe(
 	}
 	switch reservation.Status {
 	case TranscriptionCompleted:
+		if !validTranscriptionCandidate(
+			reservation.Candidate,
+			command.SessionID,
+			command.QuestionID,
+			respondentParticipantID,
+		) {
+			return TranscriptionCandidate{}, ErrVoiceRoundConflict
+		}
 		return reservation.Candidate, nil
 	case TranscriptionProcessing:
+		if strings.TrimSpace(reservation.ID) == "" ||
+			reservation.LeaseToken != "" {
+			return TranscriptionCandidate{}, ErrVoiceRoundConflict
+		}
 		return TranscriptionCandidate{}, ErrVoiceRoundProcessing
 	case TranscriptionReserved:
+		if strings.TrimSpace(reservation.ID) == "" ||
+			strings.TrimSpace(reservation.LeaseToken) == "" {
+			return TranscriptionCandidate{}, ErrVoiceRoundConflict
+		}
 	default:
 		return TranscriptionCandidate{}, ErrVoiceRoundConflict
 	}
@@ -333,21 +353,24 @@ func (service *VoiceRoundService) Transcribe(
 			service.now().Sub(startedAt),
 			service.now(),
 		)
-		if saveErr := service.store.FailTranscription(
-			ctx,
+		persistenceContext, cancel := voicePersistenceContext(ctx)
+		saveErr := service.store.FailTranscription(
+			persistenceContext,
 			actor,
 			FailTranscriptionCommand{
 				ReservationID: reservation.ID,
 				LeaseToken:    reservation.LeaseToken,
 				Attempt:       attempt,
 			},
-		); saveErr != nil {
+		)
+		cancel()
+		if saveErr != nil {
 			return TranscriptionCandidate{}, saveErr
 		}
 		return TranscriptionCandidate{}, err
 	}
 	transcript := strings.TrimSpace(result.Transcript)
-	if transcript == "" {
+	if !validTranscriptionResult(result, transcript) {
 		attempt := SafeProcessingAttempt{
 			Operation:  ai.SpeechOperationTranscription,
 			Kind:       ai.ErrorInvalidResponse,
@@ -356,21 +379,25 @@ func (service *VoiceRoundService) Transcribe(
 			Duration:   service.now().Sub(startedAt),
 			OccurredAt: service.now().UTC(),
 		}
-		if saveErr := service.store.FailTranscription(
-			ctx,
+		persistenceContext, cancel := voicePersistenceContext(ctx)
+		saveErr := service.store.FailTranscription(
+			persistenceContext,
 			actor,
 			FailTranscriptionCommand{
 				ReservationID: reservation.ID,
 				LeaseToken:    reservation.LeaseToken,
 				Attempt:       attempt,
 			},
-		); saveErr != nil {
+		)
+		cancel()
+		if saveErr != nil {
 			return TranscriptionCandidate{}, saveErr
 		}
 		return TranscriptionCandidate{}, ErrVoiceRoundInvalid
 	}
-	return service.store.CompleteTranscription(
-		ctx,
+	persistenceContext, cancel := voicePersistenceContext(ctx)
+	candidate, err = service.store.CompleteTranscription(
+		persistenceContext,
 		actor,
 		CompleteTranscriptionCommand{
 			ReservationID: reservation.ID,
@@ -386,6 +413,19 @@ func (service *VoiceRoundService) Transcribe(
 			CompletedAt:       service.now().UTC(),
 		},
 	)
+	cancel()
+	if err != nil {
+		return TranscriptionCandidate{}, err
+	}
+	if !validTranscriptionCandidate(
+		candidate,
+		command.SessionID,
+		command.QuestionID,
+		respondentParticipantID,
+	) {
+		return TranscriptionCandidate{}, ErrVoiceRoundConflict
+	}
+	return candidate, nil
 }
 
 type ConfirmVoiceTurnCommand struct {
@@ -510,7 +550,114 @@ func (service *VoiceRoundService) SynthesizeQuestion(
 		)
 		return QuestionSpeech{Text: text, Failure: &attempt}, nil
 	}
+	if !validSynthesisResult(result) {
+		if result.Audio != nil {
+			_ = result.Audio.Close()
+		}
+		attempt := SafeProcessingAttempt{
+			Operation:  ai.SpeechOperationSynthesis,
+			Kind:       ai.ErrorInvalidResponse,
+			Retryable:  true,
+			RequestID:  result.RequestID,
+			Duration:   service.now().Sub(startedAt),
+			OccurredAt: service.now().UTC(),
+		}
+		return QuestionSpeech{Text: text, Failure: &attempt}, nil
+	}
 	return QuestionSpeech{Text: text, Audio: result.Audio}, nil
+}
+
+func voicePersistenceContext(
+	ctx context.Context,
+) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(
+		context.WithoutCancel(ctx),
+		voicePersistenceTimeout,
+	)
+}
+
+func validVoiceQuestion(
+	question VoiceQuestion,
+	sessionID string,
+	questionID string,
+	respondentParticipantID string,
+) bool {
+	return validVoiceIdentifier(question.ID) &&
+		question.ID == questionID &&
+		question.SessionID == sessionID &&
+		strings.TrimSpace(question.Text) != "" &&
+		validVoiceIdentifier(question.SpeakerParticipantID) &&
+		len(question.AddresseeParticipantIDs) > 0 &&
+		slices.Contains(
+			question.AddresseeParticipantIDs,
+			respondentParticipantID,
+		)
+}
+
+func validTranscriptionResult(
+	result ai.TranscriptionResult,
+	transcript string,
+) bool {
+	return validVoiceIdentifier(result.ID) &&
+		validVoiceIdentifier(result.Provider) &&
+		validVoiceIdentifier(result.Model) &&
+		transcript != "" &&
+		utf8.ValidString(transcript) &&
+		result.Usage.InputTokens >= 0 &&
+		result.Usage.OutputTokens >= 0 &&
+		result.Usage.TotalTokens >= 0 &&
+		result.Usage.AudioSeconds >= 0 &&
+		result.Usage.Characters >= 0
+}
+
+func validTranscriptionCandidate(
+	candidate TranscriptionCandidate,
+	sessionID string,
+	questionID string,
+	respondentParticipantID string,
+) bool {
+	return validVoiceIdentifier(candidate.ID) &&
+		candidate.SessionID == sessionID &&
+		candidate.QuestionID == questionID &&
+		validVoiceIdentifier(candidate.QuestionSpeakerID) &&
+		len(candidate.AddresseeParticipantIDs) > 0 &&
+		slices.Contains(
+			candidate.AddresseeParticipantIDs,
+			respondentParticipantID,
+		) &&
+		candidate.RespondentParticipantID == respondentParticipantID &&
+		validVoiceIdentifier(candidate.TranscriptID) &&
+		candidate.EvidenceVersion >= 1 &&
+		strings.TrimSpace(candidate.Transcript) != "" &&
+		utf8.ValidString(candidate.Transcript) &&
+		validVoiceIdentifier(candidate.Provider) &&
+		validVoiceIdentifier(candidate.Model) &&
+		validVoiceIdentifier(candidate.ProviderRequestID) &&
+		!candidate.CreatedAt.IsZero()
+}
+
+func validSynthesisResult(result ai.SynthesisResult) bool {
+	return validVoiceIdentifier(result.RequestID) &&
+		validVoiceIdentifier(result.Provider) &&
+		validVoiceIdentifier(result.Model) &&
+		validVoiceIdentifier(result.AudioID) &&
+		result.Audio != nil &&
+		platformmedia.ValidateAudioSource(result.Audio) == nil &&
+		result.Usage.InputTokens >= 0 &&
+		result.Usage.OutputTokens >= 0 &&
+		result.Usage.TotalTokens >= 0 &&
+		result.Usage.AudioSeconds >= 0 &&
+		result.Usage.Characters >= 0
+}
+
+func validVoiceIdentifier(value string) bool {
+	return utf8.ValidString(value) &&
+		len(value) >= 1 &&
+		len(value) <= 128 &&
+		strings.TrimSpace(value) == value &&
+		strings.IndexFunc(value, func(r rune) bool {
+			return r < 0x21 || r == 0x7f
+		}) == -1
 }
 
 func validateVoiceContext(

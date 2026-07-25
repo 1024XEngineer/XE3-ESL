@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -42,12 +43,51 @@ func TestVoiceTurnProgressRequiresAuthoritativeLimitCompletionEquivalence(
 			EffectiveTurns: 1,
 			TurnLimit:      3,
 		},
+		"non-MVP turn limit": {
+			EffectiveTurns: 1,
+			SessionVersion: 2,
+			TurnLimit:      4,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if validVoiceTurnProgress(progress) {
 				t.Fatalf("invalid Practice progress accepted: %#v", progress)
 			}
 		})
+	}
+}
+
+func TestVoiceRoundOrchestratorRejectsMismatchedCandidateBeforePractice(
+	t *testing.T,
+) {
+	conversations := newAgentVoiceConversation(1)
+	mismatched := &mismatchedAgentVoiceConversation{
+		agentVoiceConversation: conversations,
+	}
+	practice := newAgentVoicePractice(0)
+	orchestrator := newAgentVoiceOrchestrator(
+		t,
+		mismatched,
+		practice,
+		newAgentVoiceReview(),
+	)
+
+	_, err := orchestrator.Confirm(
+		context.Background(),
+		agentVoiceActor("a"),
+		conversation.ConfirmVoiceTurnCommand{
+			CandidateID:    "candidate-1",
+			IdempotencyKey: "confirm-candidate-1",
+		},
+	)
+	if !errors.Is(err, ErrInvalidContext) {
+		t.Fatalf("mismatched candidate error = %v", err)
+	}
+	if practice.effectiveTurns != 0 {
+		t.Fatalf(
+			"mismatched candidate advanced Practice to %d",
+			practice.effectiveTurns,
+		)
 	}
 }
 
@@ -328,6 +368,25 @@ type agentVoiceConversation struct {
 	transcribeCalls      int
 	progressSaveFailures int
 	reviewSaveFailures   int
+	speech               conversation.QuestionSpeech
+}
+
+type mismatchedAgentVoiceConversation struct {
+	*agentVoiceConversation
+}
+
+func (port *mismatchedAgentVoiceConversation) GetTranscriptionCandidate(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	id string,
+) (conversation.TranscriptionCandidate, error) {
+	candidate, err := port.agentVoiceConversation.GetTranscriptionCandidate(
+		ctx,
+		actor,
+		id,
+	)
+	candidate.TranscriptID = "different-transcript"
+	return candidate, err
 }
 
 func newAgentVoiceConversation(count int) *agentVoiceConversation {
@@ -351,6 +410,7 @@ func newAgentVoiceConversation(count int) *agentVoiceConversation {
 			Provider:                "fake",
 			Model:                   "fake-asr-v1",
 			ProviderRequestID:       "request-" + string(rune('0'+round)),
+			CreatedAt:               time.Unix(int64(round), 0).UTC(),
 		}
 	}
 	return result
@@ -479,11 +539,11 @@ func (port *agentVoiceConversation) SaveTurnReview(
 	return turn, nil
 }
 
-func (*agentVoiceConversation) SynthesizeQuestion(
+func (port *agentVoiceConversation) SynthesizeQuestion(
 	context.Context,
 	string,
 ) (conversation.QuestionSpeech, error) {
-	return conversation.QuestionSpeech{}, nil
+	return port.speech, nil
 }
 
 func (port *agentVoiceConversation) replaceTurn(

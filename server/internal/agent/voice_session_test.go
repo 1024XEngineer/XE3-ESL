@@ -117,6 +117,61 @@ func TestVoiceSessionResumeRecoversSagaCrashWindows(t *testing.T) {
 	}
 }
 
+func TestVoiceSessionReviewRequiresFrozenCompletedShape(t *testing.T) {
+	now := time.Unix(2, 0).UTC()
+	valid := VoiceSessionReview{
+		ID:                    "review-1",
+		SessionID:             "session-1",
+		Status:                "completed",
+		ImplementationVersion: "review-v1",
+		SourceTurnID:          "turn-3",
+		SourceTurnVersion:     "conversation-turn:evidence-v1",
+		Result: &VoiceReviewResult{
+			OverallScore: 80,
+			Summary:      "Clear answer.",
+			Conclusions: []VoiceReviewConclusion{{
+				Key:      "overall",
+				Category: "fluency",
+				Message:  "Clear.",
+			}},
+		},
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		CompletedAt: &now,
+	}
+	if !validVoiceSessionReview(valid, valid.ID) {
+		t.Fatal("valid completed Review was rejected")
+	}
+	for name, mutate := range map[string]func(*VoiceSessionReview){
+		"wrong id": func(item *VoiceSessionReview) {
+			item.ID = "review-other"
+		},
+		"invalid source version": func(item *VoiceSessionReview) {
+			item.SourceTurnVersion = "provider-model"
+		},
+		"completed without result": func(item *VoiceSessionReview) {
+			item.Result = nil
+		},
+		"empty evidence conclusion": func(item *VoiceSessionReview) {
+			item.Result.Conclusions[0].Message = ""
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			item := valid
+			result := *valid.Result
+			result.Conclusions = append(
+				[]VoiceReviewConclusion(nil),
+				valid.Result.Conclusions...,
+			)
+			item.Result = &result
+			mutate(&item)
+			if validVoiceSessionReview(item, valid.ID) {
+				t.Fatalf("invalid Review accepted: %#v", item)
+			}
+		})
+	}
+}
+
 func newVoiceSessionTestApplication(
 	t *testing.T,
 	conversations *agentVoiceConversation,
