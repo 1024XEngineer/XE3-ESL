@@ -1017,6 +1017,124 @@ void main() {
     });
   });
 
+  test(
+    'owned transport sends Unicode Matter titles as UTF-8 JSON bytes',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final received = <_LoopbackRequest>[];
+      final subscription = server.listen((request) async {
+        final bodyBytes = await request.fold<List<int>>(
+          <int>[],
+          (buffer, chunk) => buffer..addAll(chunk),
+        );
+        received.add(
+          _LoopbackRequest(
+            method: request.method,
+            path: request.uri.path,
+            headers: <String, String>{
+              HttpHeaders.authorizationHeader:
+                  request.headers.value(HttpHeaders.authorizationHeader) ?? '',
+              HttpHeaders.contentTypeHeader:
+                  request.headers.value(HttpHeaders.contentTypeHeader) ?? '',
+            },
+            bodyBytes: bodyBytes,
+          ),
+        );
+
+        late final int statusCode;
+        late final Object body;
+        switch ((request.method, request.uri.path)) {
+          case ('GET', '/v1/matters'):
+            statusCode = HttpStatus.ok;
+            body = <String, Object?>{'matters': <Object?>[]};
+          case ('POST', '/v1/matters'):
+            statusCode = HttpStatus.created;
+            body = <String, Object?>{
+              'matter_id': _matterId,
+              'title': agentScenes.first.title,
+              'status': 'active',
+              'version': 1,
+              'created_at': _createdAt,
+              'updated_at': _updatedAt,
+            };
+          case ('PUT', '/v1/agent-threads/$_threadId/active-matter'):
+            statusCode = HttpStatus.ok;
+            body = <String, Object?>{
+              'thread_id': _threadId,
+              'matter_id': _matterId,
+              'active': true,
+              'linked_at': _createdAt,
+              'updated_at': _updatedAt,
+            };
+          default:
+            statusCode = HttpStatus.notFound;
+            body = _errorJson();
+        }
+
+        final responseBytes = utf8.encode(jsonEncode(body));
+        request.response
+          ..statusCode = statusCode
+          ..headers.contentType = ContentType.json
+          ..contentLength = responseBytes.length
+          ..add(responseBytes);
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      final client = WireAgentClient(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        credentialProvider: () => const AuthSessionCredential(
+          sessionToken: 'sess_account-a',
+          generation: 1,
+        ),
+        invalidateSession:
+            ({
+              required expectedSessionToken,
+              required expectedGeneration,
+            }) async {},
+      );
+      addTearDown(client.clearAccountState);
+
+      final result = await client.startScene(
+        threadId: _threadId,
+        scene: agentScenes.first,
+        clientOperationId: 'scene_unicode',
+      );
+
+      expect(
+        received.map((request) => '${request.method} ${request.path}'),
+        <String>[
+          'GET /v1/matters',
+          'POST /v1/matters',
+          'PUT /v1/agent-threads/$_threadId/active-matter',
+        ],
+      );
+      final createRequest = received[1];
+      expect(
+        createRequest.headers[HttpHeaders.contentTypeHeader],
+        startsWith(ContentType.json.mimeType),
+      );
+      expect(
+        createRequest.headers[HttpHeaders.authorizationHeader],
+        'Bearer sess_account-a',
+      );
+      expect(
+        createRequest.bodyBytes,
+        utf8.encode(
+          jsonEncode(<String, Object?>{'title': agentScenes.first.title}),
+        ),
+      );
+      expect(
+        jsonDecode(utf8.decode(createRequest.bodyBytes)),
+        <String, Object?>{'title': '英文自我介绍'},
+      );
+      expect(result.activeMatter.scene.title, '英文自我介绍');
+      expect(result.activeMatter.id, _matterId);
+    },
+  );
+
   test('scene selection uses Matter and SetActiveMatter HTTP APIs', () async {
     final transport = _ScriptedTransport([
       _Step(
@@ -1129,6 +1247,20 @@ final class _Call {
   final String path;
   final Map<String, String> headers;
   final String? body;
+}
+
+final class _LoopbackRequest {
+  const _LoopbackRequest({
+    required this.method,
+    required this.path,
+    required this.headers,
+    required this.bodyBytes,
+  });
+
+  final String method;
+  final String path;
+  final Map<String, String> headers;
+  final List<int> bodyBytes;
 }
 
 final class _ScriptedTransport implements IdentityHttpTransport {
