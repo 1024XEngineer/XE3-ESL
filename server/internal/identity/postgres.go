@@ -235,6 +235,21 @@ func (r *PostgresRepository) FindSessionByTokenDigest(
 	ctx context.Context,
 	tokenDigest []byte,
 ) (SessionIdentity, error) {
+	return r.findSessionByTokenDigest(ctx, tokenDigest, false)
+}
+
+func (r *PostgresRepository) FindSessionForLogoutByTokenDigest(
+	ctx context.Context,
+	tokenDigest []byte,
+) (SessionIdentity, error) {
+	return r.findSessionByTokenDigest(ctx, tokenDigest, true)
+}
+
+func (r *PostgresRepository) findSessionByTokenDigest(
+	ctx context.Context,
+	tokenDigest []byte,
+	includeRevoked bool,
+) (SessionIdentity, error) {
 	var identity SessionIdentity
 	var status string
 	err := r.database.QueryRow(ctx, `
@@ -249,10 +264,11 @@ SELECT
 FROM identity_auth_sessions AS sessions
 JOIN identity_users AS users ON users.id = sessions.user_id
 WHERE sessions.token_digest = $1
-  AND sessions.revoked_at IS NULL
+  AND ($2::boolean OR sessions.revoked_at IS NULL)
   AND sessions.created_at <= CURRENT_TIMESTAMP
   AND sessions.expires_at > CURRENT_TIMESTAMP`,
 		tokenDigest,
+		includeRevoked,
 	).Scan(
 		&identity.SessionID,
 		&identity.ExpiresAt,

@@ -76,6 +76,32 @@ func (a authenticatorStub) AuthenticateSession(
 	return a(ctx, token)
 }
 
+func (a authenticatorStub) ResolveSessionForLogout(
+	ctx context.Context,
+	token string,
+) (requestcontext.Actor, error) {
+	return a(ctx, token)
+}
+
+type splitAuthenticatorStub struct {
+	authenticate  authenticatorStub
+	resolveLogout authenticatorStub
+}
+
+func (a splitAuthenticatorStub) AuthenticateSession(
+	ctx context.Context,
+	token string,
+) (requestcontext.Actor, error) {
+	return a.authenticate(ctx, token)
+}
+
+func (a splitAuthenticatorStub) ResolveSessionForLogout(
+	ctx context.Context,
+	token string,
+) (requestcontext.Actor, error) {
+	return a.resolveLogout(ctx, token)
+}
+
 type allowLimiter struct{}
 
 func (allowLimiter) Allow(string) RateLimitDecision {
@@ -246,6 +272,105 @@ func TestAuthenticationMiddlewareHasStableFailure(t *testing.T) {
 			)
 		}
 		assertErrorCode(t, response, "authentication_required")
+	}
+}
+
+func TestLogoutIsHTTPIdempotentWithoutTrustingRevokedSessionElsewhere(
+	t *testing.T,
+) {
+	actor := requestcontext.Actor{UserID: "user-1", SessionID: "session-1"}
+	var revoked bool
+	var logoutCalls int
+	app := completeApplicationStub()
+	app.logout = func(
+		_ context.Context,
+		got requestcontext.Actor,
+	) error {
+		if got != actor {
+			t.Fatalf("unexpected actor: %#v", got)
+		}
+		revoked = true
+		logoutCalls++
+		return nil
+	}
+	authenticator := splitAuthenticatorStub{
+		authenticate: func(
+			_ context.Context,
+			token string,
+		) (requestcontext.Actor, error) {
+			if token != "sess_secret" || revoked {
+				return requestcontext.Actor{}, ErrAuthenticationRequired
+			}
+			return actor, nil
+		},
+		resolveLogout: func(
+			_ context.Context,
+			token string,
+		) (requestcontext.Actor, error) {
+			if token != "sess_secret" {
+				return requestcontext.Actor{}, ErrAuthenticationRequired
+			}
+			return actor, nil
+		},
+	}
+	router := newTestRouter(t, app, authenticator, defaultTestRateLimits())
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		response := performRequest(
+			router,
+			http.MethodPost,
+			"/v1/auth/logout",
+			"",
+			"Bearer sess_secret",
+		)
+		if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
+			t.Fatalf(
+				"logout attempt %d = %d %q",
+				attempt,
+				response.Code,
+				response.Body,
+			)
+		}
+	}
+	if logoutCalls != 2 {
+		t.Fatalf("logout calls = %d, want 2", logoutCalls)
+	}
+
+	rejected := performRequest(
+		router,
+		http.MethodGet,
+		"/v1/me",
+		"",
+		"Bearer sess_secret",
+	)
+	if rejected.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked Session accessed /v1/me: %d", rejected.Code)
+	}
+
+	for _, authorization := range []string{
+		"Bearer sess_unknown",
+		"Bearer malformed token",
+	} {
+		response := performRequest(
+			router,
+			http.MethodPost,
+			"/v1/auth/logout",
+			"",
+			authorization,
+		)
+		if response.Code != http.StatusUnauthorized ||
+			response.Header().Get("WWW-Authenticate") != "Bearer" {
+			t.Fatalf(
+				"unknown logout %q = %d %#v",
+				authorization,
+				response.Code,
+				response.Header(),
+			)
+		}
+		assertErrorCode(t, response, "authentication_required")
+	}
+	if logoutCalls != 2 {
+		t.Fatalf("unknown token reached logout: calls = %d", logoutCalls)
 	}
 }
 

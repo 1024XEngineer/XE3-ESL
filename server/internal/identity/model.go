@@ -71,6 +71,10 @@ type Repository interface {
 		ctx context.Context,
 		tokenDigest []byte,
 	) (SessionIdentity, error)
+	FindSessionForLogoutByTokenDigest(
+		ctx context.Context,
+		tokenDigest []byte,
+	) (SessionIdentity, error)
 	FindUserByID(ctx context.Context, userID string) (User, error)
 	RevokeSession(
 		ctx context.Context,

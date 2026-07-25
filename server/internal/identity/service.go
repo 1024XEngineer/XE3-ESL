@@ -20,6 +20,16 @@ type Authenticator interface {
 	) (requestcontext.Actor, error)
 }
 
+// LogoutSessionResolver resolves a known, unexpired Session even after it has
+// been revoked. It is deliberately separate from Authenticator so a revoked
+// credential can only be reused for the idempotent logout endpoint.
+type LogoutSessionResolver interface {
+	ResolveSessionForLogout(
+		ctx context.Context,
+		rawToken string,
+	) (requestcontext.Actor, error)
+}
+
 type Service struct {
 	repository Repository
 	passwords  PasswordHasher
@@ -139,13 +149,35 @@ func (s *Service) AuthenticateSession(
 	ctx context.Context,
 	rawToken string,
 ) (requestcontext.Actor, error) {
+	return s.resolveSessionActor(ctx, rawToken, false)
+}
+
+func (s *Service) ResolveSessionForLogout(
+	ctx context.Context,
+	rawToken string,
+) (requestcontext.Actor, error) {
+	return s.resolveSessionActor(ctx, rawToken, true)
+}
+
+func (s *Service) resolveSessionActor(
+	ctx context.Context,
+	rawToken string,
+	includeRevoked bool,
+) (requestcontext.Actor, error) {
 	if !s.tokens.ValidWireFormat(rawToken) {
 		return requestcontext.Actor{}, ErrAuthenticationRequired
 	}
-	session, err := s.repository.FindSessionByTokenDigest(
-		ctx,
-		s.tokens.Digest(rawToken),
-	)
+	tokenDigest := s.tokens.Digest(rawToken)
+	var session SessionIdentity
+	var err error
+	if includeRevoked {
+		session, err = s.repository.FindSessionForLogoutByTokenDigest(
+			ctx,
+			tokenDigest,
+		)
+	} else {
+		session, err = s.repository.FindSessionByTokenDigest(ctx, tokenDigest)
+	}
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return requestcontext.Actor{}, ErrAuthenticationRequired

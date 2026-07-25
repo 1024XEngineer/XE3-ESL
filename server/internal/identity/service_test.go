@@ -13,13 +13,14 @@ import (
 )
 
 type repositoryStub struct {
-	createUser       func(context.Context, string, string) (User, error)
-	findCredential   func(context.Context, string) (Credential, error)
-	createSession    func(context.Context, CreateSessionParams) (Session, error)
-	findSession      func(context.Context, []byte) (SessionIdentity, error)
-	findUser         func(context.Context, string) (User, error)
-	revokeSession    func(context.Context, string, string, string) error
-	revokeAllSession func(context.Context, string, string) error
+	createUser        func(context.Context, string, string) (User, error)
+	findCredential    func(context.Context, string) (Credential, error)
+	createSession     func(context.Context, CreateSessionParams) (Session, error)
+	findSession       func(context.Context, []byte) (SessionIdentity, error)
+	findLogoutSession func(context.Context, []byte) (SessionIdentity, error)
+	findUser          func(context.Context, string) (User, error)
+	revokeSession     func(context.Context, string, string, string) error
+	revokeAllSession  func(context.Context, string, string) error
 }
 
 func (r repositoryStub) CreateUserWithCredential(
@@ -49,6 +50,13 @@ func (r repositoryStub) FindSessionByTokenDigest(
 	digest []byte,
 ) (SessionIdentity, error) {
 	return r.findSession(ctx, digest)
+}
+
+func (r repositoryStub) FindSessionForLogoutByTokenDigest(
+	ctx context.Context,
+	digest []byte,
+) (SessionIdentity, error) {
+	return r.findLogoutSession(ctx, digest)
 }
 
 func (r repositoryStub) FindUserByID(
@@ -466,6 +474,12 @@ func completeRepositoryStub() repositoryStub {
 			return Session{}, nil
 		},
 		findSession: func(
+			context.Context,
+			[]byte,
+		) (SessionIdentity, error) {
+			return SessionIdentity{}, ErrNotFound
+		},
+		findLogoutSession: func(
 			context.Context,
 			[]byte,
 		) (SessionIdentity, error) {

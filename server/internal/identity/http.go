@@ -2,6 +2,7 @@ package identity
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -28,6 +29,7 @@ type CorrelationIDGenerator func() string
 type HTTPHandler struct {
 	application     Application
 	authenticator   Authenticator
+	logoutSessions  LogoutSessionResolver
 	rateLimits      RateLimiters
 	correlationID   CorrelationIDGenerator
 	sourceIP        SourceIPResolver
@@ -69,12 +71,17 @@ func NewHTTPHandler(
 		rateLimits.LoginAccount == nil {
 		return nil, errors.New("identity: HTTP dependency is required")
 	}
+	logoutSessions, ok := authenticator.(LogoutSessionResolver)
+	if !ok {
+		return nil, errors.New("identity: logout Session resolver is required")
+	}
 	if correlationID == nil {
 		correlationID = newCorrelationID
 	}
 	handler := &HTTPHandler{
 		application:     application,
 		authenticator:   authenticator,
+		logoutSessions:  logoutSessions,
 		rateLimits:      rateLimits,
 		correlationID:   correlationID,
 		sourceIP:        directSourceIPResolver{},
@@ -91,10 +98,14 @@ func NewHTTPHandler(
 func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 	router.POST("/v1/auth/register", h.register)
 	router.POST("/v1/auth/login", h.login)
+	router.POST(
+		"/v1/auth/logout",
+		h.logoutAuthenticationMiddleware(),
+		h.logout,
+	)
 
 	protected := router.Group("")
 	protected.Use(h.AuthenticationMiddleware())
-	protected.POST("/v1/auth/logout", h.logout)
 	protected.GET("/v1/me", h.currentUser)
 }
 
@@ -195,6 +206,18 @@ func (h *HTTPHandler) currentUser(c *gin.Context) {
 // Actor into the standard request context for protected HTTP or WebSocket
 // handlers.
 func (h *HTTPHandler) AuthenticationMiddleware() gin.HandlerFunc {
+	return h.actorMiddleware(h.authenticator.AuthenticateSession)
+}
+
+// logoutAuthenticationMiddleware keeps logout retryable after the first
+// revocation without granting a revoked Session access to any other route.
+func (h *HTTPHandler) logoutAuthenticationMiddleware() gin.HandlerFunc {
+	return h.actorMiddleware(h.logoutSessions.ResolveSessionForLogout)
+}
+
+func (h *HTTPHandler) actorMiddleware(
+	resolve func(context.Context, string) (requestcontext.Actor, error),
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rawToken, ok := bearerToken(c.Request.Header.Values("Authorization"))
 		if !ok {
@@ -202,10 +225,7 @@ func (h *HTTPHandler) AuthenticationMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		actor, err := h.authenticator.AuthenticateSession(
-			c.Request.Context(),
-			rawToken,
-		)
+		actor, err := resolve(c.Request.Context(), rawToken)
 		if err != nil {
 			if errors.Is(err, ErrAuthenticationRequired) {
 				h.writeAuthenticationRequired(c)

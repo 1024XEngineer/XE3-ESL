@@ -210,6 +210,12 @@ WHERE token_digest = $1`,
 	); !errors.Is(err, ErrAuthenticationRequired) {
 		t.Fatalf("expired token authentication = %v", err)
 	}
+	if _, err := service.ResolveSessionForLogout(
+		context.Background(),
+		expiringLogin.Token,
+	); !errors.Is(err, ErrAuthenticationRequired) {
+		t.Fatalf("expired token logout resolution = %v", err)
+	}
 
 	testConcurrentPostgresRegistration(t, service)
 	testConcurrentPostgresLogin(t, service)
@@ -861,6 +867,21 @@ WHERE id = $1`,
 	if logout.Code != http.StatusNoContent {
 		t.Fatalf("unexpected logout response: %d %s", logout.Code, logout.Body)
 	}
+	retriedLogout := performRequest(
+		router,
+		http.MethodPost,
+		"/v1/auth/logout",
+		"",
+		"Bearer "+loginBody.Token,
+	)
+	if retriedLogout.Code != http.StatusNoContent ||
+		retriedLogout.Body.Len() != 0 {
+		t.Fatalf(
+			"unexpected retried logout response: %d %s",
+			retriedLogout.Code,
+			retriedLogout.Body,
+		)
+	}
 	rejected := performRequest(
 		router,
 		http.MethodGet,
@@ -876,6 +897,22 @@ WHERE id = $1`,
 			rejected.Body,
 		)
 	}
+	unknownLogout := performRequest(
+		router,
+		http.MethodPost,
+		"/v1/auth/logout",
+		"",
+		"Bearer sess_unknown",
+	)
+	if unknownLogout.Code != http.StatusUnauthorized ||
+		unknownLogout.Header().Get("WWW-Authenticate") != "Bearer" {
+		t.Fatalf(
+			"unexpected unknown logout response: %d %s",
+			unknownLogout.Code,
+			unknownLogout.Body,
+		)
+	}
+	assertErrorCode(t, unknownLogout, "authentication_required")
 }
 
 func assertDatabaseStoresNoRawCredential(
