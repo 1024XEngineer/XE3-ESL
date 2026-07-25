@@ -1057,12 +1057,68 @@ func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if !status.Present || status.Dirty || status.Version != 6 {
-		t.Fatalf("status after full Up = %+v, want clean version 6", status)
+	if !status.Present || status.Dirty || status.Version < 6 {
+		t.Fatalf(
+			"status after full Up = %+v, want clean version >= 6",
+			status,
+		)
 	}
+	latestVersion := status.Version
+
+	assertPracticeTables := func(wantPresent bool) {
+		t.Helper()
+
+		pool, err := pgxpool.New(context.Background(), databaseURL)
+		if err != nil {
+			t.Fatalf("open migration inspection pool: %v", err)
+		}
+		defer pool.Close()
+
+		var tableName *string
+		if err := pool.QueryRow(context.Background(), `
+			SELECT to_regclass('practice_sessions')::text
+		`).Scan(&tableName); err != nil {
+			t.Fatalf("inspect Practice migration tables: %v", err)
+		}
+		if (tableName != nil) != wantPresent {
+			t.Fatalf(
+				"Practice table presence = %t, want %t",
+				tableName != nil,
+				wantPresent,
+			)
+		}
+	}
+
+	for status.Version > 6 {
+		changed, err = runner.DownOne()
+		if err != nil {
+			t.Fatalf("DownOne from version %d: %v", status.Version, err)
+		}
+		if !changed {
+			t.Fatalf(
+				"DownOne from version %d reported no change",
+				status.Version,
+			)
+		}
+		status, err = runner.Version()
+		if err != nil {
+			t.Fatalf("Version while returning to 000006: %v", err)
+		}
+		if !status.Present || status.Dirty || status.Version < 6 {
+			t.Fatalf(
+				"status while returning to 000006 = %+v",
+				status,
+			)
+		}
+	}
+	if status.Version != 6 {
+		t.Fatalf("version after later downs = %d, want 6", status.Version)
+	}
+	assertPracticeTables(true)
+
 	changed, err = runner.DownOne()
 	if err != nil {
-		t.Fatalf("DownOne: %v", err)
+		t.Fatalf("DownOne from version 6: %v", err)
 	}
 	if !changed {
 		t.Fatal("DownOne from version 6 reported no change")
@@ -1074,6 +1130,7 @@ func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
 	if !status.Present || status.Dirty || status.Version != 5 {
 		t.Fatalf("status after DownOne = %+v, want clean version 5", status)
 	}
+	assertPracticeTables(false)
 
 	changed, err = runner.Up()
 	if err != nil {
@@ -1086,12 +1143,14 @@ func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version after re-applying 000006: %v", err)
 	}
-	if !status.Present || status.Dirty || status.Version != 6 {
+	if !status.Present || status.Dirty || status.Version != latestVersion {
 		t.Fatalf(
-			"status after re-applying 000006 = %+v, want clean version 6",
+			"status after re-applying migrations = %+v, want clean version %d",
 			status,
+			latestVersion,
 		)
 	}
+	assertPracticeTables(true)
 }
 
 func newRepository(t *testing.T) (*practicepostgres.Repository, *pgxpool.Pool) {
