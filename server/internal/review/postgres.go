@@ -1,0 +1,876 @@
+package review
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type PostgresRepository struct {
+	pool *pgxpool.Pool
+}
+
+func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
+	return &PostgresRepository{pool: pool}
+}
+
+func (r *PostgresRepository) EnsurePending(
+	ctx context.Context,
+	command EnsureReviewCommand,
+) (FormalReview, error) {
+	if r == nil || r.pool == nil {
+		return FormalReview{}, ErrInvalidReview
+	}
+	if err := command.validate(); err != nil {
+		return FormalReview{}, err
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return FormalReview{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := lockReviewUser(ctx, tx, command.Actor.UserID); err != nil {
+		return FormalReview{}, err
+	}
+	if err := lockActiveIdentityUser(
+		ctx,
+		tx,
+		command.Actor.UserID,
+		command.Actor.DeletionGeneration,
+	); err != nil {
+		return FormalReview{}, err
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO reviews (
+			owner_user_id,
+			practice_session_id,
+			implementation_version,
+			source_turn_id,
+			source_turn_version,
+			source_manifest_fingerprint,
+			deletion_generation,
+			status
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+		ON CONFLICT (
+			owner_user_id,
+			practice_session_id,
+			implementation_version
+		) DO NOTHING
+	`, command.Actor.UserID, command.PracticeSessionID,
+		command.ImplementationVersion, command.SourceTurnID,
+		command.SourceTurnVersion, command.SourceManifestFingerprint,
+		command.Actor.DeletionGeneration)
+	if err != nil {
+		return FormalReview{}, err
+	}
+
+	row := tx.QueryRow(ctx, reviewSelect+`
+		WHERE owner_user_id = $1
+		  AND practice_session_id = $2
+		  AND implementation_version = $3
+	`, command.Actor.UserID, command.PracticeSessionID,
+		command.ImplementationVersion)
+	review, err := scanReview(row)
+	if err != nil {
+		return FormalReview{}, err
+	}
+	if review.DeletionGeneration != command.Actor.DeletionGeneration {
+		return FormalReview{}, ErrAccountDeleted
+	}
+	if review.SourceTurnID != command.SourceTurnID ||
+		review.SourceTurnVersion != command.SourceTurnVersion ||
+		review.SourceManifestFingerprint != command.SourceManifestFingerprint {
+		return FormalReview{}, ErrReviewSourceConflict
+	}
+	if review.Status == FormalReviewCompleted {
+		evidence, err := listEvidence(
+			ctx,
+			tx,
+			review.ID,
+			command.Actor.UserID,
+		)
+		if err != nil {
+			return FormalReview{}, err
+		}
+		review.Evidence = evidence
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return FormalReview{}, err
+	}
+	return review, nil
+}
+
+func (r *PostgresRepository) ClaimGeneration(
+	ctx context.Context,
+	actor Actor,
+	reviewID string,
+	lease time.Duration,
+) (FormalReview, GenerationJobContext, bool, error) {
+	if r == nil || r.pool == nil || actor.validate() != nil ||
+		strings.TrimSpace(reviewID) == "" || lease <= 0 {
+		return FormalReview{}, GenerationJobContext{}, false, ErrInvalidReview
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return FormalReview{}, GenerationJobContext{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := lockReviewUser(ctx, tx, actor.UserID); err != nil {
+		return FormalReview{}, GenerationJobContext{}, false, err
+	}
+	if err := lockActiveIdentityUser(
+		ctx,
+		tx,
+		actor.UserID,
+		actor.DeletionGeneration,
+	); err != nil {
+		return FormalReview{}, GenerationJobContext{}, false, err
+	}
+
+	review, err := scanReview(tx.QueryRow(ctx, reviewSelect+`
+		WHERE id = $1 AND owner_user_id = $2
+		FOR UPDATE
+	`, reviewID, actor.UserID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return FormalReview{}, GenerationJobContext{}, false, ErrReviewNotFound
+	}
+	if err != nil {
+		return FormalReview{}, GenerationJobContext{}, false, err
+	}
+	if review.DeletionGeneration != actor.DeletionGeneration {
+		return FormalReview{}, GenerationJobContext{}, false, ErrAccountDeleted
+	}
+	if review.Status == FormalReviewCompleted {
+		evidence, err := listEvidence(ctx, tx, review.ID, actor.UserID)
+		if err != nil {
+			return FormalReview{}, GenerationJobContext{}, false, err
+		}
+		review.Evidence = evidence
+		if err := tx.Commit(ctx); err != nil {
+			return FormalReview{}, GenerationJobContext{}, false, err
+		}
+		return review, GenerationJobContext{}, false, nil
+	}
+
+	var runningID string
+	var leaseUntil time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT id::text, lease_until
+		FROM review_generation_attempts
+		WHERE review_id = $1
+		  AND owner_user_id = $2
+		  AND status = 'running'
+		ORDER BY attempt_number DESC
+		LIMIT 1
+		FOR UPDATE
+	`, review.ID, actor.UserID).Scan(&runningID, &leaseUntil)
+	switch {
+	case err == nil && leaseUntil.After(time.Now()):
+		if err := tx.Commit(ctx); err != nil {
+			return FormalReview{}, GenerationJobContext{}, false, err
+		}
+		return review, GenerationJobContext{}, false, nil
+	case err == nil:
+		if _, err := tx.Exec(ctx, `
+			UPDATE review_generation_attempts
+			SET status = 'failed',
+			    stable_error_category = 'lease_expired',
+			    finished_at = now()
+			WHERE id = $1
+			  AND owner_user_id = $2
+		`, runningID, actor.UserID); err != nil {
+			return FormalReview{}, GenerationJobContext{}, false, err
+		}
+	case errors.Is(err, pgx.ErrNoRows):
+	default:
+		return FormalReview{}, GenerationJobContext{}, false, err
+	}
+
+	var claim GenerationJobContext
+	err = tx.QueryRow(ctx, `
+		INSERT INTO review_generation_attempts (
+			review_id,
+			owner_user_id,
+			attempt_number,
+			deletion_generation,
+			status,
+			lease_until
+		)
+		SELECT
+			$1,
+			$2,
+			coalesce(max(attempt_number), 0) + 1,
+			$3,
+			'running',
+			now() + make_interval(secs => $4)
+		FROM review_generation_attempts
+		WHERE review_id = $1 AND owner_user_id = $2
+		RETURNING
+			id::text,
+			review_id::text,
+			owner_user_id,
+			worker_token::text,
+			deletion_generation,
+			attempt_number,
+			lease_until
+	`, review.ID, actor.UserID, actor.DeletionGeneration, lease.Seconds()).Scan(
+		&claim.AttemptID,
+		&claim.ReviewID,
+		&claim.OwnerUserID,
+		&claim.WorkerToken,
+		&claim.DeletionGeneration,
+		&claim.AttemptNumber,
+		&claim.LeaseUntil,
+	)
+	if err != nil {
+		return FormalReview{}, GenerationJobContext{}, false, err
+	}
+
+	err = tx.QueryRow(ctx, `
+		UPDATE reviews
+		SET status = 'generating',
+		    stable_error_category = NULL,
+		    updated_at = now()
+		WHERE id = $1
+		  AND owner_user_id = $2
+		  AND deletion_generation = $3
+		RETURNING status, updated_at
+	`, review.ID, actor.UserID, actor.DeletionGeneration).Scan(
+		&review.Status,
+		&review.UpdatedAt,
+	)
+	if err != nil {
+		return FormalReview{}, GenerationJobContext{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return FormalReview{}, GenerationJobContext{}, false, err
+	}
+	return review, claim, true, nil
+}
+
+func (r *PostgresRepository) CompleteGeneration(
+	ctx context.Context,
+	claim GenerationJobContext,
+	result ReviewResult,
+	evidence []ReviewEvidence,
+) (FormalReview, error) {
+	if r == nil || r.pool == nil || errInvalidClaim(claim) ||
+		len(evidence) == 0 {
+		return FormalReview{}, ErrInvalidReview
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return FormalReview{}, ErrInvalidReview
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return FormalReview{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := lockReviewUser(ctx, tx, claim.OwnerUserID); err != nil {
+		return FormalReview{}, err
+	}
+	if err := lockActiveIdentityUser(
+		ctx,
+		tx,
+		claim.OwnerUserID,
+		claim.DeletionGeneration,
+	); err != nil {
+		return FormalReview{}, err
+	}
+
+	var attemptStatus string
+	var persistedGeneration int64
+	var leaseUntil time.Time
+	var latestAttemptID string
+	err = tx.QueryRow(ctx, `
+		SELECT
+			attempt.status,
+			attempt.deletion_generation,
+			attempt.lease_until,
+			(
+				SELECT latest.id::text
+				FROM review_generation_attempts latest
+				WHERE latest.review_id = attempt.review_id
+				  AND latest.owner_user_id = attempt.owner_user_id
+				ORDER BY latest.attempt_number DESC
+				LIMIT 1
+			)
+		FROM review_generation_attempts attempt
+		JOIN reviews review
+		  ON review.id = attempt.review_id
+		 AND review.owner_user_id = attempt.owner_user_id
+		WHERE attempt.id = $1
+		  AND attempt.review_id = $2
+		  AND attempt.owner_user_id = $3
+		  AND attempt.worker_token = $4
+		FOR UPDATE OF attempt, review
+	`, claim.AttemptID, claim.ReviewID, claim.OwnerUserID,
+		claim.WorkerToken).Scan(
+		&attemptStatus,
+		&persistedGeneration,
+		&leaseUntil,
+		&latestAttemptID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return FormalReview{}, ErrGenerationClaimLost
+	}
+	if err != nil {
+		return FormalReview{}, err
+	}
+	if attemptStatus != "running" ||
+		persistedGeneration != claim.DeletionGeneration ||
+		latestAttemptID != claim.AttemptID ||
+		!leaseUntil.After(time.Now()) {
+		return FormalReview{}, ErrGenerationClaimLost
+	}
+
+	for _, item := range evidence {
+		if strings.TrimSpace(item.ConclusionKey) == "" ||
+			strings.TrimSpace(item.SourceType) == "" ||
+			strings.TrimSpace(item.SourceID) == "" ||
+			strings.TrimSpace(item.SourceVersion) == "" {
+			return FormalReview{}, ErrInvalidReview
+		}
+		var snapshot any
+		if len(item.Snapshot) > 0 {
+			if !json.Valid(item.Snapshot) {
+				return FormalReview{}, ErrInvalidReview
+			}
+			snapshot = item.Snapshot
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO review_evidence (
+				review_id,
+				owner_user_id,
+				conclusion_key,
+				source_type,
+				source_id,
+				source_version,
+				source_checksum,
+				evidence_snapshot
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, nullif($7, ''), $8)
+			ON CONFLICT (
+				review_id,
+				conclusion_key,
+				source_type,
+				source_id,
+				source_version
+			) DO NOTHING
+		`, claim.ReviewID, claim.OwnerUserID, item.ConclusionKey,
+			item.SourceType, item.SourceID, item.SourceVersion,
+			item.Checksum, snapshot)
+		if err != nil {
+			return FormalReview{}, err
+		}
+	}
+
+	commandTag, err := tx.Exec(ctx, `
+		UPDATE reviews
+		SET status = 'completed',
+		    result = $2,
+		    stable_error_category = NULL,
+		    updated_at = now(),
+		    completed_at = now()
+		WHERE id = $1
+		  AND owner_user_id = $3
+		  AND deletion_generation = $4
+		  AND status = 'generating'
+	`, claim.ReviewID, resultJSON, claim.OwnerUserID,
+		claim.DeletionGeneration)
+	if err != nil {
+		return FormalReview{}, err
+	}
+	if commandTag.RowsAffected() != 1 {
+		return FormalReview{}, ErrGenerationClaimLost
+	}
+	commandTag, err = tx.Exec(ctx, `
+		UPDATE review_generation_attempts
+		SET status = 'succeeded',
+		    finished_at = now()
+		WHERE id = $1
+		  AND review_id = $2
+		  AND owner_user_id = $3
+		  AND worker_token = $4
+		  AND status = 'running'
+	`, claim.AttemptID, claim.ReviewID, claim.OwnerUserID, claim.WorkerToken)
+	if err != nil {
+		return FormalReview{}, err
+	}
+	if commandTag.RowsAffected() != 1 {
+		return FormalReview{}, ErrGenerationClaimLost
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return FormalReview{}, err
+	}
+	return r.Get(ctx, Actor{
+		UserID:             claim.OwnerUserID,
+		DeletionGeneration: claim.DeletionGeneration,
+	}, claim.ReviewID)
+}
+
+func (r *PostgresRepository) FailGeneration(
+	ctx context.Context,
+	claim GenerationJobContext,
+	stableErrorCategory string,
+) error {
+	category := strings.TrimSpace(stableErrorCategory)
+	if r == nil || r.pool == nil || errInvalidClaim(claim) ||
+		category == "" || len(category) > 128 {
+		return ErrInvalidReview
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockReviewUser(ctx, tx, claim.OwnerUserID); err != nil {
+		return err
+	}
+	if err := lockActiveIdentityUser(
+		ctx,
+		tx,
+		claim.OwnerUserID,
+		claim.DeletionGeneration,
+	); err != nil {
+		return err
+	}
+
+	commandTag, err := tx.Exec(ctx, `
+		UPDATE review_generation_attempts
+		SET status = 'failed',
+		    stable_error_category = $2,
+		    finished_at = now()
+		WHERE id = $1
+		  AND review_id = $3
+		  AND owner_user_id = $4
+		  AND worker_token = $5
+		  AND deletion_generation = $6
+		  AND status = 'running'
+		  AND id = (
+			SELECT id
+			FROM review_generation_attempts
+			WHERE review_id = $3
+			  AND owner_user_id = $4
+			ORDER BY attempt_number DESC
+			LIMIT 1
+		  )
+	`, claim.AttemptID, category, claim.ReviewID, claim.OwnerUserID,
+		claim.WorkerToken, claim.DeletionGeneration)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() != 1 {
+		return ErrGenerationClaimLost
+	}
+	commandTag, err = tx.Exec(ctx, `
+		UPDATE reviews
+		SET status = 'failed',
+		    stable_error_category = $2,
+		    updated_at = now()
+		WHERE id = $1
+		  AND owner_user_id = $3
+		  AND status = 'generating'
+	`, claim.ReviewID, category, claim.OwnerUserID)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() != 1 {
+		return ErrGenerationClaimLost
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *PostgresRepository) Get(
+	ctx context.Context,
+	actor Actor,
+	reviewID string,
+) (FormalReview, error) {
+	if r == nil || r.pool == nil || actor.validate() != nil ||
+		strings.TrimSpace(reviewID) == "" {
+		return FormalReview{}, ErrInvalidReview
+	}
+	unavailable, err := accountUnavailable(ctx, r.pool, actor.UserID)
+	if err != nil {
+		return FormalReview{}, err
+	}
+	if unavailable {
+		return FormalReview{}, ErrAccountDeleted
+	}
+	review, err := scanReview(r.pool.QueryRow(ctx, reviewSelect+`
+		WHERE id = $1 AND owner_user_id = $2
+	`, reviewID, actor.UserID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		deleted, checkErr := accountUnavailable(ctx, r.pool, actor.UserID)
+		if checkErr != nil {
+			return FormalReview{}, checkErr
+		}
+		if deleted {
+			return FormalReview{}, ErrAccountDeleted
+		}
+		return FormalReview{}, ErrReviewNotFound
+	}
+	if err != nil {
+		return FormalReview{}, err
+	}
+	if review.DeletionGeneration != actor.DeletionGeneration {
+		return FormalReview{}, ErrAccountDeleted
+	}
+	evidence, err := listEvidence(ctx, r.pool, review.ID, actor.UserID)
+	if err != nil {
+		return FormalReview{}, err
+	}
+	review.Evidence = evidence
+	return review, nil
+}
+
+func (r *PostgresRepository) List(
+	ctx context.Context,
+	actor Actor,
+) ([]FormalReview, error) {
+	if r == nil || r.pool == nil || actor.validate() != nil {
+		return nil, ErrInvalidReview
+	}
+	deleted, err := accountUnavailable(ctx, r.pool, actor.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if deleted {
+		return nil, ErrAccountDeleted
+	}
+	rows, err := r.pool.Query(ctx, reviewSelect+`
+		WHERE owner_user_id = $1 AND deletion_generation = $2
+		ORDER BY created_at DESC, id DESC
+	`, actor.UserID, actor.DeletionGeneration)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reviews []FormalReview
+	for rows.Next() {
+		review, err := scanReview(rows)
+		if err != nil {
+			return nil, err
+		}
+		reviews = append(reviews, review)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return reviews, nil
+}
+
+func (r *PostgresRepository) ListAttempts(
+	ctx context.Context,
+	actor Actor,
+	reviewID string,
+) ([]GenerationAttempt, error) {
+	if _, err := r.Get(ctx, actor, reviewID); err != nil {
+		return nil, err
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			id::text,
+			review_id::text,
+			attempt_number,
+			status,
+			coalesce(stable_error_category, ''),
+			started_at,
+			finished_at
+		FROM review_generation_attempts
+		WHERE review_id = $1 AND owner_user_id = $2
+		ORDER BY attempt_number
+	`, reviewID, actor.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var attempts []GenerationAttempt
+	for rows.Next() {
+		var attempt GenerationAttempt
+		if err := rows.Scan(
+			&attempt.ID,
+			&attempt.ReviewID,
+			&attempt.AttemptNumber,
+			&attempt.Status,
+			&attempt.StableErrorCategory,
+			&attempt.StartedAt,
+			&attempt.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		attempts = append(attempts, attempt)
+	}
+	return attempts, rows.Err()
+}
+
+func (r *PostgresRepository) DeleteUserData(
+	ctx context.Context,
+	command DeleteUserReviewsCommand,
+) error {
+	if r == nil || r.pool == nil ||
+		!validUUID(command.UserID) ||
+		command.DeletionGeneration <= 0 {
+		return ErrInvalidReview
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockReviewUser(ctx, tx, command.UserID); err != nil {
+		return err
+	}
+	var accountStatus string
+	if err := tx.QueryRow(ctx, `
+		SELECT account_status
+		FROM identity_users
+		WHERE id = $1
+	`, command.UserID).Scan(&accountStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrAccountDeleted
+		}
+		return err
+	}
+	if accountStatus == "active" {
+		return ErrInvalidReview
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO review_deletion_fences (
+			owner_user_id,
+			deletion_generation,
+			deleted_at
+		)
+		VALUES ($1, $2, now())
+		ON CONFLICT (owner_user_id) DO UPDATE
+		SET deletion_generation = greatest(
+		        review_deletion_fences.deletion_generation,
+		        EXCLUDED.deletion_generation
+		    ),
+		    deleted_at = least(
+		        review_deletion_fences.deleted_at,
+		        EXCLUDED.deleted_at
+		    )
+	`, command.UserID, command.DeletionGeneration); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`DELETE FROM reviews WHERE owner_user_id = $1`,
+		command.UserID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+const reviewSelect = `
+	SELECT
+		id::text,
+		owner_user_id,
+		practice_session_id,
+		implementation_version,
+		source_turn_id,
+		source_turn_version,
+		source_manifest_fingerprint,
+		deletion_generation,
+		status,
+		result,
+		coalesce(stable_error_category, ''),
+		created_at,
+		updated_at,
+		completed_at
+	FROM reviews
+`
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+type queryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+func scanReview(row rowScanner) (FormalReview, error) {
+	var review FormalReview
+	var resultJSON []byte
+	if err := row.Scan(
+		&review.ID,
+		&review.OwnerUserID,
+		&review.PracticeSessionID,
+		&review.ImplementationVersion,
+		&review.SourceTurnID,
+		&review.SourceTurnVersion,
+		&review.SourceManifestFingerprint,
+		&review.DeletionGeneration,
+		&review.Status,
+		&resultJSON,
+		&review.StableErrorCategory,
+		&review.CreatedAt,
+		&review.UpdatedAt,
+		&review.CompletedAt,
+	); err != nil {
+		return FormalReview{}, err
+	}
+	if len(resultJSON) > 0 {
+		var result ReviewResult
+		if err := json.Unmarshal(resultJSON, &result); err != nil {
+			return FormalReview{}, err
+		}
+		review.Result = &result
+	}
+	return review, nil
+}
+
+func listEvidence(
+	ctx context.Context,
+	database queryer,
+	reviewID string,
+	ownerUserID string,
+) ([]ReviewEvidence, error) {
+	rows, err := database.Query(ctx, `
+		SELECT
+			id::text,
+			review_id::text,
+			owner_user_id::text,
+			conclusion_key,
+			source_type,
+			source_id,
+			source_version,
+			coalesce(source_checksum, ''),
+			evidence_snapshot,
+			created_at
+		FROM review_evidence
+		WHERE review_id = $1 AND owner_user_id = $2
+		ORDER BY conclusion_key, source_type, source_id, source_version
+	`, reviewID, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var evidence []ReviewEvidence
+	for rows.Next() {
+		var item ReviewEvidence
+		if err := rows.Scan(
+			&item.ID,
+			&item.ReviewID,
+			&item.OwnerUserID,
+			&item.ConclusionKey,
+			&item.SourceType,
+			&item.SourceID,
+			&item.SourceVersion,
+			&item.Checksum,
+			&item.Snapshot,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, item)
+	}
+	return evidence, rows.Err()
+}
+
+func lockReviewUser(ctx context.Context, tx pgx.Tx, userID string) error {
+	_, err := tx.Exec(
+		ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		userID,
+	)
+	return err
+}
+
+type rowQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func accountUnavailable(
+	ctx context.Context,
+	database rowQueryer,
+	userID string,
+) (bool, error) {
+	var deleted bool
+	err := database.QueryRow(ctx, `
+		SELECT
+			NOT EXISTS (
+				SELECT 1
+				FROM identity_users
+				WHERE id = $1 AND account_status = 'active'
+			)
+			OR EXISTS (
+				SELECT 1
+				FROM review_deletion_fences
+				WHERE owner_user_id = $1
+			)
+	`, userID).Scan(&deleted)
+	return deleted, err
+}
+
+func lockActiveIdentityUser(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID string,
+	deletionGeneration int64,
+) error {
+	var status string
+	err := tx.QueryRow(ctx, `
+		SELECT users.account_status
+		FROM identity_users users
+		WHERE users.id = $1
+		FOR SHARE OF users
+	`, userID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrAccountDeleted
+	}
+	if err != nil {
+		return err
+	}
+	if status != "active" {
+		return ErrAccountDeleted
+	}
+
+	var fenceGeneration int64
+	err = tx.QueryRow(ctx, `
+		SELECT deletion_generation
+		FROM review_deletion_fences
+		WHERE owner_user_id = $1
+	`, userID).Scan(&fenceGeneration)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fenceGeneration >= deletionGeneration {
+		return ErrAccountDeleted
+	}
+	return ErrAccountDeleted
+}
+
+func errInvalidClaim(claim GenerationJobContext) bool {
+	return strings.TrimSpace(claim.AttemptID) == "" ||
+		strings.TrimSpace(claim.ReviewID) == "" ||
+		!validUUID(claim.OwnerUserID) ||
+		strings.TrimSpace(claim.WorkerToken) == "" ||
+		claim.DeletionGeneration < 0
+}
+
+var _ ReviewRepository = (*PostgresRepository)(nil)
