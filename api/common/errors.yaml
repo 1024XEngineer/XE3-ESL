@@ -59,6 +59,7 @@ components:
         - resource_processing
         - idempotency_key_conflict
         - provider_unavailable
+        - quota_exhausted
         - scenario_definition_not_found
         - role_definition_not_found
         - preparation_profile_not_found
@@ -127,6 +128,7 @@ components:
         transcript_unavailable: 422
         rate_limited: 429
         provider_unavailable: 503
+        quota_exhausted: 503
         internal_error: 500
   responses:
     BadRequest:

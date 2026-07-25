@@ -138,9 +138,11 @@ type VoiceTurnProgress struct {
 // Confirmation persistence supplies local checkpoints to the Agent-owned
 // cross-module saga. ReserveConfirmation must atomically bind actor +
 // operation + IdempotencyKey to CandidateID, replay the same Turn for an
-// identical request, and reject a different CandidateID. SaveTurnProgress and
-// SaveTurnReview must be monotonic idempotent updates so concurrent retries
-// cannot erase an already saved Practice decision or Review ID.
+// identical request, reject a different CandidateID, and return that same
+// immutable Turn if recovery uses a new key for an already confirmed
+// Candidate. SaveTurnProgress and SaveTurnReview must be monotonic idempotent
+// updates so concurrent retries cannot erase an already saved Practice
+// decision or Review ID.
 type VoiceRoundStore interface {
 	GetVoiceQuestion(
 		context.Context,

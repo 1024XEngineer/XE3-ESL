@@ -242,7 +242,7 @@ func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 		t.Fatalf("speech response = %d %#v", speech.Code, speech.Header())
 	}
 	failure := decodeVoiceJSONObject(t, speech)["error"].(map[string]any)
-	if failure["code"] != "provider_unavailable" ||
+	if failure["code"] != "quota_exhausted" ||
 		failure["retryable"] != false {
 		t.Fatalf("quota failure = %#v", failure)
 	}

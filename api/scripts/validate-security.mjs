@@ -628,6 +628,7 @@ for (const [errorName, status] of expectedIdentityErrors) {
 for (const [errorName, status] of new Map([
   ['resource_processing', 409],
   ['provider_unavailable', 503],
+  ['quota_exhausted', 503],
 ])) {
   assert.ok(errorCode?.enum?.includes(errorName), `Missing ${errorName}.`);
   assert.equal(

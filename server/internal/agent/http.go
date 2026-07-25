@@ -786,16 +786,17 @@ func (h *HTTPHandler) questionSpeech(c *gin.Context) {
 		return
 	}
 	if speech.Audio == nil {
-		retryable := speech.Failure == nil || speech.Failure.Retryable
-		if retryable {
+		if speech.Failure != nil {
+			h.writeProviderError(c, speech.Failure.Kind)
+		} else {
 			c.Header("Retry-After", "1")
+			h.writeError(
+				c,
+				http.StatusServiceUnavailable,
+				"provider_unavailable",
+				true,
+			)
 		}
-		h.writeError(
-			c,
-			http.StatusServiceUnavailable,
-			"provider_unavailable",
-			retryable,
-		)
 		return
 	}
 	defer func() { _ = speech.Audio.Close() }()
@@ -941,13 +942,17 @@ func (h *HTTPHandler) writeProviderError(
 	kind ai.ErrorKind,
 ) {
 	retryable := kind.Retryable()
+	code := "provider_unavailable"
+	if kind == ai.ErrorQuotaExhausted {
+		code = "quota_exhausted"
+	}
 	if retryable {
 		c.Header("Retry-After", "1")
 	}
 	h.writeError(
 		c,
 		http.StatusServiceUnavailable,
-		"provider_unavailable",
+		code,
 		retryable,
 	)
 }
@@ -971,6 +976,7 @@ func (h *HTTPHandler) writeError(
 		"idempotency_key_conflict": "Idempotency key conflicts with the original request.",
 		"resource_processing":      "Resource processing is still in progress.",
 		"provider_unavailable":     "The configured provider is temporarily unavailable.",
+		"quota_exhausted":          "The configured free quota is exhausted.",
 		"internal_error":           "An internal error occurred.",
 	}
 	c.JSON(status, gin.H{
