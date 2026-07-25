@@ -18,10 +18,87 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	persistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
 	migrationfiles "github.com/1024XEngineer/XE3-ESL/server/migrations"
 )
+
+func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
+	repository, pool := newRepository(t)
+	ctx := context.Background()
+	actor := persistence.Actor{
+		UserID:    "10000000-0000-4000-8000-000000000011",
+		SessionID: "20000000-0000-4000-8000-000000000011",
+	}
+	ensureIdentityUsers(t, pool, actor)
+	command := newSession("voice-application-session", "voice-plan", 3)
+	command.Snapshot.Participants[1].SubjectRef = persistence.SubjectRef{
+		Namespace: "speakup.user",
+		SubjectID: actor.UserID,
+	}
+	if _, err := repository.CreateSession(ctx, actor, command); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	application, err := practice.NewVoiceApplication(
+		repository,
+		"speakup.user",
+	)
+	if err != nil {
+		t.Fatalf("NewVoiceApplication: %v", err)
+	}
+	participantID, err := application.ResolveActorParticipant(
+		ctx,
+		actor,
+		command.SessionID,
+	)
+	if err != nil {
+		t.Fatalf("ResolveActorParticipant: %v", err)
+	}
+	if participantID != command.Snapshot.Participants[1].ParticipantID {
+		t.Fatalf("participant ID = %q", participantID)
+	}
+	first, err := application.ApplyEffectiveTurn(
+		ctx,
+		actor,
+		command.SessionID,
+		"voice-turn-1",
+	)
+	if err != nil {
+		t.Fatalf("ApplyEffectiveTurn: %v", err)
+	}
+	if first.EffectiveTurns != 1 || first.SessionCompleted {
+		t.Fatalf("first progress = %#v", first)
+	}
+
+	restarted, err := practice.NewVoiceApplication(
+		practicepostgres.New(pool),
+		"speakup.user",
+	)
+	if err != nil {
+		t.Fatalf("restart NewVoiceApplication: %v", err)
+	}
+	replayed, err := restarted.ApplyEffectiveTurn(
+		ctx,
+		actor,
+		command.SessionID,
+		"voice-turn-1",
+	)
+	if err != nil {
+		t.Fatalf("replay after restart: %v", err)
+	}
+	if replayed != first {
+		t.Fatalf("replayed progress = %#v, want %#v", replayed, first)
+	}
+	if recoveredID, err := restarted.ResolveActorParticipant(
+		ctx,
+		actor,
+		command.SessionID,
+	); err != nil || recoveredID != participantID {
+		t.Fatalf("resolved after restart = %q, %v", recoveredID, err)
+	}
+}
 
 func TestRepositoryContract(t *testing.T) {
 	repository, pool := newRepository(t)
