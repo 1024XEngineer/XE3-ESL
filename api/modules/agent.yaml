@@ -45,6 +45,24 @@ paths:
   /v1/matters/{matter_id}:
     parameters:
       - $ref: '#/components/parameters/MatterId'
+    get:
+      tags:
+        - Matter
+      summary: Restore one Matter owned by the trusted Actor
+      operationId: getMatter
+      responses:
+        '200':
+          description: The current durable Matter state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Matter'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
     patch:
       tags:
         - Matter

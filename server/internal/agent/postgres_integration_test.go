@@ -547,6 +547,35 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 	if nulMatter.Code != http.StatusBadRequest {
 		t.Fatalf("NUL Matter response: %d %s", nulMatter.Code, nulMatter.Body)
 	}
+	recoveredMatter := performAgentRequest(
+		router,
+		http.MethodGet,
+		"/v1/matters/"+matterBody.ID,
+		"",
+		"token-a",
+	)
+	if recoveredMatter.Code != http.StatusOK ||
+		!strings.Contains(recoveredMatter.Body.String(), `"title":"Customer meeting"`) {
+		t.Fatalf(
+			"recover Matter response: %d %s",
+			recoveredMatter.Code,
+			recoveredMatter.Body,
+		)
+	}
+	privateMatter := performAgentRequest(
+		router,
+		http.MethodGet,
+		"/v1/matters/"+matterBody.ID,
+		"",
+		"token-b",
+	)
+	if privateMatter.Code != http.StatusNotFound {
+		t.Fatalf(
+			"cross-user Matter response: %d %s",
+			privateMatter.Code,
+			privateMatter.Body,
+		)
+	}
 
 	createdThread := performAgentRequest(
 		router,

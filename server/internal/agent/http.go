@@ -59,6 +59,7 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 
 	protected.POST("/v1/matters", h.createMatter)
 	protected.GET("/v1/matters", h.listMatters)
+	protected.GET("/v1/matters/:matter_id", h.getMatter)
 	protected.PATCH("/v1/matters/:matter_id", h.changeMatterStatus)
 
 	protected.POST("/v1/agent-threads", h.createThread)
@@ -118,6 +119,24 @@ func (h *HTTPHandler) listMatters(c *gin.Context) {
 		result = append(result, matterResponse(item))
 	}
 	c.JSON(http.StatusOK, gin.H{"matters": result})
+}
+
+func (h *HTTPHandler) getMatter(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	item, err := h.matters.ReadOwned(
+		c.Request.Context(),
+		actor,
+		c.Param("matter_id"),
+	)
+	if err != nil {
+		h.writeMatterError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, matterResponse(item))
 }
 
 func (h *HTTPHandler) changeMatterStatus(c *gin.Context) {
