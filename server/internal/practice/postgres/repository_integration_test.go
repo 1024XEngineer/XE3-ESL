@@ -493,6 +493,92 @@ func TestActorIsolationAndDeletion(t *testing.T) {
 	`, ownerA.UserID).Scan(&storedGeneration); err != nil {
 		t.Fatalf("deletion fence did not survive Identity removal: %v", err)
 	}
+	if err := repository.DeleteUserData(ctx, deletion); err != nil {
+		t.Fatalf("same generation replay after Identity removal: %v", err)
+	}
+	if err := repository.DeleteUserData(ctx, persistence.DeletionContext{
+		UserID:     ownerA.UserID,
+		Generation: 8,
+	}); err != nil {
+		t.Fatalf("higher generation replay after Identity removal: %v", err)
+	}
+	if err := repository.DeleteUserData(ctx, deletion); !errors.Is(
+		err,
+		persistence.ErrDeletionGeneration,
+	) {
+		t.Fatalf("lower generation after Identity removal error = %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT deletion_generation
+		FROM practice_deletion_fences
+		WHERE owner_user_id = $1
+	`, ownerA.UserID).Scan(&storedGeneration); err != nil {
+		t.Fatalf("read advanced deletion generation: %v", err)
+	}
+	if storedGeneration != 8 {
+		t.Fatalf("advanced deletion generation = %d, want 8", storedGeneration)
+	}
+}
+
+func TestConcurrentFirstDeletionGenerationIsIdempotent(t *testing.T) {
+	repository, pool := newRepository(t)
+	ctx := context.Background()
+	actor := persistence.Actor{
+		UserID:    "10000000-0000-4000-8000-00000000000f",
+		SessionID: "20000000-0000-4000-8000-00000000000f",
+	}
+	ensureIdentityUsers(t, pool, actor)
+	if _, err := repository.CreateSession(
+		ctx,
+		actor,
+		newSession("concurrent-delete-session", "concurrent-delete-plan", 3),
+	); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE identity_users SET account_status = 'deleting' WHERE id = $1
+	`, actor.UserID); err != nil {
+		t.Fatalf("set deleting status: %v", err)
+	}
+
+	deletion := persistence.DeletionContext{
+		UserID:     actor.UserID,
+		Generation: 11,
+	}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			errs <- repository.DeleteUserData(context.Background(), deletion)
+		}()
+	}
+	close(start)
+	for call := 1; call <= 2; call++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent DeleteUserData call %d: %v", call, err)
+		}
+	}
+
+	var generation, sessionCount int64
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		    (SELECT deletion_generation
+		     FROM practice_deletion_fences
+		     WHERE owner_user_id = $1),
+		    (SELECT count(*)
+		     FROM practice_sessions
+		     WHERE owner_user_id = $1)
+	`, actor.UserID).Scan(&generation, &sessionCount); err != nil {
+		t.Fatalf("inspect concurrent deletion: %v", err)
+	}
+	if generation != 11 || sessionCount != 0 {
+		t.Fatalf(
+			"generation/session count = %d/%d, want 11/0",
+			generation,
+			sessionCount,
+		)
+	}
 }
 
 func TestDeletionFenceSerializesWithStaleActorWrite(t *testing.T) {

@@ -356,46 +356,53 @@ func (r *Repository) DeleteUserData(
 	err = tx.QueryRow(ctx, `
 		SELECT account_status
 		FROM identity_users
-		WHERE id = $1 AND account_status IN ('deleting', 'deleted')
+		WHERE id = $1
 		FOR SHARE
 	`, deletion.UserID).Scan(&accountStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return persistence.ErrNotFound
-	}
-	if err != nil {
+		var fenceExists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM practice_deletion_fences
+				WHERE owner_user_id = $1
+			)
+		`, deletion.UserID).Scan(&fenceExists); err != nil {
+			return fmt.Errorf("verify existing practice deletion fence: %w", err)
+		}
+		if !fenceExists {
+			return persistence.ErrNotFound
+		}
+	} else if err != nil {
 		return fmt.Errorf("verify practice deletion identity state: %w", err)
+	} else if accountStatus != "deleting" && accountStatus != "deleted" {
+		return persistence.ErrNotFound
 	}
 
 	var currentGeneration int64
 	err = tx.QueryRow(ctx, `
-		SELECT deletion_generation
-		FROM practice_deletion_fences
-		WHERE owner_user_id = $1
-		FOR UPDATE
-	`, deletion.UserID).Scan(&currentGeneration)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO practice_deletion_fences (
-				owner_user_id, deletion_generation
-			)
-			VALUES ($1, $2)
-		`, deletion.UserID, generation); err != nil {
-			return classifyWriteError("create practice deletion fence", err)
-		}
-	case err != nil:
-		return fmt.Errorf("read practice deletion fence: %w", err)
-	case generation < currentGeneration:
+		INSERT INTO practice_deletion_fences (
+			owner_user_id, deletion_generation
+		)
+		VALUES ($1, $2)
+		ON CONFLICT (owner_user_id) DO UPDATE
+		SET deletion_generation = GREATEST(
+		        practice_deletion_fences.deletion_generation,
+		        EXCLUDED.deletion_generation
+		    ),
+		    updated_at = CASE
+		        WHEN EXCLUDED.deletion_generation >
+		             practice_deletion_fences.deletion_generation
+		        THEN transaction_timestamp()
+		        ELSE practice_deletion_fences.updated_at
+		    END
+		RETURNING deletion_generation
+	`, deletion.UserID, generation).Scan(&currentGeneration)
+	if err != nil {
+		return fmt.Errorf("upsert practice deletion fence: %w", err)
+	}
+	if generation < currentGeneration {
 		return persistence.ErrDeletionGeneration
-	case generation > currentGeneration:
-		if _, err := tx.Exec(ctx, `
-			UPDATE practice_deletion_fences
-			SET deletion_generation = $2,
-			    updated_at = transaction_timestamp()
-			WHERE owner_user_id = $1
-		`, deletion.UserID, generation); err != nil {
-			return fmt.Errorf("advance practice deletion fence: %w", err)
-		}
 	}
 
 	if _, err := tx.Exec(ctx, `
