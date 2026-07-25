@@ -41,10 +41,7 @@ void main() {
           method: 'GET',
           path: '/v1/me',
           statusCode: HttpStatus.ok,
-          body: {
-            'user_id': 'user_fixture',
-            'email': 'test.user@example.com',
-          },
+          body: {'user_id': 'user_fixture', 'email': 'test.user@example.com'},
         ),
       ]);
       final agentTransport = _Transport([
