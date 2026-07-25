@@ -24,7 +24,7 @@ var (
 
 type PutRequest struct {
 	Key            string
-	Body           io.Reader
+	Body           io.ReadSeeker
 	Size           int64
 	ContentType    string
 	ChecksumSHA256 string

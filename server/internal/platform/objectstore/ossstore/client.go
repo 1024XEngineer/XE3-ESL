@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -18,13 +19,17 @@ import (
 )
 
 const (
-	serverSideEncryption       = "AES256"
-	privateCacheControl        = "private, no-store"
-	configuredConnectTimeout   = 5 * time.Second
-	configuredReadWriteTimeout = 30 * time.Second
+	serverSideEncryption        = "AES256"
+	privateCacheControl         = "private, no-store"
+	configuredConnectTimeout    = 5 * time.Second
+	configuredReadWriteTimeout  = 30 * time.Second
+	credentialValidationTimeout = 5 * time.Second
+	preflightTimeout            = 10 * time.Second
 )
 
 var sha256Pattern = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
+
+var ErrBucketVersioningUnsupported = errors.New("OSS bucket versioning must never have been enabled")
 
 type Client struct {
 	sdk          *aliyunoss.Client
@@ -33,20 +38,42 @@ type Client struct {
 	signedURLTTL time.Duration
 }
 
-// NewFromEnvironment creates a client whose AccessKey is read by the official
-// SDK from OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET.
-func NewFromEnvironment(storageConfig config.ObjectStorageConfig) (*Client, error) {
-	return newClient(
+// NewFromEnvironment is intended for explicit local and CI use. It reads an
+// AccessKey or STS tuple from OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, and
+// optionally OSS_SESSION_TOKEN.
+func NewFromEnvironment(
+	ctx context.Context,
+	storageConfig config.ObjectStorageConfig,
+) (*Client, error) {
+	return New(
+		ctx,
 		storageConfig,
 		credentials.NewEnvironmentVariableCredentialsProvider(),
+	)
+}
+
+// New creates a client with an explicitly selected credentials provider. This
+// is the production boundary for workload RAM role and refreshing providers.
+func New(
+	ctx context.Context,
+	storageConfig config.ObjectStorageConfig,
+	provider credentials.CredentialsProvider,
+) (*Client, error) {
+	return newClient(
+		ctx,
+		storageConfig,
+		provider,
 		nil,
+		true,
 	)
 }
 
 func newClient(
+	ctx context.Context,
 	storageConfig config.ObjectStorageConfig,
 	provider credentials.CredentialsProvider,
 	httpClient *http.Client,
+	runPreflight bool,
 ) (*Client, error) {
 	if !storageConfig.Enabled {
 		return nil, objectstore.ErrDisabled
@@ -54,7 +81,12 @@ func newClient(
 	if provider == nil {
 		return nil, objectstore.ErrCredentials
 	}
-	if _, err := provider.GetCredentials(context.Background()); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	credentialCtx, credentialCancel := context.WithTimeout(ctx, credentialValidationTimeout)
+	defer credentialCancel()
+	if _, err := provider.GetCredentials(credentialCtx); err != nil {
 		return nil, objectstore.ErrCredentials
 	}
 
@@ -68,12 +100,35 @@ func newClient(
 		sdkConfig.WithHttpClient(httpClient)
 	}
 
-	return &Client{
+	client := &Client{
 		sdk:          aliyunoss.NewClient(sdkConfig),
 		bucket:       storageConfig.Bucket,
 		prefix:       storageConfig.AudioPrefix,
 		signedURLTTL: storageConfig.SignedURLTTL,
-	}, nil
+	}
+	if runPreflight {
+		preflightCtx, preflightCancel := context.WithTimeout(ctx, preflightTimeout)
+		defer preflightCancel()
+		if err := client.Preflight(preflightCtx); err != nil {
+			return nil, err
+		}
+	}
+	return client, nil
+}
+
+// Preflight rejects buckets whose versioning state would defeat conditional
+// writes and physical deletion. An empty status means versioning was never set.
+func (c *Client) Preflight(ctx context.Context) error {
+	result, err := c.sdk.GetBucketVersioning(ctx, &aliyunoss.GetBucketVersioningRequest{
+		Bucket: aliyunoss.Ptr(c.bucket),
+	})
+	if err != nil {
+		return safeError("preflight_versioning", err)
+	}
+	if status := strings.TrimSpace(aliyunoss.ToString(result.VersionStatus)); status != "" {
+		return ErrBucketVersioningUnsupported
+	}
+	return nil
 }
 
 func (c *Client) Put(
@@ -86,14 +141,17 @@ func (c *Client) Put(
 	if request.Body == nil ||
 		request.Size < 0 ||
 		strings.TrimSpace(request.ContentType) == "" ||
-		(request.ChecksumSHA256 != "" && !sha256Pattern.MatchString(request.ChecksumSHA256)) {
+		!sha256Pattern.MatchString(request.ChecksumSHA256) {
 		return objectstore.PutResult{}, objectstore.ErrInvalidObject
 	}
 
-	metadata := make(map[string]string)
-	if request.ChecksumSHA256 != "" {
-		metadata["sha256"] = request.ChecksumSHA256
+	startOffset, err := request.Body.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return objectstore.PutResult{}, objectstore.ErrInvalidObject
 	}
+	defer func() {
+		_, _ = request.Body.Seek(startOffset, io.SeekStart)
+	}()
 
 	result, err := c.sdk.PutObject(ctx, &aliyunoss.PutObjectRequest{
 		Bucket:               aliyunoss.Ptr(c.bucket),
@@ -104,13 +162,55 @@ func (c *Client) Put(
 		CacheControl:         aliyunoss.Ptr(privateCacheControl),
 		ForbidOverwrite:      aliyunoss.Ptr("true"),
 		ServerSideEncryption: aliyunoss.Ptr(serverSideEncryption),
-		Metadata:             metadata,
+		Acl:                  aliyunoss.ObjectACLPrivate,
+		Metadata:             map[string]string{"sha256": request.ChecksumSHA256},
 	})
 	if err != nil {
+		if shouldReconcilePut(err) {
+			if existing, matches := c.reconcileExisting(ctx, request); matches {
+				return existing, nil
+			}
+		}
 		return objectstore.PutResult{}, safeError("put", err)
 	}
 
 	return objectstore.PutResult{ETag: strings.Trim(aliyunoss.ToString(result.ETag), `"`)}, nil
+}
+
+func shouldReconcilePut(err error) bool {
+	var serviceError *aliyunoss.ServiceError
+	if !errors.As(err, &serviceError) {
+		return true
+	}
+	return serviceError.Code == "FileAlreadyExists"
+}
+
+func (c *Client) reconcileExisting(
+	ctx context.Context,
+	request objectstore.PutRequest,
+) (objectstore.PutResult, bool) {
+	result, err := c.sdk.HeadObject(ctx, &aliyunoss.HeadObjectRequest{
+		Bucket: aliyunoss.Ptr(c.bucket),
+		Key:    aliyunoss.Ptr(request.Key),
+	})
+	if err != nil ||
+		result.ContentLength != request.Size ||
+		aliyunoss.ToString(result.ContentType) != request.ContentType ||
+		metadataValue(result.Metadata, "sha256") != request.ChecksumSHA256 {
+		return objectstore.PutResult{}, false
+	}
+	return objectstore.PutResult{
+		ETag: strings.Trim(aliyunoss.ToString(result.ETag), `"`),
+	}, true
+}
+
+func metadataValue(metadata map[string]string, key string) string {
+	for metadataKey, value := range metadata {
+		if strings.EqualFold(metadataKey, key) {
+			return value
+		}
+	}
+	return ""
 }
 
 func (c *Client) SignedGet(

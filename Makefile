@@ -64,14 +64,27 @@ check-go-test: check-go-vet
 
 check-oss-live:
 	@set -euo pipefail; \
-	if [[ ! -f .env ]]; then \
-		printf '%s\n' 'Create the ignored root .env with server-only OSS values first.'; \
+	required=(OSS_ENABLED OSS_REGION OSS_ENDPOINT OSS_BUCKET OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET OSS_AUDIO_PREFIX OSS_SIGNED_URL_TTL); \
+	missing=(); \
+	for name in "$${required[@]}"; do \
+		if [[ -z "$${!name:-}" ]]; then missing+=("$$name"); fi; \
+	done; \
+	if (( $${#missing[@]} > 0 )); then \
+		printf 'Export the required OSS variables before running this target. Missing:'; \
+		printf ' %s' "$${missing[@]}"; \
+		printf '\n'; \
 		exit 1; \
 	fi; \
-	set -a; \
-	source .env; \
-	set +a; \
-	OSS_LIVE_TEST=1 $(MAKE) --no-print-directory check-oss-live-go
+	enabled="$${OSS_ENABLED,,}"; \
+	if [[ "$$enabled" != "1" && "$$enabled" != "true" ]]; then \
+		printf '%s\n' 'Set and export OSS_ENABLED=1 for the real OSS lifecycle test.'; \
+		exit 1; \
+	fi; \
+	if [[ "$${OSS_LIVE_TEST:-0}" != "1" ]]; then \
+		printf '%s\n' 'Set and export OSS_LIVE_TEST=1 to opt in to the real OSS lifecycle test.'; \
+		exit 1; \
+	fi; \
+	$(MAKE) --no-print-directory check-oss-live-go
 
 .PHONY: check-oss-live-go
 check-oss-live-go:

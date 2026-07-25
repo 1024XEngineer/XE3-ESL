@@ -6,13 +6,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	aliyunoss "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
@@ -59,6 +62,7 @@ func TestClientPutSignAndDelete(t *testing.T) {
 					request.Header.Get("Cache-Control") != privateCacheControl ||
 					request.Header.Get("X-Oss-Server-Side-Encryption") != serverSideEncryption ||
 					request.Header.Get("X-Oss-Forbid-Overwrite") != "true" ||
+					request.Header.Get("X-Oss-Object-Acl") != string(aliyunoss.ObjectACLPrivate) ||
 					request.Header.Get("X-Oss-Meta-Sha256") != checksum {
 					t.Errorf("unexpected put headers: %#v", request.Header)
 				}
@@ -125,6 +129,210 @@ func TestClientPutSignAndDelete(t *testing.T) {
 	}
 }
 
+func TestClientPutReconcilesLostResponse(t *testing.T) {
+	payload := []byte("replayable audio")
+	checksum := sha256Hex(payload)
+	key := "audio/v1/assets/lost-response.wav"
+	var attempts int
+
+	client := newTestClient(t, &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.Method {
+			case http.MethodPut:
+				attempts++
+				if attempts == 1 {
+					_, _ = io.Copy(io.Discard, request.Body)
+					return nil, io.ErrUnexpectedEOF
+				}
+				return response(
+					http.StatusConflict,
+					http.Header{"Content-Type": []string{"application/xml"}},
+					`<Error><Code>FileAlreadyExists</Code><RequestId>retry-conflict</RequestId></Error>`,
+				), nil
+			case http.MethodHead:
+				return existingObjectResponse(payload, "audio/wav", checksum, "reconciled-etag"), nil
+			default:
+				t.Fatalf("unexpected method: %s", request.Method)
+				return nil, nil
+			}
+		}),
+	})
+
+	body := bytes.NewReader(payload)
+	result, err := client.Put(context.Background(), objectstore.PutRequest{
+		Key:            key,
+		Body:           body,
+		Size:           int64(len(payload)),
+		ContentType:    "audio/wav",
+		ChecksumSHA256: checksum,
+	})
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	if attempts != 2 || result.ETag != "reconciled-etag" {
+		t.Fatalf("Put() attempts = %d result = %#v", attempts, result)
+	}
+	if offset, seekErr := body.Seek(0, io.SeekCurrent); seekErr != nil || offset != 0 {
+		t.Fatalf("body offset after Put = %d, err = %v", offset, seekErr)
+	}
+}
+
+func TestClientPutConcurrentSameKeyConverges(t *testing.T) {
+	payload := []byte("same concurrent audio")
+	checksum := sha256Hex(payload)
+	key := "audio/v1/assets/concurrent.wav"
+	var mu sync.Mutex
+	created := false
+
+	client := newTestClient(t, &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			switch request.Method {
+			case http.MethodPut:
+				if !created {
+					created = true
+					return response(http.StatusOK, http.Header{"ETag": []string{`"created-etag"`}}, ""), nil
+				}
+				return response(
+					http.StatusConflict,
+					http.Header{"Content-Type": []string{"application/xml"}},
+					`<Error><Code>FileAlreadyExists</Code><RequestId>concurrent-conflict</RequestId></Error>`,
+				), nil
+			case http.MethodHead:
+				return existingObjectResponse(payload, "audio/wav", checksum, "created-etag"), nil
+			default:
+				t.Fatalf("unexpected method: %s", request.Method)
+				return nil, nil
+			}
+		}),
+	})
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			_, err := client.Put(context.Background(), objectstore.PutRequest{
+				Key:            key,
+				Body:           bytes.NewReader(payload),
+				Size:           int64(len(payload)),
+				ContentType:    "audio/wav",
+				ChecksumSHA256: checksum,
+			})
+			results <- err
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent Put() error = %v", err)
+		}
+	}
+}
+
+func TestClientPutPreservesConflictForDifferentObject(t *testing.T) {
+	payload := []byte("new audio")
+	client := newTestClient(t, &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.Method {
+			case http.MethodPut:
+				return response(
+					http.StatusConflict,
+					http.Header{"Content-Type": []string{"application/xml"}},
+					`<Error><Code>FileAlreadyExists</Code><RequestId>different-object</RequestId></Error>`,
+				), nil
+			case http.MethodHead:
+				return existingObjectResponse(
+					[]byte("different audio"),
+					"audio/wav",
+					sha256Hex([]byte("different audio")),
+					"different-etag",
+				), nil
+			default:
+				t.Fatalf("unexpected method: %s", request.Method)
+				return nil, nil
+			}
+		}),
+	})
+
+	_, err := client.Put(context.Background(), objectstore.PutRequest{
+		Key:            "audio/v1/assets/conflict.wav",
+		Body:           bytes.NewReader(payload),
+		Size:           int64(len(payload)),
+		ContentType:    "audio/wav",
+		ChecksumSHA256: sha256Hex(payload),
+	})
+	if !errors.Is(err, objectstore.ErrAlreadyExists) {
+		t.Fatalf("Put() error = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestClientPreflightRejectsVersionedBucket(t *testing.T) {
+	for _, status := range []string{"Enabled", "Suspended"} {
+		t.Run(status, func(t *testing.T) {
+			client := newTestClient(t, &http.Client{
+				Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					if request.Method != http.MethodGet || request.URL.RawQuery != "versioning" {
+						t.Fatalf("unexpected preflight request: %s %s", request.Method, request.URL.String())
+					}
+					return response(
+						http.StatusOK,
+						http.Header{"Content-Type": []string{"application/xml"}},
+						"<VersioningConfiguration><Status>"+status+"</Status></VersioningConfiguration>",
+					), nil
+				}),
+			})
+
+			err := client.Preflight(context.Background())
+			if !errors.Is(err, ErrBucketVersioningUnsupported) {
+				t.Fatalf("Preflight() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestClientPreflightAcceptsNeverVersionedBucket(t *testing.T) {
+	client := newTestClient(t, &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return response(
+				http.StatusOK,
+				http.Header{"Content-Type": []string{"application/xml"}},
+				"<VersioningConfiguration/>",
+			), nil
+		}),
+	})
+	if err := client.Preflight(context.Background()); err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+}
+
+func TestClientCredentialValidationHonorsContext(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := newClient(
+		ctx,
+		config.ObjectStorageConfig{
+			Enabled:      true,
+			Region:       "cn-shanghai",
+			Endpoint:     "https://oss-cn-shanghai.aliyuncs.com",
+			Bucket:       "speakup-test",
+			AudioPrefix:  "audio/v1",
+			SignedURLTTL: 2 * time.Minute,
+		},
+		credentials.CredentialsProviderFunc(func(ctx context.Context) (credentials.Credentials, error) {
+			<-ctx.Done()
+			return credentials.Credentials{}, ctx.Err()
+		}),
+		&http.Client{},
+		false,
+	)
+	if !errors.Is(err, objectstore.ErrCredentials) {
+		t.Fatalf("newClient() error = %v, want ErrCredentials", err)
+	}
+}
+
 func TestClientRejectsCrossPrefixKeyWithoutProviderCall(t *testing.T) {
 	called := false
 	client := newTestClient(t, &http.Client{
@@ -175,18 +383,37 @@ func newTestClient(t *testing.T, httpClient *http.Client) *Client {
 	t.Setenv("OSS_ACCESS_KEY_ID", "LTAI-test-access-key")
 	t.Setenv("OSS_ACCESS_KEY_SECRET", "test-secret-never-log")
 
-	client, err := newClient(config.ObjectStorageConfig{
+	client, err := newClient(context.Background(), config.ObjectStorageConfig{
 		Enabled:      true,
 		Region:       "cn-shanghai",
 		Endpoint:     "https://oss-cn-shanghai.aliyuncs.com",
 		Bucket:       "speakup-test",
 		AudioPrefix:  "audio/v1",
 		SignedURLTTL: 2 * time.Minute,
-	}, credentials.NewEnvironmentVariableCredentialsProvider(), httpClient)
+	}, credentials.NewEnvironmentVariableCredentialsProvider(), httpClient, false)
 	if err != nil {
 		t.Fatalf("newClient() error = %v", err)
 	}
 	return client
+}
+
+func existingObjectResponse(
+	payload []byte,
+	contentType string,
+	checksum string,
+	etag string,
+) *http.Response {
+	return response(http.StatusOK, http.Header{
+		"Content-Length":    []string{fmt.Sprint(len(payload))},
+		"Content-Type":      []string{contentType},
+		"ETag":              []string{`"` + etag + `"`},
+		"X-Oss-Meta-Sha256": []string{checksum},
+	}, "")
+}
+
+func sha256Hex(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
 }
 
 func response(status int, header http.Header, body string) *http.Response {

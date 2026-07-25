@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func TestLiveObjectLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load object storage config: %v", err)
 	}
-	client, err := NewFromEnvironment(storageConfig)
+	client, err := NewFromEnvironment(context.Background(), storageConfig)
 	if err != nil {
 		t.Fatalf("create OSS client: %v", err)
 	}
@@ -64,6 +65,24 @@ func TestLiveObjectLifecycle(t *testing.T) {
 		t.Fatalf("sign live object download: %v", err)
 	}
 	downloadClient := &http.Client{Timeout: 15 * time.Second}
+	unsignedURL, err := withoutSignature(signed.URL)
+	if err != nil {
+		t.Fatalf("build unsigned object URL: %v", err)
+	}
+	unsignedResponse, err := downloadClient.Get(unsignedURL)
+	if err != nil {
+		t.Fatalf("verify private live object: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(unsignedResponse.Body, 4096))
+	unsignedCloseErr := unsignedResponse.Body.Close()
+	if unsignedCloseErr != nil {
+		t.Fatalf("close anonymous response: %v", unsignedCloseErr)
+	}
+	if unsignedResponse.StatusCode != http.StatusForbidden &&
+		unsignedResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("anonymous object status = %d, want 403 or 404", unsignedResponse.StatusCode)
+	}
+
 	response, err := downloadClient.Get(signed.URL)
 	if err != nil {
 		t.Fatalf("download live object: %v", err)
@@ -80,7 +99,6 @@ func TestLiveObjectLifecycle(t *testing.T) {
 	if err := client.Delete(ctx, key); err != nil {
 		t.Fatalf("delete live object: %v", err)
 	}
-	cleanupNeeded = false
 
 	deletedResponse, err := downloadClient.Get(signed.URL)
 	if err != nil {
@@ -90,6 +108,30 @@ func TestLiveObjectLifecycle(t *testing.T) {
 	_ = deletedResponse.Body.Close()
 	if deletedResponse.StatusCode != http.StatusNotFound {
 		t.Fatalf("deleted object status = %d, want 404", deletedResponse.StatusCode)
+	}
+	cleanupNeeded = false
+}
+
+func withoutSignature(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func TestWithoutSignature(t *testing.T) {
+	unsigned, err := withoutSignature(
+		"https://bucket.example/audio/v1/test.wav?x-oss-signature=secret&x-oss-expires=120#fragment",
+	)
+	if err != nil {
+		t.Fatalf("withoutSignature() error = %v", err)
+	}
+	if unsigned != "https://bucket.example/audio/v1/test.wav" {
+		t.Fatalf("withoutSignature() = %q", unsigned)
 	}
 }
 
