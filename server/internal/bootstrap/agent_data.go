@@ -76,7 +76,9 @@ func NewIdentityAndAgentModules(
 	}
 	var voiceApplication *agent.VoiceSessionApplication
 	if len(voiceConfigurations) == 1 {
-		voiceApplication, err = buildVoiceApplication(
+		voiceApplication, err = buildProductionVoiceApplication(
+			database,
+			generator,
 			matterService,
 			voiceConfigurations[0],
 		)

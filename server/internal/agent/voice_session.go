@@ -170,7 +170,12 @@ func (application *VoiceSessionApplication) Start(
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
-	if session.ThreadID != threadID || session.MatterID != matterID {
+	// Start is idempotent: an existing Session keeps its immutable Matter
+	// snapshot even if the Thread selected another Matter after the first
+	// successful request. The Practice-owned Port validates the requested
+	// Matter when creating; state() re-authorizes the frozen Matter on replay.
+	if session.ThreadID != threadID ||
+		strings.TrimSpace(session.MatterID) == "" {
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return application.state(ctx, actor, session)

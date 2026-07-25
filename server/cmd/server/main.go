@@ -16,6 +16,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/database"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
@@ -40,6 +41,39 @@ func run() int {
 		logger.Error("text generation startup failed")
 		return 1
 	}
+	asrConfig, err := config.LoadSpeechRecognition()
+	if err != nil {
+		logger.Error("speech recognition configuration failed")
+		return 1
+	}
+	ttsConfig, err := config.LoadSpeechSynthesis()
+	if err != nil {
+		logger.Error("speech synthesis configuration failed")
+		return 1
+	}
+	recognizer, err := bootstrap.NewSpeechRecognizer(asrConfig)
+	if err != nil {
+		logger.Error("speech recognition startup failed")
+		return 1
+	}
+	synthesizer, err := bootstrap.NewSpeechSynthesizer(ttsConfig)
+	if err != nil {
+		logger.Error("speech synthesis startup failed")
+		return 1
+	}
+	audioVault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: ttsConfig.TempDirectory,
+			Lifetime:         2 * time.Minute,
+			MaxItems:         64,
+			MaxBytes:         64 * platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		logger.Error("temporary audio startup failed")
+		return 1
+	}
+	defer audioVault.Close()
 
 	preparationCatalog, err := preparation.NewBuiltinCatalog()
 	if err != nil {
@@ -73,6 +107,15 @@ func run() int {
 				Model:              textConfig.Model,
 				MaxOutputTokens:    textConfig.MaxOutputTokens,
 				MaxInputCharacters: textConfig.MaxContextChars,
+			},
+			bootstrap.VoiceConfiguration{
+				Recognizer:     recognizer,
+				Synthesizer:    synthesizer,
+				TemporaryAudio: audioVault,
+				ASRLease:       asrConfig.Timeout + 15*time.Second,
+				// The existing Review lease is 30s. Bound the parent context
+				// below it even when the shared provider client allows 60s.
+				ReviewGenerationTimeout: 20 * time.Second,
 			},
 		)
 	if err != nil {

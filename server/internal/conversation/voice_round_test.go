@@ -24,8 +24,8 @@ func TestVoiceRoundTranscriptionAndConfirmationAreIdempotent(t *testing.T) {
 		platformmedia.TemporaryAudioVaultConfig{
 			ScratchDirectory: t.TempDir(),
 			Lifetime:         time.Minute,
-			MaxItems:         2,
-			MaxBytes:         platformmedia.MaxAudioBytes * 2,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
 		},
 	)
 	if err != nil {
@@ -159,6 +159,20 @@ func TestVoiceRoundFailureAndForeignActorStayConversationScoped(t *testing.T) {
 			"failure changed progress or lost safe audit: %#v",
 			store.attempts,
 		)
+	}
+
+	command.Audio = bytes.NewReader(voiceTestWAV())
+	_, err = service.Transcribe(
+		context.Background(),
+		voiceTestActor("a"),
+		"participant-a",
+		command,
+	)
+	if !errors.Is(err, providerError) {
+		t.Fatalf("provider retry after cleanup = %v", err)
+	}
+	if len(store.attempts) != 2 {
+		t.Fatalf("provider retry attempts = %#v", store.attempts)
 	}
 
 	command.Audio = bytes.NewReader(voiceTestWAV())
