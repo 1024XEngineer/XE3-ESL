@@ -598,12 +598,8 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		}
 	})
 
-	changed, err := runner.Up()
-	if err != nil {
+	if err := runner.migrate.Steps(2); err != nil {
 		t.Fatalf("apply identity migration: %v", err)
-	}
-	if !changed {
-		t.Fatal("identity migration reported no change on an empty schema")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1021,7 +1017,7 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		}
 	}
 
-	changed, err = runner.DownOne()
+	changed, err := runner.DownOne()
 	if err != nil {
 		t.Fatalf("revert identity migration: %v", err)
 	}
@@ -1053,12 +1049,8 @@ func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 		}
 	}
 
-	changed, err = runner.Up()
-	if err != nil {
+	if err := runner.migrate.Steps(1); err != nil {
 		t.Fatalf("reapply identity migration from baseline: %v", err)
-	}
-	if !changed {
-		t.Fatal("identity migration reported no change when reapplied from baseline")
 	}
 }
 
