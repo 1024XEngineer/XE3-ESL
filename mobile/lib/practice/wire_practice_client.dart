@@ -543,7 +543,8 @@ PracticeSessionSnapshot _decodeSessionState(
           (formalReview.sessionId != sessionId ||
               (turn != null && formalReview.sourceTurnId != turn.id) ||
               (turn != null &&
-                  formalReview.sourceTurnVersion != turn.evidenceVersion) ||
+                  formalReview.sourceTurnVersion !=
+                      'conversation-turn:evidence-v${turn.evidenceVersion}') ||
               (turn != null && formalReview.id != turn.reviewId)))) {
     throw _invalidResponse();
   }
@@ -735,7 +736,7 @@ final class _FormalReviewProjection {
   final String sessionId;
   final String status;
   final String sourceTurnId;
-  final int sourceTurnVersion;
+  final String sourceTurnVersion;
   final AgentReview? presentation;
 }
 
@@ -757,14 +758,20 @@ _FormalReviewProjection _decodeFormalReview(Map<String, Object?> value) {
   final id = _string(root, 'review_id');
   final sessionId = _string(root, 'practice_session_id');
   final status = _string(root, 'status', maxLength: 16);
-  final sourceTurnVersion = _integer(root, 'source_turn_version');
+  final sourceTurnVersion = _string(
+    root,
+    'source_turn_version',
+    maxLength: 128,
+  );
   if (!const {
         'pending',
         'generating',
         'completed',
         'failed',
       }.contains(status) ||
-      sourceTurnVersion < 1) {
+      !RegExp(
+        r'^conversation-turn:evidence-v[1-9][0-9]*$',
+      ).hasMatch(sourceTurnVersion)) {
     throw _invalidResponse();
   }
   _string(root, 'implementation_version', maxLength: 128);

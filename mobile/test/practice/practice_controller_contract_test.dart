@@ -175,6 +175,90 @@ void main() {
       expect(practice.transcribeCount, 0);
     },
   );
+
+  test('recording deadline stops before the server audio limit', () async {
+    final practice = _TwoTurnPracticeClient();
+    final recorder = _Recorder();
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: recorder,
+      recordingLimit: const Duration(milliseconds: 5),
+    );
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+
+    await controller.startRecording();
+    expect(recorder.recording, isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(recorder.recording, isFalse);
+    expect(practice.transcribeCount, 1);
+    expect(
+      controller.recordingState,
+      PracticeRecordingState.awaitingConfirmation,
+    );
+  });
+
+  test('logout cancels the pending recording deadline', () async {
+    Timer? deadline;
+    await runZoned(
+      () async {
+        final controller = AgentController(
+          client: FakeAgentClient(),
+          practiceClient: _TwoTurnPracticeClient(),
+          recorder: _Recorder(),
+        );
+        await controller.initialize();
+        await controller.selectScene(agentScenes.first);
+        await controller.startRecording();
+        expect(deadline?.isActive, isTrue);
+
+        await controller.clearPrivateState();
+
+        expect(deadline?.isActive, isFalse);
+      },
+      zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          final timer = parent.createTimer(zone, duration, callback);
+          if (duration == const Duration(seconds: 58)) {
+            deadline = timer;
+          }
+          return timer;
+        },
+      ),
+    );
+  });
+
+  test('dispose cancels the pending recording deadline', () async {
+    Timer? deadline;
+    await runZoned(
+      () async {
+        final controller = AgentController(
+          client: FakeAgentClient(),
+          practiceClient: _TwoTurnPracticeClient(),
+          recorder: _Recorder(),
+        );
+        await controller.initialize();
+        await controller.selectScene(agentScenes.first);
+        await controller.startRecording();
+        expect(deadline?.isActive, isTrue);
+
+        controller.dispose();
+
+        expect(deadline?.isActive, isFalse);
+      },
+      zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          final timer = parent.createTimer(zone, duration, callback);
+          if (duration == const Duration(seconds: 58)) {
+            deadline = timer;
+          }
+          return timer;
+        },
+      ),
+    );
+  });
 }
 
 final class _TwoTurnPracticeClient implements PracticeClient {

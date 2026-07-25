@@ -277,7 +277,7 @@ void main() {
               'status': 'completed',
               'implementation_version': 'review-v1',
               'source_turn_id': _turnId,
-              'source_turn_version': 2,
+              'source_turn_version': 'conversation-turn:evidence-v2',
               'created_at': _timestamp,
               'updated_at': '2026-07-25T09:00:02Z',
               'result': {
@@ -413,7 +413,57 @@ void main() {
         'status': 'pending',
         'implementation_version': 'review-v1',
         'source_turn_id': _turnId,
-        'source_turn_version': 2,
+        'source_turn_version': 'conversation-turn:evidence-v2',
+        'created_at': _timestamp,
+        'updated_at': _timestamp,
+      },
+    };
+    completed.remove('current_question');
+    final transport = _Transport([
+      _Step(
+        method: 'GET',
+        path: '/v1/agent-threads/$_threadId/voice-practice-session',
+        response: _json(HttpStatus.ok, completed),
+      ),
+    ]);
+
+    await expectLater(
+      _client(transport).restorePractice(threadId: _threadId),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
+  test('rejects a noncanonical FormalReview source turn version', () async {
+    final completed = <String, Object?>{
+      ..._sessionJson(),
+      'session_version': 4,
+      'effective_turns': 3,
+      'session_completed': true,
+      'current_turn': {
+        'turn_id': _turnId,
+        'practice_session_id': _sessionId,
+        'question_id': _questionId,
+        'respondent_participant_id': 'participant-user',
+        'candidate_id': _candidateId,
+        'answer_text': 'I led the migration safely.',
+        'evidence_version': 2,
+        'effective_turns': 3,
+        'session_completed': true,
+        'review_id': 'review-1',
+      },
+      'review': {
+        'review_id': 'review-1',
+        'practice_session_id': _sessionId,
+        'status': 'pending',
+        'implementation_version': 'review-v1',
+        'source_turn_id': _turnId,
+        'source_turn_version': 'conversation-turn:evidence-v02',
         'created_at': _timestamp,
         'updated_at': _timestamp,
       },

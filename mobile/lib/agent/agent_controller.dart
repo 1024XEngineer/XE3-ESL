@@ -16,14 +16,26 @@ final class AgentController extends ChangeNotifier {
     PracticeClient? practiceClient,
     PracticeRecorder? recorder,
     AgentClientIdFactory? clientIdFactory,
+    Duration recordingLimit = const Duration(seconds: 58),
   }) : practiceClient = practiceClient ?? LegacyAgentPracticeClient(client),
        recorder = recorder ?? FakePracticeRecorder(),
-       _clientIdFactory = clientIdFactory ?? _createSecureClientId;
+       _clientIdFactory = clientIdFactory ?? _createSecureClientId,
+       _recordingLimit = recordingLimit {
+    if (recordingLimit <= Duration.zero ||
+        recordingLimit > const Duration(seconds: 60)) {
+      throw ArgumentError.value(
+        recordingLimit,
+        'recordingLimit',
+        'must be positive and no longer than the server 60-second limit',
+      );
+    }
+  }
 
   final AgentClient client;
   final PracticeClient? practiceClient;
   final PracticeRecorder recorder;
   final AgentClientIdFactory _clientIdFactory;
+  final Duration _recordingLimit;
 
   String? _threadId;
   String? _practiceSessionId;
@@ -47,6 +59,7 @@ final class AgentController extends ChangeNotifier {
   Future<void>? _accountCleanupFuture;
   Future<void>? _recorderStartFuture;
   Future<void>? _stopRecordingFuture;
+  Timer? _recordingLimitTimer;
 
   String? get threadId => _threadId;
   String? get practiceSessionId => _practiceSessionId;
@@ -305,6 +318,7 @@ final class AgentController extends ChangeNotifier {
     _activeConfirmationId = null;
     _retry = null;
     _errorMessage = null;
+    _cancelRecordingLimit();
     _recordingState = PracticeRecordingState.starting;
     notifyListeners();
     final operation = _startRecorder(generation);
@@ -324,6 +338,13 @@ final class AgentController extends ChangeNotifier {
         return;
       }
       _recordingState = PracticeRecordingState.recording;
+      _recordingLimitTimer = Timer(_recordingLimit, () {
+        if (generation == _practiceGeneration &&
+            !_disposed &&
+            _recordingState == PracticeRecordingState.recording) {
+          unawaited(stopRecording());
+        }
+      });
     } on PracticeRecordingException catch (error) {
       _recordingState = PracticeRecordingState.idle;
       _errorMessage =
@@ -349,6 +370,7 @@ final class AgentController extends ChangeNotifier {
         _recordingState != PracticeRecordingState.recording) {
       return Future<void>.value();
     }
+    _cancelRecordingLimit();
     final epoch = _epoch;
     final generation = _practiceGeneration;
     final clientTurnId = _newClientId('turn');
@@ -566,6 +588,7 @@ final class AgentController extends ChangeNotifier {
   /// Invalidates private UI state synchronously, then removes temporary audio
   /// and waits for all account-scoped transports to stop.
   Future<void> clearPrivateState() async {
+    _cancelRecordingLimit();
     _epoch++;
     _practiceGeneration++;
     _initializationFuture = null;
@@ -611,6 +634,7 @@ final class AgentController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _cancelRecordingLimit();
     _epoch++;
     _practiceGeneration++;
     _initializationFuture = null;
@@ -625,6 +649,7 @@ final class AgentController extends ChangeNotifier {
   }
 
   void _applyPracticeSnapshot(PracticeSessionSnapshot? snapshot) {
+    _cancelRecordingLimit();
     _practiceGeneration++;
     _candidate = null;
     _activeConfirmationId = null;
@@ -665,6 +690,11 @@ final class AgentController extends ChangeNotifier {
   }
 
   bool _isCurrent(int epoch) => !_disposed && epoch == _epoch;
+
+  void _cancelRecordingLimit() {
+    _recordingLimitTimer?.cancel();
+    _recordingLimitTimer = null;
+  }
 
   bool _isCurrentPractice({
     required int epoch,
