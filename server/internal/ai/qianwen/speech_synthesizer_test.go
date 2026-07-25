@@ -23,6 +23,429 @@ const testTTSProviderURL = "http://dashscope-result-bj.oss-cn-beijing.aliyuncs.c
 const testTTSDownloadURL = "https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/" +
 	"safe/audio.wav?Expires=4102444800&Signature=test"
 
+func TestNormalizeProviderWAVSizeMarkers(t *testing.T) {
+	t.Parallel()
+
+	if providerRIFFSizeMarker != 0x7fffffbf {
+		t.Fatalf("RIFF size marker = %#x", providerRIFFSizeMarker)
+	}
+	if providerDataSizeMarker != 0x7fffff9b {
+		t.Fatalf("data size marker = %#x", providerDataSizeMarker)
+	}
+	wav := ttsProviderMarkerWAV(100 * time.Millisecond)
+	original := append([]byte(nil), wav...)
+
+	reader, err := normalizeProviderWAVSizeMarkers(
+		bytes.NewReader(wav),
+		int64(len(wav)),
+	)
+	if err != nil {
+		t.Fatalf("normalize provider WAV: %v", err)
+	}
+	normalized, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read normalized provider WAV: %v", err)
+	}
+	if len(normalized) != len(wav) ||
+		binary.LittleEndian.Uint32(normalized[4:8]) != uint32(len(wav)-8) ||
+		binary.LittleEndian.Uint32(normalized[40:44]) != uint32(len(wav)-44) {
+		t.Fatalf(
+			"unexpected normalized WAV sizes: bytes=%d riff=%d data=%d",
+			len(normalized),
+			binary.LittleEndian.Uint32(normalized[4:8]),
+			binary.LittleEndian.Uint32(normalized[40:44]),
+		)
+	}
+	for index := range normalized {
+		if (index >= 4 && index < 8) || (index >= 40 && index < 44) {
+			continue
+		}
+		if normalized[index] != original[index] {
+			t.Fatalf("normalized WAV changed payload byte %d", index)
+		}
+	}
+}
+
+func TestNormalizeProviderWAVSizeMarkersLeavesOtherInputsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		contentLength func([]byte) int64
+		mutate        func([]byte)
+	}{
+		{
+			name:          "normal WAV",
+			contentLength: func(wav []byte) int64 { return int64(len(wav)) },
+		},
+		{
+			name:          "unknown content length",
+			contentLength: func([]byte) int64 { return -1 },
+			mutate:        setProviderWAVSizeMarkers,
+		},
+		{
+			name:          "zero content length",
+			contentLength: func([]byte) int64 { return 0 },
+			mutate:        setProviderWAVSizeMarkers,
+		},
+		{
+			name: "over-limit content length",
+			contentLength: func([]byte) int64 {
+				return platformmedia.MaxAudioBytes + 1
+			},
+			mutate: setProviderWAVSizeMarkers,
+		},
+		{
+			name:          "only RIFF marker",
+			contentLength: func(wav []byte) int64 { return int64(len(wav)) },
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint32(wav[4:8], providerRIFFSizeMarker)
+			},
+		},
+		{
+			name:          "only data marker",
+			contentLength: func(wav []byte) int64 { return int64(len(wav)) },
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint32(wav[40:44], providerDataSizeMarker)
+			},
+		},
+		{
+			name:          "unknown markers",
+			contentLength: func(wav []byte) int64 { return int64(len(wav)) },
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint32(wav[4:8], 0x7fffffbe)
+				binary.LittleEndian.PutUint32(wav[40:44], 0x7fffff9a)
+			},
+		},
+		{
+			name:          "non-standard 44-byte header",
+			contentLength: func(wav []byte) int64 { return int64(len(wav)) },
+			mutate: func(wav []byte) {
+				setProviderWAVSizeMarkers(wav)
+				binary.LittleEndian.PutUint32(wav[16:20], 18)
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			wav := ttsTestWAV(100 * time.Millisecond)
+			if test.mutate != nil {
+				test.mutate(wav)
+			}
+			expected := append([]byte(nil), wav...)
+			reader, err := normalizeProviderWAVSizeMarkers(
+				bytes.NewReader(wav),
+				test.contentLength(wav),
+			)
+			if err != nil {
+				t.Fatalf("normalize provider WAV: %v", err)
+			}
+			got, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatalf("read provider WAV: %v", err)
+			}
+			if !bytes.Equal(got, expected) {
+				t.Fatal("provider WAV changed outside the exact marker contract")
+			}
+		})
+	}
+}
+
+func TestNormalizeProviderWAVSizeMarkersRejectsShortRead(t *testing.T) {
+	t.Parallel()
+
+	wav := ttsProviderMarkerWAV(100 * time.Millisecond)
+	if _, err := normalizeProviderWAVSizeMarkers(
+		bytes.NewReader(wav[:40]),
+		44,
+	); err == nil {
+		t.Fatal("expected incomplete provider WAV header error")
+	}
+}
+
+func TestSynthesizeAcceptsExactProviderWAVSizeMarkers(t *testing.T) {
+	t.Parallel()
+
+	wav := ttsProviderMarkerWAV(100 * time.Millisecond)
+	directory := t.TempDir()
+	var calls atomic.Int32
+	synthesizer := mustSynthesizer(
+		t,
+		doerFunc(func(*http.Request) (*http.Response, error) {
+			if calls.Add(1) == 1 {
+				return jsonResponse(
+					http.StatusOK,
+					successfulTTSResponse(testTTSProviderURL),
+				), nil
+			}
+			response := wavResponse(wav, platformmedia.ContentTypeWAV)
+			response.Header.Set("Content-Encoding", "identity")
+			return response, nil
+		}),
+		"test-api-key",
+		directory,
+	)
+	result, err := synthesizer.Synthesize(
+		context.Background(),
+		ai.SynthesisRequest{Text: "Question"},
+	)
+	if err != nil {
+		t.Fatalf("synthesize provider marker WAV: %v", err)
+	}
+	if result.Audio == nil ||
+		result.Audio.Size() != int64(len(wav)) ||
+		result.Audio.SampleRate() != ttsOutputSampleRate {
+		t.Fatalf("unexpected normalized provider audio: %#v", result.Audio)
+	}
+	if err := result.Audio.Close(); err != nil {
+		t.Fatalf("close normalized provider audio: %v", err)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatalf("read temp directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("closed provider WAV left temporary files: %v", entries)
+	}
+}
+
+func TestSynthesizeRejectsUnsafeProviderWAVVariantsAndCleansUp(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		body          func() []byte
+		contentLength func([]byte) int64
+		mutate        func([]byte)
+	}{
+		{
+			name: "unknown content length",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			contentLength: func([]byte) int64 { return -1 },
+		},
+		{
+			name: "zero content length",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			contentLength: func([]byte) int64 { return 0 },
+		},
+		{
+			name: "over-limit content length",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			contentLength: func([]byte) int64 {
+				return platformmedia.MaxAudioBytes + 1
+			},
+		},
+		{
+			name: "short read",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)[:40]
+			},
+			contentLength: func([]byte) int64 { return 44 },
+		},
+		{
+			name: "long read",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			contentLength: func(wav []byte) int64 {
+				return int64(len(wav) - 2)
+			},
+		},
+		{
+			name: "only RIFF marker",
+			body: func() []byte {
+				return ttsTestWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint32(wav[4:8], providerRIFFSizeMarker)
+			},
+		},
+		{
+			name: "only data marker",
+			body: func() []byte {
+				return ttsTestWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint32(wav[40:44], providerDataSizeMarker)
+			},
+		},
+		{
+			name: "unknown markers",
+			body: func() []byte {
+				return ttsTestWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint32(wav[4:8], 0x7fffffbe)
+				binary.LittleEndian.PutUint32(wav[40:44], 0x7fffff9a)
+			},
+		},
+		{
+			name: "non-standard 44-byte header",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint32(wav[16:20], 18)
+			},
+		},
+		{
+			name: "non-PCM",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint16(wav[20:22], 3)
+			},
+		},
+		{
+			name: "stereo",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint16(wav[22:24], 2)
+				binary.LittleEndian.PutUint32(wav[28:32], 96_000)
+				binary.LittleEndian.PutUint16(wav[32:34], 4)
+			},
+		},
+		{
+			name: "wrong byte rate",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint32(wav[28:32], 47_998)
+			},
+		},
+		{
+			name: "non-16-bit",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint16(wav[34:36], 24)
+			},
+		},
+		{
+			name: "non-24-kHz",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint32(wav[24:28], 16_000)
+				binary.LittleEndian.PutUint32(wav[28:32], 32_000)
+			},
+		},
+		{
+			name: "wrong block align",
+			body: func() []byte {
+				return ttsProviderMarkerWAV(100 * time.Millisecond)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint16(wav[32:34], 4)
+			},
+		},
+		{
+			name: "data is not a complete PCM frame",
+			body: func() []byte {
+				return append(
+					ttsProviderMarkerWAV(100*time.Millisecond),
+					0,
+					0,
+				)
+			},
+			mutate: func(wav []byte) {
+				binary.LittleEndian.PutUint16(wav[22:24], 2)
+				binary.LittleEndian.PutUint32(wav[28:32], 96_000)
+				binary.LittleEndian.PutUint16(wav[32:34], 4)
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			wav := test.body()
+			if test.mutate != nil {
+				test.mutate(wav)
+			}
+			contentLength := int64(len(wav))
+			if test.contentLength != nil {
+				contentLength = test.contentLength(wav)
+			}
+			directory := t.TempDir()
+			var calls atomic.Int32
+			synthesizer := mustSynthesizer(
+				t,
+				doerFunc(func(*http.Request) (*http.Response, error) {
+					if calls.Add(1) == 1 {
+						return jsonResponse(
+							http.StatusOK,
+							successfulTTSResponse(testTTSProviderURL),
+						), nil
+					}
+					response := wavResponse(wav, platformmedia.ContentTypeWAV)
+					response.ContentLength = contentLength
+					return response, nil
+				}),
+				"test-api-key",
+				directory,
+			)
+			_, err := synthesizer.Synthesize(
+				context.Background(),
+				ai.SynthesisRequest{Text: "Question"},
+			)
+			assertSpeechError(
+				t,
+				err,
+				ai.SpeechOperationSynthesis,
+				ai.ErrorInvalidResponse,
+				true,
+			)
+			entries, readErr := os.ReadDir(directory)
+			if readErr != nil {
+				t.Fatalf("read temp directory: %v", readErr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("failed provider WAV left temporary files: %v", entries)
+			}
+		})
+	}
+}
+
+func TestGlobalMediaBoundaryStillRejectsProviderWAVSizeMarkers(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	audio, err := platformmedia.CaptureTemporaryAudio(
+		directory,
+		platformmedia.ContentTypeWAV,
+		bytes.NewReader(ttsProviderMarkerWAV(100*time.Millisecond)),
+	)
+	if audio != nil {
+		_ = audio.Close()
+		t.Fatal("global media boundary accepted provider WAV size markers")
+	}
+	if err == nil {
+		t.Fatal("expected global media boundary rejection")
+	}
+	entries, readErr := os.ReadDir(directory)
+	if readErr != nil {
+		t.Fatalf("read temp directory: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("global rejection left temporary files: %v", entries)
+	}
+}
+
 func TestSynthesizeUsesDocumentedContractAndOwnsDownloadedAudio(t *testing.T) {
 	t.Parallel()
 
@@ -140,6 +563,72 @@ func TestSynthesizeRejectsUnsafeProviderURLWithoutDownloading(t *testing.T) {
 			)
 			if calls.Load() != 1 {
 				t.Fatalf("HTTP calls = %d, unsafe URL must not be fetched", calls.Load())
+			}
+		})
+	}
+}
+
+func TestSynthesizeRejectsEncodedProviderAudioAndCleansUp(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		uncompressed bool
+		encoding     string
+	}{
+		{name: "automatic decompression", uncompressed: true},
+		{name: "gzip content encoding", encoding: "gzip"},
+		{name: "multiple content encodings", encoding: "gzip, br"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			directory := t.TempDir()
+			wav := ttsTestWAV(100 * time.Millisecond)
+			var calls atomic.Int32
+			synthesizer := mustSynthesizer(
+				t,
+				doerFunc(func(*http.Request) (*http.Response, error) {
+					if calls.Add(1) == 1 {
+						return jsonResponse(
+							http.StatusOK,
+							successfulTTSResponse(testTTSProviderURL),
+						), nil
+					}
+					response := wavResponse(
+						wav,
+						platformmedia.ContentTypeWAV,
+					)
+					response.Uncompressed = test.uncompressed
+					if test.encoding != "" {
+						response.Header.Set(
+							"Content-Encoding",
+							test.encoding,
+						)
+					}
+					return response, nil
+				}),
+				"test-api-key",
+				directory,
+			)
+			_, err := synthesizer.Synthesize(
+				context.Background(),
+				ai.SynthesisRequest{Text: "Question"},
+			)
+			assertSpeechError(
+				t,
+				err,
+				ai.SpeechOperationSynthesis,
+				ai.ErrorInvalidResponse,
+				true,
+			)
+			entries, readErr := os.ReadDir(directory)
+			if readErr != nil {
+				t.Fatalf("read temp directory: %v", readErr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("encoded response left temporary files: %v", entries)
 			}
 		})
 	}
@@ -448,4 +937,15 @@ func ttsTestWAV(duration time.Duration) []byte {
 	copy(payload[36:40], "data")
 	binary.LittleEndian.PutUint32(payload[40:44], uint32(dataSize))
 	return payload
+}
+
+func ttsProviderMarkerWAV(duration time.Duration) []byte {
+	wav := ttsTestWAV(duration)
+	setProviderWAVSizeMarkers(wav)
+	return wav
+}
+
+func setProviderWAVSizeMarkers(wav []byte) {
+	binary.LittleEndian.PutUint32(wav[4:8], providerRIFFSizeMarker)
+	binary.LittleEndian.PutUint32(wav[40:44], providerDataSizeMarker)
 }

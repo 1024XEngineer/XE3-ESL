@@ -3,9 +3,11 @@ package qianwen
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -22,6 +24,8 @@ const (
 	multimodalGenerationPath = "/services/aigc/multimodal-generation/generation"
 	ttsSpeechSynthesizerPath = "/services/audio/tts/SpeechSynthesizer"
 	ttsOutputSampleRate      = 24_000
+	providerRIFFSizeMarker   = 0x7fffffbf
+	providerDataSizeMarker   = 0x7fffff9b
 )
 
 type TTSConfig struct {
@@ -391,6 +395,19 @@ func (synthesizer *Synthesizer) downloadAudio(
 			"Qianwen TTS audio download failed",
 		)
 	}
+	contentEncoding := strings.TrimSpace(
+		response.Header.Get("Content-Encoding"),
+	)
+	if response.Uncompressed ||
+		(contentEncoding != "" &&
+			!strings.EqualFold(contentEncoding, "identity")) {
+		return nil, invalidSpeechResponse(
+			ai.SpeechOperationSynthesis,
+			response.StatusCode,
+			"",
+			"Qianwen TTS audio download uses unsupported content encoding",
+		)
+	}
 	if response.ContentLength > platformmedia.MaxAudioBytes {
 		return nil, invalidSpeechResponse(
 			ai.SpeechOperationSynthesis,
@@ -429,23 +446,125 @@ func (synthesizer *Synthesizer) downloadAudio(
 			"Qianwen TTS audio download has an unsupported content type",
 		)
 	}
+	normalizedBody, err := normalizeProviderWAVSizeMarkers(
+		response.Body,
+		response.ContentLength,
+	)
+	if err != nil {
+		return nil, invalidSpeechResponse(
+			ai.SpeechOperationSynthesis,
+			response.StatusCode,
+			"",
+			"Qianwen TTS audio download has an incomplete WAV header",
+		)
+	}
+	observedBody := &riffSizeObserver{reader: normalizedBody}
 	audio, err := platformmedia.CaptureTemporaryAudio(
 		synthesizer.tempDirectory,
 		contentType,
-		response.Body,
+		observedBody,
 	)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, speechTransportError(ai.SpeechOperationSynthesis, ctx, ctx.Err())
 		}
+		validationCause := err.Error()
+		if validationCause == "WAV size declaration does not match the upload" {
+			if declared, actual, ok := observedBody.sizes(); ok {
+				validationCause += fmt.Sprintf(
+					" (declared_bytes=%d actual_bytes=%d)",
+					declared,
+					actual,
+				)
+			}
+		}
 		return nil, invalidSpeechResponse(
 			ai.SpeechOperationSynthesis,
 			response.StatusCode,
 			"",
-			"Qianwen TTS audio download failed validation",
+			"Qianwen TTS audio download failed validation: "+validationCause,
+		)
+	}
+	if audio.SampleRate() != ttsOutputSampleRate {
+		if err := audio.Close(); err != nil {
+			return nil, invalidSpeechResponse(
+				ai.SpeechOperationSynthesis,
+				response.StatusCode,
+				"",
+				"Qianwen TTS audio cleanup failed after sample-rate validation",
+			)
+		}
+		return nil, invalidSpeechResponse(
+			ai.SpeechOperationSynthesis,
+			response.StatusCode,
+			"",
+			"Qianwen TTS audio has an unexpected sample rate",
 		)
 	}
 	return audio, nil
+}
+
+func normalizeProviderWAVSizeMarkers(
+	body io.Reader,
+	contentLength int64,
+) (io.Reader, error) {
+	if contentLength < 44 ||
+		contentLength > platformmedia.MaxAudioBytes ||
+		contentLength > int64(^uint32(0)) {
+		return body, nil
+	}
+	header := make([]byte, 44)
+	if _, err := io.ReadFull(body, header); err != nil {
+		return nil, err
+	}
+	if string(header[0:4]) == "RIFF" &&
+		string(header[8:12]) == "WAVE" &&
+		string(header[12:16]) == "fmt " &&
+		binary.LittleEndian.Uint32(header[16:20]) == 16 &&
+		binary.LittleEndian.Uint16(header[20:22]) == 1 &&
+		binary.LittleEndian.Uint16(header[22:24]) == 1 &&
+		binary.LittleEndian.Uint32(header[24:28]) == ttsOutputSampleRate &&
+		binary.LittleEndian.Uint32(header[28:32]) == 48_000 &&
+		binary.LittleEndian.Uint16(header[32:34]) == 2 &&
+		binary.LittleEndian.Uint16(header[34:36]) == 16 &&
+		string(header[36:40]) == "data" &&
+		binary.LittleEndian.Uint32(header[4:8]) == providerRIFFSizeMarker &&
+		binary.LittleEndian.Uint32(header[40:44]) == providerDataSizeMarker {
+		binary.LittleEndian.PutUint32(
+			header[4:8],
+			uint32(contentLength-8),
+		)
+		binary.LittleEndian.PutUint32(
+			header[40:44],
+			uint32(contentLength-44),
+		)
+	}
+	return io.MultiReader(bytes.NewReader(header), body), nil
+}
+
+type riffSizeObserver struct {
+	reader io.Reader
+	header [8]byte
+	count  int64
+}
+
+func (observer *riffSizeObserver) Read(target []byte) (int, error) {
+	read, err := observer.reader.Read(target)
+	if observer.count < int64(len(observer.header)) && read > 0 {
+		headerOffset := int(observer.count)
+		copy(observer.header[headerOffset:], target[:read])
+	}
+	observer.count += int64(read)
+	return read, err
+}
+
+func (observer *riffSizeObserver) sizes() (int64, int64, bool) {
+	if observer.count < int64(len(observer.header)) ||
+		string(observer.header[:4]) != "RIFF" {
+		return 0, observer.count, false
+	}
+	declared := int64(binary.LittleEndian.Uint32(observer.header[4:8])) + 8
+	return declared, observer.count, true
 }
 
 func normalizeDashScopeAPIBaseURL(raw string) (string, error) {

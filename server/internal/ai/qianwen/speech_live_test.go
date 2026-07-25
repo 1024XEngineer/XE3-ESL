@@ -2,10 +2,14 @@ package qianwen
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformconfig "github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
@@ -60,11 +64,27 @@ func TestLiveSpeechRecognition(t *testing.T) {
 		ai.TranscriptionRequest{Audio: audio},
 	)
 	if err != nil {
-		t.Fatalf("live Qianwen ASR failed: %v", err)
+		t.Fatalf("live Qianwen ASR failed: %s", safeLiveSpeechError(err))
 	}
 	if result.Transcript == "" {
 		t.Fatal("live Qianwen ASR returned an empty transcript")
 	}
+	t.Logf(
+		"ASR success: provider=%s model=%s request_id=%s "+
+			"transcript_nonempty=%t transcript_characters=%d "+
+			"usage_audio_seconds=%d fixture_type=%s fixture_bytes=%d "+
+			"fixture_rate_hz=%d fixture_duration=%s",
+		result.Provider,
+		result.Model,
+		result.ID,
+		result.Transcript != "",
+		utf8.RuneCountInString(result.Transcript),
+		result.Usage.AudioSeconds,
+		audio.MediaType(),
+		audio.Size(),
+		audio.SampleRate(),
+		audio.Duration(),
+	)
 }
 
 func TestLiveSpeechSynthesis(t *testing.T) {
@@ -92,7 +112,7 @@ func TestLiveSpeechSynthesis(t *testing.T) {
 		ai.SynthesisRequest{Text: "Please repeat after me."},
 	)
 	if err != nil {
-		t.Fatalf("live Qianwen TTS failed: %v", err)
+		t.Fatalf("live Qianwen TTS failed: %s", safeLiveSpeechError(err))
 	}
 	if result.Audio == nil {
 		t.Fatal("live Qianwen TTS returned no managed audio")
@@ -109,6 +129,46 @@ func TestLiveSpeechSynthesis(t *testing.T) {
 	}
 	if string(buffer[:4]) != "RIFF" || string(buffer[8:12]) != "WAVE" {
 		t.Fatal("live Qianwen TTS output is not a validated WAV")
+	}
+	t.Logf(
+		"TTS success: provider=%s model=%s request_id=%s audio_id=%s "+
+			"audio_type=%s audio_bytes=%d audio_rate_hz=%d "+
+			"audio_duration=%s usage_characters=%d",
+		result.Provider,
+		result.Model,
+		result.RequestID,
+		result.AudioID,
+		result.Audio.MediaType(),
+		result.Audio.Size(),
+		result.Audio.SampleRate(),
+		result.Audio.Duration(),
+		result.Usage.Characters,
+	)
+}
+
+func safeLiveSpeechError(err error) string {
+	var speechError *ai.SpeechError
+	if !errors.As(err, &speechError) {
+		return "unexpected_error"
+	}
+	cause := errors.Unwrap(speechError)
+	causeText := ""
+	if cause != nil {
+		causeText = cause.Error()
+	}
+	return "operation=" + string(speechError.Operation) +
+		" kind=" + string(speechError.Kind) +
+		" status=" + strconv.Itoa(speechError.StatusCode) +
+		" provider_code=" + speechError.ProviderCode +
+		" request_id=" + speechError.RequestID +
+		" cause=" + causeText
+}
+
+func TestSafeLiveSpeechErrorRedactsUnexpectedError(t *testing.T) {
+	const sensitive = "must-not-appear"
+	got := safeLiveSpeechError(errors.New(sensitive))
+	if got != "unexpected_error" || strings.Contains(got, sensitive) {
+		t.Fatalf("unexpected error was not redacted: %q", got)
 	}
 }
 
