@@ -7,10 +7,13 @@ import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/session_store.dart';
 import 'package:speakup/practice/ios_practice_recorder.dart';
+import 'package:speakup/practice/practice_audio_player.dart';
+import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/practice/wire_practice_client.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   const apiBaseUrl = String.fromEnvironment(
     'SPEAKUP_API_BASE_URL',
     defaultValue: 'http://127.0.0.1:8080',
@@ -41,7 +44,11 @@ ProductionAppDependencies createProductionAppDependencies({
   IdentityHttpTransport? identityTransport,
   IdentityHttpTransport? agentTransport,
   PracticeWireTransport? practiceTransport,
+  PracticeMediaWireTransport? practiceMediaTransport,
+  PracticeMediaWireTransport? signedAudioTransport,
   PracticeRecorder? practiceRecorder,
+  PracticeMediaClient? practiceMediaClient,
+  PracticeAudioPlayer? practiceAudioPlayer,
   SessionStore? sessionStore,
 }) {
   late final AuthController authController;
@@ -71,6 +78,22 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: practiceTransport,
     ),
     recorder: practiceRecorder ?? IosPracticeRecorder(),
+    mediaClient:
+        practiceMediaClient ??
+        WirePracticeMediaClient(
+          baseUri: baseUri,
+          credentialProvider: () => authController.currentCredential,
+          invalidateSession:
+              ({required expectedSessionToken, required expectedGeneration}) {
+                return authController.invalidateSession(
+                  expectedSessionToken: expectedSessionToken,
+                  expectedGeneration: expectedGeneration,
+                );
+              },
+          apiTransport: practiceMediaTransport,
+          signedAudioTransport: signedAudioTransport,
+        ),
+    audioPlayer: practiceAudioPlayer ?? AudioplayersPracticeAudioPlayer(),
   );
   authController = AuthController(
     identityClient: WireIdentityClient(

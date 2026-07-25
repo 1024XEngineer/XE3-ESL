@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/practice/practice_recordings.dart';
 
 class PracticePage extends StatefulWidget {
   const PracticePage({
@@ -52,6 +53,7 @@ class _PracticePageState extends State<PracticePage> {
   void dispose() {
     widget.agentController?.removeListener(_handleState);
     _clearReviewRouteWait();
+    unawaited(widget.agentController?.stopPracticeAudio(notify: false));
     super.dispose();
   }
 
@@ -218,14 +220,26 @@ class _PracticePageState extends State<PracticePage> {
                     turnLimit: controller.turnLimit,
                   ),
                   const SizedBox(height: 22),
-                  _CurrentQuestion(messages: controller.messages),
+                  _CurrentQuestion(controller: controller),
                   const SizedBox(height: 18),
                   _RecordingPanel(controller: controller),
+                  if (controller.recordings.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    PracticeRecordingsCard(controller: controller),
+                  ],
                   if (controller.errorMessage case final message?) ...[
                     const SizedBox(height: 14),
                     Text(
                       message,
                       key: const Key('practice-error-message'),
+                      style: const TextStyle(color: Color(0xFF8B2E26)),
+                    ),
+                  ],
+                  if (controller.mediaErrorMessage case final message?) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      message,
+                      key: const Key('practice-media-error-message'),
                       style: const TextStyle(color: Color(0xFF8B2E26)),
                     ),
                   ],
@@ -295,13 +309,13 @@ class _TurnProgress extends StatelessWidget {
 }
 
 class _CurrentQuestion extends StatelessWidget {
-  const _CurrentQuestion({required this.messages});
+  const _CurrentQuestion({required this.controller});
 
-  final List<AgentMessage> messages;
+  final AgentController controller;
 
   @override
   Widget build(BuildContext context) {
-    final question = messages.reversed
+    final question = controller.messages.reversed
         .where((message) => message.role == AgentMessageRole.assistant)
         .map((message) => message.text)
         .firstOrNull;
@@ -314,13 +328,40 @@ class _CurrentQuestion extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '当前问题',
-              style: TextStyle(
-                color: Color(0xFF777983),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '当前问题',
+                    style: TextStyle(
+                      color: Color(0xFF777983),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (controller.canPlayQuestionAudio)
+                  IconButton(
+                    key: const Key('practice-question-audio'),
+                    tooltip: controller.isQuestionAudioPlaying
+                        ? '停止播放'
+                        : '朗读问题',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: controller.canUsePracticeAudio
+                        ? controller.toggleQuestionAudio
+                        : null,
+                    icon: controller.isQuestionAudioLoading
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            controller.isQuestionAudioPlaying
+                                ? Icons.stop_circle_outlined
+                                : Icons.volume_up_outlined,
+                          ),
+                  ),
+              ],
             ),
             const SizedBox(height: 8),
             Text(

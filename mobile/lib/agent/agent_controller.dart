@@ -2,25 +2,35 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/practice/practice_client.dart';
+import 'package:speakup/practice/practice_audio_player.dart';
+import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
 
 typedef AgentClientIdFactory = String Function(String scope);
 
-final class AgentController extends ChangeNotifier {
+final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   AgentController({
     required this.client,
     PracticeClient? practiceClient,
     PracticeRecorder? recorder,
+    this.mediaClient,
+    this.audioPlayer,
     AgentClientIdFactory? clientIdFactory,
     Duration recordingLimit = const Duration(seconds: 58),
   }) : practiceClient = practiceClient ?? LegacyAgentPracticeClient(client),
        recorder = recorder ?? FakePracticeRecorder(),
        _clientIdFactory = clientIdFactory ?? _createSecureClientId,
        _recordingLimit = recordingLimit {
+    if ((mediaClient == null) != (audioPlayer == null)) {
+      throw ArgumentError(
+        'Practice media client and audio player must be injected together.',
+      );
+    }
     if (recordingLimit <= Duration.zero ||
         recordingLimit > const Duration(seconds: 60)) {
       throw ArgumentError.value(
@@ -29,11 +39,19 @@ final class AgentController extends ChangeNotifier {
         'must be positive and no longer than the server 60-second limit',
       );
     }
+    _mediaCompletionSubscription = audioPlayer?.onComplete.listen((_) {
+      _handleMediaCompletion();
+    });
+    if (mediaClient != null) {
+      WidgetsBinding.instance.addObserver(this);
+    }
   }
 
   final AgentClient client;
   final PracticeClient? practiceClient;
   final PracticeRecorder recorder;
+  final PracticeMediaClient? mediaClient;
+  final PracticeAudioPlayer? audioPlayer;
   final AgentClientIdFactory _clientIdFactory;
   final Duration _recordingLimit;
 
@@ -60,6 +78,15 @@ final class AgentController extends ChangeNotifier {
   Future<void>? _recorderStartFuture;
   Future<void>? _stopRecordingFuture;
   Timer? _recordingLimitTimer;
+  StreamSubscription<void>? _mediaCompletionSubscription;
+  List<PracticeRecordingReference> _recordings =
+      const <PracticeRecordingReference>[];
+  String? _playingMediaKey;
+  String? _loadingMediaKey;
+  String? _deletingAudioAssetId;
+  String? _mediaErrorMessage;
+  int _mediaGeneration = 0;
+  Future<void>? _mediaOperation;
 
   String? get threadId => _threadId;
   String? get practiceSessionId => _practiceSessionId;
@@ -77,6 +104,38 @@ final class AgentController extends ChangeNotifier {
   bool get isBusy => _busy || _practiceRequestInFlight;
   bool get canRetry => _retry != null;
   bool get supportsPracticeFlow => practiceClient != null;
+  bool get supportsPracticeMedia => mediaClient != null && audioPlayer != null;
+  List<PracticeRecordingReference> get recordings =>
+      List<PracticeRecordingReference>.unmodifiable(_recordings);
+  String? get mediaErrorMessage => _mediaErrorMessage;
+  bool get isQuestionAudioLoading =>
+      _currentQuestion != null &&
+      _loadingMediaKey == _questionMediaKey(_currentQuestion!.id);
+  bool get isQuestionAudioPlaying =>
+      _currentQuestion != null &&
+      _playingMediaKey == _questionMediaKey(_currentQuestion!.id);
+  bool get canPlayQuestionAudio =>
+      supportsPracticeMedia && _currentQuestion?.speechPath != null;
+  bool get canUsePracticeAudio =>
+      supportsPracticeMedia &&
+      !_disposed &&
+      !_busy &&
+      switch (_recordingState) {
+        PracticeRecordingState.idle ||
+        PracticeRecordingState.awaitingConfirmation ||
+        PracticeRecordingState.reviewFailed ||
+        PracticeRecordingState.completed => true,
+        PracticeRecordingState.starting ||
+        PracticeRecordingState.recording ||
+        PracticeRecordingState.transcribing ||
+        PracticeRecordingState.submitting => false,
+      };
+  bool isRecordingAudioLoading(String audioAssetId) =>
+      _loadingMediaKey == _recordingMediaKey(audioAssetId);
+  bool isRecordingAudioPlaying(String audioAssetId) =>
+      _playingMediaKey == _recordingMediaKey(audioAssetId);
+  bool isRecordingDeleting(String audioAssetId) =>
+      _deletingAudioAssetId == audioAssetId;
 
   bool get canSelectScene {
     return !_disposed &&
@@ -196,6 +255,7 @@ final class AgentController extends ChangeNotifier {
     if (threadId == null || practice == null || !canSelectScene) {
       return;
     }
+    await stopPracticeAudio();
     final epoch = _epoch;
     _retry = null;
     _errorMessage = null;
@@ -304,6 +364,211 @@ final class AgentController extends ChangeNotifier {
     }
   }
 
+  Future<void> toggleQuestionAudio() async {
+    final question = _currentQuestion;
+    final speechPath = question?.speechPath;
+    if (question == null || speechPath == null) {
+      return;
+    }
+    await _togglePracticeMedia(
+      key: _questionMediaKey(question.id)!,
+      load: (client) => client.loadQuestionSpeech(speechPath),
+      isStillAvailable: () =>
+          _currentQuestion?.id == question.id &&
+          _currentQuestion?.speechPath == speechPath,
+    );
+  }
+
+  Future<void> toggleRecordingAudio(String audioAssetId) async {
+    if (!_recordings.any(
+      (recording) => recording.audioAssetId == audioAssetId,
+    )) {
+      return;
+    }
+    await _togglePracticeMedia(
+      key: _recordingMediaKey(audioAssetId),
+      load: (client) => client.loadRecording(audioAssetId),
+      isStillAvailable: () => _recordings.any(
+        (recording) => recording.audioAssetId == audioAssetId,
+      ),
+    );
+  }
+
+  Future<void> deleteRecording(String audioAssetId) async {
+    final client = mediaClient;
+    if (client == null ||
+        _disposed ||
+        _deletingAudioAssetId != null ||
+        !_recordings.any(
+          (recording) => recording.audioAssetId == audioAssetId,
+        )) {
+      return;
+    }
+    final targetKey = _recordingMediaKey(audioAssetId);
+    if (_playingMediaKey == targetKey || _loadingMediaKey == targetKey) {
+      final pendingPlayback = _mediaOperation;
+      await stopPracticeAudio();
+      await pendingPlayback;
+      try {
+        await audioPlayer?.stop();
+      } catch (_) {
+        // The generation fence already prevents a late playback presentation.
+      }
+    }
+    final epoch = _epoch;
+    _deletingAudioAssetId = audioAssetId;
+    _mediaErrorMessage = null;
+    notifyListeners();
+    try {
+      await client.deleteRecording(audioAssetId);
+      if (!_isCurrent(epoch)) {
+        return;
+      }
+      _recordings = [
+        for (final recording in _recordings)
+          if (recording.audioAssetId != audioAssetId) recording,
+      ];
+      _mediaErrorMessage = null;
+    } on AgentClientOperationCancelled {
+      // Account cleanup already removed the private presentation.
+    } catch (error) {
+      if (_isCurrent(epoch)) {
+        _mediaErrorMessage = _mediaFailureMessage(error, action: '删除录音');
+        if (error is AgentClientException &&
+            error.kind == AgentClientFailureKind.authenticationRequired) {
+          await _clearPlayerAfterAuthenticationFailure();
+        }
+      }
+    } finally {
+      if (_isCurrent(epoch) && _deletingAudioAssetId == audioAssetId) {
+        _deletingAudioAssetId = null;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> stopPracticeAudio({bool notify = true}) async {
+    _mediaGeneration++;
+    _playingMediaKey = null;
+    _loadingMediaKey = null;
+    if (notify && !_disposed) {
+      notifyListeners();
+    }
+    try {
+      await audioPlayer?.stop();
+    } catch (_) {
+      // The private UI is already cleared; native cleanup remains best effort.
+    }
+  }
+
+  Future<void> _togglePracticeMedia({
+    required String key,
+    required Future<Uint8List> Function(PracticeMediaClient client) load,
+    required bool Function() isStillAvailable,
+  }) async {
+    final client = mediaClient;
+    final player = audioPlayer;
+    if (client == null ||
+        player == null ||
+        _disposed ||
+        !canUsePracticeAudio ||
+        _loadingMediaKey != null ||
+        _mediaOperation != null) {
+      return;
+    }
+    if (_playingMediaKey == key) {
+      await stopPracticeAudio();
+      return;
+    }
+    await stopPracticeAudio();
+    final generation = ++_mediaGeneration;
+    _loadingMediaKey = key;
+    _mediaErrorMessage = null;
+    notifyListeners();
+    final operation = _loadAndPlayPracticeMedia(
+      generation: generation,
+      key: key,
+      client: client,
+      player: player,
+      load: load,
+      isStillAvailable: isStillAvailable,
+    );
+    _mediaOperation = operation;
+    try {
+      await operation;
+    } finally {
+      if (identical(_mediaOperation, operation)) {
+        _mediaOperation = null;
+      }
+    }
+  }
+
+  Future<void> _loadAndPlayPracticeMedia({
+    required int generation,
+    required String key,
+    required PracticeMediaClient client,
+    required PracticeAudioPlayer player,
+    required Future<Uint8List> Function(PracticeMediaClient client) load,
+    required bool Function() isStillAvailable,
+  }) async {
+    Uint8List? bytes;
+    try {
+      bytes = await load(client);
+      if (!_isCurrentMedia(generation)) {
+        return;
+      }
+      if (!isStillAvailable()) {
+        if (_loadingMediaKey == key) {
+          _loadingMediaKey = null;
+        }
+        return;
+      }
+      await player.playWav(bytes);
+      if (!_isCurrentMedia(generation)) {
+        await player.stop();
+        return;
+      }
+      if (!isStillAvailable()) {
+        if (_loadingMediaKey == key) {
+          _loadingMediaKey = null;
+        }
+        await player.stop();
+        return;
+      }
+      _loadingMediaKey = null;
+      _playingMediaKey = key;
+      _mediaErrorMessage = null;
+    } on AgentClientOperationCancelled {
+      // Account cleanup already removed the private presentation.
+    } on PracticeAudioPlaybackInterruptedException {
+      if (_isCurrentMedia(generation)) {
+        _loadingMediaKey = null;
+        _playingMediaKey = null;
+      }
+    } catch (error) {
+      if (_isCurrentMedia(generation)) {
+        _loadingMediaKey = null;
+        _playingMediaKey = null;
+        _mediaErrorMessage = _mediaFailureMessage(error, action: '播放音频');
+        if (error is AgentClientException &&
+            error.kind == AgentClientFailureKind.authenticationRequired) {
+          await _clearPlayerAfterAuthenticationFailure();
+        }
+      }
+    } finally {
+      if (bytes != null) {
+        try {
+          bytes.fillRange(0, bytes.length, 0);
+        } catch (_) {
+          // The production media client always returns an owned byte buffer.
+        }
+      }
+      if (_isCurrentMedia(generation)) {
+        notifyListeners();
+      }
+    }
+  }
+
   Future<void> startRecording() {
     if (!hasActivePractice ||
         isBusy ||
@@ -330,6 +595,7 @@ final class AgentController extends ChangeNotifier {
 
   Future<void> _startRecorder(int generation) async {
     try {
+      await stopPracticeAudio();
       await recorder.start();
       if (generation != _practiceGeneration || _disposed) {
         await recorder.discardCurrent();
@@ -491,6 +757,7 @@ final class AgentController extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
     try {
+      await stopPracticeAudio();
       final confirmation = await practice.confirm(
         sessionId: sessionId,
         questionId: question.id,
@@ -510,6 +777,19 @@ final class AgentController extends ChangeNotifier {
       _turnLimit = confirmation.turnLimit;
       _currentQuestion = confirmation.nextQuestion;
       _review = confirmation.review;
+      final audioAssetId = confirmation.audioAssetId;
+      if (audioAssetId != null &&
+          !_recordings.any(
+            (recording) => recording.audioAssetId == audioAssetId,
+          )) {
+        _recordings = [
+          ..._recordings,
+          PracticeRecordingReference(
+            audioAssetId: audioAssetId,
+            effectiveTurn: confirmation.completedTurns,
+          ),
+        ];
+      }
       _candidate = null;
       _activeConfirmationId = null;
       _appendMessages([
@@ -546,8 +826,10 @@ final class AgentController extends ChangeNotifier {
   Future<void> retryReview() async {
     final practice = practiceClient;
     final threadId = _threadId;
+    final expectedSessionId = _practiceSessionId;
     if (practice == null ||
         threadId == null ||
+        expectedSessionId == null ||
         !_isSessionCompleted ||
         _review != null ||
         _recordingState != PracticeRecordingState.reviewFailed) {
@@ -568,7 +850,10 @@ final class AgentController extends ChangeNotifier {
       if (snapshot == null) {
         throw StateError('Practice Session is not restorable.');
       }
-      _applyPracticeSnapshot(snapshot);
+      if (snapshot.sessionId != expectedSessionId) {
+        throw StateError('Practice Session identity changed during Review.');
+      }
+      _applyPracticeSnapshot(snapshot, preserveKnownRecordings: true);
       if (_review == null) {
         throw StateError('Review is not ready.');
       }
@@ -603,6 +888,12 @@ final class AgentController extends ChangeNotifier {
     _retry = null;
     _completedTurns = 0;
     _turnLimit = 0;
+    _recordings = const <PracticeRecordingReference>[];
+    _playingMediaKey = null;
+    _loadingMediaKey = null;
+    _deletingAudioAssetId = null;
+    _mediaErrorMessage = null;
+    _mediaGeneration++;
     _initialized = false;
     _busy = false;
     if (!_disposed) {
@@ -618,11 +909,19 @@ final class AgentController extends ChangeNotifier {
         await _stopRecordingFuture;
         await recorder.clearAccountState();
       }),
+      if (mediaClient case final media?)
+        Future<void>.sync(media.clearAccountState),
+      if (audioPlayer case final player?)
+        Future<void>.sync(player.clearAccountState),
     ]);
     _accountCleanupFuture = cleanup;
     try {
       await cleanup;
     } finally {
+      await _mediaOperation;
+      // A second strict cleanup pass fences a late native play completion.
+      // Failure must remain visible to Auth so account switching stays closed.
+      await audioPlayer?.clearAccountState();
       if (identical(_accountCleanupFuture, cleanup)) {
         _accountCleanupFuture = null;
       }
@@ -632,12 +931,32 @@ final class AgentController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    if (mediaClient != null) {
+      WidgetsBinding.instance.removeObserver(this);
+    }
     _cancelRecordingLimit();
     _epoch++;
     _practiceGeneration++;
+    _mediaGeneration++;
     _initializationFuture = null;
     unawaited(recorder.discardCurrent());
+    unawaited(_mediaCompletionSubscription?.cancel());
+    unawaited(mediaClient?.dispose());
+    unawaited(audioPlayer?.dispose());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed ||
+        _disposed ||
+        !supportsPracticeMedia ||
+        (_playingMediaKey == null &&
+            _loadingMediaKey == null &&
+            _mediaOperation == null)) {
+      return;
+    }
+    unawaited(stopPracticeAudio());
   }
 
   Future<void> _ensureInitialized() async {
@@ -646,11 +965,20 @@ final class AgentController extends ChangeNotifier {
     }
   }
 
-  void _applyPracticeSnapshot(PracticeSessionSnapshot? snapshot) {
+  void _applyPracticeSnapshot(
+    PracticeSessionSnapshot? snapshot, {
+    bool preserveKnownRecordings = false,
+  }) {
     _cancelRecordingLimit();
     _practiceGeneration++;
     _candidate = null;
     _activeConfirmationId = null;
+    _playingMediaKey = null;
+    _loadingMediaKey = null;
+    _deletingAudioAssetId = null;
+    _mediaErrorMessage = null;
+    _mediaGeneration++;
+    unawaited(audioPlayer?.stop());
     if (snapshot == null) {
       _practiceSessionId = null;
       _currentQuestion = null;
@@ -658,16 +986,31 @@ final class AgentController extends ChangeNotifier {
       _completedTurns = 0;
       _turnLimit = 0;
       _review = null;
+      _recordings = const <PracticeRecordingReference>[];
       _recordingState = PracticeRecordingState.idle;
       return;
     }
     _validatePracticeSnapshot(snapshot);
+    final mayPreserveKnownRecordings =
+        preserveKnownRecordings && snapshot.sessionId == _practiceSessionId;
     _practiceSessionId = snapshot.sessionId;
     _currentQuestion = snapshot.currentQuestion;
     _activeMatter = snapshot.matter;
     _completedTurns = snapshot.completedTurns;
     _turnLimit = snapshot.turnLimit;
     _review = snapshot.review;
+    final currentTurn = snapshot.currentTurn;
+    final audioAssetId = currentTurn?.audioAssetId;
+    if (!mayPreserveKnownRecordings) {
+      _recordings = audioAssetId == null
+          ? const <PracticeRecordingReference>[]
+          : <PracticeRecordingReference>[
+              PracticeRecordingReference(
+                audioAssetId: audioAssetId,
+                effectiveTurn: currentTurn!.effectiveTurns,
+              ),
+            ];
+    }
     _appendMessages([?snapshot.currentQuestion?.presentation]);
     _recordingState = snapshot.sessionCompleted
         ? snapshot.review == null
@@ -688,6 +1031,51 @@ final class AgentController extends ChangeNotifier {
   }
 
   bool _isCurrent(int epoch) => !_disposed && epoch == _epoch;
+
+  bool _isCurrentMedia(int generation) {
+    return !_disposed && generation == _mediaGeneration;
+  }
+
+  void _handleMediaCompletion() {
+    if (_disposed || _playingMediaKey == null) {
+      return;
+    }
+    _playingMediaKey = null;
+    notifyListeners();
+  }
+
+  Future<void> _clearPlayerAfterAuthenticationFailure() async {
+    _mediaGeneration++;
+    _playingMediaKey = null;
+    _loadingMediaKey = null;
+    _deletingAudioAssetId = null;
+    try {
+      await audioPlayer?.clearAccountState();
+    } catch (_) {
+      // Authentication invalidation will repeat private-state cleanup.
+    }
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  String _mediaFailureMessage(Object error, {required String action}) {
+    if (error is AgentClientException) {
+      if (error.kind == AgentClientFailureKind.notFound) {
+        return '$action失败：录音不存在或已删除。';
+      }
+      if (error.kind == AgentClientFailureKind.authenticationRequired) {
+        return '登录状态已失效，请重新登录。';
+      }
+      if (error.kind == AgentClientFailureKind.network) {
+        return '$action失败：请检查网络后重试。';
+      }
+      if (error.kind == AgentClientFailureKind.rateLimited) {
+        return '$action过于频繁，请稍后重试。';
+      }
+    }
+    return '$action暂时不可用，请稍后重试。';
+  }
 
   void _cancelRecordingLimit() {
     _recordingLimitTimer?.cancel();
@@ -732,6 +1120,11 @@ final class AgentController extends ChangeNotifier {
     if (error is AgentClientException) {
       if (_isFreeQuotaExhausted(error)) {
         return '今日免费练习额度已用完，这一轮尚未确认。';
+      }
+      if (error.kind == AgentClientFailureKind.conflict &&
+          error.errorCode == 'resource_conflict' &&
+          !error.retryable) {
+        return '录音已失效，请重新录音。';
       }
       if (error.kind == AgentClientFailureKind.network) {
         return '网络连接不稳定，这一轮尚未确认，请重试。';
@@ -816,7 +1209,12 @@ final class AgentController extends ChangeNotifier {
             (snapshot.completedTurns == snapshot.turnLimit) ||
         (!snapshot.sessionCompleted && snapshot.currentQuestion == null) ||
         (snapshot.currentQuestion != null &&
-            snapshot.currentQuestion!.sessionId != snapshot.sessionId)) {
+            snapshot.currentQuestion!.sessionId != snapshot.sessionId) ||
+        (snapshot.currentTurn?.audioAssetId != null &&
+            (snapshot.currentTurn!.audioAssetId!.trim().isEmpty ||
+                snapshot.currentTurn!.audioAssetId!.length > 128 ||
+                snapshot.currentTurn!.audioAssetId!.trim() !=
+                    snapshot.currentTurn!.audioAssetId))) {
       throw StateError('Invalid Practice Session snapshot.');
     }
   }
@@ -850,7 +1248,12 @@ final class AgentController extends ChangeNotifier {
             (confirmation.completedTurns == confirmation.turnLimit) ||
         (!confirmation.sessionCompleted && confirmation.nextQuestion == null) ||
         (confirmation.nextQuestion != null &&
-            confirmation.nextQuestion!.sessionId != confirmation.sessionId)) {
+            confirmation.nextQuestion!.sessionId != confirmation.sessionId) ||
+        (confirmation.audioAssetId != null &&
+            (confirmation.audioAssetId!.trim().isEmpty ||
+                confirmation.audioAssetId!.length > 128 ||
+                confirmation.audioAssetId!.trim() !=
+                    confirmation.audioAssetId))) {
       throw StateError('Invalid Practice Turn confirmation.');
     }
   }
@@ -900,4 +1303,12 @@ String _createSecureClientId(String scope) {
     );
   }
   return buffer.toString();
+}
+
+String? _questionMediaKey(String? questionId) {
+  return questionId == null ? null : 'question:$questionId';
+}
+
+String _recordingMediaKey(String audioAssetId) {
+  return 'recording:$audioAssetId';
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -86,6 +87,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     if (_selectedIndex == index) {
       return;
     }
+    unawaited(widget.agentController.stopPracticeAudio());
     setState(() => _selectedIndex = index);
   }
 

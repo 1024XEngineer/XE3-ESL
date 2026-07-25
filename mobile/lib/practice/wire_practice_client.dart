@@ -379,7 +379,7 @@ final class WirePracticeClient implements PracticeClient {
     }
     String? errorCode;
     String? correlationId;
-    bool? serverRetryable;
+    late final bool serverRetryable;
     try {
       final root = _exactObject(
         jsonDecode(response.body),
@@ -388,15 +388,29 @@ final class WirePracticeClient implements PracticeClient {
       final error = _exactObject(
         root['error'],
         required: const {'code', 'message', 'retryable', 'correlation_id'},
+        optional: const {'details'},
       );
       errorCode = _string(error, 'code', maxLength: 64);
       _string(error, 'message', maxLength: 512);
       serverRetryable = _boolean(error, 'retryable');
       correlationId = _string(error, 'correlation_id', maxLength: 128);
+      if (error['details'] case final details?) {
+        if (details is! List<Object?> || details.length > 32) {
+          throw const FormatException();
+        }
+        for (final value in details) {
+          final detail = _exactObject(
+            value,
+            required: const {'field', 'reason'},
+          );
+          _string(detail, 'field', maxLength: 128);
+          _string(detail, 'reason', maxLength: 256);
+        }
+      }
     } catch (_) {
-      errorCode = null;
-      correlationId = null;
-      serverRetryable = null;
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+      );
     }
     final retryAfter = _retryAfter(response.headers);
     throw AgentClientException(
@@ -413,11 +427,7 @@ final class WirePracticeClient implements PracticeClient {
       statusCode: response.statusCode,
       errorCode: errorCode,
       correlationId: correlationId,
-      retryable:
-          serverRetryable == true ||
-          retryAfter != null ||
-          response.statusCode == HttpStatus.tooManyRequests ||
-          response.statusCode >= 500,
+      retryable: serverRetryable,
       retryAfter: retryAfter,
     );
   }
@@ -625,6 +635,7 @@ PracticeTurnConfirmation _confirmationFromState(
     sessionCompleted: state.sessionCompleted,
     nextQuestion: state.currentQuestion,
     review: state.review,
+    audioAssetId: turn.audioAssetId,
   );
 }
 
@@ -704,9 +715,12 @@ PracticeTurnSnapshot _decodeTurn(Map<String, Object?> value) {
     },
     optional: const {'review_id', 'audio_asset_id'},
   );
-  if (root['audio_asset_id'] != null) {
-    _string(root, 'audio_asset_id');
+  if (root.containsKey('audio_asset_id') && root['audio_asset_id'] == null) {
+    throw _invalidResponse();
   }
+  final audioAssetId = root.containsKey('audio_asset_id')
+      ? _string(root, 'audio_asset_id', maxLength: 128)
+      : null;
   final turn = PracticeTurnSnapshot(
     id: _string(root, 'turn_id'),
     sessionId: _string(root, 'practice_session_id'),
@@ -718,6 +732,7 @@ PracticeTurnSnapshot _decodeTurn(Map<String, Object?> value) {
     effectiveTurns: _integer(root, 'effective_turns'),
     sessionCompleted: _boolean(root, 'session_completed'),
     reviewId: root.containsKey('review_id') ? _string(root, 'review_id') : null,
+    audioAssetId: audioAssetId,
   );
   if (turn.evidenceVersion < 1 || turn.effectiveTurns < 1) {
     throw _invalidResponse();

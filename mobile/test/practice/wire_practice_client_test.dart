@@ -318,54 +318,102 @@ void main() {
     },
   );
 
-  test(
-    'accepts a nullable future audio asset without making it required',
-    () async {
-      final state = <String, Object?>{
-        ..._sessionJson(),
-        'session_version': 2,
+  test('rejects an explicit null optional audio asset', () async {
+    final state = <String, Object?>{
+      ..._sessionJson(),
+      'session_version': 2,
+      'effective_turns': 1,
+      'current_question': {
+        'question_id': _nextQuestionId,
+        'practice_session_id': _sessionId,
+        'content': 'What trade-off did you make?',
+        'speaker_participant_id': 'participant-agent',
+        'addressee_participant_ids': ['participant-user'],
+        'speech_path': '/v1/questions/$_nextQuestionId/speech',
+      },
+      'current_turn': {
+        'turn_id': _turnId,
+        'practice_session_id': _sessionId,
+        'question_id': _questionId,
+        'respondent_participant_id': 'participant-user',
+        'candidate_id': _candidateId,
+        'answer_text': 'I led the migration safely.',
+        'evidence_version': 1,
         'effective_turns': 1,
-        'current_question': {
-          'question_id': _nextQuestionId,
-          'practice_session_id': _sessionId,
-          'content': 'What trade-off did you make?',
-          'speaker_participant_id': 'participant-agent',
-          'addressee_participant_ids': ['participant-user'],
-          'speech_path': '/v1/questions/$_nextQuestionId/speech',
-        },
-        'current_turn': {
-          'turn_id': _turnId,
-          'practice_session_id': _sessionId,
-          'question_id': _questionId,
-          'respondent_participant_id': 'participant-user',
-          'candidate_id': _candidateId,
-          'answer_text': 'I led the migration safely.',
-          'evidence_version': 1,
-          'effective_turns': 1,
-          'session_completed': false,
-          'audio_asset_id': null,
-        },
-      };
-      final transport = _Transport([
-        _Step(
-          method: 'POST',
-          path: '/v1/transcription-candidates/$_candidateId/confirmations',
-          response: _json(HttpStatus.ok, state),
-        ),
-      ]);
+        'session_completed': false,
+        'audio_asset_id': null,
+      },
+    };
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path: '/v1/transcription-candidates/$_candidateId/confirmations',
+        response: _json(HttpStatus.ok, state),
+      ),
+    ]);
 
-      final confirmation = await _client(transport).confirm(
+    await expectLater(
+      _client(transport).confirm(
         sessionId: _sessionId,
         questionId: _questionId,
         candidateId: _candidateId,
         idempotencyKey: 'confirm-operation',
-      );
+      ),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
+    );
+    transport.expectDone();
+  });
 
-      expect(confirmation.completedTurns, 1);
-      expect(confirmation.review, isNull);
-      transport.expectDone();
-    },
-  );
+  test('retains a valid optional audio asset', () async {
+    final state = <String, Object?>{
+      ..._sessionJson(),
+      'session_version': 2,
+      'effective_turns': 1,
+      'current_question': {
+        'question_id': _nextQuestionId,
+        'practice_session_id': _sessionId,
+        'content': 'What trade-off did you make?',
+        'speaker_participant_id': 'participant-agent',
+        'addressee_participant_ids': ['participant-user'],
+        'speech_path': '/v1/questions/$_nextQuestionId/speech',
+      },
+      'current_turn': {
+        'turn_id': _turnId,
+        'practice_session_id': _sessionId,
+        'question_id': _questionId,
+        'respondent_participant_id': 'participant-user',
+        'candidate_id': _candidateId,
+        'answer_text': 'I led the migration safely.',
+        'evidence_version': 1,
+        'effective_turns': 1,
+        'session_completed': false,
+        'audio_asset_id': 'audio-asset-1',
+      },
+    };
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path: '/v1/transcription-candidates/$_candidateId/confirmations',
+        response: _json(HttpStatus.ok, state),
+      ),
+    ]);
+
+    final confirmation = await _client(transport).confirm(
+      sessionId: _sessionId,
+      questionId: _questionId,
+      candidateId: _candidateId,
+      idempotencyKey: 'confirm-operation',
+    );
+
+    expect(confirmation.audioAssetId, 'audio-asset-1');
+    transport.expectDone();
+  });
 
   test('does not accept a noncanonical success status', () async {
     final transport = _Transport([
@@ -386,7 +434,7 @@ void main() {
         isA<AgentClientException>().having(
           (error) => error.kind,
           'kind',
-          AgentClientFailureKind.unexpected,
+          AgentClientFailureKind.invalidResponse,
         ),
       ),
     );
@@ -574,6 +622,63 @@ void main() {
               'retryAfter',
               const Duration(seconds: 7),
             ),
+      ),
+    );
+  });
+
+  test('explicit retryable false overrides 429 and Retry-After', () async {
+    final transport = _Transport([
+      _Step(
+        method: 'GET',
+        path: '/v1/agent-threads/$_threadId/voice-practice-session',
+        response: _json(HttpStatus.tooManyRequests, {
+          'error': {
+            'code': 'quota_exhausted',
+            'message': 'Quota exhausted.',
+            'retryable': false,
+            'correlation_id': 'corr-88',
+          },
+        }).copyWith(headers: const {'Retry-After': '7'}),
+      ),
+    ]);
+
+    await expectLater(
+      _client(transport).restorePractice(threadId: _threadId),
+      throwsA(
+        isA<AgentClientException>()
+            .having((error) => error.retryable, 'retryable', isFalse)
+            .having(
+              (error) => error.retryAfter,
+              'retryAfter',
+              const Duration(seconds: 7),
+            ),
+      ),
+    );
+  });
+
+  test('missing retryable violates the frozen Error DTO', () async {
+    final transport = _Transport([
+      _Step(
+        method: 'GET',
+        path: '/v1/agent-threads/$_threadId/voice-practice-session',
+        response: _json(HttpStatus.tooManyRequests, {
+          'error': {
+            'code': 'voice_rate_limited',
+            'message': 'Retry later.',
+            'correlation_id': 'corr-88',
+          },
+        }),
+      ),
+    ]);
+
+    await expectLater(
+      _client(transport).restorePractice(threadId: _threadId),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
       ),
     );
   });

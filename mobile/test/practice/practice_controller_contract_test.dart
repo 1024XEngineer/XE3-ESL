@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,7 +7,9 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/practice/practice.dart';
+import 'package:speakup/practice/practice_audio_player.dart';
 import 'package:speakup/practice/practice_client.dart';
+import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
 
@@ -66,6 +69,31 @@ void main() {
     },
   );
 
+  test('same Session retains every server-issued recording handle', () async {
+    final practice = _TwoTurnPracticeClient(includeAudioAssets: true);
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+      mediaClient: _NoopMediaClient(),
+      audioPlayer: _NoopAudioPlayer(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+
+    for (var turn = 0; turn < 2; turn++) {
+      await controller.startRecording();
+      await controller.stopRecording();
+      await controller.confirmTranscript();
+    }
+
+    expect(controller.recordings.map((recording) => recording.audioAssetId), [
+      'audio-1',
+      'audio-2',
+    ]);
+  });
+
   test('confirm retry reuses one Idempotency-Key', () async {
     final practice = _TwoTurnPracticeClient()..failConfirmOnce = true;
     final controller = AgentController(
@@ -88,6 +116,101 @@ void main() {
 
     expect(practice.confirmationKeys, ['confirm-stable', 'confirm-stable']);
   });
+
+  test(
+    'pending question audio is fenced when confirmation advances the turn',
+    () async {
+      final practice = _TwoTurnPracticeClient();
+      final pendingSpeech = Completer<Uint8List>();
+      final media = _QuestionMediaClient(pendingSpeech: pendingSpeech);
+      final player = _TrackingAudioPlayer();
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+        mediaClient: media,
+        audioPlayer: player,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      await controller.startRecording();
+      await controller.stopRecording();
+
+      final playback = controller.toggleQuestionAudio();
+      await media.questionStarted.future;
+      await controller.confirmTranscript();
+      expect(controller.questionId, 'question-2');
+
+      pendingSpeech.complete(_wave());
+      await playback;
+
+      expect(player.playCount, 0);
+      expect(controller.isQuestionAudioLoading, isFalse);
+      expect(controller.isQuestionAudioPlaying, isFalse);
+    },
+  );
+
+  test(
+    'playing question audio stops before confirmation changes question',
+    () async {
+      final practice = _TwoTurnPracticeClient();
+      final media = _QuestionMediaClient();
+      final player = _TrackingAudioPlayer();
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+        mediaClient: media,
+        audioPlayer: player,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      await controller.startRecording();
+      await controller.stopRecording();
+      await controller.toggleQuestionAudio();
+      expect(controller.isQuestionAudioPlaying, isTrue);
+      final stopsBeforeConfirmation = player.stopCount;
+
+      await controller.confirmTranscript();
+
+      expect(controller.questionId, 'question-2');
+      expect(player.stopCount, greaterThan(stopsBeforeConfirmation));
+      expect(controller.isQuestionAudioPlaying, isFalse);
+    },
+  );
+
+  test(
+    'non-retryable recording conflict directs the user to rerecord',
+    () async {
+      final practice = _TwoTurnPracticeClient()
+        ..confirmFailure = const AgentClientException(
+          kind: AgentClientFailureKind.conflict,
+          errorCode: 'resource_conflict',
+          retryable: false,
+        );
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+      );
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      await controller.startRecording();
+      await controller.stopRecording();
+
+      await controller.confirmTranscript();
+
+      expect(controller.errorMessage, '录音已失效，请重新录音。');
+      expect(
+        controller.recordingState,
+        PracticeRecordingState.awaitingConfirmation,
+      );
+      controller.rerecord();
+      expect(controller.recordingState, PracticeRecordingState.idle);
+    },
+  );
 
   test(
     'retryReview returns to reviewFailed when restore has no state',
@@ -202,6 +325,122 @@ void main() {
       PracticeRecordingState.awaitingConfirmation,
     );
   });
+
+  test(
+    'same-Session Review retry does not downgrade known recording handles',
+    () async {
+      final practice = _TwoTurnPracticeClient(includeAudioAssets: true)
+        ..omitReview = true;
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+        mediaClient: _NoopMediaClient(),
+        audioPlayer: _NoopAudioPlayer(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      for (var turn = 0; turn < 2; turn++) {
+        await controller.startRecording();
+        await controller.stopRecording();
+        await controller.confirmTranscript();
+      }
+      practice.restoreResult = PracticeSessionSnapshot(
+        sessionId: _sessionId,
+        matter: AgentMatter(id: 'matter-1', scene: agentScenes.first),
+        completedTurns: 2,
+        turnLimit: 2,
+        sessionCompleted: true,
+        currentTurn: const PracticeTurnSnapshot(
+          id: 'turn-2',
+          sessionId: _sessionId,
+          questionId: 'question-2',
+          respondentParticipantId: 'participant-user',
+          candidateId: 'candidate-2',
+          answerText: 'Answer 2',
+          evidenceVersion: 2,
+          effectiveTurns: 2,
+          sessionCompleted: true,
+          reviewId: _reviewId,
+          audioAssetId: 'audio-2',
+        ),
+        review: const AgentReview(
+          id: _reviewId,
+          title: 'Review',
+          summary: 'Summary',
+          strength: 'Strength',
+          nextFocus: 'Next focus',
+        ),
+      );
+
+      await controller.retryReview();
+
+      expect(controller.recordings.map((recording) => recording.audioAssetId), [
+        'audio-1',
+        'audio-2',
+      ]);
+    },
+  );
+
+  test(
+    'Review retry rejects a different Session without mixing recordings',
+    () async {
+      final practice = _TwoTurnPracticeClient(includeAudioAssets: true)
+        ..omitReview = true;
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+        mediaClient: _NoopMediaClient(),
+        audioPlayer: _NoopAudioPlayer(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      for (var turn = 0; turn < 2; turn++) {
+        await controller.startRecording();
+        await controller.stopRecording();
+        await controller.confirmTranscript();
+      }
+      practice.restoreResult = PracticeSessionSnapshot(
+        sessionId: 'different-session',
+        matter: AgentMatter(id: 'matter-foreign', scene: agentScenes.first),
+        completedTurns: 1,
+        turnLimit: 1,
+        sessionCompleted: true,
+        currentTurn: const PracticeTurnSnapshot(
+          id: 'turn-foreign',
+          sessionId: 'different-session',
+          questionId: 'question-foreign',
+          respondentParticipantId: 'participant-user',
+          candidateId: 'candidate-foreign',
+          answerText: 'Foreign answer',
+          evidenceVersion: 1,
+          effectiveTurns: 1,
+          sessionCompleted: true,
+          reviewId: 'review-foreign',
+          audioAssetId: 'audio-foreign',
+        ),
+        review: const AgentReview(
+          id: 'review-foreign',
+          title: 'Foreign Review',
+          summary: 'Foreign',
+          strength: 'Foreign',
+          nextFocus: 'Foreign',
+        ),
+      );
+
+      await controller.retryReview();
+
+      expect(controller.practiceSessionId, _sessionId);
+      expect(controller.recordingState, PracticeRecordingState.reviewFailed);
+      expect(controller.recordings.map((recording) => recording.audioAssetId), [
+        'audio-1',
+        'audio-2',
+      ]);
+    },
+  );
 
   test('logout cancels the pending recording deadline', () async {
     Timer? deadline;
@@ -381,6 +620,9 @@ void main() {
 }
 
 final class _TwoTurnPracticeClient implements PracticeClient {
+  _TwoTurnPracticeClient({this.includeAudioAssets = false});
+
+  final bool includeAudioAssets;
   int completed = 0;
   int cleanupCount = 0;
   final List<String> confirmedQuestionIds = [];
@@ -390,6 +632,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   Object? transcribeFailure;
   Object? confirmFailure;
   Object? restoreFailure;
+  PracticeSessionSnapshot? restoreResult;
   int transcribeCount = 0;
 
   @override
@@ -406,7 +649,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     if (restoreFailure case final failure?) {
       throw failure;
     }
-    return null;
+    return restoreResult;
   }
 
   @override
@@ -426,6 +669,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
           id: 'question-1',
           sessionId: _sessionId,
           text: 'First question',
+          speechPath: '/v1/voice-questions/question-1/speech',
         ),
       ),
     );
@@ -471,6 +715,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
             id: 'question-2',
             sessionId: _sessionId,
             text: 'Second question',
+            speechPath: '/v1/voice-questions/question-2/speech',
           );
     return PracticeTurnConfirmation(
       turnId: 'turn-$completed',
@@ -495,8 +740,104 @@ final class _TwoTurnPracticeClient implements PracticeClient {
               nextFocus: 'Next focus',
             )
           : null,
+      audioAssetId: includeAudioAssets ? 'audio-$completed' : null,
     );
   }
+}
+
+final class _NoopMediaClient implements PracticeMediaClient {
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> deleteRecording(String audioAssetId) async {}
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<Uint8List> loadQuestionSpeech(String speechPath) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Uint8List> loadRecording(String audioAssetId) {
+    throw UnimplementedError();
+  }
+}
+
+final class _NoopAudioPlayer implements PracticeAudioPlayer {
+  @override
+  Stream<void> get onComplete => const Stream<void>.empty();
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<void> playWav(Uint8List bytes) async {}
+
+  @override
+  Future<void> stop() async {}
+}
+
+final class _QuestionMediaClient implements PracticeMediaClient {
+  _QuestionMediaClient({this.pendingSpeech});
+
+  final Completer<Uint8List>? pendingSpeech;
+  final Completer<void> questionStarted = Completer<void>();
+
+  @override
+  Future<Uint8List> loadQuestionSpeech(String speechPath) async {
+    if (!questionStarted.isCompleted) {
+      questionStarted.complete();
+    }
+    return pendingSpeech == null ? _wave() : await pendingSpeech!.future;
+  }
+
+  @override
+  Future<Uint8List> loadRecording(String audioAssetId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> deleteRecording(String audioAssetId) async {}
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() async {}
+}
+
+final class _TrackingAudioPlayer implements PracticeAudioPlayer {
+  final StreamController<void> _completions =
+      StreamController<void>.broadcast();
+  int playCount = 0;
+  int stopCount = 0;
+
+  @override
+  Stream<void> get onComplete => _completions.stream;
+
+  @override
+  Future<void> playWav(Uint8List bytes) async {
+    playCount++;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCount++;
+  }
+
+  @override
+  Future<void> clearAccountState() async {
+    stopCount++;
+  }
+
+  @override
+  Future<void> dispose() => _completions.close();
 }
 
 final class _PermissionDeniedRecorder implements PracticeRecorder {
@@ -640,3 +981,10 @@ final class _Recorder implements PracticeRecorder {
 
 const _sessionId = 'practice-session-server';
 const _reviewId = 'review-server';
+
+Uint8List _wave() {
+  final bytes = Uint8List(44);
+  bytes.setAll(0, const [0x52, 0x49, 0x46, 0x46]);
+  bytes.setAll(8, const [0x57, 0x41, 0x56, 0x45]);
+  return bytes;
+}

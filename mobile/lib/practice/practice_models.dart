@@ -67,6 +67,7 @@ final class PracticeTurnSnapshot {
     required this.effectiveTurns,
     required this.sessionCompleted,
     this.reviewId,
+    this.audioAssetId,
   });
 
   final String id;
@@ -79,12 +80,28 @@ final class PracticeTurnSnapshot {
   final int effectiveTurns;
   final bool sessionCompleted;
   final String? reviewId;
+  final String? audioAssetId;
 }
 
 final class PracticeStartResult {
   const PracticeStartResult({required this.snapshot});
 
   final PracticeSessionSnapshot snapshot;
+}
+
+/// A server-issued handle for one confirmed recording in the active Session.
+///
+/// Flutter may retain handles learned during the current in-memory Session.
+/// After restore, only the latest handle present in the server projection is
+/// available; the client never invents a recording history.
+final class PracticeRecordingReference {
+  const PracticeRecordingReference({
+    required this.audioAssetId,
+    required this.effectiveTurn,
+  });
+
+  final String audioAssetId;
+  final int effectiveTurn;
 }
 
 /// Candidate ASR text. It is not an effective Turn until explicitly confirmed.
@@ -122,6 +139,7 @@ final class PracticeTurnConfirmation {
     required this.sessionCompleted,
     this.nextQuestion,
     this.review,
+    this.audioAssetId,
   });
 
   final String turnId;
@@ -134,6 +152,7 @@ final class PracticeTurnConfirmation {
   final bool sessionCompleted;
   final PracticeQuestion? nextQuestion;
   final AgentReview? review;
+  final String? audioAssetId;
 }
 
 final class PracticeTranscriptionRequest {

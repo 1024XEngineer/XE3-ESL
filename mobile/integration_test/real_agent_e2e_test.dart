@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
 import 'package:speakup/practice/practice_recording.dart';
@@ -23,6 +25,9 @@ void main() {
     );
     const voiceWavBase64 = String.fromEnvironment('SPEAKUP_E2E_WAV_BASE64');
     const captureHoldMs = int.fromEnvironment('SPEAKUP_E2E_CAPTURE_HOLD_MS');
+    const validateAudioMedia = bool.fromEnvironment(
+      'SPEAKUP_E2E_VALIDATE_AUDIO_MEDIA',
+    );
     if (email.isEmpty || password.runes.length < 15) {
       fail('A disposable E2E account with a valid password is required.');
     }
@@ -121,7 +126,11 @@ void main() {
     );
     expect(agentScreenshot, isNotEmpty);
 
-    await _completeRealVoicePractice(tester);
+    await _completeRealVoicePractice(
+      tester,
+      controller: dependencies.agentController,
+      validateAudioMedia: validateAudioMedia,
+    );
     final reviewScreenshot = await binding.takeScreenshot(
       'ios-real-voice-review-e2e',
     );
@@ -137,7 +146,11 @@ void main() {
   });
 }
 
-Future<void> _completeRealVoicePractice(WidgetTester tester) async {
+Future<void> _completeRealVoicePractice(
+  WidgetTester tester, {
+  required AgentController controller,
+  required bool validateAudioMedia,
+}) async {
   await tester.tap(find.byKey(const Key('primary-tab-scenes')));
   await _waitUntil(
     tester,
@@ -165,6 +178,9 @@ Future<void> _completeRealVoicePractice(WidgetTester tester) async {
   );
 
   for (var turn = 1; turn <= 3; turn++) {
+    if (validateAudioMedia) {
+      await _validateQuestionTts(controller);
+    }
     await tester.tap(find.byKey(const Key('practice-record')));
     await _waitUntil(
       tester,
@@ -213,11 +229,65 @@ Future<void> _completeRealVoicePractice(WidgetTester tester) async {
     } else {
       await _waitForRealReview(tester);
     }
+    if (validateAudioMedia) {
+      expect(controller.recordings, hasLength(turn));
+      await _validateRecordingPlayback(
+        controller,
+        controller.recordings.last.audioAssetId,
+      );
+    }
   }
 
   expect(find.byKey(const Key('practice-page')), findsNothing);
   expect(find.byKey(const Key('review-content')).hitTestable(), findsOneWidget);
   expect(find.byKey(const Key('review-title')).hitTestable(), findsOneWidget);
+  if (validateAudioMedia) {
+    final audioAssetIds = [
+      for (final recording in controller.recordings) recording.audioAssetId,
+    ];
+    expect(audioAssetIds, hasLength(3));
+    expect(audioAssetIds.toSet(), hasLength(3));
+    for (final deletedId in audioAssetIds) {
+      await controller.deleteRecording(deletedId);
+      expect(
+        controller.recordings.any(
+          (recording) => recording.audioAssetId == deletedId,
+        ),
+        isFalse,
+      );
+      await expectLater(
+        controller.mediaClient!.loadRecording(deletedId),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.notFound,
+          ),
+        ),
+      );
+    }
+  }
+}
+
+Future<void> _validateQuestionTts(AgentController controller) async {
+  expect(controller.canPlayQuestionAudio, isTrue);
+  await controller.toggleQuestionAudio();
+  expect(controller.isQuestionAudioLoading, isFalse);
+  expect(controller.mediaErrorMessage, isNull);
+  expect(controller.isQuestionAudioPlaying, isTrue);
+  await controller.stopPracticeAudio();
+}
+
+Future<void> _validateRecordingPlayback(
+  AgentController controller,
+  String audioAssetId,
+) async {
+  expect(audioAssetId, isNotEmpty);
+  await controller.toggleRecordingAudio(audioAssetId);
+  expect(controller.isRecordingAudioLoading(audioAssetId), isFalse);
+  expect(controller.mediaErrorMessage, isNull);
+  expect(controller.isRecordingAudioPlaying(audioAssetId), isTrue);
+  await controller.stopPracticeAudio();
 }
 
 Future<void> _waitForRealReview(WidgetTester tester) async {

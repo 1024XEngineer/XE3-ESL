@@ -11,6 +11,8 @@ import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/session_store.dart';
 import 'package:speakup/main.dart' as production;
+import 'package:speakup/practice/practice_audio_player.dart';
+import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/wire_practice_client.dart';
 
 void main() {
@@ -73,11 +75,20 @@ void main() {
         practiceTransport: _PracticeTransport(),
         sessionStore: _MemorySessionStore('sess_main-wiring'),
       );
+      addTearDown(dependencies.agentController.dispose);
 
       expect(dependencies.agentController.client, isA<WireAgentClient>());
       expect(
         dependencies.agentController.client,
         isNot(isA<FakeAgentClient>()),
+      );
+      expect(
+        dependencies.agentController.mediaClient,
+        isA<WirePracticeMediaClient>(),
+      );
+      expect(
+        dependencies.agentController.audioPlayer,
+        isA<AudioplayersPracticeAudioPlayer>(),
       );
 
       await tester.pumpWidget(

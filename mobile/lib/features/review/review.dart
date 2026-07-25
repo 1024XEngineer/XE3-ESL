@@ -1,9 +1,12 @@
 /// Review module boundary.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/practice/practice_recordings.dart';
 
 class ReviewPage extends StatefulWidget {
   const ReviewPage({
@@ -41,6 +44,7 @@ class _ReviewPageState extends State<ReviewPage> {
   @override
   void dispose() {
     widget.agentController?.removeListener(_rebuild);
+    unawaited(widget.agentController?.stopPracticeAudio(notify: false));
     super.dispose();
   }
 
@@ -92,7 +96,19 @@ class _ReviewPageState extends State<ReviewPage> {
             if (review == null)
               _EmptyReview(practiceAvailable: practiceAvailable)
             else
-              _ReviewContent(review: review),
+              _ReviewContent(
+                review: review,
+                controller: widget.agentController,
+              ),
+            if (widget.agentController?.mediaErrorMessage
+                case final message?) ...[
+              const SizedBox(height: 14),
+              Text(
+                message,
+                key: const Key('review-media-error-message'),
+                style: const TextStyle(color: Color(0xFF8B2E26)),
+              ),
+            ],
           ],
         ),
       ),
@@ -141,9 +157,10 @@ class _EmptyReview extends StatelessWidget {
 }
 
 class _ReviewContent extends StatelessWidget {
-  const _ReviewContent({required this.review});
+  const _ReviewContent({required this.review, required this.controller});
 
   final AgentReview review;
+  final AgentController? controller;
 
   @override
   Widget build(BuildContext context) {
@@ -174,6 +191,10 @@ class _ReviewContent extends StatelessWidget {
           body: review.nextFocus,
           icon: Icons.track_changes_rounded,
         ),
+        if (controller case final value? when value.recordings.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          PracticeRecordingsCard(controller: value, title: '练习录音'),
+        ],
       ],
     );
   }
