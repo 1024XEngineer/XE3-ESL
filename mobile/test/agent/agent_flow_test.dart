@@ -87,8 +87,15 @@ void main() {
     }
 
     expect(find.byKey(const Key('practice-page')), findsNothing);
-    expect(find.byKey(const Key('review-content')), findsOneWidget);
+    expect(
+      find.byKey(const Key('review-content')).hitTestable(),
+      findsOneWidget,
+    );
     expect(find.textContaining('三轮复盘'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('primary-tab-profile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('profile-page')), findsOneWidget);
   });
 
   testWidgets(

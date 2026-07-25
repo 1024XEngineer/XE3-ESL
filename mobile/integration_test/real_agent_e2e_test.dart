@@ -132,6 +132,7 @@ void main() {
         () => Future<void>.delayed(Duration(milliseconds: captureHoldMs)),
       );
     }
+    await tester.pumpAndSettle();
     await _signOut(tester);
   });
 }
@@ -214,8 +215,9 @@ Future<void> _completeRealVoicePractice(WidgetTester tester) async {
     }
   }
 
-  expect(find.byKey(const Key('review-content')), findsOneWidget);
-  expect(find.byKey(const Key('review-title')), findsOneWidget);
+  expect(find.byKey(const Key('practice-page')), findsNothing);
+  expect(find.byKey(const Key('review-content')).hitTestable(), findsOneWidget);
+  expect(find.byKey(const Key('review-title')).hitTestable(), findsOneWidget);
 }
 
 Future<void> _waitForRealReview(WidgetTester tester) async {
@@ -232,6 +234,18 @@ Future<void> _waitForRealReview(WidgetTester tester) async {
       const Duration(seconds: 90),
     );
     if (find.byKey(const Key('review-content')).evaluate().isNotEmpty) {
+      await _waitUntil(
+        tester,
+        () =>
+            find.byKey(const Key('practice-page')).evaluate().isEmpty &&
+            find
+                .byKey(const Key('review-content'))
+                .hitTestable()
+                .evaluate()
+                .isNotEmpty,
+        const Duration(seconds: 5),
+      );
+      await tester.pumpAndSettle();
       return;
     }
     if (find.byKey(const Key('practice-confirm-turn')).evaluate().isNotEmpty) {
