@@ -24,13 +24,15 @@ const (
 // AudioAssetRepository persists metadata only. Create maps an ID or
 // (owner, upload request) uniqueness race to ErrAudioAssetConcurrentUpdate.
 // Save atomically compares expectedVersion and maps a stale version to
-// ErrAudioAssetConcurrentUpdate and a Turn uniqueness race to
+// ErrAudioAssetConcurrentUpdate. Database uniqueness constraints must map
+// either an (owner, Candidate) or (owner, Turn) binding race to
 // ErrAudioAssetAlreadyBound.
 type AudioAssetRepository interface {
 	Create(context.Context, AudioAsset) error
 	Get(context.Context, string) (AudioAsset, error)
 	GetByUploadRequest(context.Context, string, string) (AudioAsset, error)
-	GetByTurn(context.Context, string) (AudioAsset, error)
+	GetByCandidate(context.Context, string, string) (AudioAsset, error)
+	GetByTurn(context.Context, string, string) (AudioAsset, error)
 	Save(context.Context, AudioAsset, uint64) error
 	// ListExpiredUnconfirmed returns expired assets with no Turn whose status
 	// is staged or metadata_committed.
@@ -49,10 +51,10 @@ type AudioAssetClock interface {
 	Now() time.Time
 }
 
-// AudioAssetTurnVerifier is the minimal boundary needed to prevent an asset
-// from being bound to a missing Turn or to another actor's Turn.
+// AudioAssetTurnVerifier is the minimal boundary needed to verify that a Turn
+// exists, belongs to the actor, and records the expected #90 Candidate.
 type AudioAssetTurnVerifier interface {
-	VerifyOwnedTurn(context.Context, string, string) error
+	VerifyOwnedTurn(context.Context, string, string, string) error
 }
 
 // AudioAssetActor must be constructed from the trusted authentication context;
@@ -63,7 +65,7 @@ type AudioAssetActor struct {
 
 type UploadRecordingRequest struct {
 	RequestID      string
-	Body           io.Reader
+	Body           io.ReadSeeker
 	Size           int64
 	ContentType    string
 	ChecksumSHA256 string
@@ -197,28 +199,51 @@ func (s *AudioAssetService) createStaged(
 	return asset, nil
 }
 
-// Confirm binds one asset to one Turn. Repeating the same binding is a no-op.
+// Confirm binds one asset to exactly one Candidate and one Turn. Repeating the
+// same asset/Candidate/Turn binding is a no-op.
 func (s *AudioAssetService) Confirm(
 	ctx context.Context,
 	actor AudioAssetActor,
 	assetID string,
+	candidateID string,
 	turnID string,
 ) (AudioAsset, error) {
+	candidateID = strings.TrimSpace(candidateID)
 	turnID = strings.TrimSpace(turnID)
-	if turnID == "" {
+	if candidateID == "" || turnID == "" {
 		return AudioAsset{}, ErrAudioAssetInvalid
 	}
 	asset, err := s.ownedAsset(ctx, actor, assetID)
 	if err != nil {
 		return AudioAsset{}, err
 	}
-	if err := s.turns.VerifyOwnedTurn(ctx, asset.OwnerID, turnID); err != nil {
+	if err := s.turns.VerifyOwnedTurn(ctx, asset.OwnerID, turnID, candidateID); err != nil {
 		return AudioAsset{}, err
 	}
 
 	for range maxConflictReloads {
-		if existing, lookupErr := s.repository.GetByTurn(ctx, turnID); lookupErr == nil {
-			if existing.ID != asset.ID || existing.OwnerID != asset.OwnerID {
+		if existing, lookupErr := s.repository.GetByCandidate(
+			ctx,
+			asset.OwnerID,
+			candidateID,
+		); lookupErr == nil {
+			if existing.ID != asset.ID ||
+				existing.OwnerID != asset.OwnerID ||
+				existing.TurnID != turnID {
+				return AudioAsset{}, ErrAudioAssetAlreadyBound
+			}
+			asset = existing
+		} else if !errors.Is(lookupErr, ErrAudioAssetNotFound) {
+			return AudioAsset{}, lookupErr
+		}
+		if existing, lookupErr := s.repository.GetByTurn(
+			ctx,
+			asset.OwnerID,
+			turnID,
+		); lookupErr == nil {
+			if existing.ID != asset.ID ||
+				existing.OwnerID != asset.OwnerID ||
+				existing.CandidateID != candidateID {
 				return AudioAsset{}, ErrAudioAssetAlreadyBound
 			}
 			asset = existing
@@ -227,7 +252,7 @@ func (s *AudioAssetService) Confirm(
 		}
 
 		expectedVersion := asset.Version
-		if err := asset.bindTurn(turnID, s.clock.Now()); err != nil {
+		if err := asset.bindTurn(candidateID, turnID, s.clock.Now()); err != nil {
 			return AudioAsset{}, err
 		}
 		if asset.Version == expectedVersion {

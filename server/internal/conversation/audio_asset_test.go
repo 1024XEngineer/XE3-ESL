@@ -92,19 +92,21 @@ func TestAudioAssetConfirmIsIdempotentAndTurnIsUnique(t *testing.T) {
 	fixture := newAudioAssetFixture()
 	asset := fixture.upload(t, fixture.alice, "upload-1")
 
-	if _, err := fixture.service.Confirm(fixture.ctx, fixture.bob, asset.ID, "turn-1"); !errors.Is(err, ErrAudioAssetForbidden) {
+	if _, err := fixture.service.Confirm(fixture.ctx, fixture.bob, asset.ID, "candidate-1", "turn-1"); !errors.Is(err, ErrAudioAssetForbidden) {
 		t.Fatalf("cross-owner Confirm() error = %v", err)
 	}
-	confirmed, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "turn-1")
+	confirmed, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "candidate-1", "turn-1")
 	if err != nil {
 		t.Fatalf("Confirm() error = %v", err)
 	}
-	if confirmed.Status != AudioAssetReadable || confirmed.TurnID != "turn-1" {
+	if confirmed.Status != AudioAssetReadable ||
+		confirmed.CandidateID != "candidate-1" ||
+		confirmed.TurnID != "turn-1" {
 		t.Fatalf("Confirm() = %#v", confirmed)
 	}
 	version := confirmed.Version
 
-	again, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "turn-1")
+	again, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "candidate-1", "turn-1")
 	if err != nil {
 		t.Fatalf("idempotent Confirm() error = %v", err)
 	}
@@ -113,7 +115,7 @@ func TestAudioAssetConfirmIsIdempotentAndTurnIsUnique(t *testing.T) {
 	}
 
 	second := fixture.upload(t, fixture.alice, "upload-2")
-	if _, err := fixture.service.Confirm(fixture.ctx, fixture.alice, second.ID, "turn-1"); !errors.Is(err, ErrAudioAssetAlreadyBound) {
+	if _, err := fixture.service.Confirm(fixture.ctx, fixture.alice, second.ID, "candidate-1", "turn-1"); !errors.Is(err, ErrAudioAssetAlreadyBound) {
 		t.Fatalf("duplicate turn Confirm() error = %v", err)
 	}
 }
@@ -122,11 +124,64 @@ func TestAudioAssetConfirmRequiresOwnedExistingTurn(t *testing.T) {
 	fixture := newAudioAssetFixture()
 	asset := fixture.upload(t, fixture.alice, "upload-1")
 
-	if _, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "missing-turn"); !errors.Is(err, ErrAudioAssetTurnNotFound) {
+	if _, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "missing-candidate", "missing-turn"); !errors.Is(err, ErrAudioAssetTurnNotFound) {
 		t.Fatalf("missing Turn Confirm() error = %v", err)
 	}
-	if _, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "bob-turn"); !errors.Is(err, ErrAudioAssetForbidden) {
+	if _, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "bob-candidate", "bob-turn"); !errors.Is(err, ErrAudioAssetTurnNotFound) {
 		t.Fatalf("cross-owner Turn Confirm() error = %v", err)
+	}
+	if _, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "candidate-2", "turn-1"); !errors.Is(err, ErrAudioAssetAlreadyBound) {
+		t.Fatalf("wrong Candidate Confirm() error = %v", err)
+	}
+	if _, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "candidate-1", "turn-2"); !errors.Is(err, ErrAudioAssetAlreadyBound) {
+		t.Fatalf("same-owner wrong Turn Confirm() error = %v", err)
+	}
+}
+
+func TestAudioAssetBindingsAreScopedByOwner(t *testing.T) {
+	fixture := newAudioAssetFixture()
+	aliceAsset := fixture.upload(t, fixture.alice, "alice-shared-ids")
+	bobAsset := fixture.upload(t, fixture.bob, "bob-shared-ids")
+
+	aliceAsset, err := fixture.service.Confirm(
+		fixture.ctx,
+		fixture.alice,
+		aliceAsset.ID,
+		"shared-candidate",
+		"shared-turn",
+	)
+	if err != nil {
+		t.Fatalf("Alice Confirm() error = %v", err)
+	}
+	bobAsset, err = fixture.service.Confirm(
+		fixture.ctx,
+		fixture.bob,
+		bobAsset.ID,
+		"shared-candidate",
+		"shared-turn",
+	)
+	if err != nil {
+		t.Fatalf("Bob Confirm() error = %v", err)
+	}
+	if aliceAsset.Status != AudioAssetReadable || bobAsset.Status != AudioAssetReadable {
+		t.Fatalf("scoped bindings = %#v, %#v", aliceAsset, bobAsset)
+	}
+
+	aliceByTurn, err := fixture.repository.GetByTurn(
+		fixture.ctx,
+		fixture.alice.UserID,
+		"shared-turn",
+	)
+	if err != nil || aliceByTurn.ID != aliceAsset.ID {
+		t.Fatalf("Alice GetByTurn() = %#v, %v", aliceByTurn, err)
+	}
+	bobByCandidate, err := fixture.repository.GetByCandidate(
+		fixture.ctx,
+		fixture.bob.UserID,
+		"shared-candidate",
+	)
+	if err != nil || bobByCandidate.ID != bobAsset.ID {
+		t.Fatalf("Bob GetByCandidate() = %#v, %v", bobByCandidate, err)
 	}
 }
 
@@ -137,7 +192,7 @@ func TestAudioAssetPlaybackRequiresOwnerReadableAndShortTTL(t *testing.T) {
 	if _, err := fixture.service.Playback(fixture.ctx, fixture.alice, asset.ID); !errors.Is(err, ErrAudioAssetInvalidTransition) {
 		t.Fatalf("unconfirmed Playback() error = %v", err)
 	}
-	asset, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "turn-1")
+	asset, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "candidate-1", "turn-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +241,7 @@ func TestAudioAssetPlaybackRequiresOwnerReadableAndShortTTL(t *testing.T) {
 func TestAudioAssetDeleteFailureStaysDeletingAndRetries(t *testing.T) {
 	fixture := newAudioAssetFixture()
 	asset := fixture.upload(t, fixture.alice, "upload-1")
-	asset, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "turn-1")
+	asset, err := fixture.service.Confirm(fixture.ctx, fixture.alice, asset.ID, "candidate-1", "turn-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,6 +317,7 @@ func TestAudioAssetAccountDataCleanupIsOwnerScopedAndRetriesFailures(t *testing.
 		fixture.ctx,
 		fixture.alice,
 		aliceReadable.ID,
+		"candidate-1",
 		"turn-1",
 	)
 	if err != nil {
@@ -352,12 +408,15 @@ func TestAudioAssetConcurrentRetriesConverge(t *testing.T) {
 			fixture.ctx,
 			fixture.alice,
 			asset.ID,
+			"candidate-1",
 			"turn-1",
 		)
 		return err
 	})
 	asset, _ = fixture.repository.Get(fixture.ctx, asset.ID)
-	if asset.Status != AudioAssetReadable || asset.TurnID != "turn-1" {
+	if asset.Status != AudioAssetReadable ||
+		asset.CandidateID != "candidate-1" ||
+		asset.TurnID != "turn-1" {
 		t.Fatalf("concurrent Confirm() asset = %#v", asset)
 	}
 
@@ -422,9 +481,27 @@ func newAudioAssetFixture() *audioAssetFixture {
 	ids := &sequenceAudioAssetIDs{}
 	clock := &fakeAudioAssetClock{now: time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)}
 	turns := &fakeAudioAssetTurnVerifier{
-		owners: map[string]string{
-			"turn-1":   "alice",
-			"bob-turn": "bob",
+		turns: map[fakeTurnKey]fakeConfirmedTurn{
+			{ownerID: "alice", turnID: "turn-1"}: {
+				ownerID:     "alice",
+				candidateID: "candidate-1",
+			},
+			{ownerID: "alice", turnID: "turn-2"}: {
+				ownerID:     "alice",
+				candidateID: "candidate-2",
+			},
+			{ownerID: "bob", turnID: "bob-turn"}: {
+				ownerID:     "bob",
+				candidateID: "bob-candidate",
+			},
+			{ownerID: "alice", turnID: "shared-turn"}: {
+				ownerID:     "alice",
+				candidateID: "shared-candidate",
+			},
+			{ownerID: "bob", turnID: "shared-turn"}: {
+				ownerID:     "bob",
+				candidateID: "shared-candidate",
+			},
 		},
 	}
 	service, err := NewAudioAssetService(repository, store, ids, clock, turns, time.Hour)
@@ -540,11 +617,30 @@ func (r *memoryAudioAssetRepository) GetByUploadRequest(
 	return AudioAsset{}, ErrAudioAssetNotFound
 }
 
-func (r *memoryAudioAssetRepository) GetByTurn(_ context.Context, turnID string) (AudioAsset, error) {
+func (r *memoryAudioAssetRepository) GetByTurn(
+	_ context.Context,
+	ownerID string,
+	turnID string,
+) (AudioAsset, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, asset := range r.assets {
-		if asset.TurnID == turnID {
+		if asset.OwnerID == ownerID && asset.TurnID == turnID {
+			return asset, nil
+		}
+	}
+	return AudioAsset{}, ErrAudioAssetNotFound
+}
+
+func (r *memoryAudioAssetRepository) GetByCandidate(
+	_ context.Context,
+	ownerID string,
+	candidateID string,
+) (AudioAsset, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, asset := range r.assets {
+		if asset.OwnerID == ownerID && asset.CandidateID == candidateID {
 			return asset, nil
 		}
 	}
@@ -565,9 +661,12 @@ func (r *memoryAudioAssetRepository) Save(
 	if current.Version != expectedVersion {
 		return ErrAudioAssetConcurrentUpdate
 	}
-	if asset.TurnID != "" {
+	if asset.CandidateID != "" || asset.TurnID != "" {
 		for id, existing := range r.assets {
-			if id != asset.ID && existing.TurnID == asset.TurnID {
+			if id != asset.ID &&
+				existing.OwnerID == asset.OwnerID &&
+				(existing.CandidateID == asset.CandidateID ||
+					existing.TurnID == asset.TurnID) {
 				return ErrAudioAssetAlreadyBound
 			}
 		}
@@ -713,20 +812,34 @@ func (c *fakeAudioAssetClock) Now() time.Time {
 }
 
 type fakeAudioAssetTurnVerifier struct {
-	owners map[string]string
+	turns map[fakeTurnKey]fakeConfirmedTurn
+}
+
+type fakeTurnKey struct {
+	ownerID string
+	turnID  string
+}
+
+type fakeConfirmedTurn struct {
+	ownerID     string
+	candidateID string
 }
 
 func (v *fakeAudioAssetTurnVerifier) VerifyOwnedTurn(
 	_ context.Context,
 	actorID string,
 	turnID string,
+	expectedCandidateID string,
 ) error {
-	ownerID, found := v.owners[turnID]
+	turn, found := v.turns[fakeTurnKey{ownerID: actorID, turnID: turnID}]
 	if !found {
 		return ErrAudioAssetTurnNotFound
 	}
-	if ownerID != actorID {
+	if turn.ownerID != actorID {
 		return ErrAudioAssetForbidden
+	}
+	if turn.candidateID != expectedCandidateID {
+		return ErrAudioAssetAlreadyBound
 	}
 	return nil
 }

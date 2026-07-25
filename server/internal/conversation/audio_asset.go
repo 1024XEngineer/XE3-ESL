@@ -40,6 +40,7 @@ type AudioAsset struct {
 	OwnerID         string
 	UploadRequestID string
 	ObjectKey       string
+	CandidateID     string
 	TurnID          string
 	ContentType     string
 	Size            int64
@@ -144,13 +145,19 @@ func (a *AudioAsset) commitMetadata(etag string, now time.Time) error {
 	return nil
 }
 
-func (a *AudioAsset) bindTurn(turnID string, now time.Time) error {
+func (a *AudioAsset) bindTurn(candidateID string, turnID string, now time.Time) error {
+	candidateID = strings.TrimSpace(candidateID)
 	turnID = strings.TrimSpace(turnID)
-	if turnID == "" {
+	if candidateID == "" || turnID == "" {
 		return ErrAudioAssetInvalid
 	}
-	if a.Status == AudioAssetReadable && a.TurnID == turnID {
+	if a.Status == AudioAssetReadable &&
+		a.CandidateID == candidateID &&
+		a.TurnID == turnID {
 		return nil
+	}
+	if a.CandidateID != "" && a.CandidateID != candidateID {
+		return ErrAudioAssetAlreadyBound
 	}
 	if a.TurnID != "" && a.TurnID != turnID {
 		return ErrAudioAssetAlreadyBound
@@ -158,6 +165,7 @@ func (a *AudioAsset) bindTurn(turnID string, now time.Time) error {
 	if a.Status != AudioAssetMetadataCommitted {
 		return fmt.Errorf("%w: %s to %s", ErrAudioAssetInvalidTransition, a.Status, AudioAssetReadable)
 	}
+	a.CandidateID = candidateID
 	a.TurnID = turnID
 	a.Status = AudioAssetReadable
 	a.UpdatedAt = now
