@@ -119,6 +119,14 @@ jobs:
           TEXT_GENERATION_PROVIDER: qianwen
           QIANWEN_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
           QIANWEN_MODEL: qwen-ci-readiness-not-invoked
+          SPEECH_RECOGNITION_PROVIDER: qianwen
+          QIANWEN_ASR_BASE_URL: https://dashscope.aliyuncs.com/api/v1
+          QIANWEN_ASR_MODEL: fun-asr-flash-2026-06-15
+          SPEECH_SYNTHESIS_PROVIDER: qianwen
+          QIANWEN_TTS_BASE_URL: https://dashscope.aliyuncs.com/api/v1
+          QIANWEN_TTS_MODEL: qwen-audio-3.0-tts-flash
+          QIANWEN_TTS_VOICE: loongeva_v3.6
+          QIANWEN_TTS_LANGUAGE: en
           DASHSCOPE_API_KEY: ci-readiness-not-a-secret
         run: |
           set -euo pipefail
