@@ -112,7 +112,7 @@ final class IoIdentityHttpTransport implements IdentityHttpTransport {
     request.followRedirects = false;
     headers.forEach(request.headers.set);
     if (body != null) {
-      request.write(body);
+      request.add(utf8.encode(body));
     }
 
     final response = await request.close();
