@@ -11,6 +11,7 @@ import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/session_store.dart';
 import 'package:speakup/main.dart' as production;
+import 'package:speakup/practice/wire_practice_client.dart';
 
 void main() {
   test('iOS allows local development traffic without a global ATS bypass', () {
@@ -29,6 +30,7 @@ void main() {
       ),
     );
     expect(plist, isNot(contains('<key>NSAllowsArbitraryLoads</key>')));
+    expect(plist, contains('<key>NSMicrophoneUsageDescription</key>'));
   });
 
   testWidgets(
@@ -68,6 +70,7 @@ void main() {
         baseUri: Uri.parse('https://api.speak-up.test'),
         identityTransport: identityTransport,
         agentTransport: agentTransport,
+        practiceTransport: _PracticeTransport(),
         sessionStore: _MemorySessionStore('sess_main-wiring'),
       );
 
@@ -87,12 +90,13 @@ void main() {
 
       expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
       expect(
-        find.byKey(const Key('agent-practice-unavailable')),
-        findsOneWidget,
+        dependencies.agentController.practiceClient,
+        isA<WirePracticeClient>(),
       );
-      expect(find.byKey(const Key('agent-mic-placeholder')), findsNothing);
+      expect(find.byKey(const Key('agent-practice-unavailable')), findsNothing);
+      expect(find.byKey(const Key('agent-mic-placeholder')), findsOneWidget);
       expect(find.byKey(const Key('agent-preview-label')), findsNothing);
-      expect(find.byKey(const Key('quick-action-create-plan')), findsNothing);
+      expect(find.byKey(const Key('quick-action-create-plan')), findsOneWidget);
       expect(dependencies.agentController.threadId, _threadId);
       expect(dependencies.authController.state, isA<AuthAuthenticated>());
       expect(
@@ -108,16 +112,38 @@ void main() {
 
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
-      expect(find.text('服务端场景与语音契约尚未开放，当前仅提供 Agent 文本对话。'), findsOneWidget);
+      expect(find.text('服务端场景与语音契约尚未开放，当前仅提供 Agent 文本对话。'), findsNothing);
       final scene = tester.widget<InkWell>(
         find.byKey(const Key('scene-self-introduction')),
       );
-      expect(scene.onTap, isNull);
+      expect(scene.onTap, isNotNull);
 
       identityTransport.expectDone();
       agentTransport.expectDone();
     },
   );
+}
+
+final class _PracticeTransport implements PracticeWireTransport {
+  @override
+  Future<PracticeWireResponse> send(PracticeWireRequest request) async {
+    expect(request.method, 'GET');
+    expect(
+      request.uri.path,
+      '/v1/agent-threads/$_threadId/voice-practice-session',
+    );
+    expect(
+      request.headers[HttpHeaders.authorizationHeader],
+      'Bearer sess_main-wiring',
+    );
+    return const PracticeWireResponse(
+      statusCode: HttpStatus.notFound,
+      body: '{}',
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
 }
 
 final class _MemorySessionStore implements SessionStore {

@@ -102,12 +102,15 @@ class _PracticePageState extends State<PracticePage> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    '一问一答，完成三轮有效回答后自动生成复盘。',
+                  Text(
+                    '一问一答，完成 ${controller.turnLimit} 轮有效回答后自动生成复盘。',
                     style: TextStyle(color: Color(0xFF696B73), height: 1.4),
                   ),
                   const SizedBox(height: 22),
-                  _TurnProgress(completedTurns: controller.completedTurns),
+                  _TurnProgress(
+                    completedTurns: controller.completedTurns,
+                    turnLimit: controller.turnLimit,
+                  ),
                   const SizedBox(height: 22),
                   _CurrentQuestion(messages: controller.messages),
                   const SizedBox(height: 18),
@@ -149,16 +152,17 @@ class _NoScene extends StatelessWidget {
 }
 
 class _TurnProgress extends StatelessWidget {
-  const _TurnProgress({required this.completedTurns});
+  const _TurnProgress({required this.completedTurns, required this.turnLimit});
 
   final int completedTurns;
+  final int turnLimit;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       key: const Key('practice-turn-progress'),
       children: [
-        for (var index = 0; index < 3; index++) ...[
+        for (var index = 0; index < turnLimit; index++) ...[
           Expanded(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
@@ -171,11 +175,11 @@ class _TurnProgress extends StatelessWidget {
               ),
             ),
           ),
-          if (index != 2) const SizedBox(width: 8),
+          if (index + 1 != turnLimit) const SizedBox(width: 8),
         ],
         const SizedBox(width: 12),
         Text(
-          '$completedTurns / 3',
+          '$completedTurns / $turnLimit',
           key: const Key('practice-turn-count'),
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
@@ -248,6 +252,9 @@ class _RecordingPanel extends StatelessWidget {
             icon: Icons.mic_none_rounded,
             onPressed: controller.startRecording,
           ),
+          PracticeRecordingState.starting => const _WorkingState(
+            label: '正在请求麦克风权限',
+          ),
           PracticeRecordingState.recording => _RecordAction(
             label: '停止并转写',
             icon: Icons.stop_rounded,
@@ -289,7 +296,7 @@ class _ReviewRetry extends StatelessWidget {
           key: const Key('practice-retry-review'),
           onPressed: onPressed,
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-          child: const Text('重试生成复盘'),
+          child: const Text('刷新复盘'),
         ),
       ],
     );

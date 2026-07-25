@@ -192,7 +192,7 @@ void main() {
     await agentController.initialize();
     await agentController.selectScene(agentScenes.first);
     for (var turn = 0; turn < 3; turn++) {
-      agentController.startRecording();
+      await agentController.startRecording();
       await agentController.stopRecording();
       await agentController.confirmTranscript();
     }

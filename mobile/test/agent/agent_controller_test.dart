@@ -22,7 +22,7 @@ void main() {
       expect(controller.messages.single.role, AgentMessageRole.assistant);
 
       for (var turn = 1; turn <= 3; turn++) {
-        controller.startRecording();
+        await controller.startRecording();
         expect(controller.recordingState, PracticeRecordingState.recording);
 
         await controller.stopRecording();
@@ -164,7 +164,7 @@ void main() {
     await controller.initialize();
     await controller.selectScene(agentScenes.first);
 
-    controller.startRecording();
+    await controller.startRecording();
     await controller.stopRecording();
     final transcript = controller.transcript;
     await controller.confirmTranscript();
@@ -192,7 +192,7 @@ void main() {
       await controller.initialize();
       await controller.selectScene(agentScenes.first);
       for (var turn = 1; turn <= 3; turn++) {
-        controller.startRecording();
+        await controller.startRecording();
         await controller.stopRecording();
         await controller.confirmTranscript();
       }
@@ -242,7 +242,7 @@ void main() {
       expect(controller.completedTurns, 2);
       expect(controller.recordingState, PracticeRecordingState.idle);
 
-      controller.startRecording();
+      await controller.startRecording();
       await controller.stopRecording();
 
       expect(client.transcribedTurnNumbers, <int>[3]);
@@ -306,7 +306,7 @@ void main() {
     final client = _ControlledTranscriptionAgentClient();
     final controller = AgentController(client: client);
     await controller.initialize();
-    controller.startRecording();
+    await controller.startRecording();
 
     final transcription = controller.stopRecording();
     await client.transcriptionStarted.future;

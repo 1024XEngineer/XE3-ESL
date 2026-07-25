@@ -2,6 +2,7 @@ enum AgentMessageRole { user, assistant }
 
 enum PracticeRecordingState {
   idle,
+  starting,
   recording,
   transcribing,
   awaitingConfirmation,
@@ -39,10 +40,21 @@ final class AgentMessage {
 /// [scene] remains a presentation model. [id] is the opaque resource identity
 /// that a future real client obtains from the backend.
 final class AgentMatter {
-  const AgentMatter({required this.id, required this.scene});
+  const AgentMatter({
+    required this.id,
+    required this.scene,
+    this.status,
+    this.version,
+    this.createdAt,
+    this.updatedAt,
+  });
 
   final String id;
   final AgentScene scene;
+  final String? status;
+  final int? version;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 }
 
 /// The smallest server-authoritative practice projection needed after restart.

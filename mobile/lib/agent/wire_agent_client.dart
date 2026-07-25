@@ -119,6 +119,12 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
       final thread = threads.isEmpty
           ? await _createThread(generation)
           : threads.first;
+      final activeMatter = thread.activeMatterId == null
+          ? null
+          : await _loadMatter(
+              generation: generation,
+              matterId: thread.activeMatterId!,
+            );
       final messages = await _listMessages(
         generation: generation,
         threadId: thread.id,
@@ -131,6 +137,7 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
       );
       return AgentThreadSnapshot(
         threadId: thread.id,
+        activeMatter: activeMatter,
         textRecovery: recovery.failure,
         messages: [
           for (final message in messages) message.presentation,
@@ -227,6 +234,42 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
     );
     _requireStatus(response, const <int>{HttpStatus.created});
     return _decodeThread(response.body);
+  }
+
+  Future<AgentMatter> _loadMatter({
+    required int generation,
+    required String matterId,
+  }) async {
+    final response = await _send(
+      generation: generation,
+      method: 'GET',
+      path: '/v1/matters/$matterId',
+    );
+    _requireStatus(response, const <int>{HttpStatus.ok});
+    final matter = _decodeMatter(response.body);
+    if (matter.id != matterId) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
+    }
+    final knownScene = agentScenes
+        .where((scene) => scene.title == matter.title)
+        .firstOrNull;
+    return AgentMatter(
+      id: matter.id,
+      scene:
+          knownScene ??
+          AgentScene(
+            id: 'matter-${matter.id}',
+            title: matter.title,
+            description: '恢复的练习场景',
+          ),
+      status: matter.status,
+      version: matter.version,
+      createdAt: matter.createdAt,
+      updatedAt: matter.updatedAt,
+    );
   }
 
   @override
@@ -517,7 +560,58 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
     required AgentScene scene,
     required String clientOperationId,
   }) {
-    return Future<AgentSceneStart>.error(_practiceUnavailable);
+    return _runAccountOperation((generation) async {
+      _requireUuid(threadId);
+      _requireClientIdentity(clientOperationId);
+      _requireContent(scene.title);
+      final listResponse = await _send(
+        generation: generation,
+        method: 'GET',
+        path: '/v1/matters',
+      );
+      _requireStatus(listResponse, const <int>{HttpStatus.ok});
+      final matters = _decodeMatterList(listResponse.body);
+      var matter = matters
+          .where((item) => item.title == scene.title && item.status == 'active')
+          .firstOrNull;
+      if (matter == null) {
+        final createResponse = await _send(
+          generation: generation,
+          method: 'POST',
+          path: '/v1/matters',
+          body: <String, Object?>{'title': scene.title},
+        );
+        _requireStatus(createResponse, const <int>{HttpStatus.created});
+        matter = _decodeMatter(createResponse.body);
+      }
+      final linkResponse = await _send(
+        generation: generation,
+        method: 'PUT',
+        path: '/v1/agent-threads/$threadId/active-matter',
+        body: <String, Object?>{'matter_id': matter.id},
+      );
+      _requireStatus(linkResponse, const <int>{HttpStatus.ok});
+      _decodeMatterLink(
+        linkResponse.body,
+        expectedThreadId: threadId,
+        expectedMatterId: matter.id,
+      );
+      return AgentSceneStart(
+        activeMatter: AgentMatter(
+          id: matter.id,
+          scene: scene,
+          status: matter.status,
+          version: matter.version,
+          createdAt: matter.createdAt,
+          updatedAt: matter.updatedAt,
+        ),
+        assistantMessage: AgentMessage(
+          id: 'scene-$clientOperationId',
+          role: AgentMessageRole.assistant,
+          text: scene.title,
+        ),
+      );
+    });
   }
 
   @override
@@ -793,10 +887,29 @@ final class _FailedRun {
   final String content;
 }
 
-final class _WireThread {
-  const _WireThread({required this.id});
+final class _WireMatter {
+  const _WireMatter({
+    required this.id,
+    required this.title,
+    required this.status,
+    required this.version,
+    required this.createdAt,
+    required this.updatedAt,
+  });
 
   final String id;
+  final String title;
+  final String status;
+  final int version;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
+final class _WireThread {
+  const _WireThread({required this.id, this.activeMatterId});
+
+  final String id;
+  final String? activeMatterId;
 }
 
 final class _WireMessage {
@@ -856,6 +969,94 @@ final class _WireRun {
       status == _WireRunStatus.completed || status == _WireRunStatus.failed;
 }
 
+List<_WireMatter> _decodeMatterList(String body) {
+  return _decodeBody(body, (value) {
+    final root = _strictObject(
+      value,
+      allowed: const <String>{'matters'},
+      required: const <String>{'matters'},
+    );
+    return [
+      for (final item in _strictList(root['matters'], maxLength: 1000))
+        _decodeMatterObject(item),
+    ];
+  });
+}
+
+_WireMatter _decodeMatter(String body) {
+  return _decodeBody(body, _decodeMatterObject);
+}
+
+_WireMatter _decodeMatterObject(Object? value) {
+  final object = _strictObject(
+    value,
+    allowed: const <String>{
+      'matter_id',
+      'title',
+      'status',
+      'version',
+      'created_at',
+      'updated_at',
+    },
+    required: const <String>{
+      'matter_id',
+      'title',
+      'status',
+      'version',
+      'created_at',
+      'updated_at',
+    },
+  );
+  final version = _strictInt(object['version'], minimum: 1);
+  final createdAt = _strictDateTime(object['created_at']);
+  final updatedAt = _strictDateTime(object['updated_at']);
+  if (updatedAt.isBefore(createdAt)) {
+    throw const _InvalidAgentResponse();
+  }
+  return _WireMatter(
+    id: _strictUuid(object['matter_id']),
+    title: _strictString(object['title'], minLength: 1, maxLength: 256),
+    status: _strictString(object['status'], minLength: 1, maxLength: 32),
+    version: version,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  );
+}
+
+void _decodeMatterLink(
+  String body, {
+  required String expectedThreadId,
+  required String expectedMatterId,
+}) {
+  _decodeBody(body, (value) {
+    final object = _strictObject(
+      value,
+      allowed: const <String>{
+        'thread_id',
+        'matter_id',
+        'active',
+        'linked_at',
+        'updated_at',
+      },
+      required: const <String>{
+        'thread_id',
+        'matter_id',
+        'active',
+        'linked_at',
+        'updated_at',
+      },
+    );
+    if (_strictUuid(object['thread_id']) != expectedThreadId ||
+        _strictUuid(object['matter_id']) != expectedMatterId ||
+        !_strictBool(object['active'])) {
+      throw const _InvalidAgentResponse();
+    }
+    _strictDateTime(object['linked_at']);
+    _strictDateTime(object['updated_at']);
+    return true;
+  });
+}
+
 List<_WireThread> _decodeThreadList(String body) {
   return _decodeBody(body, (value) {
     final root = _strictObject(
@@ -884,15 +1085,15 @@ _WireThread _decodeThreadObject(Object? value) {
     required: const <String>{'thread_id', 'created_at', 'updated_at'},
   );
   final id = _strictUuid(object['thread_id']);
-  if (object['active_matter_id'] case final activeMatterId?) {
-    _strictUuid(activeMatterId);
-  }
+  final activeMatterId = object['active_matter_id'] == null
+      ? null
+      : _strictUuid(object['active_matter_id']);
   final createdAt = _strictDateTime(object['created_at']);
   final updatedAt = _strictDateTime(object['updated_at']);
   if (updatedAt.isBefore(createdAt)) {
     throw const _InvalidAgentResponse();
   }
-  return _WireThread(id: id);
+  return _WireThread(id: id, activeMatterId: activeMatterId);
 }
 
 List<_WireMessage> _decodeMessageList(

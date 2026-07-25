@@ -2,30 +2,42 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-
-import 'agent_client.dart';
-import 'agent_models.dart';
+import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/practice/practice_client.dart';
+import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/practice/practice_recording.dart';
 
 typedef AgentClientIdFactory = String Function(String scope);
 
 final class AgentController extends ChangeNotifier {
-  AgentController({required this.client, AgentClientIdFactory? clientIdFactory})
-    : _clientIdFactory = clientIdFactory ?? _createSecureClientId;
+  AgentController({
+    required this.client,
+    PracticeClient? practiceClient,
+    PracticeRecorder? recorder,
+    AgentClientIdFactory? clientIdFactory,
+  }) : practiceClient = practiceClient ?? LegacyAgentPracticeClient(client),
+       recorder = recorder ?? FakePracticeRecorder(),
+       _clientIdFactory = clientIdFactory ?? _createSecureClientId;
 
   final AgentClient client;
+  final PracticeClient? practiceClient;
+  final PracticeRecorder recorder;
   final AgentClientIdFactory _clientIdFactory;
 
   String? _threadId;
+  String? _practiceSessionId;
+  PracticeQuestion? _currentQuestion;
+  TranscriptionCandidate? _candidate;
+  String? _activeConfirmationId;
   AgentMatter? _activeMatter;
   List<AgentMessage> _messages = const <AgentMessage>[];
   PracticeRecordingState _recordingState = PracticeRecordingState.idle;
-  String? _transcript;
-  String? _activeTurnClientId;
-  String? _pendingReviewClientId;
   AgentReview? _review;
   String? _errorMessage;
   _AgentRetry? _retry;
   int _completedTurns = 0;
+  int _turnLimit = 0;
   int _epoch = 0;
   int _practiceGeneration = 0;
   bool _initialized = false;
@@ -33,25 +45,25 @@ final class AgentController extends ChangeNotifier {
   bool _disposed = false;
   Future<void>? _initializationFuture;
   Future<void>? _accountCleanupFuture;
+  Future<void>? _recorderStartFuture;
+  Future<void>? _stopRecordingFuture;
 
   String? get threadId => _threadId;
+  String? get practiceSessionId => _practiceSessionId;
+  String? get questionId => _currentQuestion?.id;
+  String? get candidateId => _candidate?.id;
   AgentMatter? get activeMatter => _activeMatter;
   AgentScene? get scene => _activeMatter?.scene;
   List<AgentMessage> get messages => List.unmodifiable(_messages);
   PracticeRecordingState get recordingState => _recordingState;
-  String? get transcript => _transcript;
+  String? get transcript => _candidate?.text;
   AgentReview? get review => _review;
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
+  int get turnLimit => _turnLimit;
   bool get isBusy => _busy || _practiceRequestInFlight;
   bool get canRetry => _retry != null;
-  bool get supportsPracticeFlow {
-    return switch (client) {
-      AgentPracticeAvailability(:final supportsPracticeFlow) =>
-        supportsPracticeFlow,
-      _ => true,
-    };
-  }
+  bool get supportsPracticeFlow => practiceClient != null;
 
   bool get canSelectScene {
     return !_disposed &&
@@ -66,7 +78,14 @@ final class AgentController extends ChangeNotifier {
         };
   }
 
-  bool get hasActivePractice => _activeMatter != null && _review == null;
+  bool get hasActivePractice {
+    return _practiceSessionId != null &&
+        _activeMatter != null &&
+        !_isSessionCompleted;
+  }
+
+  bool get _isSessionCompleted =>
+      _turnLimit > 0 && _completedTurns == _turnLimit;
 
   bool get _practiceRequestInFlight {
     return _recordingState == PracticeRecordingState.transcribing ||
@@ -89,7 +108,7 @@ final class AgentController extends ChangeNotifier {
       await inFlight;
       return;
     }
-    final operation = _restoreThread();
+    final operation = _restore();
     _initializationFuture = operation;
     try {
       await operation;
@@ -100,34 +119,29 @@ final class AgentController extends ChangeNotifier {
     }
   }
 
-  Future<void> _restoreThread() async {
+  Future<void> _restore() async {
     final epoch = _epoch;
     _retry = null;
     _errorMessage = null;
     _setBusy(true);
     try {
-      final snapshot = await client.restoreThread();
+      final thread = await client.restoreThread();
+      _validateThreadSnapshot(thread);
+      if (practiceClient case final LegacyAgentPracticeClient legacy) {
+        legacy.seedRestoredThread(thread);
+      }
+      final practice = await practiceClient?.restorePractice(
+        threadId: thread.threadId,
+        activeMatter: thread.activeMatter,
+      );
       if (!_isCurrent(epoch)) {
         return;
       }
-      _validateSnapshot(snapshot);
-      final practice = snapshot.practice;
-      _practiceGeneration++;
-      _threadId = snapshot.threadId;
-      _activeMatter = snapshot.activeMatter;
-      _messages = List<AgentMessage>.from(snapshot.messages);
-      _completedTurns = practice?.completedTurns ?? 0;
-      _review = practice?.review;
-      _pendingReviewClientId = practice?.pendingReviewClientId;
-      _activeTurnClientId = null;
-      _transcript = null;
-      _recordingState = switch ((_completedTurns, _review)) {
-        (_, AgentReview()) => PracticeRecordingState.completed,
-        (3, null) => PracticeRecordingState.reviewFailed,
-        _ => PracticeRecordingState.idle,
-      };
+      _threadId = thread.threadId;
+      _messages = List<AgentMessage>.from(thread.messages);
+      _applyPracticeSnapshot(practice);
       _initialized = true;
-      final textRecovery = snapshot.textRecovery;
+      final textRecovery = thread.textRecovery;
       if (textRecovery != null) {
         _retry = textRecovery.retryable
             ? _TextRetry(
@@ -138,11 +152,8 @@ final class AgentController extends ChangeNotifier {
         _errorMessage = textRecovery.retryable
             ? '上次 Agent 运行未能完成，可以继续重试。'
             : '上次 Agent 运行未能完成，服务端不允许重试。';
-      } else {
-        _retry = null;
-        _errorMessage = _completedTurns == 3 && _review == null
-            ? '三轮回答已保存，但复盘暂时没有生成，可以重试。'
-            : null;
+      } else if (_isSessionCompleted && _review == null) {
+        _errorMessage = '练习已完成，正在等待服务端恢复同一次复盘。';
       }
     } catch (_) {
       if (_isCurrent(epoch)) {
@@ -168,7 +179,8 @@ final class AgentController extends ChangeNotifier {
 
   Future<void> _selectScene(_SceneRetry operation) async {
     final threadId = _threadId;
-    if (threadId == null || !canSelectScene) {
+    final practice = practiceClient;
+    if (threadId == null || practice == null || !canSelectScene) {
       return;
     }
     final epoch = _epoch;
@@ -176,34 +188,32 @@ final class AgentController extends ChangeNotifier {
     _errorMessage = null;
     _setBusy(true);
     try {
-      final result = await client.startScene(
+      final selection = await client.startScene(
         threadId: threadId,
         scene: operation.scene,
+        clientOperationId: operation.clientOperationId,
+      );
+      if (practice case final LegacyAgentPracticeClient legacy) {
+        legacy.seedSceneSelection(selection);
+      }
+      final result = await practice.startPractice(
+        threadId: threadId,
+        activeMatter: selection.activeMatter,
         clientOperationId: operation.clientOperationId,
       );
       if (!_isCurrent(epoch)) {
         return;
       }
       _practiceGeneration++;
-      _activeMatter = result.activeMatter;
-      _messages = <AgentMessage>[..._messages, result.assistantMessage];
-      _recordingState = PracticeRecordingState.idle;
-      _transcript = null;
-      _activeTurnClientId = null;
-      _pendingReviewClientId = null;
-      _review = null;
-      _completedTurns = 0;
+      _applyPracticeSnapshot(result.snapshot);
       _retry = null;
       _errorMessage = null;
     } catch (error) {
       if (_isCurrent(epoch)) {
-        if (error is AgentClientException && error.isUnavailable) {
-          _retry = null;
-          _errorMessage = '场景与语音练习尚未开放，当前可以继续使用 Agent 文本对话。';
-        } else {
-          _retry = _canRetry(error) ? operation : null;
-          _errorMessage = '暂时无法开始这个场景，请稍后重试。';
-        }
+        _retry = _canRetry(error) ? operation : null;
+        _errorMessage = error is AgentClientException && error.isUnavailable
+            ? '场景与语音练习尚未开放，当前可以继续使用 Agent 文本对话。'
+            : '暂时无法开始这个场景，请稍后重试。';
       }
     } finally {
       if (_isCurrent(epoch)) {
@@ -246,9 +256,7 @@ final class AgentController extends ChangeNotifier {
       if (!_isCurrent(epoch)) {
         return false;
       }
-      _appendExchange(exchange);
-      _retry = null;
-      _errorMessage = null;
+      _appendMessages([exchange.userMessage, ?exchange.assistantMessage]);
       return true;
     } catch (error) {
       if (_isCurrent(epoch)) {
@@ -285,69 +293,148 @@ final class AgentController extends ChangeNotifier {
     }
   }
 
-  void startRecording() {
+  Future<void> startRecording() {
     if (!hasActivePractice ||
         isBusy ||
+        _currentQuestion == null ||
         _recordingState != PracticeRecordingState.idle) {
-      return;
+      return Future<void>.value();
     }
-    _practiceGeneration++;
-    _activeTurnClientId = _newClientId('turn');
-    _transcript = null;
+    final generation = ++_practiceGeneration;
+    _candidate = null;
+    _activeConfirmationId = null;
     _retry = null;
     _errorMessage = null;
-    _recordingState = PracticeRecordingState.recording;
+    _recordingState = PracticeRecordingState.starting;
     notifyListeners();
+    final operation = _startRecorder(generation);
+    _recorderStartFuture = operation;
+    return operation.whenComplete(() {
+      if (identical(_recorderStartFuture, operation)) {
+        _recorderStartFuture = null;
+      }
+    });
   }
 
-  Future<void> stopRecording() async {
-    final threadId = _threadId;
-    final matterId = _activeMatter?.id;
-    final clientTurnId = _activeTurnClientId;
-    if (threadId == null ||
-        matterId == null ||
-        clientTurnId == null ||
+  Future<void> _startRecorder(int generation) async {
+    try {
+      await recorder.start();
+      if (generation != _practiceGeneration || _disposed) {
+        await recorder.discardCurrent();
+        return;
+      }
+      _recordingState = PracticeRecordingState.recording;
+    } on PracticeRecordingException catch (error) {
+      _recordingState = PracticeRecordingState.idle;
+      _errorMessage =
+          error.kind == PracticeRecordingFailureKind.permissionDenied
+          ? '需要麦克风权限才能开始这一轮录音。'
+          : '暂时无法开始录音，请稍后重试。';
+    } catch (_) {
+      _recordingState = PracticeRecordingState.idle;
+      _errorMessage = '暂时无法开始录音，请稍后重试。';
+    }
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> stopRecording() {
+    final practice = practiceClient;
+    final sessionId = _practiceSessionId;
+    final question = _currentQuestion;
+    if (practice == null ||
+        sessionId == null ||
+        question == null ||
         _recordingState != PracticeRecordingState.recording) {
-      return;
+      return Future<void>.value();
     }
     final epoch = _epoch;
-    final practiceGeneration = _practiceGeneration;
+    final generation = _practiceGeneration;
+    final clientTurnId = _newClientId('turn');
+    final operation = _stopRecording(
+      practice: practice,
+      sessionId: sessionId,
+      question: question,
+      epoch: epoch,
+      generation: generation,
+      clientTurnId: clientTurnId,
+    );
+    _stopRecordingFuture = operation;
+    return operation.whenComplete(() {
+      if (identical(_stopRecordingFuture, operation)) {
+        _stopRecordingFuture = null;
+      }
+    });
+  }
+
+  Future<void> _stopRecording({
+    required PracticeClient practice,
+    required String sessionId,
+    required PracticeQuestion question,
+    required int epoch,
+    required int generation,
+    required String clientTurnId,
+  }) async {
+    RecordedPracticeAudio? audio;
     _recordingState = PracticeRecordingState.transcribing;
     notifyListeners();
     try {
-      final transcript = await client.transcribeTurn(
-        threadId: threadId,
-        turnNumber: _completedTurns + 1,
-        clientTurnId: clientTurnId,
-      );
+      audio = await recorder.stop();
       if (!_isCurrentPractice(
         epoch: epoch,
-        practiceGeneration: practiceGeneration,
-        threadId: threadId,
-        matterId: matterId,
+        generation: generation,
+        sessionId: sessionId,
+        questionId: question.id,
       )) {
         return;
       }
-      _transcript = transcript;
+      final candidate = await practice.transcribe(
+        PracticeTranscriptionRequest(
+          sessionId: sessionId,
+          questionId: question.id,
+          clientTurnId: clientTurnId,
+          audio: audio,
+        ),
+      );
+      if (!_isCurrentPractice(
+        epoch: epoch,
+        generation: generation,
+        sessionId: sessionId,
+        questionId: question.id,
+      )) {
+        return;
+      }
+      _validateCandidate(candidate, sessionId, question.id);
+      _candidate = candidate;
+      _activeConfirmationId = null;
       _recordingState = PracticeRecordingState.awaitingConfirmation;
       _errorMessage = null;
     } catch (_) {
       if (_isCurrentPractice(
         epoch: epoch,
-        practiceGeneration: practiceGeneration,
-        threadId: threadId,
-        matterId: matterId,
+        generation: generation,
+        sessionId: sessionId,
+        questionId: question.id,
       )) {
-        _activeTurnClientId = null;
+        _candidate = null;
         _recordingState = PracticeRecordingState.idle;
         _errorMessage = '没有识别出这一轮，请重新录音。';
+      }
+    } finally {
+      if (audio != null) {
+        try {
+          await recorder.discard(audio);
+        } catch (_) {
+          // Account cleanup retries deletion before another user can enter.
+        }
       }
     }
     if (_isCurrentPractice(
       epoch: epoch,
-      practiceGeneration: practiceGeneration,
-      threadId: threadId,
-      matterId: matterId,
+      generation: generation,
+      sessionId: sessionId,
+      questionId: question.id,
     )) {
       notifyListeners();
     }
@@ -358,129 +445,159 @@ final class AgentController extends ChangeNotifier {
       return;
     }
     _practiceGeneration++;
-    _activeTurnClientId = null;
-    _transcript = null;
+    _candidate = null;
+    _activeConfirmationId = null;
     _recordingState = PracticeRecordingState.idle;
     _errorMessage = null;
     notifyListeners();
   }
 
   Future<void> confirmTranscript() async {
-    final threadId = _threadId;
-    final matter = _activeMatter;
-    final transcript = _transcript;
-    final clientTurnId = _activeTurnClientId;
-    if (threadId == null ||
-        matter == null ||
-        transcript == null ||
-        clientTurnId == null ||
-        _completedTurns >= 3 ||
+    final practice = practiceClient;
+    final sessionId = _practiceSessionId;
+    final question = _currentQuestion;
+    final candidate = _candidate;
+    if (practice == null ||
+        sessionId == null ||
+        question == null ||
+        candidate == null ||
+        _isSessionCompleted ||
         _recordingState != PracticeRecordingState.awaitingConfirmation) {
       return;
     }
     final epoch = _epoch;
-    final practiceGeneration = _practiceGeneration;
+    final generation = _practiceGeneration;
     _recordingState = PracticeRecordingState.submitting;
+    _errorMessage = null;
     notifyListeners();
     try {
-      final turnNumber = _completedTurns + 1;
-      final exchange = await client.submitPracticeTurn(
-        threadId: threadId,
-        scene: matter.scene,
-        turnNumber: turnNumber,
-        transcript: transcript,
-        clientTurnId: clientTurnId,
+      final confirmation = await practice.confirm(
+        sessionId: sessionId,
+        questionId: question.id,
+        candidateId: candidate.id,
+        idempotencyKey: _activeConfirmationId ??= _newClientId('confirm'),
       );
       if (!_isCurrentPractice(
         epoch: epoch,
-        practiceGeneration: practiceGeneration,
-        threadId: threadId,
-        matterId: matter.id,
+        generation: generation,
+        sessionId: sessionId,
+        questionId: question.id,
       )) {
         return;
       }
-      _appendExchange(exchange);
-      _completedTurns = turnNumber;
-      _activeTurnClientId = null;
-      _transcript = null;
-      _errorMessage = null;
-      if (_completedTurns < 3) {
+      _validateConfirmation(confirmation, candidate);
+      _completedTurns = confirmation.completedTurns;
+      _turnLimit = confirmation.turnLimit;
+      _currentQuestion = confirmation.nextQuestion;
+      _review = confirmation.review;
+      _candidate = null;
+      _activeConfirmationId = null;
+      _appendMessages([
+        confirmation.answer,
+        ?confirmation.nextQuestion?.presentation,
+      ]);
+      if (confirmation.sessionCompleted) {
+        _recordingState = confirmation.review == null
+            ? PracticeRecordingState.reviewFailed
+            : PracticeRecordingState.completed;
+        _errorMessage = confirmation.review == null
+            ? '练习已完成，正在等待服务端恢复同一次复盘。'
+            : null;
+      } else {
         _recordingState = PracticeRecordingState.idle;
-        notifyListeners();
-        return;
       }
     } catch (_) {
       if (_isCurrentPractice(
         epoch: epoch,
-        practiceGeneration: practiceGeneration,
-        threadId: threadId,
-        matterId: matter.id,
+        generation: generation,
+        sessionId: sessionId,
+        questionId: question.id,
       )) {
         _recordingState = PracticeRecordingState.awaitingConfirmation;
         _errorMessage = '这一轮没有提交成功，请重试。';
-        notifyListeners();
       }
-      return;
     }
-    final clientReviewId = _pendingReviewClientId ??= _newClientId('review');
-    await _generateReview(
-      epoch: epoch,
-      practiceGeneration: practiceGeneration,
-      threadId: threadId,
-      matter: matter,
-      clientReviewId: clientReviewId,
-    );
+    if (_isCurrent(epoch)) {
+      notifyListeners();
+    }
   }
 
+  /// Refetches the server-owned result. Flutter never creates a Review.
   Future<void> retryReview() async {
+    final practice = practiceClient;
     final threadId = _threadId;
-    final matter = _activeMatter;
-    if (threadId == null ||
-        matter == null ||
-        _completedTurns != 3 ||
+    if (practice == null ||
+        threadId == null ||
+        !_isSessionCompleted ||
         _review != null ||
         _recordingState != PracticeRecordingState.reviewFailed) {
       return;
     }
     final epoch = _epoch;
-    final practiceGeneration = _practiceGeneration;
-    final clientReviewId = _pendingReviewClientId ??= _newClientId('review');
     _recordingState = PracticeRecordingState.submitting;
     _errorMessage = null;
     notifyListeners();
-    await _generateReview(
-      epoch: epoch,
-      practiceGeneration: practiceGeneration,
-      threadId: threadId,
-      matter: matter,
-      clientReviewId: clientReviewId,
-    );
+    try {
+      final snapshot = await practice.restorePractice(
+        threadId: threadId,
+        activeMatter: _activeMatter,
+      );
+      if (!_isCurrent(epoch)) {
+        return;
+      }
+      if (snapshot == null) {
+        throw StateError('Practice Session is not restorable.');
+      }
+      _applyPracticeSnapshot(snapshot);
+      if (_review == null) {
+        throw StateError('Review is not ready.');
+      }
+    } catch (_) {
+      if (_isCurrent(epoch)) {
+        _recordingState = PracticeRecordingState.reviewFailed;
+        _errorMessage = '复盘仍在生成，请稍后重试。';
+      }
+    }
+    if (_isCurrent(epoch)) {
+      notifyListeners();
+    }
   }
 
-  /// Invalidates private UI state synchronously, then waits until the client
-  /// has cancelled account work and removed temporary private artifacts.
+  /// Invalidates private UI state synchronously, then removes temporary audio
+  /// and waits for all account-scoped transports to stop.
   Future<void> clearPrivateState() async {
     _epoch++;
     _practiceGeneration++;
     _initializationFuture = null;
     _threadId = null;
+    _practiceSessionId = null;
+    _currentQuestion = null;
+    _candidate = null;
+    _activeConfirmationId = null;
     _activeMatter = null;
     _messages = const <AgentMessage>[];
     _recordingState = PracticeRecordingState.idle;
-    _transcript = null;
-    _activeTurnClientId = null;
-    _pendingReviewClientId = null;
     _review = null;
     _errorMessage = null;
     _retry = null;
     _completedTurns = 0;
+    _turnLimit = 0;
     _initialized = false;
     _busy = false;
     if (!_disposed) {
       notifyListeners();
     }
 
-    final cleanup = Future<void>.sync(client.clearAccountState);
+    final cleanup = Future.wait<void>([
+      Future<void>.sync(client.clearAccountState),
+      if (practiceClient case final practice?)
+        Future<void>.sync(practice.clearAccountState),
+      Future<void>.sync(() async {
+        await _recorderStartFuture;
+        await _stopRecordingFuture;
+        await recorder.clearAccountState();
+      }),
+    ]);
     _accountCleanupFuture = cleanup;
     try {
       await cleanup;
@@ -497,6 +614,7 @@ final class AgentController extends ChangeNotifier {
     _epoch++;
     _practiceGeneration++;
     _initializationFuture = null;
+    unawaited(recorder.discardCurrent());
     super.dispose();
   }
 
@@ -506,14 +624,40 @@ final class AgentController extends ChangeNotifier {
     }
   }
 
-  void _appendExchange(AgentExchange exchange) {
+  void _applyPracticeSnapshot(PracticeSessionSnapshot? snapshot) {
+    _practiceGeneration++;
+    _candidate = null;
+    _activeConfirmationId = null;
+    if (snapshot == null) {
+      _practiceSessionId = null;
+      _currentQuestion = null;
+      _activeMatter = null;
+      _completedTurns = 0;
+      _turnLimit = 0;
+      _review = null;
+      _recordingState = PracticeRecordingState.idle;
+      return;
+    }
+    _validatePracticeSnapshot(snapshot);
+    _practiceSessionId = snapshot.sessionId;
+    _currentQuestion = snapshot.currentQuestion;
+    _activeMatter = snapshot.matter;
+    _completedTurns = snapshot.completedTurns;
+    _turnLimit = snapshot.turnLimit;
+    _review = snapshot.review;
+    _appendMessages([?snapshot.currentQuestion?.presentation]);
+    _recordingState = snapshot.sessionCompleted
+        ? snapshot.review == null
+              ? PracticeRecordingState.reviewFailed
+              : PracticeRecordingState.completed
+        : PracticeRecordingState.idle;
+  }
+
+  void _appendMessages(Iterable<AgentMessage> values) {
     final messages = List<AgentMessage>.from(_messages);
-    final messageIds = {for (final message in messages) message.id};
-    for (final message in <AgentMessage>[
-      exchange.userMessage,
-      ?exchange.assistantMessage,
-    ]) {
-      if (messageIds.add(message.id)) {
+    final ids = {for (final message in messages) message.id};
+    for (final message in values) {
+      if (ids.add(message.id)) {
         messages.add(message);
       }
     }
@@ -524,14 +668,14 @@ final class AgentController extends ChangeNotifier {
 
   bool _isCurrentPractice({
     required int epoch,
-    required int practiceGeneration,
-    required String threadId,
-    required String matterId,
+    required int generation,
+    required String sessionId,
+    required String questionId,
   }) {
     return _isCurrent(epoch) &&
-        practiceGeneration == _practiceGeneration &&
-        threadId == _threadId &&
-        matterId == _activeMatter?.id;
+        generation == _practiceGeneration &&
+        sessionId == _practiceSessionId &&
+        questionId == _currentQuestion?.id;
   }
 
   void _setBusy(bool value) {
@@ -542,57 +686,7 @@ final class AgentController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _generateReview({
-    required int epoch,
-    required int practiceGeneration,
-    required String threadId,
-    required AgentMatter matter,
-    required String clientReviewId,
-  }) async {
-    try {
-      final review = await client.createReview(
-        threadId: threadId,
-        scene: matter.scene,
-        clientReviewId: clientReviewId,
-      );
-      if (!_isCurrentPractice(
-        epoch: epoch,
-        practiceGeneration: practiceGeneration,
-        threadId: threadId,
-        matterId: matter.id,
-      )) {
-        return;
-      }
-      _review = review;
-      _recordingState = PracticeRecordingState.completed;
-      _errorMessage = null;
-    } catch (_) {
-      if (_isCurrentPractice(
-        epoch: epoch,
-        practiceGeneration: practiceGeneration,
-        threadId: threadId,
-        matterId: matter.id,
-      )) {
-        _recordingState = PracticeRecordingState.reviewFailed;
-        _errorMessage = '三轮回答已保存，但复盘暂时没有生成，可以重试。';
-      }
-    }
-    if (_isCurrentPractice(
-      epoch: epoch,
-      practiceGeneration: practiceGeneration,
-      threadId: threadId,
-      matterId: matter.id,
-    )) {
-      notifyListeners();
-    }
-  }
-
-  void _validateSnapshot(AgentThreadSnapshot snapshot) {
-    final practice = snapshot.practice;
-    final activeMatter = snapshot.activeMatter;
-    final review = practice?.review;
-    final pendingReviewClientId = practice?.pendingReviewClientId;
-    final textRecovery = snapshot.textRecovery;
+  void _validateThreadSnapshot(AgentThreadSnapshot snapshot) {
     final messageIds = <String>{};
     final invalidMessages = snapshot.messages.any(
       (message) =>
@@ -600,41 +694,68 @@ final class AgentController extends ChangeNotifier {
           message.text.trim().isEmpty ||
           !messageIds.add(message.id),
     );
-    final invalidPractice =
-        practice != null &&
-        (practice.completedTurns < 0 ||
-            practice.completedTurns > 3 ||
-            (review != null && practice.completedTurns != 3) ||
-            (pendingReviewClientId != null &&
-                (pendingReviewClientId.trim().isEmpty ||
-                    practice.completedTurns != 3 ||
-                    review != null)) ||
-            (practice.completedTurns == 3 &&
-                review == null &&
-                pendingReviewClientId == null));
-    final invalidReview =
-        review != null &&
-        (review.id.trim().isEmpty ||
-            review.title.trim().isEmpty ||
-            review.summary.trim().isEmpty ||
-            review.strength.trim().isEmpty ||
-            review.nextFocus.trim().isEmpty);
-    final invalidTextRecovery =
-        textRecovery != null &&
-        (textRecovery.text.trim().isEmpty ||
-            textRecovery.clientMessageId.trim().isEmpty ||
-            textRecovery.failureKind.trim().isEmpty);
+    final recovery = snapshot.textRecovery;
     if (snapshot.threadId.trim().isEmpty ||
-        (activeMatter != null &&
-            (activeMatter.id.trim().isEmpty ||
-                activeMatter.scene.id.trim().isEmpty ||
-                activeMatter.scene.title.trim().isEmpty)) ||
-        (practice != null && snapshot.activeMatter == null) ||
-        invalidPractice ||
-        invalidReview ||
-        invalidTextRecovery ||
-        invalidMessages) {
+        (snapshot.activeMatter != null &&
+            (snapshot.activeMatter!.id.trim().isEmpty ||
+                snapshot.activeMatter!.scene.id.trim().isEmpty ||
+                snapshot.activeMatter!.scene.title.trim().isEmpty)) ||
+        invalidMessages ||
+        (recovery != null &&
+            (recovery.text.trim().isEmpty ||
+                recovery.clientMessageId.trim().isEmpty ||
+                recovery.failureKind.trim().isEmpty))) {
       throw StateError('Invalid Agent Thread snapshot.');
+    }
+  }
+
+  void _validatePracticeSnapshot(PracticeSessionSnapshot snapshot) {
+    if (snapshot.sessionId.trim().isEmpty ||
+        snapshot.matter.id.trim().isEmpty ||
+        snapshot.matter.scene.id.trim().isEmpty ||
+        snapshot.completedTurns < 0 ||
+        snapshot.turnLimit < 1 ||
+        snapshot.completedTurns > snapshot.turnLimit ||
+        snapshot.sessionCompleted !=
+            (snapshot.completedTurns == snapshot.turnLimit) ||
+        (!snapshot.sessionCompleted && snapshot.currentQuestion == null) ||
+        (snapshot.currentQuestion != null &&
+            snapshot.currentQuestion!.sessionId != snapshot.sessionId)) {
+      throw StateError('Invalid Practice Session snapshot.');
+    }
+  }
+
+  void _validateCandidate(
+    TranscriptionCandidate candidate,
+    String sessionId,
+    String questionId,
+  ) {
+    if (candidate.id.trim().isEmpty ||
+        candidate.text.trim().isEmpty ||
+        candidate.sessionId != sessionId ||
+        candidate.questionId != questionId) {
+      throw StateError('Invalid transcription candidate.');
+    }
+  }
+
+  void _validateConfirmation(
+    PracticeTurnConfirmation confirmation,
+    TranscriptionCandidate candidate,
+  ) {
+    if (confirmation.turnId.trim().isEmpty ||
+        confirmation.sessionId != candidate.sessionId ||
+        confirmation.questionId != candidate.questionId ||
+        confirmation.candidateId != candidate.id ||
+        confirmation.answer.text != candidate.text ||
+        confirmation.completedTurns < 1 ||
+        confirmation.turnLimit < 1 ||
+        confirmation.completedTurns > confirmation.turnLimit ||
+        confirmation.sessionCompleted !=
+            (confirmation.completedTurns == confirmation.turnLimit) ||
+        (!confirmation.sessionCompleted && confirmation.nextQuestion == null) ||
+        (confirmation.nextQuestion != null &&
+            confirmation.nextQuestion!.sessionId != confirmation.sessionId)) {
+      throw StateError('Invalid Practice Turn confirmation.');
     }
   }
 

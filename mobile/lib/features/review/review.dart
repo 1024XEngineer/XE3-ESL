@@ -121,14 +121,14 @@ class _EmptyReview extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             Text(
-              practiceAvailable ? '完成三轮练习后再来看看' : '复盘功能尚未开放',
+              practiceAvailable ? '完成本次练习后再来看看' : '复盘功能尚未开放',
               key: const Key('review-availability-title'),
               style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             Text(
               practiceAvailable
-                  ? '有效回答达到三轮后会自动生成一次复盘。'
+                  ? '达到服务端设定的有效轮数后会自动生成一次复盘。'
                   : '待服务端场景、语音与复盘契约开放后再接入，不会展示本地模拟结果。',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Color(0xFF777983)),

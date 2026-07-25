@@ -1017,38 +1017,55 @@ void main() {
     });
   });
 
-  test(
-    'production Wire practice operations fail closed without HTTP',
-    () async {
-      final transport = _ScriptedTransport(const []);
-      final harness = _Harness(transport);
+  test('scene selection uses Matter and SetActiveMatter HTTP APIs', () async {
+    final transport = _ScriptedTransport([
+      _Step(
+        method: 'GET',
+        path: '/v1/matters',
+        response: _jsonResponse(HttpStatus.ok, {
+          'matters': [
+            {
+              'matter_id': _matterId,
+              'title': agentScenes.first.title,
+              'status': 'active',
+              'version': 1,
+              'created_at': '2026-07-25T09:00:00Z',
+              'updated_at': '2026-07-25T09:00:00Z',
+            },
+          ],
+        }),
+      ),
+      _Step(
+        method: 'PUT',
+        path: '/v1/agent-threads/$_threadId/active-matter',
+        response: _jsonResponse(HttpStatus.ok, {
+          'thread_id': _threadId,
+          'matter_id': _matterId,
+          'active': true,
+          'linked_at': '2026-07-25T09:00:00Z',
+          'updated_at': '2026-07-25T09:00:00Z',
+        }),
+      ),
+    ]);
+    final harness = _Harness(transport);
 
-      expect(harness.client.supportsPracticeFlow, isFalse);
-      await expectLater(
-        harness.client.startScene(
-          threadId: _threadId,
-          scene: agentScenes.first,
-          clientOperationId: 'scene_unavailable',
-        ),
-        throwsA(
-          isA<AgentClientException>().having(
-            (error) => error.kind,
-            'kind',
-            AgentClientFailureKind.unavailable,
-          ),
-        ),
-      );
-      await expectLater(
-        harness.client.transcribeTurn(
-          threadId: _threadId,
-          turnNumber: 1,
-          clientTurnId: 'turn_unavailable',
-        ),
-        throwsA(isA<AgentClientException>()),
-      );
-      transport.expectDone();
-    },
-  );
+    expect(harness.client.supportsPracticeFlow, isFalse);
+    final result = await harness.client.startScene(
+      threadId: _threadId,
+      scene: agentScenes.first,
+      clientOperationId: 'scene_select',
+    );
+    expect(result.activeMatter.id, _matterId);
+    await expectLater(
+      harness.client.transcribeTurn(
+        threadId: _threadId,
+        turnNumber: 1,
+        clientTurnId: 'turn_unavailable',
+      ),
+      throwsA(isA<AgentClientException>()),
+    );
+    transport.expectDone();
+  });
 }
 
 final class _Harness {
@@ -1300,6 +1317,7 @@ IdentityHttpResponse _jsonResponse(int statusCode, Object? body) {
 }
 
 const _threadId = '10000000-0000-4000-8000-000000000001';
+const _matterId = '40000000-0000-4000-8000-000000000001';
 const _threadBId = '10000000-0000-4000-8000-000000000002';
 const _userMessageId = '20000000-0000-4000-8000-000000000001';
 const _assistantMessageId = '20000000-0000-4000-8000-000000000002';

@@ -81,6 +81,7 @@ final class AgentClientException implements Exception {
     this.errorCode,
     this.retryable = false,
     this.correlationId,
+    this.retryAfter,
   });
 
   final AgentClientFailureKind kind;
@@ -88,6 +89,7 @@ final class AgentClientException implements Exception {
   final String? errorCode;
   final bool retryable;
   final String? correlationId;
+  final Duration? retryAfter;
 
   bool get isUnavailable => kind == AgentClientFailureKind.unavailable;
 
