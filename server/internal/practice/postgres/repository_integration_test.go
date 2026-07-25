@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	persistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
+	migrationfiles "github.com/1024XEngineer/XE3-ESL/server/migrations"
 )
 
 func TestRepositoryContract(t *testing.T) {
@@ -1006,21 +1008,34 @@ func TestSnapshotIsImmutable(t *testing.T) {
 	}
 }
 
-func TestMigrationUpDownAndVersionGap(t *testing.T) {
+func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
+	requiredDependencies := []string{
+		"000002_identity_schema.up.sql",
+		"000002_identity_schema.down.sql",
+		"000003_agent_data.up.sql",
+		"000003_agent_data.down.sql",
+		"000004_agent_runs.up.sql",
+		"000004_agent_runs.down.sql",
+		"000005_agent_run_trust_boundaries.up.sql",
+		"000005_agent_run_trust_boundaries.down.sql",
+	}
+	for _, name := range requiredDependencies {
+		if _, err := fs.Stat(migrationfiles.Files, name); errors.Is(
+			err,
+			fs.ErrNotExist,
+		) {
+			t.Skipf(
+				"full migration chain requires embedded dependency %s; "+
+					"000002-000005 are not yet merged into upstream/dev",
+				name,
+			)
+		} else if err != nil {
+			t.Fatalf("inspect embedded migration %s: %v", name, err)
+		}
+	}
+
 	databaseURL, cleanup := isolatedDatabaseURL(t)
 	defer cleanup()
-
-	pool, err := pgxpool.New(context.Background(), databaseURL)
-	if err != nil {
-		t.Fatalf("open dependency fixture pool: %v", err)
-	}
-	if _, err := pool.Exec(context.Background(), `
-		CREATE TABLE identity_users (id uuid PRIMARY KEY)
-	`); err != nil {
-		pool.Close()
-		t.Fatalf("create identity dependency fixture: %v", err)
-	}
-	pool.Close()
 
 	runner, err := migration.Open(databaseURL)
 	if err != nil {
@@ -1031,25 +1046,51 @@ func TestMigrationUpDownAndVersionGap(t *testing.T) {
 			t.Errorf("close migration runner: %v", err)
 		}
 	}()
-	if _, err := runner.Up(); err != nil {
+	changed, err := runner.Up()
+	if err != nil {
 		t.Fatalf("Up: %v", err)
+	}
+	if !changed {
+		t.Fatal("Up from empty schema reported no change")
 	}
 	status, err := runner.Version()
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
 	if !status.Present || status.Dirty || status.Version != 6 {
-		t.Fatalf("status after gap migration = %+v, want clean version 6", status)
+		t.Fatalf("status after full Up = %+v, want clean version 6", status)
 	}
-	if _, err := runner.DownOne(); err != nil {
+	changed, err = runner.DownOne()
+	if err != nil {
 		t.Fatalf("DownOne: %v", err)
+	}
+	if !changed {
+		t.Fatal("DownOne from version 6 reported no change")
 	}
 	status, err = runner.Version()
 	if err != nil {
 		t.Fatalf("Version after DownOne: %v", err)
 	}
-	if !status.Present || status.Dirty || status.Version != 1 {
-		t.Fatalf("status after DownOne = %+v, want clean version 1", status)
+	if !status.Present || status.Dirty || status.Version != 5 {
+		t.Fatalf("status after DownOne = %+v, want clean version 5", status)
+	}
+
+	changed, err = runner.Up()
+	if err != nil {
+		t.Fatalf("Up after DownOne: %v", err)
+	}
+	if !changed {
+		t.Fatal("Up from version 5 reported no change")
+	}
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("Version after re-applying 000006: %v", err)
+	}
+	if !status.Present || status.Dirty || status.Version != 6 {
+		t.Fatalf(
+			"status after re-applying 000006 = %+v, want clean version 6",
+			status,
+		)
 	}
 }
 
