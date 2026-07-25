@@ -14,6 +14,7 @@ SHELL := /bin/bash
 	check-go-format \
 	check-go-vet \
 	check-go-test \
+	check-oss-live \
 	check-api \
 	check-api-dependencies \
 	check-api-contracts \
@@ -25,6 +26,7 @@ help:
 		'  make check          Run Flutter, Go, API, and deterministic smoke checks' \
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-go       Run Go format, vet, and test checks' \
+		'  make check-oss-live Run the explicit real OSS object lifecycle test' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-smoke    Run the deterministic Mock main flow'
 
@@ -59,6 +61,21 @@ check-go-vet: check-go-format
 
 check-go-test: check-go-vet
 	cd server && go test -count=1 ./...
+
+check-oss-live:
+	@set -euo pipefail; \
+	if [[ ! -f .env ]]; then \
+		printf '%s\n' 'Create the ignored root .env with server-only OSS values first.'; \
+		exit 1; \
+	fi; \
+	set -a; \
+	source .env; \
+	set +a; \
+	OSS_LIVE_TEST=1 $(MAKE) --no-print-directory check-oss-live-go
+
+.PHONY: check-oss-live-go
+check-oss-live-go:
+	cd server && go test -count=1 -run '^TestLiveObjectLifecycle$$' ./internal/platform/objectstore/ossstore
 
 check-api: check-api-contracts
 

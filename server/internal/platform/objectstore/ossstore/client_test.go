@@ -1,0 +1,202 @@
+package ossstore
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := fn(request)
+	if response != nil && response.Request == nil {
+		response.Request = request
+	}
+	return response, err
+}
+
+func TestClientPutSignAndDelete(t *testing.T) {
+	payload := []byte("safe audio fixture")
+	sum := sha256.Sum256(payload)
+	checksum := hex.EncodeToString(sum[:])
+	key := "audio/v1/assets/asset_test.wav"
+	var methods []string
+
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			methods = append(methods, request.Method)
+			if request.Host != "speakup-test.oss-cn-shanghai.aliyuncs.com" {
+				t.Errorf("unexpected host: %q", request.Host)
+			}
+			if request.URL.Path != "/"+key {
+				t.Errorf("unexpected path: %q", request.URL.Path)
+			}
+
+			switch request.Method {
+			case http.MethodPut:
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Fatalf("read request body: %v", err)
+				}
+				if !bytes.Equal(body, payload) {
+					t.Errorf("unexpected body: %q", body)
+				}
+				if request.Header.Get("Content-Type") != "audio/wav" ||
+					request.Header.Get("Cache-Control") != privateCacheControl ||
+					request.Header.Get("X-Oss-Server-Side-Encryption") != serverSideEncryption ||
+					request.Header.Get("X-Oss-Forbid-Overwrite") != "true" ||
+					request.Header.Get("X-Oss-Meta-Sha256") != checksum {
+					t.Errorf("unexpected put headers: %#v", request.Header)
+				}
+				return response(http.StatusOK, http.Header{
+					"ETag":             []string{`"etag-test"`},
+					"X-Oss-Request-Id": []string{"request-put"},
+				}, ""), nil
+			case http.MethodDelete:
+				return response(http.StatusNoContent, http.Header{
+					"X-Oss-Request-Id": []string{"request-delete"},
+				}, ""), nil
+			default:
+				t.Fatalf("unexpected method: %s", request.Method)
+				return nil, nil
+			}
+		}),
+	}
+
+	client := newTestClient(t, httpClient)
+	putResult, err := client.Put(context.Background(), objectstore.PutRequest{
+		Key:            key,
+		Body:           bytes.NewReader(payload),
+		Size:           int64(len(payload)),
+		ContentType:    "audio/wav",
+		ChecksumSHA256: checksum,
+	})
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	if putResult.ETag != "etag-test" {
+		t.Fatalf("Put() ETag = %q", putResult.ETag)
+	}
+
+	beforeSign := time.Now()
+	signed, err := client.SignedGet(context.Background(), key)
+	if err != nil {
+		t.Fatalf("SignedGet() error = %v", err)
+	}
+	parsedURL, err := url.Parse(signed.URL)
+	if err != nil {
+		t.Fatalf("parse signed URL: %v", err)
+	}
+	if parsedURL.Scheme != "https" ||
+		parsedURL.Host != "speakup-test.oss-cn-shanghai.aliyuncs.com" ||
+		parsedURL.Path != "/"+key ||
+		parsedURL.Query().Get("x-oss-signature") == "" {
+		t.Fatalf("unexpected signed URL shape: scheme=%q host=%q path=%q signed=%t",
+			parsedURL.Scheme,
+			parsedURL.Host,
+			parsedURL.Path,
+			parsedURL.Query().Get("x-oss-signature") != "",
+		)
+	}
+	if signed.ExpiresAt.Before(beforeSign.Add(119*time.Second)) ||
+		signed.ExpiresAt.After(beforeSign.Add(121*time.Second)) {
+		t.Fatalf("unexpected signed URL expiry: %v", signed.ExpiresAt)
+	}
+
+	if err := client.Delete(context.Background(), key); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if strings.Join(methods, ",") != "PUT,DELETE" {
+		t.Fatalf("unexpected provider calls: %v", methods)
+	}
+}
+
+func TestClientRejectsCrossPrefixKeyWithoutProviderCall(t *testing.T) {
+	called := false
+	client := newTestClient(t, &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			called = true
+			return response(http.StatusOK, nil, ""), nil
+		}),
+	})
+
+	_, err := client.Put(context.Background(), objectstore.PutRequest{
+		Key:         "../other/asset.wav",
+		Body:        bytes.NewReader(nil),
+		Size:        0,
+		ContentType: "audio/wav",
+	})
+	if !errors.Is(err, objectstore.ErrInvalidKey) {
+		t.Fatalf("Put() error = %v", err)
+	}
+	if called {
+		t.Fatal("provider was called for an invalid key")
+	}
+}
+
+func TestClientSanitizesProviderErrors(t *testing.T) {
+	client := newTestClient(t, &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return response(
+				http.StatusForbidden,
+				http.Header{"Content-Type": []string{"application/xml"}},
+				`<Error><Code>AccessDenied</Code><Message>secret-provider-detail</Message><RequestId>safe-request-id</RequestId></Error>`,
+			), nil
+		}),
+	})
+
+	err := client.Delete(context.Background(), "audio/v1/assets/denied.wav")
+	if err == nil {
+		t.Fatal("Delete() error = nil")
+	}
+	if strings.Contains(err.Error(), "secret-provider-detail") ||
+		!strings.Contains(err.Error(), "AccessDenied") ||
+		!strings.Contains(err.Error(), "safe-request-id") {
+		t.Fatalf("unsafe or incomplete error: %v", err)
+	}
+}
+
+func newTestClient(t *testing.T, httpClient *http.Client) *Client {
+	t.Helper()
+	t.Setenv("OSS_ACCESS_KEY_ID", "LTAI-test-access-key")
+	t.Setenv("OSS_ACCESS_KEY_SECRET", "test-secret-never-log")
+
+	client, err := newClient(config.ObjectStorageConfig{
+		Enabled:      true,
+		Region:       "cn-shanghai",
+		Endpoint:     "https://oss-cn-shanghai.aliyuncs.com",
+		Bucket:       "speakup-test",
+		AudioPrefix:  "audio/v1",
+		SignedURLTTL: 2 * time.Minute,
+	}, credentials.NewEnvironmentVariableCredentialsProvider(), httpClient)
+	if err != nil {
+		t.Fatalf("newClient() error = %v", err)
+	}
+	return client
+}
+
+func response(status int, header http.Header, body string) *http.Response {
+	if header == nil {
+		header = make(http.Header)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Header:     header,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
