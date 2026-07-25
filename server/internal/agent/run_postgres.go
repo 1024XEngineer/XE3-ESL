@@ -47,16 +47,12 @@ func (r *PostgresRepository) CreateInitialRun(
 	clientMessageID string,
 	content string,
 	configuration RunConfiguration,
-) (_ RunSubmission, resultErr error) {
+) (RunSubmission, error) {
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
 		return RunSubmission{}, ErrRepository
 	}
-	defer func() {
-		if resultErr != nil {
-			rollback(tx)
-		}
-	}()
+	defer rollback(tx)
 
 	var nextSequence int64
 	if err := tx.QueryRow(ctx, `
@@ -199,16 +195,12 @@ func (r *PostgresRepository) CreateRetryRun(
 	runID string,
 	retryClientID string,
 	configuration RunConfiguration,
-) (_ RunRetry, resultErr error) {
+) (RunRetry, error) {
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
 		return RunRetry{}, ErrRepository
 	}
-	defer func() {
-		if resultErr != nil {
-			rollback(tx)
-		}
-	}()
+	defer rollback(tx)
 
 	original, err := findRunForUpdate(ctx, tx, ownerID, runID)
 	if err != nil {
@@ -380,17 +372,14 @@ func (r *PostgresRepository) SaveContextManifest(
 	}
 	var activeMatterID any
 	var activeMatterVersion any
-	var activeMatterTitle any
 	if manifest.ActiveMatterID != "" {
 		activeMatterID = manifest.ActiveMatterID
 		activeMatterVersion = manifest.ActiveMatterVersion
-		activeMatterTitle = manifest.ActiveMatterTitle
 	}
 	var result ContextManifest
 	var selectedJSON []byte
 	var persistedMatterID pgtype.Text
 	var persistedMatterVersion pgtype.Int8
-	var persistedMatterTitle pgtype.Text
 	err = r.database.QueryRow(ctx, `
 INSERT INTO agent_context_manifests (
     run_id,
@@ -399,7 +388,6 @@ INSERT INTO agent_context_manifests (
     input_message_id,
     active_matter_id,
     active_matter_version,
-    active_matter_title,
     instruction_version,
     selected_messages,
     omitted_message_count,
@@ -411,8 +399,8 @@ INSERT INTO agent_context_manifests (
     max_output_tokens,
     created_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14,
-    $15, $16,
+    $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13,
+    $14, $15,
     CURRENT_TIMESTAMP
 )
 RETURNING
@@ -422,7 +410,6 @@ RETURNING
     input_message_id::text,
     active_matter_id::text,
     active_matter_version,
-    active_matter_title,
     instruction_version,
     selected_messages,
     omitted_message_count,
@@ -439,7 +426,6 @@ RETURNING
 		manifest.InputMessageID,
 		activeMatterID,
 		activeMatterVersion,
-		activeMatterTitle,
 		manifest.InstructionVersion,
 		selectedMessages,
 		manifest.OmittedMessageCount,
@@ -456,7 +442,6 @@ RETURNING
 		&result.InputMessageID,
 		&persistedMatterID,
 		&persistedMatterVersion,
-		&persistedMatterTitle,
 		&result.InstructionVersion,
 		&selectedJSON,
 		&result.OmittedMessageCount,
@@ -475,7 +460,6 @@ RETURNING
 		&result,
 		persistedMatterID,
 		persistedMatterVersion,
-		persistedMatterTitle,
 		selectedJSON,
 	); err != nil {
 		return ContextManifest{}, err
@@ -492,7 +476,6 @@ func (r *PostgresRepository) FindContextManifest(
 	var selectedJSON []byte
 	var activeMatterID pgtype.Text
 	var activeMatterVersion pgtype.Int8
-	var activeMatterTitle pgtype.Text
 	err := r.database.QueryRow(ctx, `
 SELECT
     run_id::text,
@@ -501,7 +484,6 @@ SELECT
     input_message_id::text,
     active_matter_id::text,
     active_matter_version,
-    active_matter_title,
     instruction_version,
     selected_messages,
     omitted_message_count,
@@ -523,7 +505,6 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result.InputMessageID,
 		&activeMatterID,
 		&activeMatterVersion,
-		&activeMatterTitle,
 		&result.InstructionVersion,
 		&selectedJSON,
 		&result.OmittedMessageCount,
@@ -542,7 +523,6 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result,
 		activeMatterID,
 		activeMatterVersion,
-		activeMatterTitle,
 		selectedJSON,
 	); err != nil {
 		return ContextManifest{}, err
@@ -556,16 +536,12 @@ func (r *PostgresRepository) CompleteRun(
 	runID string,
 	content string,
 	result ai.TextResult,
-) (_ Run, resultErr error) {
+) (Run, error) {
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
 		return Run{}, ErrRepository
 	}
-	defer func() {
-		if resultErr != nil {
-			rollback(tx)
-		}
-	}()
+	defer rollback(tx)
 	run, err := findRunForUpdate(ctx, tx, ownerID, runID)
 	if err != nil {
 		return Run{}, err
@@ -929,7 +905,6 @@ func decodeManifestOptionals(
 	manifest *ContextManifest,
 	activeMatterID pgtype.Text,
 	activeMatterVersion pgtype.Int8,
-	activeMatterTitle pgtype.Text,
 	selectedJSON []byte,
 ) error {
 	if activeMatterID.Valid {
@@ -937,9 +912,6 @@ func decodeManifestOptionals(
 	}
 	if activeMatterVersion.Valid {
 		manifest.ActiveMatterVersion = activeMatterVersion.Int64
-	}
-	if activeMatterTitle.Valid {
-		manifest.ActiveMatterTitle = activeMatterTitle.String
 	}
 	if err := json.Unmarshal(selectedJSON, &manifest.SelectedMessages); err != nil {
 		return ErrRepository

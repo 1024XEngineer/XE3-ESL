@@ -759,7 +759,6 @@ components:
       required:
         - matter_id
         - version
-        - title
       properties:
         matter_id:
           type: string
@@ -769,11 +768,6 @@ components:
           type: integer
           format: int64
           minimum: 1
-          readOnly: true
-        title:
-          type: string
-          minLength: 1
-          maxLength: 200
           readOnly: true
     ContextManifest:
       type: object

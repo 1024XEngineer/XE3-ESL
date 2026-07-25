@@ -101,14 +101,25 @@ func TestLoadTextGenerationRejectsUnsafeOrIncompleteConfiguration(t *testing.T) 
 
 func TestSecretIsRedactedByCommonFormatters(t *testing.T) {
 	secret := Secret{value: "must-never-be-logged"}
+	configuration := TextGenerationConfig{
+		Provider: TextProviderQianwen,
+		APIKey:   secret,
+	}
 	formatted := []string{
 		fmt.Sprint(secret),
 		fmt.Sprintf("%+v", secret),
 		fmt.Sprintf("%#v", secret),
+		fmt.Sprintf("%+v", configuration),
+		fmt.Sprintf("%#v", configuration),
 	}
 	encoded, err := json.Marshal(secret)
 	if err != nil {
 		t.Fatalf("marshal secret: %v", err)
+	}
+	formatted = append(formatted, string(encoded))
+	encoded, err = json.Marshal(configuration)
+	if err != nil {
+		t.Fatalf("marshal text generation configuration: %v", err)
 	}
 	formatted = append(formatted, string(encoded))
 

@@ -98,7 +98,6 @@ type ContextManifest struct {
 	InputMessageID      string
 	ActiveMatterID      string
 	ActiveMatterVersion int64
-	ActiveMatterTitle   string
 	InstructionVersion  string
 	SelectedMessages    []ContextMessageSource
 	OmittedMessageCount int

@@ -205,7 +205,9 @@ func (service *RunService) process(
 		)
 	}
 	if !validTextResult(result) ||
-		result.Provider != service.configuration.Provider {
+		result.Provider != service.configuration.Provider ||
+		result.Model != service.configuration.Model ||
+		result.Usage.OutputTokens > service.configuration.MaxOutputTokens {
 		return service.persistFailure(
 			ctx,
 			actor.UserID,
@@ -263,11 +265,16 @@ func validTextResult(result ai.TextResult) bool {
 		providerPattern.MatchString(result.Provider) &&
 		modelPattern.MatchString(result.Model) &&
 		(result.FinishReason == "stop" || result.FinishReason == "length") &&
-		result.Usage.InputTokens >= 0 &&
-		result.Usage.InputTokens <= maxPersistedTokenCount &&
-		result.Usage.OutputTokens >= 0 &&
-		result.Usage.OutputTokens <= maxPersistedTokenCount &&
-		result.Usage.TotalTokens >= 0 &&
-		result.Usage.TotalTokens <= maxPersistedTokenCount &&
+		validTokenUsage(result.Usage) &&
 		validMessageContent(result.Content)
+}
+
+func validTokenUsage(usage ai.TokenUsage) bool {
+	return usage.InputTokens >= 0 &&
+		usage.InputTokens <= maxPersistedTokenCount &&
+		usage.OutputTokens >= 0 &&
+		usage.OutputTokens <= maxPersistedTokenCount &&
+		usage.TotalTokens >= usage.InputTokens &&
+		usage.TotalTokens <= maxPersistedTokenCount &&
+		usage.TotalTokens-usage.InputTokens == usage.OutputTokens
 }

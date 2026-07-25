@@ -153,7 +153,6 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 	}
 	if manifest.ActiveMatterID != activeMatter.ID ||
 		manifest.ActiveMatterVersion != activeMatter.Version ||
-		manifest.ActiveMatterTitle != activeMatter.Title ||
 		manifest.RequestedProvider != testRunConfiguration.Provider ||
 		manifest.RequestedModel != testRunConfiguration.Model ||
 		manifest.MaxOutputTokens != testRunConfiguration.MaxOutputTokens ||
@@ -679,6 +678,129 @@ SELECT
 	}
 }
 
+func TestPostgresAgentRunPanicRollsBackAndReleasesConnection(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	_, dataService, runService, _ := newAgentRunServices(
+		t,
+		database.pool,
+		fake.NewTextGenerator(successfulTextResult()),
+		testRunConfiguration,
+	)
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create panic rollback Thread: %v", err)
+	}
+	panicRepository, err := NewPostgresRepository(
+		database.pool,
+		idGeneratorFunc(func() (string, error) {
+			panic("test Run ID generator panic")
+		}),
+	)
+	if err != nil {
+		t.Fatalf("new panic Run repository: %v", err)
+	}
+	acquiredBeforePanic := database.pool.Stat().AcquiredConns()
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		_, _ = panicRepository.CreateInitialRun(
+			context.Background(),
+			actor.UserID,
+			thread.ID,
+			"panic-run-message",
+			"this Run transaction must be released",
+			testRunConfiguration,
+		)
+	}()
+	if recovered == nil {
+		t.Fatal("panic Run ID generator did not panic")
+	}
+	if acquiredAfterPanic := database.pool.Stat().AcquiredConns(); acquiredAfterPanic !=
+		acquiredBeforePanic {
+		t.Fatalf(
+			"acquired connections after Run panic = %d, want %d",
+			acquiredAfterPanic,
+			acquiredBeforePanic,
+		)
+	}
+	submission, err := runService.SubmitText(
+		context.Background(),
+		actor,
+		thread.ID,
+		"after-run-panic",
+		"the Thread lock was released",
+	)
+	if err != nil || submission.Run.Status != RunStatusCompleted {
+		t.Fatalf("submit after Run panic = %#v, %v", submission, err)
+	}
+}
+
+func TestPostgresAgentRunRejectsPartialResultsOnNonterminalRuns(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	_, dataService, _, repository := newAgentRunServices(
+		t,
+		database.pool,
+		fake.NewTextGenerator(successfulTextResult()),
+		testRunConfiguration,
+	)
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	submission, err := repository.CreateInitialRun(
+		context.Background(),
+		actor.UserID,
+		thread.ID,
+		"partial-nonterminal-result",
+		"Do not permit partial result audit fields.",
+		testRunConfiguration,
+	)
+	if err != nil {
+		t.Fatalf("create pending Run: %v", err)
+	}
+
+	assertPostgresConstraint(
+		t,
+		database.pool,
+		`UPDATE agent_runs
+SET provider_completion_id = 'partial-pending-result'
+WHERE id = $1 AND owner_user_id = $2`,
+		[]any{submission.Run.ID, actor.UserID},
+		"23514",
+		"agent_runs_state_shape_check",
+	)
+	if _, acquired, err := repository.ClaimRun(
+		context.Background(),
+		actor.UserID,
+		submission.Run.ID,
+	); err != nil || !acquired {
+		t.Fatalf("claim pending Run: acquired=%v err=%v", acquired, err)
+	}
+	assertPostgresConstraint(
+		t,
+		database.pool,
+		`UPDATE agent_runs
+SET provider_model = 'fake-free-model'
+WHERE id = $1 AND owner_user_id = $2`,
+		[]any{submission.Run.ID, actor.UserID},
+		"23514",
+		"agent_runs_state_shape_check",
+	)
+	if _, err := repository.FailRun(
+		context.Background(),
+		actor.UserID,
+		submission.Run.ID,
+		RunFailureInternal,
+		true,
+	); err != nil {
+		t.Fatalf("clean up running Run: %v", err)
+	}
+}
+
 func TestPostgresAgentRunRollsBackAssistantWhenCompletionCannotCommit(
 	t *testing.T,
 ) {
@@ -713,7 +835,7 @@ func TestPostgresAgentRunRollsBackAssistantWhenCompletionCannotCommit(
 		t.Fatalf("claim pending Run: acquired=%v err=%v", acquired, err)
 	}
 	invalidResult := successfulTextResult()
-	invalidResult.Model = "invalid model with spaces"
+	invalidResult.Model = "fake-paid-model"
 	if _, err := repository.CompleteRun(
 		context.Background(),
 		actor.UserID,
@@ -800,6 +922,16 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 		" ",
 		maxMessageContentBytes,
 	) + "visible"
+	mismatchedModelResult := successfulTextResult()
+	mismatchedModelResult.Model = "fake-paid-model"
+	overBudgetResult := successfulTextResult()
+	overBudgetResult.Usage.OutputTokens =
+		testRunConfiguration.MaxOutputTokens + 1
+	overBudgetResult.Usage.TotalTokens =
+		overBudgetResult.Usage.InputTokens +
+			overBudgetResult.Usage.OutputTokens
+	inconsistentUsageResult := successfulTextResult()
+	inconsistentUsageResult.Usage.TotalTokens--
 
 	tests := []struct {
 		name      string
@@ -835,6 +967,21 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 		{
 			name:      "raw content exceeds persistence range",
 			generator: fake.NewTextGenerator(oversizedContent),
+			wantKind:  string(ai.ErrorInvalidResponse),
+		},
+		{
+			name:      "provider switched model",
+			generator: fake.NewTextGenerator(mismatchedModelResult),
+			wantKind:  string(ai.ErrorInvalidResponse),
+		},
+		{
+			name:      "provider exceeded output budget",
+			generator: fake.NewTextGenerator(overBudgetResult),
+			wantKind:  string(ai.ErrorInvalidResponse),
+		},
+		{
+			name:      "provider returned inconsistent usage",
+			generator: fake.NewTextGenerator(inconsistentUsageResult),
 			wantKind:  string(ai.ErrorInvalidResponse),
 		},
 	}
@@ -955,6 +1102,106 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 		original.FailureKind != string(ai.ErrorTimeout) {
 		t.Fatalf("original retry history changed: %#v, %v", original, err)
 	}
+}
+
+func TestPostgresAgentRunRetryCannotChangeInputMessage(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	matterService, dataService := newAgentDataServices(t, database.pool)
+	repository, err := NewPostgresRepository(
+		database.pool,
+		identity.NewUUIDv4Generator(nil),
+	)
+	if err != nil {
+		t.Fatalf("new Agent repository: %v", err)
+	}
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	failingService := newRunService(
+		t,
+		repository,
+		matterService,
+		fake.NewFailingTextGenerator(ai.NewGenerationError(
+			ai.ErrorTimeout,
+			0,
+			"",
+			"",
+			context.DeadlineExceeded,
+		)),
+		testRunConfiguration,
+	)
+	original, err := failingService.SubmitText(
+		context.Background(),
+		actor,
+		thread.ID,
+		"retry-parent-message",
+		"This is the original retry input.",
+	)
+	if err != nil || original.Run.Status != RunStatusFailed {
+		t.Fatalf("create failed parent Run = %#v, %v", original, err)
+	}
+	differentInput, err := dataService.AppendUserMessage(
+		context.Background(),
+		actor,
+		thread.ID,
+		"different-retry-input",
+		"A retry must not point at this different Message.",
+	)
+	if err != nil {
+		t.Fatalf("append different input Message: %v", err)
+	}
+
+	assertPostgresConstraint(
+		t,
+		database.pool,
+		`INSERT INTO agent_runs (
+    id,
+    owner_user_id,
+    thread_id,
+    input_message_id,
+    attempt_no,
+    retry_of_run_id,
+    retry_client_id,
+    status,
+    requested_provider,
+    requested_model,
+    max_output_tokens,
+    failure_kind,
+    failure_retryable,
+    created_at,
+    started_at,
+    completed_at,
+    updated_at
+) VALUES (
+    '40000000-0000-4000-8000-000000000002',
+    $1,
+    $2,
+    $3,
+    2,
+    $4,
+    'different-input-retry',
+    'failed',
+    'fake',
+    'fake-free-model',
+    256,
+    'timeout',
+    true,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP
+)`,
+		[]any{
+			actor.UserID,
+			thread.ID,
+			differentInput.ID,
+			original.Run.ID,
+		},
+		"23503",
+		"agent_runs_retry_of_fkey",
+	)
 }
 
 func TestPostgresAgentRunPersistsCallerCancellationAsRetryable(t *testing.T) {
@@ -1372,7 +1619,19 @@ func TestPostgresAgentRunProtectedHTTP(t *testing.T) {
 		testRunConfiguration,
 	)
 	actorA := testActorA()
-	thread, err := dataService.CreateThread(context.Background(), actorA, "")
+	activeMatter, err := matterService.Create(
+		context.Background(),
+		actorA,
+		"Private acquisition discussion",
+	)
+	if err != nil {
+		t.Fatalf("create HTTP Matter: %v", err)
+	}
+	thread, err := dataService.CreateThread(
+		context.Background(),
+		actorA,
+		activeMatter.ID,
+	)
 	if err != nil {
 		t.Fatalf("create Thread: %v", err)
 	}
@@ -1406,6 +1665,37 @@ func TestPostgresAgentRunProtectedHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	module.RegisterRoutes(router)
+
+	nulResponse := performAgentRequest(
+		router,
+		http.MethodPost,
+		"/v1/agent-threads/"+thread.ID+"/runs",
+		`{"client_message_id":"http-message-nul","content":"invalid\u0000content"}`,
+		"token-a",
+	)
+	if nulResponse.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"NUL Run content response: %d %s",
+			nulResponse.Code,
+			nulResponse.Body,
+		)
+	}
+	maxEscapedResponse := performAgentRequest(
+		router,
+		http.MethodPost,
+		"/v1/agent-threads/"+thread.ID+"/runs",
+		`{"client_message_id":"http-message-max-escaped","content":"`+
+			strings.Repeat(`\ud83d\ude00`, maxMessageContentRunes)+
+			`"}`,
+		"token-a",
+	)
+	if maxEscapedResponse.Code != http.StatusCreated {
+		t.Fatalf(
+			"maximum escaped Run response: %d %s",
+			maxEscapedResponse.Code,
+			maxEscapedResponse.Body,
+		)
+	}
 
 	response := performAgentRequest(
 		router,
@@ -1446,7 +1736,8 @@ WHERE owner_user_id = $1 AND thread_id = $2`,
 		"token-a",
 	)
 	if manifest.Code != http.StatusOK ||
-		!strings.Contains(manifest.Body.String(), `"selected_messages"`) {
+		!strings.Contains(manifest.Body.String(), `"selected_messages"`) ||
+		strings.Contains(manifest.Body.String(), activeMatter.Title) {
 		t.Fatalf("manifest response: %d %s", manifest.Code, manifest.Body)
 	}
 	messages := performAgentRequest(

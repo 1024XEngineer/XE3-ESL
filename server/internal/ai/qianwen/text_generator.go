@@ -134,10 +134,11 @@ func (generator *Generator) Generate(
 	}
 
 	payload := chatCompletionRequest{
-		Model:     generator.model,
-		Messages:  make([]chatMessage, 0, len(request.Messages)),
-		Stream:    false,
-		MaxTokens: generator.maxOutputTokens,
+		Model:          generator.model,
+		Messages:       make([]chatMessage, 0, len(request.Messages)),
+		Stream:         false,
+		EnableThinking: false,
+		MaxTokens:      generator.maxOutputTokens,
 	}
 	for _, message := range request.Messages {
 		payload.Messages = append(payload.Messages, chatMessage{
@@ -235,13 +236,32 @@ func (generator *Generator) Generate(
 			err,
 		)
 	}
+	if result.Model != generator.model {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidResponse,
+			response.StatusCode,
+			"",
+			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
+			errors.New("Qianwen response model does not match the requested model"),
+		)
+	}
+	if result.Usage.OutputTokens > generator.maxOutputTokens {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidResponse,
+			response.StatusCode,
+			"",
+			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
+			errors.New("Qianwen response exceeded the configured output budget"),
+		)
+	}
 	return result, nil
 }
 
 type chatCompletionRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
-	Stream   bool          `json:"stream"`
+	Model          string        `json:"model"`
+	Messages       []chatMessage `json:"messages"`
+	Stream         bool          `json:"stream"`
+	EnableThinking bool          `json:"enable_thinking"`
 	// The current compatibility overview lists max_completion_tokens as
 	// silently ignored. The endpoint-specific Chat API still honors the
 	// deprecated max_tokens field, so it remains the enforceable budget.
@@ -263,10 +283,10 @@ type chatCompletionResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+	Usage *struct {
+		PromptTokens     *int `json:"prompt_tokens"`
+		CompletionTokens *int `json:"completion_tokens"`
+		TotalTokens      *int `json:"total_tokens"`
 	} `json:"usage"`
 }
 
@@ -295,9 +315,16 @@ func (response chatCompletionResponse) result() (ai.TextResult, error) {
 	default:
 		return ai.TextResult{}, errors.New("Qianwen response has an unsupported finish reason")
 	}
-	if response.Usage.PromptTokens < 0 ||
-		response.Usage.CompletionTokens < 0 ||
-		response.Usage.TotalTokens < 0 {
+	if response.Usage == nil ||
+		response.Usage.PromptTokens == nil ||
+		response.Usage.CompletionTokens == nil ||
+		response.Usage.TotalTokens == nil ||
+		*response.Usage.PromptTokens < 0 ||
+		*response.Usage.CompletionTokens < 0 ||
+		*response.Usage.TotalTokens < 0 ||
+		*response.Usage.TotalTokens < *response.Usage.PromptTokens ||
+		*response.Usage.TotalTokens-*response.Usage.PromptTokens !=
+			*response.Usage.CompletionTokens {
 		return ai.TextResult{}, errors.New("Qianwen response has invalid token usage")
 	}
 
@@ -308,9 +335,9 @@ func (response chatCompletionResponse) result() (ai.TextResult, error) {
 		Content:      content,
 		FinishReason: choice.FinishReason,
 		Usage: ai.TokenUsage{
-			InputTokens:  response.Usage.PromptTokens,
-			OutputTokens: response.Usage.CompletionTokens,
-			TotalTokens:  response.Usage.TotalTokens,
+			InputTokens:  *response.Usage.PromptTokens,
+			OutputTokens: *response.Usage.CompletionTokens,
+			TotalTokens:  *response.Usage.TotalTokens,
 		},
 	}, nil
 }
@@ -359,11 +386,12 @@ func classifyStatus(statusCode int, providerCode string) ai.ErrorKind {
 	if strings.Contains(normalizedCode, "allocationquota.freetieronly") {
 		return ai.ErrorQuotaExhausted
 	}
+	if strings.Contains(normalizedCode, "arrearage") ||
+		strings.Contains(normalizedCode, "billoverdue") ||
+		strings.Contains(normalizedCode, "commoditynotpurchased") {
+		return ai.ErrorAuthorization
+	}
 	if statusCode == http.StatusTooManyRequests {
-		if strings.Contains(normalizedCode, "billoverdue") ||
-			strings.Contains(normalizedCode, "commoditynotpurchased") {
-			return ai.ErrorAuthorization
-		}
 		return ai.ErrorRateLimited
 	}
 	if statusCode == http.StatusRequestTimeout ||
@@ -464,7 +492,9 @@ func normalizeModel(raw string) (string, error) {
 		return "", errors.New("Qianwen adapter only accepts Qwen model IDs")
 	}
 	for _, value := range model {
-		if !(unicode.IsLetter(value) || unicode.IsDigit(value) ||
+		if !((value >= 'a' && value <= 'z') ||
+			(value >= 'A' && value <= 'Z') ||
+			(value >= '0' && value <= '9') ||
 			value == '-' || value == '_' || value == '.') {
 			return "", errors.New("Qianwen model contains unsupported characters")
 		}

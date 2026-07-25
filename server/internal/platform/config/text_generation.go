@@ -54,9 +54,8 @@ func (Secret) MarshalJSON() ([]byte, error) {
 	return json.Marshal("[REDACTED]")
 }
 
-// LoadTextGeneration validates the independently deployable text-provider
-// configuration. It is intentionally separate from Load until the AgentRun
-// application service is assembled.
+// LoadTextGeneration validates the server-only provider configuration before
+// production provider registration and AgentRun assembly.
 func LoadTextGeneration() (TextGenerationConfig, error) {
 	provider := strings.ToLower(strings.TrimSpace(os.Getenv("TEXT_GENERATION_PROVIDER")))
 	if provider == "" {

@@ -80,6 +80,13 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 	if _, exists := rawPayload["max_completion_tokens"]; exists {
 		t.Fatal("request used max_completion_tokens, which the compatibility endpoint ignores")
 	}
+	rawThinking, exists := rawPayload["enable_thinking"]
+	if !exists || string(rawThinking) != "false" {
+		t.Fatalf(
+			"non-streaming request did not explicitly disable thinking: %s",
+			rawThinking,
+		)
+	}
 	for index, message := range received.Messages {
 		if message.Role != string(request.Messages[index].Role) ||
 			message.Content != request.Messages[index].Content {
@@ -166,6 +173,20 @@ func TestGenerateMapsProviderFailuresWithoutLeakingSensitiveValues(t *testing.T)
 			body:       `{"code":"PostpaidBillOverdue"}`,
 			kind:       ai.ErrorAuthorization,
 			code:       "PostpaidBillOverdue",
+		},
+		{
+			name:       "account in arrears",
+			statusCode: http.StatusBadRequest,
+			body:       `{"code":"Arrearage"}`,
+			kind:       ai.ErrorAuthorization,
+			code:       "Arrearage",
+		},
+		{
+			name:       "model not purchased",
+			statusCode: http.StatusBadRequest,
+			body:       `{"code":"CommodityNotPurchased"}`,
+			kind:       ai.ErrorAuthorization,
+			code:       "CommodityNotPurchased",
 		},
 		{
 			name:       "provider timeout",
@@ -257,6 +278,13 @@ func TestGenerateRejectsInvalidResponses(t *testing.T) {
 			"choices":[{"finish_reason":"stop",
 				"message":{"role":"assistant","content":"answer"}}]
 		}`,
+		"provider switched model": `{
+			"id":"chatcmpl-1",
+			"model":"qwen-plus",
+			"choices":[{"finish_reason":"stop",
+				"message":{"role":"assistant","content":"answer"}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`,
 		"no choices": `{
 			"id":"chatcmpl-1","model":"qwen3.5-flash","choices":[]
 		}`,
@@ -282,11 +310,34 @@ func TestGenerateRejectsInvalidResponses(t *testing.T) {
 			"choices":[{"finish_reason":"tool_calls",
 				"message":{"role":"assistant","content":"answer"}}]
 		}`,
+		"missing usage": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"stop",
+				"message":{"role":"assistant","content":"answer"}}]
+		}`,
+		"incomplete usage": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"stop",
+				"message":{"role":"assistant","content":"answer"}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1}
+		}`,
 		"negative usage": `{
 			"id":"chatcmpl-1","model":"qwen3.5-flash",
 			"choices":[{"finish_reason":"stop",
 				"message":{"role":"assistant","content":"answer"}}],
 			"usage":{"prompt_tokens":-1,"completion_tokens":1,"total_tokens":0}
+		}`,
+		"inconsistent usage": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"stop",
+				"message":{"role":"assistant","content":"answer"}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":1}
+		}`,
+		"output budget exceeded": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"stop",
+				"message":{"role":"assistant","content":"answer"}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":513,"total_tokens":514}
 		}`,
 	}
 	for name, body := range tests {
@@ -462,6 +513,13 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 			name: "non Qwen model",
 			mutate: func(config *Config) string {
 				config.Model = "deepseek-v3"
+				return "test-api-key"
+			},
+		},
+		{
+			name: "non ASCII model ID",
+			mutate: func(config *Config) string {
+				config.Model = "qwen-模型"
 				return "test-api-key"
 			},
 		},

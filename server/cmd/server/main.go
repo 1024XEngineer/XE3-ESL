@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/qianwen"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
@@ -36,15 +35,7 @@ func run() int {
 		logger.Error("text generation configuration failed")
 		return 1
 	}
-	textGenerator, err := qianwen.New(
-		qianwen.Config{
-			BaseURL:         textConfig.BaseURL,
-			Model:           textConfig.Model,
-			Timeout:         textConfig.Timeout,
-			MaxOutputTokens: textConfig.MaxOutputTokens,
-		},
-		textConfig.APIKey.Reveal(),
-	)
+	textGenerator, err := bootstrap.NewTextGenerator(textConfig)
 	if err != nil {
 		logger.Error("text generation startup failed")
 		return 1

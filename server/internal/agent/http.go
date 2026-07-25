@@ -665,7 +665,6 @@ func contextManifestResponse(manifest ContextManifest) gin.H {
 		result["active_matter"] = gin.H{
 			"matter_id": manifest.ActiveMatterID,
 			"version":   manifest.ActiveMatterVersion,
-			"title":     manifest.ActiveMatterTitle,
 		}
 	}
 	return result
