@@ -159,6 +159,32 @@ func TestTranscribeRejectsInvalidAudioBeforeProviderCall(t *testing.T) {
 	}
 }
 
+func TestTranscribeRejectsAudioCloseFailureBeforeProviderCall(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	recognizer := mustRecognizer(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return jsonResponse(http.StatusOK, `{}`), nil
+	}), "test-api-key")
+	_, err := recognizer.Transcribe(
+		context.Background(),
+		ai.TranscriptionRequest{Audio: &closeFailingASRAudio{
+			asrTestAudio: asrTestAudio{data: []byte("wav")},
+		}},
+	)
+	assertSpeechError(
+		t,
+		err,
+		ai.SpeechOperationTranscription,
+		ai.ErrorInvalidRequest,
+		false,
+	)
+	if calls.Load() != 0 {
+		t.Fatalf("provider calls = %d, want zero", calls.Load())
+	}
+}
+
 func TestTranscribeRejectsInvalidResponse(t *testing.T) {
 	t.Parallel()
 
@@ -341,6 +367,24 @@ func (*asrTestAudio) Duration() time.Duration {
 
 func (*asrTestAudio) SampleRate() int {
 	return 16_000
+}
+
+type closeFailingASRAudio struct {
+	asrTestAudio
+}
+
+func (audio closeFailingASRAudio) Open() (io.ReadCloser, error) {
+	return closeFailingReader{
+		Reader: strings.NewReader(string(audio.data)),
+	}, nil
+}
+
+type closeFailingReader struct {
+	io.Reader
+}
+
+func (closeFailingReader) Close() error {
+	return errors.New("sensitive storage close failure")
 }
 
 func assertSpeechError(

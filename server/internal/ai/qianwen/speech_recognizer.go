@@ -341,12 +341,20 @@ func readAudioSource(source platformmedia.AudioSource) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("open validated audio source")
 	}
-	defer reader.Close()
-	data, err := io.ReadAll(io.LimitReader(reader, platformmedia.MaxAudioBytes+1))
-	if err != nil {
+	data, readErr := io.ReadAll(
+		io.LimitReader(reader, platformmedia.MaxAudioBytes+1),
+	)
+	closeErr := reader.Close()
+	if readErr != nil {
+		clear(data)
 		return nil, errors.New("read validated audio source")
 	}
+	if closeErr != nil {
+		clear(data)
+		return nil, errors.New("close validated audio source")
+	}
 	if int64(len(data)) != source.Size() {
+		clear(data)
 		return nil, errors.New("audio source size changed after validation")
 	}
 	return data, nil
