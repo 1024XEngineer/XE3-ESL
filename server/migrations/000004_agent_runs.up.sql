@@ -61,8 +61,6 @@ CREATE TABLE agent_runs (
     updated_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT agent_runs_id_owner_thread_key
         UNIQUE (id, owner_user_id, thread_id),
-    CONSTRAINT agent_runs_id_owner_thread_input_key
-        UNIQUE (id, owner_user_id, thread_id, input_message_id),
     CONSTRAINT agent_runs_thread_owner_fkey
         FOREIGN KEY (thread_id, owner_user_id)
         REFERENCES agent_threads (id, owner_user_id)
@@ -72,18 +70,8 @@ CREATE TABLE agent_runs (
         REFERENCES agent_messages (id, owner_user_id, thread_id)
         ON DELETE RESTRICT,
     CONSTRAINT agent_runs_retry_of_fkey
-        FOREIGN KEY (
-            retry_of_run_id,
-            owner_user_id,
-            thread_id,
-            input_message_id
-        )
-        REFERENCES agent_runs (
-            id,
-            owner_user_id,
-            thread_id,
-            input_message_id
-        )
+        FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id)
+        REFERENCES agent_runs (id, owner_user_id, thread_id)
         ON DELETE RESTRICT,
     CONSTRAINT agent_runs_input_attempt_key
         UNIQUE (owner_user_id, thread_id, input_message_id, attempt_no),
@@ -144,21 +132,6 @@ CREATE TABLE agent_runs (
             (input_tokens IS NULL OR input_tokens >= 0)
             AND (output_tokens IS NULL OR output_tokens >= 0)
             AND (total_tokens IS NULL OR total_tokens >= 0)
-            AND (
-                total_tokens IS NULL
-                OR total_tokens::bigint =
-                    input_tokens::bigint + output_tokens::bigint
-            )
-        ),
-    CONSTRAINT agent_runs_result_model_check
-        CHECK (
-            provider_model IS NULL
-            OR provider_model = requested_model
-        ),
-    CONSTRAINT agent_runs_result_budget_check
-        CHECK (
-            output_tokens IS NULL
-            OR output_tokens <= max_output_tokens
         ),
     CONSTRAINT agent_runs_state_shape_check
         CHECK (
@@ -167,12 +140,6 @@ CREATE TABLE agent_runs (
                 AND started_at IS NULL
                 AND completed_at IS NULL
                 AND assistant_message_id IS NULL
-                AND provider_completion_id IS NULL
-                AND provider_model IS NULL
-                AND finish_reason IS NULL
-                AND input_tokens IS NULL
-                AND output_tokens IS NULL
-                AND total_tokens IS NULL
                 AND failure_kind IS NULL
                 AND failure_retryable IS NULL
             )
@@ -182,12 +149,6 @@ CREATE TABLE agent_runs (
                 AND started_at IS NOT NULL
                 AND completed_at IS NULL
                 AND assistant_message_id IS NULL
-                AND provider_completion_id IS NULL
-                AND provider_model IS NULL
-                AND finish_reason IS NULL
-                AND input_tokens IS NULL
-                AND output_tokens IS NULL
-                AND total_tokens IS NULL
                 AND failure_kind IS NULL
                 AND failure_retryable IS NULL
             )
@@ -271,6 +232,7 @@ CREATE TABLE agent_context_manifests (
     input_message_id uuid NOT NULL,
     active_matter_id uuid,
     active_matter_version bigint,
+    active_matter_title text,
     instruction_version text NOT NULL,
     selected_messages jsonb NOT NULL,
     omitted_message_count integer NOT NULL,
@@ -298,11 +260,13 @@ CREATE TABLE agent_context_manifests (
             (
                 active_matter_id IS NULL
                 AND active_matter_version IS NULL
+                AND active_matter_title IS NULL
             )
             OR
             (
                 active_matter_id IS NOT NULL
                 AND active_matter_version > 0
+                AND active_matter_title IS NOT NULL
             )
         ),
     CONSTRAINT agent_context_manifests_messages_check

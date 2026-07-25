@@ -257,6 +257,80 @@ WHERE id = $1`,
 	}
 }
 
+func TestAgentTrustBoundaryMigrationUpgradePaths(t *testing.T) {
+	t.Run("already_applied_version_four", func(t *testing.T) {
+		migrationConfig, admin, schema := isolatedMigrationConfig(t)
+		runner, err := openConfig(migrationConfig)
+		if err != nil {
+			t.Fatalf("open migration runner: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := runner.Close(); err != nil {
+				t.Errorf("close migration runner: %v", err)
+			}
+		})
+
+		if err := runner.migrate.Steps(4); err != nil {
+			t.Fatalf("apply migrations through version four: %v", err)
+		}
+		assertMigrationStatus(t, runner, 4)
+		assertVersionFourAgentSchema(t, admin, schema)
+
+		changed, err := runner.Up()
+		if err != nil {
+			t.Fatalf("apply version five: %v", err)
+		}
+		if !changed {
+			t.Fatal("version five reported no change")
+		}
+		assertMigrationStatus(t, runner, 5)
+		assertAgentTrustBoundarySchema(t, admin, schema)
+
+		changed, err = runner.DownOne()
+		if err != nil {
+			t.Fatalf("revert version five: %v", err)
+		}
+		if !changed {
+			t.Fatal("version five down reported no change")
+		}
+		assertMigrationStatus(t, runner, 4)
+		assertVersionFourAgentSchema(t, admin, schema)
+
+		changed, err = runner.Up()
+		if err != nil {
+			t.Fatalf("reapply version five: %v", err)
+		}
+		if !changed {
+			t.Fatal("reapplying version five reported no change")
+		}
+		assertMigrationStatus(t, runner, 5)
+		assertAgentTrustBoundarySchema(t, admin, schema)
+	})
+
+	t.Run("empty_schema", func(t *testing.T) {
+		migrationConfig, admin, schema := isolatedMigrationConfig(t)
+		runner, err := openConfig(migrationConfig)
+		if err != nil {
+			t.Fatalf("open migration runner: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := runner.Close(); err != nil {
+				t.Errorf("close migration runner: %v", err)
+			}
+		})
+
+		changed, err := runner.Up()
+		if err != nil {
+			t.Fatalf("apply all migrations to empty schema: %v", err)
+		}
+		if !changed {
+			t.Fatal("empty-schema migration reported no change")
+		}
+		assertMigrationStatus(t, runner, 5)
+		assertAgentTrustBoundarySchema(t, admin, schema)
+	})
+}
+
 func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 	migrationConfig, admin, schema := isolatedMigrationConfig(t)
 
@@ -1033,6 +1107,189 @@ func assertConstraintViolation(
 			constraint,
 		)
 	}
+}
+
+func assertMigrationStatus(t *testing.T, runner *Runner, version int) {
+	t.Helper()
+
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("read migration version: %v", err)
+	}
+	if !status.Present || status.Version != version || status.Dirty {
+		t.Fatalf(
+			"migration status = %+v, want version %d clean",
+			status,
+			version,
+		)
+	}
+}
+
+func assertVersionFourAgentSchema(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+) {
+	t.Helper()
+
+	assertContextManifestTitleColumn(t, conn, schema, true)
+	constraints := readAgentRunConstraintDefinitions(t, conn, schema)
+	for _, name := range []string{
+		"agent_runs_id_owner_thread_input_key",
+		"agent_runs_result_model_check",
+		"agent_runs_result_budget_check",
+	} {
+		if _, exists := constraints[name]; exists {
+			t.Errorf("version four unexpectedly contains constraint %s", name)
+		}
+	}
+	retryDefinition := constraints["agent_runs_retry_of_fkey"]
+	if !strings.Contains(
+		retryDefinition,
+		"FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id)",
+	) || strings.Contains(
+		retryDefinition,
+		"FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id, input_message_id)",
+	) {
+		t.Errorf("version four retry constraint = %q", retryDefinition)
+	}
+	if strings.Contains(
+		constraints["agent_runs_result_numbers_check"],
+		"::bigint",
+	) {
+		t.Error("version four unexpectedly contains the token sum constraint")
+	}
+}
+
+func assertAgentTrustBoundarySchema(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+) {
+	t.Helper()
+
+	assertContextManifestTitleColumn(t, conn, schema, false)
+	constraints := readAgentRunConstraintDefinitions(t, conn, schema)
+	expectedFragments := map[string][]string{
+		"agent_runs_id_owner_thread_input_key": {
+			"UNIQUE (id, owner_user_id, thread_id, input_message_id)",
+		},
+		"agent_runs_retry_of_fkey": {
+			"FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id, input_message_id)",
+			"agent_runs(id, owner_user_id, thread_id, input_message_id)",
+		},
+		"agent_runs_result_numbers_check": {
+			"input_tokens",
+			"output_tokens",
+			"total_tokens",
+			"::bigint",
+		},
+		"agent_runs_result_model_check": {
+			"provider_model = requested_model",
+		},
+		"agent_runs_result_budget_check": {
+			"output_tokens <= max_output_tokens",
+		},
+		"agent_runs_state_shape_check": {
+			"status = 'pending'::text",
+			"provider_completion_id IS NULL",
+			"total_tokens IS NULL",
+		},
+	}
+	for name, fragments := range expectedFragments {
+		definition, exists := constraints[name]
+		if !exists {
+			t.Errorf("constraint %s is missing", name)
+			continue
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(definition, fragment) {
+				t.Errorf(
+					"constraint %s definition %q does not contain %q",
+					name,
+					definition,
+					fragment,
+				)
+			}
+		}
+	}
+}
+
+func assertContextManifestTitleColumn(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+	want bool,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var exists bool
+	if err := conn.QueryRow(
+		ctx,
+		`SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = $1
+      AND table_name = 'agent_context_manifests'
+      AND column_name = 'active_matter_title'
+)`,
+		schema,
+	).Scan(&exists); err != nil {
+		t.Fatalf("inspect ContextManifest title column: %v", err)
+	}
+	if exists != want {
+		t.Fatalf(
+			"ContextManifest title column exists = %t, want %t",
+			exists,
+			want,
+		)
+	}
+}
+
+func readAgentRunConstraintDefinitions(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+) map[string]string {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := conn.Query(
+		ctx,
+		`SELECT constraint_data.conname, pg_get_constraintdef(constraint_data.oid)
+FROM pg_constraint AS constraint_data
+JOIN pg_class AS relation_data
+  ON relation_data.oid = constraint_data.conrelid
+JOIN pg_namespace AS namespace_data
+  ON namespace_data.oid = relation_data.relnamespace
+WHERE namespace_data.nspname = $1
+  AND relation_data.relname = 'agent_runs'
+  AND constraint_data.convalidated`,
+		schema,
+	)
+	if err != nil {
+		t.Fatalf("query AgentRun constraints: %v", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var name string
+		var definition string
+		if err := rows.Scan(&name, &definition); err != nil {
+			t.Fatalf("scan AgentRun constraint: %v", err)
+		}
+		result[name] = definition
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate AgentRun constraints: %v", err)
+	}
+	return result
 }
 
 func assertIdentityIndexes(
