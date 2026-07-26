@@ -230,13 +230,70 @@ void main() {
       expect(activated, isFalse);
     },
   );
+
+  test(
+    'selection changes cannot orphan a Session while launch is pending',
+    () async {
+      final session = Completer<PreparationPracticeBootstrap>();
+      final voice = Completer<void>();
+      final client = _LaunchClient(sessionCompleter: session);
+      final controller = PreparationLaunchController(
+        client: client,
+        contextProvider: () => _context,
+        threadIdProvider: () => _threadId,
+        matterActivator:
+            ({
+              required threadId,
+              required selection,
+              required clientOperationId,
+            }) async => _context,
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) => voice.future,
+        idFactory: (scope) => '$scope-selection-lock-key',
+      );
+      addTearDown(controller.dispose);
+      controller.updateBackgroundSummary(_background);
+
+      final start = controller.start(_selection);
+      await Future<void>.delayed(Duration.zero);
+      expect(client.calls, ['profile', 'snapshot', 'plan', 'session']);
+      expect(controller.isStarting, isTrue);
+
+      controller.selectionChanged();
+      controller.updateBackgroundSummary('A stale field callback.');
+
+      expect(controller.isStarting, isTrue);
+      expect(controller.backgroundSummary, _background);
+      session.complete(_bootstrap);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.stage, PreparationLaunchStage.voice);
+      expect(controller.bootstrap, same(_bootstrap));
+      expect(controller.isStarting, isTrue);
+
+      voice.complete();
+
+      expect(await start, isTrue);
+      expect(controller.bootstrap, same(_bootstrap));
+      expect(controller.canRetry, isFalse);
+    },
+  );
 }
 
 final class _LaunchClient implements PreparationLaunchClient {
-  _LaunchClient({this.failFirstSession = false, this.profileCompleter});
+  _LaunchClient({
+    this.failFirstSession = false,
+    this.profileCompleter,
+    this.sessionCompleter,
+  });
 
   final bool failFirstSession;
   final Completer<PreparationProfile>? profileCompleter;
+  final Completer<PreparationPracticeBootstrap>? sessionCompleter;
   final calls = <String>[];
   final profileKeys = <String>[];
   final snapshotKeys = <String>[];
@@ -304,7 +361,7 @@ final class _LaunchClient implements PreparationLaunchClient {
         retryable: true,
       );
     }
-    return _bootstrap;
+    return sessionCompleter?.future ?? _bootstrap;
   }
 
   @override

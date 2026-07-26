@@ -445,6 +445,146 @@ void main() {
       expect(launchClient.calls, isEmpty);
     },
   );
+
+  testWidgets(
+    'locks roles options and both back paths while Session creation is pending',
+    (tester) async {
+      final session = Completer<PreparationPracticeBootstrap>();
+      final preparationController = PreparationController(
+        client: _FixtureClient(),
+      );
+      final launchClient = _PageLaunchClient(sessionCompleter: session);
+      var navigations = 0;
+      final launchController = PreparationLaunchController(
+        client: launchClient,
+        contextProvider: () => _pageContext,
+        threadIdProvider: () => _pageContext.threadId,
+        matterActivator:
+            ({
+              required threadId,
+              required selection,
+              required clientOperationId,
+            }) async => _pageContext,
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) async {},
+        idFactory: (scope) => '$scope-pending-widget-key',
+      );
+      addTearDown(preparationController.dispose);
+      addTearDown(launchController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PreparationPage(
+            showBackButton: true,
+            preparationController: preparationController,
+            launchController: launchController,
+            onPracticeStarted: () => navigations++,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
+      await tester.pumpAndSettle();
+
+      final role = find.byKey(
+        const Key('preparation-role-role_technical_interviewer'),
+      );
+      await tester.ensureVisible(role);
+      await tester.tap(role);
+      await tester.pump();
+      final option = find.byKey(
+        const Key('preparation-option-option_full_simulation'),
+      );
+      await tester.scrollUntilVisible(option, 200);
+      await tester.tap(option);
+      await tester.pump();
+      final background = find
+          .byKey(const Key('preparation-background-summary'))
+          .first;
+      await tester.ensureVisible(background);
+      await tester.enterText(
+        background,
+        'Backend engineer preparing a technical interview.',
+      );
+      final start = find.byKey(const Key('preparation-start-practice'));
+      await tester.ensureVisible(start);
+      await tester.tap(start);
+      await tester.pump();
+
+      expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
+      expect(launchController.isStarting, isTrue);
+      final detailBack = find.byKey(const Key('preparation-back-to-catalog'));
+      await tester.scrollUntilVisible(
+        detailBack,
+        -200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(tester.widget<TextButton>(detailBack).onPressed, isNull);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const Key('preparation-route-back-button')),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.scrollUntilVisible(
+        role,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        tester
+            .widget<InkWell>(
+              find.descendant(of: role, matching: find.byType(InkWell)),
+            )
+            .onTap,
+        isNull,
+      );
+      await tester.scrollUntilVisible(
+        option,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        tester
+            .widget<InkWell>(
+              find.descendant(of: option, matching: find.byType(InkWell)),
+            )
+            .onTap,
+        isNull,
+      );
+      expect(preparationController.selectedRole?.id, _technicalRole.id);
+      expect(
+        preparationController.selectedOption?.id,
+        'option_full_simulation',
+      );
+
+      session.complete(
+        PreparationPracticeBootstrap(
+          session: PreparationPracticeSession(
+            id: 'session-1',
+            planId: 'plan-1',
+            scenarioType: 'INTERVIEW',
+            snapshotId: 'session-snapshot-1',
+            status: 'starting',
+            version: 1,
+            createdAt: DateTime.utc(2026, 7, 26),
+          ),
+          preparationSnapshotId: 'preparation-snapshot-1',
+          maxEffectiveTurns: 6,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(launchController.isStarting, isFalse);
+      expect(navigations, 1);
+    },
+  );
 }
 
 class _FixtureClient implements PreparationCatalogClient {
@@ -490,6 +630,9 @@ final class _ControlledListClient implements PreparationCatalogClient {
 }
 
 final class _PageLaunchClient implements PreparationLaunchClient {
+  _PageLaunchClient({this.sessionCompleter});
+
+  final Completer<PreparationPracticeBootstrap>? sessionCompleter;
   final calls = <String>[];
 
   @override
@@ -550,7 +693,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
     required String idempotencyKey,
   }) async {
     calls.add('session');
-    return PreparationPracticeBootstrap(
+    final bootstrap = PreparationPracticeBootstrap(
       session: PreparationPracticeSession(
         id: 'session-1',
         planId: planId,
@@ -563,8 +706,14 @@ final class _PageLaunchClient implements PreparationLaunchClient {
       preparationSnapshotId: input.preparationSnapshotId,
       maxEffectiveTurns: 6,
     );
+    return sessionCompleter?.future ?? bootstrap;
   }
 }
+
+const _pageContext = AgentPracticeContext(
+  threadId: '10000000-0000-4000-8000-000000000001',
+  matterId: '40000000-0000-4000-8000-000000000001',
+);
 
 const _scenarioId = 'scn_programmer_interview';
 

@@ -57,7 +57,7 @@ final class PreparationLaunchController extends ChangeNotifier {
   bool get hasValidBackground => _validBackground(_backgroundSummary.trim());
 
   void updateBackgroundSummary(String value) {
-    if (_disposed || value == _backgroundSummary) {
+    if (_disposed || _starting || value == _backgroundSummary) {
       return;
     }
     _backgroundSummary = value;
@@ -65,7 +65,7 @@ final class PreparationLaunchController extends ChangeNotifier {
   }
 
   void selectionChanged() {
-    if (_disposed) {
+    if (_disposed || _starting) {
       return;
     }
     _invalidateAttempt();
@@ -214,6 +214,7 @@ final class PreparationLaunchController extends ChangeNotifier {
         idempotencyKey: activeAttempt.sessionKey,
       );
       _requireCurrent(operationEpoch, activeContext);
+      _bootstrap = bootstrap;
 
       _stage = PreparationLaunchStage.voice;
       notifyListeners();
@@ -224,7 +225,6 @@ final class PreparationLaunchController extends ChangeNotifier {
       );
       _requireCurrent(operationEpoch, activeContext);
 
-      _bootstrap = bootstrap;
       _retry = null;
       _errorMessage = null;
       return true;

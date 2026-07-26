@@ -173,26 +173,34 @@ class _PreparationPageState extends State<PreparationPage> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.preparationController;
-    return Scaffold(
-      key: const Key('scenes-page'),
-      backgroundColor: const Color(0xFFF3F3F0),
-      appBar: widget.showBackButton
-          ? AppBar(
-              backgroundColor: const Color(0xFFF3F3F0),
-              surfaceTintColor: Colors.transparent,
-              elevation: 0,
-              scrolledUnderElevation: 0,
-              leading: IconButton(
-                key: const Key('preparation-route-back-button'),
-                tooltip: '返回',
-                onPressed: () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.arrow_back_rounded),
-              ),
-            )
-          : null,
-      body: SafeArea(
-        bottom: false,
-        child: controller == null ? _buildPreview() : _buildCatalog(controller),
+    final launchLocked = widget.launchController?.isStarting ?? false;
+    return PopScope<void>(
+      canPop: !launchLocked,
+      child: Scaffold(
+        key: const Key('scenes-page'),
+        backgroundColor: const Color(0xFFF3F3F0),
+        appBar: widget.showBackButton
+            ? AppBar(
+                backgroundColor: const Color(0xFFF3F3F0),
+                surfaceTintColor: Colors.transparent,
+                elevation: 0,
+                scrolledUnderElevation: 0,
+                leading: IconButton(
+                  key: const Key('preparation-route-back-button'),
+                  tooltip: '返回',
+                  onPressed: launchLocked
+                      ? null
+                      : () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                ),
+              )
+            : null,
+        body: SafeArea(
+          bottom: false,
+          child: controller == null
+              ? _buildPreview()
+              : _buildCatalog(controller),
+        ),
       ),
     );
   }
@@ -324,6 +332,7 @@ class _ScenarioDetailView extends StatelessWidget {
   Widget build(BuildContext context) {
     final detail = controller.detail;
     final selectedRole = controller.selectedRole;
+    final launchLocked = launchController?.isStarting ?? false;
     return ListView(
       key: const Key('preparation-scenario-detail'),
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 140),
@@ -332,10 +341,12 @@ class _ScenarioDetailView extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
             key: const Key('preparation-back-to-catalog'),
-            onPressed: () {
-              launchController?.selectionChanged();
-              controller.showScenarioList();
-            },
+            onPressed: launchLocked
+                ? null
+                : () {
+                    launchController?.selectionChanged();
+                    controller.showScenarioList();
+                  },
             icon: const Icon(Icons.arrow_back_rounded),
             label: const Text('全部场景'),
           ),
@@ -377,10 +388,12 @@ class _ScenarioDetailView extends StatelessWidget {
             _RoleCard(
               role: role,
               selected: selectedRole?.id == role.id,
-              onPressed: () {
-                launchController?.selectionChanged();
-                controller.selectRole(role);
-              },
+              onPressed: launchLocked
+                  ? null
+                  : () {
+                      launchController?.selectionChanged();
+                      controller.selectRole(role);
+                    },
             ),
             const SizedBox(height: 10),
           ],
@@ -400,10 +413,12 @@ class _ScenarioDetailView extends StatelessWidget {
               _OptionCard(
                 option: option,
                 selected: controller.selectedOption?.id == option.id,
-                onPressed: () {
-                  launchController?.selectionChanged();
-                  controller.selectOption(option);
-                },
+                onPressed: launchLocked
+                    ? null
+                    : () {
+                        launchController?.selectionChanged();
+                        controller.selectOption(option);
+                      },
               ),
               const SizedBox(height: 10),
             ],
@@ -602,7 +617,7 @@ class _RoleCard extends StatelessWidget {
 
   final PreparationRole role;
   final bool selected;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -686,7 +701,7 @@ class _OptionCard extends StatelessWidget {
 
   final PreparationOption option;
   final bool selected;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
