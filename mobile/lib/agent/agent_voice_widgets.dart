@@ -19,10 +19,12 @@ class AgentMessageBubble extends StatefulWidget {
 
 class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   bool _transcriptExpanded = false;
+  late _AgentMessageVoiceSnapshot _voiceSnapshot;
 
   @override
   void initState() {
     super.initState();
+    _voiceSnapshot = _captureVoiceSnapshot();
     widget.voiceController?.addListener(_handleVoiceController);
   }
 
@@ -36,6 +38,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     if (oldWidget.message.id != widget.message.id) {
       _transcriptExpanded = false;
     }
+    _voiceSnapshot = _captureVoiceSnapshot();
   }
 
   @override
@@ -45,9 +48,36 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   }
 
   void _handleVoiceController() {
-    if (mounted) {
-      setState(() {});
+    if (!mounted) {
+      return;
     }
+    final snapshot = _captureVoiceSnapshot();
+    if (snapshot == _voiceSnapshot) {
+      return;
+    }
+    _voiceSnapshot = snapshot;
+    setState(() {});
+  }
+
+  _AgentMessageVoiceSnapshot _captureVoiceSnapshot() {
+    final voice = widget.voiceController;
+    final message = widget.message;
+    final playing = voice?.playingMessageId == message.id;
+    return (
+      loading: voice?.loadingMessageId == message.id,
+      playing: playing,
+      deleting: voice?.deletingMessageId == message.id,
+      error: voice?.mediaErrorMessageId == message.id
+          ? voice?.mediaErrorMessage
+          : null,
+      playbackPosition:
+          message.modality == AgentMessageModality.voice && playing
+          ? voice?.playbackPosition ?? Duration.zero
+          : Duration.zero,
+      speechSpeed: message.role == AgentMessageRole.assistant
+          ? voice?.speechSpeed ?? 1
+          : 1,
+    );
   }
 
   @override
@@ -337,6 +367,15 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     );
   }
 }
+
+typedef _AgentMessageVoiceSnapshot = ({
+  bool loading,
+  bool playing,
+  bool deleting,
+  String? error,
+  Duration playbackPosition,
+  double speechSpeed,
+});
 
 String _formatDuration(Duration value) {
   final totalSeconds = value.inSeconds.clamp(0, 3599);

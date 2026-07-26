@@ -243,6 +243,7 @@ class ConversationPage extends StatefulWidget {
                         0,
                       ),
                       child: _AgentComposer(
+                        key: ValueKey<String?>(threadId),
                         keyboardVisible: keyboardVisible,
                         acceptedUserMessageId: acceptedUserMessage?.id,
                         acceptedUserMessageText: acceptedUserMessage?.text,
@@ -273,17 +274,12 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void initState() {
     super.initState();
-    widget.voiceController?.addListener(_handleVoiceState);
     _scheduleThreadInitialPosition();
   }
 
   @override
   void didUpdateWidget(covariant ConversationPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.voiceController != widget.voiceController) {
-      oldWidget.voiceController?.removeListener(_handleVoiceState);
-      widget.voiceController?.addListener(_handleVoiceState);
-    }
     if (oldWidget.threadId != widget.threadId) {
       _earlierMessagesAnchor = null;
       _scheduleThreadInitialPosition();
@@ -313,15 +309,8 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void dispose() {
     _scrollRequestGeneration++;
-    widget.voiceController?.removeListener(_handleVoiceState);
     _scrollController.dispose();
     super.dispose();
-  }
-
-  void _handleVoiceState() {
-    if (mounted) {
-      setState(() {});
-    }
   }
 
   void _handleLoadEarlierMessages() {
@@ -807,6 +796,7 @@ class _AgentComposer extends StatefulWidget {
     required this.onSubmitText,
     required this.enabled,
     required this.isBusy,
+    super.key,
   });
 
   final bool keyboardVisible;
@@ -899,13 +889,14 @@ class _AgentComposerState extends State<_AgentComposer> {
     if (voice == null) {
       return;
     }
-    await voice.stopRecording();
-    await voice.upload();
+    await voice.stopRecordingAndUpload();
   }
 
   Future<void> _cancelVoice() async {
     final voice = widget.voiceController;
-    if (voice == null) {
+    if (voice == null ||
+        voice.state == AgentVoiceComposerState.confirming ||
+        voice.state == AgentVoiceComposerState.awaitingAssistant) {
       return;
     }
     await voice.cancel();
@@ -948,6 +939,9 @@ class _AgentComposerState extends State<_AgentComposer> {
         voiceState == AgentVoiceComposerState.transcribing ||
         voiceState == AgentVoiceComposerState.confirming ||
         voiceState == AgentVoiceComposerState.awaitingAssistant;
+    final voiceSubmissionInFlight =
+        voiceState == AgentVoiceComposerState.confirming ||
+        voiceState == AgentVoiceComposerState.awaitingAssistant;
     final voiceFailure = voiceState == AgentVoiceComposerState.failed;
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -976,20 +970,20 @@ class _AgentComposerState extends State<_AgentComposer> {
         child: recording || voiceProgress || voiceFailure
             ? Row(
                 children: [
-                  IconButton(
-                    key: const Key('agent-voice-cancel'),
-                    tooltip: '取消语音输入',
-                    onPressed: voiceState == AgentVoiceComposerState.confirming
-                        ? null
-                        : _cancelVoice,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 40,
-                      height: 40,
+                  if (!voiceSubmissionInFlight) ...[
+                    IconButton(
+                      key: const Key('agent-voice-cancel'),
+                      tooltip: '取消语音输入',
+                      onPressed: _cancelVoice,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
+                      padding: EdgeInsets.zero,
+                      icon: const Icon(Icons.close_rounded, size: 21),
                     ),
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.close_rounded, size: 21),
-                  ),
-                  const SizedBox(width: 4),
+                    const SizedBox(width: 4),
+                  ],
                   if (recording) ...[
                     const Icon(
                       Icons.fiber_manual_record_rounded,

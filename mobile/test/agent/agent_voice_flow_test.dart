@@ -199,6 +199,60 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('composer drafts cannot cross the Thread boundary', (
+    tester,
+  ) async {
+    final voiceController = AgentVoiceController(
+      client: FakeAgentClient(),
+      recorder: FakeAgentVoiceRecorder(),
+      audioPlayer: FakeAgentVoiceAudioPlayer(),
+      onMessagesCommitted: (_) {},
+      onMessageAudioDeleted: (_, _) {},
+      idFactory: (scope) => '${scope}_1',
+    );
+    addTearDown(voiceController.dispose);
+    var threadId = 'thread-a';
+    late StateSetter update;
+    await voiceController.bindThread(threadId);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              threadId: threadId,
+              onStartVoice: voiceController.startRecording,
+              voiceController: voiceController,
+              onSubmitText: (_) async => true,
+            );
+          },
+        ),
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('agent-composer-field')),
+      'Thread A private draft',
+    );
+    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+    await tester.pump();
+    expect(voiceController.state, AgentVoiceComposerState.recording);
+
+    await voiceController.bindThread('thread-b');
+    await voiceController.startRecording();
+    update(() => threadId = 'thread-b');
+    await tester.pump();
+
+    expect(voiceController.state, AgentVoiceComposerState.recording);
+    await tester.tap(find.byKey(const Key('agent-voice-cancel')));
+    await _pumpVoiceOperation(tester);
+
+    final field = find.byKey(const Key('agent-composer-field'));
+    expect(field, findsOneWidget);
+    expect(tester.widget<TextField>(field).controller?.text, isEmpty);
+    expect(find.text('Thread A private draft'), findsNothing);
+  });
+
   testWidgets(
     'microphone safely creates and focuses a Thread when none is focused',
     (tester) async {
@@ -254,6 +308,25 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
       await tester.pump();
+
+      final surface = find.byKey(const Key('agent-composer-surface'));
+      final stateLabel = find.byKey(const Key('agent-voice-state-label'));
+      final duration = find.byKey(const Key('agent-voice-recording-duration'));
+      final stop = find.byKey(const Key('agent-voice-stop'));
+      expect(stateLabel, findsOneWidget);
+      expect(duration, findsOneWidget);
+      expect(stop.hitTestable(), findsOneWidget);
+      expect(tester.getRect(stateLabel).left, greaterThanOrEqualTo(0));
+      expect(
+        tester.getRect(duration).right,
+        lessThanOrEqualTo(tester.getRect(surface).right),
+      );
+      expect(
+        tester.getRect(stop).right,
+        lessThanOrEqualTo(tester.getRect(surface).right),
+      );
+      expect(tester.takeException(), isNull);
+
       await tester.tap(find.byKey(const Key('agent-voice-stop')));
       await _pumpVoiceOperation(tester);
 

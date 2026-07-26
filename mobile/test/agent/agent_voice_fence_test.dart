@@ -10,6 +10,7 @@ import 'package:speakup/agent/agent_voice_controller.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/agent_voice_widgets.dart';
+import 'package:speakup/features/conversation/conversation.dart';
 
 void main() {
   test('late upload result cannot cross the Thread fence', () async {
@@ -195,6 +196,113 @@ void main() {
       await controller.cancel();
     },
   );
+
+  testWidgets('recording limit automatically stops and uploads', (
+    tester,
+  ) async {
+    final upload = Completer<AgentVoiceCandidate>();
+    final client = _ControlledVoiceClient()..createCompleter = upload;
+    final controller = _controller(
+      client,
+      <AgentMessage>[],
+      recordingLimit: const Duration(seconds: 2),
+    );
+    addTearDown(controller.dispose);
+    await controller.bindThread('thread-a');
+    await controller.startRecording();
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+
+    expect(controller.state, AgentVoiceComposerState.uploading);
+    expect(controller.recording, isNotNull);
+
+    upload.complete(_readyCandidate(threadId: 'thread-a'));
+    await tester.pump();
+
+    expect(controller.state, AgentVoiceComposerState.awaitingConfirmation);
+    expect(controller.recording, isNull);
+    expect(controller.candidate, isNotNull);
+  });
+
+  testWidgets('submitted voice progress cannot restore the prior draft', (
+    tester,
+  ) async {
+    final candidate = _readyCandidate(threadId: 'thread-a');
+    final confirmation = Completer<AgentVoiceConfirmation>();
+    final runResult = Completer<AgentVoiceRun>();
+    final pendingRun = AgentVoiceRun(
+      id: 'run-a',
+      threadId: 'thread-a',
+      inputMessageId: 'message-a',
+      status: AgentVoiceRunStatus.pending,
+    );
+    final completedRun = AgentVoiceRun(
+      id: 'run-a',
+      threadId: 'thread-a',
+      inputMessageId: 'message-a',
+      status: AgentVoiceRunStatus.completed,
+      assistantMessageId: 'assistant-a',
+    );
+    final client = _ControlledVoiceClient()
+      ..createResult = candidate
+      ..confirmCompleter = confirmation
+      ..getRunCompleter = runResult
+      ..messages['assistant-a'] = const AgentMessage(
+        id: 'assistant-a',
+        role: AgentMessageRole.assistant,
+        text: 'Assistant reply',
+      );
+    final committed = <AgentMessage>[];
+    final controller = _controller(client, committed);
+    addTearDown(controller.dispose);
+    await controller.bindThread('thread-a');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationPage(
+          threadId: 'thread-a',
+          messages: committed,
+          onStartVoice: controller.startRecording,
+          voiceController: controller,
+          onSubmitText: (_) async => true,
+        ),
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('agent-composer-field')),
+      'Unsent text before recording',
+    );
+    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('agent-voice-stop')));
+    await _pumpVoiceOperation(tester);
+    expect(controller.state, AgentVoiceComposerState.awaitingConfirmation);
+
+    await tester.tap(find.byKey(const Key('agent-voice-confirm')));
+    await tester.pump();
+
+    expect(controller.state, AgentVoiceComposerState.confirming);
+    expect(find.byKey(const Key('agent-voice-cancel')), findsNothing);
+    expect(find.text('Unsent text before recording'), findsNothing);
+
+    confirmation.complete(
+      _confirmation(
+        candidate: candidate,
+        text: candidate.transcript!.text,
+        run: pendingRun,
+      ),
+    );
+    await tester.pump();
+
+    expect(controller.state, AgentVoiceComposerState.awaitingAssistant);
+    expect(find.byKey(const Key('agent-voice-cancel')), findsNothing);
+    expect(find.byKey(const Key('agent-voice-state-label')), findsOneWidget);
+    expect(find.text('Unsent text before recording'), findsNothing);
+
+    runResult.complete(completedRun);
+    await _pumpVoiceOperation(tester);
+    expect(controller.state, AgentVoiceComposerState.idle);
+  });
 
   test('upload and ASR failures expose bounded retry states', () async {
     final uploadClient = _ControlledVoiceClient()
@@ -588,6 +696,7 @@ AgentVoiceController _controller(
   FakeAgentVoiceAudioPlayer? player,
   FakeAgentVoiceRecorder? recorder,
   AgentVoiceControllerClock? clock,
+  Duration recordingLimit = const Duration(seconds: 58),
 }) {
   var sequence = 0;
   return AgentVoiceController(
@@ -598,6 +707,7 @@ AgentVoiceController _controller(
     onMessageAudioDeleted: (_, _) {},
     idFactory: (scope) => '${scope}_${++sequence}'.replaceAll('-', '_'),
     clock: clock ?? DateTime.now,
+    recordingLimit: recordingLimit,
     pollInterval: Duration.zero,
     maximumCandidatePolls: 2,
     maximumRunPolls: 2,

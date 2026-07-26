@@ -81,6 +81,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   final AgentClientIdFactory _clientIdFactory;
   final Duration _recordingLimit;
   AgentVoiceController? _voiceController;
+  bool _relayedVoiceWorkflowActive = false;
 
   String? _threadId;
   AgentThreadSummary? _currentThreadSummary;
@@ -1722,9 +1723,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleVoiceState() {
-    if (!_disposed) {
-      notifyListeners();
+    final workflowActive = _voiceController?.hasActiveWorkflow ?? false;
+    if (_disposed || workflowActive == _relayedVoiceWorkflowActive) {
+      return;
     }
+    _relayedVoiceWorkflowActive = workflowActive;
+    notifyListeners();
   }
 
   bool _isCurrent(int epoch) => !_disposed && epoch == _epoch;

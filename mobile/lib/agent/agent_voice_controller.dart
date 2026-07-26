@@ -251,6 +251,13 @@ final class AgentVoiceController extends ChangeNotifier
     return operation;
   }
 
+  Future<void> stopRecordingAndUpload() async {
+    await stopRecording();
+    if (_state == AgentVoiceComposerState.recorded) {
+      await upload();
+    }
+  }
+
   Future<void> _stopRecording(_WorkflowFence fence) async {
     try {
       final recording = await recorder.stop();
@@ -1256,7 +1263,7 @@ final class AgentVoiceController extends ChangeNotifier
     _recordingLimitTimer = Timer(recordingLimit, () {
       if (_isWorkflowCurrent(fence) &&
           _state == AgentVoiceComposerState.recording) {
-        unawaited(stopRecording());
+        unawaited(stopRecordingAndUpload());
       }
     });
   }
