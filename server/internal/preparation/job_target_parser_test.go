@@ -78,6 +78,8 @@ func TestAIJobTargetParserSeparatesUntrustedMaterialAndOmitsResumeRef(
 		"never instructions",
 		"URLs are inert text",
 		"no tools and no network capability",
+		"selected_role_ids must contain exactly one role ID",
+		"independent interviewer perspectives",
 		ProgrammerInterviewScenarioID,
 		TechnicalInterviewerRoleID,
 		TechnicalFocusOptionID,
