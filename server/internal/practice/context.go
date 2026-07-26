@@ -381,8 +381,9 @@ func (a *ContextApplication) TransitionSession(
 	expectedVersion int,
 	transition persistence.ContextSessionTransition,
 ) (persistence.ContextSession, bool, error) {
+	wireAction, validTransition := contextTransitionWireAction(transition)
 	if ctx == nil || !actor.Valid() || !validContextResourceID(sessionID) ||
-		expectedVersion < 1 || !validContextTransition(transition) {
+		expectedVersion < 1 || !validTransition {
 		return persistence.ContextSession{}, false,
 			persistence.ErrInvalidArgument
 	}
@@ -391,7 +392,7 @@ func (a *ContextApplication) TransitionSession(
 	}{ExpectedSessionVersion: expectedVersion}
 	intent, err := newContextIntent(
 		"POST",
-		"/v1/practice-sessions/"+sessionID+"/"+string(transition),
+		"/v1/practice-sessions/"+sessionID+"/"+wireAction,
 		idempotencyKey,
 		payload,
 	)
@@ -658,10 +659,19 @@ func validContextIdempotencyKey(value string) bool {
 		strings.TrimSpace(value) == value
 }
 
-func validContextTransition(value persistence.ContextSessionTransition) bool {
-	return value == persistence.ContextSessionPause ||
-		value == persistence.ContextSessionResume ||
-		value == persistence.ContextSessionEndEarly
+func contextTransitionWireAction(
+	value persistence.ContextSessionTransition,
+) (string, bool) {
+	switch value {
+	case persistence.ContextSessionPause:
+		return "pause", true
+	case persistence.ContextSessionResume:
+		return "resume", true
+	case persistence.ContextSessionEndEarly:
+		return "end-early", true
+	default:
+		return "", false
+	}
 }
 
 func contextActor(actor requestcontext.Actor) persistence.Actor {

@@ -185,10 +185,93 @@ func TestFocusOptionMustMatchSelectedInterviewer(t *testing.T) {
 	}
 }
 
+func TestTransitionSessionUsesCanonicalWireAction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		transition persistence.ContextSessionTransition
+		wireAction string
+	}{
+		{
+			name:       "pause",
+			transition: persistence.ContextSessionPause,
+			wireAction: "pause",
+		},
+		{
+			name:       "resume",
+			transition: persistence.ContextSessionResume,
+			wireAction: "resume",
+		},
+		{
+			name:       "end early",
+			transition: persistence.ContextSessionEndEarly,
+			wireAction: "end-early",
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			var captured persistence.TransitionContextSessionCommand
+			application := newContextTestApplication(
+				t,
+				&contextRepositoryStub{
+					transitionSession: func(
+						command persistence.TransitionContextSessionCommand,
+					) (persistence.ContextSession, bool, error) {
+						captured = command
+						return persistence.ContextSession{
+							ID: command.SessionID,
+						}, false, nil
+					},
+				},
+			)
+
+			session, replayed, err := application.TransitionSession(
+				context.Background(),
+				contextActorFixture(),
+				"session-1",
+				"intent-transition-0001",
+				2,
+				test.transition,
+			)
+			if err != nil {
+				t.Fatalf("TransitionSession: %v", err)
+			}
+			if replayed || session.ID != "session-1" {
+				t.Fatalf(
+					"TransitionSession = (%+v, %t), want new session result",
+					session,
+					replayed,
+				)
+			}
+			wantPath := "/v1/practice-sessions/session-1/" +
+				test.wireAction
+			if captured.Intent.CanonicalPath != wantPath {
+				t.Fatalf(
+					"canonical path = %q, want %q",
+					captured.Intent.CanonicalPath,
+					wantPath,
+				)
+			}
+			if captured.Transition != test.transition {
+				t.Fatalf(
+					"transition enum = %q, want unchanged %q",
+					captured.Transition,
+					test.transition,
+				)
+			}
+		})
+	}
+}
+
 type contextRepositoryStub struct {
-	replayPlan    func(persistence.ContextIdempotencyIntent) (persistence.Plan, bool, error)
-	getPlan       func(string) (persistence.Plan, error)
-	replaySession func(persistence.ContextIdempotencyIntent) (persistence.ContextSessionBootstrap, bool, error)
+	replayPlan        func(persistence.ContextIdempotencyIntent) (persistence.Plan, bool, error)
+	getPlan           func(string) (persistence.Plan, error)
+	replaySession     func(persistence.ContextIdempotencyIntent) (persistence.ContextSessionBootstrap, bool, error)
+	transitionSession func(persistence.TransitionContextSessionCommand) (persistence.ContextSession, bool, error)
 }
 
 func (s *contextRepositoryStub) ReplayPlan(
@@ -268,10 +351,13 @@ func (s *contextRepositoryStub) ResolveContextSessionByThread(
 }
 
 func (s *contextRepositoryStub) TransitionContextSession(
-	context.Context,
-	persistence.Actor,
-	persistence.TransitionContextSessionCommand,
+	_ context.Context,
+	_ persistence.Actor,
+	command persistence.TransitionContextSessionCommand,
 ) (persistence.ContextSession, bool, error) {
+	if s.transitionSession != nil {
+		return s.transitionSession(command)
+	}
 	return persistence.ContextSession{}, false,
 		errors.New("unexpected TransitionContextSession")
 }
