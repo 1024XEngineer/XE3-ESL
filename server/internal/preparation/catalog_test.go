@@ -187,6 +187,31 @@ func TestInactiveScenarioIsNotPublic(t *testing.T) {
 	}
 }
 
+func TestInactiveScenarioRemainsAvailableForPinnedSnapshot(t *testing.T) {
+	definition := programmerInterviewCatalogDefinition()
+	definition.definition.Status = ScenarioStatusInactive
+	catalog, err := newCatalog([]catalogScenario{definition})
+	if err != nil {
+		t.Fatalf("newCatalog: %v", err)
+	}
+
+	snapshot, err := catalog.GetCatalogSnapshot(
+		ProgrammerInterviewScenarioID,
+		1,
+		[]string{TechnicalInterviewerRoleID},
+		TechnicalFocusOptionID,
+		1,
+	)
+	if err != nil {
+		t.Fatalf("GetCatalogSnapshot: %v", err)
+	}
+	if snapshot.ScenarioDefinition.Status != ScenarioStatusInactive ||
+		snapshot.SelectedRoles[0].ID != TechnicalInterviewerRoleID ||
+		snapshot.PracticeOption.ID != TechnicalFocusOptionID {
+		t.Fatalf("unexpected inactive snapshot: %#v", snapshot)
+	}
+}
+
 func TestCatalogConstructionRejectsInvalidDefinitions(t *testing.T) {
 	tests := []struct {
 		name   string

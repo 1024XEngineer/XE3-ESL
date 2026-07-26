@@ -134,7 +134,7 @@ func (c *Catalog) GetCatalogSnapshot(
 	practiceOptionID string,
 	practiceOptionVersion int,
 ) (CatalogSnapshot, error) {
-	scenario, ok := c.activeScenario(scenarioDefinitionID)
+	scenario, ok := c.scenario(scenarioDefinitionID)
 	if !ok || scenario.definition.Version != scenarioVersion {
 		return CatalogSnapshot{}, ErrScenarioDefinitionNotFound
 	}
@@ -175,9 +175,16 @@ func (c *Catalog) GetCatalogSnapshot(
 }
 
 func (c *Catalog) activeScenario(id string) (catalogScenario, bool) {
+	scenario, ok := c.scenario(id)
+	if !ok || scenario.definition.Status != ScenarioStatusActive {
+		return catalogScenario{}, false
+	}
+	return scenario, true
+}
+
+func (c *Catalog) scenario(id string) (catalogScenario, bool) {
 	for _, scenario := range c.scenarios {
-		if scenario.definition.ID == id &&
-			scenario.definition.Status == ScenarioStatusActive {
+		if scenario.definition.ID == id {
 			return scenario, true
 		}
 	}
