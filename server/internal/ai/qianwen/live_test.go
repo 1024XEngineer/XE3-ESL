@@ -11,7 +11,10 @@ import (
 
 func TestLiveTextGeneration(t *testing.T) {
 	if os.Getenv("QIANWEN_LIVE_TEST") != "1" {
-		t.Skip("set QIANWEN_LIVE_TEST=1 and the Qianwen environment variables to run")
+		t.Skip(
+			"set QIANWEN_LIVE_TEST=1 and the Qianwen environment variables " +
+				"to run; the real request may incur charges",
+		)
 	}
 
 	cfg, err := platformconfig.LoadTextGeneration()
