@@ -75,6 +75,8 @@ final class WireAgentClient
   final Map<String, _FailedRun> _failedRuns = <String, _FailedRun>{};
   final Set<String> _ambiguousSubmissions = <String>{};
   _AmbiguousThreadCreation? _ambiguousThreadCreation;
+  final Map<_MatterActivationKey, _MatterActivation> _matterActivations =
+      <_MatterActivationKey, _MatterActivation>{};
   Future<void>? _cleanupFuture;
 
   @override
@@ -100,6 +102,7 @@ final class WireAgentClient
     _failedRuns.clear();
     _ambiguousSubmissions.clear();
     _ambiguousThreadCreation = null;
+    _matterActivations.clear();
     final staleOperations = List<Future<void>>.of(_inFlightOperations);
     if (_ownsTransport) {
       (_transport as _IoAgentHttpTransport).close(force: true);
@@ -761,26 +764,29 @@ final class WireAgentClient
       _requireUuid(threadId);
       _requireClientIdentity(clientOperationId);
       _requireContent(scene.title);
-      final listResponse = await _send(
+      final operationKey = (
         generation: generation,
-        method: 'GET',
-        path: '/v1/matters',
+        threadId: threadId,
+        clientOperationId: clientOperationId,
       );
-      _requireStatus(listResponse, const <int>{HttpStatus.ok});
-      final matters = _decodeMatterList(listResponse.body);
-      var matter = matters
-          .where((item) => item.title == scene.title && item.status == 'active')
-          .firstOrNull;
-      if (matter == null) {
-        final createResponse = await _send(
-          generation: generation,
-          method: 'POST',
-          path: '/v1/matters',
-          body: <String, Object?>{'title': scene.title},
+      final existing = _matterActivations[operationKey];
+      final activation =
+          existing ??
+          _MatterActivation(sceneId: scene.id, sceneTitle: scene.title);
+      if (existing == null) {
+        _matterActivations[operationKey] = activation;
+      } else if (existing.sceneId != scene.id ||
+          existing.sceneTitle != scene.title) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.conflict,
+          errorCode: 'idempotency_key_conflict',
         );
-        _requireStatus(createResponse, const <int>{HttpStatus.created});
-        matter = _decodeMatter(createResponse.body);
       }
+      final matter = await _resolveActivationMatter(
+        generation: generation,
+        operationKey: operationKey,
+        activation: activation,
+      );
       final linkResponse = await _send(
         generation: generation,
         method: 'PUT',
@@ -809,6 +815,136 @@ final class WireAgentClient
         ),
       );
     });
+  }
+
+  Future<_WireMatter> _resolveActivationMatter({
+    required int generation,
+    required _MatterActivationKey operationKey,
+    required _MatterActivation activation,
+  }) {
+    final resolved = activation.matter;
+    if (resolved != null) {
+      return Future<_WireMatter>.value(resolved);
+    }
+    final pending = activation.pendingMatter;
+    if (pending != null) {
+      return pending;
+    }
+    late final Future<_WireMatter> operation;
+    operation =
+        _createOrRecoverActivationMatter(
+              generation: generation,
+              operationKey: operationKey,
+              activation: activation,
+            )
+            .then((matter) {
+              _requireMatterActivationCurrent(
+                generation: generation,
+                operationKey: operationKey,
+                activation: activation,
+              );
+              activation.matter = matter;
+              return matter;
+            })
+            .whenComplete(() {
+              if (identical(activation.pendingMatter, operation)) {
+                activation.pendingMatter = null;
+              }
+            });
+    activation.pendingMatter = operation;
+    return operation;
+  }
+
+  Future<_WireMatter> _createOrRecoverActivationMatter({
+    required int generation,
+    required _MatterActivationKey operationKey,
+    required _MatterActivation activation,
+  }) async {
+    if (activation.baselineMatterIds == null) {
+      final matters = await _listMatters(generation);
+      _requireMatterActivationCurrent(
+        generation: generation,
+        operationKey: operationKey,
+        activation: activation,
+      );
+      activation.baselineMatterIds = {
+        for (final matter in matters)
+          if (matter.title == activation.sceneTitle) matter.id,
+      };
+    } else if (activation.createAmbiguous) {
+      final matters = await _listMatters(generation);
+      _requireMatterActivationCurrent(
+        generation: generation,
+        operationKey: operationKey,
+        activation: activation,
+      );
+      final recovered = [
+        for (final matter in matters)
+          if (matter.title == activation.sceneTitle &&
+              matter.status == 'active' &&
+              !activation.baselineMatterIds!.contains(matter.id))
+            matter,
+      ];
+      if (recovered.length > 1) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.conflict,
+          errorCode: 'resource_conflict',
+        );
+      }
+      if (recovered case [final matter]) {
+        return matter;
+      }
+      activation.createAmbiguous = false;
+    }
+
+    try {
+      final createResponse = await _send(
+        generation: generation,
+        method: 'POST',
+        path: '/v1/matters',
+        body: <String, Object?>{'title': activation.sceneTitle},
+      );
+      _requireStatus(createResponse, const <int>{HttpStatus.created});
+      final matter = _decodeMatter(createResponse.body);
+      if (matter.title != activation.sceneTitle || matter.status != 'active') {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidResponse,
+          retryable: true,
+        );
+      }
+      return matter;
+    } on AgentClientException catch (error) {
+      if (error.kind == AgentClientFailureKind.network) {
+        _requireMatterActivationCurrent(
+          generation: generation,
+          operationKey: operationKey,
+          activation: activation,
+        );
+        activation.createAmbiguous = true;
+      }
+      rethrow;
+    }
+  }
+
+  Future<List<_WireMatter>> _listMatters(int generation) async {
+    final response = await _send(
+      generation: generation,
+      method: 'GET',
+      path: '/v1/matters',
+    );
+    _requireStatus(response, const <int>{HttpStatus.ok});
+    return _decodeMatterList(response.body);
+  }
+
+  void _requireMatterActivationCurrent({
+    required int generation,
+    required _MatterActivationKey operationKey,
+    required _MatterActivation activation,
+  }) {
+    _requireCurrentGeneration(generation);
+    if (!identical(_matterActivations[operationKey], activation)) {
+      throw const AgentClientOperationCancelled();
+    }
   }
 
   @override
@@ -1112,6 +1248,23 @@ final class _FailedRun {
   final String threadId;
   final String inputMessageId;
   final String content;
+}
+
+typedef _MatterActivationKey = ({
+  int generation,
+  String threadId,
+  String clientOperationId,
+});
+
+final class _MatterActivation {
+  _MatterActivation({required this.sceneId, required this.sceneTitle});
+
+  final String sceneId;
+  final String sceneTitle;
+  Set<String>? baselineMatterIds;
+  _WireMatter? matter;
+  Future<_WireMatter>? pendingMatter;
+  bool createAmbiguous = false;
 }
 
 final class _WireMatter {

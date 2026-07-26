@@ -765,14 +765,15 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Adopts the exact Session created by the Preparation launch chain.
   ///
-  /// The voice client resolves by the already trusted Thread, then this method
-  /// requires the returned Session and Matter identities to match the launch
-  /// result. It never starts a second Session or guesses a recent one.
+  /// The voice client activates the formal Session already created for the
+  /// trusted Thread and Matter. This method requires the returned identities
+  /// and frozen Turn budget to match; it never guesses a recent Session.
   Future<void> activateCreatedPractice({
     required String threadId,
     required String matterId,
     required String sessionId,
     required int turnLimit,
+    required String clientOperationId,
   }) async {
     final accountFence = _captureOperationFence();
     await _ensureInitialized();
@@ -784,6 +785,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         matter?.id != matterId ||
         turnLimit < 1 ||
         turnLimit > 6 ||
+        clientOperationId.trim().isEmpty ||
         isBusy ||
         _disposed) {
       throw StateError('The Agent context changed before voice activation.');
@@ -800,20 +802,21 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final epoch = fence.epoch;
     _setBusy(true);
     try {
-      final snapshot = await practice.restorePractice(
+      final result = await practice.startPractice(
         threadId: threadId,
-        activeMatter: matter,
+        activeMatter: matter!,
+        clientOperationId: clientOperationId,
       );
       if (!_isOperationCurrent(fence)) {
         throw const AgentClientOperationCancelled();
       }
-      if (snapshot == null ||
-          snapshot.sessionId != sessionId ||
-          (snapshot.threadId != null && snapshot.threadId != threadId) ||
+      final snapshot = result.snapshot;
+      if (snapshot.sessionId != sessionId ||
+          snapshot.threadId != threadId ||
           snapshot.matter.id != matterId ||
           snapshot.turnLimit != turnLimit) {
         throw StateError(
-          'Voice restore did not return the created Practice Session.',
+          'Voice activation did not return the created Practice Session.',
         );
       }
       _applyPracticeSnapshot(snapshot);

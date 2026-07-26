@@ -307,7 +307,12 @@ void main() {
               matterId: matter.id,
             );
           },
-      voiceActivator: ({required context, required bootstrap}) async {},
+      voiceActivator:
+          ({
+            required context,
+            required bootstrap,
+            required clientOperationId,
+          }) async {},
       idFactory: (scope) => '$scope-widget-key',
     );
     addTearDown(agentController.dispose);
@@ -378,7 +383,12 @@ void main() {
             }) {
               throw StateError('Matter activation must wait for the Thread.');
             },
-        voiceActivator: ({required context, required bootstrap}) async {},
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) async {},
         idFactory: (scope) => '$scope-thread-wait-key',
       );
       addTearDown(preparationController.dispose);

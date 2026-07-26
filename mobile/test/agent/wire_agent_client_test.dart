@@ -1437,54 +1437,328 @@ void main() {
     },
   );
 
-  test('scene selection uses Matter and SetActiveMatter HTTP APIs', () async {
+  test(
+    'new catalog activation never reuses an existing same-title Matter',
+    () async {
+      const selectedScene = AgentScene(
+        id: 'catalog-scene-new',
+        title: 'Technical interview',
+        description: 'A distinct catalog scenario with the same title.',
+      );
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/matters',
+          response: _jsonResponse(HttpStatus.ok, {
+            'matters': [_matterJson(id: _matterId, title: selectedScene.title)],
+          }),
+        ),
+        _Step(
+          method: 'POST',
+          path: '/v1/matters',
+          response: _jsonResponse(
+            HttpStatus.created,
+            _matterJson(id: _matterBId, title: selectedScene.title),
+          ),
+        ),
+        _Step(
+          method: 'PUT',
+          path: '/v1/agent-threads/$_threadId/active-matter',
+          verify: (call) {
+            expect(jsonDecode(call.body!), {'matter_id': _matterBId});
+          },
+          response: _jsonResponse(
+            HttpStatus.ok,
+            _matterLinkJson(matterId: _matterBId),
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final result = await harness.client.startScene(
+        threadId: _threadId,
+        scene: selectedScene,
+        clientOperationId: 'scene_select',
+      );
+
+      expect(result.activeMatter.id, _matterBId);
+      expect(result.activeMatter.scene.id, selectedScene.id);
+      transport.expectDone();
+    },
+  );
+
+  test('recovers exactly one Matter after an ambiguous create', () async {
+    final scene = agentScenes.first;
     final transport = _ScriptedTransport([
       _Step(
         method: 'GET',
         path: '/v1/matters',
         response: _jsonResponse(HttpStatus.ok, {
+          'matters': [_matterJson(id: _matterId, title: scene.title)],
+        }),
+      ),
+      _Step(
+        method: 'POST',
+        path: '/v1/matters',
+        error: const SocketException('response lost'),
+      ),
+      _Step(
+        method: 'GET',
+        path: '/v1/matters',
+        response: _jsonResponse(HttpStatus.ok, {
           'matters': [
-            {
-              'matter_id': _matterId,
-              'title': agentScenes.first.title,
-              'status': 'active',
-              'version': 1,
-              'created_at': '2026-07-25T09:00:00Z',
-              'updated_at': '2026-07-25T09:00:00Z',
-            },
+            _matterJson(id: _matterId, title: scene.title),
+            _matterJson(id: _matterBId, title: scene.title),
           ],
         }),
       ),
       _Step(
         method: 'PUT',
         path: '/v1/agent-threads/$_threadId/active-matter',
+        verify: (call) {
+          expect(jsonDecode(call.body!), {'matter_id': _matterBId});
+        },
+        response: _jsonResponse(
+          HttpStatus.ok,
+          _matterLinkJson(matterId: _matterBId),
+        ),
+      ),
+    ]);
+    final harness = _Harness(transport);
+    const operationId = 'scene_ambiguous';
+
+    await expectLater(
+      harness.client.startScene(
+        threadId: _threadId,
+        scene: scene,
+        clientOperationId: operationId,
+      ),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.network,
+        ),
+      ),
+    );
+    final result = await harness.client.startScene(
+      threadId: _threadId,
+      scene: scene,
+      clientOperationId: operationId,
+    );
+
+    expect(result.activeMatter.id, _matterBId);
+    expect(
+      transport.calls.where(
+        (call) => call.method == 'POST' && call.path == '/v1/matters',
+      ),
+      hasLength(1),
+    );
+    transport.expectDone();
+  });
+
+  test('rejects multiple new Matters after an ambiguous create', () async {
+    final scene = agentScenes.first;
+    final transport = _ScriptedTransport([
+      _Step(
+        method: 'GET',
+        path: '/v1/matters',
         response: _jsonResponse(HttpStatus.ok, {
-          'thread_id': _threadId,
-          'matter_id': _matterId,
-          'active': true,
-          'linked_at': '2026-07-25T09:00:00Z',
-          'updated_at': '2026-07-25T09:00:00Z',
+          'matters': [_matterJson(id: _matterId, title: scene.title)],
+        }),
+      ),
+      _Step(
+        method: 'POST',
+        path: '/v1/matters',
+        error: const SocketException('response lost'),
+      ),
+      _Step(
+        method: 'GET',
+        path: '/v1/matters',
+        response: _jsonResponse(HttpStatus.ok, {
+          'matters': [
+            _matterJson(id: _matterId, title: scene.title),
+            _matterJson(id: _matterBId, title: scene.title),
+            _matterJson(id: _matterCId, title: scene.title),
+          ],
         }),
       ),
     ]);
     final harness = _Harness(transport);
+    const operationId = 'scene_conflict';
 
-    expect(harness.client.supportsPracticeFlow, isFalse);
-    final result = await harness.client.startScene(
-      threadId: _threadId,
-      scene: agentScenes.first,
-      clientOperationId: 'scene_select',
-    );
-    expect(result.activeMatter.id, _matterId);
     await expectLater(
-      harness.client.transcribeTurn(
+      harness.client.startScene(
         threadId: _threadId,
-        turnNumber: 1,
-        clientTurnId: 'turn_unavailable',
+        scene: scene,
+        clientOperationId: operationId,
       ),
-      throwsA(isA<AgentClientException>()),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.network,
+        ),
+      ),
+    );
+    await expectLater(
+      harness.client.startScene(
+        threadId: _threadId,
+        scene: scene,
+        clientOperationId: operationId,
+      ),
+      throwsA(
+        isA<AgentClientException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              AgentClientFailureKind.conflict,
+            )
+            .having(
+              (error) => error.errorCode,
+              'errorCode',
+              'resource_conflict',
+            ),
+      ),
     );
     transport.expectDone();
+  });
+
+  test('retries the Matter link with the same created Matter ID', () async {
+    final scene = agentScenes.first;
+    final transport = _ScriptedTransport([
+      _Step(
+        method: 'GET',
+        path: '/v1/matters',
+        response: _jsonResponse(HttpStatus.ok, {'matters': <Object?>[]}),
+      ),
+      _Step(
+        method: 'POST',
+        path: '/v1/matters',
+        response: _jsonResponse(
+          HttpStatus.created,
+          _matterJson(id: _matterBId, title: scene.title),
+        ),
+      ),
+      _Step(
+        method: 'PUT',
+        path: '/v1/agent-threads/$_threadId/active-matter',
+        error: const SocketException('link response lost'),
+      ),
+      _Step(
+        method: 'PUT',
+        path: '/v1/agent-threads/$_threadId/active-matter',
+        verify: (call) {
+          expect(jsonDecode(call.body!), {'matter_id': _matterBId});
+        },
+        response: _jsonResponse(
+          HttpStatus.ok,
+          _matterLinkJson(matterId: _matterBId),
+        ),
+      ),
+    ]);
+    final harness = _Harness(transport);
+    const operationId = 'scene_link_retry';
+
+    await expectLater(
+      harness.client.startScene(
+        threadId: _threadId,
+        scene: scene,
+        clientOperationId: operationId,
+      ),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.network,
+        ),
+      ),
+    );
+    final result = await harness.client.startScene(
+      threadId: _threadId,
+      scene: scene,
+      clientOperationId: operationId,
+    );
+
+    expect(result.activeMatter.id, _matterBId);
+    expect(
+      transport.calls.where(
+        (call) => call.method == 'POST' && call.path == '/v1/matters',
+      ),
+      hasLength(1),
+    );
+    transport.expectDone();
+  });
+
+  test('logout fences and clears an in-flight Matter activation', () async {
+    final transport = _ControlledTransport();
+    final initialList = transport.enqueue();
+    final staleCreate = transport.enqueue();
+    final harness = _Harness(transport);
+    final scene = agentScenes.first;
+    const operationId = 'scene_logout_race';
+
+    final staleStart = harness.client.startScene(
+      threadId: _threadId,
+      scene: scene,
+      clientOperationId: operationId,
+    );
+    await transport.waitForCalls(1);
+    initialList.complete(
+      _jsonResponse(HttpStatus.ok, {'matters': <Object?>[]}),
+    );
+    await transport.waitForCalls(2);
+
+    final cleanup = harness.client.clearAccountState();
+    staleCreate.complete(
+      _jsonResponse(
+        HttpStatus.created,
+        _matterJson(id: _matterId, title: scene.title),
+      ),
+    );
+    await expectLater(
+      staleStart,
+      throwsA(isA<AgentClientOperationCancelled>()),
+    );
+    await cleanup;
+
+    harness.credential = const AuthSessionCredential(
+      sessionToken: 'sess_account-b',
+      generation: 2,
+    );
+    final freshList = transport.enqueue();
+    final freshCreate = transport.enqueue();
+    final freshLink = transport.enqueue();
+    final freshStart = harness.client.startScene(
+      threadId: _threadId,
+      scene: scene,
+      clientOperationId: operationId,
+    );
+    await transport.waitForCalls(3);
+    freshList.complete(
+      _jsonResponse(HttpStatus.ok, {
+        'matters': [_matterJson(id: _matterId, title: scene.title)],
+      }),
+    );
+    await transport.waitForCalls(4);
+    freshCreate.complete(
+      _jsonResponse(
+        HttpStatus.created,
+        _matterJson(id: _matterBId, title: scene.title),
+      ),
+    );
+    await transport.waitForCalls(5);
+    freshLink.complete(
+      _jsonResponse(HttpStatus.ok, _matterLinkJson(matterId: _matterBId)),
+    );
+
+    final result = await freshStart;
+    expect(result.activeMatter.id, _matterBId);
+    expect(jsonDecode(transport.calls.last.body!), {'matter_id': _matterBId});
+    expect(
+      transport.calls.last.headers[HttpHeaders.authorizationHeader],
+      'Bearer sess_account-b',
+    );
   });
 }
 
@@ -1689,6 +1963,31 @@ Map<String, Object?> _threadJson({
   };
 }
 
+Map<String, Object?> _matterJson({
+  required String id,
+  required String title,
+  String status = 'active',
+}) {
+  return {
+    'matter_id': id,
+    'title': title,
+    'status': status,
+    'version': 1,
+    'created_at': _createdAt,
+    'updated_at': _updatedAt,
+  };
+}
+
+Map<String, Object?> _matterLinkJson({required String matterId}) {
+  return {
+    'thread_id': _threadId,
+    'matter_id': matterId,
+    'active': true,
+    'linked_at': _createdAt,
+    'updated_at': _updatedAt,
+  };
+}
+
 Map<String, Object?> _messageJson({
   required String id,
   required int sequence,
@@ -1766,6 +2065,8 @@ IdentityHttpResponse _jsonResponse(int statusCode, Object? body) {
 
 const _threadId = '10000000-0000-4000-8000-000000000001';
 const _matterId = '40000000-0000-4000-8000-000000000001';
+const _matterBId = '40000000-0000-4000-8000-000000000002';
+const _matterCId = '40000000-0000-4000-8000-000000000003';
 const _threadBId = '10000000-0000-4000-8000-000000000002';
 const _userMessageId = '20000000-0000-4000-8000-000000000001';
 const _assistantMessageId = '20000000-0000-4000-8000-000000000002';

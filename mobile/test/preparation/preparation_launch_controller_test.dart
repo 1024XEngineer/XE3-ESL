@@ -26,9 +26,16 @@ void main() {
               matterKeys.add(clientOperationId);
               return _context;
             },
-        voiceActivator: ({required context, required bootstrap}) async {
-          activations.add('${context.threadId}:${bootstrap.session.id}');
-        },
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) async {
+              activations.add(
+                '${context.threadId}:${bootstrap.session.id}:$clientOperationId',
+              );
+            },
         idFactory: (scope) => '$scope-stable-key',
       );
       addTearDown(controller.dispose);
@@ -53,7 +60,7 @@ void main() {
         'agent-matter-stable-key',
         'agent-matter-stable-key',
       ]);
-      expect(activations, ['$_threadId:$_sessionId']);
+      expect(activations, ['$_threadId:$_sessionId:practice-voice-stable-key']);
       expect(controller.bootstrap?.session.id, _sessionId);
       expect(controller.canRetry, isFalse);
     },
@@ -77,7 +84,12 @@ void main() {
               context = _context;
               return _context;
             },
-        voiceActivator: ({required context, required bootstrap}) async {},
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) async {},
         idFactory: (scope) => '$scope-recovered-key',
       );
       addTearDown(controller.dispose);
@@ -87,6 +99,52 @@ void main() {
       expect(controller.backgroundSummary, _background);
       expect(client.calls, ['profile', 'snapshot', 'plan', 'session']);
       expect(client.lastPlanInput?.selection, _selection);
+    },
+  );
+
+  test(
+    'reuses the formal voice activation key after a network retry',
+    () async {
+      final voiceKeys = <String>[];
+      final client = _LaunchClient();
+      final controller = PreparationLaunchController(
+        client: client,
+        contextProvider: () => _context,
+        threadIdProvider: () => _threadId,
+        matterActivator:
+            ({
+              required threadId,
+              required selection,
+              required clientOperationId,
+            }) async => _context,
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) async {
+              voiceKeys.add(clientOperationId);
+              if (voiceKeys.length == 1) {
+                throw const PreparationLaunchException(
+                  kind: PreparationLaunchFailureKind.network,
+                  stage: PreparationLaunchStage.voice,
+                  retryable: true,
+                );
+              }
+            },
+        idFactory: (scope) => '$scope-voice-retry-key',
+      );
+      addTearDown(controller.dispose);
+      controller.updateBackgroundSummary(_background);
+
+      expect(await controller.start(_selection), isFalse);
+      expect(controller.canRetry, isTrue);
+      expect(await controller.retry(), isTrue);
+
+      expect(voiceKeys, [
+        'practice-voice-voice-retry-key',
+        'practice-voice-voice-retry-key',
+      ]);
     },
   );
 
@@ -106,7 +164,12 @@ void main() {
               required selection,
               required clientOperationId,
             }) async => context,
-        voiceActivator: ({required context, required bootstrap}) async {},
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) async {},
         idFactory: (scope) => '$scope-context-key',
       );
       addTearDown(controller.dispose);
@@ -142,9 +205,14 @@ void main() {
               required selection,
               required clientOperationId,
             }) async => _context,
-        voiceActivator: ({required context, required bootstrap}) async {
-          activated = true;
-        },
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) async {
+              activated = true;
+            },
         idFactory: (scope) => '$scope-logout-key',
       );
       addTearDown(controller.dispose);

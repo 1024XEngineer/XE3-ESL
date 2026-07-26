@@ -19,6 +19,7 @@ typedef VoicePracticeActivator =
     Future<void> Function({
       required AgentPracticeContext context,
       required PreparationPracticeBootstrap bootstrap,
+      required String clientOperationId,
     });
 
 final class PreparationLaunchController extends ChangeNotifier {
@@ -111,6 +112,7 @@ final class PreparationLaunchController extends ChangeNotifier {
             snapshotKey: _newId('prep-snapshot'),
             planKey: _newId('practice-plan'),
             sessionKey: _newId('practice-session'),
+            voiceKey: _newId('practice-voice'),
           );
     return _run(attempt);
   }
@@ -215,7 +217,11 @@ final class PreparationLaunchController extends ChangeNotifier {
 
       _stage = PreparationLaunchStage.voice;
       notifyListeners();
-      await voiceActivator(context: activeContext, bootstrap: bootstrap);
+      await voiceActivator(
+        context: activeContext,
+        bootstrap: bootstrap,
+        clientOperationId: activeAttempt.voiceKey,
+      );
       _requireCurrent(operationEpoch, activeContext);
 
       _bootstrap = bootstrap;
@@ -330,6 +336,7 @@ final class _LaunchAttempt {
     required this.snapshotKey,
     required this.planKey,
     required this.sessionKey,
+    required this.voiceKey,
   });
 
   final PreparationLaunchSelection selection;
@@ -341,6 +348,7 @@ final class _LaunchAttempt {
   final String snapshotKey;
   final String planKey;
   final String sessionKey;
+  final String voiceKey;
 
   bool matches({
     required PreparationLaunchSelection selection,
@@ -362,6 +370,7 @@ final class _LaunchAttempt {
       snapshotKey: snapshotKey,
       planKey: planKey,
       sessionKey: sessionKey,
+      voiceKey: voiceKey,
     );
   }
 }

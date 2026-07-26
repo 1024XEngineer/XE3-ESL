@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
@@ -101,13 +103,16 @@ void main() {
         matterId: _matterId,
         sessionId: _sessionId,
         turnLimit: 6,
+        clientOperationId: _voiceKey,
       );
 
       expect(controller.practiceSessionId, _sessionId);
       expect(controller.turnLimit, 6);
       expect(controller.completedTurns, 0);
       expect(controller.hasActivePractice, isTrue);
-      expect(practice.restoreCalls, 2);
+      expect(practice.restoreCalls, 1);
+      expect(practice.startCalls, 1);
+      expect(practice.startKeys, [_voiceKey]);
     },
   );
 
@@ -130,12 +135,127 @@ void main() {
           matterId: _matterId,
           sessionId: _sessionId,
           turnLimit: 6,
+          clientOperationId: _voiceKey,
         ),
         throwsStateError,
       );
       expect(controller.practiceSessionId, isNull);
     },
   );
+
+  test('retries formal activation with the same operation key', () async {
+    final practice = _ActivationPracticeClient(
+      snapshot: _snapshot(turnLimit: 6),
+      failFirstStart: true,
+    );
+    final controller = AgentController(
+      client: _ActivationAgentClient(),
+      practiceClient: practice,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    await expectLater(
+      controller.activateCreatedPractice(
+        threadId: _threadId,
+        matterId: _matterId,
+        sessionId: _sessionId,
+        turnLimit: 6,
+        clientOperationId: _voiceKey,
+      ),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.network,
+        ),
+      ),
+    );
+    await controller.activateCreatedPractice(
+      threadId: _threadId,
+      matterId: _matterId,
+      sessionId: _sessionId,
+      turnLimit: 6,
+      clientOperationId: _voiceKey,
+    );
+
+    expect(practice.startKeys, [_voiceKey, _voiceKey]);
+    expect(controller.practiceSessionId, _sessionId);
+  });
+
+  test('rejects activation of a different formal Session response', () async {
+    final practice = _ActivationPracticeClient(
+      snapshot: PracticeSessionSnapshot(
+        sessionId: 'session-other',
+        planId: 'plan-1',
+        threadId: _threadId,
+        matter: _matter,
+        completedTurns: 0,
+        turnLimit: 6,
+        sessionCompleted: false,
+        currentQuestion: const PracticeQuestion(
+          id: 'question-other',
+          sessionId: 'session-other',
+          text: 'Wrong session.',
+        ),
+      ),
+    );
+    final controller = AgentController(
+      client: _ActivationAgentClient(),
+      practiceClient: practice,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    await expectLater(
+      controller.activateCreatedPractice(
+        threadId: _threadId,
+        matterId: _matterId,
+        sessionId: _sessionId,
+        turnLimit: 6,
+        clientOperationId: _voiceKey,
+      ),
+      throwsStateError,
+    );
+    expect(controller.practiceSessionId, isNull);
+  });
+
+  test('logout fences a late formal activation response', () async {
+    final startCompleter = Completer<PracticeStartResult>();
+    final practice = _ActivationPracticeClient(
+      snapshot: _snapshot(turnLimit: 6),
+      startCompleter: startCompleter,
+    );
+    final controller = AgentController(
+      client: _ActivationAgentClient(),
+      practiceClient: practice,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    final activation = controller.activateCreatedPractice(
+      threadId: _threadId,
+      matterId: _matterId,
+      sessionId: _sessionId,
+      turnLimit: 6,
+      clientOperationId: _voiceKey,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(practice.startCalls, 1);
+
+    await controller.clearPrivateState();
+    startCompleter.complete(
+      PracticeStartResult(snapshot: _snapshot(turnLimit: 6)),
+    );
+
+    await expectLater(
+      activation,
+      throwsA(isA<AgentClientOperationCancelled>()),
+    );
+    expect(controller.threadId, isNull);
+    expect(controller.practiceSessionId, isNull);
+    expect(practice.clearCalls, 1);
+  });
 
   test('does not replace or relabel an active formal Session', () async {
     final practice = _ActivationPracticeClient(
@@ -152,6 +272,7 @@ void main() {
       matterId: _matterId,
       sessionId: _sessionId,
       turnLimit: 6,
+      clientOperationId: _voiceKey,
     );
 
     await expectLater(
@@ -160,6 +281,7 @@ void main() {
         matterId: _matterId,
         sessionId: _sessionId,
         turnLimit: 3,
+        clientOperationId: _voiceKey,
       ),
       throwsStateError,
     );
@@ -169,12 +291,14 @@ void main() {
         matterId: _matterId,
         sessionId: 'session-other',
         turnLimit: 6,
+        clientOperationId: _voiceKey,
       ),
       throwsStateError,
     );
     expect(controller.practiceSessionId, _sessionId);
     expect(controller.turnLimit, 6);
-    expect(practice.restoreCalls, 2);
+    expect(practice.restoreCalls, 1);
+    expect(practice.startCalls, 1);
   });
 
   test(
@@ -210,6 +334,7 @@ void main() {
         matterId: _matterId,
         sessionId: _sessionId,
         turnLimit: 6,
+        clientOperationId: _voiceKey,
       );
 
       expect(controller.completedTurns, 4);
@@ -238,14 +363,24 @@ PracticeSessionSnapshot _snapshot({required int turnLimit}) {
 }
 
 final class _ActivationPracticeClient implements PracticeClient {
-  _ActivationPracticeClient({required this.snapshot});
+  _ActivationPracticeClient({
+    required this.snapshot,
+    this.failFirstStart = false,
+    this.startCompleter,
+  });
 
   final PracticeSessionSnapshot snapshot;
+  final bool failFirstStart;
+  final Completer<PracticeStartResult>? startCompleter;
   int restoreCalls = 0;
   int startCalls = 0;
+  int clearCalls = 0;
+  final startKeys = <String>[];
 
   @override
-  Future<void> clearAccountState() async {}
+  Future<void> clearAccountState() async {
+    clearCalls++;
+  }
 
   @override
   Future<PracticeSessionSnapshot?> restorePractice({
@@ -263,7 +398,20 @@ final class _ActivationPracticeClient implements PracticeClient {
     required String clientOperationId,
   }) {
     startCalls++;
-    throw UnimplementedError();
+    startKeys.add(clientOperationId);
+    if (failFirstStart && startCalls == 1) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    }
+    final pending = startCompleter;
+    if (pending != null) {
+      return pending.future;
+    }
+    return Future<PracticeStartResult>.value(
+      PracticeStartResult(snapshot: snapshot),
+    );
   }
 
   @override
@@ -361,6 +509,7 @@ final class _ActivationAgentClient implements AgentClient {
 const _threadId = 'thread-1';
 const _matterId = 'matter-1';
 const _sessionId = 'session-1';
+const _voiceKey = 'formal-voice-activation-key';
 const _matter = AgentMatter(
   id: _matterId,
   scene: AgentScene(

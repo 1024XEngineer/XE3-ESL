@@ -198,13 +198,15 @@ ProductionAppDependencies createProductionAppDependencies({
           );
           return AgentPracticeContext(threadId: threadId, matterId: matter.id);
         },
-    voiceActivator: ({required context, required bootstrap}) =>
-        agentController.activateCreatedPractice(
-          threadId: context.threadId,
-          matterId: context.matterId,
-          sessionId: bootstrap.session.id,
-          turnLimit: bootstrap.maxEffectiveTurns,
-        ),
+    voiceActivator:
+        ({required context, required bootstrap, required clientOperationId}) =>
+            agentController.activateCreatedPractice(
+              threadId: context.threadId,
+              matterId: context.matterId,
+              sessionId: bootstrap.session.id,
+              turnLimit: bootstrap.maxEffectiveTurns,
+              clientOperationId: clientOperationId,
+            ),
   );
   authController = AuthController(
     identityClient: WireIdentityClient(
