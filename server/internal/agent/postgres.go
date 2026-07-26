@@ -47,6 +47,16 @@ func (r *PostgresRepository) CreateThread(
 	}
 	defer rollback(tx)
 
+	if activeMatterID != "" {
+		if err := lockActiveMatter(
+			ctx,
+			tx,
+			ownerID,
+			activeMatterID,
+		); err != nil {
+			return Thread{}, err
+		}
+	}
 	var result Thread
 	if err := tx.QueryRow(ctx, `
 INSERT INTO agent_threads (
@@ -203,6 +213,9 @@ FOR UPDATE`,
 		ownerID,
 	).Scan(&lockedThreadID); err != nil {
 		return ThreadMatterLink{}, mapPostgresError(err)
+	}
+	if err := lockActiveMatter(ctx, tx, ownerID, matterID); err != nil {
+		return ThreadMatterLink{}, err
 	}
 
 	var current ThreadMatterLink
@@ -469,6 +482,29 @@ ORDER BY sequence_no ASC`,
 		return nil, ErrRepository
 	}
 	return result, nil
+}
+
+func lockActiveMatter(
+	ctx context.Context,
+	tx pgx.Tx,
+	ownerID string,
+	matterID string,
+) error {
+	var active bool
+	if err := tx.QueryRow(ctx, `
+SELECT status = 'active'
+FROM matters
+WHERE id = $1 AND owner_user_id = $2
+FOR UPDATE`,
+		matterID,
+		ownerID,
+	).Scan(&active); err != nil {
+		return mapPostgresError(err)
+	}
+	if !active {
+		return ErrConflict
+	}
+	return nil
 }
 
 func findMessageByClientID(

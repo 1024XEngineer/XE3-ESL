@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
@@ -466,6 +467,189 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	}
 }
 
+func TestPostgresActiveMatterBindingSerializesWithLifecycleTransition(
+	t *testing.T,
+) {
+	testCases := []struct {
+		name         string
+		targetStatus matter.Status
+		createThread bool
+	}{
+		{
+			name:         "create thread while Matter is archived",
+			targetStatus: matter.StatusArchived,
+			createThread: true,
+		},
+		{
+			name:         "select Matter while it is completed",
+			targetStatus: matter.StatusCompleted,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			database := newAgentTestDatabase(t)
+			matterService, normalService := newAgentDataServices(t, database.pool)
+			actor := requestcontext.Actor{
+				UserID:    agentTestUserA,
+				SessionID: "20000000-0000-4000-8000-000000000001",
+			}
+			item, err := matterService.Create(
+				context.Background(),
+				actor,
+				"Concurrent lifecycle transition",
+			)
+			if err != nil {
+				t.Fatalf("create Matter: %v", err)
+			}
+			var thread Thread
+			if !testCase.createThread {
+				thread, err = normalService.CreateThread(
+					context.Background(),
+					actor,
+					"",
+				)
+				if err != nil {
+					t.Fatalf("create Thread: %v", err)
+				}
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			transition, err := database.pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin Matter transition: %v", err)
+			}
+			defer func() {
+				_ = transition.Rollback(context.Background())
+			}()
+			if _, err := transition.Exec(ctx, `
+UPDATE matters
+SET
+    status = $3,
+    version = version + 1,
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE id = $1 AND owner_user_id = $2`,
+				item.ID,
+				actor.UserID,
+				string(testCase.targetStatus),
+			); err != nil {
+				t.Fatalf("stage Matter transition: %v", err)
+			}
+
+			lockAttempted := make(chan struct{}, 1)
+			observedDatabase := &queryObservingPostgreSQL{
+				Pool: database.pool,
+				observeQuery: func(query string) {
+					if strings.Contains(query, "FROM matters") &&
+						strings.Contains(query, "FOR UPDATE") {
+						select {
+						case lockAttempted <- struct{}{}:
+						default:
+						}
+					}
+				},
+			}
+			repository, err := NewPostgresRepository(
+				observedDatabase,
+				identity.NewUUIDv4Generator(nil),
+			)
+			if err != nil {
+				t.Fatalf("new observed Agent repository: %v", err)
+			}
+			observedService, err := NewService(repository, matterService)
+			if err != nil {
+				t.Fatalf("new observed Agent service: %v", err)
+			}
+			result := make(chan error, 1)
+			go func() {
+				if testCase.createThread {
+					_, operationErr := observedService.CreateThread(
+						ctx,
+						actor,
+						item.ID,
+					)
+					result <- operationErr
+					return
+				}
+				_, operationErr := observedService.SetActiveMatter(
+					ctx,
+					actor,
+					thread.ID,
+					item.ID,
+				)
+				result <- operationErr
+			}()
+
+			select {
+			case <-lockAttempted:
+			case operationErr := <-result:
+				t.Fatalf(
+					"binding completed before atomic Matter lock: %v",
+					operationErr,
+				)
+			case <-ctx.Done():
+				t.Fatal("binding did not attempt the atomic Matter lock")
+			}
+			select {
+			case operationErr := <-result:
+				t.Fatalf(
+					"binding escaped the uncommitted Matter transition: %v",
+					operationErr,
+				)
+			default:
+			}
+			if err := transition.Commit(ctx); err != nil {
+				t.Fatalf("commit Matter transition: %v", err)
+			}
+			select {
+			case operationErr := <-result:
+				if !errors.Is(operationErr, ErrConflict) {
+					t.Fatalf(
+						"binding error after Matter transition = %v, want conflict",
+						operationErr,
+					)
+				}
+			case <-ctx.Done():
+				t.Fatal("binding did not finish after Matter transition")
+			}
+
+			if testCase.createThread {
+				threads, err := normalService.ListThreads(
+					context.Background(),
+					actor,
+				)
+				if err != nil {
+					t.Fatalf("list Threads after rejected binding: %v", err)
+				}
+				if len(threads) != 0 {
+					t.Fatalf(
+						"Thread count after rejected binding = %d, want 0",
+						len(threads),
+					)
+				}
+			} else {
+				recovered, err := normalService.GetThread(
+					context.Background(),
+					actor,
+					thread.ID,
+				)
+				if err != nil {
+					t.Fatalf("recover Thread after rejected binding: %v", err)
+				}
+				if recovered.ActiveMatterID != "" {
+					t.Fatalf(
+						"active Matter after rejected binding = %q, want empty",
+						recovered.ActiveMatterID,
+					)
+				}
+			}
+		})
+	}
+}
+
 func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 	database := newAgentTestDatabase(t)
 	matterService, service := newAgentDataServices(t, database.pool)
@@ -736,6 +920,40 @@ type idGeneratorFunc func() (string, error)
 
 func (f idGeneratorFunc) NewID() (string, error) {
 	return f()
+}
+
+type queryObservingPostgreSQL struct {
+	*pgxpool.Pool
+	observeQuery func(string)
+}
+
+func (database *queryObservingPostgreSQL) Begin(
+	ctx context.Context,
+) (pgx.Tx, error) {
+	tx, err := database.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &queryObservingTx{
+		Tx:           tx,
+		observeQuery: database.observeQuery,
+	}, nil
+}
+
+type queryObservingTx struct {
+	pgx.Tx
+	observeQuery func(string)
+}
+
+func (tx *queryObservingTx) QueryRow(
+	ctx context.Context,
+	query string,
+	args ...any,
+) pgx.Row {
+	if tx.observeQuery != nil {
+		tx.observeQuery(query)
+	}
+	return tx.Tx.QueryRow(ctx, query, args...)
 }
 
 type agentTestDatabase struct {
