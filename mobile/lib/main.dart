@@ -11,6 +11,8 @@ import 'package:speakup/practice/practice_audio_player.dart';
 import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/practice/wire_practice_client.dart';
+import 'package:speakup/review/review_history_controller.dart';
+import 'package:speakup/review/wire_review_history_client.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,6 +27,7 @@ void main() {
     SpeakUpApp(
       authController: dependencies.authController,
       agentController: dependencies.agentController,
+      reviewHistoryController: dependencies.reviewHistoryController,
     ),
   );
 }
@@ -33,16 +36,19 @@ final class ProductionAppDependencies {
   const ProductionAppDependencies({
     required this.authController,
     required this.agentController,
+    required this.reviewHistoryController,
   });
 
   final AuthController authController;
   final AgentController agentController;
+  final ReviewHistoryController reviewHistoryController;
 }
 
 ProductionAppDependencies createProductionAppDependencies({
   required Uri baseUri,
   IdentityHttpTransport? identityTransport,
   IdentityHttpTransport? agentTransport,
+  IdentityHttpTransport? reviewHistoryTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
   PracticeMediaWireTransport? signedAudioTransport,
@@ -95,16 +101,36 @@ ProductionAppDependencies createProductionAppDependencies({
         ),
     audioPlayer: practiceAudioPlayer ?? AudioplayersPracticeAudioPlayer(),
   );
+  final reviewHistoryController = ReviewHistoryController(
+    client: WireReviewHistoryClient(
+      baseUri: baseUri,
+      credentialProvider: () => authController.currentCredential,
+      invalidateSession:
+          ({required expectedSessionToken, required expectedGeneration}) {
+            return authController.invalidateSession(
+              expectedSessionToken: expectedSessionToken,
+              expectedGeneration: expectedGeneration,
+            );
+          },
+      transport: reviewHistoryTransport,
+    ),
+  );
   authController = AuthController(
     identityClient: WireIdentityClient(
       baseUri: baseUri,
       transport: identityTransport,
     ),
     sessionStore: sessionStore ?? const IosKeychainSessionStore(),
-    clearPrivateState: agentController.clearPrivateState,
+    clearPrivateState: () async {
+      await Future.wait<void>([
+        agentController.clearPrivateState(),
+        reviewHistoryController.clearPrivateState(),
+      ]);
+    },
   );
   return ProductionAppDependencies(
     authController: authController,
     agentController: agentController,
+    reviewHistoryController: reviewHistoryController,
   );
 }

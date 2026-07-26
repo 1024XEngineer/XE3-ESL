@@ -10,6 +10,7 @@ import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
+import 'package:speakup/review/review_history_controller.dart';
 
 class SpeakUpShell extends StatefulWidget {
   const SpeakUpShell({
@@ -17,6 +18,7 @@ class SpeakUpShell extends StatefulWidget {
     this.previewMode = false,
     this.user,
     this.authController,
+    this.reviewHistoryController,
     required this.agentController,
     super.key,
   });
@@ -26,6 +28,7 @@ class SpeakUpShell extends StatefulWidget {
   final User? user;
   final AuthController? authController;
   final AgentController agentController;
+  final ReviewHistoryController? reviewHistoryController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -69,12 +72,17 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   @override
   void didUpdateWidget(covariant SpeakUpShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.agentController == widget.agentController) {
-      return;
+    final agentControllerChanged =
+        oldWidget.agentController != widget.agentController;
+    final historyControllerChanged =
+        oldWidget.reviewHistoryController != widget.reviewHistoryController;
+    if (agentControllerChanged) {
+      oldWidget.agentController.removeListener(_handleAgentState);
+      widget.agentController.addListener(_handleAgentState);
     }
-    oldWidget.agentController.removeListener(_handleAgentState);
-    widget.agentController.addListener(_handleAgentState);
-    _restorePresentedReview();
+    if (agentControllerChanged || historyControllerChanged) {
+      _restorePresentedReview();
+    }
   }
 
   @override
@@ -85,9 +93,15 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   void _selectDestination(int index) {
     if (_selectedIndex == index) {
+      if (index == 2) {
+        unawaited(widget.reviewHistoryController?.refresh());
+      }
       return;
     }
     unawaited(widget.agentController.stopPracticeAudio());
+    if (index == 2) {
+      unawaited(widget.reviewHistoryController?.refresh());
+    }
     setState(() => _selectedIndex = index);
   }
 
@@ -136,6 +150,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     } else if (!_reviewPresented) {
       _reviewPresented = true;
       _selectedIndex = 2;
+      unawaited(widget.reviewHistoryController?.refresh());
     }
     setState(() {});
   }
@@ -147,6 +162,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     }
     _reviewPresented = true;
     _selectedIndex = 2;
+    unawaited(widget.reviewHistoryController?.refresh());
   }
 
   @override
@@ -190,7 +206,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ReviewPage(
         showBackButton: widget.showBackButton,
         previewMode: widget.previewMode,
+        practiceAvailable: practiceAvailable,
+        historyController: widget.reviewHistoryController,
         agentController: widget.agentController,
+        autoload: false,
       ),
       _ProfilePage(
         showBackButton: widget.showBackButton,
