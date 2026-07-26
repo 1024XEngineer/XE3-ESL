@@ -841,16 +841,29 @@ void main() {
 
       expect(find.byKey(const Key('review-content')), findsOneWidget);
       expect(find.byKey(const Key('review-title')), findsOneWidget);
-      expect(find.text('summary-91'), findsOneWidget);
+      expect(find.text('summary-91'), findsNothing);
       expect(find.byKey(const Key('review-history-load-more')), findsOneWidget);
 
       await tester.tap(
+        find.byKey(const Key('review-history-select-$_newerId')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+      expect(find.text('summary-91'), findsOneWidget);
+      expect(find.text('summary-78'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('review-detail-back')));
+      await tester.pumpAndSettle();
+      await tester.tap(
         find.byKey(const Key('review-history-select-$_olderId')),
       );
-      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
       expect(find.text('summary-78'), findsOneWidget);
       expect(find.text('summary-91'), findsNothing);
 
+      await tester.tap(find.byKey(const Key('review-detail-back')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('review-history-load-more')));
       await tester.pumpAndSettle();
       expect(
@@ -861,7 +874,7 @@ void main() {
     },
   );
 
-  testWidgets('Review tab renders empty and retryable failure states', (
+  testWidgets('Review tab renders zero-item and retryable failure states', (
     tester,
   ) async {
     final failureClient = _FailOnceClient();
@@ -921,7 +934,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.cursors, <String?>[null, null, null]);
-      expect(find.text('summary-92'), findsOneWidget);
+      expect(find.text('本次练习 · 92 分'), findsOneWidget);
+      expect(find.text('summary-92'), findsNothing);
       expect(controller.hasMore, isFalse);
     },
   );
@@ -1061,20 +1075,190 @@ void main() {
       expect(find.byKey(const Key('review-current-$_newerId')), findsOneWidget);
       expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
       expect(find.byKey(const Key('review-content')), findsOneWidget);
-      expect(find.text('summary-91'), findsOneWidget);
+      expect(find.text('summary-91'), findsNothing);
       expect(find.text('summary-78'), findsNothing);
 
       await tester.tap(
+        find.byKey(const Key('review-current-select-$_newerId')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+      expect(find.text('summary-91'), findsOneWidget);
+      expect(find.text('summary-78'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('review-detail-back')));
+      await tester.pumpAndSettle();
+      await tester.tap(
         find.byKey(const Key('review-history-select-$_olderId')),
       );
-      await tester.pump();
+      await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('review-content')), findsOneWidget);
-      expect(find.byKey(const Key('review-title')), findsOneWidget);
+      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+      expect(find.byKey(const Key('review-detail-title')), findsOneWidget);
       expect(find.text('summary-91'), findsNothing);
       expect(find.text('summary-78'), findsOneWidget);
     },
   );
+
+  testWidgets('one history item opens a dedicated detail page', (tester) async {
+    final item = _fixtureItem(index: 0);
+    final controller = ReviewHistoryController(
+      client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(Key('review-history-${item.review.id}')), findsOneWidget);
+    expect(find.byKey(const Key('review-detail-page')), findsNothing);
+    expect(find.text(item.review.summary), findsNothing);
+    expect(
+      tester
+          .getSize(find.byKey(Key('review-history-${item.review.id}')))
+          .height,
+      lessThan(120),
+    );
+
+    await tester.tap(
+      find.byKey(Key('review-history-select-${item.review.id}')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+    expect(find.byKey(const Key('review-detail-summary')), findsOneWidget);
+    expect(find.byKey(const Key('review-detail-strength')), findsOneWidget);
+    expect(find.byKey(const Key('review-detail-focus')), findsOneWidget);
+    expect(find.text(item.review.summary), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('review-detail-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('review-history-list')), findsOneWidget);
+    expect(find.byKey(const Key('review-detail-page')), findsNothing);
+  });
+
+  testWidgets('ten compact history cards preserve multi-day dates', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(430, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final items = List<ReviewHistoryItem>.generate(
+      10,
+      (index) => _fixtureItem(
+        index: index,
+        completedAt: DateTime(2026, 7, 26 - index, 12),
+      ),
+    );
+    final controller = ReviewHistoryController(
+      client: _FixedItemsClient(items),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    for (final item in items) {
+      expect(
+        find.byKey(Key('review-history-${item.review.id}')),
+        findsOneWidget,
+      );
+    }
+    expect(find.text('2026-07-26'), findsOneWidget);
+    expect(find.text('2026-07-17'), findsOneWidget);
+    expect(find.byKey(const Key('review-detail-page')), findsNothing);
+    expect(find.text(items.first.review.summary), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('twenty-five records, long copy, and 2x text stay scrollable', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final longTitle = List<String>.filled(8, '跨团队英文系统设计面试复盘').join(' ');
+    final longSummary = List<String>.filled(24, '回答先说明背景与约束，再给出取舍和结果。').join();
+    final longStrength = List<String>.filled(20, '能够用具体证据支撑判断，并保持结构清楚。').join();
+    final longFocus = List<String>.filled(20, '下一次缩短开场，并更早量化业务影响。').join();
+    final items = List<ReviewHistoryItem>.generate(
+      25,
+      (index) => _fixtureItem(
+        index: index,
+        title: index == 24 ? longTitle : null,
+        summary: index == 24 ? longSummary : null,
+        strength: index == 24 ? longStrength : null,
+        nextFocus: index == 24 ? longFocus : null,
+        completedAt: DateTime(2026, 7, 26).subtract(Duration(days: index)),
+      ),
+    );
+    final controller = ReviewHistoryController(
+      client: _FixedItemsClient(items),
+    );
+    addTearDown(controller.dispose);
+    final last = items.last;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) {
+          final mediaQuery = MediaQuery.of(context);
+          return MediaQuery(
+            data: mediaQuery.copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          );
+        },
+        home: ReviewPage(historyController: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final historyScrollable = find.descendant(
+      of: find.byKey(const Key('review-history-list')),
+      matching: find.byType(Scrollable),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('review-history-load-more')),
+      500,
+      scrollable: historyScrollable,
+    );
+    await tester.tap(find.byKey(const Key('review-history-load-more')));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(Key('review-history-select-${last.review.id}')),
+      500,
+      scrollable: historyScrollable,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(Key('review-history-${last.review.id}')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(
+      find.byKey(Key('review-history-select-${last.review.id}')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+    final detailScrollable = find.descendant(
+      of: find.byKey(const Key('review-detail-content')),
+      matching: find.byType(Scrollable),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('review-detail-summary')),
+      300,
+      scrollable: detailScrollable,
+    );
+    expect(find.text(longSummary), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('review-detail-focus')),
+      300,
+      scrollable: detailScrollable,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(longFocus), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<HttpServer> _startReviewHistoryServer(
@@ -1344,6 +1528,29 @@ final class _SinglePageClient implements ReviewHistoryClient {
   Future<void> clearAccountState() async {}
 }
 
+final class _FixedItemsClient implements ReviewHistoryClient {
+  const _FixedItemsClient(this.items);
+
+  final List<ReviewHistoryItem> items;
+
+  @override
+  Future<ReviewHistoryPage> list({String? cursor, int limit = 20}) async {
+    if (cursor == null) {
+      return ReviewHistoryPage(
+        items: items.take(limit).toList(growable: false),
+        nextCursor: items.length > limit ? 'fixed-items-page-2' : null,
+      );
+    }
+    expect(cursor, 'fixed-items-page-2');
+    return ReviewHistoryPage(
+      items: items.skip(limit).take(limit).toList(growable: false),
+    );
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
 Future<AgentController> _agentControllerWithReview(String reviewId) async {
   final controller = AgentController(client: _ReviewAgentClient(reviewId));
   await controller.initialize();
@@ -1451,6 +1658,29 @@ ReviewHistoryItem _item(String id, {required int score}) {
     practiceSessionId: 'session-$score',
     createdAt: createdAt,
     completedAt: createdAt.add(const Duration(minutes: 1)),
+  );
+}
+
+ReviewHistoryItem _fixtureItem({
+  required int index,
+  DateTime? completedAt,
+  String? title,
+  String? summary,
+  String? strength,
+  String? nextFocus,
+}) {
+  final completed = completedAt ?? DateTime(2026, 7, 26, 12, index);
+  return ReviewHistoryItem(
+    review: AgentReview(
+      id: 'review-fixture-$index',
+      title: title ?? '英文面试练习 · ${90 - index} 分',
+      summary: summary ?? 'fixture-summary-$index',
+      strength: strength ?? 'fixture-strength-$index',
+      nextFocus: nextFocus ?? 'fixture-focus-$index',
+    ),
+    practiceSessionId: 'session-fixture-$index',
+    createdAt: completed.subtract(const Duration(minutes: 16)),
+    completedAt: completed,
   );
 }
 
