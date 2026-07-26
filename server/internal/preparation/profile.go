@@ -80,16 +80,18 @@ type DeleteProfileDataCommand struct {
 
 // ProfileRepository is Preparation's production persistence Port.
 type ProfileRepository interface {
+	// Create methods return replayed=true only when an existing, matching
+	// idempotency result is returned. A newly persisted resource returns false.
 	CreateProfile(
 		context.Context,
 		requestcontext.Actor,
 		CreateProfileCommand,
-	) (Profile, bool, error)
+	) (profile Profile, replayed bool, err error)
 	CreateSnapshot(
 		context.Context,
 		requestcontext.Actor,
 		CreateSnapshotCommand,
-	) (Snapshot, bool, error)
+	) (snapshot Snapshot, replayed bool, err error)
 	ReadProfile(
 		context.Context,
 		requestcontext.Actor,
@@ -144,7 +146,7 @@ func (s *PersistenceService) CreateProfile(
 	actor requestcontext.Actor,
 	idempotencyKey string,
 	request CreateProfileRequest,
-) (Profile, bool, error) {
+) (profile Profile, replayed bool, err error) {
 	if ctx == nil || !actor.Valid() || !validCreateProfileRequest(request) {
 		return Profile{}, false, ErrProfileInvalid
 	}
@@ -174,7 +176,7 @@ func (s *PersistenceService) CreateSnapshot(
 	profileID string,
 	idempotencyKey string,
 	request CreateSnapshotRequest,
-) (Snapshot, bool, error) {
+) (snapshot Snapshot, replayed bool, err error) {
 	if ctx == nil || !actor.Valid() || !validResourceIdentifier(profileID) ||
 		request.SourceVersion < 1 {
 		return Snapshot{}, false, ErrProfileInvalid
