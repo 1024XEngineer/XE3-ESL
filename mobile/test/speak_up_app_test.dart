@@ -222,7 +222,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.descendant(of: drawer, matching: find.text('本地界面预览 · UI Mock')),
+      find.descendant(of: drawer, matching: find.text('本地 Fake 预览，未连接正式账号')),
       findsOneWidget,
     );
     expect(
@@ -448,7 +448,7 @@ void main() {
 
       await tester.drag(find.byType(ListView), const Offset(0, -1000));
       await tester.pumpAndSettle();
-      final accountLabel = find.text('本地界面预览 · UI Mock');
+      final accountLabel = find.text('本地 Fake 预览，未连接正式账号');
       expect(accountLabel.hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

@@ -280,7 +280,7 @@ class _ConversationDrawer extends StatelessWidget {
               contentPadding: const EdgeInsets.symmetric(horizontal: 8),
               leading: const Icon(Icons.chat_bubble_outline_rounded),
               title: const Text('Agent 对话'),
-              subtitle: Text(previewMode ? '本地界面预览 · UI Mock' : '已连接当前账号'),
+              subtitle: Text(previewMode ? '本地 Fake 预览，未连接正式账号' : '已连接当前账号'),
             ),
           ],
         ),
