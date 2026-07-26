@@ -59,7 +59,11 @@ func TestCatalogHTTPRoutesReturnCanonicalStableResponses(t *testing.T) {
 		t.Fatalf("decode detail: %v", err)
 	}
 	if detail.ScenarioConfig.ID != BackendEngineerConfigID ||
-		len(detail.PracticeOptions) != 5 {
+		detail.ScenarioDefinition.Name != "English interview for technical roles" ||
+		len(detail.PracticeOptions) != 5 ||
+		detail.PracticeOptions[0].ID != FullSimulationOptionID ||
+		detail.PracticeOptions[1].ID != TechnicalFocusOptionID ||
+		detail.PracticeOptions[2].ID != HRFocusOptionID {
 		t.Fatalf("unexpected detail: %#v", detail)
 	}
 
@@ -72,8 +76,11 @@ func TestCatalogHTTPRoutesReturnCanonicalStableResponses(t *testing.T) {
 		t.Fatalf("decode roles: %v", err)
 	}
 	if len(roles.Roles) != 4 ||
-		roles.Roles[0].ID != HRInterviewerRoleID ||
-		roles.Roles[3].ID != ExecutiveInterviewerRoleID {
+		roles.Roles[0].ID != TechnicalInterviewerRoleID ||
+		roles.Roles[0].DisplayName != "Technical depth perspective" ||
+		roles.Roles[1].ID != HRInterviewerRoleID ||
+		roles.Roles[3].ID != ExecutiveInterviewerRoleID ||
+		roles.Roles[3].DisplayName != "Leadership and impact perspective" {
 		t.Fatalf("unexpected roles: %#v", roles)
 	}
 }

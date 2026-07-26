@@ -116,7 +116,8 @@ func (c *Catalog) GetScenarioDetail(scenarioDefinitionID string) (ScenarioDetail
 	}, nil
 }
 
-// ListRoles returns copies in stable display order.
+// ListRoles returns optional perspectives in stable menu order. The order is
+// presentation metadata, not a required interview sequence.
 func (c *Catalog) ListRoles(scenarioDefinitionID string) ([]RoleDefinition, error) {
 	scenario, ok := c.activeScenario(scenarioDefinitionID)
 	if !ok {

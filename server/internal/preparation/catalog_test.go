@@ -24,13 +24,15 @@ func TestBuiltinCatalogExposesCanonicalProgrammerInterview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetScenarioDetail: %v", err)
 	}
-	if detail.ScenarioConfig.ID != BackendEngineerConfigID {
-		t.Fatalf("scenario config ID=%q", detail.ScenarioConfig.ID)
+	if detail.ScenarioConfig.ID != BackendEngineerConfigID ||
+		detail.ScenarioConfig.Type != ScenarioTypeInterview ||
+		detail.ScenarioConfig.Version != 1 {
+		t.Fatalf("unexpected scenario config: %#v", detail.ScenarioConfig)
 	}
 	wantOptions := []string{
 		FullSimulationOptionID,
-		HRFocusOptionID,
 		TechnicalFocusOptionID,
+		HRFocusOptionID,
 		ProjectFocusOptionID,
 		ExecutiveFocusOptionID,
 	}
@@ -38,7 +40,8 @@ func TestBuiltinCatalogExposesCanonicalProgrammerInterview(t *testing.T) {
 		t.Fatalf("practice option order=%v, want %v", got, wantOptions)
 	}
 	if detail.PracticeOptions[0].Type != PracticeOptionFullSimulation ||
-		detail.PracticeOptions[0].RoleDefinitionID != "" {
+		detail.PracticeOptions[0].RoleDefinitionID != "" ||
+		detail.PracticeOptions[0].Version != 1 {
 		t.Fatalf("invalid full simulation option: %#v", detail.PracticeOptions[0])
 	}
 
@@ -47,8 +50,8 @@ func TestBuiltinCatalogExposesCanonicalProgrammerInterview(t *testing.T) {
 		t.Fatalf("ListRoles: %v", err)
 	}
 	wantRoles := []string{
-		HRInterviewerRoleID,
 		TechnicalInterviewerRoleID,
+		HRInterviewerRoleID,
 		ProjectManagerRoleID,
 		ExecutiveInterviewerRoleID,
 	}
@@ -60,6 +63,111 @@ func TestBuiltinCatalogExposesCanonicalProgrammerInterview(t *testing.T) {
 		if option.Type != PracticeOptionFocus ||
 			option.RoleDefinitionID != role.ID {
 			t.Fatalf("role %q has invalid FOCUS option %#v", role.ID, option)
+		}
+	}
+}
+
+func TestBuiltinCatalogTreatsRolesAsIndependentPerspectives(t *testing.T) {
+	catalog := mustBuiltinCatalog(t)
+	roles, err := catalog.ListRoles(ProgrammerInterviewScenarioID)
+	if err != nil {
+		t.Fatalf("ListRoles: %v", err)
+	}
+	detail, err := catalog.GetScenarioDetail(ProgrammerInterviewScenarioID)
+	if err != nil {
+		t.Fatalf("GetScenarioDetail: %v", err)
+	}
+
+	expectedRoles := []struct {
+		id          string
+		roleType    string
+		displayName string
+		focusOption string
+	}{
+		{
+			TechnicalInterviewerRoleID,
+			"TECHNICAL_INTERVIEWER",
+			"Technical depth perspective",
+			TechnicalFocusOptionID,
+		},
+		{
+			HRInterviewerRoleID,
+			"HR_INTERVIEWER",
+			"Recruiter and motivation perspective",
+			HRFocusOptionID,
+		},
+		{
+			ProjectManagerRoleID,
+			"PROJECT_MANAGER",
+			"Delivery and collaboration perspective",
+			ProjectFocusOptionID,
+		},
+		{
+			ExecutiveInterviewerRoleID,
+			"EXECUTIVE_INTERVIEWER",
+			"Leadership and impact perspective",
+			ExecutiveFocusOptionID,
+		},
+	}
+	if len(roles) != len(expectedRoles) {
+		t.Fatalf("role count=%d, want %d", len(roles), len(expectedRoles))
+	}
+
+	optionsByID := make(map[string]PracticeOptionDefinition, len(detail.PracticeOptions))
+	focusCountByRole := make(map[string]int, len(roles))
+	for _, option := range detail.PracticeOptions {
+		optionsByID[option.ID] = option
+		if option.Type == PracticeOptionFocus {
+			focusCountByRole[option.RoleDefinitionID]++
+		}
+	}
+
+	for index, expected := range expectedRoles {
+		role := roles[index]
+		if role.ID != expected.id ||
+			role.Type != expected.roleType ||
+			role.DisplayName != expected.displayName ||
+			role.Version != 1 {
+			t.Fatalf("role[%d]=%#v, want %#v", index, role, expected)
+		}
+
+		fullSnapshot, err := catalog.GetCatalogSnapshot(
+			ProgrammerInterviewScenarioID,
+			1,
+			[]string{role.ID},
+			FullSimulationOptionID,
+			1,
+		)
+		if err != nil {
+			t.Fatalf("FULL_SIMULATION for role %q: %v", role.ID, err)
+		}
+		if len(fullSnapshot.SelectedRoles) != 1 ||
+			fullSnapshot.SelectedRoles[0].ID != role.ID ||
+			fullSnapshot.PracticeOption.Type != PracticeOptionFullSimulation ||
+			fullSnapshot.PracticeOption.RoleDefinitionID != "" {
+			t.Fatalf("invalid FULL_SIMULATION snapshot for %q: %#v", role.ID, fullSnapshot)
+		}
+
+		focusOption, ok := optionsByID[expected.focusOption]
+		if !ok ||
+			focusOption.Type != PracticeOptionFocus ||
+			focusOption.RoleDefinitionID != role.ID ||
+			focusOption.Version != 1 ||
+			focusCountByRole[role.ID] != 1 {
+			t.Fatalf("role %q has invalid FOCUS mapping: %#v", role.ID, focusOption)
+		}
+		focusSnapshot, err := catalog.GetCatalogSnapshot(
+			ProgrammerInterviewScenarioID,
+			1,
+			[]string{role.ID},
+			expected.focusOption,
+			1,
+		)
+		if err != nil {
+			t.Fatalf("FOCUS for role %q: %v", role.ID, err)
+		}
+		if focusSnapshot.PracticeOption.RoleDefinitionID != role.ID {
+			t.Fatalf("FOCUS snapshot mismatch for %q: %#v", role.ID, focusSnapshot)
 		}
 	}
 }
@@ -292,8 +400,8 @@ func TestCatalogSortsScenariosRolesAndOptions(t *testing.T) {
 		t.Fatalf("ListRoles: %v", err)
 	}
 	if got := roleIDs(roles); !reflect.DeepEqual(got, []string{
-		HRInterviewerRoleID,
 		TechnicalInterviewerRoleID,
+		HRInterviewerRoleID,
 		ProjectManagerRoleID,
 		ExecutiveInterviewerRoleID,
 	}) {
@@ -305,8 +413,8 @@ func TestCatalogSortsScenariosRolesAndOptions(t *testing.T) {
 	}
 	if got := optionIDs(detail.PracticeOptions); !reflect.DeepEqual(got, []string{
 		FullSimulationOptionID,
-		HRFocusOptionID,
 		TechnicalFocusOptionID,
+		HRFocusOptionID,
 		ProjectFocusOptionID,
 		ExecutiveFocusOptionID,
 	}) {

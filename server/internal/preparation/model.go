@@ -46,7 +46,9 @@ type ScenarioConfig struct {
 	FocusAreas           []string     `json:"focus_areas"`
 }
 
-// RoleDefinition is a versioned, Preparation-owned role definition.
+// RoleDefinition is a versioned, Preparation-owned optional interviewer
+// perspective. DisplayOrder controls menu presentation only; it never implies a
+// required interview stage or progression sequence.
 type RoleDefinition struct {
 	ID                   string   `json:"role_definition_id"`
 	ScenarioDefinitionID string   `json:"scenario_definition_id"`
@@ -60,7 +62,9 @@ type RoleDefinition struct {
 	DisplayOrder         int      `json:"-"`
 }
 
-// PracticeOptionDefinition describes one stable way to select a scenario.
+// PracticeOptionDefinition describes one stable way to practice from the
+// currently selected perspective. FULL_SIMULATION is not bound to one role;
+// FOCUS is bound to exactly one role.
 type PracticeOptionDefinition struct {
 	ID                   string             `json:"practice_option_id"`
 	ScenarioDefinitionID string             `json:"scenario_definition_id"`
