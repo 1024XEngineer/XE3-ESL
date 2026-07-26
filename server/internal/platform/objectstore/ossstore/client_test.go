@@ -273,14 +273,22 @@ func TestClientPreflightRejectsVersionedBucket(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			client := newTestClient(t, &http.Client{
 				Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-					if request.Method != http.MethodGet || request.URL.RawQuery != "versioning" {
+					if request.Method != http.MethodGet {
 						t.Fatalf("unexpected preflight request: %s %s", request.Method, request.URL.String())
 					}
-					return response(
-						http.StatusOK,
-						http.Header{"Content-Type": []string{"application/xml"}},
-						"<VersioningConfiguration><Status>"+status+"</Status></VersioningConfiguration>",
-					), nil
+					switch request.URL.RawQuery {
+					case "acl":
+						return bucketACLResponse("private"), nil
+					case "versioning":
+						return response(
+							http.StatusOK,
+							http.Header{"Content-Type": []string{"application/xml"}},
+							"<VersioningConfiguration><Status>"+status+"</Status></VersioningConfiguration>",
+						), nil
+					default:
+						t.Fatalf("unexpected preflight request: %s %s", request.Method, request.URL.String())
+						return nil, nil
+					}
 				}),
 			})
 
@@ -292,14 +300,70 @@ func TestClientPreflightRejectsVersionedBucket(t *testing.T) {
 	}
 }
 
+func TestClientPreflightRejectsPublicBucketBeforeVersioningCheck(t *testing.T) {
+	for _, acl := range []string{"public-read", "public-read-write", ""} {
+		t.Run(acl, func(t *testing.T) {
+			var requests int
+			client := newTestClient(t, &http.Client{
+				Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					requests++
+					if request.Method != http.MethodGet || request.URL.RawQuery != "acl" {
+						t.Fatalf("unexpected preflight request: %s %s", request.Method, request.URL.String())
+					}
+					return bucketACLResponse(acl), nil
+				}),
+			})
+
+			err := client.Preflight(context.Background())
+			if !errors.Is(err, ErrBucketACLNotPrivate) {
+				t.Fatalf("Preflight() error = %v", err)
+			}
+			if requests != 1 {
+				t.Fatalf("Preflight() requests = %d, want 1", requests)
+			}
+		})
+	}
+}
+
+func TestClientPreflightSanitizesBucketACLFailure(t *testing.T) {
+	client := newTestClient(t, &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Method != http.MethodGet || request.URL.RawQuery != "acl" {
+				t.Fatalf("unexpected preflight request: %s %s", request.Method, request.URL.String())
+			}
+			return response(
+				http.StatusForbidden,
+				http.Header{"Content-Type": []string{"application/xml"}},
+				`<Error><Code>AccessDenied</Code><Message>secret-provider-detail</Message><RequestId>safe-acl-request-id</RequestId></Error>`,
+			), nil
+		}),
+	})
+
+	err := client.Preflight(context.Background())
+	if !errors.Is(err, objectstore.ErrOperationFailed) ||
+		strings.Contains(err.Error(), "secret-provider-detail") ||
+		!strings.Contains(err.Error(), "AccessDenied") ||
+		!strings.Contains(err.Error(), "safe-acl-request-id") {
+		t.Fatalf("unsafe or incomplete Preflight() error: %v", err)
+	}
+}
+
 func TestClientPreflightAcceptsNeverVersionedBucket(t *testing.T) {
 	client := newTestClient(t, &http.Client{
-		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			return response(
-				http.StatusOK,
-				http.Header{"Content-Type": []string{"application/xml"}},
-				"<VersioningConfiguration/>",
-			), nil
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.URL.RawQuery {
+			case "acl":
+				return bucketACLResponse("private"), nil
+			case "versioning":
+				return response(
+					http.StatusOK,
+					http.Header{"Content-Type": []string{"application/xml"}},
+					"<VersioningConfiguration/>",
+				), nil
+			default:
+				t.Fatalf("unexpected preflight request: %s %s", request.Method, request.URL.String())
+				return nil, nil
+			}
 		}),
 	})
 	if err := client.Preflight(context.Background()); err != nil {
@@ -409,6 +473,16 @@ func existingObjectResponse(
 		"ETag":              []string{`"` + etag + `"`},
 		"X-Oss-Meta-Sha256": []string{checksum},
 	}, "")
+}
+
+func bucketACLResponse(acl string) *http.Response {
+	return response(
+		http.StatusOK,
+		http.Header{"Content-Type": []string{"application/xml"}},
+		"<AccessControlPolicy><AccessControlList><Grant>"+
+			acl+
+			"</Grant></AccessControlList></AccessControlPolicy>",
+	)
 }
 
 func sha256Hex(payload []byte) string {

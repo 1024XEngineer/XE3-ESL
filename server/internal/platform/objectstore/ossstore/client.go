@@ -29,7 +29,10 @@ const (
 
 var sha256Pattern = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 
-var ErrBucketVersioningUnsupported = errors.New("OSS bucket versioning must never have been enabled")
+var (
+	ErrBucketACLNotPrivate         = errors.New("OSS bucket ACL must be private")
+	ErrBucketVersioningUnsupported = errors.New("OSS bucket versioning must never have been enabled")
+)
 
 type Client struct {
 	sdk          *aliyunoss.Client
@@ -116,9 +119,21 @@ func newClient(
 	return client, nil
 }
 
-// Preflight rejects buckets whose versioning state would defeat conditional
-// writes and physical deletion. An empty status means versioning was never set.
+// Preflight rejects a public bucket before any recording can be written and
+// rejects versioning states that would defeat physical deletion. An empty
+// versioning status means versioning was never set.
 func (c *Client) Preflight(ctx context.Context) error {
+	acl, err := c.sdk.GetBucketAcl(ctx, &aliyunoss.GetBucketAclRequest{
+		Bucket: aliyunoss.Ptr(c.bucket),
+	})
+	if err != nil {
+		return safeError("preflight_acl", err)
+	}
+	if strings.TrimSpace(aliyunoss.ToString(acl.ACL)) !=
+		string(aliyunoss.BucketACLPrivate) {
+		return ErrBucketACLNotPrivate
+	}
+
 	result, err := c.sdk.GetBucketVersioning(ctx, &aliyunoss.GetBucketVersioningRequest{
 		Bucket: aliyunoss.Ptr(c.bucket),
 	})
