@@ -309,7 +309,7 @@ func TestNewRecognizerRejectsUnsupportedModelAndEndpoint(t *testing.T) {
 		name   string
 		mutate func(*ASRConfig)
 	}{
-		{name: "potentially paid model", mutate: func(config *ASRConfig) {
+		{name: "unsupported model API family", mutate: func(config *ASRConfig) {
 			config.Model = "qwen3-asr-flash"
 		}},
 		{name: "wrong endpoint", mutate: func(config *ASRConfig) {

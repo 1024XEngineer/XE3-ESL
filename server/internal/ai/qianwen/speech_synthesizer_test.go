@@ -795,7 +795,7 @@ func TestNewSynthesizerRejectsUnsupportedConfiguration(t *testing.T) {
 		name   string
 		mutate func(*TTSConfig)
 	}{
-		{name: "potentially paid model", mutate: func(config *TTSConfig) {
+		{name: "unsupported model API family", mutate: func(config *TTSConfig) {
 			config.Model = "qwen3-tts-flash"
 		}},
 		{name: "wrong voice", mutate: func(config *TTSConfig) {

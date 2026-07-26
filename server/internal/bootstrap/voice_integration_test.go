@@ -1097,7 +1097,7 @@ func (generator *voiceTextGenerator) Generate(
 				http.StatusTooManyRequests,
 				"FreeTierOnly",
 				"review-quota-request",
-				errors.New("free quota exhausted"),
+				errors.New("provider quota exhausted"),
 			)
 		}
 		for {
