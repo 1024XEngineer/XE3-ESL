@@ -9,6 +9,9 @@ import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/preparation/preparation_client.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/preparation_launch_client.dart';
+import 'package:speakup/features/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
 void main() {
@@ -66,17 +69,13 @@ void main() {
       await tester.tap(fullSimulation);
       await tester.pump();
       final selectionNotice = find.byKey(
-        const Key('preparation-read-only-selection'),
+        const Key('preparation-launch-unavailable'),
       );
       await tester.scrollUntilVisible(selectionNotice, 200);
       await tester.pumpAndSettle();
 
       expect(selectionNotice, findsOneWidget);
-      final startButton = tester.widget<FilledButton>(
-        find.byKey(const Key('preparation-start-unavailable')),
-      );
-      expect(startButton.onPressed, isNull);
-      expect(find.textContaining('尚未创建练习或写入业务数据'), findsOneWidget);
+      expect(find.textContaining('正式练习启动服务未注入'), findsOneWidget);
     },
   );
 
@@ -277,6 +276,165 @@ void main() {
       expect(agentController.activeMatter?.id, originalMatterId);
     },
   );
+
+  testWidgets('starts the real typed chain and reports success to navigation', (
+    tester,
+  ) async {
+    final agentController = AgentController(client: FakeAgentClient());
+    final preparationController = PreparationController(
+      client: _FixtureClient(),
+    );
+    final launchClient = _PageLaunchClient();
+    var navigations = 0;
+    await agentController.initialize();
+    await agentController.selectScene(agentScenes.first);
+    final launchController = PreparationLaunchController(
+      client: launchClient,
+      contextProvider: () => AgentPracticeContext(
+        threadId: agentController.threadId!,
+        matterId: agentController.activeMatter!.id,
+      ),
+      threadIdProvider: () => agentController.threadId,
+      matterActivator:
+          ({
+            required threadId,
+            required selection,
+            required clientOperationId,
+          }) async {
+            final matter = agentController.activeMatter!;
+            return AgentPracticeContext(
+              threadId: threadId,
+              matterId: matter.id,
+            );
+          },
+      voiceActivator: ({required context, required bootstrap}) async {},
+      idFactory: (scope) => '$scope-widget-key',
+    );
+    addTearDown(agentController.dispose);
+    addTearDown(preparationController.dispose);
+    addTearDown(launchController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          agentController: agentController,
+          preparationController: preparationController,
+          launchController: launchController,
+          onPracticeStarted: () => navigations++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
+    await tester.pumpAndSettle();
+    final role = find.byKey(
+      const Key('preparation-role-role_technical_interviewer'),
+    );
+    await tester.ensureVisible(role);
+    await tester.tap(role);
+    await tester.pump();
+    final option = find.byKey(
+      const Key('preparation-option-option_full_simulation'),
+    );
+    await tester.scrollUntilVisible(option, 200);
+    await tester.tap(option);
+    await tester.pump();
+    final background = find
+        .byKey(const Key('preparation-background-summary'))
+        .first;
+    await tester.ensureVisible(background);
+    await tester.enterText(
+      background,
+      'Backend engineer preparing a technical interview.',
+    );
+    final start = find.byKey(const Key('preparation-start-practice'));
+    await tester.ensureVisible(start);
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+
+    expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
+    expect(navigations, 1);
+    expect(agentController.threadId, isNotNull);
+    expect(agentController.activeMatter, isNotNull);
+    expect(launchController.bootstrap?.maxEffectiveTurns, 6);
+  });
+
+  testWidgets(
+    'keeps start on the current page while the Agent Thread restores',
+    (tester) async {
+      final preparationController = PreparationController(
+        client: _FixtureClient(),
+      );
+      final launchClient = _PageLaunchClient();
+      final launchController = PreparationLaunchController(
+        client: launchClient,
+        contextProvider: () => null,
+        threadIdProvider: () => null,
+        matterActivator:
+            ({
+              required threadId,
+              required selection,
+              required clientOperationId,
+            }) {
+              throw StateError('Matter activation must wait for the Thread.');
+            },
+        voiceActivator: ({required context, required bootstrap}) async {},
+        idFactory: (scope) => '$scope-thread-wait-key',
+      );
+      addTearDown(preparationController.dispose);
+      addTearDown(launchController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PreparationPage(
+            preparationController: preparationController,
+            launchController: launchController,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
+      await tester.pumpAndSettle();
+      final role = find.byKey(
+        const Key('preparation-role-role_technical_interviewer'),
+      );
+      await tester.ensureVisible(role);
+      await tester.tap(role);
+      await tester.pump();
+      final option = find.byKey(
+        const Key('preparation-option-option_full_simulation'),
+      );
+      await tester.scrollUntilVisible(option, 200);
+      await tester.tap(option);
+      await tester.pump();
+
+      final startFinder = find.byKey(const Key('preparation-start-practice'));
+      await tester.ensureVisible(startFinder);
+      expect(tester.widget<FilledButton>(startFinder).onPressed, isNotNull);
+      expect(
+        find.byKey(const Key('preparation-agent-context-missing')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('preparation-open-agent-home')),
+        findsNothing,
+      );
+
+      final background = find
+          .byKey(const Key('preparation-background-summary'))
+          .first;
+      await tester.ensureVisible(background);
+      await tester.enterText(
+        background,
+        'Backend engineer preparing a technical interview.',
+      );
+      await tester.tap(startFinder);
+      await tester.pump();
+
+      expect(find.textContaining('Agent 对话仍在恢复'), findsWidgets);
+      expect(launchClient.calls, isEmpty);
+    },
+  );
 }
 
 class _FixtureClient implements PreparationCatalogClient {
@@ -318,6 +476,83 @@ final class _ControlledListClient implements PreparationCatalogClient {
   @override
   Future<List<PreparationRole>> listRoles(String scenarioId) {
     throw UnimplementedError();
+  }
+}
+
+final class _PageLaunchClient implements PreparationLaunchClient {
+  final calls = <String>[];
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<PreparationProfile> createProfile({
+    required CreatePreparationProfileInput input,
+    required String idempotencyKey,
+  }) async {
+    calls.add('profile');
+    return PreparationProfile(
+      id: 'profile-1',
+      userId: 'user-1',
+      backgroundSummary: input.backgroundSummary,
+      version: 1,
+      updatedAt: DateTime.utc(2026, 7, 26),
+    );
+  }
+
+  @override
+  Future<PreparationSnapshot> createSnapshot({
+    required String profileId,
+    required int sourceVersion,
+    required String idempotencyKey,
+  }) async {
+    calls.add('snapshot');
+    return PreparationSnapshot(
+      id: 'preparation-snapshot-1',
+      sourceProfileId: profileId,
+      sourceVersion: sourceVersion,
+      backgroundSnapshot: 'Backend engineer preparing a technical interview.',
+      createdAt: DateTime.utc(2026, 7, 26),
+    );
+  }
+
+  @override
+  Future<PreparationPracticePlan> createPlan({
+    required CreatePreparationPlanInput input,
+    required String idempotencyKey,
+  }) async {
+    calls.add('plan');
+    return PreparationPracticePlan(
+      id: 'plan-1',
+      userId: input.preparationUserId,
+      context: input.context,
+      selection: input.selection,
+      preparationProfileId: input.preparationProfileId,
+      revision: 1,
+      status: 'ready',
+    );
+  }
+
+  @override
+  Future<PreparationPracticeBootstrap> createSession({
+    required String planId,
+    required CreatePreparationSessionInput input,
+    required String idempotencyKey,
+  }) async {
+    calls.add('session');
+    return PreparationPracticeBootstrap(
+      session: PreparationPracticeSession(
+        id: 'session-1',
+        planId: planId,
+        scenarioType: 'INTERVIEW',
+        snapshotId: 'session-snapshot-1',
+        status: 'starting',
+        version: 1,
+        createdAt: DateTime.utc(2026, 7, 26),
+      ),
+      preparationSnapshotId: input.preparationSnapshotId,
+      maxEffectiveTurns: 6,
+    );
   }
 }
 

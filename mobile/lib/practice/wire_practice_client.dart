@@ -542,8 +542,8 @@ PracticeSessionSnapshot _decodeSessionState(
       sessionVersion < 1 ||
       effectiveTurns < 0 ||
       turnLimit < 1 ||
+      turnLimit > 6 ||
       effectiveTurns > turnLimit ||
-      completed != (effectiveTurns == turnLimit) ||
       (!completed && (question == null || formalReview != null)) ||
       (completed && (question != null || turn == null)) ||
       (question != null && question.sessionId != sessionId) ||

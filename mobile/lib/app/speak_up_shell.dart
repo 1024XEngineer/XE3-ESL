@@ -9,6 +9,7 @@ import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/features/conversation/conversation.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
@@ -21,6 +22,7 @@ class SpeakUpShell extends StatefulWidget {
     this.user,
     this.authController,
     this.preparationController,
+    this.preparationLaunchController,
     this.reviewHistoryController,
     required this.agentController,
     super.key,
@@ -32,6 +34,7 @@ class SpeakUpShell extends StatefulWidget {
   final AuthController? authController;
   final AgentController agentController;
   final PreparationController? preparationController;
+  final PreparationLaunchController? preparationLaunchController;
   final ReviewHistoryController? reviewHistoryController;
 
   @override
@@ -212,7 +215,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         previewMode: widget.previewMode,
         agentController: widget.agentController,
         preparationController: widget.preparationController,
+        launchController: widget.preparationLaunchController,
         onSceneSelected: () => _selectDestination(0),
+        onPracticeStarted: _openPractice,
       ),
       ReviewPage(
         showBackButton: widget.showBackButton,

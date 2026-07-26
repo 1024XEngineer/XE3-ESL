@@ -13,6 +13,7 @@ import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/preparation/wire_preparation_client.dart';
+import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/session_store.dart';
@@ -134,6 +135,7 @@ void main() {
       );
       addTearDown(dependencies.agentController.dispose);
       addTearDown(dependencies.preparationController.dispose);
+      addTearDown(dependencies.preparationLaunchController.dispose);
       addTearDown(dependencies.reviewHistoryController.dispose);
 
       expect(dependencies.agentController.client, isA<WireAgentClient>());
@@ -169,12 +171,17 @@ void main() {
         dependencies.preparationController.client,
         isA<WirePreparationCatalogClient>(),
       );
+      expect(
+        dependencies.preparationLaunchController.client,
+        isA<WirePreparationLaunchClient>(),
+      );
 
       await tester.pumpWidget(
         SpeakUpApp(
           authController: dependencies.authController,
           agentController: dependencies.agentController,
           preparationController: dependencies.preparationController,
+          preparationLaunchController: dependencies.preparationLaunchController,
           reviewHistoryController: dependencies.reviewHistoryController,
         ),
       );
