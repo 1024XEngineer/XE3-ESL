@@ -75,6 +75,8 @@ func (p *practiceVoicePort) ApplyEffectiveTurn(
 	}
 	if progress.EffectiveTurns < 1 ||
 		progress.SessionVersion <= 1 ||
+		progress.TurnLimit < 1 ||
+		progress.TurnLimit > 6 ||
 		progress.TurnLimit < progress.EffectiveTurns ||
 		progress.SessionCompleted !=
 			(progress.EffectiveTurns == progress.TurnLimit) {

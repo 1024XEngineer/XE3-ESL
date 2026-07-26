@@ -71,10 +71,14 @@ type ContextSession struct {
 	SnapshotID   string               `json:"snapshot_id"`
 	Status       ContextSessionStatus `json:"practice_session_status"`
 	Version      int                  `json:"session_version"`
-	StartedAt    *time.Time           `json:"started_at,omitempty"`
-	EndedAt      *time.Time           `json:"ended_at,omitempty"`
-	EndReason    string               `json:"end_reason,omitempty"`
-	CreatedAt    time.Time            `json:"created_at"`
+	// EffectiveTurns is persisted on the shared Practice Session row. It is
+	// intentionally not added to the formal Context HTTP representation yet;
+	// Agent consumes it through the internal voice boundary.
+	EffectiveTurns int        `json:"-"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	EndReason      string     `json:"end_reason,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type ScenarioDefinitionSnapshot struct {
@@ -238,4 +242,35 @@ type ContextRepository interface {
 		TransitionContextSessionCommand,
 	) (ContextSession, bool, error)
 	DeleteUserData(context.Context, DeletionContext) error
+}
+
+// ContextVoiceRepository is the narrow formal Context authority consumed by
+// the production Agent voice composition. It never creates a legacy Session
+// and resolves only an exact Actor + Thread + Matter binding.
+type ContextVoiceRepository interface {
+	GetPlan(context.Context, Actor, string) (Plan, error)
+	GetContextSession(context.Context, Actor, string) (ContextSession, error)
+	GetContextSessionSnapshot(
+		context.Context,
+		Actor,
+		string,
+	) (ContextSessionSnapshot, error)
+	ResolveContextSession(
+		context.Context,
+		Actor,
+		string,
+		string,
+	) (ContextSessionBootstrap, error)
+	ActivateContextSession(
+		context.Context,
+		Actor,
+		string,
+		string,
+		string,
+	) (ContextSessionBootstrap, error)
+	AdvanceContextVoiceTurn(
+		context.Context,
+		Actor,
+		ConsumeTurnCommand,
+	) (TurnResult, error)
 }

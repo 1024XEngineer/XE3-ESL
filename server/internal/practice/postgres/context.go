@@ -570,6 +570,7 @@ func (r *Repository) ResolveContextSessionByThread(
 			session.snapshot_id,
 			session.status,
 			session.version,
+			session.effective_turns,
 			session.started_at,
 			session.completed_at,
 			session.end_reason,
@@ -643,6 +644,261 @@ func (r *Repository) ResolveContextSessionByThread(
 	default:
 		return persistence.ContextSessionBootstrap{}, persistence.ErrConflict
 	}
+}
+
+// ResolveContextSession resolves only the effective formal Session bound to
+// the exact Actor + Thread + Matter tuple. It deliberately has no "latest"
+// fallback and treats ambiguous rows as corrupted state.
+func (r *Repository) ResolveContextSession(
+	ctx context.Context,
+	actor persistence.Actor,
+	threadID string,
+	matterID string,
+) (persistence.ContextSessionBootstrap, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
+		!validContextResourceID(threadID) ||
+		!validContextResourceID(matterID) {
+		return persistence.ContextSessionBootstrap{},
+			persistence.ErrInvalidArgument
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			session.session_id,
+			session.context_plan_id,
+			session.scenario_type,
+			session.snapshot_id,
+			session.status,
+			session.version,
+			session.effective_turns,
+			session.started_at,
+			session.completed_at,
+			session.end_reason,
+			session.created_at,
+			snapshot.snapshot_document
+		FROM practice_sessions AS session
+		JOIN practice_plans AS plan
+		  ON plan.owner_user_id = session.owner_user_id
+		 AND plan.plan_id = session.context_plan_id
+		 AND plan.agent_thread_id = session.agent_thread_id
+		 AND plan.matter_id = session.matter_id
+		JOIN practice_session_snapshots AS snapshot
+		  ON snapshot.owner_user_id = session.owner_user_id
+		 AND snapshot.session_id = session.session_id
+		 AND snapshot.context_plan_id = session.context_plan_id
+		 AND snapshot.snapshot_id = session.snapshot_id
+		JOIN agent_thread_matter_links AS link
+		  ON link.owner_user_id = plan.owner_user_id
+		 AND link.thread_id = plan.agent_thread_id
+		 AND link.matter_id = plan.matter_id
+		JOIN matters AS matter
+		  ON matter.owner_user_id = plan.owner_user_id
+		 AND matter.id = plan.matter_id
+		JOIN identity_users AS owner
+		  ON owner.id = session.owner_user_id
+		LEFT JOIN practice_deletion_fences AS fence
+		  ON fence.owner_user_id = session.owner_user_id
+		WHERE session.owner_user_id = $1
+		  AND session.agent_thread_id = $2
+		  AND session.matter_id = $3
+		  AND session.status IN ('starting', 'in_progress', 'paused')
+		  AND plan.status = 'ready'
+		  AND matter.status = 'active'
+		  AND owner.account_status = 'active'
+		  AND fence.owner_user_id IS NULL
+		ORDER BY session.created_at, session.session_id
+		LIMIT 2
+	`, actor.UserID, threadID, matterID)
+	if err != nil {
+		return persistence.ContextSessionBootstrap{},
+			fmt.Errorf("resolve exact context Session: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]persistence.ContextSessionBootstrap, 0, 2)
+	for rows.Next() {
+		session, document, scanErr := scanResolvedContextSession(rows)
+		if scanErr != nil {
+			return persistence.ContextSessionBootstrap{}, scanErr
+		}
+		snapshot, decodeErr := decodeContextSnapshot(document)
+		if decodeErr != nil ||
+			snapshot.ID != session.SnapshotID ||
+			snapshot.SessionID != session.ID {
+			return persistence.ContextSessionBootstrap{},
+				persistence.ErrConflict
+		}
+		results = append(results, persistence.ContextSessionBootstrap{
+			Session:  session,
+			Snapshot: snapshot,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return persistence.ContextSessionBootstrap{},
+			fmt.Errorf("iterate exact context Sessions: %w", err)
+	}
+	switch len(results) {
+	case 0:
+		return persistence.ContextSessionBootstrap{}, persistence.ErrNotFound
+	case 1:
+		return results[0], nil
+	default:
+		return persistence.ContextSessionBootstrap{}, persistence.ErrConflict
+	}
+}
+
+// ActivateContextSession atomically changes a formal starting Session to
+// in_progress after re-validating its exact immutable Thread + Matter binding.
+// Replaying an already in_progress Session is idempotent; paused Sessions must
+// use the formal lifecycle resume command.
+func (r *Repository) ActivateContextSession(
+	ctx context.Context,
+	actor persistence.Actor,
+	sessionID string,
+	threadID string,
+	matterID string,
+) (persistence.ContextSessionBootstrap, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
+		!validContextResourceID(sessionID) ||
+		!validContextResourceID(threadID) ||
+		!validContextResourceID(matterID) {
+		return persistence.ContextSessionBootstrap{},
+			persistence.ErrInvalidArgument
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return persistence.ContextSessionBootstrap{},
+			fmt.Errorf("begin activate context Session: %w", err)
+	}
+	defer rollback(ctx, tx)
+	if err := lockActiveActor(ctx, tx, actor.UserID); err != nil {
+		return persistence.ContextSessionBootstrap{}, err
+	}
+
+	session, err := scanContextSession(tx.QueryRow(ctx, contextSessionSelect+`
+		JOIN practice_plans AS plan
+		  ON plan.owner_user_id = session.owner_user_id
+		 AND plan.plan_id = session.context_plan_id
+		 AND plan.agent_thread_id = session.agent_thread_id
+		 AND plan.matter_id = session.matter_id
+		JOIN agent_thread_matter_links AS link
+		  ON link.owner_user_id = plan.owner_user_id
+		 AND link.thread_id = plan.agent_thread_id
+		 AND link.matter_id = plan.matter_id
+		JOIN matters AS matter
+		  ON matter.owner_user_id = plan.owner_user_id
+		 AND matter.id = plan.matter_id
+		WHERE session.owner_user_id = $1
+		  AND session.session_id = $2
+		  AND session.agent_thread_id = $3
+		  AND session.matter_id = $4
+		  AND session.context_plan_id IS NOT NULL
+		  AND plan.status = 'ready'
+		  AND matter.status = 'active'
+		  AND owner.account_status = 'active'
+		  AND fence.owner_user_id IS NULL
+		FOR UPDATE OF session
+	`, actor.UserID, sessionID, threadID, matterID))
+	if err != nil {
+		return persistence.ContextSessionBootstrap{}, err
+	}
+	switch session.Status {
+	case persistence.ContextSessionStarting:
+		var startedAt pgtype.Timestamptz
+		tag, updateErr := tx.Exec(ctx, `
+			UPDATE practice_sessions
+			SET status = 'in_progress',
+			    version = version + 1,
+			    started_at = transaction_timestamp(),
+			    updated_at = transaction_timestamp()
+			WHERE owner_user_id = $1
+			  AND session_id = $2
+			  AND context_plan_id IS NOT NULL
+			  AND status = 'starting'
+			  AND version = $3
+		`, actor.UserID, sessionID, session.Version)
+		if updateErr != nil {
+			return persistence.ContextSessionBootstrap{},
+				classifyContextWriteError(
+					"activate context Session",
+					updateErr,
+				)
+		}
+		if tag.RowsAffected() != 1 {
+			return persistence.ContextSessionBootstrap{},
+				persistence.ErrConflict
+		}
+		if scanErr := tx.QueryRow(ctx, `
+			SELECT started_at
+			FROM practice_sessions
+			WHERE owner_user_id = $1 AND session_id = $2
+		`, actor.UserID, sessionID).Scan(&startedAt); scanErr != nil ||
+			!startedAt.Valid {
+			if scanErr != nil {
+				return persistence.ContextSessionBootstrap{},
+					fmt.Errorf(
+						"read activated context Session: %w",
+						scanErr,
+					)
+			}
+			return persistence.ContextSessionBootstrap{},
+				persistence.ErrConflict
+		}
+		value := startedAt.Time
+		session.Status = persistence.ContextSessionProgress
+		session.Version++
+		session.StartedAt = &value
+	case persistence.ContextSessionProgress:
+	case persistence.ContextSessionPaused:
+		return persistence.ContextSessionBootstrap{},
+			persistence.ErrConflict
+	default:
+		return persistence.ContextSessionBootstrap{},
+			persistence.ErrConflict
+	}
+
+	var document []byte
+	var storedSnapshotID, storedPlanID string
+	if err := tx.QueryRow(ctx, `
+		SELECT snapshot.snapshot_id, snapshot.context_plan_id,
+		       snapshot.snapshot_document
+		FROM practice_session_snapshots AS snapshot
+		WHERE snapshot.owner_user_id = $1
+		  AND snapshot.session_id = $2
+		  AND snapshot.context_plan_id = $3
+		  AND snapshot.snapshot_id = $4
+	`, actor.UserID, session.ID, session.PlanID, session.SnapshotID).Scan(
+		&storedSnapshotID,
+		&storedPlanID,
+		&document,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return persistence.ContextSessionBootstrap{},
+				persistence.ErrNotFound
+		}
+		return persistence.ContextSessionBootstrap{},
+			fmt.Errorf("read activated context Snapshot: %w", err)
+	}
+	snapshot, err := decodeContextSnapshot(document)
+	if err != nil || storedSnapshotID != session.SnapshotID ||
+		storedPlanID != session.PlanID ||
+		snapshot.ID != session.SnapshotID ||
+		snapshot.SessionID != session.ID {
+		return persistence.ContextSessionBootstrap{},
+			persistence.ErrConflict
+	}
+	bootstrap := persistence.ContextSessionBootstrap{
+		Session:  session,
+		Snapshot: snapshot,
+	}
+	if !validStoredContextBootstrap(bootstrap) {
+		return persistence.ContextSessionBootstrap{},
+			persistence.ErrConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return persistence.ContextSessionBootstrap{},
+			fmt.Errorf("commit activated context Session: %w", err)
+	}
+	return bootstrap, nil
 }
 
 func (r *Repository) TransitionContextSession(
@@ -830,6 +1086,7 @@ const contextSessionSelect = `
 		session.snapshot_id,
 		session.status,
 		session.version,
+		session.effective_turns,
 		session.started_at,
 		session.completed_at,
 		session.end_reason,
@@ -914,6 +1171,7 @@ func scanContextSession(row contextRowScanner) (persistence.ContextSession, erro
 		&session.SnapshotID,
 		&session.Status,
 		&session.Version,
+		&session.EffectiveTurns,
 		&startedAt,
 		&completedAt,
 		&endReason,
@@ -957,6 +1215,7 @@ func scanResolvedContextSession(
 		&session.SnapshotID,
 		&session.Status,
 		&session.Version,
+		&session.EffectiveTurns,
 		&startedAt,
 		&completedAt,
 		&endReason,
@@ -1407,12 +1666,15 @@ func validStoredContextSession(session persistence.ContextSession) bool {
 		!validContextResourceID(session.ScenarioType) ||
 		!validContextResourceID(session.SnapshotID) ||
 		session.Version < 1 ||
+		session.EffectiveTurns < 0 ||
+		session.EffectiveTurns > 6 ||
 		session.CreatedAt.IsZero() {
 		return false
 	}
 	switch session.Status {
 	case persistence.ContextSessionStarting:
-		return session.StartedAt == nil &&
+		return session.EffectiveTurns == 0 &&
+			session.StartedAt == nil &&
 			session.EndedAt == nil &&
 			session.EndReason == ""
 	case persistence.ContextSessionProgress,
@@ -1424,7 +1686,9 @@ func validStoredContextSession(session persistence.ContextSession) bool {
 		persistence.ContextSessionEndedEarly:
 		return session.StartedAt != nil &&
 			session.EndedAt != nil &&
-			session.EndReason != ""
+			session.EndReason != "" &&
+			(session.Status != persistence.ContextSessionCompleted ||
+				session.EffectiveTurns > 0)
 	default:
 		return false
 	}

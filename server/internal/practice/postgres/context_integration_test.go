@@ -685,6 +685,14 @@ func TestContextRepositoryTransitionsResolveAmbiguityAndDelete(t *testing.T) {
 	); !errors.Is(err, persistence.ErrConflict) {
 		t.Fatalf("ambiguous resolver error = %v", err)
 	}
+	if _, err := repository.ResolveContextSession(
+		ctx,
+		owner.Actor,
+		owner.ThreadID,
+		owner.MatterID,
+	); !errors.Is(err, persistence.ErrConflict) {
+		t.Fatalf("ambiguous exact resolver error = %v", err)
+	}
 
 	otherPlan, _, err := repository.CreatePlan(
 		ctx,

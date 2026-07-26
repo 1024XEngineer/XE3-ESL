@@ -675,13 +675,13 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	).Scan(&evidenceCount, &matchedEvidenceCount); err != nil {
 		t.Fatalf("read formal Review evidence: %v", err)
 	}
-	if evidenceCount != voiceTurnLimit ||
-		matchedEvidenceCount != voiceTurnLimit {
+	if evidenceCount != 3 ||
+		matchedEvidenceCount != 3 {
 		t.Fatalf(
 			"formal Review evidence = %d/%d, want %d matched",
 			matchedEvidenceCount,
 			evidenceCount,
-			voiceTurnLimit,
+			3,
 		)
 	}
 	playback := voiceJSONRequest(
