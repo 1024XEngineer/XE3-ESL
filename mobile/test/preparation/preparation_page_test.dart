@@ -49,6 +49,33 @@ void main() {
     },
   );
 
+  testWidgets('only the interview topic opens JD-first when catalog grows', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _MultiScenarioClient());
+    addTearDown(controller.dispose);
+    var opens = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: controller,
+          onOpenJobPreparation: () => opens++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const Key('catalog-scenario-scn_general_speaking')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(opens, 0);
+    expect(controller.selectedScenario?.id, 'scn_general_speaking');
+    expect(find.text('General speaking practice'), findsOneWidget);
+  });
+
   testWidgets(
     'loads the server catalog and keeps perspectives independent of stages',
     (tester) async {
@@ -726,6 +753,25 @@ class _FixtureClient implements PreparationCatalogClient {
   Future<List<PreparationRole>> listRoles(String scenarioId) async => _roles;
 }
 
+final class _MultiScenarioClient implements PreparationCatalogClient {
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<PreparationScenarioDetail> getScenario(String scenarioId) async =>
+      scenarioId == _scenarioId ? _detail : _otherDetail;
+
+  @override
+  Future<List<PreparationScenario>> listScenarios() async => const [
+    _scenario,
+    _otherScenario,
+  ];
+
+  @override
+  Future<List<PreparationRole>> listRoles(String scenarioId) async =>
+      scenarioId == _scenarioId ? _roles : const [_otherRole];
+}
+
 final class _ControlledListClient implements PreparationCatalogClient {
   final Completer<List<PreparationScenario>> first =
       Completer<List<PreparationScenario>>();
@@ -847,6 +893,55 @@ const _scenario = PreparationScenario(
   name: 'English interview for technical roles',
   version: 1,
   status: 'active',
+);
+
+const _otherScenario = PreparationScenario(
+  id: 'scn_general_speaking',
+  type: 'GENERAL',
+  name: 'General speaking practice',
+  version: 1,
+  status: 'active',
+);
+
+const _otherRole = PreparationRole(
+  id: 'role_general_coach',
+  scenarioId: 'scn_general_speaking',
+  type: 'COACH',
+  displayName: 'Speaking coach',
+  responsibilities: 'Guide a focused conversation.',
+  style: 'Supportive.',
+  focusAreas: ['fluency'],
+  version: 1,
+);
+
+const _otherDetail = PreparationScenarioDetail(
+  scenario: _otherScenario,
+  config: PreparationScenarioConfig(
+    id: 'scfg_general_speaking',
+    scenarioId: 'scn_general_speaking',
+    type: 'GENERAL',
+    version: 1,
+    jobTitle: 'General speaking',
+    jobDescription: 'Practice everyday spoken English.',
+    focusAreas: ['fluency'],
+  ),
+  options: [
+    PreparationOption(
+      id: 'option_general_full',
+      scenarioId: 'scn_general_speaking',
+      type: PreparationOptionType.fullSimulation,
+      displayName: 'Full practice',
+      version: 1,
+    ),
+    PreparationOption(
+      id: 'option_general_focus',
+      scenarioId: 'scn_general_speaking',
+      roleId: 'role_general_coach',
+      type: PreparationOptionType.focus,
+      displayName: 'Fluency focus',
+      version: 1,
+    ),
+  ],
 );
 
 const _config = PreparationScenarioConfig(

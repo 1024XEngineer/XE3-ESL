@@ -11,6 +11,8 @@ import 'package:speakup/features/preparation/preparation_launch_controller.dart'
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
+const _jobInterviewScenarioId = 'scn_programmer_interview';
+
 class PreparationPage extends StatefulWidget {
   const PreparationPage({
     this.showBackButton = false,
@@ -260,7 +262,12 @@ class _PreparationPageState extends State<PreparationPage> {
           for (final scenario in controller.scenarios) ...[
             _CatalogScenarioCard(
               scenario: scenario,
-              onPressed: widget.onOpenJobPreparation == null
+              jdFirstAvailable:
+                  widget.onOpenJobPreparation != null &&
+                  scenario.id == _jobInterviewScenarioId,
+              onPressed:
+                  widget.onOpenJobPreparation == null ||
+                      scenario.id != _jobInterviewScenarioId
                   ? () => controller.selectScenario(scenario)
                   : widget.onOpenJobPreparation!,
             ),
@@ -284,9 +291,9 @@ class _PreparationPageState extends State<PreparationPage> {
         Text(
           practiceAvailable
               ? widget.previewMode
-                    ? '本地 UI Mock；练习结果不会写入正式服务。'
-                    : '练习目录未注入，当前页面不可用于正式运行。'
-              : '服务端场景与语音契约尚未开放，当前仅提供 Agent 文本对话。',
+                    ? '预览练习专题与进入流程。'
+                    : '练习内容暂时无法加载，请稍后重试。'
+              : '练习功能正在准备中，目前可以先使用文字陪练。',
           key: const Key('practice-availability-message'),
           style: const TextStyle(color: Color(0xFF696B73), fontSize: 15),
         ),
@@ -551,9 +558,14 @@ class _CatalogEmpty extends StatelessWidget {
 }
 
 class _CatalogScenarioCard extends StatelessWidget {
-  const _CatalogScenarioCard({required this.scenario, required this.onPressed});
+  const _CatalogScenarioCard({
+    required this.scenario,
+    required this.jdFirstAvailable,
+    required this.onPressed,
+  });
 
   final PreparationScenario scenario;
+  final bool jdFirstAvailable;
   final VoidCallback onPressed;
 
   @override
@@ -599,12 +611,17 @@ class _CatalogScenarioCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 5),
-                    const Text(
-                      '从岗位与 JD 开始，生成专属练习计划',
-                      style: TextStyle(color: Color(0xFF696B73), height: 1.4),
+                    Text(
+                      jdFirstAvailable ? '从岗位与 JD 开始，生成专属练习计划' : '查看练习方式与训练重点',
+                      style: const TextStyle(
+                        color: Color(0xFF696B73),
+                        height: 1.4,
+                      ),
                     ),
-                    const SizedBox(height: 9),
-                    const _AvailableTopicLabel(),
+                    if (jdFirstAvailable) ...[
+                      const SizedBox(height: 9),
+                      const _AvailableTopicLabel(),
+                    ],
                   ],
                 ),
               ),

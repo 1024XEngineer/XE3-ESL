@@ -465,7 +465,7 @@ void main() {
 
     await _tapVisible(tester, 'quick-action-create-plan');
     expect(find.byKey(const Key('scenes-page')), findsOneWidget);
-    expect(find.text('本地 UI Mock；练习结果不会写入正式服务。'), findsOneWidget);
+    expect(find.text('预览练习专题与进入流程。'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
