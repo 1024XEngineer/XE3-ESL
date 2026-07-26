@@ -302,6 +302,251 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/voice-message-candidates:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
+    post:
+      tags:
+        - Agent
+      summary: Upload and transcribe one Agent voice Message candidate
+      description: |
+        The body is raw `audio/wav`. The server validates the recording, stores
+        it under Agent-owned private object storage, and creates durable ASR
+        candidate state. This operation never creates an AgentMessage or
+        AgentRun; the user must explicitly confirm a returned candidate
+        version. The upload idempotency scope is the trusted Actor, Thread, key,
+        and recording checksum.
+      operationId: createAgentVoiceMessageCandidate
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Durable candidate state, including the current ASR result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentVoiceMessageCandidate'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-voice-message-candidates/{candidate_id}:
+    parameters:
+      - $ref: '#/components/parameters/AgentVoiceCandidateId'
+    get:
+      tags:
+        - Agent
+      summary: Restore one owned Agent voice Message candidate
+      operationId: getAgentVoiceMessageCandidate
+      responses:
+        '200':
+          description: Current durable candidate and ASR state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentVoiceMessageCandidate'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    delete:
+      tags:
+        - Agent
+      summary: Delete one unconfirmed Agent voice Message candidate
+      description: |
+        Object deletion is ordered after durable `deleting` state. Repeating a
+        completed deletion is idempotent. If the candidate was already
+        confirmed, its canonical AgentMessage text and AgentRun remain durable
+        while the attached recording becomes unavailable.
+      operationId: deleteAgentVoiceMessageCandidate
+      responses:
+        '204':
+          description: Candidate recording deletion completed.
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-voice-message-candidates/{candidate_id}/retries:
+    parameters:
+      - $ref: '#/components/parameters/AgentVoiceCandidateId'
+    post:
+      tags:
+        - Agent
+      summary: Retry ASR for one retryable Agent voice Message candidate
+      description: |
+        A successful lease claim increments both `asr_attempt` and
+        `candidate_version`. The server reloads the private recording and fences
+        late workers so an older attempt cannot overwrite the current result.
+        The request has no body.
+      operationId: retryAgentVoiceMessageCandidate
+      responses:
+        '200':
+          description: Current candidate after the retry or concurrent recovery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentVoiceMessageCandidate'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-voice-message-candidates/{candidate_id}/confirmations:
+    parameters:
+      - $ref: '#/components/parameters/AgentVoiceCandidateId'
+    post:
+      tags:
+        - Agent
+      summary: Confirm a candidate as one canonical Agent voice Message
+      description: |
+        Confirmation atomically creates the user AgentMessage, its durable audio
+        projection, immutable transcript evidence, and the initial pending
+        AgentRun. `confirmed_text`, not the provider candidate text, becomes the
+        canonical Message content. Replaying the same version and command
+        restores and, when needed, resumes the original Run. Confirming an old
+        candidate version returns 409.
+      operationId: confirmAgentVoiceMessageCandidate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmAgentVoiceMessageCandidateRequest'
+      responses:
+        '201':
+          description: The original or replayed Run reached a terminal state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentVoiceMessageConfirmation'
+        '202':
+          description: The original durable Run remains pending or running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentVoiceMessageConfirmation'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-message-audios/{audio_id}/playback:
+    parameters:
+      - $ref: '#/components/parameters/AgentMessageAudioId'
+    get:
+      tags:
+        - Agent
+      summary: Issue temporary playback access for one owned Agent recording
+      description: |
+        The returned HTTPS URL is an ephemeral bearer capability that expires
+        no later than two minutes after issuance. It must not be persisted,
+        logged, or shared. Deleted, deleting, missing, and foreign-owned audio
+        resources all produce the same not-found response.
+      operationId: getAgentMessageAudioPlayback
+      responses:
+        '200':
+          description: Temporary private-recording playback access.
+          headers:
+            Cache-Control:
+              description: Prevent storage of the bearer capability response.
+              schema:
+                type: string
+                const: no-store
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMessageAudioPlayback'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-message-audios/{audio_id}:
+    parameters:
+      - $ref: '#/components/parameters/AgentMessageAudioId'
+    delete:
+      tags:
+        - Agent
+      summary: Delete the recording attached to an Agent voice Message
+      description: |
+        The canonical AgentMessage and its confirmed text remain in history.
+        The audio projection becomes `deleted` and no longer exposes a playback
+        path. Repeating a completed deletion is idempotent.
+      operationId: deleteAgentMessageAudio
+      responses:
+        '204':
+          description: Recording deletion completed; text history remains.
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-messages/{message_id}/speech:
+    parameters:
+      - $ref: '#/components/parameters/AgentMessageId'
+    get:
+      tags:
+        - Agent
+      summary: Synthesize one assistant Agent Message on demand
+      description: |
+        Returns ephemeral WAV bytes synthesized from the assistant Message's
+        canonical text. The server never persists this generated TTS audio.
+        User Messages and foreign-owned Messages produce the same not-found
+        response.
+      operationId: getAgentMessageSpeech
+      responses:
+        '200':
+          description: Ephemeral synthesized assistant speech.
+          headers:
+            Cache-Control:
+              description: Prevent storage of generated speech.
+              schema:
+                type: string
+                const: no-store
+              example: no-store
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-threads/{thread_id}/runs:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'
@@ -454,6 +699,29 @@ components:
       schema:
         type: string
         format: uuid
+    AgentVoiceCandidateId:
+      name: candidate_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AgentMessageAudioId:
+      name: audio_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AgentMessageId:
+      name: message_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
     ThreadPageSize:
       name: page_size
       in: query
@@ -698,13 +966,312 @@ components:
           format: uuid
           readOnly: true
           description: Present only for an assistant Message.
+        modality:
+          $ref: '#/components/schemas/AgentMessageModality'
+          description: |
+            Present as `voice` for a voice Message. It remains absent for a
+            plain text Message so pre-voice strict clients keep the original
+            response shape; absence therefore means `text`.
         content:
           type: string
           minLength: 1
           maxLength: 4096
           pattern: '^[^\u0000]*$'
           x-max-utf8-bytes: 16384
+        audio:
+          $ref: '#/components/schemas/AgentMessageAudio'
         created_at:
+          type: string
+          format: date-time
+          readOnly: true
+    AgentMessageModality:
+      type: string
+      enum:
+        - text
+        - voice
+      readOnly: true
+    AgentMessageAudioStatus:
+      type: string
+      enum:
+        - readable
+        - deleting
+        - deleted
+      readOnly: true
+    AgentMessageAudio:
+      type: object
+      additionalProperties: false
+      description: |
+        Safe public recording metadata for one voice Message. Private object
+        keys, checksums, provider ETags, and signed URLs are never included.
+        `playback_path` is present only while status is `readable`.
+      required:
+        - audio_id
+        - status
+        - content_type
+        - size_bytes
+        - duration_ms
+      properties:
+        audio_id:
+          type: string
+          format: uuid
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/AgentMessageAudioStatus'
+        content_type:
+          type: string
+          const: audio/wav
+          readOnly: true
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 7400000
+          readOnly: true
+        duration_ms:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 60000
+          readOnly: true
+        playback_path:
+          type: string
+          pattern: '^/v1/agent-message-audios/[0-9a-f-]+/playback$'
+          readOnly: true
+        deleted_at:
+          type: string
+          format: date-time
+          readOnly: true
+    AgentVoiceMessageCandidateStatus:
+      type: string
+      enum:
+        - staged
+        - transcribing
+        - candidate_ready
+        - failed
+        - confirming
+        - confirmed
+        - deleting
+        - deleted
+      readOnly: true
+    AgentVoiceRecording:
+      type: object
+      additionalProperties: false
+      required:
+        - content_type
+        - size_bytes
+        - duration_ms
+        - sample_rate
+      properties:
+        content_type:
+          type: string
+          const: audio/wav
+          readOnly: true
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 7400000
+          readOnly: true
+        duration_ms:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 60000
+          readOnly: true
+        sample_rate:
+          type: integer
+          minimum: 8000
+          maximum: 48000
+          readOnly: true
+    AgentVoiceTranscriptCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - candidate_text
+        - request_id
+        - provider
+        - model
+      properties:
+        candidate_text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: '^[^\u0000]*$'
+          x-max-utf8-bytes: 16384
+          readOnly: true
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          readOnly: true
+        provider:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          readOnly: true
+        model:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
+        language:
+          type: string
+          minLength: 1
+          maxLength: 64
+          readOnly: true
+        emotion:
+          type: string
+          minLength: 1
+          maxLength: 64
+          readOnly: true
+        finish_reason:
+          type: string
+          minLength: 1
+          maxLength: 64
+          readOnly: true
+    AgentVoiceCandidateFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - retryable
+      properties:
+        kind:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,63}$'
+          readOnly: true
+        retryable:
+          type: boolean
+          readOnly: true
+    AgentVoiceMessageCandidate:
+      type: object
+      additionalProperties: false
+      description: |
+        Agent-owned workflow state. The provider transcript is only a candidate;
+        it does not become Message content until explicit confirmation. Storage
+        object keys, checksums, leases, and fencing tokens are server-only.
+      required:
+        - candidate_id
+        - thread_id
+        - status
+        - asr_attempt
+        - candidate_version
+        - recording
+        - expires_at
+        - created_at
+        - updated_at
+      properties:
+        candidate_id:
+          type: string
+          format: uuid
+          readOnly: true
+        thread_id:
+          type: string
+          format: uuid
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/AgentVoiceMessageCandidateStatus'
+        asr_attempt:
+          type: integer
+          minimum: 0
+          readOnly: true
+        candidate_version:
+          type: integer
+          format: int64
+          minimum: 0
+          readOnly: true
+        recording:
+          $ref: '#/components/schemas/AgentVoiceRecording'
+        transcript:
+          $ref: '#/components/schemas/AgentVoiceTranscriptCandidate'
+        failure:
+          $ref: '#/components/schemas/AgentVoiceCandidateFailure'
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
+        confirmed_message_id:
+          type: string
+          format: uuid
+          readOnly: true
+        confirmed_run_id:
+          type: string
+          format: uuid
+          readOnly: true
+        message_audio_id:
+          type: string
+          format: uuid
+          readOnly: true
+        confirmed_at:
+          type: string
+          format: date-time
+          readOnly: true
+        deleted_at:
+          type: string
+          format: date-time
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    ConfirmAgentVoiceMessageCandidateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - candidate_version
+        - client_message_id
+        - confirmed_text
+      properties:
+        candidate_version:
+          type: integer
+          format: int64
+          minimum: 1
+        client_message_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+        confirmed_text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: '^[^\u0000]*$'
+          x-max-utf8-bytes: 16384
+    AgentVoiceMessageConfirmation:
+      type: object
+      additionalProperties: false
+      required:
+        - candidate
+        - message
+        - run
+      properties:
+        candidate:
+          $ref: '#/components/schemas/AgentVoiceMessageCandidate'
+        message:
+          $ref: '#/components/schemas/AgentMessage'
+        run:
+          $ref: '#/components/schemas/AgentRun'
+    AgentMessageAudioPlayback:
+      type: object
+      additionalProperties: false
+      description: |
+        Ephemeral bearer capability for one owned Agent recording. It expires
+        no later than two minutes after issuance and is never persisted as
+        Message audio metadata.
+      required:
+        - playback_url
+        - expires_at
+      properties:
+        playback_url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          readOnly: true
+        expires_at:
           type: string
           format: date-time
           readOnly: true

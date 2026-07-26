@@ -54,17 +54,21 @@ type VoicePorts struct {
 }
 
 type VoiceConfiguration struct {
-	Recognizer              ai.SpeechRecognizer
-	Synthesizer             ai.SpeechSynthesizer
-	TemporaryAudio          conversation.TemporaryAudioVault
-	Ports                   VoicePorts
-	Recordings              conversation.VoiceRecordingLifecycle
-	ObjectStore             objectstore.Store
-	AudioStagedTTL          time.Duration
-	ASRLease                time.Duration
-	ReviewGenerationTimeout time.Duration
-	AudioReadTimeout        time.Duration
-	ReviewHistoryCursorKey  []byte
+	Recognizer                ai.SpeechRecognizer
+	Synthesizer               ai.SpeechSynthesizer
+	TemporaryAudio            conversation.TemporaryAudioVault
+	Ports                     VoicePorts
+	Recordings                conversation.VoiceRecordingLifecycle
+	ObjectStore               objectstore.Store
+	AgentVoiceMessagesEnabled bool
+	ScratchDirectory          string
+	ObjectReadAllowedHosts    []string
+	AudioStagedTTL            time.Duration
+	AudioUploadLease          time.Duration
+	ASRLease                  time.Duration
+	ReviewGenerationTimeout   time.Duration
+	AudioReadTimeout          time.Duration
+	ReviewHistoryCursorKey    []byte
 }
 
 // NewSpeechRecognizer is the server-side ASR registration boundary. Production

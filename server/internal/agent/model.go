@@ -15,6 +15,13 @@ const (
 	MessageRoleAssistant MessageRole = "assistant"
 )
 
+type MessageModality string
+
+const (
+	MessageModalityText  MessageModality = "text"
+	MessageModalityVoice MessageModality = "voice"
+)
+
 type Thread struct {
 	ID             string
 	OwnerID        string
@@ -41,7 +48,9 @@ type Message struct {
 	Role            MessageRole
 	ClientMessageID string
 	ProducedByRunID string
+	Modality        MessageModality
 	Content         string
+	Audio           *MessageAudio
 	CreatedAt       time.Time
 }
 

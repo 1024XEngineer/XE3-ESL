@@ -31,6 +31,7 @@ type ProtectedRouteRegistrar interface {
 type IdentityAgentPracticeComposition struct {
 	identityModule         *identity.Module
 	agentModule            *agent.Module
+	agentVoiceReclaimer    AgentVoiceObjectReclaimer
 	identityHTTP           *identity.HTTPHandler
 	preparationApplication *preparation.PersistenceService
 	preparationHTTP        *preparation.ProfileHTTPHandler
@@ -117,6 +118,7 @@ func NewIdentityAgentAndPracticeComposition(
 	return &IdentityAgentPracticeComposition{
 		identityModule:         base.identity.module,
 		agentModule:            base.agentModule,
+		agentVoiceReclaimer:    base.agentVoiceReclaimer,
 		identityHTTP:           base.identity.handler,
 		preparationApplication: preparationApplication,
 		preparationHTTP:        preparationHTTP,
@@ -137,6 +139,15 @@ func (c *IdentityAgentPracticeComposition) AgentModule() *agent.Module {
 		return nil
 	}
 	return c.agentModule
+}
+
+// AgentVoiceReclaimer exposes only the lifecycle operation required by the
+// server cleanup scheduler.
+func (c *IdentityAgentPracticeComposition) AgentVoiceReclaimer() AgentVoiceObjectReclaimer {
+	if c == nil {
+		return nil
+	}
+	return c.agentVoiceReclaimer
 }
 
 func (c *IdentityAgentPracticeComposition) PreparationApplication() *preparation.PersistenceService {

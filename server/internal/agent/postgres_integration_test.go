@@ -143,6 +143,9 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append first message: %v", err)
 	}
+	if first.Modality != MessageModalityText {
+		t.Fatalf("plain Message modality = %q, want text", first.Modality)
+	}
 	replayed, err := service.AppendUserMessage(
 		context.Background(),
 		actorA,

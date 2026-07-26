@@ -108,6 +108,7 @@ FOR UPDATE`,
 			return RunSubmission{}, ErrRepository
 		}
 		var role string
+		var modality string
 		if err := tx.QueryRow(ctx, `
 INSERT INTO agent_messages (
     id,
@@ -116,9 +117,10 @@ INSERT INTO agent_messages (
     sequence_no,
     role,
     client_message_id,
+    modality,
     content,
     created_at
-) VALUES ($1, $2, $3, $4, 'user', $5, $6, CURRENT_TIMESTAMP)
+) VALUES ($1, $2, $3, $4, 'user', $5, 'text', $6, CURRENT_TIMESTAMP)
 RETURNING
     id::text,
     owner_user_id::text,
@@ -126,6 +128,7 @@ RETURNING
     sequence_no,
     role,
     client_message_id,
+    modality,
     content,
     created_at`,
 			messageID,
@@ -141,12 +144,14 @@ RETURNING
 			&message.Sequence,
 			&role,
 			&message.ClientMessageID,
+			&modality,
 			&message.Content,
 			&message.CreatedAt,
 		); err != nil {
 			return RunSubmission{}, mapPostgresError(err)
 		}
 		message.Role = MessageRole(role)
+		message.Modality = MessageModality(modality)
 		if _, err := tx.Exec(ctx, `
 UPDATE agent_threads
 SET
@@ -336,6 +341,7 @@ func (r *PostgresRepository) FindMessage(
 ) (Message, error) {
 	var result Message
 	var role string
+	var modality string
 	err := r.database.QueryRow(ctx, `
 SELECT
     id::text,
@@ -345,6 +351,7 @@ SELECT
     role,
     COALESCE(client_message_id, ''),
     COALESCE(produced_by_run_id::text, ''),
+    modality,
     content,
     created_at
 FROM agent_messages
@@ -362,6 +369,7 @@ WHERE id = $1
 		&role,
 		&result.ClientMessageID,
 		&result.ProducedByRunID,
+		&modality,
 		&result.Content,
 		&result.CreatedAt,
 	)
@@ -369,6 +377,7 @@ WHERE id = $1
 		return Message{}, mapPostgresError(err)
 	}
 	result.Role = MessageRole(role)
+	result.Modality = MessageModality(modality)
 	return result, nil
 }
 
@@ -684,9 +693,12 @@ INSERT INTO agent_messages (
     role,
     client_message_id,
     produced_by_run_id,
+    modality,
     content,
     created_at
-) VALUES ($1, $2, $3, $4, 'assistant', NULL, $5, $6, CURRENT_TIMESTAMP)`,
+) VALUES (
+    $1, $2, $3, $4, 'assistant', NULL, $5, 'text', $6, CURRENT_TIMESTAMP
+)`,
 		messageID,
 		ownerID,
 		run.ThreadID,

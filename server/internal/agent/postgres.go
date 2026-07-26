@@ -573,6 +573,7 @@ FOR UPDATE`,
 	}
 	var result Message
 	var role string
+	var modality string
 	if err := tx.QueryRow(ctx, `
 INSERT INTO agent_messages (
     id,
@@ -581,9 +582,10 @@ INSERT INTO agent_messages (
     sequence_no,
     role,
     client_message_id,
+    modality,
     content,
     created_at
-) VALUES ($1, $2, $3, $4, 'user', $5, $6, CURRENT_TIMESTAMP)
+) VALUES ($1, $2, $3, $4, 'user', $5, 'text', $6, CURRENT_TIMESTAMP)
 RETURNING
     id::text,
     owner_user_id::text,
@@ -591,6 +593,7 @@ RETURNING
     sequence_no,
     role,
     client_message_id,
+    modality,
     content,
     created_at`,
 		messageID,
@@ -606,12 +609,14 @@ RETURNING
 		&result.Sequence,
 		&role,
 		&result.ClientMessageID,
+		&modality,
 		&result.Content,
 		&result.CreatedAt,
 	); err != nil {
 		return Message{}, mapPostgresError(err)
 	}
 	result.Role = MessageRole(role)
+	result.Modality = MessageModality(modality)
 	if _, err := tx.Exec(ctx, `
 UPDATE agent_threads
 SET
@@ -638,19 +643,14 @@ func (r *PostgresRepository) ListMessages(
 	threadID string,
 ) ([]Message, error) {
 	rows, err := r.database.Query(ctx, `
-SELECT
-    id::text,
-    owner_user_id::text,
-    thread_id::text,
-    sequence_no,
-    role,
-    COALESCE(client_message_id, ''),
-    COALESCE(produced_by_run_id::text, ''),
-    content,
-    created_at
-FROM agent_messages
-WHERE owner_user_id = $1 AND thread_id = $2
-ORDER BY sequence_no ASC`,
+SELECT `+agentMessageWithAudioSelectColumns+`
+FROM agent_messages AS message
+LEFT JOIN agent_message_audios AS audio
+  ON audio.message_id = message.id
+ AND audio.owner_user_id = message.owner_user_id
+ AND audio.thread_id = message.thread_id
+WHERE message.owner_user_id = $1 AND message.thread_id = $2
+ORDER BY message.sequence_no ASC`,
 		ownerID,
 		threadID,
 	)
@@ -661,22 +661,10 @@ ORDER BY sequence_no ASC`,
 
 	result := make([]Message, 0)
 	for rows.Next() {
-		var item Message
-		var role string
-		if err := rows.Scan(
-			&item.ID,
-			&item.OwnerID,
-			&item.ThreadID,
-			&item.Sequence,
-			&role,
-			&item.ClientMessageID,
-			&item.ProducedByRunID,
-			&item.Content,
-			&item.CreatedAt,
-		); err != nil {
+		item, err := scanMessageWithAudio(rows)
+		if err != nil {
 			return nil, ErrRepository
 		}
-		item.Role = MessageRole(role)
 		result = append(result, item)
 	}
 	if rows.Err() != nil {
@@ -693,38 +681,28 @@ func (r *PostgresRepository) PageMessages(
 	before *MessagePageCursor,
 ) ([]Message, error) {
 	query := `
-SELECT
-    id::text,
-    owner_user_id::text,
-    thread_id::text,
-    sequence_no,
-    role,
-    COALESCE(client_message_id, ''),
-    COALESCE(produced_by_run_id::text, ''),
-    content,
-    created_at
-FROM agent_messages
-WHERE owner_user_id = $1 AND thread_id = $2
-ORDER BY sequence_no DESC
+SELECT ` + agentMessageWithAudioSelectColumns + `
+FROM agent_messages AS message
+LEFT JOIN agent_message_audios AS audio
+  ON audio.message_id = message.id
+ AND audio.owner_user_id = message.owner_user_id
+ AND audio.thread_id = message.thread_id
+WHERE message.owner_user_id = $1 AND message.thread_id = $2
+ORDER BY message.sequence_no DESC
 LIMIT $3`
 	arguments := []any{ownerID, threadID, limit}
 	if before != nil {
 		query = `
-SELECT
-    id::text,
-    owner_user_id::text,
-    thread_id::text,
-    sequence_no,
-    role,
-    COALESCE(client_message_id, ''),
-    COALESCE(produced_by_run_id::text, ''),
-    content,
-    created_at
-FROM agent_messages
-WHERE owner_user_id = $1
-  AND thread_id = $2
-  AND sequence_no < $3
-ORDER BY sequence_no DESC
+SELECT ` + agentMessageWithAudioSelectColumns + `
+FROM agent_messages AS message
+LEFT JOIN agent_message_audios AS audio
+  ON audio.message_id = message.id
+ AND audio.owner_user_id = message.owner_user_id
+ AND audio.thread_id = message.thread_id
+WHERE message.owner_user_id = $1
+  AND message.thread_id = $2
+  AND message.sequence_no < $3
+ORDER BY message.sequence_no DESC
 LIMIT $4`
 		arguments = []any{
 			ownerID,
@@ -741,22 +719,10 @@ LIMIT $4`
 
 	result := make([]Message, 0, limit)
 	for rows.Next() {
-		var item Message
-		var role string
-		if err := rows.Scan(
-			&item.ID,
-			&item.OwnerID,
-			&item.ThreadID,
-			&item.Sequence,
-			&role,
-			&item.ClientMessageID,
-			&item.ProducedByRunID,
-			&item.Content,
-			&item.CreatedAt,
-		); err != nil {
+		item, err := scanMessageWithAudio(rows)
+		if err != nil {
 			return nil, ErrRepository
 		}
-		item.Role = MessageRole(role)
 		result = append(result, item)
 	}
 	if rows.Err() != nil {
@@ -797,6 +763,7 @@ func findMessageByClientID(
 ) (Message, bool, error) {
 	var result Message
 	var role string
+	var modality string
 	err := tx.QueryRow(ctx, `
 SELECT
     id::text,
@@ -805,6 +772,7 @@ SELECT
     sequence_no,
     role,
     client_message_id,
+    modality,
     content,
     created_at
 FROM agent_messages
@@ -821,6 +789,7 @@ WHERE owner_user_id = $1
 		&result.Sequence,
 		&role,
 		&result.ClientMessageID,
+		&modality,
 		&result.Content,
 		&result.CreatedAt,
 	)
@@ -831,6 +800,7 @@ WHERE owner_user_id = $1
 		return Message{}, false, mapPostgresError(err)
 	}
 	result.Role = MessageRole(role)
+	result.Modality = MessageModality(modality)
 	return result, true, nil
 }
 

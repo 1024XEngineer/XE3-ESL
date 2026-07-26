@@ -66,7 +66,8 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 	}
 	if !submission.Created ||
 		submission.Run.Status != RunStatusCompleted ||
-		submission.Run.AssistantMessageID == "" {
+		submission.Run.AssistantMessageID == "" ||
+		submission.UserMessage.Modality != MessageModalityText {
 		t.Fatalf("unexpected completed submission: %#v", submission)
 	}
 	if generator.CallCount() != 1 {
@@ -139,7 +140,9 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 	}
 	if len(messages) != 2 ||
 		messages[0].Role != MessageRoleUser ||
+		messages[0].Modality != MessageModalityText ||
 		messages[1].Role != MessageRoleAssistant ||
+		messages[1].Modality != MessageModalityText ||
 		messages[1].ProducedByRunID != submission.Run.ID {
 		t.Fatalf("unexpected committed messages: %#v", messages)
 	}
