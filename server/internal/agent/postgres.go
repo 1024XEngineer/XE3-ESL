@@ -700,6 +700,7 @@ SELECT
     sequence_no,
     role,
     COALESCE(client_message_id, ''),
+    COALESCE(produced_by_run_id::text, ''),
     content,
     created_at
 FROM agent_messages
@@ -716,6 +717,7 @@ SELECT
     sequence_no,
     role,
     COALESCE(client_message_id, ''),
+    COALESCE(produced_by_run_id::text, ''),
     content,
     created_at
 FROM agent_messages
@@ -748,6 +750,7 @@ LIMIT $4`
 			&item.Sequence,
 			&role,
 			&item.ClientMessageID,
+			&item.ProducedByRunID,
 			&item.Content,
 			&item.CreatedAt,
 		); err != nil {
