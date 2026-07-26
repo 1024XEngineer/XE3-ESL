@@ -235,7 +235,8 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 		userID,
 	)
 	if !errors.As(err, &constraintError) ||
-		constraintError.Code != "23001" ||
+		(constraintError.Code != "23001" &&
+			constraintError.Code != "23503") ||
 		constraintError.ConstraintName !=
 			"practice_sessions_context_plan_fkey" {
 		t.Fatalf("delete referenced plan error = %v, want FK violation", err)

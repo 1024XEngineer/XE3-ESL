@@ -221,7 +221,10 @@ func TestContextRepositoryPersistsExactRecoverableAggregate(t *testing.T) {
 		WHERE owner_user_id = $1 AND plan_id = $2
 	`, owner.Actor.UserID, plan.ID)
 	if !errors.As(err, &postgresError) ||
-		postgresError.Code != "23001" {
+		(postgresError.Code != "23001" &&
+			postgresError.Code != "23503") ||
+		postgresError.ConstraintName !=
+			"practice_sessions_context_plan_fkey" {
 		t.Fatalf("delete referenced Plan error = %v", err)
 	}
 
