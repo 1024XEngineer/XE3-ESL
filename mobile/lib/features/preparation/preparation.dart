@@ -510,50 +510,58 @@ class _RoleCard extends StatelessWidget {
           width: selected ? 1.5 : 1,
         ),
       ),
-      child: InkWell(
+      child: Semantics(
         key: Key('preparation-role-${role.id}'),
+        container: true,
+        button: true,
+        selected: selected,
+        label: '${role.displayName}. ${role.responsibilities} ${role.style}',
         onTap: onPressed,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                selected
-                    ? Icons.radio_button_checked_rounded
-                    : Icons.radio_button_unchecked_rounded,
-                color: const Color(0xFF4F5054),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      role.displayName,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      role.responsibilities,
-                      style: const TextStyle(
-                        color: Color(0xFF696B73),
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      role.style,
-                      style: const TextStyle(
-                        color: Color(0xFF85878D),
-                        fontSize: 13,
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  selected
+                      ? Icons.radio_button_checked_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  color: const Color(0xFF4F5054),
                 ),
-              ),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        role.displayName,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        role.responsibilities,
+                        style: const TextStyle(
+                          color: Color(0xFF696B73),
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        role.style,
+                        style: const TextStyle(
+                          color: Color(0xFF85878D),
+                          fontSize: 13,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -589,35 +597,43 @@ class _OptionCard extends StatelessWidget {
           width: selected ? 1.5 : 1,
         ),
       ),
-      child: InkWell(
+      child: Semantics(
         key: Key('preparation-option-${option.id}'),
+        container: true,
+        button: true,
+        selected: selected,
+        label: '$typeLabel: ${option.displayName}',
         onTap: onPressed,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Icon(
-                selected ? Icons.check_circle_rounded : Icons.circle_outlined,
-                color: const Color(0xFF4F5054),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      typeLabel,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      option.displayName,
-                      style: const TextStyle(color: Color(0xFF696B73)),
-                    ),
-                  ],
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(
+                  selected ? Icons.check_circle_rounded : Icons.circle_outlined,
+                  color: const Color(0xFF4F5054),
                 ),
-              ),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        typeLabel,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        option.displayName,
+                        style: const TextStyle(color: Color(0xFF696B73)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

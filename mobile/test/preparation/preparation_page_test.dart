@@ -80,6 +80,86 @@ void main() {
     },
   );
 
+  testWidgets('role and option cards expose one selectable button node', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final controller = PreparationController(client: _FixtureClient());
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: PreparationPage(preparationController: controller)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
+    await tester.pumpAndSettle();
+
+    const roleLabel =
+        'Technical depth perspective. '
+        'Probe technical depth and decision making. '
+        'Precise and evidence seeking.';
+    final role = find.byKey(
+      const Key('preparation-role-role_technical_interviewer'),
+    );
+    await tester.ensureVisible(role);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(role),
+      isSemantics(
+        label: roleLabel,
+        isButton: true,
+        hasSelectedState: true,
+        isSelected: false,
+        hasTapAction: true,
+      ),
+    );
+    expect(find.bySemanticsLabel(roleLabel), findsOneWidget);
+
+    await tester.tap(role);
+    await tester.pump();
+    expect(
+      tester.getSemantics(role),
+      isSemantics(
+        label: roleLabel,
+        isButton: true,
+        hasSelectedState: true,
+        isSelected: true,
+        hasTapAction: true,
+      ),
+    );
+
+    const optionLabel = '完整模拟: Full simulation';
+    final option = find.byKey(
+      const Key('preparation-option-option_full_simulation'),
+    );
+    await tester.scrollUntilVisible(option, 200);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(option),
+      isSemantics(
+        label: optionLabel,
+        isButton: true,
+        hasSelectedState: true,
+        isSelected: false,
+        hasTapAction: true,
+      ),
+    );
+    expect(find.bySemanticsLabel(optionLabel), findsOneWidget);
+
+    await tester.tap(option);
+    await tester.pump();
+    expect(
+      tester.getSemantics(option),
+      isSemantics(
+        label: optionLabel,
+        isButton: true,
+        hasSelectedState: true,
+        isSelected: true,
+        hasTapAction: true,
+      ),
+    );
+    semantics.dispose();
+  });
+
   testWidgets('shows loading, failure retry, and empty states', (tester) async {
     final client = _ControlledListClient();
     final controller = PreparationController(client: client);
