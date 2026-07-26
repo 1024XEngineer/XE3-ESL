@@ -21,7 +21,7 @@ import (
 
 var testRunConfiguration = RunConfiguration{
 	Provider:           "fake",
-	Model:              "fake-free-model",
+	Model:              "configured-model",
 	MaxOutputTokens:    256,
 	MaxInputCharacters: 12000,
 }
@@ -241,7 +241,7 @@ SELECT
     1,
     'pending',
     'fake',
-    'fake-free-model',
+    'configured-model',
     256
 )`,
 		[]any{actorA.UserID, threadB.ID, messageB.ID},
@@ -784,7 +784,7 @@ WHERE id = $1 AND owner_user_id = $2`,
 		t,
 		database.pool,
 		`UPDATE agent_runs
-SET provider_model = 'fake-free-model'
+SET provider_model = 'configured-model'
 WHERE id = $1 AND owner_user_id = $2`,
 		[]any{submission.Run.ID, actor.UserID},
 		"23514",
@@ -835,7 +835,7 @@ func TestPostgresAgentRunRollsBackAssistantWhenCompletionCannotCommit(
 		t.Fatalf("claim pending Run: acquired=%v err=%v", acquired, err)
 	}
 	invalidResult := successfulTextResult()
-	invalidResult.Model = "fake-paid-model"
+	invalidResult.Model = "other-model"
 	if _, err := repository.CompleteRun(
 		context.Background(),
 		actor.UserID,
@@ -923,7 +923,7 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 		maxMessageContentBytes,
 	) + "visible"
 	mismatchedModelResult := successfulTextResult()
-	mismatchedModelResult.Model = "fake-paid-model"
+	mismatchedModelResult.Model = "other-model"
 	overBudgetResult := successfulTextResult()
 	overBudgetResult.Usage.OutputTokens =
 		testRunConfiguration.MaxOutputTokens + 1
@@ -1184,7 +1184,7 @@ func TestPostgresAgentRunRetryCannotChangeInputMessage(t *testing.T) {
     'different-input-retry',
     'failed',
     'fake',
-    'fake-free-model',
+    'configured-model',
     256,
     'timeout',
     true,
@@ -1955,7 +1955,7 @@ func successfulTextResult() ai.TextResult {
 	return ai.TextResult{
 		ID:           "fake-completion-1",
 		Provider:     "fake",
-		Model:        "fake-free-model",
+		Model:        "configured-model",
 		Content:      "Open with the shared goal, then ask what success looks like.",
 		FinishReason: "stop",
 		Usage: ai.TokenUsage{

@@ -139,7 +139,7 @@ func TestGenerateMapsProviderFailuresWithoutLeakingSensitiveValues(t *testing.T)
 			code:       "InvalidApiKey",
 		},
 		{
-			name:       "free quota exhausted",
+			name:       "provider quota exhausted",
 			statusCode: http.StatusForbidden,
 			body:       `{"code":"AllocationQuota.FreeTierOnly"}`,
 			kind:       ai.ErrorQuotaExhausted,
