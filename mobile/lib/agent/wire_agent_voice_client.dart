@@ -1058,8 +1058,7 @@ AgentVoiceCandidate _decodeCandidateObject(Object? value) {
       (status == AgentVoiceCandidateStatus.failed &&
           (transcript != null || failure == null)) ||
       (hasAnyConfirmation && !hasAllConfirmation) ||
-      (status == AgentVoiceCandidateStatus.confirmed &&
-          !hasAllConfirmation) ||
+      (status == AgentVoiceCandidateStatus.confirmed && !hasAllConfirmation) ||
       (!statusHasConfirmation && hasAnyConfirmation)) {
     throw const _InvalidVoiceResponse();
   }
