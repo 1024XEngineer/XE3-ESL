@@ -55,9 +55,10 @@ const (
 )
 
 const (
-	RunFailureInterrupted    = "interrupted"
-	RunFailureInvalidContext = "invalid_context"
-	RunFailureInternal       = "internal_error"
+	RunFailureInterrupted        = "interrupted"
+	RunFailureConfigurationDrift = "configuration_drift"
+	RunFailureInvalidContext     = "invalid_context"
+	RunFailureInternal           = "internal_error"
 )
 
 type Run struct {

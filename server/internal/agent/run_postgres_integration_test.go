@@ -1420,6 +1420,123 @@ func TestPostgresAgentRunRecoversRunningAndResumesPendingAfterRestart(
 	}
 }
 
+func TestPostgresAgentRunRejectsPendingReplayAfterConfigurationDrift(
+	t *testing.T,
+) {
+	database := newAgentTestDatabase(t)
+	_, dataService, _, repository := newAgentRunServices(
+		t,
+		database.pool,
+		fake.NewTextGenerator(successfulTextResult()),
+		testRunConfiguration,
+	)
+	actor := testActorA()
+	thread, err := dataService.CreateThread(
+		context.Background(),
+		actor,
+		"",
+	)
+	if err != nil {
+		t.Fatalf("create pending replay Thread: %v", err)
+	}
+	pending, err := repository.CreateInitialRun(
+		context.Background(),
+		actor.UserID,
+		thread.ID,
+		"pending-before-configuration-drift",
+		"Do not invoke a reconfigured provider for this durable Run.",
+		testRunConfiguration,
+	)
+	if err != nil {
+		t.Fatalf("create pending replay submission: %v", err)
+	}
+
+	database.pool.Close()
+	reopenedPool := database.reopen(t)
+	reconfigured := testRunConfiguration
+	reconfigured.Provider = "fake_reconfigured"
+	reconfigured.Model = "fake-reconfigured-model"
+	reconfigured.MaxOutputTokens++
+	reconfiguredResult := successfulTextResult()
+	reconfiguredResult.Provider = reconfigured.Provider
+	reconfiguredResult.Model = reconfigured.Model
+	generator := &recordingTextGenerator{result: reconfiguredResult}
+	_, _, recoveredService, _ := newAgentRunServices(
+		t,
+		reopenedPool,
+		generator,
+		reconfigured,
+	)
+
+	replayed, err := recoveredService.SubmitText(
+		context.Background(),
+		actor,
+		thread.ID,
+		"pending-before-configuration-drift",
+		"Do not invoke a reconfigured provider for this durable Run.",
+	)
+	if err != nil {
+		t.Fatalf("replay pending Run after configuration drift: %v", err)
+	}
+	if replayed.Created ||
+		replayed.Run.ID != pending.Run.ID ||
+		replayed.Run.Status != RunStatusFailed ||
+		replayed.Run.FailureKind != RunFailureConfigurationDrift ||
+		!replayed.Run.FailureRetryable {
+		t.Fatalf("configuration-drift replay = %#v", replayed)
+	}
+	if replayed.Run.RequestedProvider != testRunConfiguration.Provider ||
+		replayed.Run.RequestedModel != testRunConfiguration.Model ||
+		replayed.Run.MaxOutputTokens !=
+			testRunConfiguration.MaxOutputTokens {
+		t.Fatalf(
+			"configuration-drift replay changed the durable request: %#v",
+			replayed.Run,
+		)
+	}
+	if generator.CallCount() != 0 {
+		t.Fatalf(
+			"configuration-drift replay invoked provider %d times",
+			generator.CallCount(),
+		)
+	}
+	if _, err := recoveredService.GetContextManifest(
+		context.Background(),
+		actor,
+		replayed.Run.ID,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf(
+			"configuration-drift manifest error = %v, want not found",
+			err,
+		)
+	}
+
+	retry, err := recoveredService.RetryText(
+		context.Background(),
+		actor,
+		replayed.Run.ID,
+		"retry-after-configuration-drift",
+	)
+	if err != nil {
+		t.Fatalf("retry after configuration drift: %v", err)
+	}
+	if !retry.Created ||
+		retry.Run.Status != RunStatusCompleted ||
+		retry.Run.Attempt != 2 ||
+		retry.Run.RetryOfRunID != replayed.Run.ID ||
+		retry.Run.RequestedProvider != reconfigured.Provider ||
+		retry.Run.RequestedModel != reconfigured.Model ||
+		retry.Run.MaxOutputTokens != reconfigured.MaxOutputTokens {
+		t.Fatalf("configuration-drift retry = %#v", retry)
+	}
+	if generator.CallCount() != 1 {
+		t.Fatalf(
+			"configuration-drift retry provider calls = %d, want 1",
+			generator.CallCount(),
+		)
+	}
+}
+
 func TestPostgresContextAssemblerKeepsCurrentInputWithinBudget(t *testing.T) {
 	database := newAgentTestDatabase(t)
 	configuration := testRunConfiguration

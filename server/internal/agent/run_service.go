@@ -154,6 +154,15 @@ func (service *RunService) process(
 	if !acquired {
 		return claimed, nil
 	}
+	if !runConfigurationMatches(claimed, service.configuration) {
+		return service.persistFailure(
+			ctx,
+			actor.UserID,
+			claimed.ID,
+			RunFailureConfigurationDrift,
+			true,
+		)
+	}
 
 	manifest, request, err := service.assembler.Assemble(
 		ctx,
@@ -277,4 +286,13 @@ func validTokenUsage(usage ai.TokenUsage) bool {
 		usage.TotalTokens >= usage.InputTokens &&
 		usage.TotalTokens <= maxPersistedTokenCount &&
 		usage.TotalTokens-usage.InputTokens == usage.OutputTokens
+}
+
+func runConfigurationMatches(
+	run Run,
+	configuration RunConfiguration,
+) bool {
+	return run.RequestedProvider == configuration.Provider &&
+		run.RequestedModel == configuration.Model &&
+		run.MaxOutputTokens == configuration.MaxOutputTokens
 }
