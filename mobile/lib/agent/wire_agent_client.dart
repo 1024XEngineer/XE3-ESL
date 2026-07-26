@@ -861,6 +861,10 @@ final class WireAgentClient
     required _MatterActivation activation,
   }) async {
     if (activation.baselineMatterIds == null) {
+      // Every Matter already visible when this client starts the operation is
+      // deliberately treated as unrelated. The frozen API has no durable
+      // client operation identity, so a restarted client must create a fresh
+      // Matter instead of guessing from a same-title result.
       final matters = await _listMatters(generation);
       _requireMatterActivationCurrent(
         generation: generation,
@@ -914,7 +918,8 @@ final class WireAgentClient
       }
       return matter;
     } on AgentClientException catch (error) {
-      if (error.kind == AgentClientFailureKind.network) {
+      if (error.kind == AgentClientFailureKind.network ||
+          error.kind == AgentClientFailureKind.invalidResponse) {
         _requireMatterActivationCurrent(
           generation: generation,
           operationKey: operationKey,

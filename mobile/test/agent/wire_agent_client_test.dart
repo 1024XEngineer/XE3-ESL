@@ -1557,6 +1557,159 @@ void main() {
     transport.expectDone();
   });
 
+  test('recovers a committed Matter after a malformed 201 response', () async {
+    final scene = agentScenes.first;
+    final transport = _ScriptedTransport([
+      _Step(
+        method: 'GET',
+        path: '/v1/matters',
+        response: _jsonResponse(HttpStatus.ok, {
+          'matters': [_matterJson(id: _matterId, title: scene.title)],
+        }),
+      ),
+      _Step(
+        method: 'POST',
+        path: '/v1/matters',
+        response: _jsonResponse(HttpStatus.created, <String, Object?>{}),
+      ),
+      _Step(
+        method: 'GET',
+        path: '/v1/matters',
+        response: _jsonResponse(HttpStatus.ok, {
+          'matters': [
+            _matterJson(id: _matterId, title: scene.title),
+            _matterJson(id: _matterBId, title: scene.title),
+          ],
+        }),
+      ),
+      _Step(
+        method: 'PUT',
+        path: '/v1/agent-threads/$_threadId/active-matter',
+        verify: (call) {
+          expect(jsonDecode(call.body!), {'matter_id': _matterBId});
+        },
+        response: _jsonResponse(
+          HttpStatus.ok,
+          _matterLinkJson(matterId: _matterBId),
+        ),
+      ),
+    ]);
+    final harness = _Harness(transport);
+    const operationId = 'scene_malformed_201';
+
+    await expectLater(
+      harness.client.startScene(
+        threadId: _threadId,
+        scene: scene,
+        clientOperationId: operationId,
+      ),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
+    );
+    final result = await harness.client.startScene(
+      threadId: _threadId,
+      scene: scene,
+      clientOperationId: operationId,
+    );
+
+    expect(result.activeMatter.id, _matterBId);
+    expect(
+      transport.calls.where(
+        (call) => call.method == 'POST' && call.path == '/v1/matters',
+      ),
+      hasLength(1),
+    );
+    transport.expectDone();
+  });
+
+  test(
+    'after client restart creates fresh Matter instead of guessing a prior commit',
+    () async {
+      final scene = agentScenes.first;
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/matters',
+          response: _jsonResponse(HttpStatus.ok, {
+            'matters': [_matterJson(id: _matterId, title: scene.title)],
+          }),
+        ),
+        _Step(
+          method: 'POST',
+          path: '/v1/matters',
+          response: _jsonResponse(HttpStatus.created, <String, Object?>{}),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/matters',
+          response: _jsonResponse(HttpStatus.ok, {
+            'matters': [
+              _matterJson(id: _matterId, title: scene.title),
+              _matterJson(id: _matterBId, title: scene.title),
+            ],
+          }),
+        ),
+        _Step(
+          method: 'POST',
+          path: '/v1/matters',
+          response: _jsonResponse(
+            HttpStatus.created,
+            _matterJson(id: _matterCId, title: scene.title),
+          ),
+        ),
+        _Step(
+          method: 'PUT',
+          path: '/v1/agent-threads/$_threadId/active-matter',
+          verify: (call) {
+            expect(jsonDecode(call.body!), {'matter_id': _matterCId});
+          },
+          response: _jsonResponse(
+            HttpStatus.ok,
+            _matterLinkJson(matterId: _matterCId),
+          ),
+        ),
+      ]);
+      final firstClient = _Harness(transport);
+      const operationId = 'scene_restart_retry';
+
+      await expectLater(
+        firstClient.client.startScene(
+          threadId: _threadId,
+          scene: scene,
+          clientOperationId: operationId,
+        ),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+
+      final restartedClient = _Harness(transport);
+      final result = await restartedClient.client.startScene(
+        threadId: _threadId,
+        scene: scene,
+        clientOperationId: operationId,
+      );
+
+      expect(result.activeMatter.id, _matterCId);
+      expect(
+        transport.calls.where(
+          (call) => call.method == 'POST' && call.path == '/v1/matters',
+        ),
+        hasLength(2),
+      );
+      transport.expectDone();
+    },
+  );
+
   test('rejects multiple new Matters after an ambiguous create', () async {
     final scene = agentScenes.first;
     final transport = _ScriptedTransport([
