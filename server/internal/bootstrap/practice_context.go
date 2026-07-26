@@ -397,14 +397,74 @@ func (r *preparationPracticeContextReader) ReadPreparationSnapshot(
 			practicepersistence.ErrNotFound
 	}
 	return practicepersistence.PreparationSnapshot{
-		ID:                     snapshot.ID,
-		SourceProfileID:        snapshot.SourceProfileID,
-		SourceVersion:          snapshot.SourceVersion,
+		ID:                                 snapshot.ID,
+		SourceProfileID:                    snapshot.SourceProfileID,
+		SourceVersion:                      snapshot.SourceVersion,
+		SourceJobTargetID:                  snapshot.SourceJobTargetID,
+		SourceJobTargetConfirmationVersion: snapshot.SourceJobTargetConfirmationVersion,
+		JobTargetInputSnapshot: mapJobTargetInputSnapshot(
+			snapshot.JobTargetInputSnapshot,
+		),
+		JobTargetCandidateSnapshot: mapJobTargetCandidateSnapshot(
+			snapshot.JobTargetCandidateSnapshot,
+		),
 		ResumeSnapshot:         snapshot.ResumeSnapshot,
 		JobDescriptionSnapshot: snapshot.JobDescriptionSnapshot,
 		BackgroundSnapshot:     snapshot.BackgroundSnapshot,
 		CreatedAt:              snapshot.CreatedAt,
 	}, nil
+}
+
+func mapJobTargetInputSnapshot(
+	input *preparation.JobTargetInput,
+) *practicepersistence.JobTargetInputSnapshot {
+	if input == nil {
+		return nil
+	}
+	return &practicepersistence.JobTargetInputSnapshot{
+		Source:              string(input.Source),
+		JobTitle:            input.JobTitle,
+		JobDescription:      input.JobDescription,
+		Company:             input.Company,
+		Seniority:           input.Seniority,
+		CandidateBackground: input.CandidateBackground,
+		ResumeRef:           input.ResumeRef,
+		PracticeFocus:       input.PracticeFocus,
+	}
+}
+
+func mapJobTargetCandidateSnapshot(
+	candidate *preparation.JobTargetCandidate,
+) *practicepersistence.JobTargetCandidateSnapshot {
+	if candidate == nil {
+		return nil
+	}
+	return &practicepersistence.JobTargetCandidateSnapshot{
+		Source:             string(candidate.Source),
+		GeneralAdviceOnly:  candidate.GeneralAdviceOnly,
+		JobTitle:           candidate.JobTitle,
+		Seniority:          candidate.Seniority,
+		Responsibilities:   append([]string(nil), candidate.Responsibilities...),
+		CoreSkills:         append([]string(nil), candidate.CoreSkills...),
+		CommunicationFocus: append([]string(nil), candidate.CommunicationFocus...),
+		PracticeGoals:      append([]string(nil), candidate.PracticeGoals...),
+		ScopeNotice:        candidate.ScopeNotice,
+		CatalogRecommendation: practicepersistence.
+			JobTargetCatalogRecommendationSnapshot{
+			ScenarioDefinitionID: candidate.CatalogRecommendation.
+				ScenarioDefinitionID,
+			ScenarioDefinitionVersion: candidate.CatalogRecommendation.
+				ScenarioDefinitionVersion,
+			SelectedRoleIDs: append(
+				[]string(nil),
+				candidate.CatalogRecommendation.SelectedRoleIDs...,
+			),
+			PracticeOptionID: candidate.CatalogRecommendation.
+				PracticeOptionID,
+			PracticeOptionVersion: candidate.CatalogRecommendation.
+				PracticeOptionVersion,
+		},
+	}
 }
 
 func mapPreparationPracticeContextError(err error) error {
@@ -446,7 +506,11 @@ func (r *practiceCatalogContextReader) ReadPlanCatalog(
 		return practice.PlanCatalogSelection{},
 			practicepersistence.ErrConflict
 	}
-	fullOption, found := fullSimulationOption(detail.PracticeOptions)
+	option, found := requestedPracticeOption(
+		detail.PracticeOptions,
+		request.PracticeOptionID,
+		request.PracticeOptionVersion,
+	)
 	if !found {
 		return practice.PlanCatalogSelection{},
 			practicepersistence.ErrNotFound
@@ -455,14 +519,15 @@ func (r *practiceCatalogContextReader) ReadPlanCatalog(
 		request.ScenarioDefinitionID,
 		request.ScenarioDefinitionVersion,
 		append([]string(nil), request.SelectedRoleIDs...),
-		fullOption.ID,
-		fullOption.Version,
+		option.ID,
+		option.Version,
 	)
 	if err != nil {
 		return practice.PlanCatalogSelection{}, mapPracticeCatalogError(err)
 	}
-	if snapshot.ScenarioConfig.ID != request.ScenarioConfigID ||
-		snapshot.ScenarioConfig.Version != request.ScenarioConfigVersion {
+	if request.ScenarioConfigID != "" &&
+		(snapshot.ScenarioConfig.ID != request.ScenarioConfigID ||
+			snapshot.ScenarioConfig.Version != request.ScenarioConfigVersion) {
 		return practice.PlanCatalogSelection{},
 			practicepersistence.ErrConflict
 	}
@@ -523,15 +588,23 @@ func exactPlanCatalogRequest(
 		detail.ScenarioDefinition.Version ==
 			request.ScenarioDefinitionVersion &&
 		detail.ScenarioDefinition.Status == preparation.ScenarioStatusActive &&
-		detail.ScenarioConfig.ID == request.ScenarioConfigID &&
-		detail.ScenarioConfig.Version == request.ScenarioConfigVersion &&
 		detail.ScenarioConfig.ScenarioDefinitionID ==
-			request.ScenarioDefinitionID
+			request.ScenarioDefinitionID &&
+		(request.ScenarioConfigID == "" ||
+			(detail.ScenarioConfig.ID == request.ScenarioConfigID &&
+				detail.ScenarioConfig.Version ==
+					request.ScenarioConfigVersion))
 }
 
-func fullSimulationOption(
+func requestedPracticeOption(
 	options []preparation.PracticeOptionDefinition,
+	optionID string,
+	optionVersion int,
 ) (preparation.PracticeOptionDefinition, bool) {
+	if optionID != "" {
+		option, found := practiceOption(options, optionID)
+		return option, found && option.Version == optionVersion
+	}
 	for _, option := range options {
 		if option.Type == preparation.PracticeOptionFullSimulation {
 			return option, true
@@ -580,7 +653,8 @@ func mapPlanCatalogSelection(
 				snapshot.ScenarioConfig.FocusAreas...,
 			),
 		},
-		SelectedRoles: roles,
+		SelectedRoles:  roles,
+		PracticeOption: mapPracticeOption(snapshot.PracticeOption),
 	}
 }
 

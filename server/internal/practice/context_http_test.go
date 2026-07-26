@@ -31,6 +31,13 @@ type contextHTTPApplicationStub struct {
 		requestcontext.Actor,
 		string,
 	) (persistence.Plan, error)
+	updatePlan func(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+		UpdatePlanRequest,
+	) (persistence.Plan, bool, error)
 	createSession func(
 		context.Context,
 		requestcontext.Actor,
@@ -79,6 +86,19 @@ func (s contextHTTPApplicationStub) GetPlan(
 		return persistence.Plan{}, errors.New("unexpected GetPlan")
 	}
 	return s.getPlan(ctx, actor, planID)
+}
+
+func (s contextHTTPApplicationStub) UpdatePlan(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	planID string,
+	key string,
+	request UpdatePlanRequest,
+) (persistence.Plan, bool, error) {
+	if s.updatePlan == nil {
+		return persistence.Plan{}, false, errors.New("unexpected UpdatePlan")
+	}
+	return s.updatePlan(ctx, actor, planID, key, request)
 }
 
 func (s contextHTTPApplicationStub) CreateSession(
@@ -167,6 +187,22 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 			}
 			return plan, nil
 		},
+		updatePlan: func(
+			_ context.Context,
+			gotActor requestcontext.Actor,
+			planID string,
+			key string,
+			request UpdatePlanRequest,
+		) (persistence.Plan, bool, error) {
+			if gotActor != actor || planID != plan.ID ||
+				key != "plan-revision-intent-0001" ||
+				!reflect.DeepEqual(request, contextHTTPUpdatePlanRequest()) {
+				t.Fatal("UpdatePlan received untrusted or altered input")
+			}
+			revised := plan
+			revised.Revision = 2
+			return revised, true, nil
+		},
 		createSession: func(
 			_ context.Context,
 			gotActor requestcontext.Actor,
@@ -243,6 +279,21 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		},
 	)
 	assertContextHTTPSuccess(t, getPlan, http.StatusOK, plan)
+
+	revisedPlan := plan
+	revisedPlan.Revision = 2
+	updatePlan := serveContextHTTPRequest(
+		router,
+		contextHTTPRequest{
+			method:      http.MethodPut,
+			path:        "/v1/practice-plans/" + plan.ID,
+			body:        mustContextHTTPJSON(t, contextHTTPUpdatePlanRequest()),
+			contentType: "application/json",
+			keyValues:   []string{"plan-revision-intent-0001"},
+			actor:       &actor,
+		},
+	)
+	assertContextHTTPSuccess(t, updatePlan, http.StatusOK, revisedPlan)
 
 	createSession := serveContextHTTPRequest(
 		router,
@@ -355,6 +406,42 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		"practice_focuses",
 		"created_at",
 	})
+}
+
+func TestContextHTTPAllowsPlanOwnedExplicitStart(t *testing.T) {
+	actor := contextHTTPActor()
+	want := contextHTTPBootstrap()
+	router := newContextHTTPTestRouter(t, contextHTTPApplicationStub{
+		createSession: func(
+			_ context.Context,
+			gotActor requestcontext.Actor,
+			planID string,
+			key string,
+			request CreateSessionRequest,
+		) (persistence.ContextSessionBootstrap, bool, error) {
+			if gotActor != actor || planID != "plan-targeted" ||
+				key != "targeted-start-intent" ||
+				!reflect.DeepEqual(request, CreateSessionRequest{
+					ExpectedPlanRevision: 2,
+				}) {
+				t.Fatalf("targeted start request = %+v", request)
+			}
+			return want, false, nil
+		},
+	})
+	response := serveContextHTTPRequest(
+		router,
+		contextHTTPRequest{
+			method: http.MethodPost,
+			path: "/v1/practice-plans/plan-targeted/" +
+				"practice-sessions",
+			body:        `{"expected_plan_revision":2}`,
+			contentType: "application/json",
+			keyValues:   []string{"targeted-start-intent"},
+			actor:       &actor,
+		},
+	)
+	assertContextHTTPSuccess(t, response, http.StatusCreated, want)
 }
 
 func TestContextHTTPLifecycleRoutesAndReplayStatus(t *testing.T) {
@@ -1193,6 +1280,16 @@ func contextHTTPSessionRequest() CreateSessionRequest {
 		PreparationSnapshotID: "preparation-snapshot-1",
 		PracticeOptionID:      "option-1",
 		RoleDefinitionIDs:     []string{"role-1"},
+	}
+}
+
+func contextHTTPUpdatePlanRequest() UpdatePlanRequest {
+	return UpdatePlanRequest{
+		ExpectedPlanRevision:  1,
+		SelectedRoleIDs:       []string{"role-1"},
+		PracticeOptionID:      "option-1",
+		PracticeOptionVersion: 1,
+		MaxEffectiveTurns:     2,
 	}
 }
 

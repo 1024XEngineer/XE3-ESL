@@ -474,6 +474,38 @@ func TestJobTargetConfirmRejectsMultipleInterviewRoles(t *testing.T) {
 	}
 }
 
+func TestInterviewJobTargetRecommendationRequiresOneInterviewer(t *testing.T) {
+	t.Parallel()
+
+	catalog := mustBuiltinCatalog(t)
+	candidate := validJobTargetCandidateFixture(
+		JobTargetSourceJobDescription,
+	)
+	candidate.CatalogRecommendation.PracticeOptionID =
+		FullSimulationOptionID
+	candidate.CatalogRecommendation.SelectedRoleIDs = []string{
+		TechnicalInterviewerRoleID,
+		HRInterviewerRoleID,
+	}
+	if err := validateJobTargetCandidate(
+		candidate,
+		JobTargetSourceJobDescription,
+		catalog,
+	); !errors.Is(err, ErrJobTargetInvalid) {
+		t.Fatalf("multi-role INTERVIEW recommendation error = %v", err)
+	}
+	candidate.CatalogRecommendation.SelectedRoleIDs = []string{
+		TechnicalInterviewerRoleID,
+	}
+	if err := validateJobTargetCandidate(
+		candidate,
+		JobTargetSourceJobDescription,
+		catalog,
+	); err != nil {
+		t.Fatalf("single-role FULL_SIMULATION recommendation: %v", err)
+	}
+}
+
 func TestJobTargetConfirmationCandidateUnicodeAndTotalJSONLimits(
 	t *testing.T,
 ) {

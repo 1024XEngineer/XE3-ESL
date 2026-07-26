@@ -31,6 +31,137 @@ const (
 	preparationSessionB = "20000000-0000-4000-8000-000000000222"
 )
 
+func TestPostgresProfileRepositoryFreezesConfirmedJobTarget(
+	t *testing.T,
+) {
+	repository, pool := newPreparationRepository(t)
+	insertPreparationUsers(t, pool, preparationUserA)
+	ctx := context.Background()
+	actor := preparationActor(preparationUserA, preparationSessionA)
+	input := preparation.JobTargetInput{
+		Source:              preparation.JobTargetSourceQuickStart,
+		JobTitle:            "Platform engineer",
+		Seniority:           "Senior",
+		CandidateBackground: "Built reliable Go services.",
+	}
+	candidate := jobTargetCandidate(preparation.JobTargetSourceQuickStart)
+	inputDocument, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal JobTarget input: %v", err)
+	}
+	candidateDocument, err := json.Marshal(candidate)
+	if err != nil {
+		t.Fatalf("marshal JobTarget candidate: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO preparation_job_targets (
+			owner_user_id, target_id, source_kind, job_title,
+			seniority, candidate_background, input_version, stage
+		) VALUES ($1, 'target-confirmed', 'quick_start', $2, $3, $4, 1, 'confirmed')
+	`,
+		actor.UserID,
+		input.JobTitle,
+		input.Seniority,
+		input.CandidateBackground,
+	); err != nil {
+		t.Fatalf("seed confirmed JobTarget: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO preparation_job_target_analysis_attempts (
+			owner_user_id, target_id, input_version, attempt_number,
+			status, lease_until, candidate, finished_at
+		) VALUES (
+			$1, 'target-confirmed', 1, 1, 'succeeded',
+			transaction_timestamp(), $2, transaction_timestamp()
+		)
+	`, actor.UserID, candidateDocument); err != nil {
+		t.Fatalf("seed confirmed JobTarget analysis: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO preparation_job_target_confirmations (
+			owner_user_id, target_id, input_version, analysis_version,
+			confirmation_version, candidate, input_snapshot
+		) VALUES ($1, 'target-confirmed', 1, 1, 1, $2, $3)
+	`, actor.UserID, candidateDocument, inputDocument); err != nil {
+		t.Fatalf("seed confirmed JobTarget confirmation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO preparation_job_targets (
+			owner_user_id, target_id, source_kind, job_title,
+			input_version, stage
+		) VALUES (
+			$1, 'target-unconfirmed', 'quick_start', 'Draft role', 1, 'draft'
+		)
+	`, actor.UserID); err != nil {
+		t.Fatalf("seed unconfirmed JobTarget: %v", err)
+	}
+
+	request := preparation.CreateProfileRequest{
+		BackgroundSummary:            "Built reliable Go services.",
+		JobTargetID:                  "target-confirmed",
+		JobTargetConfirmationVersion: 1,
+	}
+	profile, replayed, err := repository.CreateProfile(
+		ctx,
+		actor,
+		preparation.CreateProfileCommand{
+			ProfileID: "profile-targeted",
+			Request:   request,
+			Intent: profileIntent(
+				"profile-targeted-key",
+				request,
+			),
+		},
+	)
+	if err != nil || replayed {
+		t.Fatalf("CreateProfile = (%+v, %t, %v)", profile, replayed, err)
+	}
+	snapshotRequest := preparation.CreateSnapshotRequest{SourceVersion: 1}
+	snapshot, replayed, err := repository.CreateSnapshot(
+		ctx,
+		actor,
+		preparation.CreateSnapshotCommand{
+			SnapshotID: "snapshot-targeted",
+			ProfileID:  profile.ID,
+			Request:    snapshotRequest,
+			Intent: snapshotIntent(
+				profile.ID,
+				"snapshot-targeted-key",
+				snapshotRequest,
+			),
+		},
+	)
+	if err != nil || replayed {
+		t.Fatalf("CreateSnapshot = (%+v, %t, %v)", snapshot, replayed, err)
+	}
+	if snapshot.SourceJobTargetID != request.JobTargetID ||
+		snapshot.SourceJobTargetConfirmationVersion != 1 ||
+		!reflect.DeepEqual(snapshot.JobTargetInputSnapshot, &input) ||
+		!reflect.DeepEqual(
+			snapshot.JobTargetCandidateSnapshot,
+			&candidate,
+		) {
+		t.Fatalf("targeted Snapshot = %+v", snapshot)
+	}
+
+	unconfirmedRequest := request
+	unconfirmedRequest.JobTargetID = "target-unconfirmed"
+	if _, _, err := repository.CreateProfile(
+		ctx,
+		actor,
+		preparation.CreateProfileCommand{
+			ProfileID: "profile-unconfirmed",
+			Request:   unconfirmedRequest,
+			Intent: profileIntent(
+				"profile-unconfirmed-key",
+				unconfirmedRequest,
+			),
+		},
+	); !errors.Is(err, preparation.ErrProfileNotFound) {
+		t.Fatalf("unconfirmed JobTarget error = %v", err)
+	}
+}
+
 func TestPostgresProfileRepositoryPersistsReplaysAndScopesResources(
 	t *testing.T,
 ) {

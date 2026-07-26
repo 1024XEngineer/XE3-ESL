@@ -55,12 +55,15 @@ type PlanCatalogRequest struct {
 	ScenarioConfigID          string
 	ScenarioConfigVersion     int
 	SelectedRoleIDs           []string
+	PracticeOptionID          string
+	PracticeOptionVersion     int
 }
 
 type PlanCatalogSelection struct {
 	ScenarioDefinition persistence.ScenarioDefinitionSnapshot
 	ScenarioConfig     persistence.ScenarioConfigSnapshot
 	SelectedRoles      []persistence.RoleSnapshot
+	PracticeOption     persistence.PracticeOptionSnapshot
 }
 
 type SessionCatalogRequest struct {
@@ -155,45 +158,109 @@ func (a *ContextApplication) CreatePlan(
 		anchor.MatterID != request.MatterID {
 		return persistence.Plan{}, false, persistence.ErrConflict
 	}
-	profile, err := a.preparation.ReadPreparationProfile(
-		ctx,
-		actor,
-		request.PreparationProfileID,
-	)
-	if err != nil {
-		return persistence.Plan{}, false, err
-	}
-	if profile.ID != request.PreparationProfileID || profile.Version < 1 {
-		return persistence.Plan{}, false, persistence.ErrNotFound
-	}
-	catalog, err := a.catalog.ReadPlanCatalog(PlanCatalogRequest{
+
+	profileID := request.PreparationProfileID
+	catalogRequest := PlanCatalogRequest{
 		ScenarioDefinitionID:      request.ScenarioDefinitionID,
 		ScenarioDefinitionVersion: request.ScenarioDefinitionVersion,
 		ScenarioConfigID:          request.ScenarioConfigID,
 		ScenarioConfigVersion:     request.ScenarioConfigVersion,
 		SelectedRoleIDs:           cloneStrings(request.SelectedRoleIDs),
-	})
+	}
+	var preparationSnapshot *persistence.PreparationSnapshot
+	targeted := request.PreparationSnapshotID != ""
+	if targeted {
+		snapshot, readErr := a.preparation.ReadPreparationSnapshot(
+			ctx,
+			actor,
+			request.PreparationSnapshotID,
+		)
+		if readErr != nil {
+			return persistence.Plan{}, false, readErr
+		}
+		if !validTargetedPreparationSnapshot(snapshot) {
+			return persistence.Plan{}, false, persistence.ErrConflict
+		}
+		profileID = snapshot.SourceProfileID
+		if request.PreparationProfileID != "" &&
+			request.PreparationProfileID != profileID {
+			return persistence.Plan{}, false, persistence.ErrConflict
+		}
+		recommendation := snapshot.JobTargetCandidateSnapshot.
+			CatalogRecommendation
+		catalogRequest = PlanCatalogRequest{
+			ScenarioDefinitionID: recommendation.ScenarioDefinitionID,
+			ScenarioDefinitionVersion: recommendation.
+				ScenarioDefinitionVersion,
+			SelectedRoleIDs: cloneStrings(
+				recommendation.SelectedRoleIDs,
+			),
+			PracticeOptionID: recommendation.PracticeOptionID,
+			PracticeOptionVersion: recommendation.
+				PracticeOptionVersion,
+		}
+		preparationCopy := clonePreparationSnapshot(snapshot)
+		preparationSnapshot = &preparationCopy
+	} else {
+		profile, readErr := a.preparation.ReadPreparationProfile(
+			ctx,
+			actor,
+			profileID,
+		)
+		if readErr != nil {
+			return persistence.Plan{}, false, readErr
+		}
+		if profile.ID != profileID || profile.Version < 1 {
+			return persistence.Plan{}, false, persistence.ErrNotFound
+		}
+	}
+
+	catalog, err := a.catalog.ReadPlanCatalog(catalogRequest)
 	if err != nil {
 		return persistence.Plan{}, false, err
 	}
-	if !validPlanCatalogSelection(request, catalog) {
+	if !validPlanCatalogSelection(catalogRequest, catalog) ||
+		(targeted && !compatibleTargetedPlanRequest(request, catalog)) {
+		return persistence.Plan{}, false, persistence.ErrConflict
+	}
+	if targeted && catalog.ScenarioDefinition.Type == "INTERVIEW" &&
+		len(catalog.SelectedRoles) != 1 {
 		return persistence.Plan{}, false, persistence.ErrConflict
 	}
 	planID, err := a.ids.NewID()
 	if err != nil {
 		return persistence.Plan{}, false, persistence.ErrConflict
 	}
+	var (
+		catalogSnapshot *persistence.PlanCatalogSnapshot
+		sessionPolicy   *persistence.ContextSessionPolicy
+		practiceFocuses []persistence.PracticeObjective
+	)
+	if targeted {
+		catalogValue := planCatalogSnapshot(catalog)
+		policyValue := defaultContextSessionPolicy(
+			catalog.ScenarioConfig,
+			catalog.PracticeOption,
+		)
+		catalogSnapshot = &catalogValue
+		sessionPolicy = &policyValue
+		practiceFocuses = contextPracticeFocuses(catalog.SelectedRoles)
+	}
 	return a.repository.CreatePlan(ctx, contextActor(actor), persistence.CreatePlanCommand{
 		PlanID:                    planID,
 		AgentThreadID:             request.AgentThreadID,
 		MatterID:                  request.MatterID,
-		ScenarioDefinitionID:      request.ScenarioDefinitionID,
-		ScenarioDefinitionVersion: request.ScenarioDefinitionVersion,
+		ScenarioDefinitionID:      catalog.ScenarioDefinition.ID,
+		ScenarioDefinitionVersion: catalog.ScenarioDefinition.Version,
 		ScenarioType:              catalog.ScenarioDefinition.Type,
-		ScenarioConfigID:          request.ScenarioConfigID,
-		ScenarioConfigVersion:     request.ScenarioConfigVersion,
-		PreparationProfileID:      request.PreparationProfileID,
-		SelectedRoleIDs:           cloneStrings(request.SelectedRoleIDs),
+		ScenarioConfigID:          catalog.ScenarioConfig.ID,
+		ScenarioConfigVersion:     catalog.ScenarioConfig.Version,
+		PreparationProfileID:      profileID,
+		SelectedRoleIDs:           roleSnapshotIDs(catalog.SelectedRoles),
+		PreparationSnapshot:       preparationSnapshot,
+		CatalogSnapshot:           catalogSnapshot,
+		SessionPolicy:             sessionPolicy,
+		PracticeFocuses:           practiceFocuses,
 		Intent:                    intent,
 	})
 }
@@ -207,6 +274,95 @@ func (a *ContextApplication) GetPlan(
 		return persistence.Plan{}, persistence.ErrNotFound
 	}
 	return a.repository.GetPlan(ctx, contextActor(actor), planID)
+}
+
+func (a *ContextApplication) UpdatePlan(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	planID string,
+	idempotencyKey string,
+	request UpdatePlanRequest,
+) (persistence.Plan, bool, error) {
+	if ctx == nil || !actor.Valid() || !validContextResourceID(planID) ||
+		!validUpdatePlanRequest(request) {
+		return persistence.Plan{}, false, persistence.ErrInvalidArgument
+	}
+	intent, err := newContextIntent(
+		"PUT",
+		"/v1/practice-plans/"+planID,
+		idempotencyKey,
+		request,
+	)
+	if err != nil {
+		return persistence.Plan{}, false, err
+	}
+	replayed, found, err := a.repository.ReplayPlan(
+		ctx,
+		contextActor(actor),
+		intent,
+	)
+	if err != nil {
+		return persistence.Plan{}, false, err
+	}
+	if found {
+		return replayed, true, nil
+	}
+	plan, err := a.repository.GetPlan(ctx, contextActor(actor), planID)
+	if err != nil {
+		return persistence.Plan{}, false, err
+	}
+	if plan.Status != persistence.PlanStatusReady ||
+		plan.Revision != request.ExpectedPlanRevision ||
+		plan.PreparationSnapshot == nil ||
+		plan.CatalogSnapshot == nil ||
+		plan.SessionPolicy == nil {
+		return persistence.Plan{}, false, persistence.ErrConflict
+	}
+	catalogRequest := PlanCatalogRequest{
+		ScenarioDefinitionID:      plan.ScenarioDefinitionID,
+		ScenarioDefinitionVersion: plan.ScenarioDefinitionVersion,
+		ScenarioConfigID:          plan.ScenarioConfigID,
+		ScenarioConfigVersion:     plan.ScenarioConfigVersion,
+		SelectedRoleIDs:           cloneStrings(request.SelectedRoleIDs),
+		PracticeOptionID:          request.PracticeOptionID,
+		PracticeOptionVersion:     request.PracticeOptionVersion,
+	}
+	catalog, err := a.catalog.ReadPlanCatalog(catalogRequest)
+	if err != nil {
+		return persistence.Plan{}, false, err
+	}
+	if !validPlanCatalogSelection(catalogRequest, catalog) {
+		return persistence.Plan{}, false, persistence.ErrConflict
+	}
+	if catalog.ScenarioDefinition.Type == "INTERVIEW" &&
+		len(catalog.SelectedRoles) != 1 {
+		return persistence.Plan{}, false, persistence.ErrConflict
+	}
+	policy, ok := adjustedContextSessionPolicy(
+		defaultContextSessionPolicy(
+			catalog.ScenarioConfig,
+			catalog.PracticeOption,
+		),
+		request.MaxEffectiveTurns,
+	)
+	if !ok {
+		return persistence.Plan{}, false, persistence.ErrConflict
+	}
+	return a.repository.UpdatePlan(
+		ctx,
+		contextActor(actor),
+		persistence.UpdatePlanCommand{
+			PlanID:               planID,
+			ExpectedPlanRevision: request.ExpectedPlanRevision,
+			SelectedRoleIDs:      roleSnapshotIDs(catalog.SelectedRoles),
+			CatalogSnapshot:      planCatalogSnapshot(catalog),
+			SessionPolicy:        policy,
+			PracticeFocuses: contextPracticeFocuses(
+				catalog.SelectedRoles,
+			),
+			Intent: intent,
+		},
+	)
 }
 
 func (a *ContextApplication) CreateSession(
@@ -249,6 +405,15 @@ func (a *ContextApplication) CreateSession(
 		plan.Revision != request.ExpectedPlanRevision {
 		return persistence.ContextSessionBootstrap{}, false,
 			persistence.ErrConflict
+	}
+	if completeTargetedPlanPreview(plan) {
+		return a.createTargetedContextSession(
+			ctx,
+			actor,
+			plan,
+			request,
+			intent,
+		)
 	}
 	if plan.ScenarioType == "INTERVIEW" &&
 		len(request.RoleDefinitionIDs) != 1 {
@@ -326,6 +491,62 @@ func (a *ContextApplication) CreateSession(
 			PlanID:                plan.ID,
 			ExpectedPlanRevision:  request.ExpectedPlanRevision,
 			PreparationSnapshotID: request.PreparationSnapshotID,
+			Snapshot:              snapshot,
+			Intent:                intent,
+		},
+	)
+}
+
+func (a *ContextApplication) createTargetedContextSession(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	plan persistence.Plan,
+	request CreateSessionRequest,
+	intent persistence.ContextIdempotencyIntent,
+) (persistence.ContextSessionBootstrap, bool, error) {
+	if !compatibleTargetedStartRequest(plan, request) {
+		return persistence.ContextSessionBootstrap{}, false,
+			persistence.ErrConflict
+	}
+	catalog := *plan.CatalogSnapshot
+	if plan.ScenarioType == "INTERVIEW" &&
+		len(catalog.SelectedRoles) != 1 {
+		return persistence.ContextSessionBootstrap{}, false,
+			persistence.ErrConflict
+	}
+	sessionID, snapshotID, participants, err := a.newSessionIdentities(
+		actor,
+		catalog.SelectedRoles,
+	)
+	if err != nil {
+		return persistence.ContextSessionBootstrap{}, false, err
+	}
+	snapshot := persistence.ContextSessionSnapshot{
+		ID:                 snapshotID,
+		SessionID:          sessionID,
+		PlanRevision:       plan.Revision,
+		ScenarioType:       plan.ScenarioType,
+		ScenarioDefinition: catalog.ScenarioDefinition,
+		ScenarioConfig:     cloneScenarioConfigSnapshot(catalog.ScenarioConfig),
+		Preparation: clonePreparationSnapshot(
+			*plan.PreparationSnapshot,
+		),
+		Participants:   participants,
+		PracticeOption: catalog.PracticeOption,
+		SessionPolicy:  cloneContextSessionPolicy(*plan.SessionPolicy),
+		PracticeFocuses: clonePracticeObjectives(
+			plan.PracticeFocuses,
+		),
+	}
+	return a.repository.CreateContextSession(
+		ctx,
+		contextActor(actor),
+		persistence.CreateContextSessionCommand{
+			SessionID:             sessionID,
+			SnapshotID:            snapshotID,
+			PlanID:                plan.ID,
+			ExpectedPlanRevision:  request.ExpectedPlanRevision,
+			PreparationSnapshotID: plan.PreparationSnapshot.ID,
 			Snapshot:              snapshot,
 			Intent:                intent,
 		},
@@ -466,7 +687,8 @@ func newContextIntent(
 	key string,
 	payload any,
 ) (persistence.ContextIdempotencyIntent, error) {
-	if method != "POST" || !validContextResourcePath(path) ||
+	if (method != "POST" && method != "PUT") ||
+		!validContextResourcePath(path) ||
 		!validContextIdempotencyKey(key) {
 		return persistence.ContextIdempotencyIntent{},
 			persistence.ErrInvalidArgument
@@ -485,37 +707,71 @@ func newContextIntent(
 }
 
 func validCreatePlanRequest(request CreatePlanRequest) bool {
-	return validContextResourceID(request.AgentThreadID) &&
-		validContextResourceID(request.MatterID) &&
-		validContextResourceID(request.ScenarioDefinitionID) &&
-		request.ScenarioDefinitionVersion > 0 &&
-		validContextResourceID(request.ScenarioConfigID) &&
-		request.ScenarioConfigVersion > 0 &&
-		validContextResourceID(request.PreparationProfileID) &&
-		validUniqueContextIDs(request.SelectedRoleIDs)
+	if !validContextResourceID(request.AgentThreadID) ||
+		!validContextResourceID(request.MatterID) {
+		return false
+	}
+	if request.PreparationSnapshotID == "" {
+		return validContextResourceID(request.ScenarioDefinitionID) &&
+			request.ScenarioDefinitionVersion > 0 &&
+			validContextResourceID(request.ScenarioConfigID) &&
+			request.ScenarioConfigVersion > 0 &&
+			validContextResourceID(request.PreparationProfileID) &&
+			validUniqueContextIDs(request.SelectedRoleIDs)
+	}
+	if !validContextResourceID(request.PreparationSnapshotID) ||
+		(request.PreparationProfileID != "" &&
+			!validContextResourceID(request.PreparationProfileID)) ||
+		(len(request.SelectedRoleIDs) > 0 &&
+			!validUniqueContextIDs(request.SelectedRoleIDs)) {
+		return false
+	}
+	scenarioEmpty := request.ScenarioDefinitionID == "" &&
+		request.ScenarioDefinitionVersion == 0
+	scenarioValid := validContextResourceID(request.ScenarioDefinitionID) &&
+		request.ScenarioDefinitionVersion > 0
+	configEmpty := request.ScenarioConfigID == "" &&
+		request.ScenarioConfigVersion == 0
+	configValid := validContextResourceID(request.ScenarioConfigID) &&
+		request.ScenarioConfigVersion > 0
+	return (scenarioEmpty || scenarioValid) && (configEmpty || configValid)
+}
+
+func validUpdatePlanRequest(request UpdatePlanRequest) bool {
+	return request.ExpectedPlanRevision > 0 &&
+		validUniqueContextIDs(request.SelectedRoleIDs) &&
+		validContextResourceID(request.PracticeOptionID) &&
+		request.PracticeOptionVersion > 0 &&
+		request.MaxEffectiveTurns > 0
 }
 
 func validCreateSessionRequest(request CreateSessionRequest) bool {
 	return request.ExpectedPlanRevision > 0 &&
-		validContextResourceID(request.PreparationSnapshotID) &&
-		validContextResourceID(request.PracticeOptionID) &&
-		validUniqueContextIDs(request.RoleDefinitionIDs)
+		(request.PreparationSnapshotID == "" ||
+			validContextResourceID(request.PreparationSnapshotID)) &&
+		(request.PracticeOptionID == "" ||
+			validContextResourceID(request.PracticeOptionID)) &&
+		(len(request.RoleDefinitionIDs) == 0 ||
+			validUniqueContextIDs(request.RoleDefinitionIDs))
 }
 
 func validPlanCatalogSelection(
-	request CreatePlanRequest,
+	request PlanCatalogRequest,
 	selection PlanCatalogSelection,
 ) bool {
 	if selection.ScenarioDefinition.ID != request.ScenarioDefinitionID ||
 		selection.ScenarioDefinition.Version !=
 			request.ScenarioDefinitionVersion ||
 		selection.ScenarioDefinition.Status != "active" ||
-		selection.ScenarioConfig.ID != request.ScenarioConfigID ||
-		selection.ScenarioConfig.Version != request.ScenarioConfigVersion ||
 		selection.ScenarioConfig.ScenarioDefinitionID !=
 			request.ScenarioDefinitionID ||
 		selection.ScenarioConfig.Type != selection.ScenarioDefinition.Type ||
 		len(selection.SelectedRoles) != len(request.SelectedRoleIDs) {
+		return false
+	}
+	if request.ScenarioConfigID != "" &&
+		(selection.ScenarioConfig.ID != request.ScenarioConfigID ||
+			selection.ScenarioConfig.Version != request.ScenarioConfigVersion) {
 		return false
 	}
 	for index, role := range selection.SelectedRoles {
@@ -525,7 +781,26 @@ func validPlanCatalogSelection(
 			return false
 		}
 	}
-	return true
+	if selection.PracticeOption.ScenarioDefinitionID !=
+		request.ScenarioDefinitionID ||
+		selection.PracticeOption.Version < 1 {
+		return false
+	}
+	if request.PracticeOptionID != "" &&
+		selection.PracticeOption.ID != request.PracticeOptionID {
+		return false
+	}
+	if request.PracticeOptionVersion > 0 &&
+		selection.PracticeOption.Version != request.PracticeOptionVersion {
+		return false
+	}
+	if selection.PracticeOption.Type == "FOCUS" {
+		return len(selection.SelectedRoles) == 1 &&
+			selection.PracticeOption.RoleDefinitionID ==
+				selection.SelectedRoles[0].ID
+	}
+	return selection.PracticeOption.Type == "FULL_SIMULATION" &&
+		selection.PracticeOption.RoleDefinitionID == ""
 }
 
 func validSessionCatalogSelection(
@@ -533,15 +808,13 @@ func validSessionCatalogSelection(
 	request CreateSessionRequest,
 	selection SessionCatalogSelection,
 ) bool {
-	if !validPlanCatalogSelection(CreatePlanRequest{
-		AgentThreadID:             plan.AgentThreadID,
-		MatterID:                  plan.MatterID,
+	if !validPlanCatalogSelection(PlanCatalogRequest{
 		ScenarioDefinitionID:      plan.ScenarioDefinitionID,
 		ScenarioDefinitionVersion: plan.ScenarioDefinitionVersion,
 		ScenarioConfigID:          plan.ScenarioConfigID,
 		ScenarioConfigVersion:     plan.ScenarioConfigVersion,
-		PreparationProfileID:      plan.PreparationProfileID,
 		SelectedRoleIDs:           request.RoleDefinitionIDs,
+		PracticeOptionID:          request.PracticeOptionID,
 	}, selection.PlanCatalogSelection) {
 		return false
 	}
@@ -565,6 +838,232 @@ func validSessionCatalogSelection(
 			plan.ScenarioDefinitionID &&
 		selection.PracticeOption.Version > 0 &&
 		focusMatches
+}
+
+func compatibleTargetedPlanRequest(
+	request CreatePlanRequest,
+	selection PlanCatalogSelection,
+) bool {
+	if request.ScenarioDefinitionID != "" &&
+		(request.ScenarioDefinitionID != selection.ScenarioDefinition.ID ||
+			request.ScenarioDefinitionVersion !=
+				selection.ScenarioDefinition.Version) {
+		return false
+	}
+	if request.ScenarioConfigID != "" &&
+		(request.ScenarioConfigID != selection.ScenarioConfig.ID ||
+			request.ScenarioConfigVersion != selection.ScenarioConfig.Version) {
+		return false
+	}
+	return len(request.SelectedRoleIDs) == 0 ||
+		equalContextStrings(
+			request.SelectedRoleIDs,
+			roleSnapshotIDs(selection.SelectedRoles),
+		)
+}
+
+func validTargetedPreparationSnapshot(
+	snapshot persistence.PreparationSnapshot,
+) bool {
+	if !validContextResourceID(snapshot.ID) ||
+		!validContextResourceID(snapshot.SourceProfileID) ||
+		snapshot.SourceVersion < 1 ||
+		!validContextResourceID(snapshot.SourceJobTargetID) ||
+		snapshot.SourceJobTargetConfirmationVersion < 1 ||
+		snapshot.JobTargetInputSnapshot == nil ||
+		snapshot.JobTargetCandidateSnapshot == nil ||
+		strings.TrimSpace(snapshot.BackgroundSnapshot) == "" ||
+		snapshot.CreatedAt.IsZero() {
+		return false
+	}
+	input := snapshot.JobTargetInputSnapshot
+	candidate := snapshot.JobTargetCandidateSnapshot
+	recommendation := candidate.CatalogRecommendation
+	sourceShape := (candidate.Source == "quick_start" &&
+		candidate.GeneralAdviceOnly &&
+		strings.TrimSpace(input.JobTitle) != "" &&
+		input.JobDescription == "") ||
+		(candidate.Source == "job_description" &&
+			!candidate.GeneralAdviceOnly &&
+			strings.TrimSpace(input.JobDescription) != "")
+	return input.Source == candidate.Source &&
+		(candidate.Source == "job_description" ||
+			candidate.Source == "quick_start") &&
+		sourceShape &&
+		strings.TrimSpace(candidate.JobTitle) != "" &&
+		strings.TrimSpace(candidate.Seniority) != "" &&
+		strings.TrimSpace(candidate.ScopeNotice) != "" &&
+		validNonBlankContextTexts(candidate.Responsibilities) &&
+		validNonBlankContextTexts(candidate.CoreSkills) &&
+		validNonBlankContextTexts(candidate.CommunicationFocus) &&
+		validNonBlankContextTexts(candidate.PracticeGoals) &&
+		validContextResourceID(recommendation.ScenarioDefinitionID) &&
+		recommendation.ScenarioDefinitionVersion > 0 &&
+		validUniqueContextIDs(recommendation.SelectedRoleIDs) &&
+		validContextResourceID(recommendation.PracticeOptionID) &&
+		recommendation.PracticeOptionVersion > 0
+}
+
+func completeTargetedPlanPreview(plan persistence.Plan) bool {
+	if plan.PreparationSnapshot == nil ||
+		plan.CatalogSnapshot == nil ||
+		plan.SessionPolicy == nil ||
+		!validTargetedPreparationSnapshot(*plan.PreparationSnapshot) ||
+		len(plan.PracticeFocuses) == 0 {
+		return false
+	}
+	catalog := plan.CatalogSnapshot
+	return plan.PreparationSnapshot.SourceProfileID ==
+		plan.PreparationProfileID &&
+		catalog.ScenarioDefinition.ID == plan.ScenarioDefinitionID &&
+		catalog.ScenarioDefinition.Version ==
+			plan.ScenarioDefinitionVersion &&
+		catalog.ScenarioConfig.ID == plan.ScenarioConfigID &&
+		catalog.ScenarioConfig.Version == plan.ScenarioConfigVersion &&
+		equalContextStrings(
+			roleSnapshotIDs(catalog.SelectedRoles),
+			plan.SelectedRoleIDs,
+		)
+}
+
+func compatibleTargetedStartRequest(
+	plan persistence.Plan,
+	request CreateSessionRequest,
+) bool {
+	if request.PreparationSnapshotID != "" &&
+		request.PreparationSnapshotID != plan.PreparationSnapshot.ID {
+		return false
+	}
+	if request.PracticeOptionID != "" &&
+		request.PracticeOptionID != plan.CatalogSnapshot.PracticeOption.ID {
+		return false
+	}
+	return len(request.RoleDefinitionIDs) == 0 ||
+		equalContextStrings(
+			request.RoleDefinitionIDs,
+			plan.SelectedRoleIDs,
+		)
+}
+
+func adjustedContextSessionPolicy(
+	recommended persistence.ContextSessionPolicy,
+	maxEffectiveTurns int,
+) (persistence.ContextSessionPolicy, bool) {
+	if maxEffectiveTurns < recommended.MinEffectiveTurns ||
+		maxEffectiveTurns > recommended.MaxEffectiveTurns {
+		return persistence.ContextSessionPolicy{}, false
+	}
+	result := cloneContextSessionPolicy(recommended)
+	result.MaxEffectiveTurns = maxEffectiveTurns
+	if result.CoverageCheckpointTurn > maxEffectiveTurns {
+		result.CoverageCheckpointTurn = maxEffectiveTurns
+	}
+	return result, true
+}
+
+func planCatalogSnapshot(
+	selection PlanCatalogSelection,
+) persistence.PlanCatalogSnapshot {
+	return persistence.PlanCatalogSnapshot{
+		ScenarioDefinition: selection.ScenarioDefinition,
+		ScenarioConfig: cloneScenarioConfigSnapshot(
+			selection.ScenarioConfig,
+		),
+		SelectedRoles:  cloneRoleSnapshots(selection.SelectedRoles),
+		PracticeOption: selection.PracticeOption,
+	}
+}
+
+func roleSnapshotIDs(roles []persistence.RoleSnapshot) []string {
+	ids := make([]string, len(roles))
+	for index, role := range roles {
+		ids[index] = role.ID
+	}
+	return ids
+}
+
+func clonePreparationSnapshot(
+	source persistence.PreparationSnapshot,
+) persistence.PreparationSnapshot {
+	result := source
+	if source.JobTargetInputSnapshot != nil {
+		input := *source.JobTargetInputSnapshot
+		result.JobTargetInputSnapshot = &input
+	}
+	if source.JobTargetCandidateSnapshot != nil {
+		candidate := *source.JobTargetCandidateSnapshot
+		candidate.Responsibilities = cloneStrings(source.
+			JobTargetCandidateSnapshot.Responsibilities)
+		candidate.CoreSkills = cloneStrings(source.
+			JobTargetCandidateSnapshot.CoreSkills)
+		candidate.CommunicationFocus = cloneStrings(source.
+			JobTargetCandidateSnapshot.CommunicationFocus)
+		candidate.PracticeGoals = cloneStrings(source.
+			JobTargetCandidateSnapshot.PracticeGoals)
+		candidate.CatalogRecommendation.SelectedRoleIDs = cloneStrings(
+			source.JobTargetCandidateSnapshot.
+				CatalogRecommendation.SelectedRoleIDs,
+		)
+		result.JobTargetCandidateSnapshot = &candidate
+	}
+	return result
+}
+
+func cloneScenarioConfigSnapshot(
+	source persistence.ScenarioConfigSnapshot,
+) persistence.ScenarioConfigSnapshot {
+	result := source
+	result.FocusAreas = cloneStrings(source.FocusAreas)
+	return result
+}
+
+func cloneRoleSnapshots(
+	source []persistence.RoleSnapshot,
+) []persistence.RoleSnapshot {
+	result := make([]persistence.RoleSnapshot, len(source))
+	for index, role := range source {
+		result[index] = role
+		result[index].FocusAreas = cloneStrings(role.FocusAreas)
+	}
+	return result
+}
+
+func clonePracticeObjectives(
+	source []persistence.PracticeObjective,
+) []persistence.PracticeObjective {
+	return append([]persistence.PracticeObjective(nil), source...)
+}
+
+func cloneContextSessionPolicy(
+	source persistence.ContextSessionPolicy,
+) persistence.ContextSessionPolicy {
+	result := source
+	result.TargetObjectives = clonePracticeObjectives(source.TargetObjectives)
+	return result
+}
+
+func equalContextStrings(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func validNonBlankContextTexts(values []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	for _, value := range values {
+		if value == "" || strings.TrimSpace(value) != value {
+			return false
+		}
+	}
+	return true
 }
 
 func defaultContextSessionPolicy(

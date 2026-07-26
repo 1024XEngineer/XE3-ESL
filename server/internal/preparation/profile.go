@@ -28,26 +28,32 @@ const (
 
 // Profile is Preparation's production, actor-owned profile record.
 type Profile struct {
-	ID                string    `json:"preparation_profile_id"`
-	UserID            string    `json:"user_id"`
-	ResumeRef         string    `json:"resume_ref,omitempty"`
-	JobDescriptionRef string    `json:"job_description_ref,omitempty"`
-	BackgroundSummary string    `json:"background_summary"`
-	Version           int       `json:"version"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                           string    `json:"preparation_profile_id"`
+	UserID                       string    `json:"user_id"`
+	ResumeRef                    string    `json:"resume_ref,omitempty"`
+	JobDescriptionRef            string    `json:"job_description_ref,omitempty"`
+	BackgroundSummary            string    `json:"background_summary"`
+	JobTargetID                  string    `json:"job_target_id,omitempty"`
+	JobTargetConfirmationVersion int       `json:"job_target_confirmation_version,omitempty"`
+	Version                      int       `json:"version"`
+	UpdatedAt                    time.Time `json:"updated_at"`
 }
 
 // Snapshot is an immutable copy of the exact Profile version accepted by the
 // create request. Optional source references are copied as frozen values; no
 // later Profile or external reference change can reinterpret this record.
 type Snapshot struct {
-	ID                     string    `json:"preparation_snapshot_id"`
-	SourceProfileID        string    `json:"source_profile_id"`
-	SourceVersion          int       `json:"source_version"`
-	ResumeSnapshot         string    `json:"resume_snapshot,omitempty"`
-	JobDescriptionSnapshot string    `json:"job_description_snapshot,omitempty"`
-	BackgroundSnapshot     string    `json:"background_snapshot"`
-	CreatedAt              time.Time `json:"created_at"`
+	ID                                 string              `json:"preparation_snapshot_id"`
+	SourceProfileID                    string              `json:"source_profile_id"`
+	SourceVersion                      int                 `json:"source_version"`
+	SourceJobTargetID                  string              `json:"source_job_target_id,omitempty"`
+	SourceJobTargetConfirmationVersion int                 `json:"source_job_target_confirmation_version,omitempty"`
+	JobTargetInputSnapshot             *JobTargetInput     `json:"job_target_input_snapshot,omitempty"`
+	JobTargetCandidateSnapshot         *JobTargetCandidate `json:"job_target_candidate_snapshot,omitempty"`
+	ResumeSnapshot                     string              `json:"resume_snapshot,omitempty"`
+	JobDescriptionSnapshot             string              `json:"job_description_snapshot,omitempty"`
+	BackgroundSnapshot                 string              `json:"background_snapshot"`
+	CreatedAt                          time.Time           `json:"created_at"`
 }
 
 // IdempotencyIntent is derived from trusted transport routing plus a canonical
@@ -290,7 +296,11 @@ func newPreparationIntent(
 }
 
 func validCreateProfileRequest(request CreateProfileRequest) bool {
-	return validOptionalPreparationText(
+	targetPairValid := (request.JobTargetID == "" &&
+		request.JobTargetConfirmationVersion == 0) ||
+		(validResourceIdentifier(request.JobTargetID) &&
+			request.JobTargetConfirmationVersion > 0)
+	return targetPairValid && validOptionalPreparationText(
 		request.ResumeRef,
 		maxPreparationReferenceLength,
 	) &&
@@ -302,6 +312,31 @@ func validCreateProfileRequest(request CreateProfileRequest) bool {
 			request.BackgroundSummary,
 			maxPreparationSummaryLength,
 		)
+}
+
+func targetedPreparationSnapshot(snapshot Snapshot) bool {
+	return validResourceIdentifier(snapshot.SourceJobTargetID) &&
+		snapshot.SourceJobTargetConfirmationVersion > 0 &&
+		snapshot.JobTargetInputSnapshot != nil &&
+		snapshot.JobTargetCandidateSnapshot != nil
+}
+
+func cloneSnapshotJobTargetInput(input *JobTargetInput) *JobTargetInput {
+	if input == nil {
+		return nil
+	}
+	result := *input
+	return &result
+}
+
+func cloneSnapshotJobTargetCandidate(
+	candidate *JobTargetCandidate,
+) *JobTargetCandidate {
+	if candidate == nil {
+		return nil
+	}
+	result := cloneJobTargetCandidate(*candidate)
+	return &result
 }
 
 func validOptionalPreparationText(value string, maxLength int) bool {

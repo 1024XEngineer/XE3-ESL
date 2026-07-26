@@ -35,6 +35,13 @@ type ContextHTTPApplication interface {
 		requestcontext.Actor,
 		string,
 	) (persistence.Plan, error)
+	UpdatePlan(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+		UpdatePlanRequest,
+	) (persistence.Plan, bool, error)
 	CreateSession(
 		context.Context,
 		requestcontext.Actor,
@@ -79,6 +86,7 @@ func NewContextHTTPHandler(
 func (h *ContextHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST("/v1/practice-plans", h.createPlan)
 	routes.GET("/v1/practice-plans/:practice_plan_id", h.getPlan)
+	routes.PUT("/v1/practice-plans/:practice_plan_id", h.updatePlan)
 	routes.POST(
 		"/v1/practice-plans/:practice_plan_id/practice-sessions",
 		h.createSession,
@@ -167,6 +175,55 @@ func (h *ContextHTTPHandler) getPlan(c *gin.Context) {
 	)
 	if err != nil {
 		writePracticeContextReadError(c, err, "practice_plan_not_found")
+		return
+	}
+	c.JSON(http.StatusOK, plan)
+}
+
+func (h *ContextHTTPHandler) updatePlan(c *gin.Context) {
+	setPracticeContextPrivateResponseHeaders(c)
+	actor, ok := practiceContextActor(c)
+	if !ok {
+		writePracticeContextAuthenticationRequired(c)
+		return
+	}
+	idempotencyKey, ok := practiceContextIdempotencyKey(c)
+	if !ok {
+		writePracticeContextHTTPError(
+			c,
+			http.StatusBadRequest,
+			"invalid_request",
+		)
+		return
+	}
+	planID := c.Param("practice_plan_id")
+	if !validContextResourceID(planID) {
+		writePracticeContextHTTPError(
+			c,
+			http.StatusBadRequest,
+			"invalid_request",
+		)
+		return
+	}
+	var request UpdatePlanRequest
+	if !decodePracticeContextJSONObject(c, &request) ||
+		!validUpdatePlanRequest(request) {
+		writePracticeContextHTTPError(
+			c,
+			http.StatusBadRequest,
+			"invalid_request",
+		)
+		return
+	}
+	plan, _, err := h.application.UpdatePlan(
+		c.Request.Context(),
+		actor,
+		planID,
+		idempotencyKey,
+		request,
+	)
+	if err != nil {
+		writePracticeContextServiceError(c, err, "practice_plan_not_found")
 		return
 	}
 	c.JSON(http.StatusOK, plan)

@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -201,6 +202,27 @@ func TestContextRepositoryPersistsExactRecoverableAggregate(t *testing.T) {
 	`, owner.Actor.UserID, "agent-thread:"+owner.ThreadID); err != nil {
 		t.Fatalf("insert legacy Session: %v", err)
 	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO practice_session_snapshots (
+			owner_user_id, session_id, mode, target_ids,
+			participants, turn_limit
+		) VALUES (
+			$1, 'legacy-session-a', 'INTERVIEW',
+			'["legacy-target"]'::jsonb, '[]'::jsonb, 4
+		)
+	`, owner.Actor.UserID); err != nil {
+		t.Fatalf("insert legacy Session Snapshot: %v", err)
+	}
+	historical, err := restarted.GetSession(
+		ctx,
+		owner.Actor,
+		"legacy-session-a",
+	)
+	if err != nil ||
+		historical.ID != "legacy-session-a" ||
+		historical.Status != persistence.SessionStatusActive {
+		t.Fatalf("recover historical #111 Session = (%+v, %v)", historical, err)
+	}
 	resolved, err = restarted.ResolveContextSessionByThread(
 		ctx,
 		owner.Actor,
@@ -286,6 +308,223 @@ func TestContextRepositoryPersistsExactRecoverableAggregate(t *testing.T) {
 	); !errors.Is(err, persistence.ErrNotFound) {
 		t.Fatalf("resolver with archived Matter error = %v", err)
 	}
+}
+
+func TestContextRepositoryPersistsPreviewRevisionAndExplicitStart(
+	t *testing.T,
+) {
+	repository, pool := newContextRepository(t)
+	ctx := context.Background()
+	owner := contextOwnerA()
+	seedContextOwner(t, pool, &owner)
+	preparation := seedTargetedContextPreparation(t, pool, &owner)
+	command := targetedContextPlanCommand(
+		owner,
+		preparation,
+		"plan-targeted",
+		"plan-targeted-intent",
+	)
+	multiRoleCreate := command
+	multiRoleCreate.PlanID = "plan-targeted-multi-role"
+	multiRoleCreate.Intent = contextIntent(
+		"/v1/practice-plans",
+		"plan-targeted-multi-role-intent",
+		"create-targeted-multi-role-plan",
+	)
+	multiRoleCatalog := *command.CatalogSnapshot
+	multiRoleCatalog.SelectedRoles = append(
+		append(
+			[]persistence.RoleSnapshot(nil),
+			command.CatalogSnapshot.SelectedRoles...,
+		),
+		contextHRRoleSnapshot(command.ScenarioDefinitionID),
+	)
+	multiRoleCreate.SelectedRoleIDs = []string{
+		"role_technical_interviewer",
+		"role_hr_interviewer",
+	}
+	multiRoleCreate.CatalogSnapshot = &multiRoleCatalog
+	multiRoleCreate.PracticeFocuses = append(
+		append(
+			[]persistence.PracticeObjective(nil),
+			command.PracticeFocuses...,
+		),
+		persistence.PracticeObjective{
+			ID:          "communication",
+			Description: "Practice communication with concrete evidence.",
+		},
+	)
+	if _, _, err := repository.CreatePlan(
+		ctx,
+		owner.Actor,
+		multiRoleCreate,
+	); !errors.Is(err, persistence.ErrInvalidArgument) {
+		t.Fatalf("multi-role targeted CreatePlan error = %v", err)
+	}
+
+	plan, replayed, err := repository.CreatePlan(
+		ctx,
+		owner.Actor,
+		command,
+	)
+	if err != nil || replayed || plan.PreparationSnapshot == nil ||
+		plan.CatalogSnapshot == nil || plan.SessionPolicy == nil ||
+		plan.Revision != 1 {
+		t.Fatalf("Create targeted Plan = (%+v, %t, %v)", plan, replayed, err)
+	}
+	assertContextRowCount(
+		t,
+		pool,
+		"practice_sessions",
+		owner.Actor.UserID,
+		0,
+	)
+	recovered, err := repository.GetPlan(ctx, owner.Actor, plan.ID)
+	if err != nil ||
+		!reflect.DeepEqual(recovered.PreparationSnapshot, &preparation) ||
+		!reflect.DeepEqual(recovered.CatalogSnapshot, plan.CatalogSnapshot) {
+		t.Fatalf("recover targeted Plan = (%+v, %v)", recovered, err)
+	}
+
+	revisedPolicy := *plan.SessionPolicy
+	revisedPolicy.MaxEffectiveTurns = 5
+	multiRoleRevision := persistence.UpdatePlanCommand{
+		PlanID:               plan.ID,
+		ExpectedPlanRevision: 1,
+		SelectedRoleIDs:      append([]string(nil), multiRoleCreate.SelectedRoleIDs...),
+		CatalogSnapshot:      multiRoleCatalog,
+		SessionPolicy:        *plan.SessionPolicy,
+		PracticeFocuses: append(
+			[]persistence.PracticeObjective(nil),
+			multiRoleCreate.PracticeFocuses...,
+		),
+		Intent: persistence.ContextIdempotencyIntent{
+			Method:             "PUT",
+			CanonicalPath:      "/v1/practice-plans/" + plan.ID,
+			Key:                "plan-targeted-multi-revision",
+			PayloadFingerprint: sha256.Sum256([]byte("multi-revision")),
+		},
+	}
+	if _, _, err := repository.UpdatePlan(
+		ctx,
+		owner.Actor,
+		multiRoleRevision,
+	); !errors.Is(err, persistence.ErrInvalidArgument) {
+		t.Fatalf("multi-role targeted UpdatePlan error = %v", err)
+	}
+	update := persistence.UpdatePlanCommand{
+		PlanID:               plan.ID,
+		ExpectedPlanRevision: 1,
+		SelectedRoleIDs:      append([]string(nil), plan.SelectedRoleIDs...),
+		CatalogSnapshot:      *plan.CatalogSnapshot,
+		SessionPolicy:        revisedPolicy,
+		PracticeFocuses: append(
+			[]persistence.PracticeObjective(nil),
+			plan.PracticeFocuses...,
+		),
+		Intent: persistence.ContextIdempotencyIntent{
+			Method:             "PUT",
+			CanonicalPath:      "/v1/practice-plans/" + plan.ID,
+			Key:                "plan-targeted-revision",
+			PayloadFingerprint: sha256.Sum256([]byte("targeted-revision")),
+		},
+	}
+	revised, replayed, err := repository.UpdatePlan(
+		ctx,
+		owner.Actor,
+		update,
+	)
+	if err != nil || replayed || revised.Revision != 2 ||
+		revised.SessionPolicy == nil ||
+		revised.SessionPolicy.MaxEffectiveTurns != 5 ||
+		!reflect.DeepEqual(
+			revised.PreparationSnapshot,
+			plan.PreparationSnapshot,
+		) {
+		t.Fatalf("Update targeted Plan = (%+v, %t, %v)", revised, replayed, err)
+	}
+	replayedRevision, replayed, err := repository.UpdatePlan(
+		ctx,
+		owner.Actor,
+		update,
+	)
+	if err != nil || !replayed ||
+		!reflect.DeepEqual(replayedRevision, revised) {
+		t.Fatalf(
+			"replay targeted Plan revision = (%+v, %t, %v)",
+			replayedRevision,
+			replayed,
+			err,
+		)
+	}
+	stale := update
+	stale.Intent.Key = "plan-targeted-stale-revision"
+	stale.Intent.PayloadFingerprint = sha256.Sum256([]byte("stale-revision"))
+	if _, _, err := repository.UpdatePlan(
+		ctx,
+		owner.Actor,
+		stale,
+	); !errors.Is(err, persistence.ErrConflict) {
+		t.Fatalf("stale Plan revision error = %v", err)
+	}
+	assertContextRowCount(
+		t,
+		pool,
+		"practice_sessions",
+		owner.Actor.UserID,
+		0,
+	)
+
+	sessionCommand := targetedContextSessionCommand(
+		owner,
+		revised,
+		"session-targeted",
+		"session-targeted-snapshot",
+		"session-targeted-intent",
+	)
+	bootstrap, replayed, err := repository.CreateContextSession(
+		ctx,
+		owner.Actor,
+		sessionCommand,
+	)
+	if err != nil || replayed ||
+		bootstrap.Snapshot.PlanRevision != revised.Revision ||
+		!reflect.DeepEqual(
+			bootstrap.Snapshot.Preparation,
+			*revised.PreparationSnapshot,
+		) ||
+		!reflect.DeepEqual(
+			bootstrap.Snapshot.SessionPolicy,
+			*revised.SessionPolicy,
+		) {
+		t.Fatalf(
+			"explicit targeted start = (%+v, %t, %v)",
+			bootstrap,
+			replayed,
+			err,
+		)
+	}
+	replayedBootstrap, replayed, err := repository.CreateContextSession(
+		ctx,
+		owner.Actor,
+		sessionCommand,
+	)
+	if err != nil || !replayed ||
+		replayedBootstrap.Session.ID != bootstrap.Session.ID {
+		t.Fatalf(
+			"replay targeted start = (%+v, %t, %v)",
+			replayedBootstrap,
+			replayed,
+			err,
+		)
+	}
+	assertContextRowCount(
+		t,
+		pool,
+		"practice_sessions",
+		owner.Actor.UserID,
+		1,
+	)
 }
 
 func TestContextRepositoryConcurrentCreatesAreExactlyOnce(t *testing.T) {
@@ -866,6 +1105,311 @@ func seedContextOwner(
 		owner.BackgroundSummary,
 	).Scan(&owner.PreparationAt); err != nil {
 		t.Fatalf("insert Preparation Snapshot: %v", err)
+	}
+}
+
+func seedTargetedContextPreparation(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	owner *contextOwnerFixture,
+) persistence.PreparationSnapshot {
+	t.Helper()
+	ctx := context.Background()
+	input := persistence.JobTargetInputSnapshot{
+		Source:              "quick_start",
+		JobTitle:            "Backend engineer",
+		Seniority:           "Senior",
+		CandidateBackground: owner.BackgroundSummary,
+	}
+	candidate := persistence.JobTargetCandidateSnapshot{
+		Source:             "quick_start",
+		GeneralAdviceOnly:  true,
+		JobTitle:           "Backend engineer",
+		Seniority:          "Senior",
+		Responsibilities:   []string{"Build reliable APIs."},
+		CoreSkills:         []string{"Go services"},
+		CommunicationFocus: []string{"Explain trade-offs."},
+		PracticeGoals:      []string{"Practice a technical deep dive."},
+		ScopeNotice:        "Limited to the interview content pack.",
+		CatalogRecommendation: persistence.
+			JobTargetCatalogRecommendationSnapshot{
+			ScenarioDefinitionID:      "scn_programmer_interview",
+			ScenarioDefinitionVersion: 1,
+			SelectedRoleIDs: []string{
+				"role_technical_interviewer",
+			},
+			PracticeOptionID:      "option_full_simulation",
+			PracticeOptionVersion: 1,
+		},
+	}
+	inputDocument, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal targeted input: %v", err)
+	}
+	candidateDocument, err := json.Marshal(candidate)
+	if err != nil {
+		t.Fatalf("marshal targeted candidate: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO preparation_job_targets (
+			owner_user_id, target_id, source_kind, job_title,
+			seniority, candidate_background, input_version, stage
+		) VALUES (
+			$1, 'target-owner-a', 'quick_start', $2, $3, $4, 1, 'confirmed'
+		)
+	`,
+		owner.Actor.UserID,
+		input.JobTitle,
+		input.Seniority,
+		input.CandidateBackground,
+	); err != nil {
+		t.Fatalf("insert targeted JobTarget: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO preparation_job_target_analysis_attempts (
+			owner_user_id, target_id, input_version, attempt_number,
+			status, lease_until, candidate, finished_at
+		) VALUES (
+			$1, 'target-owner-a', 1, 1, 'succeeded',
+			transaction_timestamp(), $2, transaction_timestamp()
+		)
+	`, owner.Actor.UserID, candidateDocument); err != nil {
+		t.Fatalf("insert targeted analysis: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO preparation_job_target_confirmations (
+			owner_user_id, target_id, input_version, analysis_version,
+			confirmation_version, candidate, input_snapshot
+		) VALUES ($1, 'target-owner-a', 1, 1, 1, $2, $3)
+	`, owner.Actor.UserID, candidateDocument, inputDocument); err != nil {
+		t.Fatalf("insert targeted confirmation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE preparation_profiles
+		SET job_target_id = 'target-owner-a',
+		    job_target_confirmation_version = 1,
+		    version = 2,
+		    updated_at = transaction_timestamp()
+		WHERE owner_user_id = $1 AND profile_id = $2
+	`, owner.Actor.UserID, owner.ProfileID); err != nil {
+		t.Fatalf("bind targeted Profile: %v", err)
+	}
+	var legacyUntouched int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM preparation_snapshots
+		WHERE owner_user_id = $1
+		  AND snapshot_id = $2
+		  AND source_job_target_id IS NULL
+		  AND job_target_input_snapshot IS NULL
+		  AND job_target_candidate_snapshot IS NULL
+	`, owner.Actor.UserID, owner.PreparationID).Scan(&legacyUntouched); err != nil {
+		t.Fatalf("verify legacy Snapshot: %v", err)
+	}
+	if legacyUntouched != 1 {
+		t.Fatal("legacy Snapshot was backfilled or reinterpreted")
+	}
+
+	snapshot := persistence.PreparationSnapshot{
+		ID:                                 "preparation-targeted-owner-a",
+		SourceProfileID:                    owner.ProfileID,
+		SourceVersion:                      2,
+		SourceJobTargetID:                  "target-owner-a",
+		SourceJobTargetConfirmationVersion: 1,
+		JobTargetInputSnapshot:             &input,
+		JobTargetCandidateSnapshot:         &candidate,
+		BackgroundSnapshot:                 owner.BackgroundSummary,
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO preparation_snapshots (
+			owner_user_id, snapshot_id, source_profile_id, source_version,
+			background_snapshot, source_job_target_id,
+			source_job_target_confirmation_version,
+			job_target_input_snapshot, job_target_candidate_snapshot
+		) VALUES ($1, $2, $3, 2, $4, $5, 1, $6, $7)
+		RETURNING created_at
+	`,
+		owner.Actor.UserID,
+		snapshot.ID,
+		owner.ProfileID,
+		owner.BackgroundSummary,
+		snapshot.SourceJobTargetID,
+		inputDocument,
+		candidateDocument,
+	).Scan(&snapshot.CreatedAt); err != nil {
+		t.Fatalf("insert targeted Preparation Snapshot: %v", err)
+	}
+	snapshot.CreatedAt = snapshot.CreatedAt.UTC()
+	owner.PreparationID = snapshot.ID
+	owner.PreparationAt = snapshot.CreatedAt
+	return snapshot
+}
+
+func targetedContextPlanCommand(
+	owner contextOwnerFixture,
+	preparation persistence.PreparationSnapshot,
+	planID string,
+	idempotencyKey string,
+) persistence.CreatePlanCommand {
+	role := persistence.RoleSnapshot{
+		ID:                   "role_technical_interviewer",
+		ScenarioDefinitionID: "scn_programmer_interview",
+		Type:                 "TECHNICAL_INTERVIEWER",
+		DisplayName:          "Technical depth perspective",
+		Responsibilities:     "Probe technical depth and engineering trade-offs.",
+		Style:                "Precise and evidence seeking.",
+		FocusAreas:           []string{"system_design", "project_depth"},
+		Version:              1,
+	}
+	catalog := persistence.PlanCatalogSnapshot{
+		ScenarioDefinition: persistence.ScenarioDefinitionSnapshot{
+			ID:      "scn_programmer_interview",
+			Type:    "INTERVIEW",
+			Name:    "English interview for technical roles",
+			Version: 1,
+			Status:  "active",
+		},
+		ScenarioConfig: persistence.ScenarioConfigSnapshot{
+			ID:                   "scfg_backend_engineer",
+			ScenarioDefinitionID: "scn_programmer_interview",
+			Type:                 "INTERVIEW",
+			Version:              1,
+			JobTitle:             "Backend engineer",
+			JobDescription:       "Build reliable APIs.",
+			FocusAreas:           []string{"introduction", "system_design"},
+		},
+		SelectedRoles: []persistence.RoleSnapshot{role},
+		PracticeOption: persistence.PracticeOptionSnapshot{
+			ID:                   "option_full_simulation",
+			ScenarioDefinitionID: "scn_programmer_interview",
+			Type:                 "FULL_SIMULATION",
+			DisplayName:          "Full simulation",
+			Version:              1,
+		},
+	}
+	policy := persistence.ContextSessionPolicy{
+		SuggestedDurationSeconds: 900,
+		MinEffectiveTurns:        4,
+		MaxEffectiveTurns:        6,
+		CoverageCheckpointTurn:   4,
+		MaxFollowUpsPerQuestion:  1,
+		TargetObjectives: []persistence.PracticeObjective{
+			{
+				ID:          "introduction",
+				Description: "Explain current experience clearly.",
+			},
+			{
+				ID:          "system_design",
+				Description: "Explain technical trade-offs.",
+			},
+		},
+		EarlyCompletionRule: "COVERAGE_SATISFIED_AFTER_CHECKPOINT",
+	}
+	focuses := []persistence.PracticeObjective{
+		{
+			ID:          "system_design",
+			Description: "Explain technical trade-offs.",
+		},
+		{
+			ID:          "project_depth",
+			Description: "Support decisions with concrete evidence.",
+		},
+	}
+	return persistence.CreatePlanCommand{
+		PlanID:                    planID,
+		AgentThreadID:             owner.ThreadID,
+		MatterID:                  owner.MatterID,
+		ScenarioDefinitionID:      catalog.ScenarioDefinition.ID,
+		ScenarioDefinitionVersion: catalog.ScenarioDefinition.Version,
+		ScenarioType:              catalog.ScenarioDefinition.Type,
+		ScenarioConfigID:          catalog.ScenarioConfig.ID,
+		ScenarioConfigVersion:     catalog.ScenarioConfig.Version,
+		PreparationProfileID:      owner.ProfileID,
+		SelectedRoleIDs:           []string{role.ID},
+		PreparationSnapshot:       &preparation,
+		CatalogSnapshot:           &catalog,
+		SessionPolicy:             &policy,
+		PracticeFocuses:           focuses,
+		Intent: contextIntent(
+			"/v1/practice-plans",
+			idempotencyKey,
+			"create-targeted-plan-payload",
+		),
+	}
+}
+
+func contextHRRoleSnapshot(
+	scenarioDefinitionID string,
+) persistence.RoleSnapshot {
+	return persistence.RoleSnapshot{
+		ID:                   "role_hr_interviewer",
+		ScenarioDefinitionID: scenarioDefinitionID,
+		Type:                 "HR_INTERVIEWER",
+		DisplayName:          "Recruiter and motivation perspective",
+		Responsibilities:     "Explore motivation and communication clarity.",
+		Style:                "Warm and structured.",
+		FocusAreas:           []string{"communication", "motivation"},
+		Version:              1,
+	}
+}
+
+func targetedContextSessionCommand(
+	owner contextOwnerFixture,
+	plan persistence.Plan,
+	sessionID string,
+	snapshotID string,
+	idempotencyKey string,
+) persistence.CreateContextSessionCommand {
+	catalog := plan.CatalogSnapshot
+	role := catalog.SelectedRoles[0]
+	snapshot := persistence.ContextSessionSnapshot{
+		ID:                 snapshotID,
+		SessionID:          sessionID,
+		PlanRevision:       plan.Revision,
+		ScenarioType:       plan.ScenarioType,
+		ScenarioDefinition: catalog.ScenarioDefinition,
+		ScenarioConfig:     catalog.ScenarioConfig,
+		Preparation:        *plan.PreparationSnapshot,
+		Participants: []persistence.ContextParticipant{
+			{
+				ID:        sessionID + "-interviewer",
+				SessionID: sessionID,
+				Role:      "INTERVIEWER",
+				SubjectRef: persistence.SubjectRef{
+					Namespace: "speakup.role",
+					SubjectID: role.ID,
+				},
+				RoleDefinitionID: role.ID,
+				RoleSnapshot:     &role,
+				Order:            1,
+			},
+			{
+				ID:        sessionID + "-candidate",
+				SessionID: sessionID,
+				Role:      "CANDIDATE",
+				SubjectRef: persistence.SubjectRef{
+					Namespace: "speakup.user",
+					SubjectID: owner.Actor.UserID,
+				},
+				Order: 2,
+			},
+		},
+		PracticeOption:  catalog.PracticeOption,
+		SessionPolicy:   *plan.SessionPolicy,
+		PracticeFocuses: append([]persistence.PracticeObjective(nil), plan.PracticeFocuses...),
+	}
+	return persistence.CreateContextSessionCommand{
+		SessionID:             sessionID,
+		SnapshotID:            snapshotID,
+		PlanID:                plan.ID,
+		ExpectedPlanRevision:  plan.Revision,
+		PreparationSnapshotID: plan.PreparationSnapshot.ID,
+		Snapshot:              snapshot,
+		Intent: contextIntent(
+			"/v1/practice-plans/"+plan.ID+"/practice-sessions",
+			idempotencyKey,
+			"create-targeted-session-payload",
+		),
 	}
 }
 
