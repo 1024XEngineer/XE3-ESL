@@ -217,6 +217,128 @@ func TestContextVoiceExactActivationRestartAndConcurrentSixthTurn(
 	}
 }
 
+func TestContextVoiceResolverRestoresOnlyUniqueCompletedSession(
+	t *testing.T,
+) {
+	repository, pool := newContextRepository(t)
+	ctx := context.Background()
+	owner := contextOwnerA()
+	seedContextOwner(t, pool, &owner)
+
+	plan, _, err := repository.CreatePlan(
+		ctx,
+		owner.Actor,
+		contextPlanCommand(
+			owner,
+			"plan-voice-completed",
+			"plan-voice-completed-key",
+		),
+	)
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	first, _, err := repository.CreateContextSession(
+		ctx,
+		owner.Actor,
+		contextSessionCommand(
+			owner,
+			plan,
+			"session-voice-completed-1",
+			"snapshot-voice-completed-1",
+			"session-voice-completed-key-1",
+		),
+	)
+	if err != nil {
+		t.Fatalf("Create first Context Session: %v", err)
+	}
+	completeContextVoiceSession(
+		t,
+		repository,
+		owner.Actor,
+		first.Session.ID,
+		"completed-first",
+	)
+
+	restarted := practicepostgres.New(pool)
+	resolved, err := restarted.ResolveContextSession(
+		ctx,
+		owner.Actor,
+		owner.ThreadID,
+		owner.MatterID,
+	)
+	if err != nil ||
+		resolved.Session.ID != first.Session.ID ||
+		resolved.Session.Status != persistence.ContextSessionCompleted {
+		t.Fatalf("restart completed resolver = (%+v, %v)", resolved, err)
+	}
+
+	second, _, err := restarted.CreateContextSession(
+		ctx,
+		owner.Actor,
+		contextSessionCommand(
+			owner,
+			plan,
+			"session-voice-completed-2",
+			"snapshot-voice-completed-2",
+			"session-voice-completed-key-2",
+		),
+	)
+	if err != nil {
+		t.Fatalf("Create second Context Session: %v", err)
+	}
+	resolved, err = restarted.ResolveContextSession(
+		ctx,
+		owner.Actor,
+		owner.ThreadID,
+		owner.MatterID,
+	)
+	if err != nil || resolved.Session.ID != second.Session.ID {
+		t.Fatalf("effective Session did not win: (%+v, %v)", resolved, err)
+	}
+	completeContextVoiceSession(
+		t,
+		restarted,
+		owner.Actor,
+		second.Session.ID,
+		"completed-second",
+	)
+
+	if _, err := practicepostgres.New(pool).ResolveContextSession(
+		ctx,
+		owner.Actor,
+		owner.ThreadID,
+		owner.MatterID,
+	); !errors.Is(err, persistence.ErrConflict) {
+		t.Fatalf("two completed Sessions resolver error = %v", err)
+	}
+}
+
+func completeContextVoiceSession(
+	t *testing.T,
+	repository *practicepostgres.Repository,
+	actor persistence.Actor,
+	sessionID string,
+	keyPrefix string,
+) {
+	t.Helper()
+	for turn := 1; turn <= 6; turn++ {
+		result, err := repository.AdvanceContextVoiceTurn(
+			context.Background(),
+			actor,
+			contextVoiceTurnCommand(
+				sessionID,
+				fmt.Sprintf("%s-turn-%d", keyPrefix, turn),
+			),
+		)
+		if err != nil ||
+			result.Completed != (turn == 6) ||
+			result.EffectiveTurns != turn {
+			t.Fatalf("complete Context Session turn %d = (%+v, %v)",
+				turn, result, err)
+		}
+	}
+}
+
 func TestContextVoiceStartingThreeTurnAndPausedLifecycle(t *testing.T) {
 	repository, pool := newContextRepository(t)
 	ctx := context.Background()

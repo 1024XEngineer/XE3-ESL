@@ -646,9 +646,10 @@ func (r *Repository) ResolveContextSessionByThread(
 	}
 }
 
-// ResolveContextSession resolves only the effective formal Session bound to
-// the exact Actor + Thread + Matter tuple. It deliberately has no "latest"
-// fallback and treats ambiguous rows as corrupted state.
+// ResolveContextSession resolves the formal Session bound to the exact Actor +
+// Thread + Matter tuple. A unique effective Session wins over completed
+// history. Without an effective Session, exactly one completed Session may be
+// restored; ambiguous effective or completed rows are rejected.
 func (r *Repository) ResolveContextSession(
 	ctx context.Context,
 	actor persistence.Actor,
@@ -700,12 +701,24 @@ func (r *Repository) ResolveContextSession(
 		WHERE session.owner_user_id = $1
 		  AND session.agent_thread_id = $2
 		  AND session.matter_id = $3
-		  AND session.status IN ('starting', 'in_progress', 'paused')
+		  AND session.status IN (
+		      'starting',
+		      'in_progress',
+		      'paused',
+		      'completed'
+		  )
 		  AND plan.status = 'ready'
 		  AND matter.status = 'active'
 		  AND owner.account_status = 'active'
 		  AND fence.owner_user_id IS NULL
-		ORDER BY session.created_at, session.session_id
+		ORDER BY
+		  CASE
+		    WHEN session.status IN ('starting', 'in_progress', 'paused')
+		      THEN 0
+		    ELSE 1
+		  END,
+		  session.created_at,
+		  session.session_id
 		LIMIT 2
 	`, actor.UserID, threadID, matterID)
 	if err != nil {
@@ -736,13 +749,34 @@ func (r *Repository) ResolveContextSession(
 		return persistence.ContextSessionBootstrap{},
 			fmt.Errorf("iterate exact context Sessions: %w", err)
 	}
-	switch len(results) {
-	case 0:
+	if len(results) == 0 {
 		return persistence.ContextSessionBootstrap{}, persistence.ErrNotFound
-	case 1:
+	}
+	if isEffectiveContextSessionStatus(results[0].Session.Status) {
+		if len(results) == 2 &&
+			isEffectiveContextSessionStatus(results[1].Session.Status) {
+			return persistence.ContextSessionBootstrap{},
+				persistence.ErrConflict
+		}
 		return results[0], nil
-	default:
+	}
+	if len(results) != 1 ||
+		results[0].Session.Status != persistence.ContextSessionCompleted {
 		return persistence.ContextSessionBootstrap{}, persistence.ErrConflict
+	}
+	return results[0], nil
+}
+
+func isEffectiveContextSessionStatus(
+	status persistence.ContextSessionStatus,
+) bool {
+	switch status {
+	case persistence.ContextSessionStarting,
+		persistence.ContextSessionProgress,
+		persistence.ContextSessionPaused:
+		return true
+	default:
+		return false
 	}
 }
 
