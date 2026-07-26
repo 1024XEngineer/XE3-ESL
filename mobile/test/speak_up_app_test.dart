@@ -579,7 +579,10 @@ void main() {
       expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
       expect(tester.takeException(), isNull);
       final selectedLabel = tester.renderObject<RenderParagraph>(
-        find.text('SpeakUp'),
+        find.descendant(
+          of: find.byKey(const Key('primary-navigation')),
+          matching: find.text('SpeakUp'),
+        ),
       );
       expect(selectedLabel.didExceedMaxLines, isFalse);
 

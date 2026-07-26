@@ -25,31 +25,33 @@ void main() {
         controller.voiceController?.state,
         AgentVoiceComposerState.recording,
       );
+      expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
+      expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
       expect(find.byKey(const Key('agent-voice-stop')), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('agent-voice-stop')));
       await _pumpVoiceOperation(tester);
       expect(
         controller.voiceController?.state,
-        AgentVoiceComposerState.recorded,
-      );
-      expect(find.byKey(const Key('agent-voice-preview')), findsOneWidget);
-      expect(find.byKey(const Key('agent-voice-rerecord')), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('agent-voice-upload')));
-      await _pumpVoiceOperation(tester);
-      expect(
-        controller.voiceController?.state,
         AgentVoiceComposerState.awaitingConfirmation,
       );
-      final transcriptField = find.byKey(
-        const Key('agent-voice-transcript-field'),
-      );
+      expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
+      expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
+      expect(find.text('试听'), findsNothing);
+      expect(find.text('重录'), findsNothing);
+      expect(find.text('上传并转写'), findsNothing);
+      final transcriptField = find.byKey(const Key('agent-composer-field'));
       expect(transcriptField, findsOneWidget);
       await tester.enterText(
         transcriptField,
         'I kept the migration safe with staged checks.',
       );
+      await tester.pump();
+      expect(
+        controller.voiceController?.editedTranscript,
+        'I kept the migration safe with staged checks.',
+      );
+      expect(controller.voiceController?.canConfirm, isTrue);
 
       await tester.tap(find.byKey(const Key('agent-voice-confirm')));
       await _pumpVoiceOperation(tester);
@@ -157,7 +159,7 @@ void main() {
   );
 
   testWidgets(
-    'voice confirmation panel survives narrow large-text keyboard layout',
+    'voice transcript stays in the original composer on narrow layouts',
     (tester) async {
       tester.view.physicalSize = const Size(320, 640);
       tester.view.devicePixelRatio = 1;
@@ -179,16 +181,8 @@ void main() {
       await tester.pump();
       await tester.tap(find.byKey(const Key('agent-voice-stop')));
       await _pumpVoiceOperation(tester);
-      final uploadButton = find.byKey(const Key('agent-voice-upload'));
-      await tester.ensureVisible(uploadButton);
-      await tester.pump();
-      await tester.tap(uploadButton);
-      await _pumpVoiceOperation(tester);
 
-      expect(
-        find.byKey(const Key('agent-voice-transcript-field')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
       expect(tester.takeException(), isNull);
       await controller.voiceController?.cancel();
       await tester.pump();

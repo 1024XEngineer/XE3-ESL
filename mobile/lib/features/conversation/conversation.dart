@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_controller.dart';
+import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/agent_voice_widgets.dart';
 
 class ConversationPage extends StatefulWidget {
@@ -91,24 +92,34 @@ class ConversationPage extends StatefulWidget {
                 padding: EdgeInsets.only(bottom: composerBottom),
                 child: Column(
                   children: [
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        horizontalPadding,
+                        12,
+                        horizontalPadding,
+                        8,
+                      ),
+                      child: _AgentTopBar(
+                        previewMode: previewMode,
+                        onOpenMenu: onOpenMenu,
+                        onNavigateBack: onNavigateBack,
+                        onCreateConversation: onCreateConversation,
+                        isBusy: isBusy,
+                      ),
+                    ),
                     Expanded(
                       child: SingleChildScrollView(
                         controller: scrollController,
                         padding: EdgeInsets.fromLTRB(
                           horizontalPadding,
-                          12,
+                          8,
                           horizontalPadding,
                           0,
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _AgentTopBar(
-                              previewMode: previewMode,
-                              onOpenMenu: onOpenMenu,
-                              onNavigateBack: onNavigateBack,
-                            ),
-                            SizedBox(height: width < 350 ? 32 : 48),
+                            SizedBox(height: width < 350 ? 20 : 32),
                             if (!hasFocusedThread) ...[
                               _NoFocusedConversation(
                                 onCreateConversation: onCreateConversation,
@@ -205,43 +216,25 @@ class ConversationPage extends StatefulWidget {
                         ),
                       ),
                     ),
-                    if (voiceController != null &&
-                        voiceController!.hasActiveWorkflow)
-                      Flexible(
-                        fit: FlexFit.loose,
-                        child: Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            horizontalPadding,
-                            8,
-                            horizontalPadding,
-                            0,
-                          ),
-                          child: SingleChildScrollView(
-                            child: AgentVoiceComposerPanel(
-                              controller: voiceController!,
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          horizontalPadding,
-                          16,
-                          horizontalPadding,
-                          0,
-                        ),
-                        child: _AgentComposer(
-                          keyboardVisible: keyboardVisible,
-                          acceptedUserMessageId: acceptedUserMessage?.id,
-                          acceptedUserMessageText: acceptedUserMessage?.text,
-                          onStartVoice: onStartVoice,
-                          voiceEnabled: voiceController != null && !isBusy,
-                          onSubmitText: onSubmitText,
-                          enabled: hasFocusedThread,
-                          isBusy: isBusy,
-                        ),
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        horizontalPadding,
+                        16,
+                        horizontalPadding,
+                        0,
                       ),
+                      child: _AgentComposer(
+                        keyboardVisible: keyboardVisible,
+                        acceptedUserMessageId: acceptedUserMessage?.id,
+                        acceptedUserMessageText: acceptedUserMessage?.text,
+                        onStartVoice: onStartVoice,
+                        voiceController: voiceController,
+                        voiceEnabled: voiceController != null && !isBusy,
+                        onSubmitText: onSubmitText,
+                        enabled: hasFocusedThread,
+                        isBusy: isBusy,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -261,12 +254,17 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void initState() {
     super.initState();
+    widget.voiceController?.addListener(_handleVoiceState);
     _scheduleThreadInitialPosition();
   }
 
   @override
   void didUpdateWidget(covariant ConversationPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.voiceController != widget.voiceController) {
+      oldWidget.voiceController?.removeListener(_handleVoiceState);
+      widget.voiceController?.addListener(_handleVoiceState);
+    }
     if (oldWidget.threadId != widget.threadId) {
       _earlierMessagesAnchor = null;
       _scheduleThreadInitialPosition();
@@ -296,8 +294,15 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void dispose() {
     _scrollRequestGeneration++;
+    widget.voiceController?.removeListener(_handleVoiceState);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _handleVoiceState() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _handleLoadEarlierMessages() {
@@ -406,49 +411,87 @@ class _AgentTopBar extends StatelessWidget {
     required this.previewMode,
     required this.onOpenMenu,
     required this.onNavigateBack,
+    required this.onCreateConversation,
+    required this.isBusy,
   });
 
   final bool previewMode;
   final VoidCallback? onOpenMenu;
   final VoidCallback? onNavigateBack;
+  final VoidCallback? onCreateConversation;
+  final bool isBusy;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        _RoundGlassButton(
-          key: Key(
-            onNavigateBack == null
-                ? 'conversation-menu-button'
-                : 'conversation-route-back-button',
+    return SizedBox(
+      height: 48,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _RoundGlassButton(
+              key: Key(
+                onNavigateBack == null
+                    ? 'conversation-menu-button'
+                    : 'conversation-route-back-button',
+              ),
+              tooltip: onNavigateBack == null ? '打开对话菜单' : '返回',
+              icon: onNavigateBack == null
+                  ? Icons.menu_rounded
+                  : Icons.arrow_back_rounded,
+              onPressed: onNavigateBack ?? onOpenMenu,
+            ),
           ),
-          tooltip: onNavigateBack == null ? '打开对话菜单' : '返回',
-          icon: onNavigateBack == null
-              ? Icons.menu_rounded
-              : Icons.arrow_back_rounded,
-          onPressed: onNavigateBack ?? onOpenMenu,
-        ),
-        if (previewMode) ...[
-          const SizedBox(width: 12),
-          Semantics(
-            label: '当前为 UI Mock',
-            child: ExcludeSemantics(
-              child: MediaQuery.withNoTextScaling(
-                child: const Text(
-                  'UI Mock',
-                  key: Key('agent-preview-label'),
-                  style: TextStyle(
-                    color: Color(0xFF6C6E75),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
+          Positioned(
+            left: 56,
+            right: 56,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'SpeakUp',
+                      key: Key('conversation-fixed-title'),
+                      style: TextStyle(
+                        color: Color(0xFF15161A),
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (previewMode) ...[
+                      const SizedBox(width: 8),
+                      const Text(
+                        'UI Mock',
+                        key: Key('agent-preview-label'),
+                        style: TextStyle(
+                          color: Color(0xFF6C6E75),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
           ),
+          if (onNavigateBack == null && onCreateConversation != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: _RoundGlassButton(
+                key: const Key('conversation-create-button'),
+                tooltip: '新对话',
+                icon: Icons.add_rounded,
+                onPressed: isBusy ? null : onCreateConversation,
+              ),
+            ),
         ],
-        const Spacer(),
-      ],
+      ),
     );
   }
 }
@@ -740,6 +783,7 @@ class _AgentComposer extends StatefulWidget {
     required this.acceptedUserMessageId,
     required this.acceptedUserMessageText,
     required this.onStartVoice,
+    required this.voiceController,
     required this.voiceEnabled,
     required this.onSubmitText,
     required this.enabled,
@@ -750,6 +794,7 @@ class _AgentComposer extends StatefulWidget {
   final String? acceptedUserMessageId;
   final String? acceptedUserMessageText;
   final VoidCallback? onStartVoice;
+  final AgentVoiceController? voiceController;
   final bool voiceEnabled;
   final Future<bool> Function(String)? onSubmitText;
   final bool enabled;
@@ -762,16 +807,22 @@ class _AgentComposer extends StatefulWidget {
 class _AgentComposerState extends State<_AgentComposer> {
   final _controller = TextEditingController();
   bool _suppressControllerNotifications = false;
+  String _draftBeforeVoice = '';
 
   @override
   void initState() {
     super.initState();
     _controller.addListener(_handleTextChanged);
+    widget.voiceController?.addListener(_handleVoiceChanged);
   }
 
   @override
   void didUpdateWidget(covariant _AgentComposer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.voiceController != widget.voiceController) {
+      oldWidget.voiceController?.removeListener(_handleVoiceChanged);
+      widget.voiceController?.addListener(_handleVoiceChanged);
+    }
     if (widget.acceptedUserMessageId != null &&
         widget.acceptedUserMessageId != oldWidget.acceptedUserMessageId &&
         _controller.text.trim() == widget.acceptedUserMessageText) {
@@ -783,6 +834,7 @@ class _AgentComposerState extends State<_AgentComposer> {
 
   @override
   void dispose() {
+    widget.voiceController?.removeListener(_handleVoiceChanged);
     _controller
       ..removeListener(_handleTextChanged)
       ..dispose();
@@ -791,8 +843,63 @@ class _AgentComposerState extends State<_AgentComposer> {
 
   void _handleTextChanged() {
     if (!_suppressControllerNotifications) {
+      final voice = widget.voiceController;
+      if (voice?.state == AgentVoiceComposerState.awaitingConfirmation) {
+        voice?.updateTranscript(_controller.text);
+      }
       setState(() {});
     }
+  }
+
+  void _handleVoiceChanged() {
+    if (!mounted) {
+      return;
+    }
+    final voice = widget.voiceController;
+    if (voice?.state == AgentVoiceComposerState.awaitingConfirmation &&
+        _controller.text != voice?.editedTranscript) {
+      _suppressControllerNotifications = true;
+      _controller.value = TextEditingValue(
+        text: voice!.editedTranscript,
+        selection: TextSelection.collapsed(
+          offset: voice.editedTranscript.length,
+        ),
+      );
+      _suppressControllerNotifications = false;
+    }
+    setState(() {});
+  }
+
+  void _startVoice() {
+    _draftBeforeVoice = _controller.text;
+    widget.onStartVoice?.call();
+  }
+
+  Future<void> _stopVoice() async {
+    final voice = widget.voiceController;
+    if (voice == null) {
+      return;
+    }
+    await voice.stopRecording();
+    await voice.upload();
+  }
+
+  Future<void> _cancelVoice() async {
+    final voice = widget.voiceController;
+    if (voice == null) {
+      return;
+    }
+    await voice.cancel();
+    if (!mounted) {
+      return;
+    }
+    _suppressControllerNotifications = true;
+    _controller.value = TextEditingValue(
+      text: _draftBeforeVoice,
+      selection: TextSelection.collapsed(offset: _draftBeforeVoice.length),
+    );
+    _suppressControllerNotifications = false;
+    setState(() {});
   }
 
   Future<void> _submit() async {
@@ -811,6 +918,18 @@ class _AgentComposerState extends State<_AgentComposer> {
 
   @override
   Widget build(BuildContext context) {
+    final voice = widget.voiceController;
+    final voiceState = voice?.state ?? AgentVoiceComposerState.idle;
+    final recording = voiceState == AgentVoiceComposerState.recording;
+    final confirmingText =
+        voiceState == AgentVoiceComposerState.awaitingConfirmation;
+    final voiceProgress =
+        voiceState == AgentVoiceComposerState.starting ||
+        voiceState == AgentVoiceComposerState.uploading ||
+        voiceState == AgentVoiceComposerState.transcribing ||
+        voiceState == AgentVoiceComposerState.confirming ||
+        voiceState == AgentVoiceComposerState.awaitingAssistant;
+    final voiceFailure = voiceState == AgentVoiceComposerState.failed;
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
@@ -840,67 +959,156 @@ class _AgentComposerState extends State<_AgentComposer> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
-                  key: const Key('agent-composer-field'),
-                  controller: _controller,
-                  enabled: widget.enabled && !widget.isBusy,
-                  minLines: 1,
-                  maxLines: 2,
-                  inputFormatters: <TextInputFormatter>[_agentContentFormatter],
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _submit(),
-                  decoration: InputDecoration(
-                    hintText: widget.enabled ? '问问 SpeakUp' : '请先选择或创建对话',
-                    hintStyle: const TextStyle(
-                      color: Color(0xFF989AA3),
-                      fontSize: 16,
-                    ),
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: EdgeInsets.fromLTRB(4, 4, 4, 2),
-                  ),
-                ),
-                if (!widget.keyboardVisible) const SizedBox(height: 5),
-                Row(
-                  children: [
-                    const Spacer(),
-                    if (widget.onStartVoice != null) ...[
-                      Semantics(
-                        key: const Key('agent-mic-placeholder'),
-                        button: true,
-                        enabled: widget.voiceEnabled,
-                        label: '录制 Agent 语音消息',
-                        onTap: widget.voiceEnabled ? widget.onStartVoice : null,
-                        child: ExcludeSemantics(
-                          child: IconButton.filledTonal(
-                            tooltip: '录制 Agent 语音消息',
-                            onPressed: widget.voiceEnabled
-                                ? widget.onStartVoice
-                                : null,
-                            style: IconButton.styleFrom(
-                              backgroundColor: const Color(0xFFE8E8E5),
-                              foregroundColor: const Color(0xFF44464D),
+                if (recording || voiceProgress || voiceFailure)
+                  SizedBox(
+                    height: widget.keyboardVisible ? 62 : 84,
+                    child: Row(
+                      children: [
+                        IconButton(
+                          key: const Key('agent-voice-cancel'),
+                          tooltip: '取消语音输入',
+                          onPressed:
+                              voiceState == AgentVoiceComposerState.confirming
+                              ? null
+                              : _cancelVoice,
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                        const SizedBox(width: 8),
+                        if (recording) ...[
+                          const _ComposerRecordingDot(),
+                          const SizedBox(width: 10),
+                        ] else if (voiceProgress) ...[
+                          const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 10),
+                        ],
+                        Expanded(
+                          child: Text(
+                            recording
+                                ? '正在聆听  ${_formatComposerDuration(voice!.recordingElapsed)}'
+                                : voiceFailure
+                                ? voice?.errorMessage ?? '语音识别失败'
+                                : _composerVoiceStateLabel(voiceState),
+                            key: const Key('agent-voice-state-label'),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: voiceFailure
+                                  ? const Color(0xFF8B2E26)
+                                  : const Color(0xFF44464D),
+                              fontWeight: FontWeight.w600,
                             ),
-                            icon: const Icon(Icons.mic_none_rounded),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                    ],
-                    IconButton.filled(
-                      key: const Key('agent-send-button'),
-                      tooltip: '发送',
-                      onPressed:
-                          _controller.text.trim().isEmpty ||
-                              widget.isBusy ||
-                              !widget.enabled ||
-                              widget.onSubmitText == null
-                          ? null
-                          : _submit,
-                      icon: const Icon(Icons.arrow_upward_rounded),
+                        if (recording)
+                          IconButton.filled(
+                            key: const Key('agent-voice-stop'),
+                            tooltip: '结束录音并自动转写',
+                            onPressed: _stopVoice,
+                            icon: const Icon(Icons.stop_rounded),
+                          )
+                        else if (voiceFailure && voice?.canRetry == true)
+                          IconButton(
+                            key: const Key('agent-voice-retry'),
+                            tooltip: '重试',
+                            onPressed: voice?.retry,
+                            icon: const Icon(Icons.refresh_rounded),
+                          ),
+                      ],
                     ),
-                  ],
-                ),
+                  )
+                else ...[
+                  TextField(
+                    key: const Key('agent-composer-field'),
+                    controller: _controller,
+                    enabled:
+                        confirmingText ||
+                        (widget.enabled && !widget.isBusy),
+                    minLines: 1,
+                    maxLines: 2,
+                    inputFormatters: <TextInputFormatter>[
+                      _agentContentFormatter,
+                    ],
+                    onChanged: confirmingText ? voice?.updateTranscript : null,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => confirmingText
+                        ? widget.voiceController?.confirm()
+                        : _submit(),
+                    decoration: InputDecoration(
+                      hintText: widget.enabled
+                          ? confirmingText
+                                ? '检查识别文字'
+                                : '问问 SpeakUp'
+                          : '请先选择或创建对话',
+                      hintStyle: const TextStyle(
+                        color: Color(0xFF989AA3),
+                        fontSize: 16,
+                      ),
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
+                    ),
+                  ),
+                  if (!widget.keyboardVisible) const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      if (confirmingText)
+                        IconButton(
+                          key: const Key('agent-voice-cancel'),
+                          tooltip: '取消语音输入',
+                          onPressed: _cancelVoice,
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      const Spacer(),
+                      if (!confirmingText && widget.onStartVoice != null) ...[
+                        Semantics(
+                          key: const Key('agent-mic-placeholder'),
+                          button: true,
+                          enabled: widget.voiceEnabled,
+                          label: '录制 Agent 语音消息',
+                          onTap: widget.voiceEnabled ? _startVoice : null,
+                          child: ExcludeSemantics(
+                            child: IconButton.filledTonal(
+                              tooltip: '录制 Agent 语音消息',
+                              onPressed: widget.voiceEnabled
+                                  ? _startVoice
+                                  : null,
+                              style: IconButton.styleFrom(
+                                backgroundColor: const Color(0xFFE8E8E5),
+                                foregroundColor: const Color(0xFF44464D),
+                              ),
+                              icon: const Icon(Icons.mic_none_rounded),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      IconButton.filled(
+                        key: Key(
+                          confirmingText
+                              ? 'agent-voice-confirm'
+                              : 'agent-send-button',
+                        ),
+                        tooltip: '发送',
+                        onPressed:
+                            _controller.text.trim().isEmpty ||
+                                (widget.isBusy && !confirmingText) ||
+                                !widget.enabled
+                            ? null
+                            : confirmingText
+                            ? voice?.canConfirm == true
+                                  ? voice?.confirm
+                                  : null
+                            : widget.onSubmitText == null
+                            ? null
+                            : _submit,
+                        icon: const Icon(Icons.arrow_upward_rounded),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
@@ -908,6 +1116,41 @@ class _AgentComposerState extends State<_AgentComposer> {
       ),
     );
   }
+}
+
+class _ComposerRecordingDot extends StatelessWidget {
+  const _ComposerRecordingDot();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox.square(
+      dimension: 12,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Color(0xFFC83D32),
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
+  }
+}
+
+String _composerVoiceStateLabel(AgentVoiceComposerState state) {
+  return switch (state) {
+    AgentVoiceComposerState.starting => '正在打开麦克风…',
+    AgentVoiceComposerState.uploading => '正在处理语音…',
+    AgentVoiceComposerState.transcribing => '正在转写…',
+    AgentVoiceComposerState.confirming => '正在发送…',
+    AgentVoiceComposerState.awaitingAssistant => 'SpeakUp 正在回复…',
+    _ => '正在处理…',
+  };
+}
+
+String _formatComposerDuration(Duration value) {
+  final totalSeconds = value.inSeconds.clamp(0, 3599);
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  return '$minutes:${seconds.toString().padLeft(2, '0')}';
 }
 
 final TextInputFormatter _agentContentFormatter =

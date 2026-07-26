@@ -81,176 +81,156 @@ class _AgentVoiceComposerPanelState extends State<AgentVoiceComposerPanel> {
     final controller = widget.controller;
     final state = controller.state;
     final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.25;
-    return Material(
-      key: const Key('agent-voice-composer-panel'),
-      color: const Color(0xFFFDFDFC),
-      elevation: 2,
-      shadowColor: const Color(0x24000000),
-      borderRadius: BorderRadius.circular(22),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.only(top: 2),
-                  child: Icon(Icons.mic_rounded, size: 21),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _stateLabel(controller),
-                    key: const Key('agent-voice-state-label'),
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                if (state != AgentVoiceComposerState.confirming)
-                  IconButton(
-                    key: const Key('agent-voice-cancel'),
-                    tooltip: '取消语音消息',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: controller.cancel,
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-              ],
-            ),
-            if (state == AgentVoiceComposerState.recording) ...[
-              const SizedBox(height: 10),
-              Semantics(
-                liveRegion: true,
-                label: '正在录音 ${_formatDuration(controller.recordingElapsed)}',
-                child: Row(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(28),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          key: const Key('agent-voice-composer-panel'),
+          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+          decoration: BoxDecoration(
+            color: const Color(0xEFFFFFFF),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: Colors.white),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (state != AgentVoiceComposerState.awaitingConfirmation)
+                Row(
                   children: [
-                    const _RecordingPulse(),
-                    const SizedBox(width: 9),
+                    IconButton(
+                      key: const Key('agent-voice-cancel'),
+                      tooltip: '取消语音输入',
+                      onPressed: state == AgentVoiceComposerState.confirming
+                          ? null
+                          : controller.cancel,
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                    const SizedBox(width: 2),
+                    if (state == AgentVoiceComposerState.recording) ...[
+                      const _RecordingPulse(),
+                      const SizedBox(width: 10),
+                    ] else if (_isVoiceProgressState(state)) ...[
+                      const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
                     Expanded(
                       child: Text(
-                        _formatDuration(controller.recordingElapsed),
-                        key: const Key('agent-voice-recording-duration'),
+                        state == AgentVoiceComposerState.recording
+                            ? '正在聆听  ${_formatDuration(controller.recordingElapsed)}'
+                            : _stateLabel(controller),
+                        key: const Key('agent-voice-state-label'),
                         style: const TextStyle(
-                          fontFeatures: <ui.FontFeature>[
-                            ui.FontFeature.tabularFigures(),
-                          ],
+                          color: Color(0xFF44464D),
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
-                    FilledButton.icon(
-                      key: const Key('agent-voice-stop'),
-                      onPressed: controller.stopRecording,
-                      icon: const Icon(Icons.stop_rounded),
-                      label: const Text('停止'),
+                    if (state == AgentVoiceComposerState.recording)
+                      IconButton.filled(
+                        key: const Key('agent-voice-stop'),
+                        tooltip: '结束录音并自动转写',
+                        onPressed: () async {
+                          await controller.stopRecording();
+                          await controller.upload();
+                        },
+                        icon: const Icon(Icons.stop_rounded),
+                      ),
+                  ],
+                ),
+              if (state == AgentVoiceComposerState.awaitingConfirmation) ...[
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      key: const Key('agent-voice-cancel'),
+                      tooltip: '取消语音输入',
+                      onPressed: controller.cancel,
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        key: const Key('agent-voice-transcript-field'),
+                        controller: _transcriptController,
+                        minLines: largeText ? 2 : 1,
+                        maxLines: 4,
+                        inputFormatters: <TextInputFormatter>[
+                          _agentVoiceContentFormatter,
+                        ],
+                        decoration: const InputDecoration(
+                          hintText: '检查识别文字',
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.fromLTRB(8, 8, 8, 10),
+                        ),
+                      ),
+                    ),
+                    IconButton.filled(
+                      key: const Key('agent-voice-confirm'),
+                      tooltip: '发送',
+                      onPressed: controller.canConfirm
+                          ? controller.confirm
+                          : null,
+                      icon: const Icon(Icons.arrow_upward_rounded),
                     ),
                   ],
                 ),
-              ),
-            ],
-            if (state == AgentVoiceComposerState.recorded ||
-                (state == AgentVoiceComposerState.failed &&
-                    controller.recording != null)) ...[
-              const SizedBox(height: 10),
-              Text(
-                '录音时长 ${_formatDuration(controller.recording!.duration)}',
-                key: const Key('agent-voice-draft-duration'),
-                style: const TextStyle(color: Color(0xFF66686F)),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    key: const Key('agent-voice-preview'),
-                    onPressed: controller.toggleDraftPlayback,
-                    icon: Icon(
-                      controller.isDraftPlaying
-                          ? Icons.stop_rounded
-                          : Icons.play_arrow_rounded,
-                    ),
-                    label: Text(controller.isDraftPlaying ? '停止试听' : '试听'),
-                  ),
-                  OutlinedButton.icon(
-                    key: const Key('agent-voice-rerecord'),
-                    onPressed: controller.rerecord,
-                    icon: const Icon(Icons.replay_rounded),
-                    label: const Text('重录'),
-                  ),
-                  FilledButton.icon(
-                    key: const Key('agent-voice-upload'),
-                    onPressed: controller.canUpload ? controller.upload : null,
-                    icon: const Icon(Icons.upload_rounded),
-                    label: const Text('上传并转写'),
-                  ),
-                ],
-              ),
-            ],
-            if (state == AgentVoiceComposerState.starting ||
-                state == AgentVoiceComposerState.uploading ||
-                state == AgentVoiceComposerState.transcribing ||
-                state == AgentVoiceComposerState.confirming ||
-                state == AgentVoiceComposerState.awaitingAssistant) ...[
-              const SizedBox(height: 10),
-              const LinearProgressIndicator(
-                key: Key('agent-voice-progress'),
-                minHeight: 3,
-              ),
-            ],
-            if (state == AgentVoiceComposerState.awaitingConfirmation) ...[
-              const SizedBox(height: 10),
-              TextField(
-                key: const Key('agent-voice-transcript-field'),
-                controller: _transcriptController,
-                minLines: largeText ? 2 : 1,
-                maxLines: 4,
-                inputFormatters: <TextInputFormatter>[
-                  _agentVoiceContentFormatter,
-                ],
-                decoration: const InputDecoration(
-                  labelText: '确认文字',
-                  helperText: '可以编辑识别结果；确认后它会成为消息正文。',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  key: const Key('agent-voice-confirm'),
-                  onPressed: controller.canConfirm ? controller.confirm : null,
-                  icon: const Icon(Icons.send_rounded),
-                  label: const Text('确认发送'),
-                ),
-              ),
-            ],
-            if (controller.errorMessage case final error?) ...[
-              const SizedBox(height: 10),
-              Text(
-                error,
-                key: const Key('agent-voice-error'),
-                style: const TextStyle(color: Color(0xFF8B2E26), height: 1.35),
-              ),
-              if (controller.canRetry) ...[
+              ],
+              if (state == AgentVoiceComposerState.recorded ||
+                  (state == AgentVoiceComposerState.failed &&
+                      controller.recording != null)) ...[
                 const SizedBox(height: 6),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    key: const Key('agent-voice-retry'),
-                    onPressed: controller.retry,
-                    icon: const Icon(Icons.refresh_rounded),
-                    label: const Text('重试'),
+                  child: TextButton(
+                    key: const Key('agent-voice-upload'),
+                    onPressed: controller.canUpload ? controller.upload : null,
+                    child: const Text('重新尝试转写'),
                   ),
                 ),
               ],
+              if (controller.errorMessage case final error?) ...[
+                const SizedBox(height: 6),
+                Text(
+                  error,
+                  key: const Key('agent-voice-error'),
+                  style: const TextStyle(
+                    color: Color(0xFF8B2E26),
+                    height: 1.35,
+                  ),
+                ),
+                if (controller.canRetry) ...[
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      key: const Key('agent-voice-retry'),
+                      onPressed: controller.retry,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('重试'),
+                    ),
+                  ),
+                ],
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
   }
+}
+
+bool _isVoiceProgressState(AgentVoiceComposerState state) {
+  return state == AgentVoiceComposerState.starting ||
+      state == AgentVoiceComposerState.uploading ||
+      state == AgentVoiceComposerState.transcribing ||
+      state == AgentVoiceComposerState.confirming ||
+      state == AgentVoiceComposerState.awaitingAssistant;
 }
 
 class AgentMessageBubble extends StatefulWidget {
