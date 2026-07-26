@@ -48,9 +48,9 @@ func TestStrictRequestAndIdempotencyKeyValidation(t *testing.T) {
 		{"snapshot requires body", "/v1/preparation-profiles/" + demoPreparationProfile + "/snapshots", ``, "invalid_request"},
 		{"snapshot rejects zero version", "/v1/preparation-profiles/" + demoPreparationProfile + "/snapshots", `{"source_version":0}`, "invalid_request"},
 		{"plan rejects duplicate roles", "/v1/practice-plans", `{
-			"scenario_definition_id":"scenario_programmer_interview",
+			"scenario_definition_id":"scn_programmer_interview",
 			"scenario_definition_version":1,
-			"scenario_config_id":"scenario_config_backend",
+			"scenario_config_id":"scfg_backend_engineer",
 			"scenario_config_version":1,
 			"preparation_profile_id":"profile_demo_001",
 			"selected_role_ids":["role_technical_interviewer","role_technical_interviewer"]
@@ -145,9 +145,9 @@ func TestIdempotencyReplayScopeAndNoRepeatedSideEffects(t *testing.T) {
 		http.StatusCreated,
 	)
 	planBody := `{
-		"scenario_definition_id":"scenario_programmer_interview",
+		"scenario_definition_id":"scn_programmer_interview",
 		"scenario_definition_version":1,
-		"scenario_config_id":"scenario_config_backend",
+		"scenario_config_id":"scfg_backend_engineer",
 		"scenario_config_version":1,
 		"preparation_profile_id":"profile_demo_001",
 		"selected_role_ids":["role_technical_interviewer"]
@@ -156,7 +156,7 @@ func TestIdempotencyReplayScopeAndNoRepeatedSideEffects(t *testing.T) {
 	sessionBody := `{
 		"expected_plan_revision":1,
 		"preparation_snapshot_id":"preparation_snapshot_demo_001",
-		"practice_option_id":"option_full_interview",
+		"practice_option_id":"option_full_simulation",
 		"role_definition_ids":["role_technical_interviewer"]
 	}`
 	sessionPath := "/v1/practice-plans/" + demoPracticePlan + "/practice-sessions"
@@ -738,9 +738,9 @@ func seedThroughQuestion(t *testing.T, client contractClient) {
 		http.MethodPost,
 		"/v1/practice-plans",
 		`{
-			"scenario_definition_id":"scenario_programmer_interview",
+			"scenario_definition_id":"scn_programmer_interview",
 			"scenario_definition_version":1,
-			"scenario_config_id":"scenario_config_backend",
+			"scenario_config_id":"scfg_backend_engineer",
 			"scenario_config_version":1,
 			"preparation_profile_id":"profile_demo_001",
 			"selected_role_ids":["role_technical_interviewer"]
@@ -770,16 +770,16 @@ func validSessionBody() string {
 	return `{
 		"expected_plan_revision":1,
 		"preparation_snapshot_id":"preparation_snapshot_demo_001",
-		"practice_option_id":"option_full_interview",
+		"practice_option_id":"option_full_simulation",
 		"role_definition_ids":["role_technical_interviewer"]
 	}`
 }
 
 func validPlanBody() string {
 	return `{
-		"scenario_definition_id":"scenario_programmer_interview",
+		"scenario_definition_id":"scn_programmer_interview",
 		"scenario_definition_version":1,
-		"scenario_config_id":"scenario_config_backend",
+		"scenario_config_id":"scfg_backend_engineer",
 		"scenario_config_version":1,
 		"preparation_profile_id":"profile_demo_001",
 		"selected_role_ids":["role_technical_interviewer"]

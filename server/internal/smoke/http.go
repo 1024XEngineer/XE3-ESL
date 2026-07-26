@@ -42,7 +42,10 @@ type Server struct {
 func NewServer(logger *slog.Logger) *Server {
 	runtime := NewRuntime()
 	provider := NewDeterministicProvider()
-	preparationService := preparation.NewService(preparationBackend{runtime: runtime})
+	preparationService := preparation.NewService(
+		preparationBackend{runtime: runtime},
+		runtime.catalog,
+	)
 	practiceService := practice.NewService(practiceBackend{runtime: runtime})
 	conversationService := conversation.NewService(
 		conversationBackend{runtime: runtime},
@@ -70,6 +73,7 @@ func NewServer(logger *slog.Logger) *Server {
 		),
 		idempotency: newIdempotencyStore(),
 	}
+	bootstrap.RegisterPreparationCatalog(router, preparationService)
 	server.registerRoutes()
 	return server
 }
@@ -79,8 +83,6 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) registerRoutes() {
-	s.router.GET("/v1/scenario-definitions/:scenario_definition_id", s.getScenario)
-	s.router.GET("/v1/scenario-definitions/:scenario_definition_id/role-definitions", s.listRoles)
 	s.router.POST("/v1/preparation-profiles", s.createProfile)
 	s.router.POST("/v1/preparation-profiles/:preparation_profile_id/snapshots", s.createSnapshot)
 	s.router.POST("/v1/practice-plans", s.createPlan)
@@ -98,24 +100,6 @@ func (s *Server) registerRoutes() {
 	s.router.GET("/v1/retry-requests/:retry_request_id", s.getRetry)
 	s.router.GET("/v1/history-records", s.listHistory)
 	s.router.GET("/v1/practice-sessions/:practice_session_id/events", s.streamEvents)
-}
-
-func (s *Server) getScenario(c *gin.Context) {
-	result, ok := s.preparation.GetScenario(c.Param("scenario_definition_id"))
-	if !ok {
-		writeError(c, http.StatusNotFound, "scenario_definition_not_found", "Scenario definition was not found.", false)
-		return
-	}
-	c.JSON(http.StatusOK, result)
-}
-
-func (s *Server) listRoles(c *gin.Context) {
-	roles, ok := s.preparation.ListRoles(c.Param("scenario_definition_id"))
-	if !ok {
-		writeError(c, http.StatusNotFound, "scenario_definition_not_found", "Scenario definition was not found.", false)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"roles": roles})
 }
 
 func (s *Server) createProfile(c *gin.Context) {

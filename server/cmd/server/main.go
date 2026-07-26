@@ -30,6 +30,12 @@ func run() int {
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
 
+	preparationCatalog, err := preparation.NewBuiltinCatalog()
+	if err != nil {
+		logger.Error("preparation catalog startup failed", slog.Any("error", err))
+		return 1
+	}
+
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -50,6 +56,7 @@ func run() int {
 		conversation.New(),
 		review.New(),
 	)
+	bootstrap.RegisterPreparationCatalog(router, preparationCatalog)
 
 	server := &http.Server{
 		Addr:              cfg.Address(),

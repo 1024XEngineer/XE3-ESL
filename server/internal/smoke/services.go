@@ -15,38 +15,6 @@ type preparationBackend struct {
 	runtime *Runtime
 }
 
-func (b preparationBackend) GetScenario(id string) (map[string]any, bool) {
-	if id != DemoScenarioDefinition {
-		return nil, false
-	}
-	return map[string]any{
-		"scenario_definition": map[string]any{
-			"scenario_definition_id": DemoScenarioDefinition,
-			"scenario_type":          "INTERVIEW",
-			"name":                   "Programmer English Interview",
-			"version":                1,
-			"status":                 "active",
-		},
-		"scenario_config": map[string]any{
-			"scenario_config_id":     "scenario_config_backend",
-			"scenario_definition_id": DemoScenarioDefinition,
-			"config_type":            "INTERVIEW",
-			"version":                1,
-			"job_title":              "Backend Engineer",
-			"job_description":        "Build reliable APIs and explain engineering trade-offs.",
-			"focus_areas":            []string{"reliability", "ownership", "collaboration"},
-		},
-		"practice_options": []map[string]any{practiceOption()},
-	}, true
-}
-
-func (b preparationBackend) ListRoles(scenarioID string) ([]map[string]any, bool) {
-	if scenarioID != DemoScenarioDefinition {
-		return nil, false
-	}
-	return []map[string]any{roleDefinition()}, true
-}
-
 func (b preparationBackend) CreateProfile(
 	request preparation.CreateProfileRequest,
 ) (map[string]any, error) {
@@ -97,17 +65,19 @@ type practiceBackend struct {
 func (b practiceBackend) CreatePlan(
 	request practice.CreatePlanRequest,
 ) (map[string]any, error) {
-	if request.ScenarioDefinitionID != DemoScenarioDefinition {
-		return nil, ErrScenarioNotFound
-	}
 	if request.PreparationProfileID != demoPreparationProfile {
 		return nil, ErrProfileNotFound
 	}
-	if request.ScenarioDefinitionVersion != 1 ||
-		request.ScenarioConfigID != "scenario_config_backend" ||
-		request.ScenarioConfigVersion != 1 ||
-		len(request.SelectedRoleIDs) != 1 ||
-		request.SelectedRoleIDs[0] != DemoRoleDefinition {
+	catalogSnapshot, err := b.runtime.catalog.GetCatalogSnapshot(
+		request.ScenarioDefinitionID,
+		request.ScenarioDefinitionVersion,
+		request.SelectedRoleIDs,
+		preparation.FullSimulationOptionID,
+		1,
+	)
+	if err != nil ||
+		catalogSnapshot.ScenarioConfig.ID != request.ScenarioConfigID ||
+		catalogSnapshot.ScenarioConfig.Version != request.ScenarioConfigVersion {
 		return nil, ErrInvalidSelection
 	}
 	return b.runtime.createPlan()
@@ -129,10 +99,16 @@ func (b practiceBackend) CreateSession(
 	if request.ExpectedPlanRevision != 1 {
 		return nil, ErrVersionConflict
 	}
-	if request.PreparationSnapshotID != demoPreparationSnapshot ||
-		request.PracticeOptionID != DemoPracticeOption ||
-		len(request.RoleDefinitionIDs) != 1 ||
-		request.RoleDefinitionIDs[0] != DemoRoleDefinition {
+	if request.PreparationSnapshotID != demoPreparationSnapshot {
+		return nil, ErrInvalidSelection
+	}
+	if _, err := b.runtime.catalog.GetCatalogSnapshot(
+		DemoScenarioDefinition,
+		1,
+		request.RoleDefinitionIDs,
+		request.PracticeOptionID,
+		1,
+	); err != nil {
 		return nil, ErrInvalidSelection
 	}
 	return b.runtime.createSession()

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/gorilla/websocket"
 )
 
@@ -60,6 +61,7 @@ func runMainFlow(t *testing.T) flowTrace {
 		exchanges: &trace.Exchanges,
 	}
 
+	client.expect(t, http.MethodGet, "/v1/scenario-definitions", nil, nil, http.StatusOK, nil)
 	client.expect(t, http.MethodGet, "/v1/scenario-definitions/"+DemoScenarioDefinition, nil, nil, http.StatusOK, nil)
 	client.expect(t, http.MethodGet, "/v1/scenario-definitions/"+DemoScenarioDefinition+"/role-definitions", nil, nil, http.StatusOK, nil)
 	client.expect(t, http.MethodPost, "/v1/preparation-profiles", map[string]any{
@@ -71,7 +73,7 @@ func runMainFlow(t *testing.T) flowTrace {
 	client.expect(t, http.MethodPost, "/v1/practice-plans", map[string]any{
 		"scenario_definition_id":      DemoScenarioDefinition,
 		"scenario_definition_version": 1,
-		"scenario_config_id":          "scenario_config_backend",
+		"scenario_config_id":          preparation.BackendEngineerConfigID,
 		"scenario_config_version":     1,
 		"preparation_profile_id":      demoPreparationProfile,
 		"selected_role_ids":           []string{DemoRoleDefinition},

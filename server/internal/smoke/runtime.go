@@ -1,6 +1,7 @@
 package smoke
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,14 +10,15 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
 const (
 	DemoUserID              = "user_demo"
-	DemoScenarioDefinition  = "scenario_programmer_interview"
-	DemoRoleDefinition      = "role_technical_interviewer"
-	DemoPracticeOption      = "option_full_interview"
+	DemoScenarioDefinition  = preparation.ProgrammerInterviewScenarioID
+	DemoRoleDefinition      = preparation.TechnicalInterviewerRoleID
+	DemoPracticeOption      = preparation.FullSimulationOptionID
 	demoInterviewerID       = "participant_interviewer_001"
 	demoCandidateID         = "participant_candidate_001"
 	demoPreparationProfile  = "profile_demo_001"
@@ -56,7 +58,8 @@ type HistoryRecord = review.HistoryRecord
 type Runtime struct {
 	mu sync.Mutex
 
-	now time.Time
+	now     time.Time
+	catalog preparation.CatalogReader
 
 	profileCreated  bool
 	snapshotCreated bool
@@ -81,8 +84,13 @@ type Runtime struct {
 }
 
 func NewRuntime() *Runtime {
+	catalog, err := preparation.NewBuiltinCatalog()
+	if err != nil {
+		panic(fmt.Sprintf("build deterministic preparation catalog: %v", err))
+	}
 	return &Runtime{
 		now:                    time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC),
+		catalog:                catalog,
 		retryTurnByRequest:     make(map[string]string),
 		retryOriginalByRequest: make(map[string]string),
 		turnDecisions:          make(map[string]practice.TurnDecision),
@@ -138,7 +146,7 @@ func (r *Runtime) createPlan() (map[string]any, error) {
 		"scenario_definition_id":      DemoScenarioDefinition,
 		"scenario_definition_version": 1,
 		"scenario_type":               "INTERVIEW",
-		"scenario_config_id":          "scenario_config_backend",
+		"scenario_config_id":          preparation.BackendEngineerConfigID,
 		"scenario_config_version":     1,
 		"preparation_profile_id":      demoPreparationProfile,
 		"selected_role_ids":           []string{DemoRoleDefinition},
@@ -461,6 +469,16 @@ func (r *Runtime) lastEventSequenceLocked() int {
 }
 
 func (r *Runtime) snapshotLocked() map[string]any {
+	catalogSnapshot, err := r.catalog.GetCatalogSnapshot(
+		DemoScenarioDefinition,
+		1,
+		[]string{DemoRoleDefinition},
+		DemoPracticeOption,
+		1,
+	)
+	if err != nil {
+		panic(fmt.Sprintf("resolve deterministic catalog snapshot: %v", err))
+	}
 	objectives := []map[string]any{
 		{"objective_id": "introduction", "description": "Explain current experience clearly."},
 		{"objective_id": "system_design", "description": "Explain a technical design and its trade-offs."},
@@ -468,26 +486,12 @@ func (r *Runtime) snapshotLocked() map[string]any {
 		{"objective_id": "collaboration", "description": "Explain cross-team communication and outcomes."},
 	}
 	return map[string]any{
-		"snapshot_id":         "snapshot_session_demo_001",
-		"practice_session_id": demoPracticeSession,
-		"plan_revision":       1,
-		"scenario_type":       "INTERVIEW",
-		"scenario_definition_snapshot": map[string]any{
-			"scenario_definition_id": DemoScenarioDefinition,
-			"scenario_type":          "INTERVIEW",
-			"name":                   "Programmer English Interview",
-			"version":                1,
-			"status":                 "active",
-		},
-		"scenario_config_snapshot": map[string]any{
-			"scenario_config_id":     "scenario_config_backend",
-			"scenario_definition_id": DemoScenarioDefinition,
-			"config_type":            "INTERVIEW",
-			"version":                1,
-			"job_title":              "Backend Engineer",
-			"job_description":        "Build reliable APIs and explain engineering trade-offs.",
-			"focus_areas":            []string{"reliability", "ownership", "collaboration"},
-		},
+		"snapshot_id":                  "snapshot_session_demo_001",
+		"practice_session_id":          demoPracticeSession,
+		"plan_revision":                1,
+		"scenario_type":                "INTERVIEW",
+		"scenario_definition_snapshot": mustJSONMap(catalogSnapshot.ScenarioDefinition),
+		"scenario_config_snapshot":     mustJSONMap(catalogSnapshot.ScenarioConfig),
 		"preparation_snapshot": map[string]any{
 			"preparation_snapshot_id":  demoPreparationSnapshot,
 			"source_profile_id":        demoPreparationProfile,
@@ -504,7 +508,7 @@ func (r *Runtime) snapshotLocked() map[string]any {
 				"participant_role":        "INTERVIEWER",
 				"subject_ref":             map[string]any{"namespace": "mock.actor", "subject_id": "interviewer_technical"},
 				"role_definition_id":      DemoRoleDefinition,
-				"role_snapshot":           roleDefinition(),
+				"role_snapshot":           mustJSONMap(catalogSnapshot.SelectedRoles[0]),
 				"participant_order":       1,
 			},
 			{
@@ -515,7 +519,7 @@ func (r *Runtime) snapshotLocked() map[string]any {
 				"participant_order":       2,
 			},
 		},
-		"practice_option": practiceOption(),
+		"practice_option": mustJSONMap(catalogSnapshot.PracticeOption),
 		"session_policy": map[string]any{
 			"suggested_duration_seconds":  900,
 			"min_effective_turns":         4,
@@ -530,28 +534,16 @@ func (r *Runtime) snapshotLocked() map[string]any {
 	}
 }
 
-func roleDefinition() map[string]any {
-	return map[string]any{
-		"role_definition_id":     DemoRoleDefinition,
-		"scenario_definition_id": DemoScenarioDefinition,
-		"role_type":              "INTERVIEWER",
-		"display_name":           "Technical Interviewer",
-		"responsibilities":       "Ask focused questions and evaluate trade-offs.",
-		"style":                  "direct and constructive",
-		"focus_areas":            []string{"reliability", "ownership", "collaboration"},
-		"version":                1,
+func mustJSONMap(value any) map[string]any {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(fmt.Sprintf("encode deterministic catalog value: %v", err))
 	}
-}
-
-func practiceOption() map[string]any {
-	return map[string]any{
-		"practice_option_id":     DemoPracticeOption,
-		"scenario_definition_id": DemoScenarioDefinition,
-		"role_definition_id":     DemoRoleDefinition,
-		"practice_option_type":   "FULL_SIMULATION",
-		"display_name":           "Full interview simulation",
-		"version":                1,
+	var result map[string]any
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		panic(fmt.Sprintf("decode deterministic catalog value: %v", err))
 	}
+	return result
 }
 
 func (r *Runtime) appendEventLocked(eventType string, payload map[string]any) {

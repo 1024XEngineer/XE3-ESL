@@ -1,0 +1,132 @@
+package preparation
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+func TestCatalogHTTPRoutesReturnCanonicalStableResponses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	catalog := mustBuiltinCatalog(t)
+	NewCatalogHTTPHandler(catalog).RegisterRoutes(router)
+
+	tests := []struct {
+		path string
+	}{
+		{"/v1/scenario-definitions"},
+		{"/v1/scenario-definitions/" + ProgrammerInterviewScenarioID},
+		{"/v1/scenario-definitions/" + ProgrammerInterviewScenarioID + "/role-definitions"},
+	}
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			first := serveCatalogRequest(router, test.path)
+			second := serveCatalogRequest(router, test.path)
+			if first.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", first.Code, first.Body.String())
+			}
+			if !bytes.Equal(first.Body.Bytes(), second.Body.Bytes()) {
+				t.Fatalf("repeated response changed:\nfirst=%s\nsecond=%s", first.Body, second.Body)
+			}
+			if strings.Contains(first.Body.String(), "display_order") {
+				t.Fatalf("internal display order leaked: %s", first.Body.String())
+			}
+		})
+	}
+
+	listResponse := serveCatalogRequest(router, "/v1/scenario-definitions")
+	var list ScenarioDefinitionList
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list.Scenarios) != 1 ||
+		list.Scenarios[0].ID != ProgrammerInterviewScenarioID {
+		t.Fatalf("unexpected list: %#v", list)
+	}
+
+	detailResponse := serveCatalogRequest(
+		router,
+		"/v1/scenario-definitions/"+ProgrammerInterviewScenarioID,
+	)
+	var detail ScenarioDetail
+	if err := json.Unmarshal(detailResponse.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if detail.ScenarioConfig.ID != BackendEngineerConfigID ||
+		len(detail.PracticeOptions) != 5 {
+		t.Fatalf("unexpected detail: %#v", detail)
+	}
+
+	roleResponse := serveCatalogRequest(
+		router,
+		"/v1/scenario-definitions/"+ProgrammerInterviewScenarioID+"/role-definitions",
+	)
+	var roles RoleDefinitionList
+	if err := json.Unmarshal(roleResponse.Body.Bytes(), &roles); err != nil {
+		t.Fatalf("decode roles: %v", err)
+	}
+	if len(roles.Roles) != 4 ||
+		roles.Roles[0].ID != HRInterviewerRoleID ||
+		roles.Roles[3].ID != ExecutiveInterviewerRoleID {
+		t.Fatalf("unexpected roles: %#v", roles)
+	}
+}
+
+func TestCatalogHTTPRoutesHideUnknownAndInactiveScenarios(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	definition := programmerInterviewCatalogDefinition()
+	definition.definition.Status = ScenarioStatusInactive
+	catalog, err := newCatalog([]catalogScenario{definition})
+	if err != nil {
+		t.Fatalf("newCatalog: %v", err)
+	}
+	router := gin.New()
+	NewCatalogHTTPHandler(catalog).RegisterRoutes(router)
+
+	list := serveCatalogRequest(router, "/v1/scenario-definitions")
+	if list.Code != http.StatusOK || list.Body.String() != `{"scenarios":[]}` {
+		t.Fatalf("inactive list status=%d body=%s", list.Code, list.Body.String())
+	}
+
+	for _, path := range []string{
+		"/v1/scenario-definitions/unknown",
+		"/v1/scenario-definitions/unknown/role-definitions",
+		"/v1/scenario-definitions/" + ProgrammerInterviewScenarioID,
+		"/v1/scenario-definitions/" + ProgrammerInterviewScenarioID + "/role-definitions",
+	} {
+		response := serveCatalogRequest(router, path)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+		var body struct {
+			Error struct {
+				Code          string `json:"code"`
+				Message       string `json:"message"`
+				Retryable     bool   `json:"retryable"`
+				CorrelationID string `json:"correlation_id"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s decode error: %v", path, err)
+		}
+		if body.Error.Code != "scenario_definition_not_found" ||
+			body.Error.Message == "" ||
+			body.Error.Retryable ||
+			body.Error.CorrelationID == "" {
+			t.Fatalf("%s unexpected error: %#v", path, body)
+		}
+	}
+}
+
+func serveCatalogRequest(router http.Handler, path string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
