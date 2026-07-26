@@ -17,30 +17,31 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 )
 
-func TestRendererMapsEveryCategoryExplicitly(t *testing.T) {
+func TestRendererAcceptsMatchingCanonicalCodeStatusPairs(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		category apperror.Category
+		code     string
 		status   int
 	}{
-		{apperror.InvalidArgument, http.StatusBadRequest},
-		{apperror.Unauthenticated, http.StatusUnauthorized},
-		{apperror.PermissionDenied, http.StatusForbidden},
-		{apperror.NotFound, http.StatusNotFound},
-		{apperror.AlreadyExists, http.StatusConflict},
-		{apperror.Conflict, http.StatusConflict},
-		{apperror.FailedPrecondition, http.StatusPreconditionFailed},
-		{apperror.ResourceExhausted, http.StatusTooManyRequests},
-		{apperror.DeadlineExceeded, http.StatusGatewayTimeout},
-		{apperror.Unimplemented, http.StatusNotImplemented},
-		{apperror.Unavailable, http.StatusServiceUnavailable},
-		{apperror.Internal, http.StatusInternalServerError},
+		{apperror.InvalidArgument, "invalid_request", http.StatusBadRequest},
+		{apperror.Unauthenticated, "invalid_credentials", http.StatusUnauthorized},
+		{
+			apperror.PermissionDenied,
+			"practice_participant_not_authorized",
+			http.StatusForbidden,
+		},
+		{apperror.NotFound, "resource_not_found", http.StatusNotFound},
+		{apperror.AlreadyExists, "account_registration_unavailable", http.StatusConflict},
+		{apperror.Conflict, "resource_conflict", http.StatusConflict},
+		{apperror.ResourceExhausted, "rate_limited", http.StatusTooManyRequests},
+		{apperror.Internal, "internal_error", http.StatusInternalServerError},
 	}
 
 	for _, test := range tests {
 		test := test
-		t.Run(string(test.category), func(t *testing.T) {
+		t.Run(test.code, func(t *testing.T) {
 			t.Parallel()
 			response := render(
 				t,
@@ -48,7 +49,7 @@ func TestRendererMapsEveryCategoryExplicitly(t *testing.T) {
 				context.Background(),
 				apperror.New(
 					test.category,
-					"module_error",
+					test.code,
 					"Public error.",
 					apperror.WithRetryable(true),
 				),
@@ -58,7 +59,7 @@ func TestRendererMapsEveryCategoryExplicitly(t *testing.T) {
 				t.Fatalf("expected status %d, got %d", test.status, response.Code)
 			}
 			payload := decodeResponse(t, response)
-			if payload.Error.Code != "module_error" ||
+			if payload.Error.Code != test.code ||
 				payload.Error.Message != "Public error." ||
 				!payload.Error.Retryable ||
 				payload.Error.CorrelationID != "corr_category" {
@@ -207,7 +208,7 @@ func TestRendererSafelyFallsBackForUnrenderableErrors(t *testing.T) {
 			name: "unknown category",
 			err: apperror.New(
 				apperror.Category("future"),
-				"future_error",
+				"internal_error",
 				"Future error.",
 			),
 		},
@@ -220,12 +221,28 @@ func TestRendererSafelyFallsBackForUnrenderableErrors(t *testing.T) {
 			err:  apperror.New(apperror.Internal, "Internal Error", "Public error."),
 		},
 		{
+			name: "well formed but undeclared code",
+			err: apperror.New(
+				apperror.NotFound,
+				"resource_not_foud",
+				"Resource was not found.",
+			),
+		},
+		{
+			name: "canonical code with mismatched category",
+			err: apperror.New(
+				apperror.NotFound,
+				"internal_error",
+				"Resource was not found.",
+			),
+		},
+		{
 			name: "empty message",
-			err:  apperror.New(apperror.Internal, "module_error", " \t"),
+			err:  apperror.New(apperror.Internal, "internal_error", " \t"),
 		},
 		{
 			name: "control in message",
-			err:  apperror.New(apperror.Internal, "module_error", "Public\nsecret"),
+			err:  apperror.New(apperror.Internal, "internal_error", "Public\nsecret"),
 		},
 		{
 			name: "empty detail field",

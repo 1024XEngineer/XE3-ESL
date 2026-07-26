@@ -105,8 +105,10 @@ func payloadFor(err error) (int, ErrorPayload) {
 	}
 
 	status, ok := statusForCategory(appError.Category())
+	contractStatus, codeOK := canonicalHTTPStatusByCode[appError.Code()]
 	if !ok ||
-		!validCode(appError.Code()) ||
+		!codeOK ||
+		contractStatus != status ||
 		!validPublicText(appError.Message()) {
 		return internalPayload()
 	}
@@ -163,6 +165,52 @@ func statusForCategory(category apperror.Category) (int, bool) {
 	}
 }
 
+// canonicalHTTPStatusByCode mirrors ErrorCode.x-http-status-map in
+// api/common/errors.yaml for delivery-time validation. Business modules still
+// own and select their error codes; this snapshot only prevents the REST
+// renderer from emitting codes or code/status combinations outside the public
+// API contract. A regression test keeps the snapshot synchronized with the
+// schema.
+var canonicalHTTPStatusByCode = map[string]int{
+	"invalid_request":                         http.StatusBadRequest,
+	"answer_invalid":                          http.StatusBadRequest,
+	"unsupported_message":                     http.StatusBadRequest,
+	"authentication_required":                 http.StatusUnauthorized,
+	"invalid_credentials":                     http.StatusUnauthorized,
+	"practice_participant_not_authorized":     http.StatusForbidden,
+	"scenario_definition_not_found":           http.StatusNotFound,
+	"role_definition_not_found":               http.StatusNotFound,
+	"preparation_profile_not_found":           http.StatusNotFound,
+	"practice_plan_not_found":                 http.StatusNotFound,
+	"practice_session_not_found":              http.StatusNotFound,
+	"question_not_found":                      http.StatusNotFound,
+	"turn_not_found":                          http.StatusNotFound,
+	"turn_analysis_not_found":                 http.StatusNotFound,
+	"feedback_item_not_found":                 http.StatusNotFound,
+	"retry_request_not_found":                 http.StatusNotFound,
+	"resource_not_found":                      http.StatusNotFound,
+	"account_registration_unavailable":        http.StatusConflict,
+	"idempotency_key_conflict":                http.StatusConflict,
+	"resource_conflict":                       http.StatusConflict,
+	"preparation_version_conflict":            http.StatusConflict,
+	"practice_plan_not_ready":                 http.StatusConflict,
+	"practice_plan_archived":                  http.StatusConflict,
+	"practice_plan_has_active_session":        http.StatusConflict,
+	"practice_plan_revision_conflict":         http.StatusConflict,
+	"practice_session_transition_not_allowed": http.StatusConflict,
+	"practice_session_already_terminal":       http.StatusConflict,
+	"practice_session_version_conflict":       http.StatusConflict,
+	"practice_participant_invalid":            http.StatusConflict,
+	"practice_option_invalid":                 http.StatusConflict,
+	"turn_conflict":                           http.StatusConflict,
+	"turn_outcome_session_mismatch":           http.StatusConflict,
+	"turn_analysis_conflict":                  http.StatusConflict,
+	"retry_request_conflict":                  http.StatusConflict,
+	"transcript_unavailable":                  http.StatusUnprocessableEntity,
+	"rate_limited":                            http.StatusTooManyRequests,
+	internalErrorCode:                         http.StatusInternalServerError,
+}
+
 func responseDetails(details []apperror.Detail) ([]ErrorDetail, bool) {
 	if len(details) == 0 {
 		return nil, true
@@ -179,27 +227,6 @@ func responseDetails(details []apperror.Detail) ([]ErrorDetail, bool) {
 		}
 	}
 	return response, true
-}
-
-func validCode(code string) bool {
-	if code == "" {
-		return false
-	}
-
-	for index := 0; index < len(code); index++ {
-		character := code[index]
-		if character >= 'a' && character <= 'z' {
-			continue
-		}
-		if index > 0 && character >= '0' && character <= '9' {
-			continue
-		}
-		if index > 0 && character == '_' {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 func validPublicText(value string) bool {
