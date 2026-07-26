@@ -5,6 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/agent/agent_voice_client.dart';
+import 'package:speakup/agent/agent_voice_controller.dart';
+import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_audio_player.dart';
 import 'package:speakup/practice/practice_media.dart';
@@ -20,6 +23,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     PracticeRecorder? recorder,
     this.mediaClient,
     this.audioPlayer,
+    AgentVoiceClient? voiceClient,
+    AgentVoiceRecorder? voiceRecorder,
+    AgentVoiceAudioPlayer? voiceAudioPlayer,
     AgentClientIdFactory? clientIdFactory,
     Duration recordingLimit = const Duration(seconds: 58),
   }) : practiceClient = practiceClient ?? LegacyAgentPracticeClient(client),
@@ -30,6 +36,26 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       throw ArgumentError(
         'Practice media client and audio player must be injected together.',
       );
+    }
+    final AgentVoiceClient? supportedVoiceClient = switch (client) {
+      final AgentVoiceClient supported => supported,
+      _ => null,
+    };
+    final resolvedVoiceClient = voiceClient ?? supportedVoiceClient;
+    if (resolvedVoiceClient != null) {
+      if ((voiceRecorder == null) != (voiceAudioPlayer == null)) {
+        throw ArgumentError(
+          'Agent voice recorder and audio player must be injected together.',
+        );
+      }
+      _voiceController = AgentVoiceController(
+        client: resolvedVoiceClient,
+        recorder: voiceRecorder ?? FakeAgentVoiceRecorder(),
+        audioPlayer: voiceAudioPlayer ?? FakeAgentVoiceAudioPlayer(),
+        onMessagesCommitted: _commitVoiceMessages,
+        onMessageAudioDeleted: _markVoiceMessageAudioDeleted,
+        idFactory: _newClientId,
+      )..addListener(_handleVoiceState);
     }
     if (recordingLimit <= Duration.zero ||
         recordingLimit > const Duration(seconds: 60)) {
@@ -54,6 +80,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   final PracticeAudioPlayer? audioPlayer;
   final AgentClientIdFactory _clientIdFactory;
   final Duration _recordingLimit;
+  AgentVoiceController? _voiceController;
 
   String? _threadId;
   AgentThreadSummary? _currentThreadSummary;
@@ -117,6 +144,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   AgentMatter? get activeMatter => _activeMatter;
   AgentScene? get scene => _activeMatter?.scene;
   List<AgentMessage> get messages => List.unmodifiable(_messages);
+  AgentVoiceController? get voiceController => _voiceController;
+  bool get supportsAgentVoice => _voiceController != null;
   PracticeRecordingState get recordingState => _recordingState;
   String? get transcript => _candidate?.text;
   AgentReview? get review => _review;
@@ -124,7 +153,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
   bool get isBusy =>
-      _busy || _practiceRequestInFlight || _threadTransitionInFlight;
+      _busy ||
+      _practiceRequestInFlight ||
+      _threadTransitionInFlight ||
+      (_voiceController?.hasActiveWorkflow ?? false);
   bool get canRetry => _retry != null;
   bool get supportsPracticeFlow => practiceClient != null;
   bool get supportsPracticeMedia => mediaClient != null && audioPlayer != null;
@@ -222,6 +254,13 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _threadHistoryErrorMessage = null;
     _setBusy(true);
     try {
+      // A previous process can be terminated before its normal disposal path.
+      // Purge only Agent voice scratch media before restoring this account;
+      // durable Messages and candidates remain server-owned.
+      await _voiceController?.clearPrivateState(clearClient: false);
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
       if (client case final AgentThreadHistoryClient historyClient) {
         await _restoreThreadHistory(historyClient, fence);
       } else {
@@ -259,6 +298,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     if (focused == null) {
+      await _voiceController?.bindThread(null);
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
       _resetSelectedThreadPresentation();
       _initialized = true;
       return;
@@ -296,6 +339,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         summary ?? _threadSummaryFromSnapshot(thread) ?? _currentThreadSummary;
     _nextMessageCursor = thread.nextMessageCursor;
     _messages = List<AgentMessage>.from(thread.messages);
+    await _voiceController?.bindThread(thread.threadId, messages: _messages);
+    if (!_isOperationCurrent(fence)) {
+      return;
+    }
     _applyPracticeSnapshot(practice);
     _initialized = true;
     _applyRestoredTextState(thread);
@@ -390,6 +437,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
     _setBusy(true);
     try {
+      await _voiceController?.bindThread(null);
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
       await stopPracticeAudio();
       if (!_isOperationCurrent(fence)) {
         return false;
@@ -496,6 +547,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       if (!_isOperationCurrent(fence)) {
         return;
       }
+      await _voiceController?.bindThread(null);
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
       _resetSelectedThreadPresentation();
       _initialized = true;
     } catch (_) {
@@ -597,6 +652,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         );
       }
       _messages = <AgentMessage>[...page.messages, ..._messages];
+      _voiceController?.syncMessages(_messages);
       _nextMessageCursor = page.nextCursor;
     } catch (_) {
       if (_isOperationCurrent(fence)) {
@@ -608,6 +664,38 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
       }
     }
+  }
+
+  /// Starts an ordinary Agent voice Message in the focused Thread.
+  ///
+  /// If the account has no focused Thread, the existing safe Thread creation
+  /// path runs first. This microphone is intentionally independent from the
+  /// Practice turn recorder.
+  Future<void> startAgentVoiceRecording() async {
+    final voice = _voiceController;
+    if (voice == null || _disposed || voice.hasActiveWorkflow) {
+      return;
+    }
+    await _ensureInitialized();
+    if (_disposed) {
+      return;
+    }
+    if (_threadId == null) {
+      final created = await createThread();
+      if (!created || _threadId == null || _disposed) {
+        return;
+      }
+    }
+    final threadId = _threadId!;
+    await voice.bindThread(threadId, messages: _messages);
+    if (_disposed || _threadId != threadId || voice.threadId != threadId) {
+      return;
+    }
+    await stopPracticeAudio();
+    if (_disposed || _threadId != threadId || voice.threadId != threadId) {
+      return;
+    }
+    await voice.startRecording();
   }
 
   Future<void> selectScene(AgentScene scene) async {
@@ -1414,6 +1502,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
     final cleanup = Future.wait<void>([
       Future<void>.sync(client.clearAccountState),
+      if (_voiceController case final voice?)
+        Future<void>.sync(
+          () => voice.clearPrivateState(
+            clearClient: !identical(client, voice.client),
+          ),
+        ),
       if (practiceClient case final practice?)
         Future<void>.sync(practice.clearAccountState),
       Future<void>.sync(() async {
@@ -1453,6 +1547,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _threadTransitionGeneration++;
     _threadTransitionInFlight = false;
     _initializationFuture = null;
+    _voiceController?.removeListener(_handleVoiceState);
+    _voiceController?.dispose();
     unawaited(recorder.discardCurrent());
     unawaited(_mediaCompletionSubscription?.cancel());
     unawaited(mediaClient?.dispose());
@@ -1484,6 +1580,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _currentThreadSummary = null;
     _nextMessageCursor = null;
     _messages = const <AgentMessage>[];
+    _voiceController?.syncMessages(_messages);
     _retry = null;
     _errorMessage = null;
     _applyPracticeSnapshot(null);
@@ -1583,6 +1680,51 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     _messages = messages;
+    _voiceController?.syncMessages(_messages);
+  }
+
+  void _commitVoiceMessages(Iterable<AgentMessage> values) {
+    if (_disposed || _threadId == null) {
+      return;
+    }
+    _appendMessages(values);
+    final current = _currentThreadSummary;
+    if (current != null) {
+      final now = DateTime.now().toUtc();
+      final updated = AgentThreadSummary(
+        id: current.id,
+        activeMatterId: current.activeMatterId,
+        createdAt: current.createdAt,
+        updatedAt: now.isBefore(current.updatedAt) ? current.updatedAt : now,
+      );
+      _currentThreadSummary = updated;
+      _mergeThreadSummary(updated, placeFirst: true);
+    }
+    notifyListeners();
+  }
+
+  void _markVoiceMessageAudioDeleted(
+    String messageId,
+    AgentMessageAudio deletedAudio,
+  ) {
+    if (_disposed) {
+      return;
+    }
+    _messages = <AgentMessage>[
+      for (final message in _messages)
+        if (message.id == messageId)
+          message.copyWith(audio: deletedAudio)
+        else
+          message,
+    ];
+    _voiceController?.syncMessages(_messages);
+    notifyListeners();
+  }
+
+  void _handleVoiceState() {
+    if (!_disposed) {
+      notifyListeners();
+    }
   }
 
   bool _isCurrent(int epoch) => !_disposed && epoch == _epoch;

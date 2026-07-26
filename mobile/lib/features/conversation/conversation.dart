@@ -7,18 +7,22 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/agent/agent_voice_controller.dart';
+import 'package:speakup/agent/agent_voice_widgets.dart';
 
-class ConversationPage extends StatelessWidget {
+class ConversationPage extends StatefulWidget {
   const ConversationPage({
     this.previewMode = false,
     this.practiceAvailable = true,
     this.restingComposerBottom = 16,
+    this.threadId,
     this.onOpenMenu,
     this.onNavigateBack,
     this.onCreatePlan,
     this.onContinuePractice,
     this.onOpenReview,
-    this.onVoicePlaceholder,
+    VoidCallback? onStartVoice,
+    VoidCallback? onVoicePlaceholder,
     this.onCreateConversation,
     this.messages = const <AgentMessage>[],
     this.activeScene,
@@ -30,18 +34,20 @@ class ConversationPage extends StatelessWidget {
     this.onSubmitText,
     this.onRetryOperation,
     this.onLoadEarlierMessages,
+    this.voiceController,
     super.key,
-  });
+  }) : onStartVoice = onStartVoice ?? onVoicePlaceholder;
 
   final bool previewMode;
   final bool practiceAvailable;
   final double restingComposerBottom;
+  final String? threadId;
   final VoidCallback? onOpenMenu;
   final VoidCallback? onNavigateBack;
   final VoidCallback? onCreatePlan;
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
-  final VoidCallback? onVoicePlaceholder;
+  final VoidCallback? onStartVoice;
   final VoidCallback? onCreateConversation;
   final List<AgentMessage> messages;
   final AgentScene? activeScene;
@@ -53,9 +59,16 @@ class ConversationPage extends StatelessWidget {
   final Future<bool> Function(String)? onSubmitText;
   final VoidCallback? onRetryOperation;
   final VoidCallback? onLoadEarlierMessages;
+  final AgentVoiceController? voiceController;
 
   @override
-  Widget build(BuildContext context) {
+  State<ConversationPage> createState() => _ConversationPageState();
+
+  Widget _build(
+    BuildContext context, {
+    required ScrollController scrollController,
+    required VoidCallback? onLoadEarlierMessages,
+  }) {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
@@ -80,6 +93,7 @@ class ConversationPage extends StatelessWidget {
                   children: [
                     Expanded(
                       child: SingleChildScrollView(
+                        controller: scrollController,
                         padding: EdgeInsets.fromLTRB(
                           horizontalPadding,
                           12,
@@ -168,7 +182,10 @@ class ConversationPage extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 8),
                               ],
-                              _MessageList(messages: messages),
+                              _MessageList(
+                                messages: messages,
+                                voiceController: voiceController,
+                              ),
                             ],
                             if (isBusy) ...[
                               const SizedBox(height: 14),
@@ -188,23 +205,43 @@ class ConversationPage extends StatelessWidget {
                         ),
                       ),
                     ),
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        horizontalPadding,
-                        16,
-                        horizontalPadding,
-                        0,
+                    if (voiceController != null &&
+                        voiceController!.hasActiveWorkflow)
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            horizontalPadding,
+                            8,
+                            horizontalPadding,
+                            0,
+                          ),
+                          child: SingleChildScrollView(
+                            child: AgentVoiceComposerPanel(
+                              controller: voiceController!,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          16,
+                          horizontalPadding,
+                          0,
+                        ),
+                        child: _AgentComposer(
+                          keyboardVisible: keyboardVisible,
+                          acceptedUserMessageId: acceptedUserMessage?.id,
+                          acceptedUserMessageText: acceptedUserMessage?.text,
+                          onStartVoice: onStartVoice,
+                          voiceEnabled: voiceController != null && !isBusy,
+                          onSubmitText: onSubmitText,
+                          enabled: hasFocusedThread,
+                          isBusy: isBusy,
+                        ),
                       ),
-                      child: _AgentComposer(
-                        keyboardVisible: keyboardVisible,
-                        acceptedUserMessageId: acceptedUserMessage?.id,
-                        acceptedUserMessageText: acceptedUserMessage?.text,
-                        onVoicePlaceholder: onVoicePlaceholder,
-                        onSubmitText: onSubmitText,
-                        enabled: hasFocusedThread,
-                        isBusy: isBusy,
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -214,6 +251,145 @@ class ConversationPage extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ConversationPageState extends State<ConversationPage> {
+  final ScrollController _scrollController = ScrollController();
+  _ConversationScrollAnchor? _earlierMessagesAnchor;
+  int _scrollRequestGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleThreadInitialPosition();
+  }
+
+  @override
+  void didUpdateWidget(covariant ConversationPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.threadId != widget.threadId) {
+      _earlierMessagesAnchor = null;
+      _scheduleThreadInitialPosition();
+      return;
+    }
+
+    final messageCountGrew = widget.messages.length > oldWidget.messages.length;
+    if (messageCountGrew) {
+      final anchor = _earlierMessagesAnchor;
+      _earlierMessagesAnchor = null;
+      if (anchor != null &&
+          anchor.threadId == widget.threadId &&
+          widget.messages.length > anchor.messageCount) {
+        _schedulePreserveEarlierMessagesAnchor(anchor);
+      } else {
+        _scheduleScrollToLatest();
+      }
+      return;
+    }
+
+    if (oldWidget.isLoadingEarlierMessages &&
+        !widget.isLoadingEarlierMessages) {
+      _earlierMessagesAnchor = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollRequestGeneration++;
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _handleLoadEarlierMessages() {
+    if (_scrollController.hasClients) {
+      final position = _scrollController.position;
+      _earlierMessagesAnchor = _ConversationScrollAnchor(
+        threadId: widget.threadId,
+        messageCount: widget.messages.length,
+        pixels: position.pixels,
+        maxScrollExtent: position.maxScrollExtent,
+      );
+    }
+    widget.onLoadEarlierMessages?.call();
+  }
+
+  void _scheduleScrollToLatest() {
+    final requestGeneration = ++_scrollRequestGeneration;
+    final threadId = widget.threadId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          requestGeneration != _scrollRequestGeneration ||
+          threadId != widget.threadId ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      _scrollController.jumpTo(position.maxScrollExtent);
+    });
+  }
+
+  void _scheduleThreadInitialPosition() {
+    final requestGeneration = ++_scrollRequestGeneration;
+    final threadId = widget.threadId;
+    final hasMessages = widget.messages.isNotEmpty;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          requestGeneration != _scrollRequestGeneration ||
+          threadId != widget.threadId ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      _scrollController.jumpTo(
+        hasMessages ? position.maxScrollExtent : position.minScrollExtent,
+      );
+    });
+  }
+
+  void _schedulePreserveEarlierMessagesAnchor(
+    _ConversationScrollAnchor anchor,
+  ) {
+    final requestGeneration = ++_scrollRequestGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          requestGeneration != _scrollRequestGeneration ||
+          anchor.threadId != widget.threadId ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      final insertedExtent = position.maxScrollExtent - anchor.maxScrollExtent;
+      final target = (anchor.pixels + insertedExtent)
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      _scrollController.jumpTo(target);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget._build(
+      context,
+      scrollController: _scrollController,
+      onLoadEarlierMessages: widget.onLoadEarlierMessages == null
+          ? null
+          : _handleLoadEarlierMessages,
+    );
+  }
+}
+
+final class _ConversationScrollAnchor {
+  const _ConversationScrollAnchor({
+    required this.threadId,
+    required this.messageCount,
+    required this.pixels,
+    required this.maxScrollExtent,
+  });
+
+  final String? threadId;
+  final int messageCount;
+  final double pixels;
+  final double maxScrollExtent;
 }
 
 class _AgentBackground extends StatelessWidget {
@@ -503,9 +679,10 @@ class _QuickActionButton extends StatelessWidget {
 }
 
 class _MessageList extends StatelessWidget {
-  const _MessageList({required this.messages});
+  const _MessageList({required this.messages, this.voiceController});
 
   final List<AgentMessage> messages;
+  final AgentVoiceController? voiceController;
 
   @override
   Widget build(BuildContext context) {
@@ -513,36 +690,9 @@ class _MessageList extends StatelessWidget {
       key: const Key('agent-message-list'),
       children: [
         for (final message in messages)
-          Align(
-            alignment: message.role == AgentMessageRole.user
-                ? Alignment.centerRight
-                : Alignment.centerLeft,
-            child: Container(
-              key: Key('agent-message-${message.id}'),
-              constraints: const BoxConstraints(maxWidth: 310),
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-              decoration: BoxDecoration(
-                color: message.role == AgentMessageRole.user
-                    ? const Color(0xFF202124)
-                    : Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: message.role == AgentMessageRole.user
-                      ? const Color(0xFF202124)
-                      : const Color(0xFFE6E6E2),
-                ),
-              ),
-              child: Text(
-                message.text,
-                style: TextStyle(
-                  color: message.role == AgentMessageRole.user
-                      ? Colors.white
-                      : const Color(0xFF202124),
-                  height: 1.45,
-                ),
-              ),
-            ),
+          AgentMessageBubble(
+            message: message,
+            voiceController: voiceController,
           ),
       ],
     );
@@ -589,7 +739,8 @@ class _AgentComposer extends StatefulWidget {
     required this.keyboardVisible,
     required this.acceptedUserMessageId,
     required this.acceptedUserMessageText,
-    required this.onVoicePlaceholder,
+    required this.onStartVoice,
+    required this.voiceEnabled,
     required this.onSubmitText,
     required this.enabled,
     required this.isBusy,
@@ -598,7 +749,8 @@ class _AgentComposer extends StatefulWidget {
   final bool keyboardVisible;
   final String? acceptedUserMessageId;
   final String? acceptedUserMessageText;
-  final VoidCallback? onVoicePlaceholder;
+  final VoidCallback? onStartVoice;
+  final bool voiceEnabled;
   final Future<bool> Function(String)? onSubmitText;
   final bool enabled;
   final bool isBusy;
@@ -712,20 +864,18 @@ class _AgentComposerState extends State<_AgentComposer> {
                 Row(
                   children: [
                     const Spacer(),
-                    if (widget.onVoicePlaceholder != null) ...[
+                    if (widget.onStartVoice != null) ...[
                       Semantics(
                         key: const Key('agent-mic-placeholder'),
                         button: true,
-                        enabled: widget.enabled,
-                        label: '开始按轮语音练习',
-                        onTap: widget.enabled
-                            ? widget.onVoicePlaceholder
-                            : null,
+                        enabled: widget.voiceEnabled,
+                        label: '录制 Agent 语音消息',
+                        onTap: widget.voiceEnabled ? widget.onStartVoice : null,
                         child: ExcludeSemantics(
                           child: IconButton.filledTonal(
-                            tooltip: '开始按轮语音练习',
-                            onPressed: widget.enabled
-                                ? widget.onVoicePlaceholder
+                            tooltip: '录制 Agent 语音消息',
+                            onPressed: widget.voiceEnabled
+                                ? widget.onStartVoice
                                 : null,
                             style: IconButton.styleFrom(
                               backgroundColor: const Color(0xFFE8E8E5),

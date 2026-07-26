@@ -127,23 +127,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     Navigator.of(context).pushNamed(AppRoutes.practice);
   }
 
-  void _openVoicePractice() {
-    if (!widget.agentController.supportsPracticeFlow) {
-      _showMockNotice('语音练习尚未开放，当前可以使用 Agent 文本对话');
-      return;
-    }
-    if (widget.agentController.review != null) {
-      _selectDestination(2);
-      return;
-    }
-    if (!widget.agentController.hasActivePractice) {
-      _selectDestination(1);
-      _showMockNotice('请先选择一个练习场景');
-      return;
-    }
-    _openPractice();
-  }
-
   void _handleAgentState() {
     if (!mounted) {
       return;
@@ -184,6 +167,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         restingComposerBottom: composerBottomInset,
+        threadId: widget.agentController.threadId,
         onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
@@ -191,7 +175,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onCreatePlan: () => _selectDestination(1),
         onContinuePractice: _openPractice,
         onOpenReview: () => _selectDestination(2),
-        onVoicePlaceholder: practiceAvailable ? _openVoicePractice : null,
+        onStartVoice: widget.agentController.supportsAgentVoice
+            ? () => unawaited(widget.agentController.startAgentVoiceRecording())
+            : null,
+        voiceController: widget.agentController.voiceController,
         onCreateConversation: widget.agentController.supportsThreadHistory
             ? () => unawaited(widget.agentController.createThread())
             : null,

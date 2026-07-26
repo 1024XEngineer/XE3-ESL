@@ -1,5 +1,51 @@
 enum AgentMessageRole { user, assistant }
 
+enum AgentMessageModality { text, voice }
+
+enum AgentMessageAudioStatus { readable, deleting, deleted }
+
+final class AgentMessageAudio {
+  const AgentMessageAudio({
+    required this.id,
+    required this.status,
+    required this.contentType,
+    required this.sizeBytes,
+    required this.duration,
+    this.playbackPath,
+    this.deletedAt,
+  });
+
+  final String id;
+  final AgentMessageAudioStatus status;
+  final String contentType;
+  final int sizeBytes;
+  final Duration duration;
+  final String? playbackPath;
+  final DateTime? deletedAt;
+
+  bool get isReadable =>
+      status == AgentMessageAudioStatus.readable && playbackPath != null;
+
+  AgentMessageAudio copyWith({
+    AgentMessageAudioStatus? status,
+    String? playbackPath,
+    bool clearPlaybackPath = false,
+    DateTime? deletedAt,
+  }) {
+    return AgentMessageAudio(
+      id: id,
+      status: status ?? this.status,
+      contentType: contentType,
+      sizeBytes: sizeBytes,
+      duration: duration,
+      playbackPath: clearPlaybackPath
+          ? null
+          : playbackPath ?? this.playbackPath,
+      deletedAt: deletedAt ?? this.deletedAt,
+    );
+  }
+}
+
 enum PracticeRecordingState {
   idle,
   starting,
@@ -30,13 +76,32 @@ final class AgentMessage {
     required this.text,
     this.sequence,
     this.createdAt,
-  });
+    this.modality = AgentMessageModality.text,
+    this.audio,
+  }) : assert(
+         (modality == AgentMessageModality.voice && audio != null) ||
+             (modality == AgentMessageModality.text && audio == null),
+       );
 
   final String id;
   final AgentMessageRole role;
   final String text;
   final int? sequence;
   final DateTime? createdAt;
+  final AgentMessageModality modality;
+  final AgentMessageAudio? audio;
+
+  AgentMessage copyWith({AgentMessageAudio? audio, bool clearAudio = false}) {
+    return AgentMessage(
+      id: id,
+      role: role,
+      text: text,
+      sequence: sequence,
+      createdAt: createdAt,
+      modality: clearAudio ? AgentMessageModality.text : modality,
+      audio: clearAudio ? null : audio ?? this.audio,
+    );
+  }
 }
 
 /// One durable Agent Thread as returned by the bounded history endpoint.

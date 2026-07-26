@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'agent_models.dart';
+import 'agent_voice_client.dart';
+import 'agent_voice_models.dart';
 
 abstract interface class AgentClient {
   /// Cancels account-scoped work, closes live resources, and removes temporary
@@ -131,7 +134,8 @@ final class AgentClientOperationCancelled implements Exception {
   String toString() => 'Agent operation was cancelled during account cleanup.';
 }
 
-final class FakeAgentClient implements AgentClient, AgentThreadHistoryClient {
+final class FakeAgentClient
+    implements AgentClient, AgentThreadHistoryClient, AgentVoiceClient {
   FakeAgentClient({this.delay = Duration.zero});
 
   final Duration delay;
@@ -148,6 +152,11 @@ final class FakeAgentClient implements AgentClient, AgentThreadHistoryClient {
   final Map<String, String> _transcripts = {};
   final Map<String, AgentExchange> _practiceExchanges = {};
   final Map<String, AgentReview> _reviews = {};
+  final Map<String, AgentVoiceCandidate> _voiceCandidates = {};
+  final Map<String, AgentVoiceConfirmation> _voiceConfirmations = {};
+  final Map<String, AgentVoiceRun> _voiceRuns = {};
+  final Map<String, ({String threadId, String messageId})> _voiceAudios = {};
+  int _voiceCandidateSequence = 0;
   final Set<Future<void>> _inFlightOperations = <Future<void>>{};
 
   @override
@@ -166,6 +175,11 @@ final class FakeAgentClient implements AgentClient, AgentThreadHistoryClient {
     _transcripts.clear();
     _practiceExchanges.clear();
     _reviews.clear();
+    _voiceCandidates.clear();
+    _voiceConfirmations.clear();
+    _voiceRuns.clear();
+    _voiceAudios.clear();
+    _voiceCandidateSequence = 0;
     await Future.wait(staleOperations);
   }
 
@@ -449,6 +463,304 @@ final class FakeAgentClient implements AgentClient, AgentThreadHistoryClient {
     });
   }
 
+  @override
+  Future<AgentVoiceCandidate> createCandidate({
+    required String threadId,
+    required AgentVoiceLocalRecording recording,
+    required String idempotencyKey,
+  }) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      if (!_threads.containsKey(threadId) ||
+          recording.contentType != 'audio/wav' ||
+          recording.sizeBytes < 1 ||
+          recording.duration <= Duration.zero ||
+          idempotencyKey.trim().isEmpty) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidRequest,
+        );
+      }
+      final operationKey = _operationKey(threadId, idempotencyKey);
+      for (final candidate in _voiceCandidates.values) {
+        if (candidate.transcript?.requestId == operationKey) {
+          return candidate;
+        }
+      }
+      final now = DateTime.now().toUtc();
+      final candidate = AgentVoiceCandidate(
+        id: 'voice_candidate_${++_voiceCandidateSequence}',
+        threadId: threadId,
+        status: AgentVoiceCandidateStatus.candidateReady,
+        asrAttempt: 1,
+        version: 1,
+        recording: AgentVoiceRecordingMetadata(
+          contentType: 'audio/wav',
+          sizeBytes: recording.sizeBytes,
+          duration: recording.duration,
+          sampleRate: 16000,
+        ),
+        transcript: AgentVoiceTranscript(
+          text:
+              'I explained the problem, the trade-off, and the result clearly.',
+          requestId: operationKey,
+          provider: 'fake',
+          model: 'fake-asr',
+          language: 'en',
+          finishReason: 'stop',
+        ),
+        expiresAt: now.add(const Duration(hours: 1)),
+        createdAt: now,
+        updatedAt: now,
+      );
+      _voiceCandidates[candidate.id] = candidate;
+      return candidate;
+    });
+  }
+
+  @override
+  Future<AgentVoiceCandidate> getCandidate({required String candidateId}) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      final candidate = _voiceCandidates[candidateId];
+      if (candidate == null) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      return candidate;
+    });
+  }
+
+  @override
+  Future<AgentVoiceCandidate> retryCandidate({required String candidateId}) {
+    return getCandidate(candidateId: candidateId);
+  }
+
+  @override
+  Future<void> deleteCandidate({required String candidateId}) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      final candidate = _voiceCandidates[candidateId];
+      if (candidate == null) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      final now = DateTime.now().toUtc();
+      _voiceCandidates[candidateId] = AgentVoiceCandidate(
+        id: candidate.id,
+        threadId: candidate.threadId,
+        status: AgentVoiceCandidateStatus.deleted,
+        asrAttempt: candidate.asrAttempt,
+        version: candidate.version,
+        recording: candidate.recording,
+        transcript: candidate.transcript,
+        failure: candidate.failure,
+        expiresAt: candidate.expiresAt,
+        confirmedMessageId: candidate.confirmedMessageId,
+        confirmedRunId: candidate.confirmedRunId,
+        messageAudioId: candidate.messageAudioId,
+        confirmedAt: candidate.confirmedAt,
+        deletedAt: now,
+        createdAt: candidate.createdAt,
+        updatedAt: now,
+      );
+    });
+  }
+
+  @override
+  Future<AgentVoiceConfirmation> confirmCandidate({
+    required String candidateId,
+    required int candidateVersion,
+    required String clientMessageId,
+    required String confirmedText,
+  }) {
+    return _runAccountOperation((generation) async {
+      final operationKey = '$candidateId\u{0}$clientMessageId';
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      final replay = _voiceConfirmations[operationKey];
+      if (replay != null) {
+        if (replay.message.text != confirmedText ||
+            replay.candidate.version != candidateVersion) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.conflict,
+          );
+        }
+        return replay;
+      }
+      final candidate = _voiceCandidates[candidateId];
+      if (candidate == null) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      if (!candidate.isReady ||
+          candidate.version != candidateVersion ||
+          confirmedText.trim().isEmpty) {
+        throw const AgentClientException(kind: AgentClientFailureKind.conflict);
+      }
+      final now = DateTime.now().toUtc();
+      final audioId = 'voice_audio_$candidateId';
+      final userMessage = AgentMessage(
+        id: _nextMessageId(),
+        role: AgentMessageRole.user,
+        text: confirmedText,
+        createdAt: now,
+        modality: AgentMessageModality.voice,
+        audio: AgentMessageAudio(
+          id: audioId,
+          status: AgentMessageAudioStatus.readable,
+          contentType: 'audio/wav',
+          sizeBytes: candidate.recording.sizeBytes,
+          duration: candidate.recording.duration,
+          playbackPath: '/v1/agent-message-audios/$audioId/playback',
+        ),
+      );
+      final assistantMessage = AgentMessage(
+        id: _nextMessageId(),
+        role: AgentMessageRole.assistant,
+        text:
+            'That was clear. Add one measurable result to make the answer stronger.',
+        createdAt: now,
+      );
+      final run = AgentVoiceRun(
+        id: 'voice_run_$candidateId',
+        threadId: candidate.threadId,
+        inputMessageId: userMessage.id,
+        status: AgentVoiceRunStatus.completed,
+        assistantMessageId: assistantMessage.id,
+      );
+      final confirmedCandidate = AgentVoiceCandidate(
+        id: candidate.id,
+        threadId: candidate.threadId,
+        status: AgentVoiceCandidateStatus.confirmed,
+        asrAttempt: candidate.asrAttempt,
+        version: candidate.version,
+        recording: candidate.recording,
+        transcript: candidate.transcript,
+        expiresAt: candidate.expiresAt,
+        confirmedMessageId: userMessage.id,
+        confirmedRunId: run.id,
+        messageAudioId: audioId,
+        confirmedAt: now,
+        createdAt: candidate.createdAt,
+        updatedAt: now,
+      );
+      final confirmation = AgentVoiceConfirmation(
+        candidate: confirmedCandidate,
+        message: userMessage,
+        run: run,
+        assistantMessage: assistantMessage,
+      );
+      _voiceCandidates[candidate.id] = confirmedCandidate;
+      _voiceConfirmations[operationKey] = confirmation;
+      _voiceRuns[run.id] = run;
+      _voiceAudios[audioId] = (
+        threadId: candidate.threadId,
+        messageId: userMessage.id,
+      );
+      _appendThreadMessages(candidate.threadId, <AgentMessage>[
+        userMessage,
+        assistantMessage,
+      ]);
+      return confirmation;
+    });
+  }
+
+  @override
+  Future<AgentVoiceRun> getRun({required String runId}) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      final run = _voiceRuns[runId];
+      if (run == null) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      return run;
+    });
+  }
+
+  @override
+  Future<AgentVoiceRun> retryRun({
+    required String runId,
+    required String clientRetryId,
+  }) {
+    return getRun(runId: runId);
+  }
+
+  @override
+  Future<AgentMessage?> getMessage({
+    required String threadId,
+    required String messageId,
+  }) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      return _threadMessages[threadId]
+          ?.where((message) => message.id == messageId)
+          .firstOrNull;
+    });
+  }
+
+  @override
+  Future<Uint8List> loadMessageAudio({required String audioId}) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      if (!_voiceAudios.containsKey(audioId)) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      return Uint8List.fromList(_fakeWaveBytes);
+    });
+  }
+
+  @override
+  Future<void> deleteMessageAudio({required String audioId}) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      final reference = _voiceAudios.remove(audioId);
+      if (reference == null) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      final messages = _threadMessages[reference.threadId]!;
+      final index = messages.indexWhere(
+        (message) => message.id == reference.messageId,
+      );
+      if (index < 0 || messages[index].audio == null) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      final message = messages[index];
+      messages[index] = message.copyWith(
+        audio: message.audio!.copyWith(
+          status: AgentMessageAudioStatus.deleted,
+          clearPlaybackPath: true,
+          deletedAt: DateTime.now().toUtc(),
+        ),
+      );
+    });
+  }
+
+  @override
+  Future<Uint8List> loadAssistantSpeech({required String messageId}) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      final found = _threadMessages.values.any(
+        (messages) => messages.any(
+          (message) =>
+              message.id == messageId &&
+              message.role == AgentMessageRole.assistant,
+        ),
+      );
+      if (!found) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      return Uint8List.fromList(_fakeWaveBytes);
+    });
+  }
+
+  @override
+  Future<void> dispose() async {}
+
   String _nextMessageId() => 'message_${++_messageSequence}';
 
   void _seedPreviewThread(int generation) {
@@ -531,6 +843,57 @@ final class FakeAgentClient implements AgentClient, AgentThreadHistoryClient {
     }
   }
 }
+
+const _fakeWaveBytes = <int>[
+  0x52,
+  0x49,
+  0x46,
+  0x46,
+  0x28,
+  0x00,
+  0x00,
+  0x00,
+  0x57,
+  0x41,
+  0x56,
+  0x45,
+  0x66,
+  0x6d,
+  0x74,
+  0x20,
+  0x10,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x01,
+  0x00,
+  0x80,
+  0x3e,
+  0x00,
+  0x00,
+  0x00,
+  0x7d,
+  0x00,
+  0x00,
+  0x02,
+  0x00,
+  0x10,
+  0x00,
+  0x64,
+  0x61,
+  0x74,
+  0x61,
+  0x04,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+];
 
 int _fakeCursorOffset(String? cursor, {required String prefix}) {
   if (cursor == null) {

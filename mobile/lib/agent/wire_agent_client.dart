@@ -1180,8 +1180,10 @@ final class _WireMessage {
     required this.content,
     required this.sequence,
     required this.createdAt,
+    required this.modality,
     this.clientMessageId,
     this.producedByRunId,
+    this.audio,
   });
 
   final String id;
@@ -1189,8 +1191,10 @@ final class _WireMessage {
   final String content;
   final int sequence;
   final DateTime createdAt;
+  final AgentMessageModality modality;
   final String? clientMessageId;
   final String? producedByRunId;
+  final AgentMessageAudio? audio;
 
   AgentMessage get presentation => AgentMessage(
     id: id,
@@ -1198,6 +1202,8 @@ final class _WireMessage {
     text: content,
     sequence: sequence,
     createdAt: createdAt,
+    modality: modality,
+    audio: audio,
   );
 }
 
@@ -1461,7 +1467,9 @@ _WireMessage _decodeMessageObject(
       'role',
       'client_message_id',
       'produced_by_run_id',
+      'modality',
       'content',
+      'audio',
       'created_at',
     },
     required: const <String>{
@@ -1493,6 +1501,16 @@ _WireMessage _decodeMessageObject(
     throw const _InvalidAgentResponse();
   }
   final createdAt = _strictDateTime(object['created_at']);
+  final modality = _absentOnlyOptional(
+    object,
+    'modality',
+    (value) => switch (_strictString(value, minLength: 1, maxLength: 16)) {
+      'voice' => AgentMessageModality.voice,
+      _ => throw const _InvalidAgentResponse(),
+    },
+  );
+  final audio = _absentOnlyOptional(object, 'audio', _decodeMessageAudio);
+  final effectiveModality = modality ?? AgentMessageModality.text;
   final clientMessageId = _absentOnlyOptional(
     object,
     'client_message_id',
@@ -1506,7 +1524,11 @@ _WireMessage _decodeMessageObject(
   if ((role == AgentMessageRole.user &&
           (clientMessageId == null || producedByRunId != null)) ||
       (role == AgentMessageRole.assistant &&
-          (clientMessageId != null || producedByRunId == null))) {
+          (clientMessageId != null || producedByRunId == null)) ||
+      (effectiveModality == AgentMessageModality.voice && audio == null) ||
+      (effectiveModality == AgentMessageModality.text && audio != null) ||
+      (effectiveModality == AgentMessageModality.voice &&
+          role != AgentMessageRole.user)) {
     throw const _InvalidAgentResponse();
   }
   return _WireMessage(
@@ -1515,8 +1537,83 @@ _WireMessage _decodeMessageObject(
     content: content,
     sequence: sequence,
     createdAt: createdAt,
+    modality: effectiveModality,
     clientMessageId: clientMessageId,
     producedByRunId: producedByRunId,
+    audio: audio,
+  );
+}
+
+AgentMessageAudio _decodeMessageAudio(Object? value) {
+  final object = _strictObject(
+    value,
+    allowed: const <String>{
+      'audio_id',
+      'status',
+      'content_type',
+      'size_bytes',
+      'duration_ms',
+      'playback_path',
+      'deleted_at',
+    },
+    required: const <String>{
+      'audio_id',
+      'status',
+      'content_type',
+      'size_bytes',
+      'duration_ms',
+    },
+  );
+  final id = _strictUuid(object['audio_id']);
+  final status = switch (_strictString(
+    object['status'],
+    minLength: 1,
+    maxLength: 16,
+  )) {
+    'readable' => AgentMessageAudioStatus.readable,
+    'deleting' => AgentMessageAudioStatus.deleting,
+    'deleted' => AgentMessageAudioStatus.deleted,
+    _ => throw const _InvalidAgentResponse(),
+  };
+  if (_strictString(object['content_type'], minLength: 1, maxLength: 32) !=
+      'audio/wav') {
+    throw const _InvalidAgentResponse();
+  }
+  final sizeBytes = _strictInt(
+    object['size_bytes'],
+    minimum: 1,
+    maximum: 7400000,
+  );
+  final durationMs = _strictInt(
+    object['duration_ms'],
+    minimum: 1,
+    maximum: 60000,
+  );
+  final playbackPath = _absentOnlyOptional(
+    object,
+    'playback_path',
+    (value) => _strictPatternString(
+      value,
+      pattern: _agentMessageAudioPlaybackPathPattern,
+      maxLength: 256,
+    ),
+  );
+  final deletedAt = _absentOnlyOptional(object, 'deleted_at', _strictDateTime);
+  if ((status == AgentMessageAudioStatus.readable &&
+          (playbackPath == null || deletedAt != null)) ||
+      (status == AgentMessageAudioStatus.deleting && playbackPath != null) ||
+      (status == AgentMessageAudioStatus.deleted &&
+          (playbackPath != null || deletedAt == null))) {
+    throw const _InvalidAgentResponse();
+  }
+  return AgentMessageAudio(
+    id: id,
+    status: status,
+    contentType: 'audio/wav',
+    sizeBytes: sizeBytes,
+    duration: Duration(milliseconds: durationMs),
+    playbackPath: playbackPath,
+    deletedAt: deletedAt,
   );
 }
 
@@ -1812,8 +1909,10 @@ String _strictClientIdentity(Object? value) {
   );
 }
 
-int _strictInt(Object? value, {required int minimum}) {
-  if (value is! int || value < minimum) {
+int _strictInt(Object? value, {required int minimum, int? maximum}) {
+  if (value is! int ||
+      value < minimum ||
+      (maximum != null && value > maximum)) {
     throw const _InvalidAgentResponse();
   }
   return value;
@@ -1880,6 +1979,9 @@ final RegExp _clientIdentityPattern = RegExp(
 );
 final RegExp _providerPattern = RegExp(r'^[a-z][a-z0-9_-]{0,63}$');
 final RegExp _failureKindPattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');
+final RegExp _agentMessageAudioPlaybackPathPattern = RegExp(
+  r'^/v1/agent-message-audios/[0-9a-f-]+/playback$',
+);
 const Set<String> _knownRunFailureKinds = <String>{
   'interrupted',
   'invalid_context',
