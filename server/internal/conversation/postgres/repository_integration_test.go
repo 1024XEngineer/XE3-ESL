@@ -334,6 +334,74 @@ func TestLeaseUsesDatabaseTimeNotApplicationClock(t *testing.T) {
 	}
 }
 
+func TestCompletedCandidateRequiresStableProviderRequestID(t *testing.T) {
+	repository, pool := newIntegrationRepository(t)
+	actor := testActor(testUserA)
+	question := saveTestQuestion(
+		t,
+		repository,
+		actor,
+		"question-provider-request",
+		"session-provider-request",
+	)
+	reservation := reserveTestTranscription(
+		t,
+		repository,
+		actor,
+		question,
+		"reserve-provider-request",
+	)
+	job := jobFromReservation(actor.UserID, reservation)
+
+	for _, providerRequestID := range []string{"", " \t"} {
+		command := completeCommand("missing-provider-request")
+		command.ProviderRequestID = providerRequestID
+		if _, err := repository.CompleteTranscription(
+			context.Background(),
+			job,
+			command,
+		); !errors.Is(err, conversation.ErrPersistenceInvalid) {
+			t.Fatalf(
+				"provider request ID %q error = %v, want invalid",
+				providerRequestID,
+				err,
+			)
+		}
+	}
+
+	var candidateCount int
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT count(*)
+		 FROM conversation_transcript_candidates
+		 WHERE owner_user_id = $1 AND reservation_id = $2`,
+		actor.UserID,
+		reservation.ID,
+	).Scan(&candidateCount); err != nil {
+		t.Fatalf("count candidates after invalid completion: %v", err)
+	}
+	if candidateCount != 0 {
+		t.Fatalf("invalid completion created %d candidates", candidateCount)
+	}
+
+	candidate := completeTestTranscription(
+		t,
+		repository,
+		reservation,
+		"stable-provider-request",
+	)
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE conversation_transcript_candidates
+		 SET provider_request_id = ''
+		 WHERE owner_user_id = $1 AND candidate_id = $2`,
+		actor.UserID,
+		candidate.ID,
+	); err == nil {
+		t.Fatal("database accepted an empty successful Provider request ID")
+	}
+}
+
 func TestConcurrentConfirmationCreatesExactlyOneTurn(t *testing.T) {
 	repository, pool := newIntegrationRepository(t)
 	actor := testActor(testUserA)

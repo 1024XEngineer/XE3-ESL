@@ -111,7 +111,7 @@ CREATE TABLE conversation_transcript_candidates (
     evidence_version bigint NOT NULL CHECK (evidence_version > 0),
     provider text NOT NULL,
     model text NOT NULL,
-    provider_request_id text NOT NULL,
+    provider_request_id text NOT NULL CHECK (btrim(provider_request_id) <> ''),
     transcript_text text NOT NULL CHECK (btrim(transcript_text) <> ''),
     status text NOT NULL CHECK (status IN ('ready', 'confirmed')),
     created_at timestamptz NOT NULL,

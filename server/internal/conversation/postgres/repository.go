@@ -351,6 +351,7 @@ func (r *Repository) CompleteTranscription(
 		command.EvidenceVersion <= 0 ||
 		strings.TrimSpace(command.Provider) == "" ||
 		strings.TrimSpace(command.Model) == "" ||
+		strings.TrimSpace(command.ProviderRequestID) == "" ||
 		strings.TrimSpace(command.Text) == "" {
 		return conversation.TranscriptCandidate{}, conversation.ErrPersistenceInvalid
 	}
