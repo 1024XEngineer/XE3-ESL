@@ -9,6 +9,8 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -22,6 +24,8 @@ import (
 const (
 	maxAgentDataRequestBody = 64 * 1024
 	agentDataReadTimeout    = 5 * time.Second
+	defaultThreadPageSize   = 20
+	defaultMessagePageSize  = 50
 )
 
 type CorrelationIDGenerator func() string
@@ -82,6 +86,9 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 
 	protected.POST("/v1/agent-threads", h.createThread)
 	protected.GET("/v1/agent-threads", h.listThreads)
+	protected.GET("/v1/agent-threads/focused", h.getFocusedThread)
+	protected.PUT("/v1/agent-threads/focused", h.setFocusedThread)
+	protected.DELETE("/v1/agent-threads/focused", h.clearFocusedThread)
 	protected.GET("/v1/agent-threads/:thread_id", h.getThread)
 	protected.PUT(
 		"/v1/agent-threads/:thread_id/active-matter",
@@ -241,21 +248,106 @@ func (h *HTTPHandler) createThread(c *gin.Context) {
 }
 
 func (h *HTTPHandler) listThreads(c *gin.Context) {
+	pageSize, cursor, ok := decodeAgentPageQuery(
+		c.Request.URL.RawQuery,
+		defaultThreadPageSize,
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
 	actor, ok := trustedActor(c)
 	if !ok {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	threads, err := h.application.ListThreads(c.Request.Context(), actor)
+	page, err := h.application.PageThreads(
+		c.Request.Context(),
+		actor,
+		pageSize,
+		cursor,
+	)
 	if err != nil {
 		h.writeAgentError(c, err)
 		return
 	}
-	result := make([]gin.H, 0, len(threads))
-	for _, thread := range threads {
-		result = append(result, threadResponse(thread))
+	threads := make([]gin.H, 0, len(page.Threads))
+	for _, thread := range page.Threads {
+		threads = append(threads, threadResponse(thread))
 	}
-	c.JSON(http.StatusOK, gin.H{"threads": result})
+	result := gin.H{"threads": threads}
+	if page.FocusedThreadID != "" {
+		result["focused_thread_id"] = page.FocusedThreadID
+	}
+	if page.NextCursor != "" {
+		result["next_cursor"] = page.NextCursor
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *HTTPHandler) getFocusedThread(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	thread, found, err := h.application.GetFocusedThread(
+		c.Request.Context(),
+		actor,
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	if !found {
+		c.Status(http.StatusNoContent)
+		return
+	}
+	c.JSON(http.StatusOK, threadResponse(thread))
+}
+
+func (h *HTTPHandler) setFocusedThread(c *gin.Context) {
+	values, ok := decodeObject(c, []string{"thread_id"}, []string{"thread_id"})
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	threadID, ok := decodeString(values["thread_id"])
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	thread, err := h.application.SetFocusedThread(
+		c.Request.Context(),
+		actor,
+		threadID,
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, threadResponse(thread))
+}
+
+func (h *HTTPHandler) clearFocusedThread(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	if err := h.application.ClearFocusedThread(
+		c.Request.Context(),
+		actor,
+	); err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *HTTPHandler) getThread(c *gin.Context) {
@@ -306,25 +398,84 @@ func (h *HTTPHandler) setActiveMatter(c *gin.Context) {
 }
 
 func (h *HTTPHandler) listMessages(c *gin.Context) {
+	pageSize, cursor, ok := decodeAgentPageQuery(
+		c.Request.URL.RawQuery,
+		defaultMessagePageSize,
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
 	actor, ok := trustedActor(c)
 	if !ok {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	messages, err := h.application.ListMessages(
+	page, err := h.application.PageMessages(
 		c.Request.Context(),
 		actor,
 		c.Param("thread_id"),
+		pageSize,
+		cursor,
 	)
 	if err != nil {
 		h.writeAgentError(c, err)
 		return
 	}
-	result := make([]gin.H, 0, len(messages))
-	for _, message := range messages {
-		result = append(result, messageResponse(message))
+	messages := make([]gin.H, 0, len(page.Messages))
+	for _, message := range page.Messages {
+		messages = append(messages, messageResponse(message))
 	}
-	c.JSON(http.StatusOK, gin.H{"messages": result})
+	result := gin.H{"messages": messages}
+	if page.NextCursor != "" {
+		result["next_cursor"] = page.NextCursor
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func decodeAgentPageQuery(
+	rawQuery string,
+	defaultPageSize int,
+) (int, string, bool) {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return 0, "", false
+	}
+	for key := range values {
+		if key != "page_size" && key != "cursor" {
+			return 0, "", false
+		}
+	}
+	pageSize := defaultPageSize
+	if rawValues, exists := values["page_size"]; exists {
+		if len(rawValues) != 1 || !decimalDigits(rawValues[0]) {
+			return 0, "", false
+		}
+		pageSize, err = strconv.Atoi(rawValues[0])
+		if err != nil || pageSize < 1 || pageSize > maxAgentPageSize {
+			return 0, "", false
+		}
+	}
+	cursor := ""
+	if rawValues, exists := values["cursor"]; exists {
+		if len(rawValues) != 1 || rawValues[0] == "" {
+			return 0, "", false
+		}
+		cursor = rawValues[0]
+	}
+	return pageSize, cursor, true
+}
+
+func decimalDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *HTTPHandler) submitRun(c *gin.Context) {
