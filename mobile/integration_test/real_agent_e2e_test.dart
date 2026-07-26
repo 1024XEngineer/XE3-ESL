@@ -41,6 +41,7 @@ void main() {
       SpeakUpApp(
         authController: dependencies.authController,
         agentController: dependencies.agentController,
+        reviewHistoryController: dependencies.reviewHistoryController,
       ),
     );
     await _waitUntil(
@@ -131,10 +132,44 @@ void main() {
       controller: dependencies.agentController,
       validateAudioMedia: validateAudioMedia,
     );
+    final completedReviewId = dependencies.agentController.review?.id;
+    expect(completedReviewId, isNotNull);
+    await _waitUntil(
+      tester,
+      () => dependencies.reviewHistoryController.items.any(
+        (item) => item.review.id == completedReviewId,
+      ),
+      const Duration(seconds: 15),
+    );
     final reviewScreenshot = await binding.takeScreenshot(
       'ios-real-voice-review-e2e',
     );
     expect(reviewScreenshot, isNotEmpty);
+
+    await _signOut(tester);
+    await _signIn(tester, email: email, password: password);
+    await tester.tap(find.byKey(const Key('primary-tab-review')));
+    await _waitUntil(
+      tester,
+      () =>
+          dependencies.reviewHistoryController.items.any(
+            (item) => item.review.id == completedReviewId,
+          ) &&
+          find
+              .byKey(Key('review-history-$completedReviewId'))
+              .evaluate()
+              .isNotEmpty &&
+          find
+              .byKey(const Key('review-content'))
+              .hitTestable()
+              .evaluate()
+              .isNotEmpty,
+      const Duration(seconds: 20),
+    );
+    final restoredReviewScreenshot = await binding.takeScreenshot(
+      'ios-real-review-history-restore-e2e',
+    );
+    expect(restoredReviewScreenshot, isNotEmpty);
     debugPrint('SPEAKUP_E2E_CAPTURE_READY=true');
     if (captureHoldMs > 0) {
       await tester.runAsync(
@@ -144,6 +179,28 @@ void main() {
     await tester.pumpAndSettle();
     await _signOut(tester);
   });
+}
+
+Future<void> _signIn(
+  WidgetTester tester, {
+  required String email,
+  required String password,
+}) async {
+  await _waitUntil(
+    tester,
+    () => find.text('欢迎回来').evaluate().isNotEmpty,
+    const Duration(seconds: 15),
+  );
+  await tester.enterText(find.byType(TextFormField).at(0), email);
+  await tester.enterText(find.byType(TextFormField).at(1), password);
+  await tester.tap(find.text('登录'));
+  await _waitUntil(
+    tester,
+    () =>
+        find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
+        _composerIsReady(tester),
+    const Duration(seconds: 20),
+  );
 }
 
 Future<void> _completeRealVoicePractice(
