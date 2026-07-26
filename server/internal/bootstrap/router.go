@@ -7,12 +7,21 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 )
 
 // Module is the narrow boundary used by the application composition root.
 // Business modules can add their own dependencies without exposing internals.
 type Module interface {
 	Name() string
+}
+
+// RouteRegistrar is implemented by modules with production HTTP routes.
+// Explicit Mock/Test composition roots may keep their own deterministic routes.
+type RouteRegistrar interface {
+	RegisterRoutes(*gin.Engine)
 }
 
 // ReadinessChecker reports whether an external dependency can currently
@@ -24,7 +33,7 @@ type ReadinessChecker interface {
 const readinessTimeout = 2 * time.Second
 
 func NewRouter(logger *slog.Logger, modules ...Module) *gin.Engine {
-	return newRouter(logger, nil, modules...)
+	return newRouter(logger, nil, nil, modules...)
 }
 
 func NewRouterWithReadiness(
@@ -32,21 +41,40 @@ func NewRouterWithReadiness(
 	readiness ReadinessChecker,
 	modules ...Module,
 ) *gin.Engine {
-	return newRouter(logger, readiness, modules...)
+	return newRouter(logger, readiness, nil, modules...)
+}
+
+// NewRouterWithReadinessAndRoutes mounts infrastructure route registrars
+// without advertising them as business modules in the frozen /health contract.
+func NewRouterWithReadinessAndRoutes(
+	logger *slog.Logger,
+	readiness ReadinessChecker,
+	routes []RouteRegistrar,
+	modules ...Module,
+) *gin.Engine {
+	return newRouter(logger, readiness, routes, modules...)
 }
 
 func newRouter(
 	logger *slog.Logger,
 	readiness ReadinessChecker,
+	routes []RouteRegistrar,
 	modules ...Module,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery(), requestLogger(logger))
+	errorRenderer := httpresponse.NewRenderer(nil)
 
 	moduleNames := make([]string, 0, len(modules))
 	for _, module := range modules {
 		moduleNames = append(moduleNames, module.Name())
+		if registrar, ok := module.(RouteRegistrar); ok {
+			registrar.RegisterRoutes(router)
+		}
+	}
+	for _, registrar := range routes {
+		registrar.RegisterRoutes(router)
 	}
 
 	router.GET("/health", func(c *gin.Context) {
@@ -79,12 +107,11 @@ func newRouter(
 	})
 
 	router.NoRoute(func(c *gin.Context) {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": gin.H{
-				"code":    "route_not_found",
-				"message": "route not found",
-			},
-		})
+		errorRenderer.Write(c, apperror.New(
+			apperror.NotFound,
+			"resource_not_found",
+			"Resource was not found.",
+		))
 	})
 
 	return router

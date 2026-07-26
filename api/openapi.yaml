@@ -27,6 +27,10 @@ x-json-null-policy: omit
 tags:
   - name: Identity
     description: Minimal account registration, opaque Session, and current-user operations.
+  - name: Matter
+    description: User-owned real-world activities and their lifecycle.
+  - name: Agent
+    description: Durable Agent Threads, Matter links, and committed Messages.
   - name: Preparation
     description: Scenario, role, profile, and immutable preparation snapshot resources.
   - name: Practice
@@ -69,6 +73,18 @@ paths:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me
   /v1/scenario-definitions:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions
+  /v1/matters:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1matters
+  /v1/matters/{matter_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1matters~1{matter_id}
+  /v1/agent-threads:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads
+  /v1/agent-threads/{thread_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}
+  /v1/agent-threads/{thread_id}/active-matter:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1active-matter
+  /v1/agent-threads/{thread_id}/messages:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1messages
   /v1/scenario-definitions/{scenario_definition_id}:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions~1{scenario_definition_id}
   /v1/scenario-definitions/{scenario_definition_id}/role-definitions:
@@ -154,6 +170,14 @@ components:
       $ref: ./modules/identity.yaml#/components/schemas/LoginRequest
     LoginResponse:
       $ref: ./modules/identity.yaml#/components/schemas/LoginResponse
+    Matter:
+      $ref: ./modules/agent.yaml#/components/schemas/Matter
+    AgentThread:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentThread
+    ThreadMatterLink:
+      $ref: ./modules/agent.yaml#/components/schemas/ThreadMatterLink
+    AgentMessage:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentMessage
     ScenarioDefinition:
       $ref: ./modules/preparation.yaml#/components/schemas/ScenarioDefinition
     ScenarioDefinitionList:

@@ -13,7 +13,7 @@ void main() {
   testWidgets('starts on the Agent home with four glass navigation entries', (
     tester,
   ) async {
-    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpWidget(const SpeakUpApp.preview());
 
     expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
     expect(find.text('我能为你做什么？'), findsOneWidget);
@@ -58,7 +58,7 @@ void main() {
   });
 
   testWidgets('switches between every primary destination', (tester) async {
-    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpWidget(const SpeakUpApp.preview());
     final semantics = tester.ensureSemantics();
 
     await _tapPrimaryDestination(
@@ -92,7 +92,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpWidget(const SpeakUpApp.preview());
     await tester.pumpAndSettle();
 
     const actionKeys = [
@@ -119,7 +119,7 @@ void main() {
   testWidgets('conversation drawer contains no duplicate primary navigation', (
     tester,
   ) async {
-    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpWidget(const SpeakUpApp.preview());
 
     await tester.tap(find.byKey(const Key('conversation-menu-button')));
     await tester.pumpAndSettle();
@@ -154,7 +154,7 @@ void main() {
   testWidgets('Agent actions reuse the existing feature entry points', (
     tester,
   ) async {
-    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpWidget(const SpeakUpApp.preview());
 
     await _tapVisible(tester, 'quick-action-create-plan');
     expect(find.byKey(const Key('scenes-page')), findsOneWidget);
@@ -171,7 +171,7 @@ void main() {
   });
 
   testWidgets('keeps every formal feature route reachable', (tester) async {
-    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpWidget(const SpeakUpApp.preview());
 
     await _expectNamedRoute<PreparationPage>(
       tester,
@@ -198,7 +198,7 @@ void main() {
   testWidgets('keeps the named conversation route escapable on every tab', (
     tester,
   ) async {
-    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpWidget(const SpeakUpApp.preview());
 
     final shellContext = tester.element(find.byType(SpeakUpShell));
     Navigator.of(shellContext).pushNamed(AppRoutes.conversation);
@@ -246,7 +246,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetViewInsets);
 
-    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpWidget(const SpeakUpApp.preview());
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
@@ -294,7 +294,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
-    await tester.pumpWidget(const SpeakUpApp());
+    await tester.pumpWidget(const SpeakUpApp.preview());
     await tester.pumpAndSettle();
 
     final lastAction = find.byKey(const Key('quick-action-recent-review'));
@@ -321,7 +321,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
-      await tester.pumpWidget(const SpeakUpApp());
+      await tester.pumpWidget(const SpeakUpApp.preview());
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
@@ -347,7 +347,7 @@ void main() {
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
-      await tester.pumpWidget(const SpeakUpApp());
+      await tester.pumpWidget(const SpeakUpApp.preview());
       await tester.pumpAndSettle();
 
       final menuButton = find.byKey(const Key('conversation-menu-button'));
