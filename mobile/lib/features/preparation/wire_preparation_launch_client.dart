@@ -58,7 +58,11 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
       body: <String, Object?>{'background_summary': input.backgroundSummary},
       stage: PreparationLaunchStage.profile,
     );
-    return _profile(response.body, expectedBackground: input.backgroundSummary);
+    return _decodeCreated(
+      stage: PreparationLaunchStage.profile,
+      decode: () =>
+          _profile(response.body, expectedBackground: input.backgroundSummary),
+    );
   }
 
   @override
@@ -82,10 +86,13 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
       body: <String, Object?>{'source_version': sourceVersion},
       stage: PreparationLaunchStage.snapshot,
     );
-    return _snapshot(
-      _decode(response.body),
-      expectedProfileId: profileId,
-      expectedSourceVersion: sourceVersion,
+    return _decodeCreated(
+      stage: PreparationLaunchStage.snapshot,
+      decode: () => _snapshot(
+        _decode(response.body),
+        expectedProfileId: profileId,
+        expectedSourceVersion: sourceVersion,
+      ),
     );
   }
 
@@ -114,7 +121,10 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
       },
       stage: PreparationLaunchStage.plan,
     );
-    return _plan(_decode(response.body), expected: input);
+    return _decodeCreated(
+      stage: PreparationLaunchStage.plan,
+      decode: () => _plan(_decode(response.body), expected: input),
+    );
   }
 
   @override
@@ -148,10 +158,13 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
       },
       stage: PreparationLaunchStage.session,
     );
-    return _bootstrap(
-      _decode(response.body),
-      expectedPlanId: planId,
-      expected: input,
+    return _decodeCreated(
+      stage: PreparationLaunchStage.session,
+      decode: () => _bootstrap(
+        _decode(response.body),
+        expectedPlanId: planId,
+        expected: input,
+      ),
     );
   }
 
@@ -227,6 +240,8 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
         throw PreparationLaunchException(
           kind: PreparationLaunchFailureKind.invalidResponse,
           stage: stage,
+          statusCode: HttpStatus.created,
+          retryable: true,
         );
       }
       return response;
@@ -277,6 +292,25 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
   @override
   Future<void> clearAccountState() async {
     _accountGeneration++;
+  }
+}
+
+T _decodeCreated<T>({
+  required PreparationLaunchStage stage,
+  required T Function() decode,
+}) {
+  try {
+    return decode();
+  } on PreparationLaunchException catch (error) {
+    if (error.kind != PreparationLaunchFailureKind.invalidResponse) {
+      rethrow;
+    }
+    throw PreparationLaunchException(
+      kind: PreparationLaunchFailureKind.invalidResponse,
+      stage: stage,
+      statusCode: HttpStatus.created,
+      retryable: true,
+    );
   }
 }
 

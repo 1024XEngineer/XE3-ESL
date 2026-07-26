@@ -42,6 +42,7 @@ void main() {
         authController: dependencies.authController,
         agentController: dependencies.agentController,
         preparationController: dependencies.preparationController,
+        preparationLaunchController: dependencies.preparationLaunchController,
         reviewHistoryController: dependencies.reviewHistoryController,
       ),
     );
@@ -65,39 +66,13 @@ void main() {
     }
 
     if (find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty) {
-      await _verifySignedInAccount(tester, email);
-    } else {
-      await tester.tap(find.text('创建账号'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextFormField).at(0), email);
-      await tester.enterText(find.byType(TextFormField).at(1), password);
-      await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
-      await _waitUntil(
-        tester,
-        () =>
-            find.text('账号创建成功，请登录后继续。').evaluate().isNotEmpty ||
-            find.text('无法使用这些信息创建账号。').evaluate().isNotEmpty,
-        const Duration(seconds: 15),
-      );
-      if (find.text('无法使用这些信息创建账号。').evaluate().isNotEmpty) {
-        await tester.tap(find.text('返回登录'));
-        await _waitUntil(
-          tester,
-          () => find.text('欢迎回来').evaluate().isNotEmpty,
-          const Duration(seconds: 5),
-        );
+      final sameAccount = await _signedInAccountMatches(tester, email);
+      if (!sameAccount) {
+        await _signOut(tester);
+        await _registerOrSignIn(tester, email: email, password: password);
       }
-
-      await tester.enterText(find.byType(TextFormField).at(0), email);
-      await tester.enterText(find.byType(TextFormField).at(1), password);
-      await tester.tap(find.text('登录'));
-      await _waitUntil(
-        tester,
-        () =>
-            find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
-            _composerIsReady(tester),
-        const Duration(seconds: 20),
-      );
+    } else {
+      await _registerOrSignIn(tester, email: email, password: password);
     }
 
     const prompt =
@@ -182,6 +157,49 @@ void main() {
   });
 }
 
+Future<void> _registerOrSignIn(
+  WidgetTester tester, {
+  required String email,
+  required String password,
+}) async {
+  await _waitUntil(
+    tester,
+    () => find.text('欢迎回来').evaluate().isNotEmpty,
+    const Duration(seconds: 15),
+  );
+  await tester.tap(find.text('创建账号'));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byType(TextFormField).at(0), email);
+  await tester.enterText(find.byType(TextFormField).at(1), password);
+  await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
+  await _waitUntil(
+    tester,
+    () =>
+        find.text('账号创建成功，请登录后继续。').evaluate().isNotEmpty ||
+        find.text('无法使用这些信息创建账号。').evaluate().isNotEmpty,
+    const Duration(seconds: 15),
+  );
+  if (find.text('无法使用这些信息创建账号。').evaluate().isNotEmpty) {
+    await tester.tap(find.text('返回登录'));
+    await _waitUntil(
+      tester,
+      () => find.text('欢迎回来').evaluate().isNotEmpty,
+      const Duration(seconds: 5),
+    );
+  }
+
+  await tester.enterText(find.byType(TextFormField).at(0), email);
+  await tester.enterText(find.byType(TextFormField).at(1), password);
+  await tester.tap(find.text('登录'));
+  await _waitUntil(
+    tester,
+    () =>
+        find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
+        _composerIsReady(tester),
+    const Duration(seconds: 20),
+  );
+}
+
 Future<void> _signIn(
   WidgetTester tester, {
   required String email,
@@ -209,30 +227,61 @@ Future<void> _completeRealVoicePractice(
   required AgentController controller,
   required bool validateAudioMedia,
 }) async {
+  FocusManager.instance.primaryFocus?.unfocus();
   await tester.tap(find.byKey(const Key('primary-tab-scenes')));
-  await _waitUntil(
-    tester,
-    () =>
-        find.byKey(const Key('scene-self-introduction')).evaluate().isNotEmpty,
-    const Duration(seconds: 5),
+  await tester.pump();
+  final scenario = find.byKey(
+    const Key('catalog-scenario-scn_programmer_interview'),
   );
-  await tester.tap(find.byKey(const Key('scene-self-introduction')));
-  await _waitUntil(
+  await _waitForPreparationTarget(
     tester,
-    () =>
-        find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty ||
-        find.byKey(const Key('scene-operation-error')).evaluate().isNotEmpty,
-    const Duration(seconds: 30),
+    target: scenario,
+    operation: 'load the formal preparation catalog',
+    timeout: const Duration(seconds: 30),
   );
-  if (find.byKey(const Key('scene-operation-error')).evaluate().isNotEmpty) {
-    fail('The real service could not start the selected voice scene.');
-  }
+  await _scrollPreparationIntoView(tester, scenario);
+  await tester.tap(scenario);
+  await tester.pump();
 
-  await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-  await _waitUntil(
+  final role = find.byKey(
+    const Key('preparation-role-role_technical_interviewer'),
+  );
+  await _waitForPreparationTarget(
     tester,
-    () => find.byKey(const Key('practice-page')).evaluate().isNotEmpty,
-    const Duration(seconds: 5),
+    target: role,
+    operation: 'load the technical interview preparation detail',
+    timeout: const Duration(seconds: 30),
+  );
+  await _scrollPreparationIntoView(tester, role);
+  await tester.tap(role);
+  await tester.pump();
+
+  final option = find.byKey(
+    const Key('preparation-option-option_technical_focus'),
+  );
+  await _scrollPreparationIntoView(tester, option);
+  await tester.tap(option);
+  await tester.pump();
+
+  final background = find.byKey(const Key('preparation-background-summary'));
+  await _scrollPreparationIntoView(tester, background);
+  await tester.enterText(
+    background,
+    'Backend engineer preparing for a technical interview. '
+    'Focus on concise spoken explanations of engineering trade-offs.',
+  );
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pump(const Duration(milliseconds: 300));
+
+  final start = find.byKey(const Key('preparation-start-practice'));
+  await _scrollPreparationIntoView(tester, start);
+  await tester.tap(start);
+  await tester.pump();
+  await _waitForPreparationTarget(
+    tester,
+    target: find.byKey(const Key('practice-page')),
+    operation: 'create and open the formal FOCUS Practice Session',
+    timeout: const Duration(seconds: 90),
   );
 
   for (var turn = 1; turn <= 3; turn++) {
@@ -327,6 +376,101 @@ Future<void> _completeRealVoicePractice(
   }
 }
 
+Future<void> _waitForPreparationTarget(
+  WidgetTester tester, {
+  required Finder target,
+  required String operation,
+  required Duration timeout,
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    final failure = _preparationFailure(tester);
+    if (failure != null) {
+      fail('Failed to $operation: $failure');
+    }
+    if (target.evaluate().isNotEmpty) {
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 250));
+  }
+
+  final pending = _preparationPendingState(tester);
+  fail('Timed out waiting to $operation. Current state: $pending.');
+}
+
+Future<void> _scrollPreparationIntoView(
+  WidgetTester tester,
+  Finder target,
+) async {
+  if (target.hitTestable().evaluate().isEmpty) {
+    final scrollable = find.byType(Scrollable).first;
+    if (scrollable.evaluate().isEmpty) {
+      fail('Preparation content has no scrollable surface.');
+    }
+    await tester.scrollUntilVisible(target, 240, scrollable: scrollable);
+  }
+  await tester.ensureVisible(target);
+  await tester.pump(const Duration(milliseconds: 100));
+  if (target.hitTestable().evaluate().isEmpty) {
+    fail('Preparation control $target is not tappable.');
+  }
+}
+
+String? _preparationFailure(WidgetTester tester) {
+  const failures = <(String, String)>[
+    ('preparation-catalog-error', 'catalog request failed'),
+    ('preparation-detail-error', 'scenario detail request failed'),
+    ('preparation-launch-error', 'practice launch failed'),
+  ];
+  for (final (key, fallback) in failures) {
+    final finder = find.byKey(Key(key));
+    if (finder.evaluate().isNotEmpty) {
+      final message = _visibleText(tester, finder);
+      return message.isEmpty ? fallback : '$fallback: $message';
+    }
+  }
+  return null;
+}
+
+String _preparationPendingState(WidgetTester tester) {
+  if (find
+      .byKey(const Key('preparation-launch-progress'))
+      .evaluate()
+      .isNotEmpty) {
+    final stage = _visibleText(
+      tester,
+      find.byKey(const Key('preparation-launch-stage')),
+    );
+    return stage.isEmpty ? 'practice launch is still running' : stage;
+  }
+  if (find
+      .byKey(const Key('preparation-detail-loading'))
+      .evaluate()
+      .isNotEmpty) {
+    return 'scenario detail is still loading';
+  }
+  if (find
+      .byKey(const Key('preparation-catalog-loading'))
+      .evaluate()
+      .isNotEmpty) {
+    return 'preparation catalog is still loading';
+  }
+  return 'the expected preparation control is absent';
+}
+
+String _visibleText(WidgetTester tester, Finder root) {
+  final values = <String>[
+    for (final element in root.evaluate())
+      if (element.widget case final Text text)
+        if ((text.data ?? '').trim().isNotEmpty) text.data!.trim(),
+    for (final text in tester.widgetList<Text>(
+      find.descendant(of: root, matching: find.byType(Text)),
+    ))
+      if ((text.data ?? '').trim().isNotEmpty) text.data!.trim(),
+  ];
+  return values.toSet().join(' ');
+}
+
 Future<void> _validateQuestionTts(AgentController controller) async {
   expect(controller.canPlayQuestionAudio, isTrue);
   await controller.toggleQuestionAudio();
@@ -399,7 +543,7 @@ void _failOnPracticeError(WidgetTester tester, String operation) {
   fail('Failed to $operation: $message');
 }
 
-Future<void> _verifySignedInAccount(
+Future<bool> _signedInAccountMatches(
   WidgetTester tester,
   String expectedEmail,
 ) async {
@@ -410,7 +554,7 @@ Future<void> _verifySignedInAccount(
     const Duration(seconds: 5),
   );
   if (find.text(expectedEmail).evaluate().isEmpty) {
-    fail('The restored E2E Session belongs to a different account.');
+    return false;
   }
   await tester.tap(find.byKey(const Key('primary-tab-agent')));
   await _waitUntil(
@@ -420,6 +564,7 @@ Future<void> _verifySignedInAccount(
         _composerIsReady(tester),
     const Duration(seconds: 20),
   );
+  return true;
 }
 
 Future<void> _signOut(WidgetTester tester) async {

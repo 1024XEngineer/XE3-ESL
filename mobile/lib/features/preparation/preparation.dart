@@ -173,7 +173,7 @@ class _PreparationPageState extends State<PreparationPage> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.preparationController;
-    final launchLocked = widget.launchController?.isStarting ?? false;
+    final launchLocked = widget.launchController?.isSelectionLocked ?? false;
     return PopScope<void>(
       canPop: !launchLocked,
       child: Scaffold(
@@ -332,7 +332,7 @@ class _ScenarioDetailView extends StatelessWidget {
   Widget build(BuildContext context) {
     final detail = controller.detail;
     final selectedRole = controller.selectedRole;
-    final launchLocked = launchController?.isStarting ?? false;
+    final launchLocked = launchController?.isSelectionLocked ?? false;
     return ListView(
       key: const Key('preparation-scenario-detail'),
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 140),
@@ -801,7 +801,7 @@ class _LaunchSelectionCard extends StatelessWidget {
             TextField(
               key: const Key('preparation-background-summary'),
               controller: backgroundController,
-              enabled: !controller.isStarting,
+              enabled: !controller.isSelectionLocked,
               minLines: 3,
               maxLines: 6,
               maxLength: 4000,

@@ -92,6 +92,141 @@ void main() {
     },
   );
 
+  test(
+    'marks malformed 201 creates ambiguous and retries Session with one key',
+    () async {
+      final transport = _QueueTransport([
+        _rawResponse(HttpStatus.created, '{"truncated":'),
+        _rawResponse(HttpStatus.created, '{"truncated":'),
+        _rawResponse(HttpStatus.created, '{"truncated":'),
+        _rawResponse(HttpStatus.created, '{"truncated":'),
+        _response(_bootstrapJson()),
+      ]);
+      final client = _client(transport);
+      const sessionInput = CreatePreparationSessionInput(
+        expectedPlanRevision: 1,
+        preparationSnapshotId: _preparationSnapshotId,
+        preparationProfileId: _profileId,
+        preparationProfileVersion: 1,
+        preparationUserId: _userId,
+        backgroundSummary: _background,
+        selection: _selection,
+      );
+      final operations =
+          <({PreparationLaunchStage stage, Future<Object?> Function() run})>[
+            (
+              stage: PreparationLaunchStage.profile,
+              run: () => client.createProfile(
+                input: const CreatePreparationProfileInput(
+                  backgroundSummary: _background,
+                ),
+                idempotencyKey: 'profile-malformed-key',
+              ),
+            ),
+            (
+              stage: PreparationLaunchStage.snapshot,
+              run: () => client.createSnapshot(
+                profileId: _profileId,
+                sourceVersion: 1,
+                idempotencyKey: 'snapshot-malformed-key',
+              ),
+            ),
+            (
+              stage: PreparationLaunchStage.plan,
+              run: () => client.createPlan(
+                input: const CreatePreparationPlanInput(
+                  context: _context,
+                  selection: _selection,
+                  preparationProfileId: _profileId,
+                  preparationUserId: _userId,
+                ),
+                idempotencyKey: 'plan-malformed-key',
+              ),
+            ),
+            (
+              stage: PreparationLaunchStage.session,
+              run: () => client.createSession(
+                planId: _planId,
+                input: sessionInput,
+                idempotencyKey: 'session-malformed-key',
+              ),
+            ),
+          ];
+
+      for (final operation in operations) {
+        await expectLater(
+          operation.run(),
+          throwsA(
+            isA<PreparationLaunchException>()
+                .having(
+                  (error) => error.kind,
+                  'kind',
+                  PreparationLaunchFailureKind.invalidResponse,
+                )
+                .having((error) => error.stage, 'stage', operation.stage)
+                .having(
+                  (error) => error.statusCode,
+                  'statusCode',
+                  HttpStatus.created,
+                )
+                .having((error) => error.retryable, 'retryable', isTrue),
+          ),
+        );
+      }
+
+      final bootstrap = await client.createSession(
+        planId: _planId,
+        input: sessionInput,
+        idempotencyKey: 'session-malformed-key',
+      );
+
+      expect(bootstrap.session.id, _sessionId);
+      final sessionCalls = transport.calls.where(
+        (call) => call.uri.path.endsWith('/practice-sessions'),
+      );
+      expect(sessionCalls, hasLength(2));
+      expect(
+        sessionCalls.map((call) => call.headers['Idempotency-Key']),
+        everyElement('session-malformed-key'),
+      );
+    },
+  );
+
+  test(
+    'keeps a definite 400 create validation failure non-retryable',
+    () async {
+      final client = _client(
+        _QueueTransport([
+          _rawResponse(
+            HttpStatus.badRequest,
+            jsonEncode({
+              'error': {'code': 'invalid_request'},
+            }),
+          ),
+        ]),
+      );
+
+      await expectLater(
+        client.createProfile(
+          input: const CreatePreparationProfileInput(
+            backgroundSummary: _background,
+          ),
+          idempotencyKey: 'profile-validation-key',
+        ),
+        throwsA(
+          isA<PreparationLaunchException>()
+              .having(
+                (error) => error.kind,
+                'kind',
+                PreparationLaunchFailureKind.invalidRequest,
+              )
+              .having((error) => error.statusCode, 'statusCode', 400)
+              .having((error) => error.retryable, 'retryable', isFalse),
+        ),
+      );
+    },
+  );
+
   test('rejects a Plan owned by a different user', () async {
     final response = _planJson()..['user_id'] = 'user-other';
     final client = _client(_QueueTransport([_response(response)]));
@@ -323,6 +458,10 @@ IdentityHttpResponse _response(Map<String, Object?> body) {
     statusCode: HttpStatus.created,
     body: jsonEncode(body),
   );
+}
+
+IdentityHttpResponse _rawResponse(int statusCode, String body) {
+  return IdentityHttpResponse(statusCode: statusCode, body: body);
 }
 
 Map<String, Object?> _profileJson() => {

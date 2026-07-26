@@ -46,6 +46,7 @@ final class PreparationLaunchController extends ChangeNotifier {
   _LaunchAttempt? _retry;
   int _epoch = 0;
   bool _starting = false;
+  bool _commitMayHaveSucceeded = false;
   bool _disposed = false;
 
   String get backgroundSummary => _backgroundSummary;
@@ -53,11 +54,14 @@ final class PreparationLaunchController extends ChangeNotifier {
   PreparationLaunchStage? get stage => _stage;
   PreparationPracticeBootstrap? get bootstrap => _bootstrap;
   bool get isStarting => _starting;
+  bool get isSelectionLocked =>
+      _starting ||
+      (_retry != null && (_bootstrap != null || _commitMayHaveSucceeded));
   bool get canRetry => _retry != null && !_starting;
   bool get hasValidBackground => _validBackground(_backgroundSummary.trim());
 
   void updateBackgroundSummary(String value) {
-    if (_disposed || _starting || value == _backgroundSummary) {
+    if (_disposed || isSelectionLocked || value == _backgroundSummary) {
       return;
     }
     _backgroundSummary = value;
@@ -65,7 +69,7 @@ final class PreparationLaunchController extends ChangeNotifier {
   }
 
   void selectionChanged() {
-    if (_disposed || _starting) {
+    if (_disposed || isSelectionLocked) {
       return;
     }
     _invalidateAttempt();
@@ -81,7 +85,9 @@ final class PreparationLaunchController extends ChangeNotifier {
           ? '请先补充你的背景与本次练习目标。'
           : '背景内容过长，请精简后再开始练习。';
       _stage = PreparationLaunchStage.profile;
-      _retry = null;
+      if (!_hasCommittedOrAmbiguousCreate) {
+        _retry = null;
+      }
       notifyListeners();
       return Future<bool>.value(false);
     }
@@ -89,11 +95,25 @@ final class PreparationLaunchController extends ChangeNotifier {
     if (threadId == null || !_validResourceId(threadId)) {
       _errorMessage = 'Agent 对话仍在恢复，请稍后再试。你的背景内容会保留在本机当前页面。';
       _stage = PreparationLaunchStage.context;
-      _retry = null;
+      if (!_hasCommittedOrAmbiguousCreate) {
+        _retry = null;
+      }
       notifyListeners();
       return Future<bool>.value(false);
     }
     final existing = _retry;
+    if (isSelectionLocked &&
+        (existing == null ||
+            !existing.matches(
+              selection: selection,
+              backgroundSummary: background,
+              threadId: threadId,
+            ))) {
+      _errorMessage = '练习已经创建，请先重试连接原练习。';
+      _stage = PreparationLaunchStage.voice;
+      notifyListeners();
+      return Future<bool>.value(false);
+    }
     final attempt =
         existing != null &&
             existing.matches(
@@ -132,7 +152,9 @@ final class PreparationLaunchController extends ChangeNotifier {
     if (attempt.threadId != threadId) {
       _errorMessage = '当前 Agent 对话已变化，请重新确认后开始练习。';
       _stage = PreparationLaunchStage.context;
-      _retry = null;
+      if (!_hasCommittedOrAmbiguousCreate) {
+        _retry = null;
+      }
       notifyListeners();
       return Future<bool>.value(false);
     }
@@ -141,9 +163,14 @@ final class PreparationLaunchController extends ChangeNotifier {
 
   Future<bool> _run(_LaunchAttempt attempt) async {
     final operationEpoch = _epoch;
+    final preserveCommittedState =
+        identical(_retry, attempt) && _hasCommittedOrAmbiguousCreate;
     _starting = true;
     _errorMessage = null;
-    _bootstrap = null;
+    if (!preserveCommittedState) {
+      _bootstrap = null;
+      _commitMayHaveSucceeded = false;
+    }
     _retry = attempt;
     notifyListeners();
     try {
@@ -226,14 +253,20 @@ final class PreparationLaunchController extends ChangeNotifier {
       _requireCurrent(operationEpoch, activeContext);
 
       _retry = null;
+      _commitMayHaveSucceeded = false;
       _errorMessage = null;
       return true;
     } on PreparationLaunchException catch (error) {
       if (_isCurrent(operationEpoch)) {
         _stage = error.stage ?? _stage;
         _errorMessage = _messageFor(error);
+        if (error.kind == PreparationLaunchFailureKind.invalidResponse &&
+            error.statusCode == 201) {
+          _commitMayHaveSucceeded = true;
+        }
         if (!error.retryable &&
-            error.kind != PreparationLaunchFailureKind.contextChanged) {
+            error.kind != PreparationLaunchFailureKind.contextChanged &&
+            !_hasCommittedOrAmbiguousCreate) {
           _retry = null;
         }
       }
@@ -260,6 +293,7 @@ final class PreparationLaunchController extends ChangeNotifier {
     _stage = null;
     _bootstrap = null;
     _retry = null;
+    _commitMayHaveSucceeded = false;
     _starting = false;
     await client.clearAccountState();
     if (!_disposed) {
@@ -273,6 +307,7 @@ final class PreparationLaunchController extends ChangeNotifier {
     _stage = null;
     _bootstrap = null;
     _retry = null;
+    _commitMayHaveSucceeded = false;
     _starting = false;
     notifyListeners();
   }
@@ -308,6 +343,9 @@ final class PreparationLaunchController extends ChangeNotifier {
   }
 
   bool _isCurrent(int epoch) => !_disposed && epoch == _epoch;
+
+  bool get _hasCommittedOrAmbiguousCreate =>
+      _bootstrap != null || _commitMayHaveSucceeded;
 
   String _newId(String scope) {
     final value = _idFactory(scope);

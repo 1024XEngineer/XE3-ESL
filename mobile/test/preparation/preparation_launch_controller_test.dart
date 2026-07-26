@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/preparation/preparation_launch_client.dart';
@@ -103,9 +104,10 @@ void main() {
   );
 
   test(
-    'reuses the formal voice activation key after a network retry',
+    'locks a committed Session and reuses every key after voice failure',
     () async {
       final voiceKeys = <String>[];
+      final matterKeys = <String>[];
       final client = _LaunchClient();
       final controller = PreparationLaunchController(
         client: client,
@@ -116,7 +118,10 @@ void main() {
               required threadId,
               required selection,
               required clientOperationId,
-            }) async => _context,
+            }) async {
+              matterKeys.add(clientOperationId);
+              return _context;
+            },
         voiceActivator:
             ({
               required context,
@@ -126,9 +131,8 @@ void main() {
               voiceKeys.add(clientOperationId);
               if (voiceKeys.length == 1) {
                 throw const PreparationLaunchException(
-                  kind: PreparationLaunchFailureKind.network,
+                  kind: PreparationLaunchFailureKind.invalidResponse,
                   stage: PreparationLaunchStage.voice,
-                  retryable: true,
                 );
               }
             },
@@ -139,12 +143,52 @@ void main() {
 
       expect(await controller.start(_selection), isFalse);
       expect(controller.canRetry, isTrue);
+      expect(controller.isSelectionLocked, isTrue);
+      expect(controller.bootstrap, same(_bootstrap));
+
+      controller.selectionChanged();
+      controller.updateBackgroundSummary('A different background.');
+
+      expect(controller.backgroundSummary, _background);
+      expect(controller.bootstrap, same(_bootstrap));
+      expect(controller.canRetry, isTrue);
       expect(await controller.retry(), isTrue);
 
+      expect(matterKeys, [
+        'agent-matter-voice-retry-key',
+        'agent-matter-voice-retry-key',
+      ]);
+      expect(client.calls, [
+        'profile',
+        'snapshot',
+        'plan',
+        'session',
+        'profile',
+        'snapshot',
+        'plan',
+        'session',
+      ]);
+      expect(client.profileKeys, [
+        'prep-profile-voice-retry-key',
+        'prep-profile-voice-retry-key',
+      ]);
+      expect(client.snapshotKeys, [
+        'prep-snapshot-voice-retry-key',
+        'prep-snapshot-voice-retry-key',
+      ]);
+      expect(client.planKeys, [
+        'practice-plan-voice-retry-key',
+        'practice-plan-voice-retry-key',
+      ]);
+      expect(client.sessionKeys, [
+        'practice-session-voice-retry-key',
+        'practice-session-voice-retry-key',
+      ]);
       expect(voiceKeys, [
         'practice-voice-voice-retry-key',
         'practice-voice-voice-retry-key',
       ]);
+      expect(controller.isSelectionLocked, isFalse);
     },
   );
 
@@ -186,6 +230,56 @@ void main() {
       expect(controller.stage, PreparationLaunchStage.context);
       expect(controller.errorMessage, contains('已变化'));
       expect(client.calls, isEmpty);
+    },
+  );
+
+  test(
+    'retries a malformed 201 Session with the same key before voice',
+    () async {
+      final voiceKeys = <String>[];
+      final client = _LaunchClient(failFirstSessionResponse: true);
+      final controller = PreparationLaunchController(
+        client: client,
+        contextProvider: () => _context,
+        threadIdProvider: () => _threadId,
+        matterActivator:
+            ({
+              required threadId,
+              required selection,
+              required clientOperationId,
+            }) async => _context,
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) async {
+              voiceKeys.add(clientOperationId);
+            },
+        idFactory: (scope) => '$scope-session-201-key',
+      );
+      addTearDown(controller.dispose);
+      controller.updateBackgroundSummary(_background);
+
+      expect(await controller.start(_selection), isFalse);
+      expect(controller.stage, PreparationLaunchStage.session);
+      expect(controller.bootstrap, isNull);
+      expect(controller.canRetry, isTrue);
+      expect(controller.isSelectionLocked, isTrue);
+
+      controller.selectionChanged();
+      controller.updateBackgroundSummary('A different background.');
+
+      expect(controller.backgroundSummary, _background);
+      expect(controller.canRetry, isTrue);
+      expect(await controller.retry(), isTrue);
+      expect(client.sessionKeys, [
+        'practice-session-session-201-key',
+        'practice-session-session-201-key',
+      ]);
+      expect(voiceKeys, ['practice-voice-session-201-key']);
+      expect(controller.bootstrap, same(_bootstrap));
+      expect(controller.isSelectionLocked, isFalse);
     },
   );
 
@@ -287,11 +381,13 @@ void main() {
 final class _LaunchClient implements PreparationLaunchClient {
   _LaunchClient({
     this.failFirstSession = false,
+    this.failFirstSessionResponse = false,
     this.profileCompleter,
     this.sessionCompleter,
   });
 
   final bool failFirstSession;
+  final bool failFirstSessionResponse;
   final Completer<PreparationProfile>? profileCompleter;
   final Completer<PreparationPracticeBootstrap>? sessionCompleter;
   final calls = <String>[];
@@ -358,6 +454,14 @@ final class _LaunchClient implements PreparationLaunchClient {
       throw const PreparationLaunchException(
         kind: PreparationLaunchFailureKind.network,
         stage: PreparationLaunchStage.session,
+        retryable: true,
+      );
+    }
+    if (failFirstSessionResponse && _sessionCalls == 1) {
+      throw const PreparationLaunchException(
+        kind: PreparationLaunchFailureKind.invalidResponse,
+        stage: PreparationLaunchStage.session,
+        statusCode: HttpStatus.created,
         retryable: true,
       );
     }

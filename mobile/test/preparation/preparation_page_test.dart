@@ -430,9 +430,9 @@ void main() {
         findsNothing,
       );
 
-      final background = find
-          .byKey(const Key('preparation-background-summary'))
-          .first;
+      final background = find.byKey(
+        const Key('preparation-background-summary'),
+      );
       await tester.ensureVisible(background);
       await tester.enterText(
         background,
@@ -447,7 +447,7 @@ void main() {
   );
 
   testWidgets(
-    'locks roles options and both back paths while Session creation is pending',
+    'keeps selection locked after Session creation until voice retry succeeds',
     (tester) async {
       final session = Completer<PreparationPracticeBootstrap>();
       final preparationController = PreparationController(
@@ -455,6 +455,7 @@ void main() {
       );
       final launchClient = _PageLaunchClient(sessionCompleter: session);
       var navigations = 0;
+      var voiceCalls = 0;
       final launchController = PreparationLaunchController(
         client: launchClient,
         contextProvider: () => _pageContext,
@@ -470,7 +471,15 @@ void main() {
               required context,
               required bootstrap,
               required clientOperationId,
-            }) async {},
+            }) async {
+              voiceCalls++;
+              if (voiceCalls == 1) {
+                throw const PreparationLaunchException(
+                  kind: PreparationLaunchFailureKind.invalidResponse,
+                  stage: PreparationLaunchStage.voice,
+                );
+              }
+            },
         idFactory: (scope) => '$scope-pending-widget-key',
       );
       addTearDown(preparationController.dispose);
@@ -502,9 +511,9 @@ void main() {
       await tester.scrollUntilVisible(option, 200);
       await tester.tap(option);
       await tester.pump();
-      final background = find
-          .byKey(const Key('preparation-background-summary'))
-          .first;
+      final background = find.byKey(
+        const Key('preparation-background-summary'),
+      );
       await tester.ensureVisible(background);
       await tester.enterText(
         background,
@@ -531,6 +540,10 @@ void main() {
             )
             .onPressed,
         isNull,
+      );
+      expect(
+        tester.widget<PopScope<void>>(find.byType(PopScope<void>)).canPop,
+        isFalse,
       );
       await tester.scrollUntilVisible(
         role,
@@ -582,6 +595,83 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(launchController.isStarting, isFalse);
+      expect(launchController.isSelectionLocked, isTrue);
+      expect(launchController.bootstrap, isNotNull);
+      expect(launchController.canRetry, isTrue);
+      expect(navigations, 0);
+
+      await tester.scrollUntilVisible(
+        detailBack,
+        -200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(tester.widget<TextButton>(detailBack).onPressed, isNull);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const Key('preparation-route-back-button')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester.widget<PopScope<void>>(find.byType(PopScope<void>)).canPop,
+        isFalse,
+      );
+      await tester.scrollUntilVisible(
+        role,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        tester
+            .widget<InkWell>(
+              find.descendant(of: role, matching: find.byType(InkWell)),
+            )
+            .onTap,
+        isNull,
+      );
+      await tester.scrollUntilVisible(
+        option,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        tester
+            .widget<InkWell>(
+              find.descendant(of: option, matching: find.byType(InkWell)),
+            )
+            .onTap,
+        isNull,
+      );
+      await tester.scrollUntilVisible(
+        background,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(tester.widget<TextField>(background).enabled, isFalse);
+
+      final retry = find.byKey(const Key('preparation-retry-launch'));
+      await tester.scrollUntilVisible(
+        retry,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(voiceCalls, 2);
+      expect(
+        launchClient.calls,
+        ['profile', 'snapshot', 'plan', 'session'] +
+            ['profile', 'snapshot', 'plan', 'session'],
+      );
+      expect(launchController.isStarting, isFalse);
+      expect(launchController.isSelectionLocked, isFalse);
+      expect(
+        tester.widget<PopScope<void>>(find.byType(PopScope<void>)).canPop,
+        isTrue,
+      );
       expect(navigations, 1);
     },
   );
