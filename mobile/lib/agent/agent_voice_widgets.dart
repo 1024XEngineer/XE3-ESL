@@ -1,237 +1,7 @@
-import 'dart:convert';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'agent_models.dart';
 import 'agent_voice_controller.dart';
-import 'agent_voice_models.dart';
-
-class AgentVoiceComposerPanel extends StatefulWidget {
-  const AgentVoiceComposerPanel({required this.controller, super.key});
-
-  final AgentVoiceController controller;
-
-  @override
-  State<AgentVoiceComposerPanel> createState() =>
-      _AgentVoiceComposerPanelState();
-}
-
-class _AgentVoiceComposerPanelState extends State<AgentVoiceComposerPanel> {
-  final _transcriptController = TextEditingController();
-  bool _updatingTranscript = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _transcriptController.text = widget.controller.editedTranscript;
-    _transcriptController.addListener(_handleTranscript);
-    widget.controller.addListener(_handleController);
-  }
-
-  @override
-  void didUpdateWidget(covariant AgentVoiceComposerPanel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_handleController);
-      widget.controller.addListener(_handleController);
-    }
-    _syncTranscript();
-  }
-
-  @override
-  void dispose() {
-    widget.controller.removeListener(_handleController);
-    _transcriptController
-      ..removeListener(_handleTranscript)
-      ..dispose();
-    super.dispose();
-  }
-
-  void _handleController() {
-    if (!mounted) {
-      return;
-    }
-    _syncTranscript();
-    setState(() {});
-  }
-
-  void _syncTranscript() {
-    final value = widget.controller.editedTranscript;
-    if (_transcriptController.text == value) {
-      return;
-    }
-    _updatingTranscript = true;
-    _transcriptController.value = TextEditingValue(
-      text: value,
-      selection: TextSelection.collapsed(offset: value.length),
-    );
-    _updatingTranscript = false;
-  }
-
-  void _handleTranscript() {
-    if (!_updatingTranscript) {
-      widget.controller.updateTranscript(_transcriptController.text);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = widget.controller;
-    final state = controller.state;
-    final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.25;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(28),
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          key: const Key('agent-voice-composer-panel'),
-          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-          decoration: BoxDecoration(
-            color: const Color(0xEFFFFFFF),
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: Colors.white),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (state != AgentVoiceComposerState.awaitingConfirmation)
-                Row(
-                  children: [
-                    IconButton(
-                      key: const Key('agent-voice-cancel'),
-                      tooltip: '取消语音输入',
-                      onPressed: state == AgentVoiceComposerState.confirming
-                          ? null
-                          : controller.cancel,
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                    const SizedBox(width: 2),
-                    if (state == AgentVoiceComposerState.recording) ...[
-                      const _RecordingPulse(),
-                      const SizedBox(width: 10),
-                    ] else if (_isVoiceProgressState(state)) ...[
-                      const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      const SizedBox(width: 10),
-                    ],
-                    Expanded(
-                      child: Text(
-                        state == AgentVoiceComposerState.recording
-                            ? '正在聆听  ${_formatDuration(controller.recordingElapsed)}'
-                            : _stateLabel(controller),
-                        key: const Key('agent-voice-state-label'),
-                        style: const TextStyle(
-                          color: Color(0xFF44464D),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    if (state == AgentVoiceComposerState.recording)
-                      IconButton.filled(
-                        key: const Key('agent-voice-stop'),
-                        tooltip: '结束录音并自动转写',
-                        onPressed: () async {
-                          await controller.stopRecording();
-                          await controller.upload();
-                        },
-                        icon: const Icon(Icons.stop_rounded),
-                      ),
-                  ],
-                ),
-              if (state == AgentVoiceComposerState.awaitingConfirmation) ...[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    IconButton(
-                      key: const Key('agent-voice-cancel'),
-                      tooltip: '取消语音输入',
-                      onPressed: controller.cancel,
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                    Expanded(
-                      child: TextField(
-                        key: const Key('agent-voice-transcript-field'),
-                        controller: _transcriptController,
-                        minLines: largeText ? 2 : 1,
-                        maxLines: 4,
-                        inputFormatters: <TextInputFormatter>[
-                          _agentVoiceContentFormatter,
-                        ],
-                        decoration: const InputDecoration(
-                          hintText: '检查识别文字',
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.fromLTRB(8, 8, 8, 10),
-                        ),
-                      ),
-                    ),
-                    IconButton.filled(
-                      key: const Key('agent-voice-confirm'),
-                      tooltip: '发送',
-                      onPressed: controller.canConfirm
-                          ? controller.confirm
-                          : null,
-                      icon: const Icon(Icons.arrow_upward_rounded),
-                    ),
-                  ],
-                ),
-              ],
-              if (state == AgentVoiceComposerState.recorded ||
-                  (state == AgentVoiceComposerState.failed &&
-                      controller.recording != null)) ...[
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    key: const Key('agent-voice-upload'),
-                    onPressed: controller.canUpload ? controller.upload : null,
-                    child: const Text('重新尝试转写'),
-                  ),
-                ),
-              ],
-              if (controller.errorMessage case final error?) ...[
-                const SizedBox(height: 6),
-                Text(
-                  error,
-                  key: const Key('agent-voice-error'),
-                  style: const TextStyle(
-                    color: Color(0xFF8B2E26),
-                    height: 1.35,
-                  ),
-                ),
-                if (controller.canRetry) ...[
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      key: const Key('agent-voice-retry'),
-                      onPressed: controller.retry,
-                      icon: const Icon(Icons.refresh_rounded),
-                      label: const Text('重试'),
-                    ),
-                  ),
-                ],
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-bool _isVoiceProgressState(AgentVoiceComposerState state) {
-  return state == AgentVoiceComposerState.starting ||
-      state == AgentVoiceComposerState.uploading ||
-      state == AgentVoiceComposerState.transcribing ||
-      state == AgentVoiceComposerState.confirming ||
-      state == AgentVoiceComposerState.awaitingAssistant;
-}
 
 class AgentMessageBubble extends StatefulWidget {
   const AgentMessageBubble({
@@ -284,20 +54,20 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   Widget build(BuildContext context) {
     final message = widget.message;
     final isUser = message.role == AgentMessageRole.user;
-    final foreground = isUser ? Colors.white : const Color(0xFF202124);
+    const foreground = Color(0xFF25262A);
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         key: Key('agent-message-${message.id}'),
-        constraints: const BoxConstraints(maxWidth: 330),
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        constraints: const BoxConstraints(maxWidth: 340),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: isUser
+            ? const EdgeInsets.fromLTRB(14, 11, 12, 11)
+            : const EdgeInsets.fromLTRB(2, 7, 12, 9),
         decoration: BoxDecoration(
-          color: isUser ? const Color(0xFF202124) : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isUser ? const Color(0xFF202124) : const Color(0xFFE6E6E2),
-          ),
+          color: isUser ? const Color(0xFFE7E7E3) : Colors.transparent,
+          borderRadius: BorderRadius.circular(18),
+          border: isUser ? Border.all(color: const Color(0xFFDCDCD7)) : null,
         ),
         child: message.modality == AgentMessageModality.voice
             ? _buildUserVoice(context, foreground)
@@ -312,7 +82,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     if (message.role == AgentMessageRole.user || voice == null) {
       return Text(
         message.text,
-        style: TextStyle(color: foreground, height: 1.45),
+        style: TextStyle(color: foreground, fontSize: 15, height: 1.45),
       );
     }
     final loading = voice.loadingMessageId == message.id;
@@ -326,26 +96,36 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         Text(
           message.text,
           key: Key('agent-assistant-text-${message.id}'),
-          style: TextStyle(color: foreground, height: 1.45),
+          style: TextStyle(color: foreground, fontSize: 15, height: 1.48),
         ),
-        const SizedBox(height: 10),
-        const Divider(height: 1),
-        const SizedBox(height: 7),
+        const SizedBox(height: 6),
         Wrap(
-          spacing: 6,
-          runSpacing: 6,
+          spacing: 4,
+          runSpacing: 4,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             TextButton.icon(
               key: Key('agent-assistant-tts-${message.id}'),
               onPressed: () => voice.toggleMessagePlayback(message),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF55575E),
+                backgroundColor: const Color(0xFFE8E8E4),
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               icon: loading
                   ? const SizedBox.square(
-                      dimension: 16,
+                      dimension: 14,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : Icon(
                       playing ? Icons.stop_rounded : Icons.volume_up_outlined,
+                      size: 17,
                     ),
               label: Text(
                 loading
@@ -360,11 +140,22 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             TextButton(
               key: Key('agent-assistant-speed-${message.id}'),
               onPressed: voice.cycleSpeechSpeed,
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF66686F),
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               child: Text('${_formatSpeed(voice.speechSpeed)}×'),
             ),
           ],
         ),
-        if (error != null)
+        if (error != null) ...[
+          const SizedBox(height: 3),
           Text(
             error,
             key: Key('agent-message-media-error-${message.id}'),
@@ -374,6 +165,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
               height: 1.35,
             ),
           ),
+        ],
       ],
     );
   }
@@ -395,10 +187,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
+        Row(
           children: [
             IconButton(
               key: Key('agent-user-voice-play-${message.id}'),
@@ -411,58 +200,107 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                   ? () => voice.toggleMessagePlayback(message)
                   : null,
               style: IconButton.styleFrom(
-                backgroundColor: const Color(0x2EFFFFFF),
+                backgroundColor: const Color(0xFFD6D6D1),
                 foregroundColor: foreground,
+                disabledBackgroundColor: const Color(0xFFDCDCD7),
+                disabledForegroundColor: const Color(0xFF8A8B90),
+                minimumSize: const Size.square(36),
+                maximumSize: const Size.square(36),
+                padding: EdgeInsets.zero,
               ),
               icon: loading
                   ? const SizedBox.square(
-                      dimension: 17,
+                      dimension: 15,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: Color(0xFF55575E),
                       ),
                     )
                   : Icon(
                       playing ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                      size: 21,
                     ),
             ),
+            const SizedBox(width: 9),
             Text(
               _formatDuration(audio.duration),
               key: Key('agent-user-voice-duration-${message.id}'),
-              style: TextStyle(color: foreground),
+              style: TextStyle(
+                color: foreground,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-            if (!audio.isReadable)
-              Text(
-                audio.status == AgentMessageAudioStatus.deleting
-                    ? '录音删除中'
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                playing
+                    ? '正在播放'
+                    : audio.isReadable
+                    ? '语音消息'
+                    : audio.status == AgentMessageAudioStatus.deleting
+                    ? '正在删除录音'
                     : '录音已删除',
-                key: Key(
-                  audio.status == AgentMessageAudioStatus.deleting
-                      ? 'agent-user-voice-deleting-${message.id}'
-                      : 'agent-user-voice-deleted-${message.id}',
+                key: !audio.isReadable
+                    ? Key(
+                        audio.status == AgentMessageAudioStatus.deleting
+                            ? 'agent-user-voice-deleting-${message.id}'
+                            : 'agent-user-voice-deleted-${message.id}',
+                      )
+                    : null,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Color(0xFF6B6D73), fontSize: 13),
+              ),
+            ),
+            if (!audio.isReadable) const SizedBox(width: 2),
+            if (audio.status != AgentMessageAudioStatus.deleted &&
+                voice != null)
+              IconButton(
+                key: Key('agent-user-voice-delete-${message.id}'),
+                tooltip: deleting ? '正在删除录音' : '删除录音',
+                onPressed: deleting
+                    ? null
+                    : () => voice.deleteMessageAudio(message),
+                constraints: const BoxConstraints.tightFor(
+                  width: 36,
+                  height: 36,
                 ),
-                style: const TextStyle(color: Color(0xFFCACBCD)),
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                color: const Color(0xFF686A70),
+                icon: deleting
+                    ? const SizedBox.square(
+                        dimension: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.delete_outline_rounded, size: 19),
               ),
           ],
         ),
         if (audio.isReadable) ...[
-          const SizedBox(height: 6),
+          const SizedBox(height: 7),
           LinearProgressIndicator(
             key: Key('agent-user-voice-progress-${message.id}'),
             value: playing ? progress : 0,
-            minHeight: 3,
-            borderRadius: BorderRadius.circular(2),
-            backgroundColor: const Color(0x3DFFFFFF),
-            valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+            minHeight: 2,
+            borderRadius: BorderRadius.circular(1),
+            backgroundColor: const Color(0xFFCECEC9),
+            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF55575E)),
           ),
         ],
-        const SizedBox(height: 7),
+        const SizedBox(height: 4),
         TextButton.icon(
           key: Key('agent-user-voice-transcript-toggle-${message.id}'),
           style: TextButton.styleFrom(
-            foregroundColor: const Color(0xFFE7E7E8),
-            padding: EdgeInsets.zero,
+            foregroundColor: const Color(0xFF5F6167),
+            minimumSize: const Size(0, 30),
+            padding: const EdgeInsets.symmetric(horizontal: 2),
             visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           onPressed: () {
             setState(() => _transcriptExpanded = !_transcriptExpanded);
@@ -471,84 +309,33 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             _transcriptExpanded
                 ? Icons.expand_less_rounded
                 : Icons.expand_more_rounded,
+            size: 18,
           ),
-          label: const Text('确认文字'),
+          label: const Text('转写'),
         ),
-        if (_transcriptExpanded)
+        if (_transcriptExpanded) ...[
+          const SizedBox(height: 2),
           Text(
             message.text,
             key: Key('agent-user-voice-transcript-${message.id}'),
-            style: TextStyle(color: foreground, height: 1.45),
+            style: TextStyle(color: foreground, fontSize: 15, height: 1.45),
           ),
-        if (audio.status != AgentMessageAudioStatus.deleted && voice != null)
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              key: Key('agent-user-voice-delete-${message.id}'),
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFE7E7E8),
-                visualDensity: VisualDensity.compact,
-              ),
-              onPressed: deleting
-                  ? null
-                  : () => voice.deleteMessageAudio(message),
-              icon: deleting
-                  ? const SizedBox.square(
-                      dimension: 15,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.delete_outline_rounded),
-              label: Text(deleting ? '删除中' : '删除录音'),
-            ),
-          ),
-        if (error != null)
+        ],
+        if (error != null) ...[
+          const SizedBox(height: 4),
           Text(
             error,
             key: Key('agent-message-media-error-${message.id}'),
             style: const TextStyle(
-              color: Color(0xFFFFC5BE),
+              color: Color(0xFF8B2E26),
               fontSize: 12,
               height: 1.35,
             ),
           ),
+        ],
       ],
     );
   }
-}
-
-class _RecordingPulse extends StatelessWidget {
-  const _RecordingPulse();
-
-  @override
-  Widget build(BuildContext context) {
-    return const SizedBox.square(
-      dimension: 12,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Color(0xFFC83D32),
-          shape: BoxShape.circle,
-        ),
-      ),
-    );
-  }
-}
-
-String _stateLabel(AgentVoiceController controller) {
-  return switch (controller.state) {
-    AgentVoiceComposerState.idle => '语音消息',
-    AgentVoiceComposerState.starting => '正在打开麦克风…',
-    AgentVoiceComposerState.recording => '正在录音',
-    AgentVoiceComposerState.recorded => '录音完成',
-    AgentVoiceComposerState.uploading => '正在上传录音…',
-    AgentVoiceComposerState.transcribing => '正在识别语音…',
-    AgentVoiceComposerState.awaitingConfirmation => '编辑并确认识别文字',
-    AgentVoiceComposerState.confirming => '正在确认语音消息…',
-    AgentVoiceComposerState.awaitingAssistant => '消息已发送，Agent 正在回复…',
-    AgentVoiceComposerState.failed => '语音消息需要处理',
-  };
 }
 
 String _formatDuration(Duration value) {
@@ -563,11 +350,3 @@ String _formatSpeed(double value) {
       ? value.toStringAsFixed(0)
       : value.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '');
 }
-
-final TextInputFormatter _agentVoiceContentFormatter =
-    TextInputFormatter.withFunction((oldValue, newValue) {
-      final text = newValue.text;
-      return text.runes.length <= 4096 && utf8.encode(text).length <= 16384
-          ? newValue
-          : oldValue;
-    });

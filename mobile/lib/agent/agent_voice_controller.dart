@@ -11,6 +11,7 @@ import 'agent_voice_models.dart';
 import 'agent_voice_recording.dart';
 
 typedef AgentVoiceIdFactory = String Function(String scope);
+typedef AgentVoiceControllerClock = DateTime Function();
 typedef AgentVoiceMessagesCommitted =
     void Function(Iterable<AgentMessage> messages);
 typedef AgentVoiceMessageAudioDeleted =
@@ -25,6 +26,7 @@ final class AgentVoiceController extends ChangeNotifier
     required this.onMessagesCommitted,
     required this.onMessageAudioDeleted,
     required this.idFactory,
+    this.clock = DateTime.now,
     this.pollInterval = const Duration(seconds: 1),
     this.maximumCandidatePolls = 75,
     this.maximumRunPolls = 75,
@@ -50,6 +52,7 @@ final class AgentVoiceController extends ChangeNotifier
   final AgentVoiceMessagesCommitted onMessagesCommitted;
   final AgentVoiceMessageAudioDeleted onMessageAudioDeleted;
   final AgentVoiceIdFactory idFactory;
+  final AgentVoiceControllerClock clock;
   final Duration pollInterval;
   final int maximumCandidatePolls;
   final int maximumRunPolls;
@@ -214,7 +217,6 @@ final class AgentVoiceController extends ChangeNotifier
         return;
       }
       _state = AgentVoiceComposerState.recording;
-      _recordingStartedAt = DateTime.now();
       _recordingElapsed = Duration.zero;
       _startRecordingTimers(fence);
     } catch (error) {
@@ -1237,6 +1239,7 @@ final class AgentVoiceController extends ChangeNotifier
 
   void _startRecordingTimers(_WorkflowFence fence) {
     _cancelRecordingTimers();
+    _recordingStartedAt = clock();
     _recordingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_isWorkflowCurrent(fence) ||
           _state != AgentVoiceComposerState.recording) {
@@ -1245,7 +1248,8 @@ final class AgentVoiceController extends ChangeNotifier
       }
       final startedAt = _recordingStartedAt;
       if (startedAt != null) {
-        _recordingElapsed = DateTime.now().difference(startedAt);
+        final elapsed = clock().difference(startedAt);
+        _recordingElapsed = elapsed.isNegative ? Duration.zero : elapsed;
         notifyListeners();
       }
     });

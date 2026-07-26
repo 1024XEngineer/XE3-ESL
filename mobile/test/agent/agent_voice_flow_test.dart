@@ -3,8 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/agent/agent_voice_controller.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
+import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/app/speak_up_app.dart';
+import 'package:speakup/features/conversation/conversation.dart';
 
 void main() {
   testWidgets(
@@ -94,6 +97,27 @@ void main() {
       expect(controller.voiceController?.speechSpeed, 1.25);
 
       final voiceMessage = voiceMessages.single;
+      final voiceBubble = find.byKey(Key('agent-message-${voiceMessage.id}'));
+      final voiceDecoration =
+          tester.widget<Container>(voiceBubble).decoration! as BoxDecoration;
+      expect(voiceDecoration.color, const Color(0xFFE7E7E3));
+      expect(tester.getSize(voiceBubble).height, lessThan(140));
+      expect(
+        find.byKey(Key('agent-user-voice-play-${voiceMessage.id}')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(Key('agent-user-voice-duration-${voiceMessage.id}')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(Key('agent-user-voice-progress-${voiceMessage.id}')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(Key('agent-user-voice-transcript-${voiceMessage.id}')),
+        findsNothing,
+      );
       final transcriptToggle = find.byKey(
         Key('agent-user-voice-transcript-toggle-${voiceMessage.id}'),
       );
@@ -123,6 +147,57 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets('recording elapsed time updates inside the original composer', (
+    tester,
+  ) async {
+    var now = DateTime.utc(2026, 7, 27, 9);
+    final voiceController = AgentVoiceController(
+      client: FakeAgentClient(),
+      recorder: FakeAgentVoiceRecorder(),
+      audioPlayer: FakeAgentVoiceAudioPlayer(),
+      onMessagesCommitted: (_) {},
+      onMessageAudioDeleted: (_, _) {},
+      idFactory: (scope) => '${scope}_1',
+      clock: () => now,
+    );
+    addTearDown(voiceController.dispose);
+    await voiceController.bindThread('thread-a');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationPage(
+          onStartVoice: voiceController.startRecording,
+          voiceController: voiceController,
+          onSubmitText: (_) async => true,
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+    await tester.pump();
+
+    expect(voiceController.state, AgentVoiceComposerState.recording);
+    expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
+    expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('agent-voice-recording-duration')))
+          .data,
+      '0:00',
+    );
+
+    now = now.add(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('agent-voice-recording-duration')))
+          .data,
+      '0:01',
+    );
+    await voiceController.cancel();
+    await tester.pump();
+  });
 
   testWidgets(
     'microphone safely creates and focuses a Thread when none is focused',

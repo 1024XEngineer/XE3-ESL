@@ -278,6 +278,61 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets(
+    'keeps conversation controls fixed and omits the generic thread heading',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final messages = List<AgentMessage>.generate(
+        28,
+        (index) => AgentMessage(
+          id: 'scroll-message-$index',
+          role: index.isEven
+              ? AgentMessageRole.user
+              : AgentMessageRole.assistant,
+          text: 'Conversation message $index with enough text to scroll.',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ConversationPage(
+            messages: messages,
+            onOpenMenu: () {},
+            onCreateConversation: () {},
+            onSubmitText: (_) async => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Agent 对话'), findsNothing);
+      expect(find.byKey(const Key('agent-thread-title')), findsNothing);
+      final menu = find.byKey(const Key('conversation-menu-button'));
+      final create = find.byKey(const Key('conversation-create-button'));
+      final fixedTitle = find.byKey(const Key('conversation-fixed-title'));
+      final menuBefore = tester.getRect(menu);
+      final createBefore = tester.getRect(create);
+      final titleBefore = tester.getRect(fixedTitle);
+      final scroll = find.byType(SingleChildScrollView);
+      final scrollController = tester
+          .widget<SingleChildScrollView>(scroll)
+          .controller!;
+      final pixelsBefore = scrollController.position.pixels;
+      expect(pixelsBefore, greaterThan(0));
+
+      await tester.drag(scroll, const Offset(0, 360));
+      await tester.pumpAndSettle();
+
+      expect(scrollController.position.pixels, lessThan(pixelsBefore));
+      expect(tester.getRect(menu), menuBefore);
+      expect(tester.getRect(create), createBefore);
+      expect(tester.getRect(fixedTitle), titleBefore);
+    },
+  );
+
   testWidgets('keeps all four Agent actions above the composer on iPhone', (
     tester,
   ) async {

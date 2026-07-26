@@ -166,6 +166,36 @@ void main() {
     },
   );
 
+  testWidgets(
+    'recording ticker preserves its start clock and publishes elapsed time',
+    (tester) async {
+      var now = DateTime.utc(2026, 7, 27, 9);
+      final controller = _controller(
+        _ControlledVoiceClient(),
+        <AgentMessage>[],
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-a');
+      await controller.startRecording();
+      var notifications = 0;
+      controller.addListener(() => notifications++);
+
+      now = now.add(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(controller.recordingElapsed, const Duration(seconds: 1));
+      expect(notifications, 1);
+
+      now = now.add(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(controller.recordingElapsed, const Duration(seconds: 3));
+      expect(notifications, 2);
+      await controller.cancel();
+    },
+  );
+
   test('upload and ASR failures expose bounded retry states', () async {
     final uploadClient = _ControlledVoiceClient()
       ..createError = const AgentClientException(
@@ -557,6 +587,7 @@ AgentVoiceController _controller(
   List<AgentMessage> committed, {
   FakeAgentVoiceAudioPlayer? player,
   FakeAgentVoiceRecorder? recorder,
+  AgentVoiceControllerClock? clock,
 }) {
   var sequence = 0;
   return AgentVoiceController(
@@ -566,6 +597,7 @@ AgentVoiceController _controller(
     onMessagesCommitted: committed.addAll,
     onMessageAudioDeleted: (_, _) {},
     idFactory: (scope) => '${scope}_${++sequence}'.replaceAll('-', '_'),
+    clock: clock ?? DateTime.now,
     pollInterval: Duration.zero,
     maximumCandidatePolls: 2,
     maximumRunPolls: 2,
