@@ -12,30 +12,6 @@ import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/practice/wire_practice_client.dart';
 
 void main() {
-  test('encodes every opaque resource ID as one path segment', () {
-    const endpoints = PracticeWireEndpoints();
-    const opaque = 'resource/part?query#fragment%value';
-    const encoded = 'resource%2Fpart%3Fquery%23fragment%25value';
-
-    expect(
-      endpoints.restorePath(opaque),
-      '/v1/agent-threads/$encoded/voice-practice-session',
-    );
-    expect(
-      endpoints.startPath(opaque),
-      '/v1/agent-threads/$encoded/voice-practice-sessions',
-    );
-    expect(
-      endpoints.transcribePath(opaque, opaque),
-      '/v1/voice-practice-sessions/$encoded/questions/'
-      '$encoded/transcription-candidates',
-    );
-    expect(
-      endpoints.confirmPath(opaque),
-      '/v1/transcription-candidates/$encoded/confirmations',
-    );
-  });
-
   test(
     'accepts server-authoritative completion before the frozen max turns',
     () async {
@@ -77,6 +53,30 @@ void main() {
       transport.expectDone();
     },
   );
+
+  test('encodes every opaque resource ID as one path segment', () {
+    const endpoints = PracticeWireEndpoints();
+    const opaque = 'resource/part?query#fragment%value';
+    const encoded = 'resource%2Fpart%3Fquery%23fragment%25value';
+
+    expect(
+      endpoints.restorePath(opaque),
+      '/v1/agent-threads/$encoded/voice-practice-session',
+    );
+    expect(
+      endpoints.startPath(opaque),
+      '/v1/agent-threads/$encoded/voice-practice-sessions',
+    );
+    expect(
+      endpoints.transcribePath(opaque, opaque),
+      '/v1/voice-practice-sessions/$encoded/questions/'
+      '$encoded/transcription-candidates',
+    );
+    expect(
+      endpoints.confirmPath(opaque),
+      '/v1/transcription-candidates/$encoded/confirmations',
+    );
+  });
 
   test('uses the frozen #87 empty-body and raw WAV routes', () async {
     final audioFile = await _temporaryAudio();

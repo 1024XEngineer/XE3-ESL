@@ -356,6 +356,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _applyPracticeSnapshot(practice);
+    if (practice == null) {
+      _activeMatter = thread.activeMatter;
+    }
     _initialized = true;
     _applyRestoredTextState(thread);
   }

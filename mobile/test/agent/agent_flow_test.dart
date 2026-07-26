@@ -14,6 +14,8 @@ import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/identity/session_store.dart';
+import 'package:speakup/review/review_history_client.dart';
+import 'package:speakup/review/review_history_controller.dart';
 
 void main() {
   testWidgets('uses one Agent Thread for text, 3 Practice turns, and Review', (
@@ -312,6 +314,58 @@ void main() {
     },
   );
 
+  testWidgets(
+    'completed Practice refreshes persisted Review history before route exit',
+    (tester) async {
+      final agentController = AgentController(client: FakeAgentClient());
+      await agentController.initialize();
+      await agentController.selectScene(agentScenes.first);
+      final historyClient = _CurrentReviewHistoryClient(agentController);
+      final historyController = ReviewHistoryController(client: historyClient);
+      addTearDown(agentController.dispose);
+      addTearDown(historyController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SpeakUpShell(
+            previewMode: true,
+            agentController: agentController,
+            reviewHistoryController: historyController,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final navigatorContext = tester.element(find.byType(SpeakUpShell));
+      Navigator.of(navigatorContext).push(
+        MaterialPageRoute<void>(
+          builder: (_) => PracticePage(agentController: agentController),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(historyClient.listCalls, 0);
+
+      for (var turn = 0; turn < 3; turn++) {
+        await agentController.startRecording();
+        await agentController.stopRecording();
+        await agentController.confirmTranscript();
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+
+      final review = agentController.review;
+      expect(review, isNotNull);
+      final reviewId = review!.id;
+      expect(historyClient.listCalls, 1);
+      expect(historyController.items.single.review.id, reviewId);
+      expect(find.byKey(const Key('practice-page')), findsNothing);
+      expect(
+        find.byKey(Key('review-history-$reviewId')).hitTestable(),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('completed root Practice route keeps a safe destination', (
     tester,
   ) async {
@@ -393,6 +447,37 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+final class _CurrentReviewHistoryClient implements ReviewHistoryClient {
+  _CurrentReviewHistoryClient(this.agentController);
+
+  final AgentController agentController;
+  int listCalls = 0;
+
+  @override
+  Future<ReviewHistoryPage> list({String? cursor, int limit = 20}) async {
+    listCalls++;
+    final review = agentController.review;
+    final practiceSessionId = agentController.practiceSessionId;
+    if (review == null || practiceSessionId == null) {
+      throw StateError('Review history refreshed before Practice completed.');
+    }
+    final completedAt = DateTime.utc(2026, 7, 26, 12);
+    return ReviewHistoryPage(
+      items: <ReviewHistoryItem>[
+        ReviewHistoryItem(
+          review: review,
+          practiceSessionId: practiceSessionId,
+          createdAt: completedAt.subtract(const Duration(minutes: 5)),
+          completedAt: completedAt,
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
 }
 
 final class _RejectFirstPracticePop extends StatefulWidget {

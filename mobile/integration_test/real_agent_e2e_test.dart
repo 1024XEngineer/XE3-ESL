@@ -10,6 +10,7 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
 import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/review/review_history_controller.dart';
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -109,13 +110,14 @@ void main() {
       validateAudioMedia: validateAudioMedia,
     );
     final completedReviewId = dependencies.agentController.review?.id;
-    expect(completedReviewId, isNotNull);
-    await _waitUntil(
+    if (completedReviewId == null) {
+      fail('The completed Practice did not expose its server Review identity.');
+    }
+    await _waitForPersistedReview(
       tester,
-      () => dependencies.reviewHistoryController.items.any(
-        (item) => item.review.id == completedReviewId,
-      ),
-      const Duration(seconds: 15),
+      controller: dependencies.reviewHistoryController,
+      reviewId: completedReviewId,
+      timeout: const Duration(seconds: 15),
     );
     final reviewScreenshot = await binding.takeScreenshot(
       'ios-real-voice-review-e2e',
@@ -125,12 +127,12 @@ void main() {
     await _signOut(tester);
     await _signIn(tester, email: email, password: password);
     await tester.tap(find.byKey(const Key('primary-tab-review')));
-    await _waitUntil(
+    await _waitForPersistedReview(
       tester,
-      () =>
-          dependencies.reviewHistoryController.items.any(
-            (item) => item.review.id == completedReviewId,
-          ) &&
+      controller: dependencies.reviewHistoryController,
+      reviewId: completedReviewId,
+      timeout: const Duration(seconds: 20),
+      additionalCondition: () =>
           find
               .byKey(Key('review-history-$completedReviewId'))
               .evaluate()
@@ -140,7 +142,6 @@ void main() {
               .hitTestable()
               .evaluate()
               .isNotEmpty,
-      const Duration(seconds: 20),
     );
     final restoredReviewScreenshot = await binding.takeScreenshot(
       'ios-real-review-history-restore-e2e',
@@ -167,11 +168,24 @@ Future<void> _registerOrSignIn(
     () => find.text('欢迎回来').evaluate().isNotEmpty,
     const Duration(seconds: 15),
   );
-  await tester.tap(find.text('创建账号'));
-  await tester.pumpAndSettle();
+  final openRegistration = find.widgetWithText(TextButton, '创建账号');
+  await _waitUntil(
+    tester,
+    () => openRegistration.hitTestable().evaluate().length == 1,
+    const Duration(seconds: 5),
+  );
+  await tester.ensureVisible(openRegistration);
+  await tester.tap(openRegistration);
+  await _waitUntil(
+    tester,
+    () =>
+        find.widgetWithText(FilledButton, '创建账号').evaluate().length == 1 &&
+        find.text('返回登录').evaluate().length == 1,
+    const Duration(seconds: 5),
+  );
   await tester.enterText(find.byType(TextFormField).at(0), email);
   await tester.enterText(find.byType(TextFormField).at(1), password);
-  await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
+  await _tapAuthSubmit(tester, '创建账号');
   await _waitUntil(
     tester,
     () =>
@@ -190,7 +204,7 @@ Future<void> _registerOrSignIn(
 
   await tester.enterText(find.byType(TextFormField).at(0), email);
   await tester.enterText(find.byType(TextFormField).at(1), password);
-  await tester.tap(find.text('登录'));
+  await _tapAuthSubmit(tester, '登录');
   await _waitUntil(
     tester,
     () =>
@@ -212,7 +226,7 @@ Future<void> _signIn(
   );
   await tester.enterText(find.byType(TextFormField).at(0), email);
   await tester.enterText(find.byType(TextFormField).at(1), password);
-  await tester.tap(find.text('登录'));
+  await _tapAuthSubmit(tester, '登录');
   await _waitUntil(
     tester,
     () =>
@@ -220,6 +234,21 @@ Future<void> _signIn(
         find.byKey(const Key('primary-tab-review')).evaluate().isNotEmpty,
     const Duration(seconds: 20),
   );
+}
+
+Future<void> _tapAuthSubmit(WidgetTester tester, String label) async {
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pump(const Duration(milliseconds: 200));
+  final button = find.byType(FilledButton, skipOffstage: false);
+  if (button.evaluate().length != 1) {
+    fail(
+      'Expected one auth submit button for $label, '
+      'found ${button.evaluate().length}.',
+    );
+  }
+  await tester.ensureVisible(button);
+  await tester.pump(const Duration(milliseconds: 100));
+  await tester.tap(button);
 }
 
 Future<void> _completeRealVoicePractice(
@@ -283,12 +312,13 @@ Future<void> _completeRealVoicePractice(
     operation: 'create and open the formal FOCUS Practice Session',
     timeout: const Duration(seconds: 90),
   );
+  await tester.pumpAndSettle();
 
   for (var turn = 1; turn <= 3; turn++) {
     if (validateAudioMedia) {
       await _validateQuestionTts(controller);
     }
-    await tester.tap(find.byKey(const Key('practice-record')));
+    await _tapPracticeControl(tester, const Key('practice-record'));
     await _waitUntil(
       tester,
       () =>
@@ -301,7 +331,7 @@ Future<void> _completeRealVoicePractice(
     );
     _failOnPracticeError(tester, 'start recording for turn $turn');
 
-    await tester.tap(find.byKey(const Key('practice-stop-recording')));
+    await _tapPracticeControl(tester, const Key('practice-stop-recording'));
     await _waitUntil(
       tester,
       () =>
@@ -318,7 +348,7 @@ Future<void> _completeRealVoicePractice(
       isNotEmpty,
     );
 
-    await tester.tap(find.byKey(const Key('practice-confirm-turn')));
+    await _tapPracticeControl(tester, const Key('practice-confirm-turn'));
     await tester.pump();
     if (turn < 3) {
       await _waitUntil(
@@ -374,6 +404,21 @@ Future<void> _completeRealVoicePractice(
       );
     }
   }
+}
+
+Future<void> _tapPracticeControl(WidgetTester tester, Key key) async {
+  final control = find.byKey(key);
+  await _waitUntil(
+    tester,
+    () => control.evaluate().isNotEmpty,
+    const Duration(seconds: 10),
+  );
+  await tester.ensureVisible(control);
+  await tester.pump(const Duration(milliseconds: 100));
+  if (control.hitTestable().evaluate().isEmpty) {
+    fail('Practice control $key is not tappable.');
+  }
+  await tester.tap(control);
 }
 
 Future<void> _waitForPreparationTarget(
@@ -532,6 +577,28 @@ Future<void> _waitForRealReview(WidgetTester tester) async {
   }
   _failOnPracticeError(tester, 'restore the Review');
   fail('The real service did not return a Review after retrying.');
+}
+
+Future<void> _waitForPersistedReview(
+  WidgetTester tester, {
+  required ReviewHistoryController controller,
+  required String reviewId,
+  required Duration timeout,
+  bool Function()? additionalCondition,
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    final loaded = controller.items.any((item) => item.review.id == reviewId);
+    if (loaded && (additionalCondition?.call() ?? true)) {
+      return;
+    }
+    final error = controller.errorMessage;
+    if (error != null && error.isNotEmpty) {
+      fail('Failed to load persisted Review $reviewId: $error');
+    }
+    await tester.pump(const Duration(milliseconds: 250));
+  }
+  fail('Timed out waiting for persisted Review $reviewId.');
 }
 
 void _failOnPracticeError(WidgetTester tester, String operation) {
