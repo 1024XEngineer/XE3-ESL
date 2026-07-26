@@ -134,8 +134,8 @@ func run() int {
 		}
 	}
 
-	identityModule, agentModule, err :=
-		bootstrap.NewIdentityAndAgentModules(
+	applicationComposition, err :=
+		bootstrap.NewIdentityAgentAndPracticeComposition(
 			ctx,
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
@@ -147,6 +147,7 @@ func run() int {
 				MaxOutputTokens:    textConfig.MaxOutputTokens,
 				MaxInputCharacters: textConfig.MaxContextChars,
 			},
+			preparationCatalog,
 			bootstrap.VoiceConfiguration{
 				Recognizer:     recognizer,
 				Synthesizer:    synthesizer,
@@ -165,6 +166,11 @@ func run() int {
 		)
 	if err != nil {
 		logger.Error("application startup failed", slog.Any("error", err))
+		return 1
+	}
+	contextRoutes, err := applicationComposition.ProtectedRoutes()
+	if err != nil {
+		logger.Error("context route startup failed", slog.Any("error", err))
 		return 1
 	}
 
@@ -194,7 +200,11 @@ func run() int {
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
 		logger,
 		databasePool,
-		[]bootstrap.RouteRegistrar{identityModule, agentModule},
+		[]bootstrap.RouteRegistrar{
+			applicationComposition.IdentityModule(),
+			applicationComposition.AgentModule(),
+			contextRoutes,
+		},
 		preparation.New(),
 		practice.New(),
 		conversation.New(),
