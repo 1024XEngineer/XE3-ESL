@@ -133,14 +133,17 @@ void main() {
       addTearDown(subscription.cancel);
       await player.playWav(_wave());
 
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-      await completion.future.timeout(const Duration(seconds: 1));
-      await _drain();
+      try {
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await completion.future.timeout(const Duration(seconds: 1));
+        await _eventually(() async => !await File(native.path!).exists());
 
-      expect(completionCount, 1);
-      expect(await File(native.path!).exists(), isFalse);
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        expect(completionCount, 1);
+        expect(await File(native.path!).exists(), isFalse);
+      } finally {
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      }
     },
   );
 
