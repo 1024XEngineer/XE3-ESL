@@ -406,10 +406,34 @@ func (r *Repository) DeleteUserData(
 		return persistence.ErrDeletionGeneration
 	}
 
+	var contextPersistencePresent bool
+	if err := tx.QueryRow(ctx, `
+		SELECT to_regclass('practice_plans') IS NOT NULL
+	`).Scan(&contextPersistencePresent); err != nil {
+		return fmt.Errorf("inspect Practice context persistence: %w", err)
+	}
+	if contextPersistencePresent {
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM practice_idempotency_records
+			WHERE owner_user_id = $1
+		`, deletion.UserID); err != nil {
+			return fmt.Errorf(
+				"delete Practice idempotency records: %w",
+				err,
+			)
+		}
+	}
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM practice_sessions WHERE owner_user_id = $1
 	`, deletion.UserID); err != nil {
 		return fmt.Errorf("delete practice user data: %w", err)
+	}
+	if contextPersistencePresent {
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM practice_plans WHERE owner_user_id = $1
+		`, deletion.UserID); err != nil {
+			return fmt.Errorf("delete Practice Plans: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit practice user deletion: %w", err)
