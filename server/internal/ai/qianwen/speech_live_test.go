@@ -37,9 +37,11 @@ func TestASRLiveFixturePassesUploadBoundary(t *testing.T) {
 
 func TestLiveSpeechRecognition(t *testing.T) {
 	if os.Getenv("QIANWEN_ASR_LIVE_TEST") != "1" {
-		t.Skip("set QIANWEN_ASR_LIVE_TEST=1 and the ASR environment variables to run")
+		t.Skip(
+			"set QIANWEN_ASR_LIVE_TEST=1 and the ASR environment variables " +
+				"to run; the real request may incur charges",
+		)
 	}
-	requireConfirmedVoiceFreeQuota(t)
 	audioPath := os.Getenv("QIANWEN_ASR_LIVE_TEST_AUDIO")
 	if audioPath == "" {
 		audioPath = defaultASRLiveFixture
@@ -89,9 +91,11 @@ func TestLiveSpeechRecognition(t *testing.T) {
 
 func TestLiveSpeechSynthesis(t *testing.T) {
 	if os.Getenv("QIANWEN_TTS_LIVE_TEST") != "1" {
-		t.Skip("set QIANWEN_TTS_LIVE_TEST=1 and the TTS environment variables to run")
+		t.Skip(
+			"set QIANWEN_TTS_LIVE_TEST=1 and the TTS environment variables " +
+				"to run; the real request may incur charges",
+		)
 	}
-	requireConfirmedVoiceFreeQuota(t)
 	cfg, err := platformconfig.LoadSpeechSynthesis()
 	if err != nil {
 		t.Fatalf("load speech synthesis config: %v", err)
@@ -191,14 +195,4 @@ func captureLiveASRFixture(
 		t.Fatalf("validate live ASR test audio: %v", err)
 	}
 	return audio
-}
-
-func requireConfirmedVoiceFreeQuota(t *testing.T) {
-	t.Helper()
-	if os.Getenv("QIANWEN_VOICE_FREE_QUOTA_ONLY_CONFIRMED") != "1" {
-		t.Fatal(
-			"confirm the console's free-quota-only protection, then set " +
-				"QIANWEN_VOICE_FREE_QUOTA_ONLY_CONFIRMED=1",
-		)
-	}
 }

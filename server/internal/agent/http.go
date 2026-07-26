@@ -1018,7 +1018,7 @@ func (h *HTTPHandler) writeError(
 		"idempotency_key_conflict": "Idempotency key conflicts with the original request.",
 		"resource_processing":      "Resource processing is still in progress.",
 		"provider_unavailable":     "The configured provider is temporarily unavailable.",
-		"quota_exhausted":          "The configured free quota is exhausted.",
+		"quota_exhausted":          "The configured provider quota is exhausted.",
 		"voice_capacity_exhausted": "Voice processing capacity is temporarily exhausted.",
 		"internal_error":           "An internal error occurred.",
 	}

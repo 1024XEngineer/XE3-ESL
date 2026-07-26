@@ -353,6 +353,7 @@ func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 	}
 	failure := decodeVoiceJSONObject(t, speech)["error"].(map[string]any)
 	if failure["code"] != "quota_exhausted" ||
+		failure["message"] != "The configured provider quota is exhausted." ||
 		failure["retryable"] != false {
 		t.Fatalf("quota failure = %#v", failure)
 	}
