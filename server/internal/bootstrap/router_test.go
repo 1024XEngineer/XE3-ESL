@@ -224,13 +224,25 @@ func TestUnknownRouteUsesStableErrorShape(t *testing.T) {
 
 	var body struct {
 		Error struct {
-			Code string `json:"code"`
+			Code          string `json:"code"`
+			Message       string `json:"message"`
+			Retryable     bool   `json:"retryable"`
+			CorrelationID string `json:"correlation_id"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.Error.Code != "route_not_found" {
+	if body.Error.Code != "resource_not_found" {
 		t.Fatalf("unexpected error code: %q", body.Error.Code)
+	}
+	if body.Error.Message != "Resource was not found." {
+		t.Fatalf("unexpected error message: %q", body.Error.Message)
+	}
+	if body.Error.Retryable {
+		t.Fatal("route-not-found response must not be retryable")
+	}
+	if strings.TrimSpace(body.Error.CorrelationID) == "" {
+		t.Fatal("route-not-found response must include a correlation ID")
 	}
 }

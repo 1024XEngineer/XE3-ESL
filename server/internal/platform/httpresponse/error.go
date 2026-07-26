@@ -1,0 +1,230 @@
+// Package httpresponse renders application errors for the REST API.
+package httpresponse
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
+)
+
+const (
+	internalErrorCode    = "internal_error"
+	internalErrorMessage = "Internal server error."
+)
+
+type correlationIDContextKey struct{}
+
+// ErrorResponse is the canonical REST error response.
+type ErrorResponse struct {
+	Error ErrorPayload `json:"error"`
+}
+
+// ErrorPayload contains only fields declared by api/common/errors.yaml.
+type ErrorPayload struct {
+	Code          string        `json:"code"`
+	Message       string        `json:"message"`
+	Retryable     bool          `json:"retryable"`
+	CorrelationID string        `json:"correlation_id"`
+	Details       []ErrorDetail `json:"details,omitempty"`
+}
+
+// ErrorDetail is a sanitized field-specific REST error detail.
+type ErrorDetail struct {
+	Field  string `json:"field"`
+	Reason string `json:"reason"`
+}
+
+// CorrelationIDGenerator supplies correlation IDs until ERR-2 introduces
+// centralized middleware.
+type CorrelationIDGenerator func() string
+
+// Renderer converts application errors into canonical REST responses.
+type Renderer struct {
+	generateCorrelationID CorrelationIDGenerator
+}
+
+// NewRenderer creates a REST error renderer. A nil generator uses the package's
+// non-empty default generator.
+func NewRenderer(generator CorrelationIDGenerator) *Renderer {
+	if generator == nil {
+		generator = newCorrelationID
+	}
+	return &Renderer{generateCorrelationID: generator}
+}
+
+// WithCorrelationID stores a request-scoped correlation ID in ctx. ERR-2 can
+// use this boundary when centralized request middleware is introduced.
+func WithCorrelationID(ctx context.Context, correlationID string) context.Context {
+	return context.WithValue(ctx, correlationIDContextKey{}, correlationID)
+}
+
+// CorrelationIDFromContext returns a valid request-scoped correlation ID.
+func CorrelationIDFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	correlationID, ok := ctx.Value(correlationIDContextKey{}).(string)
+	return correlationID, ok && validPublicText(correlationID)
+}
+
+// Write renders err without exposing its internal cause or raw error string.
+func (renderer *Renderer) Write(c *gin.Context, err error) {
+	status, payload := payloadFor(err)
+	payload.CorrelationID = renderer.correlationID(c.Request.Context())
+	c.JSON(status, ErrorResponse{Error: payload})
+}
+
+func (renderer *Renderer) correlationID(ctx context.Context) string {
+	if correlationID, ok := CorrelationIDFromContext(ctx); ok {
+		return correlationID
+	}
+
+	if renderer != nil && renderer.generateCorrelationID != nil {
+		if correlationID := renderer.generateCorrelationID(); validPublicText(correlationID) {
+			return correlationID
+		}
+	}
+	return newCorrelationID()
+}
+
+func payloadFor(err error) (int, ErrorPayload) {
+	appError, ok := apperror.From(err)
+	if !ok {
+		return internalPayload()
+	}
+
+	status, ok := statusForCategory(appError.Category())
+	if !ok ||
+		!validCode(appError.Code()) ||
+		!validPublicText(appError.Message()) {
+		return internalPayload()
+	}
+
+	details, ok := responseDetails(appError.Details())
+	if !ok {
+		return internalPayload()
+	}
+
+	return status, ErrorPayload{
+		Code:      appError.Code(),
+		Message:   appError.Message(),
+		Retryable: appError.Retryable(),
+		Details:   details,
+	}
+}
+
+func internalPayload() (int, ErrorPayload) {
+	return http.StatusInternalServerError, ErrorPayload{
+		Code:      internalErrorCode,
+		Message:   internalErrorMessage,
+		Retryable: false,
+	}
+}
+
+func statusForCategory(category apperror.Category) (int, bool) {
+	switch category {
+	case apperror.InvalidArgument:
+		return http.StatusBadRequest, true
+	case apperror.Unauthenticated:
+		return http.StatusUnauthorized, true
+	case apperror.PermissionDenied:
+		return http.StatusForbidden, true
+	case apperror.NotFound:
+		return http.StatusNotFound, true
+	case apperror.AlreadyExists:
+		return http.StatusConflict, true
+	case apperror.Conflict:
+		return http.StatusConflict, true
+	case apperror.FailedPrecondition:
+		return http.StatusPreconditionFailed, true
+	case apperror.ResourceExhausted:
+		return http.StatusTooManyRequests, true
+	case apperror.DeadlineExceeded:
+		return http.StatusGatewayTimeout, true
+	case apperror.Unimplemented:
+		return http.StatusNotImplemented, true
+	case apperror.Unavailable:
+		return http.StatusServiceUnavailable, true
+	case apperror.Internal:
+		return http.StatusInternalServerError, true
+	default:
+		return 0, false
+	}
+}
+
+func responseDetails(details []apperror.Detail) ([]ErrorDetail, bool) {
+	if len(details) == 0 {
+		return nil, true
+	}
+
+	response := make([]ErrorDetail, len(details))
+	for index, detail := range details {
+		if !validPublicText(detail.Field) || !validPublicText(detail.Reason) {
+			return nil, false
+		}
+		response[index] = ErrorDetail{
+			Field:  detail.Field,
+			Reason: detail.Reason,
+		}
+	}
+	return response, true
+}
+
+func validCode(code string) bool {
+	if code == "" {
+		return false
+	}
+
+	for index := 0; index < len(code); index++ {
+		character := code[index]
+		if character >= 'a' && character <= 'z' {
+			continue
+		}
+		if index > 0 && character >= '0' && character <= '9' {
+			continue
+		}
+		if index > 0 && character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validPublicText(value string) bool {
+	if !utf8.ValidString(value) || strings.TrimSpace(value) == "" {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
+}
+
+var fallbackCorrelationSequence atomic.Uint64
+
+func newCorrelationID() string {
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err == nil {
+		return "corr_" + hex.EncodeToString(random)
+	}
+
+	return fmt.Sprintf(
+		"corr_%x_%x",
+		time.Now().UnixNano(),
+		fallbackCorrelationSequence.Add(1),
+	)
+}

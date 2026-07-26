@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 )
 
 // Module is the narrow boundary used by the application composition root.
@@ -61,6 +64,7 @@ func newRouter(
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery(), requestLogger(logger))
+	errorRenderer := httpresponse.NewRenderer(nil)
 
 	moduleNames := make([]string, 0, len(modules))
 	for _, module := range modules {
@@ -103,12 +107,11 @@ func newRouter(
 	})
 
 	router.NoRoute(func(c *gin.Context) {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": gin.H{
-				"code":    "route_not_found",
-				"message": "route not found",
-			},
-		})
+		errorRenderer.Write(c, apperror.New(
+			apperror.NotFound,
+			"resource_not_found",
+			"Resource was not found.",
+		))
 	})
 
 	return router
