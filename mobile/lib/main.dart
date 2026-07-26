@@ -6,9 +6,12 @@ import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
 import 'package:speakup/features/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/wire_preparation_client.dart';
+import 'package:speakup/features/preparation/wire_job_preparation_client.dart';
 import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
@@ -36,6 +39,7 @@ void main() {
       authController: dependencies.authController,
       agentController: dependencies.agentController,
       preparationController: dependencies.preparationController,
+      jobPreparationController: dependencies.jobPreparationController,
       preparationLaunchController: dependencies.preparationLaunchController,
       reviewHistoryController: dependencies.reviewHistoryController,
     ),
@@ -47,6 +51,7 @@ final class ProductionAppDependencies {
     required this.authController,
     required this.agentController,
     required this.preparationController,
+    required this.jobPreparationController,
     required this.preparationLaunchController,
     required this.reviewHistoryController,
   });
@@ -54,6 +59,7 @@ final class ProductionAppDependencies {
   final AuthController authController;
   final AgentController agentController;
   final PreparationController preparationController;
+  final JobPreparationController jobPreparationController;
   final PreparationLaunchController preparationLaunchController;
   final ReviewHistoryController reviewHistoryController;
 }
@@ -65,6 +71,7 @@ ProductionAppDependencies createProductionAppDependencies({
   AgentVoiceWireTransport? agentVoiceTransport,
   AgentVoiceWireTransport? signedAgentVoiceTransport,
   IdentityHttpTransport? preparationTransport,
+  IdentityHttpTransport? jobPreparationTransport,
   IdentityHttpTransport? preparationLaunchTransport,
   IdentityHttpTransport? reviewHistoryTransport,
   PracticeWireTransport? practiceTransport,
@@ -75,6 +82,7 @@ ProductionAppDependencies createProductionAppDependencies({
   AgentVoiceAudioPlayer? agentVoiceAudioPlayer,
   PracticeMediaClient? practiceMediaClient,
   PracticeAudioPlayer? practiceAudioPlayer,
+  JobPreparationDraftStore? jobPreparationDraftStore,
   SessionStore? sessionStore,
 }) {
   late final AuthController authController;
@@ -208,6 +216,49 @@ ProductionAppDependencies createProductionAppDependencies({
               clientOperationId: clientOperationId,
             ),
   );
+  final jobPreparationController = JobPreparationController(
+    client: WireJobPreparationClient(
+      baseUri: baseUri,
+      credentialProvider: () => authController.currentCredential,
+      invalidateSession:
+          ({required expectedSessionToken, required expectedGeneration}) {
+            return authController.invalidateSession(
+              expectedSessionToken: expectedSessionToken,
+              expectedGeneration: expectedGeneration,
+            );
+          },
+      transport: jobPreparationTransport,
+    ),
+    draftStore:
+        jobPreparationDraftStore ?? const SecureJobPreparationDraftStore(),
+    threadIdProvider: () => agentController.threadId,
+    matterActivator:
+        ({
+          required threadId,
+          required candidate,
+          required clientOperationId,
+        }) async {
+          final matter = await agentController.activateMatterForScenario(
+            threadId: threadId,
+            scene: AgentScene(
+              id: candidate.catalogRecommendation.scenarioDefinitionId,
+              title: '${candidate.jobTitle}英文面试',
+              description: candidate.scopeNotice,
+            ),
+            clientOperationId: clientOperationId,
+          );
+          return AgentPracticeContext(threadId: threadId, matterId: matter.id);
+        },
+    voiceActivator:
+        ({required context, required bootstrap, required clientOperationId}) =>
+            agentController.activateCreatedPractice(
+              threadId: context.threadId,
+              matterId: context.matterId,
+              sessionId: bootstrap.session.id,
+              turnLimit: bootstrap.maxEffectiveTurns,
+              clientOperationId: clientOperationId,
+            ),
+  );
   authController = AuthController(
     identityClient: WireIdentityClient(
       baseUri: baseUri,
@@ -219,6 +270,7 @@ ProductionAppDependencies createProductionAppDependencies({
         agentController.clearPrivateState(),
         preparationController.clearPrivateState(),
         preparationLaunchController.clearPrivateState(),
+        jobPreparationController.clearPrivateState(),
         reviewHistoryController.clearPrivateState(),
       ]);
     },
@@ -227,6 +279,7 @@ ProductionAppDependencies createProductionAppDependencies({
     authController: authController,
     agentController: agentController,
     preparationController: preparationController,
+    jobPreparationController: jobPreparationController,
     preparationLaunchController: preparationLaunchController,
     reviewHistoryController: reviewHistoryController,
   );

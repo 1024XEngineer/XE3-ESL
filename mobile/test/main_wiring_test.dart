@@ -12,6 +12,8 @@ import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
+import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/preparation/wire_job_preparation_client.dart';
 import 'package:speakup/features/preparation/wire_preparation_client.dart';
 import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -131,11 +133,13 @@ void main() {
         agentVoiceAudioPlayer: agentVoiceAudioPlayer,
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
+        jobPreparationDraftStore: MemoryJobPreparationDraftStore(),
         sessionStore: _MemorySessionStore('sess_main-wiring'),
       );
       addTearDown(dependencies.agentController.dispose);
       addTearDown(dependencies.preparationController.dispose);
       addTearDown(dependencies.preparationLaunchController.dispose);
+      addTearDown(dependencies.jobPreparationController.dispose);
       addTearDown(dependencies.reviewHistoryController.dispose);
 
       expect(dependencies.agentController.client, isA<WireAgentClient>());
@@ -175,12 +179,17 @@ void main() {
         dependencies.preparationLaunchController.client,
         isA<WirePreparationLaunchClient>(),
       );
+      expect(
+        dependencies.jobPreparationController.client,
+        isA<WireJobPreparationClient>(),
+      );
 
       await tester.pumpWidget(
         SpeakUpApp(
           authController: dependencies.authController,
           agentController: dependencies.agentController,
           preparationController: dependencies.preparationController,
+          jobPreparationController: dependencies.jobPreparationController,
           preparationLaunchController: dependencies.preparationLaunchController,
           reviewHistoryController: dependencies.reviewHistoryController,
         ),
@@ -219,12 +228,11 @@ void main() {
 
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
-      expect(find.text('服务端场景与语音契约尚未开放，当前仅提供 Agent 文本对话。'), findsNothing);
-      final scene = tester.widget<InkWell>(
-        find.byKey(const Key('catalog-scenario-scn_programmer_interview')),
-      );
-      expect(scene.onTap, isNotNull);
-      expect(preparationTransport.calls.single.authorization, isNull);
+      expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);
+      expect(find.byKey(const Key('job-description-field')), findsOneWidget);
+      expect(find.byKey(const Key('primary-tab-review')), findsNothing);
+      await tester.tap(find.byKey(const Key('job-wizard-close')));
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('primary-tab-review')));
       await tester.pump();
@@ -241,6 +249,8 @@ void main() {
       expect(dependencies.reviewHistoryController.isLoading, isFalse);
       expect(dependencies.preparationController.scenarios, isEmpty);
       expect(dependencies.preparationController.selectedScenario, isNull);
+      expect(dependencies.jobPreparationController.target, isNull);
+      expect(dependencies.jobPreparationController.plan, isNull);
       expect(dependencies.agentController.threadId, isNull);
       expect(dependencies.agentController.messages, isEmpty);
       expect(practiceRecorder.clearCount, 1);

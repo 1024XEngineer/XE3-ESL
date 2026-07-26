@@ -7,6 +7,7 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/features/conversation/conversation.dart';
+import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/features/preparation/preparation_launch_controller.dart';
@@ -23,6 +24,7 @@ class SpeakUpShell extends StatefulWidget {
     this.authController,
     this.preparationController,
     this.preparationLaunchController,
+    this.jobPreparationController,
     this.reviewHistoryController,
     required this.agentController,
     super.key,
@@ -35,6 +37,7 @@ class SpeakUpShell extends StatefulWidget {
   final AgentController agentController;
   final PreparationController? preparationController;
   final PreparationLaunchController? preparationLaunchController;
+  final JobPreparationController? jobPreparationController;
   final ReviewHistoryController? reviewHistoryController;
 
   @override
@@ -49,7 +52,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       key: Key('primary-tab-agent'),
     ),
     GlassNavigationDestination(
-      label: '场景',
+      label: '训练',
       icon: Icons.grid_view_rounded,
       key: Key('primary-tab-scenes'),
     ),
@@ -99,6 +102,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _selectDestination(int index) {
+    if (index == 1 && widget.jobPreparationController != null) {
+      _openJobPreparation();
+      return;
+    }
     if (_selectedIndex == index) {
       if (index == 2) {
         unawaited(widget.reviewHistoryController?.refresh());
@@ -110,6 +117,14 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       unawaited(widget.reviewHistoryController?.refresh());
     }
     setState(() => _selectedIndex = index);
+  }
+
+  void _openJobPreparation() {
+    if (widget.jobPreparationController == null) {
+      _showMockNotice('岗位准备流程尚未连接');
+      return;
+    }
+    Navigator.of(context).pushNamed(AppRoutes.jobPreparation);
   }
 
   void _showMockNotice(String message) {
@@ -175,7 +190,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
             : null,
-        onCreatePlan: () => _selectDestination(1),
+        onCreatePlan: widget.jobPreparationController == null
+            ? () => _selectDestination(1)
+            : _openJobPreparation,
         onContinuePractice: _openPractice,
         onOpenReview: () => _selectDestination(2),
         onStartVoice: widget.agentController.supportsAgentVoice
