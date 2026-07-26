@@ -841,7 +841,7 @@ void main() {
 
       expect(find.byKey(const Key('review-content')), findsOneWidget);
       expect(find.byKey(const Key('review-title')), findsOneWidget);
-      expect(find.text('summary-91'), findsNothing);
+      expect(find.text('summary-91'), findsOneWidget);
       expect(find.byKey(const Key('review-history-load-more')), findsOneWidget);
 
       await tester.tap(
@@ -903,6 +903,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('review-availability-title')), findsOneWidget);
     expect(find.byKey(const Key('review-content')), findsNothing);
+    expect(find.textContaining('三轮'), findsNothing);
   });
 
   testWidgets(
@@ -935,7 +936,7 @@ void main() {
 
       expect(client.cursors, <String?>[null, null, null]);
       expect(find.text('本次练习 · 92 分'), findsOneWidget);
-      expect(find.text('summary-92'), findsNothing);
+      expect(find.text('summary-92'), findsOneWidget);
       expect(controller.hasMore, isFalse);
     },
   );
@@ -986,6 +987,8 @@ void main() {
       expect(find.byKey(const Key('review-content')), findsOneWidget);
       expect(find.byKey(const Key('review-title')), findsOneWidget);
       expect(find.byKey(const Key('review-current-label')), findsOneWidget);
+      expect(find.text('本次结果'), findsOneWidget);
+      expect(find.textContaining('刚'), findsNothing);
       expect(
         find.byKey(const Key('review-history-page-loading')),
         findsOneWidget,
@@ -1075,8 +1078,8 @@ void main() {
       expect(find.byKey(const Key('review-current-$_newerId')), findsOneWidget);
       expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
       expect(find.byKey(const Key('review-content')), findsOneWidget);
-      expect(find.text('summary-91'), findsNothing);
-      expect(find.text('summary-78'), findsNothing);
+      expect(find.text('summary-91'), findsOneWidget);
+      expect(find.text('summary-78'), findsOneWidget);
 
       await tester.tap(
         find.byKey(const Key('review-current-select-$_newerId')),
@@ -1114,12 +1117,12 @@ void main() {
 
     expect(find.byKey(Key('review-history-${item.review.id}')), findsOneWidget);
     expect(find.byKey(const Key('review-detail-page')), findsNothing);
-    expect(find.text(item.review.summary), findsNothing);
+    expect(find.text(item.review.summary), findsOneWidget);
     expect(
       tester
           .getSize(find.byKey(Key('review-history-${item.review.id}')))
           .height,
-      lessThan(120),
+      lessThan(145),
     );
 
     await tester.tap(
@@ -1137,6 +1140,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('review-history-list')), findsOneWidget);
     expect(find.byKey(const Key('review-detail-page')), findsNothing);
+  });
+
+  testWidgets('history card exposes one consolidated semantics node', (
+    tester,
+  ) async {
+    final semanticsHandle = tester.ensureSemantics();
+    final item = _fixtureItem(index: 0);
+    final controller = ReviewHistoryController(
+      client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    final expectedLabel =
+        '${item.review.title}，摘要：${item.review.summary}，'
+        '2026-07-26，已完成，查看复盘详情';
+    expect(
+      tester.getSemantics(find.byKey(const Key('review-content'))),
+      matchesSemantics(
+        label: expectedLabel,
+        isButton: true,
+        hasTapAction: true,
+      ),
+    );
+    expect(
+      find.bySemanticsLabel(RegExp(RegExp.escape(item.review.title))),
+      findsOneWidget,
+    );
+    semanticsHandle.dispose();
   });
 
   testWidgets('ten compact history cards preserve multi-day dates', (
@@ -1170,7 +1206,7 @@ void main() {
     expect(find.text('2026-07-26'), findsOneWidget);
     expect(find.text('2026-07-17'), findsOneWidget);
     expect(find.byKey(const Key('review-detail-page')), findsNothing);
-    expect(find.text(items.first.review.summary), findsNothing);
+    expect(find.text(items.first.review.summary), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

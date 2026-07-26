@@ -13,6 +13,8 @@ import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/review/review_history_client.dart';
+import 'package:speakup/review/review_history_controller.dart';
 
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
@@ -441,7 +443,14 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: ReviewPage(agentController: controller)),
     );
+    await tester.pumpAndSettle();
 
+    expect(
+      find.byKey(const Key('practice-recording-play-audio-final')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const Key('review-current-select-review-1')));
+    await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('practice-recording-play-audio-final')),
       findsOneWidget,
@@ -450,6 +459,132 @@ void main() {
       find.byKey(const Key('practice-recording-delete-audio-final')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('Review media errors stay inside one matching detail visit', (
+    tester,
+  ) async {
+    final media = _MediaClient(
+      recordingError: const AgentClientException(
+        kind: AgentClientFailureKind.server,
+        statusCode: 503,
+        retryable: true,
+      ),
+    );
+    final controller = _controller(
+      snapshot: _completedSnapshot(audioAssetId: 'audio-final'),
+      media: media,
+      player: _AudioPlayer(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(agentController: controller)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('review-current-select-review-1')));
+    await tester.pumpAndSettle();
+
+    final detailScrollable = find.descendant(
+      of: find.byKey(const Key('review-detail-content')),
+      matching: find.byType(Scrollable),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('practice-recording-play-audio-final')),
+      240,
+      scrollable: detailScrollable,
+    );
+    await tester.tap(
+      find
+          .byKey(const Key('practice-recording-play-audio-final'))
+          .hitTestable(),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('review-detail-media-error')),
+      120,
+      scrollable: detailScrollable,
+    );
+    expect(find.byKey(const Key('review-detail-media-error')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('review-detail-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('review-detail-media-error')), findsNothing);
+    expect(find.byKey(const Key('review-media-error-message')), findsNothing);
+    expect(controller.mediaErrorMessage, isNotNull);
+
+    await tester.tap(find.byKey(const Key('review-current-select-review-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('review-detail-media-error')), findsNothing);
+  });
+
+  testWidgets('old Review detail never adopts a newer Review recording', (
+    tester,
+  ) async {
+    final firstSnapshot = _completedSnapshot(
+      audioAssetId: 'audio-old',
+      reviewId: 'review-1',
+      sessionId: 'session-1',
+    );
+    final practice = _SnapshotPracticeClient(firstSnapshot);
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      mediaClient: _MediaClient(),
+      audioPlayer: _AudioPlayer(),
+    );
+    final historyController = ReviewHistoryController(
+      client: _SingleReviewClient(
+        ReviewHistoryItem(
+          review: firstSnapshot.review!,
+          practiceSessionId: firstSnapshot.sessionId,
+          createdAt: DateTime.utc(2026, 7, 26, 9),
+          completedAt: DateTime.utc(2026, 7, 26, 9, 12),
+        ),
+      ),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(historyController.dispose);
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReviewPage(
+          agentController: controller,
+          historyController: historyController,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('review-history-select-review-1')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('practice-recording-play-audio-old')),
+      findsOneWidget,
+    );
+
+    await controller.clearPrivateState();
+    practice.snapshot = _completedSnapshot(
+      audioAssetId: 'audio-new',
+      reviewId: 'review-2',
+      sessionId: 'session-2',
+    );
+    await controller.initialize();
+    await tester.pumpAndSettle();
+
+    expect(controller.review?.id, 'review-2');
+    expect(controller.recordings.single.audioAssetId, 'audio-new');
+    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-recording-play-audio-old')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('practice-recording-play-audio-new')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('practice-recordings-card')), findsNothing);
   });
 }
 
@@ -494,16 +629,20 @@ PracticeSessionSnapshot _activeSnapshot({required String audioAssetId}) {
   );
 }
 
-PracticeSessionSnapshot _completedSnapshot({required String audioAssetId}) {
+PracticeSessionSnapshot _completedSnapshot({
+  required String audioAssetId,
+  String reviewId = 'review-1',
+  String sessionId = 'session-1',
+}) {
   return PracticeSessionSnapshot(
-    sessionId: 'session-1',
+    sessionId: sessionId,
     matter: AgentMatter(id: 'matter-1', scene: agentScenes.first),
     completedTurns: 2,
     turnLimit: 2,
     sessionCompleted: true,
     currentTurn: PracticeTurnSnapshot(
       id: 'turn-2',
-      sessionId: 'session-1',
+      sessionId: sessionId,
       questionId: 'question-2',
       respondentParticipantId: 'participant-user',
       candidateId: 'candidate-2',
@@ -511,11 +650,11 @@ PracticeSessionSnapshot _completedSnapshot({required String audioAssetId}) {
       evidenceVersion: 2,
       effectiveTurns: 2,
       sessionCompleted: true,
-      reviewId: 'review-1',
+      reviewId: reviewId,
       audioAssetId: audioAssetId,
     ),
-    review: const AgentReview(
-      id: 'review-1',
+    review: AgentReview(
+      id: reviewId,
       title: '本次复盘',
       summary: '表达清晰。',
       strength: '有具体证据。',
@@ -527,7 +666,7 @@ PracticeSessionSnapshot _completedSnapshot({required String audioAssetId}) {
 final class _SnapshotPracticeClient implements PracticeClient {
   _SnapshotPracticeClient(this.snapshot);
 
-  final PracticeSessionSnapshot snapshot;
+  PracticeSessionSnapshot snapshot;
 
   @override
   Future<void> clearAccountState() async {}
@@ -561,6 +700,20 @@ final class _SnapshotPracticeClient implements PracticeClient {
   }) {
     throw UnimplementedError();
   }
+}
+
+final class _SingleReviewClient implements ReviewHistoryClient {
+  const _SingleReviewClient(this.item);
+
+  final ReviewHistoryItem item;
+
+  @override
+  Future<ReviewHistoryPage> list({String? cursor, int limit = 20}) async {
+    return ReviewHistoryPage(items: <ReviewHistoryItem>[item]);
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
 }
 
 final class _MediaClient implements PracticeMediaClient {

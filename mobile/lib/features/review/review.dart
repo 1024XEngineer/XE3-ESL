@@ -197,17 +197,6 @@ class _ReviewPageState extends State<ReviewPage> {
                     child: _HistoryFooter(controller: controller),
                   ),
                 ),
-              if (widget.agentController?.mediaErrorMessage case final message?)
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-                  sliver: SliverToBoxAdapter(
-                    child: Text(
-                      message,
-                      key: const Key('review-media-error-message'),
-                      style: const TextStyle(color: Color(0xFF8B2E26)),
-                    ),
-                  ),
-                ),
               const SliverToBoxAdapter(child: SizedBox(height: 140)),
             ],
           ),
@@ -286,11 +275,11 @@ final class _ReviewListEntry {
   final bool isCurrent;
   final AgentController? agentController;
 
-  String get statusLabel => isCurrent ? '刚完成' : '已完成';
-  String get dateLabel =>
-      completedAt == null ? '刚刚' : _compactDateLabel(completedAt!);
-  String get detailDateLabel =>
-      completedAt == null ? '刚刚完成' : _detailDateLabel(completedAt!);
+  String get statusLabel => isCurrent ? '本次结果' : '已完成';
+  String? get dateLabel =>
+      completedAt == null ? null : _compactDateLabel(completedAt!);
+  String? get detailDateLabel =>
+      completedAt == null ? null : _detailDateLabel(completedAt!);
 }
 
 class _ReviewListCard extends StatelessWidget {
@@ -307,10 +296,20 @@ class _ReviewListCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final review = entry.review;
+    final dateLabel = entry.dateLabel;
+    final semanticsLabel = <String>[
+      review.title,
+      '摘要：${review.summary}',
+      ?dateLabel,
+      entry.statusLabel,
+      '查看复盘详情',
+    ].join('，');
     return Semantics(
       key: primary ? const Key('review-content') : null,
       button: true,
-      label: '${review.title}，${entry.dateLabel}，${entry.statusLabel}，查看复盘详情',
+      excludeSemantics: true,
+      label: semanticsLabel,
+      onTap: onTap,
       child: Card(
         key: Key(
           entry.isCurrent
@@ -358,23 +357,38 @@ class _ReviewListCard extends StatelessWidget {
                           height: 1.25,
                         ),
                       ),
-                      const SizedBox(height: 9),
+                      const SizedBox(height: 6),
+                      Text(
+                        review.summary,
+                        key: Key('review-list-summary-${review.id}'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF5F6269),
+                          fontSize: 14,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                       Wrap(
                         spacing: 8,
                         runSpacing: 6,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Text(
-                            entry.dateLabel,
+                          if (dateLabel != null)
+                            Text(
+                              dateLabel,
+                              style: const TextStyle(
+                                color: Color(0xFF696B73),
+                                fontSize: 13,
+                              ),
+                            ),
+                          _StatusLabel(
                             key: entry.isCurrent
                                 ? const Key('review-current-label')
                                 : null,
-                            style: const TextStyle(
-                              color: Color(0xFF696B73),
-                              fontSize: 13,
-                            ),
+                            label: entry.statusLabel,
                           ),
-                          _StatusLabel(label: entry.statusLabel),
                         ],
                       ),
                     ],
@@ -395,7 +409,7 @@ class _ReviewListCard extends StatelessWidget {
 }
 
 class _StatusLabel extends StatelessWidget {
-  const _StatusLabel({required this.label});
+  const _StatusLabel({required this.label, super.key});
 
   final String label;
 
@@ -572,7 +586,7 @@ class _EmptyReview extends StatelessWidget {
               previewMode
                   ? '预览模式不会用当前页面状态伪造历史记录。'
                   : practiceAvailable
-                  ? '完成三轮练习后，正式复盘会保存在当前账号的历史中。'
+                  ? '完成练习后，正式复盘会保存在当前账号的历史中。'
                   : '待服务端场景、语音与复盘契约开放后再接入。',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Color(0xFF777983)),
@@ -594,10 +608,14 @@ class _ReviewDetailPage extends StatefulWidget {
 }
 
 class _ReviewDetailPageState extends State<_ReviewDetailPage> {
+  String? _visibleMediaError;
+  String? _ignoredInitialMediaError;
+
   @override
   void initState() {
     super.initState();
     widget.entry.agentController?.addListener(_rebuild);
+    _ignoredInitialMediaError = _matchingController()?.mediaErrorMessage;
   }
 
   @override
@@ -607,27 +625,48 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
       oldWidget.entry.agentController?.removeListener(_rebuild);
       widget.entry.agentController?.addListener(_rebuild);
     }
+    _visibleMediaError = null;
+    _ignoredInitialMediaError = _matchingController()?.mediaErrorMessage;
   }
 
   @override
   void dispose() {
-    final controller = widget.entry.agentController;
-    controller?.removeListener(_rebuild);
-    unawaited(controller?.stopPracticeAudio(notify: false));
+    final attachedController = widget.entry.agentController;
+    attachedController?.removeListener(_rebuild);
+    unawaited(_matchingController()?.stopPracticeAudio(notify: false));
     super.dispose();
   }
 
   void _rebuild() {
-    if (mounted) {
-      setState(() {});
+    if (!mounted) {
+      return;
     }
+    final controller = _matchingController();
+    final error = controller != null && controller.recordings.isNotEmpty
+        ? controller.mediaErrorMessage
+        : null;
+    if (error == null) {
+      _visibleMediaError = null;
+      _ignoredInitialMediaError = null;
+    } else if (error != _ignoredInitialMediaError) {
+      _visibleMediaError = error;
+    }
+    setState(() {});
+  }
+
+  AgentController? _matchingController() {
+    final controller = widget.entry.agentController;
+    return controller?.review?.id == widget.entry.review.id ? controller : null;
   }
 
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
     final review = entry.review;
-    final controller = entry.agentController;
+    final controller = _matchingController();
+    final hasRecordingControls =
+        controller != null && controller.recordings.isNotEmpty;
+    final mediaError = _visibleMediaError;
     return Scaffold(
       key: const Key('review-detail-page'),
       backgroundColor: const Color(0xFFF3F3F0),
@@ -669,14 +708,14 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
               title: '下一次重点',
               body: review.nextFocus,
             ),
-            if (controller != null && controller.recordings.isNotEmpty) ...[
+            if (hasRecordingControls) ...[
               const SizedBox(height: 12),
               PracticeRecordingsCard(controller: controller, title: '练习录音'),
             ],
-            if (controller?.mediaErrorMessage case final message?) ...[
+            if (hasRecordingControls && mediaError != null) ...[
               const SizedBox(height: 12),
               Text(
-                message,
+                mediaError,
                 key: const Key('review-detail-media-error'),
                 style: const TextStyle(color: Color(0xFF8B2E26)),
               ),
@@ -695,6 +734,7 @@ class _ReviewDetailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final detailDateLabel = entry.detailDateLabel;
     return Card(
       elevation: 0,
       color: const Color(0xFFE9EAE5),
@@ -709,14 +749,20 @@ class _ReviewDetailHeader extends StatelessWidget {
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _StatusLabel(label: entry.statusLabel),
-                Text(
-                  entry.detailDateLabel,
-                  style: const TextStyle(
-                    color: Color(0xFF65676E),
-                    fontSize: 13,
-                  ),
+                _StatusLabel(
+                  key: entry.isCurrent
+                      ? const Key('review-detail-current-label')
+                      : null,
+                  label: entry.statusLabel,
                 ),
+                if (detailDateLabel != null)
+                  Text(
+                    detailDateLabel,
+                    style: const TextStyle(
+                      color: Color(0xFF65676E),
+                      fontSize: 13,
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 14),
