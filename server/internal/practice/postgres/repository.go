@@ -465,6 +465,7 @@ type rowScanner interface {
 func scanSession(row rowScanner) (persistence.Session, error) {
 	var session persistence.Session
 	var targets, participants []byte
+	var startedAt, completedAt pgtype.Timestamptz
 	err := row.Scan(
 		&session.ID,
 		&session.OwnerUserID,
@@ -474,8 +475,8 @@ func scanSession(row rowScanner) (persistence.Session, error) {
 		&session.EffectiveTurns,
 		&session.CreatedAt,
 		&session.UpdatedAt,
-		&session.StartedAt,
-		&session.CompletedAt,
+		&startedAt,
+		&completedAt,
 		&session.Snapshot.Mode,
 		&targets,
 		&participants,
@@ -492,6 +493,13 @@ func scanSession(row rowScanner) (persistence.Session, error) {
 	}
 	if err := json.Unmarshal(participants, &session.Snapshot.Participants); err != nil {
 		return persistence.Session{}, fmt.Errorf("decode practice participant snapshot: %w", err)
+	}
+	if startedAt.Valid {
+		session.StartedAt = startedAt.Time
+	}
+	if completedAt.Valid {
+		completed := completedAt.Time
+		session.CompletedAt = &completed
 	}
 	return session, nil
 }

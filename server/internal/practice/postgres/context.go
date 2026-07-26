@@ -409,7 +409,14 @@ func (r *Repository) CreateContextSession(
 		return persistence.ContextSessionBootstrap{}, false,
 			persistence.ErrInvalidArgument
 	}
-	participants, err := json.Marshal(snapshot.Participants)
+	legacyParticipants, err := legacyContextParticipantProjection(
+		snapshot.Participants,
+	)
+	if err != nil {
+		return persistence.ContextSessionBootstrap{}, false,
+			persistence.ErrInvalidArgument
+	}
+	participants, err := json.Marshal(legacyParticipants)
 	if err != nil {
 		return persistence.ContextSessionBootstrap{}, false,
 			persistence.ErrInvalidArgument
@@ -1471,6 +1478,36 @@ func contextTransitionStatus(
 
 func cloneContextStrings(values []string) []string {
 	return append([]string(nil), values...)
+}
+
+func legacyContextParticipantProjection(
+	participants []persistence.ContextParticipant,
+) ([]persistence.ParticipantSnapshot, error) {
+	projected := make(
+		[]persistence.ParticipantSnapshot,
+		len(participants),
+	)
+	for index, participant := range participants {
+		projected[index] = persistence.ParticipantSnapshot{
+			ParticipantID:   participant.ID,
+			ParticipantRole: participant.Role,
+			SubjectRef:      participant.SubjectRef,
+			Order:           participant.Order,
+		}
+		if participant.RoleSnapshot == nil {
+			continue
+		}
+		document, err := json.Marshal(participant.RoleSnapshot)
+		if err != nil {
+			return nil, err
+		}
+		var roleDefinition map[string]any
+		if err := json.Unmarshal(document, &roleDefinition); err != nil {
+			return nil, err
+		}
+		projected[index].RoleDefinition = roleDefinition
+	}
+	return projected, nil
 }
 
 func cloneContextSessionSnapshot(

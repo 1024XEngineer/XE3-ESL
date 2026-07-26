@@ -106,6 +106,27 @@ func TestContextRepositoryPersistsExactRecoverableAggregate(t *testing.T) {
 		bootstrap.Snapshot.SessionPolicy.MaxEffectiveTurns != 6 {
 		t.Fatalf("persisted Session bootstrap = %+v", bootstrap)
 	}
+	legacySession, err := repository.GetSession(
+		ctx,
+		owner.Actor,
+		bootstrap.Session.ID,
+	)
+	if err != nil {
+		t.Fatalf("decode formal Session through legacy projection: %v", err)
+	}
+	if !legacySession.StartedAt.IsZero() ||
+		len(legacySession.Snapshot.Participants) != 2 ||
+		legacySession.Snapshot.Participants[0].ParticipantID !=
+			bootstrap.Snapshot.Participants[0].ID ||
+		legacySession.Snapshot.Participants[0].Order !=
+			bootstrap.Snapshot.Participants[0].Order ||
+		legacySession.Snapshot.Participants[0].
+			RoleDefinition["role_definition_id"] !=
+			bootstrap.Snapshot.Participants[0].RoleDefinitionID ||
+		legacySession.Snapshot.Participants[1].ParticipantID !=
+			bootstrap.Snapshot.Participants[1].ID {
+		t.Fatalf("legacy formal Session projection = %+v", legacySession)
+	}
 
 	restarted := practicepostgres.New(pool)
 	recovered, err := restarted.GetContextSession(
