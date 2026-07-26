@@ -198,7 +198,7 @@ Future<void> _signIn(
     tester,
     () =>
         find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
-        _composerIsReady(tester),
+        find.byKey(const Key('primary-tab-review')).evaluate().isNotEmpty,
     const Duration(seconds: 20),
   );
 }
