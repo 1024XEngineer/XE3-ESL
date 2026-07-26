@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
+import 'package:speakup/features/preparation/wire_preparation_client.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/session_store.dart';
@@ -79,6 +80,24 @@ void main() {
         ),
       ]);
       final reviewHistoryTransport = _ControlledReviewHistoryTransport();
+      final preparationTransport = _Transport([
+        _Response(
+          method: 'GET',
+          path: '/v1/scenario-definitions',
+          statusCode: HttpStatus.ok,
+          body: {
+            'scenarios': [
+              {
+                'scenario_definition_id': 'scn_programmer_interview',
+                'scenario_type': 'INTERVIEW',
+                'name': 'English interview for technical roles',
+                'version': 1,
+                'status': 'active',
+              },
+            ],
+          },
+        ),
+      ]);
       addTearDown(reviewHistoryTransport.completeEmptyIfPending);
       final practiceRecorder = _TrackingPracticeRecorder();
       final practiceMediaClient = _TrackingPracticeMediaClient();
@@ -87,6 +106,7 @@ void main() {
         baseUri: Uri.parse('https://api.speak-up.test'),
         identityTransport: identityTransport,
         agentTransport: agentTransport,
+        preparationTransport: preparationTransport,
         reviewHistoryTransport: reviewHistoryTransport,
         practiceTransport: _PracticeTransport(),
         practiceRecorder: practiceRecorder,
@@ -95,6 +115,7 @@ void main() {
         sessionStore: _MemorySessionStore('sess_main-wiring'),
       );
       addTearDown(dependencies.agentController.dispose);
+      addTearDown(dependencies.preparationController.dispose);
       addTearDown(dependencies.reviewHistoryController.dispose);
 
       expect(dependencies.agentController.client, isA<WireAgentClient>());
@@ -114,11 +135,16 @@ void main() {
         dependencies.reviewHistoryController.client,
         isA<WireReviewHistoryClient>(),
       );
+      expect(
+        dependencies.preparationController.client,
+        isA<WirePreparationCatalogClient>(),
+      );
 
       await tester.pumpWidget(
         SpeakUpApp(
           authController: dependencies.authController,
           agentController: dependencies.agentController,
+          preparationController: dependencies.preparationController,
           reviewHistoryController: dependencies.reviewHistoryController,
         ),
       );
@@ -153,12 +179,13 @@ void main() {
       );
 
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(find.text('服务端场景与语音契约尚未开放，当前仅提供 Agent 文本对话。'), findsNothing);
       final scene = tester.widget<InkWell>(
-        find.byKey(const Key('scene-self-introduction')),
+        find.byKey(const Key('catalog-scenario-scn_programmer_interview')),
       );
       expect(scene.onTap, isNotNull);
+      expect(preparationTransport.calls.single.authorization, isNull);
 
       await tester.tap(find.byKey(const Key('primary-tab-review')));
       await tester.pump();
@@ -173,6 +200,8 @@ void main() {
       expect(dependencies.reviewHistoryController.items, isEmpty);
       expect(dependencies.reviewHistoryController.errorMessage, isNull);
       expect(dependencies.reviewHistoryController.isLoading, isFalse);
+      expect(dependencies.preparationController.scenarios, isEmpty);
+      expect(dependencies.preparationController.selectedScenario, isNull);
       expect(dependencies.agentController.threadId, isNull);
       expect(dependencies.agentController.messages, isEmpty);
       expect(practiceRecorder.clearCount, 1);
@@ -201,6 +230,7 @@ void main() {
       );
       identityTransport.expectDone();
       agentTransport.expectDone();
+      preparationTransport.expectDone();
     },
   );
 }

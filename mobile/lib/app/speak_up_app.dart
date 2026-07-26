@@ -5,6 +5,7 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/practice/practice.dart';
 import 'package:speakup/features/preparation/preparation.dart';
+import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_gate.dart';
@@ -15,6 +16,7 @@ class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp({
     required AuthController authController,
     required this.agentController,
+    required this.preparationController,
     this.reviewHistoryController,
     super.key,
   }) : _authentication = (controller: authController),
@@ -22,6 +24,7 @@ class SpeakUpApp extends StatelessWidget {
 
   const SpeakUpApp.preview({
     this.agentController,
+    this.preparationController,
     this.reviewHistoryController,
     super.key,
   }) : _authentication = null,
@@ -29,6 +32,7 @@ class SpeakUpApp extends StatelessWidget {
 
   final ({AuthController controller})? _authentication;
   final AgentController? agentController;
+  final PreparationController? preparationController;
   final ReviewHistoryController? reviewHistoryController;
   final bool _allowFakePreview;
 
@@ -53,6 +57,7 @@ class SpeakUpApp extends StatelessWidget {
       home: controller == null
           ? _AuthenticatedNavigator(
               agentController: agentController,
+              preparationController: preparationController,
               reviewHistoryController: reviewHistoryController,
               allowFakePreview: _allowFakePreview,
             )
@@ -62,6 +67,7 @@ class SpeakUpApp extends StatelessWidget {
                 user: user,
                 authController: controller,
                 agentController: agentController,
+                preparationController: preparationController,
                 reviewHistoryController: reviewHistoryController,
                 allowFakePreview: _allowFakePreview,
               ),
@@ -75,6 +81,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.user,
     this.authController,
     this.agentController,
+    this.preparationController,
     this.reviewHistoryController,
     required this.allowFakePreview,
   });
@@ -82,6 +89,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final User? user;
   final AuthController? authController;
   final AgentController? agentController;
+  final PreparationController? preparationController;
   final ReviewHistoryController? reviewHistoryController;
   final bool allowFakePreview;
 
@@ -128,12 +136,14 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             user: widget.user,
             authController: widget.authController,
             agentController: _agentController,
+            preparationController: widget.preparationController,
             reviewHistoryController: widget.reviewHistoryController,
           ),
           AppRoutes.preparation => PreparationPage(
             showBackButton: true,
             previewMode: widget.allowFakePreview,
             agentController: _agentController,
+            preparationController: widget.preparationController,
           ),
           AppRoutes.practice => PracticePage(
             previewMode: widget.allowFakePreview,
@@ -145,6 +155,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             user: widget.user,
             authController: widget.authController,
             agentController: _agentController,
+            preparationController: widget.preparationController,
             reviewHistoryController: widget.reviewHistoryController,
           ),
           AppRoutes.review => ReviewPage(

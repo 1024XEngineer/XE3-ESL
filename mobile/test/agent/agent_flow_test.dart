@@ -7,6 +7,9 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/practice/practice.dart';
+import 'package:speakup/features/preparation/preparation_client.dart';
+import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/preparation_models.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/model/identity_models.dart';
@@ -102,16 +105,26 @@ void main() {
     'global AuthGate shows the real email and logout clears Agent data',
     (tester) async {
       final agentController = AgentController(client: FakeAgentClient());
+      final preparationController = PreparationController(
+        client: _EmptyPreparationCatalogClient(),
+      );
+      addTearDown(preparationController.dispose);
       final authController = AuthController(
         identityClient: _AuthenticatedIdentityClient(),
         sessionStore: _MemorySessionStore('sess_stored-token'),
-        clearPrivateState: agentController.clearPrivateState,
+        clearPrivateState: () async {
+          await Future.wait<void>([
+            agentController.clearPrivateState(),
+            preparationController.clearPrivateState(),
+          ]);
+        },
       );
 
       await tester.pumpWidget(
         SpeakUpApp(
           authController: authController,
           agentController: agentController,
+          preparationController: preparationController,
         ),
       );
       await tester.pumpAndSettle();
@@ -144,15 +157,25 @@ void main() {
     tester,
   ) async {
     final agentController = AgentController(client: FakeAgentClient());
+    final preparationController = PreparationController(
+      client: _EmptyPreparationCatalogClient(),
+    );
+    addTearDown(preparationController.dispose);
     final authController = AuthController(
       identityClient: _AuthenticatedIdentityClient(),
       sessionStore: _MemorySessionStore('sess_stored-token'),
-      clearPrivateState: agentController.clearPrivateState,
+      clearPrivateState: () async {
+        await Future.wait<void>([
+          agentController.clearPrivateState(),
+          preparationController.clearPrivateState(),
+        ]);
+      },
     );
     await tester.pumpWidget(
       SpeakUpApp(
         authController: authController,
         agentController: agentController,
+        preparationController: preparationController,
       ),
     );
     await tester.pumpAndSettle();
@@ -433,6 +456,25 @@ final class _MemorySessionStore implements SessionStore {
   @override
   Future<void> writeToken(String token) async {
     this.token = token;
+  }
+}
+
+final class _EmptyPreparationCatalogClient implements PreparationCatalogClient {
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<PreparationScenarioDetail> getScenario(String scenarioId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<List<PreparationScenario>> listScenarios() async =>
+      const <PreparationScenario>[];
+
+  @override
+  Future<List<PreparationRole>> listRoles(String scenarioId) {
+    throw UnimplementedError();
   }
 }
 

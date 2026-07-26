@@ -41,6 +41,7 @@ void main() {
       SpeakUpApp(
         authController: dependencies.authController,
         agentController: dependencies.agentController,
+        preparationController: dependencies.preparationController,
         reviewHistoryController: dependencies.reviewHistoryController,
       ),
     );

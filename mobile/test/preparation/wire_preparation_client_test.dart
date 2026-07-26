@@ -1,0 +1,284 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/features/preparation/preparation_client.dart';
+import 'package:speakup/features/preparation/preparation_models.dart';
+import 'package:speakup/features/preparation/wire_preparation_client.dart';
+import 'package:speakup/identity/network/identity_http_transport.dart';
+
+void main() {
+  test(
+    'reads the anonymous scenario directory without a bearer credential',
+    () async {
+      final transport = _QueueTransport([
+        _response(<String, Object?>{
+          'scenarios': [_scenarioJson],
+        }),
+      ]);
+      final client = WirePreparationCatalogClient(
+        baseUri: Uri.parse('https://api.speak-up.test'),
+        transport: transport,
+      );
+
+      final scenarios = await client.listScenarios();
+
+      expect(scenarios, hasLength(1));
+      expect(scenarios.single.id, _scenarioId);
+      expect(scenarios.single.name, 'English interview for technical roles');
+      expect(transport.calls.single.path, '/v1/scenario-definitions');
+      expect(transport.calls.single.authorization, isNull);
+      transport.expectDone();
+    },
+  );
+
+  test('decodes detail and preserves server role and option order', () async {
+    final transport = _QueueTransport([
+      _response(_detailJson),
+      _response(<String, Object?>{
+        'roles': [_technicalRoleJson, _recruiterRoleJson],
+      }),
+    ]);
+    final client = WirePreparationCatalogClient(
+      baseUri: Uri.parse('https://api.speak-up.test'),
+      transport: transport,
+    );
+
+    final detail = await client.getScenario(_scenarioId);
+    final roles = await client.listRoles(_scenarioId);
+
+    expect(detail.config.id, 'scfg_backend_engineer');
+    expect(detail.options.map((option) => option.type), const [
+      PreparationOptionType.fullSimulation,
+      PreparationOptionType.focus,
+      PreparationOptionType.focus,
+    ]);
+    expect(roles.map((role) => role.id), const [
+      'role_technical_interviewer',
+      'role_hr_interviewer',
+    ]);
+    expect(transport.calls.map((call) => call.path), const [
+      '/v1/scenario-definitions/$_scenarioId',
+      '/v1/scenario-definitions/$_scenarioId/role-definitions',
+    ]);
+    expect(transport.calls.every((call) => call.authorization == null), isTrue);
+    transport.expectDone();
+  });
+
+  test(
+    'rejects unknown fields instead of inventing a client contract',
+    () async {
+      final transport = _QueueTransport([
+        _response(<String, Object?>{
+          'scenarios': [
+            <String, Object?>{..._scenarioJson, 'display_order': 10},
+          ],
+        }),
+      ]);
+      final client = WirePreparationCatalogClient(
+        baseUri: Uri.parse('https://api.speak-up.test'),
+        transport: transport,
+      );
+
+      await expectLater(
+        client.listScenarios(),
+        throwsA(
+          isA<PreparationCatalogException>().having(
+            (error) => error.kind,
+            'kind',
+            PreparationCatalogFailureKind.invalidResponse,
+          ),
+        ),
+      );
+    },
+  );
+
+  test('rejects a FULL_SIMULATION option that claims one fixed role', () async {
+    final invalidDetail = <String, Object?>{
+      ..._detailJson,
+      'practice_options': [
+        <String, Object?>{
+          ..._fullOptionJson,
+          'role_definition_id': 'role_technical_interviewer',
+        },
+      ],
+    };
+    final transport = _QueueTransport([_response(invalidDetail)]);
+    final client = WirePreparationCatalogClient(
+      baseUri: Uri.parse('https://api.speak-up.test'),
+      transport: transport,
+    );
+
+    await expectLater(
+      client.getScenario(_scenarioId),
+      throwsA(
+        isA<PreparationCatalogException>().having(
+          (error) => error.kind,
+          'kind',
+          PreparationCatalogFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
+  test('account cleanup fences a late catalog response', () async {
+    final transport = _ControlledTransport();
+    final client = WirePreparationCatalogClient(
+      baseUri: Uri.parse('https://api.speak-up.test'),
+      transport: transport,
+    );
+
+    final request = client.listScenarios();
+    await client.clearAccountState();
+    transport.complete(
+      _response(<String, Object?>{
+        'scenarios': [_scenarioJson],
+      }),
+    );
+
+    await expectLater(
+      request,
+      throwsA(
+        isA<PreparationCatalogException>().having(
+          (error) => error.kind,
+          'kind',
+          PreparationCatalogFailureKind.superseded,
+        ),
+      ),
+    );
+  });
+}
+
+final class _Call {
+  const _Call({required this.path, required this.authorization});
+
+  final String path;
+  final String? authorization;
+}
+
+final class _QueueTransport implements IdentityHttpTransport {
+  _QueueTransport(this.responses);
+
+  final List<IdentityHttpResponse> responses;
+  final List<_Call> calls = <_Call>[];
+
+  @override
+  Future<IdentityHttpResponse> send({
+    required String method,
+    required Uri uri,
+    required Map<String, String> headers,
+    String? body,
+  }) async {
+    expect(method, 'GET');
+    expect(body, isNull);
+    if (responses.isEmpty) {
+      throw StateError('Unexpected request.');
+    }
+    calls.add(
+      _Call(
+        path: uri.path,
+        authorization: headers[HttpHeaders.authorizationHeader],
+      ),
+    );
+    return responses.removeAt(0);
+  }
+
+  void expectDone() => expect(responses, isEmpty);
+}
+
+final class _ControlledTransport implements IdentityHttpTransport {
+  final Completer<IdentityHttpResponse> response =
+      Completer<IdentityHttpResponse>();
+
+  @override
+  Future<IdentityHttpResponse> send({
+    required String method,
+    required Uri uri,
+    required Map<String, String> headers,
+    String? body,
+  }) => response.future;
+
+  void complete(IdentityHttpResponse value) => response.complete(value);
+}
+
+IdentityHttpResponse _response(Object body) =>
+    IdentityHttpResponse(statusCode: HttpStatus.ok, body: jsonEncode(body));
+
+const _scenarioId = 'scn_programmer_interview';
+
+const _scenarioJson = <String, Object?>{
+  'scenario_definition_id': _scenarioId,
+  'scenario_type': 'INTERVIEW',
+  'name': 'English interview for technical roles',
+  'version': 1,
+  'status': 'active',
+};
+
+const _configJson = <String, Object?>{
+  'scenario_config_id': 'scfg_backend_engineer',
+  'scenario_definition_id': _scenarioId,
+  'config_type': 'INTERVIEW',
+  'version': 1,
+  'job_title': 'Backend engineer',
+  'job_description': 'Build reliable APIs and explain engineering trade-offs.',
+  'focus_areas': ['introduction', 'system_design'],
+};
+
+const _fullOptionJson = <String, Object?>{
+  'practice_option_id': 'option_full_simulation',
+  'scenario_definition_id': _scenarioId,
+  'practice_option_type': 'FULL_SIMULATION',
+  'display_name': 'Full simulation',
+  'version': 1,
+};
+
+const _technicalOptionJson = <String, Object?>{
+  'practice_option_id': 'option_technical_focus',
+  'scenario_definition_id': _scenarioId,
+  'role_definition_id': 'role_technical_interviewer',
+  'practice_option_type': 'FOCUS',
+  'display_name': 'Technical depth focus',
+  'version': 1,
+};
+
+const _recruiterOptionJson = <String, Object?>{
+  'practice_option_id': 'option_hr_focus',
+  'scenario_definition_id': _scenarioId,
+  'role_definition_id': 'role_hr_interviewer',
+  'practice_option_type': 'FOCUS',
+  'display_name': 'Recruiter and motivation focus',
+  'version': 1,
+};
+
+const _detailJson = <String, Object?>{
+  'scenario_definition': _scenarioJson,
+  'scenario_config': _configJson,
+  'practice_options': [
+    _fullOptionJson,
+    _technicalOptionJson,
+    _recruiterOptionJson,
+  ],
+};
+
+const _technicalRoleJson = <String, Object?>{
+  'role_definition_id': 'role_technical_interviewer',
+  'scenario_definition_id': _scenarioId,
+  'role_type': 'TECHNICAL_INTERVIEWER',
+  'display_name': 'Technical depth perspective',
+  'responsibilities': 'Probe technical depth and decision making.',
+  'style': 'Precise and evidence seeking.',
+  'focus_areas': ['system_design', 'project_depth'],
+  'version': 1,
+};
+
+const _recruiterRoleJson = <String, Object?>{
+  'role_definition_id': 'role_hr_interviewer',
+  'scenario_definition_id': _scenarioId,
+  'role_type': 'HR_INTERVIEWER',
+  'display_name': 'Recruiter and motivation perspective',
+  'responsibilities': 'Explore motivation and communication clarity.',
+  'style': 'Warm and structured.',
+  'focus_areas': ['motivation', 'communication'],
+  'version': 1,
+};

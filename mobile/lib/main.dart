@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
+import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/wire_preparation_client.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
@@ -27,6 +29,7 @@ void main() {
     SpeakUpApp(
       authController: dependencies.authController,
       agentController: dependencies.agentController,
+      preparationController: dependencies.preparationController,
       reviewHistoryController: dependencies.reviewHistoryController,
     ),
   );
@@ -36,11 +39,13 @@ final class ProductionAppDependencies {
   const ProductionAppDependencies({
     required this.authController,
     required this.agentController,
+    required this.preparationController,
     required this.reviewHistoryController,
   });
 
   final AuthController authController;
   final AgentController agentController;
+  final PreparationController preparationController;
   final ReviewHistoryController reviewHistoryController;
 }
 
@@ -48,6 +53,7 @@ ProductionAppDependencies createProductionAppDependencies({
   required Uri baseUri,
   IdentityHttpTransport? identityTransport,
   IdentityHttpTransport? agentTransport,
+  IdentityHttpTransport? preparationTransport,
   IdentityHttpTransport? reviewHistoryTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
@@ -115,6 +121,12 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: reviewHistoryTransport,
     ),
   );
+  final preparationController = PreparationController(
+    client: WirePreparationCatalogClient(
+      baseUri: baseUri,
+      transport: preparationTransport,
+    ),
+  );
   authController = AuthController(
     identityClient: WireIdentityClient(
       baseUri: baseUri,
@@ -124,6 +136,7 @@ ProductionAppDependencies createProductionAppDependencies({
     clearPrivateState: () async {
       await Future.wait<void>([
         agentController.clearPrivateState(),
+        preparationController.clearPrivateState(),
         reviewHistoryController.clearPrivateState(),
       ]);
     },
@@ -131,6 +144,7 @@ ProductionAppDependencies createProductionAppDependencies({
   return ProductionAppDependencies(
     authController: authController,
     agentController: agentController,
+    preparationController: preparationController,
     reviewHistoryController: reviewHistoryController,
   );
 }
