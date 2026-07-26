@@ -15,6 +15,12 @@ type Module interface {
 	Name() string
 }
 
+// RouteRegistrar is implemented by modules with production HTTP routes.
+// Explicit Mock/Test composition roots may keep their own deterministic routes.
+type RouteRegistrar interface {
+	RegisterRoutes(*gin.Engine)
+}
+
 // ReadinessChecker reports whether an external dependency can currently
 // accept work. pgxpool.Pool satisfies this interface.
 type ReadinessChecker interface {
@@ -24,7 +30,7 @@ type ReadinessChecker interface {
 const readinessTimeout = 2 * time.Second
 
 func NewRouter(logger *slog.Logger, modules ...Module) *gin.Engine {
-	return newRouter(logger, nil, modules...)
+	return newRouter(logger, nil, nil, modules...)
 }
 
 func NewRouterWithReadiness(
@@ -32,12 +38,24 @@ func NewRouterWithReadiness(
 	readiness ReadinessChecker,
 	modules ...Module,
 ) *gin.Engine {
-	return newRouter(logger, readiness, modules...)
+	return newRouter(logger, readiness, nil, modules...)
+}
+
+// NewRouterWithReadinessAndRoutes mounts infrastructure route registrars
+// without advertising them as business modules in the frozen /health contract.
+func NewRouterWithReadinessAndRoutes(
+	logger *slog.Logger,
+	readiness ReadinessChecker,
+	routes []RouteRegistrar,
+	modules ...Module,
+) *gin.Engine {
+	return newRouter(logger, readiness, routes, modules...)
 }
 
 func newRouter(
 	logger *slog.Logger,
 	readiness ReadinessChecker,
+	routes []RouteRegistrar,
 	modules ...Module,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
@@ -47,6 +65,12 @@ func newRouter(
 	moduleNames := make([]string, 0, len(modules))
 	for _, module := range modules {
 		moduleNames = append(moduleNames, module.Name())
+		if registrar, ok := module.(RouteRegistrar); ok {
+			registrar.RegisterRoutes(router)
+		}
+	}
+	for _, registrar := range routes {
+		registrar.RegisterRoutes(router)
 	}
 
 	router.GET("/health", func(c *gin.Context) {

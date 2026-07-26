@@ -1,6 +1,7 @@
 package bootstrap_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,12 +18,21 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	"github.com/gin-gonic/gin"
 )
 
 type readinessChecker func(context.Context) error
 
 func (checker readinessChecker) Ping(ctx context.Context) error {
 	return checker(ctx)
+}
+
+type routedModule struct{}
+
+func (routedModule) RegisterRoutes(router *gin.Engine) {
+	router.GET("/module-route", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
 }
 
 func TestHealthIncludesRegisteredModules(t *testing.T) {
@@ -71,6 +81,61 @@ func TestHealthDoesNotDependOnDatabaseReadiness(t *testing.T) {
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+}
+
+func TestModuleCanRegisterProductionRoutes(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := bootstrap.NewRouterWithReadinessAndRoutes(
+		logger,
+		nil,
+		[]bootstrap.RouteRegistrar{routedModule{}},
+		preparation.New(),
+		practice.New(),
+		conversation.New(),
+		review.New(),
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/module-route", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, response.Code)
+	}
+
+	healthRequest := httptest.NewRequest(http.MethodGet, "/health", nil)
+	healthResponse := httptest.NewRecorder()
+	router.ServeHTTP(healthResponse, healthRequest)
+	var healthBody struct {
+		Modules []string `json:"modules"`
+	}
+	if err := json.Unmarshal(healthResponse.Body.Bytes(), &healthBody); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	wantModules := []string{"preparation", "practice", "conversation", "review"}
+	if !reflect.DeepEqual(healthBody.Modules, wantModules) {
+		t.Fatalf("health modules = %#v, want %#v", healthBody.Modules, wantModules)
+	}
+}
+
+func TestRequestLoggerNeverLogsAuthorization(t *testing.T) {
+	const rawToken = "sess_must_not_appear_in_logs"
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	router := bootstrap.NewRouter(logger)
+
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	request.Header.Set("Authorization", "Bearer "+rawToken)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+	if strings.Contains(output.String(), rawToken) ||
+		strings.Contains(output.String(), "Authorization") {
+		t.Fatalf("request log leaked credential metadata: %s", output.String())
 	}
 }
 
