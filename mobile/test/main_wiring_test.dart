@@ -70,6 +70,17 @@ void main() {
                 'updated_at': _timestamp,
               },
             ],
+            'focused_thread_id': _threadId,
+          },
+        ),
+        _Response(
+          method: 'GET',
+          path: '/v1/agent-threads/focused',
+          statusCode: HttpStatus.ok,
+          body: {
+            'thread_id': _threadId,
+            'created_at': _timestamp,
+            'updated_at': _timestamp,
           },
         ),
         const _Response(

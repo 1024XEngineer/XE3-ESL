@@ -19,12 +19,17 @@ class ConversationPage extends StatelessWidget {
     this.onContinuePractice,
     this.onOpenReview,
     this.onVoicePlaceholder,
+    this.onCreateConversation,
     this.messages = const <AgentMessage>[],
     this.activeScene,
+    this.hasFocusedThread = true,
+    this.hasEarlierMessages = false,
+    this.isLoadingEarlierMessages = false,
     this.isBusy = false,
     this.errorMessage,
     this.onSubmitText,
     this.onRetryOperation,
+    this.onLoadEarlierMessages,
     super.key,
   });
 
@@ -37,12 +42,17 @@ class ConversationPage extends StatelessWidget {
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
   final VoidCallback? onVoicePlaceholder;
+  final VoidCallback? onCreateConversation;
   final List<AgentMessage> messages;
   final AgentScene? activeScene;
+  final bool hasFocusedThread;
+  final bool hasEarlierMessages;
+  final bool isLoadingEarlierMessages;
   final bool isBusy;
   final String? errorMessage;
   final Future<bool> Function(String)? onSubmitText;
   final VoidCallback? onRetryOperation;
+  final VoidCallback? onLoadEarlierMessages;
 
   @override
   Widget build(BuildContext context) {
@@ -85,7 +95,13 @@ class ConversationPage extends StatelessWidget {
                               onNavigateBack: onNavigateBack,
                             ),
                             SizedBox(height: width < 350 ? 32 : 48),
-                            if (messages.isEmpty) ...[
+                            if (!hasFocusedThread) ...[
+                              _NoFocusedConversation(
+                                onCreateConversation: onCreateConversation,
+                                onOpenConversations: onOpenMenu,
+                                isBusy: isBusy,
+                              ),
+                            ] else if (messages.isEmpty) ...[
                               const _Greeting(),
                               const SizedBox(height: 8),
                               Text(
@@ -120,6 +136,38 @@ class ConversationPage extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(height: 18),
+                              if (hasEarlierMessages) ...[
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    key: const Key(
+                                      'load-earlier-agent-messages',
+                                    ),
+                                    onPressed:
+                                        isLoadingEarlierMessages ||
+                                            onLoadEarlierMessages == null
+                                        ? null
+                                        : onLoadEarlierMessages,
+                                    icon: isLoadingEarlierMessages
+                                        ? const SizedBox.square(
+                                            dimension: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Icon(
+                                            Icons.history_rounded,
+                                            size: 18,
+                                          ),
+                                    label: Text(
+                                      isLoadingEarlierMessages
+                                          ? '正在加载更早消息'
+                                          : '加载更早消息',
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                              ],
                               _MessageList(messages: messages),
                             ],
                             if (isBusy) ...[
@@ -153,6 +201,7 @@ class ConversationPage extends StatelessWidget {
                         acceptedUserMessageText: acceptedUserMessage?.text,
                         onVoicePlaceholder: onVoicePlaceholder,
                         onSubmitText: onSubmitText,
+                        enabled: hasFocusedThread,
                         isBusy: isBusy,
                       ),
                     ),
@@ -287,6 +336,58 @@ class _Greeting extends StatelessWidget {
         height: 1.1,
         letterSpacing: -0.5,
       ),
+    );
+  }
+}
+
+class _NoFocusedConversation extends StatelessWidget {
+  const _NoFocusedConversation({
+    required this.onCreateConversation,
+    required this.onOpenConversations,
+    required this.isBusy,
+  });
+
+  final VoidCallback? onCreateConversation;
+  final VoidCallback? onOpenConversations;
+  final bool isBusy;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('no-focused-conversation-home'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '选择一个对话',
+          style: TextStyle(
+            color: Color(0xFF0B0B0D),
+            fontSize: 30,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          '打开近期对话，或创建一个新对话后再开始输入。',
+          style: TextStyle(color: Color(0xFF66686F), height: 1.45),
+        ),
+        const SizedBox(height: 22),
+        if (onCreateConversation != null)
+          FilledButton.icon(
+            key: const Key('no-focused-create-conversation'),
+            onPressed: isBusy ? null : onCreateConversation,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('创建新对话'),
+          ),
+        if (onOpenConversations != null) ...[
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: const Key('no-focused-open-conversations'),
+            onPressed: onOpenConversations,
+            icon: const Icon(Icons.chat_bubble_outline_rounded),
+            label: const Text('打开近期对话'),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -490,6 +591,7 @@ class _AgentComposer extends StatefulWidget {
     required this.acceptedUserMessageText,
     required this.onVoicePlaceholder,
     required this.onSubmitText,
+    required this.enabled,
     required this.isBusy,
   });
 
@@ -498,6 +600,7 @@ class _AgentComposer extends StatefulWidget {
   final String? acceptedUserMessageText;
   final VoidCallback? onVoicePlaceholder;
   final Future<bool> Function(String)? onSubmitText;
+  final bool enabled;
   final bool isBusy;
 
   @override
@@ -542,7 +645,10 @@ class _AgentComposerState extends State<_AgentComposer> {
 
   Future<void> _submit() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || widget.isBusy || widget.onSubmitText == null) {
+    if (!widget.enabled ||
+        text.isEmpty ||
+        widget.isBusy ||
+        widget.onSubmitText == null) {
       return;
     }
     final sent = await widget.onSubmitText!(text);
@@ -585,15 +691,15 @@ class _AgentComposerState extends State<_AgentComposer> {
                 TextField(
                   key: const Key('agent-composer-field'),
                   controller: _controller,
-                  enabled: !widget.isBusy,
+                  enabled: widget.enabled && !widget.isBusy,
                   minLines: 1,
                   maxLines: 2,
                   inputFormatters: <TextInputFormatter>[_agentContentFormatter],
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _submit(),
-                  decoration: const InputDecoration(
-                    hintText: '问问 SpeakUp',
-                    hintStyle: TextStyle(
+                  decoration: InputDecoration(
+                    hintText: widget.enabled ? '问问 SpeakUp' : '请先选择或创建对话',
+                    hintStyle: const TextStyle(
                       color: Color(0xFF989AA3),
                       fontSize: 16,
                     ),
@@ -610,12 +716,17 @@ class _AgentComposerState extends State<_AgentComposer> {
                       Semantics(
                         key: const Key('agent-mic-placeholder'),
                         button: true,
+                        enabled: widget.enabled,
                         label: '开始按轮语音练习',
-                        onTap: widget.onVoicePlaceholder,
+                        onTap: widget.enabled
+                            ? widget.onVoicePlaceholder
+                            : null,
                         child: ExcludeSemantics(
                           child: IconButton.filledTonal(
                             tooltip: '开始按轮语音练习',
-                            onPressed: widget.onVoicePlaceholder,
+                            onPressed: widget.enabled
+                                ? widget.onVoicePlaceholder
+                                : null,
                             style: IconButton.styleFrom(
                               backgroundColor: const Color(0xFFE8E8E5),
                               foregroundColor: const Color(0xFF44464D),
@@ -632,6 +743,7 @@ class _AgentComposerState extends State<_AgentComposer> {
                       onPressed:
                           _controller.text.trim().isEmpty ||
                               widget.isBusy ||
+                              !widget.enabled ||
                               widget.onSubmitText == null
                           ? null
                           : _submit,

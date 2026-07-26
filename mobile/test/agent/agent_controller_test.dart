@@ -391,6 +391,365 @@ void main() {
     },
   );
 
+  test(
+    'restores focused Thread and continues bounded Thread and Message pages',
+    () async {
+      final client = _HistoryAgentClient();
+      final controller = AgentController(client: client);
+      addTearDown(controller.dispose);
+
+      await controller.initialize();
+
+      expect(controller.threadId, _historyThreadOne);
+      expect(controller.threads.map((thread) => thread.id), [
+        _historyThreadOne,
+      ]);
+      expect(controller.hasMoreThreads, isTrue);
+      expect(controller.hasEarlierMessages, isTrue);
+
+      await controller.loadMoreThreads();
+      await controller.loadEarlierMessages();
+
+      expect(controller.threads.map((thread) => thread.id), [
+        _historyThreadOne,
+        _historyThreadTwo,
+      ]);
+      expect(controller.hasMoreThreads, isFalse);
+      expect(controller.messages.map((message) => message.id), [
+        'message_older',
+        'message_current_$_historyThreadOne',
+      ]);
+
+      expect(await controller.createThread(), isTrue);
+      expect(controller.threadId, _historyThreadThree);
+      expect(client.focusRequests.last, _historyThreadThree);
+      expect(controller.currentThreadSummary?.id, _historyThreadThree);
+    },
+  );
+
+  test(
+    'keeps an absent focused Thread empty until explicit creation',
+    () async {
+      final client = _HistoryAgentClient(startsWithoutFocus: true);
+      final controller = AgentController(client: client);
+      addTearDown(controller.dispose);
+
+      await controller.initialize();
+
+      expect(controller.threadId, isNull);
+      expect(controller.messages, isEmpty);
+      expect(controller.threads.single.id, _historyThreadOne);
+
+      expect(await controller.createThread(), isTrue);
+      expect(controller.threadId, _historyThreadThree);
+      expect(client.focusRequests, <String>[_historyThreadThree]);
+    },
+  );
+
+  test(
+    'account cleanup fences Thread intents that are waiting for initialization',
+    () async {
+      for (final operation in <String>['create', 'select', 'clear']) {
+        final initializationGate = Completer<void>();
+        final client = _HistoryAgentClient(
+          initializationGate: initializationGate,
+        );
+        final controller = AgentController(client: client);
+
+        final pending = switch (operation) {
+          'create' => controller.createThread(),
+          'select' => controller.selectThread(_historyThreadTwo),
+          'clear' => controller.clearFocusedThread().then<Object?>((_) => null),
+          _ => throw StateError('Unknown test operation.'),
+        };
+        await client.initialListStarted.future;
+
+        await controller.clearPrivateState();
+        initializationGate.complete();
+        final result = await pending;
+
+        if (operation != 'clear') {
+          expect(result, isFalse, reason: operation);
+        }
+        expect(client.createCalls, 0, reason: operation);
+        expect(client.focusRequests, isEmpty, reason: operation);
+        expect(client.clearFocusedCalls, 0, reason: operation);
+        expect(controller.threadId, isNull, reason: operation);
+        controller.dispose();
+      }
+    },
+  );
+
+  test('rejects a concurrent Thread transition before a second POST', () async {
+    final createGate = Completer<void>();
+    final client = _HistoryAgentClient(createGate: createGate);
+    final controller = AgentController(client: client);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    final firstCreate = controller.createThread();
+    await client.createStarted.future;
+
+    expect(controller.isThreadTransitionInFlight, isTrue);
+    expect(await controller.createThread(), isFalse);
+    expect(client.createCalls, 1);
+
+    createGate.complete();
+    expect(await firstCreate, isTrue);
+    expect(client.createCalls, 1);
+    expect(client.focusRequests, <String>[_historyThreadThree]);
+    expect(controller.isThreadTransitionInFlight, isFalse);
+  });
+
+  test(
+    'exposes ambiguous Thread creation as an explicit recovery operation',
+    () async {
+      final client = _HistoryAgentClient(ambiguousCreateFailuresRemaining: 1);
+      final controller = AgentController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(await controller.createThread(), isFalse);
+
+      expect(controller.canRetryThreadHistory, isTrue);
+      expect(controller.threadHistoryErrorMessage, contains('系统不会重复创建'));
+      expect(controller.threadId, _historyThreadOne);
+
+      await controller.retryThreadHistory();
+
+      expect(controller.canRetryThreadHistory, isFalse);
+      expect(controller.threadHistoryErrorMessage, isNull);
+      expect(controller.threadId, _historyThreadThree);
+      expect(client.createCalls, 2);
+      expect(client.focusRequests, <String>[_historyThreadThree]);
+    },
+  );
+
+  test(
+    'retains a created Thread when focus fails and retries PUT without POST',
+    () async {
+      final client = _HistoryAgentClient(focusFailuresRemaining: 1);
+      final controller = AgentController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(await controller.createThread(), isFalse);
+
+      expect(client.createCalls, 1);
+      expect(controller.threadId, _historyThreadOne);
+      expect(controller.threads.first.id, _historyThreadThree);
+      expect(controller.threadHistoryErrorMessage, isNotNull);
+
+      expect(await controller.selectThread(_historyThreadThree), isTrue);
+
+      expect(client.createCalls, 1);
+      expect(client.focusRequests, [_historyThreadThree, _historyThreadThree]);
+      expect(controller.threadId, _historyThreadThree);
+    },
+  );
+
+  test(
+    'keeps sent Messages while authoritative Thread ordering is retried',
+    () async {
+      final updatedSummaryOne = AgentThreadSummary(
+        id: _historyThreadOne,
+        createdAt: _historySummaryOne.createdAt,
+        updatedAt: DateTime.utc(2026, 7, 25, 12),
+      );
+      final client = _HistoryAgentClient(
+        initialThreadPage: AgentThreadPage(
+          threads: <AgentThreadSummary>[
+            _historySummaryThree,
+            _historySummaryOne,
+          ],
+          focusedThreadId: _historyThreadOne,
+        ),
+        refreshedThreadPage: AgentThreadPage(
+          threads: <AgentThreadSummary>[
+            updatedSummaryOne,
+            _historySummaryThree,
+          ],
+          focusedThreadId: _historyThreadOne,
+        ),
+        threadRefreshFailuresRemaining: 1,
+        textExchange: const AgentExchange(
+          userMessage: AgentMessage(
+            id: 'message_sent_user',
+            role: AgentMessageRole.user,
+            text: 'sent text',
+          ),
+          assistantMessage: AgentMessage(
+            id: 'message_sent_assistant',
+            role: AgentMessageRole.assistant,
+            text: 'sent reply',
+          ),
+        ),
+      );
+      final controller = AgentController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(controller.threads.first.id, _historyThreadThree);
+      expect(await controller.sendText('sent text'), isTrue);
+
+      expect(
+        controller.messages.map((message) => message.id),
+        containsAll(<String>['message_sent_user', 'message_sent_assistant']),
+      );
+      expect(controller.threads.first.id, _historyThreadThree);
+      expect(controller.canRetryThreadHistory, isTrue);
+      expect(controller.threadHistoryErrorMessage, contains('消息已发送'));
+
+      await controller.retryThreadHistory();
+
+      expect(controller.canRetryThreadHistory, isFalse);
+      expect(controller.threadHistoryErrorMessage, isNull);
+      expect(controller.threads.map((thread) => thread.id), [
+        _historyThreadOne,
+        _historyThreadThree,
+      ]);
+      expect(
+        controller.currentThreadSummary?.updatedAt,
+        updatedSummaryOne.updatedAt,
+      );
+      expect(client.firstPageCalls, 3);
+    },
+  );
+
+  test('rejects overlapping and out-of-bound Thread pages', () async {
+    final invalidPages = <AgentThreadPage>[
+      AgentThreadPage(threads: <AgentThreadSummary>[_historySummaryOne]),
+      AgentThreadPage(
+        threads: <AgentThreadSummary>[
+          AgentThreadSummary(
+            id: 'thread_newer_than_boundary',
+            createdAt: DateTime.utc(2026, 7, 25, 8),
+            updatedAt: DateTime.utc(2026, 7, 25, 11),
+          ),
+        ],
+      ),
+    ];
+
+    for (final invalidPage in invalidPages) {
+      final client = _HistoryAgentClient(laterThreadPage: invalidPage);
+      final controller = AgentController(client: client);
+      await controller.initialize();
+
+      await controller.loadMoreThreads();
+
+      expect(controller.threads.map((thread) => thread.id), [
+        _historyThreadOne,
+      ]);
+      expect(controller.hasMoreThreads, isTrue);
+      expect(controller.threadHistoryErrorMessage, isNotNull);
+      controller.dispose();
+    }
+  });
+
+  test(
+    'rejects unsafe earlier Message pages without changing history',
+    () async {
+      final invalidPages = <AgentMessagePage>[
+        const AgentMessagePage(
+          messages: <AgentMessage>[
+            AgentMessage(
+              id: 'message_without_sequence',
+              role: AgentMessageRole.user,
+              text: 'missing sequence',
+            ),
+          ],
+        ),
+        const AgentMessagePage(
+          messages: <AgentMessage>[
+            AgentMessage(
+              id: 'message_current_$_historyThreadOne',
+              role: AgentMessageRole.assistant,
+              text: 'overlap',
+              sequence: 1,
+            ),
+          ],
+        ),
+        const AgentMessagePage(
+          messages: <AgentMessage>[
+            AgentMessage(
+              id: 'message_not_older',
+              role: AgentMessageRole.user,
+              text: 'not older',
+              sequence: 2,
+            ),
+          ],
+        ),
+        const AgentMessagePage(
+          messages: <AgentMessage>[
+            AgentMessage(
+              id: 'message_out_of_order_2',
+              role: AgentMessageRole.user,
+              text: 'second',
+              sequence: 2,
+            ),
+            AgentMessage(
+              id: 'message_out_of_order_1',
+              role: AgentMessageRole.user,
+              text: 'first',
+              sequence: 1,
+            ),
+          ],
+        ),
+      ];
+
+      for (final invalidPage in invalidPages) {
+        final client = _HistoryAgentClient(olderMessagePage: invalidPage);
+        final controller = AgentController(client: client);
+        await controller.initialize();
+
+        await controller.loadEarlierMessages();
+
+        expect(
+          controller.messages.single.id,
+          'message_current_$_historyThreadOne',
+        );
+        expect(controller.hasEarlierMessages, isTrue);
+        expect(controller.errorMessage, isNotNull);
+        controller.dispose();
+      }
+    },
+  );
+
+  test('late text response cannot pollute a newly selected Thread', () async {
+    final client = _HistoryAgentClient(controlOldSend: true);
+    final controller = AgentController(client: client);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    final staleSend = controller.sendText('old Thread request');
+    await client.sendStarted.future;
+    expect(await controller.selectThread(_historyThreadTwo), isTrue);
+    expect(controller.threadId, _historyThreadTwo);
+
+    client.sendResult.complete(
+      const AgentExchange(
+        userMessage: AgentMessage(
+          id: 'message_late_user',
+          role: AgentMessageRole.user,
+          text: 'old Thread request',
+        ),
+        assistantMessage: AgentMessage(
+          id: 'message_late_assistant',
+          role: AgentMessageRole.assistant,
+          text: 'late old response',
+        ),
+      ),
+    );
+
+    expect(await staleSend, isFalse);
+    expect(controller.threadId, _historyThreadTwo);
+    expect(
+      controller.messages.map((message) => message.text),
+      isNot(contains('late old response')),
+    );
+    expect(controller.messages.single.id, 'message_current_$_historyThreadTwo');
+  });
+
   test('rejects inconsistent or unsafe restored snapshots', () async {
     final scene = agentScenes.first;
     final matter = AgentMatter(id: 'matter_valid', scene: scene);
@@ -547,6 +906,227 @@ class _DelegatingAgentClient implements AgentClient {
     );
   }
 }
+
+final class _HistoryAgentClient extends _DelegatingAgentClient
+    implements AgentThreadHistoryClient {
+  _HistoryAgentClient({
+    this.controlOldSend = false,
+    this.startsWithoutFocus = false,
+    this.focusFailuresRemaining = 0,
+    this.ambiguousCreateFailuresRemaining = 0,
+    this.initializationGate,
+    this.createGate,
+    this.initialThreadPage,
+    this.refreshedThreadPage,
+    this.threadRefreshFailuresRemaining = 0,
+    this.textExchange,
+    this.laterThreadPage,
+    this.olderMessagePage,
+  });
+
+  final bool controlOldSend;
+  final bool startsWithoutFocus;
+  int focusFailuresRemaining;
+  int ambiguousCreateFailuresRemaining;
+  final Completer<void>? initializationGate;
+  final Completer<void>? createGate;
+  final AgentThreadPage? initialThreadPage;
+  final AgentThreadPage? refreshedThreadPage;
+  int threadRefreshFailuresRemaining;
+  final AgentExchange? textExchange;
+  final AgentThreadPage? laterThreadPage;
+  final AgentMessagePage? olderMessagePage;
+  final initialListStarted = Completer<void>();
+  final createStarted = Completer<void>();
+  final sendStarted = Completer<void>();
+  final sendResult = Completer<AgentExchange>();
+  final List<String> focusRequests = <String>[];
+  int createCalls = 0;
+  int firstPageCalls = 0;
+  int clearFocusedCalls = 0;
+
+  @override
+  Future<AgentThreadPage> listThreads({
+    int pageSize = 20,
+    String? cursor,
+  }) async {
+    if (cursor == null) {
+      firstPageCalls++;
+      if (!initialListStarted.isCompleted) {
+        initialListStarted.complete();
+      }
+      if (firstPageCalls == 1) {
+        await initializationGate?.future;
+        final page = initialThreadPage;
+        if (page != null) {
+          return page;
+        }
+      } else {
+        if (threadRefreshFailuresRemaining > 0) {
+          threadRefreshFailuresRemaining--;
+          throw StateError('Temporary Thread refresh failure.');
+        }
+        final page = refreshedThreadPage;
+        if (page != null) {
+          return page;
+        }
+      }
+      return AgentThreadPage(
+        threads: <AgentThreadSummary>[_historySummaryOne],
+        focusedThreadId: startsWithoutFocus ? null : _historyThreadOne,
+        nextCursor: 'older_threads',
+      );
+    }
+    if (cursor == 'older_threads') {
+      final override = laterThreadPage;
+      if (override != null) {
+        return override;
+      }
+      return AgentThreadPage(
+        threads: <AgentThreadSummary>[_historySummaryTwo],
+        focusedThreadId: startsWithoutFocus ? null : _historyThreadOne,
+      );
+    }
+    throw StateError('Unexpected Thread cursor.');
+  }
+
+  @override
+  Future<AgentThreadSnapshot?> getFocusedThread() async {
+    if (startsWithoutFocus) {
+      return null;
+    }
+    return _historySnapshot(_historySummaryOne, hasOlderMessages: true);
+  }
+
+  @override
+  Future<AgentThreadSummary> createThread() async {
+    createCalls++;
+    if (!createStarted.isCompleted) {
+      createStarted.complete();
+    }
+    await createGate?.future;
+    if (ambiguousCreateFailuresRemaining > 0) {
+      ambiguousCreateFailuresRemaining--;
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        errorCode: 'thread_creation_ambiguous',
+        retryable: true,
+      );
+    }
+    return _historySummaryThree;
+  }
+
+  @override
+  Future<AgentThreadSnapshot> setFocusedThread({
+    required String threadId,
+  }) async {
+    focusRequests.add(threadId);
+    if (focusFailuresRemaining > 0) {
+      focusFailuresRemaining--;
+      throw StateError('Temporary focus failure.');
+    }
+    final summary = switch (threadId) {
+      _historyThreadOne => _historySummaryOne,
+      _historyThreadTwo => _historySummaryTwo,
+      _historyThreadThree => _historySummaryThree,
+      _ => throw StateError('Unknown Thread.'),
+    };
+    return _historySnapshot(summary);
+  }
+
+  @override
+  Future<void> clearFocusedThread() async {
+    clearFocusedCalls++;
+  }
+
+  @override
+  Future<AgentMessagePage> listMessages({
+    required String threadId,
+    int pageSize = 50,
+    String? cursor,
+  }) async {
+    if (threadId != _historyThreadOne || cursor != 'older_messages') {
+      throw StateError('Unexpected Message page request.');
+    }
+    final override = olderMessagePage;
+    if (override != null) {
+      return override;
+    }
+    return const AgentMessagePage(
+      messages: <AgentMessage>[
+        AgentMessage(
+          id: 'message_older',
+          role: AgentMessageRole.user,
+          text: 'older message',
+          sequence: 1,
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<AgentExchange> sendText({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+  }) {
+    final exchange = textExchange;
+    if (exchange != null) {
+      return Future<AgentExchange>.value(exchange);
+    }
+    if (controlOldSend && threadId == _historyThreadOne) {
+      if (!sendStarted.isCompleted) {
+        sendStarted.complete();
+      }
+      return sendResult.future;
+    }
+    return super.sendText(
+      threadId: threadId,
+      text: text,
+      clientMessageId: clientMessageId,
+    );
+  }
+}
+
+AgentThreadSnapshot _historySnapshot(
+  AgentThreadSummary summary, {
+  bool hasOlderMessages = false,
+}) {
+  return AgentThreadSnapshot(
+    threadId: summary.id,
+    messages: <AgentMessage>[
+      AgentMessage(
+        id: 'message_current_${summary.id}',
+        role: AgentMessageRole.assistant,
+        text: 'current ${summary.id}',
+        sequence: 2,
+      ),
+    ],
+    createdAt: summary.createdAt,
+    updatedAt: summary.updatedAt,
+    nextMessageCursor: hasOlderMessages ? 'older_messages' : null,
+  );
+}
+
+final _historySummaryOne = AgentThreadSummary(
+  id: _historyThreadOne,
+  createdAt: DateTime.utc(2026, 7, 25, 8),
+  updatedAt: DateTime.utc(2026, 7, 25, 10),
+);
+final _historySummaryTwo = AgentThreadSummary(
+  id: _historyThreadTwo,
+  createdAt: DateTime.utc(2026, 7, 24, 8),
+  updatedAt: DateTime.utc(2026, 7, 25, 9),
+);
+final _historySummaryThree = AgentThreadSummary(
+  id: _historyThreadThree,
+  createdAt: DateTime.utc(2026, 7, 25, 11),
+  updatedAt: DateTime.utc(2026, 7, 25, 11),
+);
+
+const _historyThreadOne = 'thread_history_one';
+const _historyThreadTwo = 'thread_history_two';
+const _historyThreadThree = 'thread_history_three';
 
 final class _CountingAgentClient extends _DelegatingAgentClient {
   final List<String> turnClientIds = <String>[];

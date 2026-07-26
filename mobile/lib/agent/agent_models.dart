@@ -28,11 +28,52 @@ final class AgentMessage {
     required this.id,
     required this.role,
     required this.text,
+    this.sequence,
+    this.createdAt,
   });
 
   final String id;
   final AgentMessageRole role;
   final String text;
+  final int? sequence;
+  final DateTime? createdAt;
+}
+
+/// One durable Agent Thread as returned by the bounded history endpoint.
+///
+/// Threads deliberately have no client-invented title, summary, archive, or
+/// unread state. The Drawer presents the server-owned update time instead.
+final class AgentThreadSummary {
+  const AgentThreadSummary({
+    required this.id,
+    required this.createdAt,
+    required this.updatedAt,
+    this.activeMatterId,
+  });
+
+  final String id;
+  final String? activeMatterId;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
+final class AgentThreadPage {
+  const AgentThreadPage({
+    required this.threads,
+    this.focusedThreadId,
+    this.nextCursor,
+  });
+
+  final List<AgentThreadSummary> threads;
+  final String? focusedThreadId;
+  final String? nextCursor;
+}
+
+final class AgentMessagePage {
+  const AgentMessagePage({required this.messages, this.nextCursor});
+
+  final List<AgentMessage> messages;
+  final String? nextCursor;
 }
 
 /// The user-owned Matter currently selected for one durable Agent Thread.
@@ -82,6 +123,9 @@ final class AgentThreadSnapshot {
     this.practice,
     this.textRecovery,
     this.messages = const <AgentMessage>[],
+    this.createdAt,
+    this.updatedAt,
+    this.nextMessageCursor,
   }) : assert(practice == null || activeMatter != null);
 
   final String threadId;
@@ -89,6 +133,9 @@ final class AgentThreadSnapshot {
   final AgentPracticeSnapshot? practice;
   final AgentTextRecovery? textRecovery;
   final List<AgentMessage> messages;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final String? nextMessageCursor;
 }
 
 /// A server-restored failed text operation that keeps its idempotency identity.

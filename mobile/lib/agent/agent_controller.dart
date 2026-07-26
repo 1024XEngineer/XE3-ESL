@@ -56,6 +56,16 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   final Duration _recordingLimit;
 
   String? _threadId;
+  AgentThreadSummary? _currentThreadSummary;
+  List<AgentThreadSummary> _threads = const <AgentThreadSummary>[];
+  String? _nextThreadCursor;
+  String? _nextMessageCursor;
+  String? _threadHistoryErrorMessage;
+  _ThreadHistoryRecovery? _threadHistoryRecovery;
+  bool _loadingMoreThreads = false;
+  bool _loadingEarlierMessages = false;
+  bool _threadTransitionInFlight = false;
+  int _threadTransitionGeneration = 0;
   String? _practiceSessionId;
   PracticeQuestion? _currentQuestion;
   TranscriptionCandidate? _candidate;
@@ -89,6 +99,18 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void>? _mediaOperation;
 
   String? get threadId => _threadId;
+  AgentThreadSummary? get currentThreadSummary => _currentThreadSummary;
+  List<AgentThreadSummary> get threads =>
+      List<AgentThreadSummary>.unmodifiable(_threads);
+  bool get isInitialized => _initialized;
+  bool get supportsThreadHistory => client is AgentThreadHistoryClient;
+  bool get isThreadTransitionInFlight => _threadTransitionInFlight;
+  bool get hasMoreThreads => _nextThreadCursor != null;
+  bool get isLoadingMoreThreads => _loadingMoreThreads;
+  String? get threadHistoryErrorMessage => _threadHistoryErrorMessage;
+  bool get canRetryThreadHistory => _threadHistoryRecovery != null;
+  bool get hasEarlierMessages => _nextMessageCursor != null;
+  bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get practiceSessionId => _practiceSessionId;
   String? get questionId => _currentQuestion?.id;
   String? get candidateId => _candidate?.id;
@@ -101,7 +123,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
-  bool get isBusy => _busy || _practiceRequestInFlight;
+  bool get isBusy =>
+      _busy || _practiceRequestInFlight || _threadTransitionInFlight;
   bool get canRetry => _retry != null;
   bool get supportsPracticeFlow => practiceClient != null;
   bool get supportsPracticeMedia => mediaClient != null && audioPlayer != null;
@@ -196,40 +219,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final epoch = fence.epoch;
     _retry = null;
     _errorMessage = null;
+    _threadHistoryErrorMessage = null;
     _setBusy(true);
     try {
-      final thread = await client.restoreThread();
-      _validateThreadSnapshot(thread);
-      if (!_isOperationCurrent(fence)) {
-        return;
-      }
-      if (practiceClient case final LegacyAgentPracticeClient legacy) {
-        legacy.seedRestoredThread(thread);
-      }
-      final practice = await practiceClient?.restorePractice(
-        threadId: thread.threadId,
-        activeMatter: thread.activeMatter,
-      );
-      if (!_isOperationCurrent(fence)) {
-        return;
-      }
-      _threadId = thread.threadId;
-      _messages = List<AgentMessage>.from(thread.messages);
-      _applyPracticeSnapshot(practice);
-      _initialized = true;
-      final textRecovery = thread.textRecovery;
-      if (textRecovery != null) {
-        _retry = textRecovery.retryable
-            ? _TextRetry(
-                text: textRecovery.text,
-                clientMessageId: textRecovery.clientMessageId,
-              )
-            : null;
-        _errorMessage = textRecovery.retryable
-            ? '上次 Agent 运行未能完成，可以继续重试。'
-            : '上次 Agent 运行未能完成，服务端不允许重试。';
-      } else if (_isSessionCompleted && _review == null) {
-        _errorMessage = '练习已完成，正在等待服务端恢复同一次复盘。';
+      if (client case final AgentThreadHistoryClient historyClient) {
+        await _restoreThreadHistory(historyClient, fence);
+      } else {
+        final thread = await client.restoreThread();
+        await _applyThreadSnapshot(thread, fence: fence);
       }
     } catch (_) {
       if (_isCurrent(epoch)) {
@@ -239,6 +236,376 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     } finally {
       if (_isCurrent(epoch)) {
         _setBusy(false);
+      }
+    }
+  }
+
+  Future<void> _restoreThreadHistory(
+    AgentThreadHistoryClient historyClient,
+    _AgentOperationFence fence,
+  ) async {
+    final page = await historyClient.listThreads();
+    _validateThreadPage(page);
+    if (!_isOperationCurrent(fence)) {
+      return;
+    }
+    _threads = List<AgentThreadSummary>.from(page.threads);
+    _nextThreadCursor = page.nextCursor;
+    _threadHistoryErrorMessage = null;
+    notifyListeners();
+
+    final focused = await historyClient.getFocusedThread();
+    if (!_isOperationCurrent(fence)) {
+      return;
+    }
+    if (focused == null) {
+      _resetSelectedThreadPresentation();
+      _initialized = true;
+      return;
+    }
+    await _applyThreadSnapshot(
+      focused,
+      fence: fence,
+      summary: _threads
+          .where((thread) => thread.id == focused.threadId)
+          .firstOrNull,
+    );
+  }
+
+  Future<void> _applyThreadSnapshot(
+    AgentThreadSnapshot thread, {
+    required _AgentOperationFence fence,
+    AgentThreadSummary? summary,
+  }) async {
+    _validateThreadSnapshot(thread);
+    if (!_isOperationCurrent(fence)) {
+      return;
+    }
+    if (practiceClient case final LegacyAgentPracticeClient legacy) {
+      legacy.seedRestoredThread(thread);
+    }
+    final practice = await practiceClient?.restorePractice(
+      threadId: thread.threadId,
+      activeMatter: thread.activeMatter,
+    );
+    if (!_isOperationCurrent(fence)) {
+      return;
+    }
+    _threadId = thread.threadId;
+    _currentThreadSummary =
+        summary ?? _threadSummaryFromSnapshot(thread) ?? _currentThreadSummary;
+    _nextMessageCursor = thread.nextMessageCursor;
+    _messages = List<AgentMessage>.from(thread.messages);
+    _applyPracticeSnapshot(practice);
+    _initialized = true;
+    _applyRestoredTextState(thread);
+  }
+
+  void _applyRestoredTextState(AgentThreadSnapshot thread) {
+    final textRecovery = thread.textRecovery;
+    if (textRecovery != null) {
+      _retry = textRecovery.retryable
+          ? _TextRetry(
+              text: textRecovery.text,
+              clientMessageId: textRecovery.clientMessageId,
+            )
+          : null;
+      _errorMessage = textRecovery.retryable
+          ? '上次 Agent 运行未能完成，可以继续重试。'
+          : '上次 Agent 运行未能完成，服务端不允许重试。';
+    } else if (_isSessionCompleted && _review == null) {
+      _errorMessage = '练习已完成，正在等待服务端恢复同一次复盘。';
+    }
+  }
+
+  Future<bool> createThread() async {
+    if (client is! AgentThreadHistoryClient || _disposed) {
+      return false;
+    }
+    final accountEpoch = _epoch;
+    final transitionGeneration = _beginThreadTransition();
+    if (transitionGeneration == null) {
+      return false;
+    }
+    final historyClient = client as AgentThreadHistoryClient;
+    try {
+      await _ensureInitialized();
+      if (!_isCurrent(accountEpoch)) {
+        return false;
+      }
+      return await _transitionThread(historyClient, createNew: true);
+    } finally {
+      _finishThreadTransition(transitionGeneration);
+    }
+  }
+
+  Future<bool> selectThread(String threadId) async {
+    if (client is! AgentThreadHistoryClient ||
+        _disposed ||
+        threadId.trim().isEmpty) {
+      return false;
+    }
+    final accountEpoch = _epoch;
+    final transitionGeneration = _beginThreadTransition();
+    if (transitionGeneration == null) {
+      return false;
+    }
+    final historyClient = client as AgentThreadHistoryClient;
+    try {
+      await _ensureInitialized();
+      if (!_isCurrent(accountEpoch)) {
+        return false;
+      }
+      if (threadId == _threadId) {
+        return true;
+      }
+      return await _transitionThread(
+        historyClient,
+        selectedThreadId: threadId,
+        createNew: false,
+      );
+    } finally {
+      _finishThreadTransition(transitionGeneration);
+    }
+  }
+
+  Future<bool> _transitionThread(
+    AgentThreadHistoryClient historyClient, {
+    String? selectedThreadId,
+    required bool createNew,
+  }) async {
+    _epoch++;
+    _practiceGeneration++;
+    _cancelRecordingLimit();
+    _loadingMoreThreads = false;
+    _loadingEarlierMessages = false;
+    final fence = _captureOperationFence();
+    _retry = null;
+    _errorMessage = null;
+    if (_threadHistoryRecovery == _ThreadHistoryRecovery.refresh) {
+      _threadHistoryRecovery = null;
+    }
+    if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
+      _threadHistoryErrorMessage = null;
+    }
+    _setBusy(true);
+    try {
+      await stopPracticeAudio();
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      AgentThreadSummary? summary;
+      var targetThreadId = selectedThreadId;
+      if (createNew) {
+        summary = await historyClient.createThread();
+        _validateThreadSummary(summary);
+        if (!_isOperationCurrent(fence)) {
+          return false;
+        }
+        _threadHistoryRecovery = null;
+        _mergeThreadSummary(summary, placeFirst: true);
+        notifyListeners();
+        targetThreadId = summary.id;
+      } else {
+        summary = _threads
+            .where((thread) => thread.id == selectedThreadId)
+            .firstOrNull;
+      }
+      if (!_isOperationCurrent(fence) || targetThreadId == null) {
+        return false;
+      }
+      final snapshot = await historyClient.setFocusedThread(
+        threadId: targetThreadId,
+      );
+      if (snapshot.threadId != targetThreadId) {
+        throw StateError('Focused Thread identity did not match the request.');
+      }
+      await _applyThreadSnapshot(snapshot, fence: fence, summary: summary);
+      if (!_isOperationCurrent(fence) || _threadId != targetThreadId) {
+        return false;
+      }
+      final canonicalSummary = summary ?? _threadSummaryFromSnapshot(snapshot);
+      if (canonicalSummary != null) {
+        _mergeThreadSummary(canonicalSummary, placeFirst: createNew);
+        _currentThreadSummary = canonicalSummary;
+      }
+      if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
+        _threadHistoryErrorMessage = null;
+      }
+      return true;
+    } catch (error) {
+      if (_isOperationCurrent(fence)) {
+        if (createNew &&
+            error is AgentClientException &&
+            error.errorCode == 'thread_creation_ambiguous') {
+          _threadHistoryRecovery = _ThreadHistoryRecovery.create;
+          _threadHistoryErrorMessage = '新对话的创建结果尚未确认。请重试恢复；系统不会重复创建。';
+        } else if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
+          _threadHistoryErrorMessage = createNew
+              ? '暂时无法创建新对话，请稍后再试。'
+              : '暂时无法切换对话，请稍后再试。';
+        }
+      }
+      return false;
+    } finally {
+      if (_isOperationCurrent(fence)) {
+        _setBusy(false);
+      }
+    }
+  }
+
+  Future<void> clearFocusedThread() async {
+    if (client is! AgentThreadHistoryClient || _disposed) {
+      return;
+    }
+    final accountEpoch = _epoch;
+    final transitionGeneration = _beginThreadTransition();
+    if (transitionGeneration == null) {
+      return;
+    }
+    final historyClient = client as AgentThreadHistoryClient;
+    try {
+      await _ensureInitialized();
+      if (!_isCurrent(accountEpoch)) {
+        return;
+      }
+      await _clearFocusedThread(historyClient);
+    } finally {
+      _finishThreadTransition(transitionGeneration);
+    }
+  }
+
+  Future<void> _clearFocusedThread(
+    AgentThreadHistoryClient historyClient,
+  ) async {
+    _epoch++;
+    _practiceGeneration++;
+    _cancelRecordingLimit();
+    final fence = _captureOperationFence();
+    _retry = null;
+    _errorMessage = null;
+    if (_threadHistoryRecovery == _ThreadHistoryRecovery.refresh) {
+      _threadHistoryRecovery = null;
+      _threadHistoryErrorMessage = null;
+    } else if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
+      _threadHistoryErrorMessage = null;
+    }
+    _setBusy(true);
+    try {
+      await historyClient.clearFocusedThread();
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
+      _resetSelectedThreadPresentation();
+      _initialized = true;
+    } catch (_) {
+      if (_isOperationCurrent(fence) &&
+          _threadHistoryRecovery != _ThreadHistoryRecovery.create) {
+        _threadHistoryErrorMessage = '暂时无法清除当前对话，请稍后再试。';
+      }
+    } finally {
+      if (_isOperationCurrent(fence)) {
+        _setBusy(false);
+      }
+    }
+  }
+
+  Future<void> loadMoreThreads() async {
+    final cursor = _nextThreadCursor;
+    if (client is! AgentThreadHistoryClient ||
+        cursor == null ||
+        _loadingMoreThreads ||
+        _disposed) {
+      return;
+    }
+    final historyClient = client as AgentThreadHistoryClient;
+    final fence = _captureOperationFence();
+    _loadingMoreThreads = true;
+    _threadHistoryErrorMessage = null;
+    notifyListeners();
+    try {
+      final page = await historyClient.listThreads(cursor: cursor);
+      _validateThreadPage(page);
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
+      if (page.nextCursor == cursor) {
+        throw StateError('Thread cursor did not advance.');
+      }
+      final knownIds = <String>{for (final thread in _threads) thread.id};
+      if (page.threads.any((thread) => knownIds.contains(thread.id))) {
+        throw StateError('Thread pages overlapped.');
+      }
+      if (_threads.isNotEmpty &&
+          page.threads.isNotEmpty &&
+          !_threadSortsAfter(page.threads.first, _threads.last)) {
+        throw StateError('Thread page crossed the existing keyset boundary.');
+      }
+      _threads = <AgentThreadSummary>[..._threads, ...page.threads];
+      _nextThreadCursor = page.nextCursor;
+    } catch (_) {
+      if (_isOperationCurrent(fence)) {
+        _threadHistoryErrorMessage = '暂时无法加载更早的对话，请稍后再试。';
+      }
+    } finally {
+      if (_isOperationCurrent(fence)) {
+        _loadingMoreThreads = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> loadEarlierMessages() async {
+    final threadId = _threadId;
+    final cursor = _nextMessageCursor;
+    if (client is! AgentThreadHistoryClient ||
+        threadId == null ||
+        cursor == null ||
+        _loadingEarlierMessages ||
+        _disposed) {
+      return;
+    }
+    final historyClient = client as AgentThreadHistoryClient;
+    final fence = _captureOperationFence(threadId: threadId);
+    _loadingEarlierMessages = true;
+    notifyListeners();
+    try {
+      final page = await historyClient.listMessages(
+        threadId: threadId,
+        cursor: cursor,
+      );
+      _validateMessagePage(page);
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
+      if (page.nextCursor == cursor) {
+        throw StateError('Message cursor did not advance.');
+      }
+      final ids = <String>{for (final message in _messages) message.id};
+      if (page.messages.any((message) => ids.contains(message.id))) {
+        throw StateError('Message pages overlapped.');
+      }
+      final currentFirstSequence = _messages
+          .map((message) => message.sequence)
+          .whereType<int>()
+          .firstOrNull;
+      if (page.messages.isNotEmpty &&
+          (currentFirstSequence == null ||
+              page.messages.last.sequence! >= currentFirstSequence)) {
+        throw StateError(
+          'Message page crossed the existing sequence boundary.',
+        );
+      }
+      _messages = <AgentMessage>[...page.messages, ..._messages];
+      _nextMessageCursor = page.nextCursor;
+    } catch (_) {
+      if (_isOperationCurrent(fence)) {
+        _errorMessage = '暂时无法加载更早的消息，请稍后再试。';
+      }
+    } finally {
+      if (_isOperationCurrent(fence)) {
+        _loadingEarlierMessages = false;
+        notifyListeners();
       }
     }
   }
@@ -330,7 +697,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (threadId == null || isBusy || _disposed) {
       return false;
     }
-    final epoch = _epoch;
+    final fence = _captureOperationFence(threadId: threadId);
     _retry = null;
     _errorMessage = null;
     _setBusy(true);
@@ -340,13 +707,24 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         text: operation.text,
         clientMessageId: operation.clientMessageId,
       );
-      if (!_isCurrent(epoch)) {
+      if (!_isOperationCurrent(fence)) {
         return false;
       }
       _appendMessages([exchange.userMessage, ?exchange.assistantMessage]);
+      notifyListeners();
+      if (client case final AgentThreadHistoryClient historyClient) {
+        await _refreshAuthoritativeThreadPage(
+          historyClient,
+          fence: fence,
+          failureMessage: '消息已发送，但对话顺序暂时无法刷新。请重试。',
+        );
+      }
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
       return true;
     } catch (error) {
-      if (_isCurrent(epoch)) {
+      if (_isOperationCurrent(fence)) {
         _retry = _canRetry(error) ? operation : null;
         _errorMessage =
             error is AgentClientException &&
@@ -359,9 +737,83 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       }
       return false;
     } finally {
-      if (_isCurrent(epoch)) {
+      if (_isOperationCurrent(fence)) {
         _setBusy(false);
       }
+    }
+  }
+
+  Future<void> retryThreadHistory() async {
+    if (_disposed || isBusy) {
+      return;
+    }
+    switch (_threadHistoryRecovery) {
+      case _ThreadHistoryRecovery.create:
+        await createThread();
+        return;
+      case _ThreadHistoryRecovery.refresh:
+        await _retryThreadHistoryRefresh();
+        return;
+      case null:
+        return;
+    }
+  }
+
+  Future<void> _retryThreadHistoryRefresh() async {
+    final threadId = _threadId;
+    if (client is! AgentThreadHistoryClient || threadId == null || _disposed) {
+      return;
+    }
+    final historyClient = client as AgentThreadHistoryClient;
+    final fence = _captureOperationFence(threadId: threadId);
+    _setBusy(true);
+    try {
+      await _refreshAuthoritativeThreadPage(
+        historyClient,
+        fence: fence,
+        failureMessage: '对话顺序暂时无法刷新，请稍后再试。',
+      );
+    } finally {
+      if (_isOperationCurrent(fence)) {
+        _setBusy(false);
+      }
+    }
+  }
+
+  Future<bool> _refreshAuthoritativeThreadPage(
+    AgentThreadHistoryClient historyClient, {
+    required _AgentOperationFence fence,
+    required String failureMessage,
+  }) async {
+    try {
+      final page = await historyClient.listThreads();
+      _validateThreadPage(page);
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      final threadId = _threadId;
+      final current = page.threads
+          .where((thread) => thread.id == threadId)
+          .firstOrNull;
+      if (threadId == null || current == null) {
+        throw StateError(
+          'The authoritative Thread page omitted the selected Thread.',
+        );
+      }
+      _threads = List<AgentThreadSummary>.from(page.threads);
+      _nextThreadCursor = page.nextCursor;
+      _currentThreadSummary = current;
+      _threadHistoryRecovery = null;
+      _threadHistoryErrorMessage = null;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      if (_isOperationCurrent(fence)) {
+        _threadHistoryRecovery = _ThreadHistoryRecovery.refresh;
+        _threadHistoryErrorMessage = failureMessage;
+        notifyListeners();
+      }
+      return false;
     }
   }
 
@@ -926,6 +1378,16 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _practiceGeneration++;
     _initializationFuture = null;
     _threadId = null;
+    _currentThreadSummary = null;
+    _threads = const <AgentThreadSummary>[];
+    _nextThreadCursor = null;
+    _nextMessageCursor = null;
+    _threadHistoryErrorMessage = null;
+    _threadHistoryRecovery = null;
+    _loadingMoreThreads = false;
+    _loadingEarlierMessages = false;
+    _threadTransitionGeneration++;
+    _threadTransitionInFlight = false;
     _practiceSessionId = null;
     _currentQuestion = null;
     _candidate = null;
@@ -988,6 +1450,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _epoch++;
     _practiceGeneration++;
     _mediaGeneration++;
+    _threadTransitionGeneration++;
+    _threadTransitionInFlight = false;
     _initializationFuture = null;
     unawaited(recorder.discardCurrent());
     unawaited(_mediaCompletionSubscription?.cancel());
@@ -1013,6 +1477,47 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (!_initialized) {
       await initialize();
     }
+  }
+
+  void _resetSelectedThreadPresentation() {
+    _threadId = null;
+    _currentThreadSummary = null;
+    _nextMessageCursor = null;
+    _messages = const <AgentMessage>[];
+    _retry = null;
+    _errorMessage = null;
+    _applyPracticeSnapshot(null);
+  }
+
+  AgentThreadSummary? _threadSummaryFromSnapshot(AgentThreadSnapshot snapshot) {
+    final createdAt = snapshot.createdAt;
+    final updatedAt = snapshot.updatedAt;
+    if (createdAt == null || updatedAt == null) {
+      return null;
+    }
+    return AgentThreadSummary(
+      id: snapshot.threadId,
+      activeMatterId: snapshot.activeMatter?.id,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
+  void _mergeThreadSummary(
+    AgentThreadSummary summary, {
+    required bool placeFirst,
+  }) {
+    final remaining = <AgentThreadSummary>[
+      for (final thread in _threads)
+        if (thread.id != summary.id) thread,
+    ];
+    _threads = placeFirst
+        ? <AgentThreadSummary>[summary, ...remaining]
+        : <AgentThreadSummary>[
+            for (final thread in _threads)
+              if (thread.id == summary.id) summary else thread,
+            if (!_threads.any((thread) => thread.id == summary.id)) summary,
+          ];
   }
 
   void _applyPracticeSnapshot(
@@ -1253,16 +1758,53 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  int? _beginThreadTransition() {
+    if (_disposed || _threadTransitionInFlight) {
+      return null;
+    }
+    _threadTransitionInFlight = true;
+    final generation = ++_threadTransitionGeneration;
+    notifyListeners();
+    return generation;
+  }
+
+  void _finishThreadTransition(int generation) {
+    if (_disposed ||
+        !_threadTransitionInFlight ||
+        generation != _threadTransitionGeneration) {
+      return;
+    }
+    _threadTransitionInFlight = false;
+    notifyListeners();
+  }
+
   void _validateThreadSnapshot(AgentThreadSnapshot snapshot) {
     final messageIds = <String>{};
-    final invalidMessages = snapshot.messages.any(
-      (message) =>
-          message.id.trim().isEmpty ||
+    var previousSequence = 0;
+    var invalidMessages = false;
+    for (final message in snapshot.messages) {
+      final sequence = message.sequence;
+      if (message.id.trim().isEmpty ||
           message.text.trim().isEmpty ||
-          !messageIds.add(message.id),
-    );
+          !messageIds.add(message.id) ||
+          (sequence != null &&
+              (sequence < 1 || sequence <= previousSequence))) {
+        invalidMessages = true;
+        break;
+      }
+      if (sequence != null) {
+        previousSequence = sequence;
+      }
+    }
     final recovery = snapshot.textRecovery;
+    final createdAt = snapshot.createdAt;
+    final updatedAt = snapshot.updatedAt;
     if (snapshot.threadId.trim().isEmpty ||
+        ((createdAt == null) != (updatedAt == null)) ||
+        (createdAt != null && updatedAt!.isBefore(createdAt)) ||
+        (snapshot.nextMessageCursor != null &&
+            (snapshot.nextMessageCursor!.isEmpty ||
+                snapshot.nextMessageCursor!.runes.length > 1024)) ||
         (snapshot.activeMatter != null &&
             (snapshot.activeMatter!.id.trim().isEmpty ||
                 snapshot.activeMatter!.scene.id.trim().isEmpty ||
@@ -1274,6 +1816,71 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
                 recovery.failureKind.trim().isEmpty))) {
       throw StateError('Invalid Agent Thread snapshot.');
     }
+  }
+
+  void _validateThreadSummary(AgentThreadSummary summary) {
+    if (summary.id.trim().isEmpty ||
+        summary.updatedAt.isBefore(summary.createdAt) ||
+        (summary.activeMatterId != null &&
+            summary.activeMatterId!.trim().isEmpty)) {
+      throw StateError('Invalid Agent Thread summary.');
+    }
+  }
+
+  void _validateThreadPage(AgentThreadPage page) {
+    if (page.threads.length > 100 ||
+        (page.focusedThreadId != null &&
+            page.focusedThreadId!.trim().isEmpty) ||
+        (page.nextCursor != null &&
+            (page.nextCursor!.isEmpty ||
+                page.nextCursor!.runes.length > 1024))) {
+      throw StateError('Invalid Agent Thread page.');
+    }
+    final ids = <String>{};
+    AgentThreadSummary? previous;
+    for (final thread in page.threads) {
+      _validateThreadSummary(thread);
+      if (!ids.add(thread.id) ||
+          (previous != null &&
+              (thread.updatedAt.isAfter(previous.updatedAt) ||
+                  (thread.updatedAt == previous.updatedAt &&
+                      previous.id.compareTo(thread.id) <= 0)))) {
+        throw StateError('Invalid Agent Thread page ordering.');
+      }
+      previous = thread;
+    }
+  }
+
+  void _validateMessagePage(AgentMessagePage page) {
+    if (page.messages.length > 100 ||
+        (page.nextCursor != null &&
+            (page.nextCursor!.isEmpty ||
+                page.nextCursor!.runes.length > 1024))) {
+      throw StateError('Invalid Agent Message page.');
+    }
+    final ids = <String>{};
+    var previousSequence = 0;
+    for (final message in page.messages) {
+      final sequence = message.sequence;
+      if (message.id.trim().isEmpty ||
+          message.text.trim().isEmpty ||
+          !ids.add(message.id) ||
+          sequence == null ||
+          sequence < 1 ||
+          sequence <= previousSequence) {
+        throw StateError('Invalid Agent Message page ordering.');
+      }
+      previousSequence = sequence;
+    }
+  }
+
+  bool _threadSortsAfter(
+    AgentThreadSummary candidate,
+    AgentThreadSummary boundary,
+  ) {
+    return candidate.updatedAt.isBefore(boundary.updatedAt) ||
+        (candidate.updatedAt == boundary.updatedAt &&
+            candidate.id.compareTo(boundary.id) < 0);
   }
 
   void _validatePracticeSnapshot(PracticeSessionSnapshot snapshot) {
@@ -1374,6 +1981,8 @@ final class _AgentOperationFence {
 sealed class _AgentRetry {
   const _AgentRetry();
 }
+
+enum _ThreadHistoryRecovery { create, refresh }
 
 final class _RestoreRetry extends _AgentRetry {
   const _RestoreRetry();
