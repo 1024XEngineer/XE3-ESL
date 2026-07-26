@@ -328,10 +328,21 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (practiceClient case final LegacyAgentPracticeClient legacy) {
       legacy.seedRestoredThread(thread);
     }
-    final practice = await practiceClient?.restorePractice(
-      threadId: thread.threadId,
-      activeMatter: thread.activeMatter,
-    );
+    PracticeSessionSnapshot? practice;
+    try {
+      practice = await practiceClient?.restorePractice(
+        threadId: thread.threadId,
+        activeMatter: thread.activeMatter,
+      );
+    } catch (error) {
+      if (!_isPracticeRestoreAmbiguity(error)) {
+        rethrow;
+      }
+      // Multiple completed Sessions are durable history, but no single one
+      // is the current Practice. Keep the independently restored Agent
+      // context and let Review history present those completed Sessions.
+      practice = null;
+    }
     if (!_isOperationCurrent(fence)) {
       return;
     }
@@ -2015,6 +2026,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
   bool _isFreeQuotaExhausted(AgentClientException error) {
     return error.errorCode == 'quota_exhausted';
+  }
+
+  bool _isPracticeRestoreAmbiguity(Object error) {
+    return error is AgentClientException &&
+        error.kind == AgentClientFailureKind.conflict &&
+        error.statusCode == 409 &&
+        error.errorCode == 'resource_conflict' &&
+        !error.retryable;
   }
 
   void _setBusy(bool value) {
