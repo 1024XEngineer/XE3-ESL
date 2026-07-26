@@ -16,6 +16,40 @@ import 'package:speakup/features/preparation/preparation_models.dart';
 
 void main() {
   testWidgets(
+    'product training center shows server topic before opening JD-first',
+    (tester) async {
+      final controller = PreparationController(client: _FixtureClient());
+      addTearDown(controller.dispose);
+      var opens = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PreparationPage(
+            preparationController: controller,
+            onOpenJobPreparation: () => opens++,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('training-center-title')), findsOneWidget);
+      expect(find.text('练习中心'), findsOneWidget);
+      expect(find.byKey(const Key('training-catalog-status')), findsOneWidget);
+      expect(find.text('可用'), findsOneWidget);
+      expect(
+        find.text('English interview for technical roles'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
+      await tester.pump();
+
+      expect(opens, 1);
+      expect(controller.selectedScenario, isNull);
+    },
+  );
+
+  testWidgets(
     'loads the server catalog and keeps perspectives independent of stages',
     (tester) async {
       final controller = PreparationController(client: _FixtureClient());
@@ -26,8 +60,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('通用职业英语 Agent'), findsOneWidget);
-      expect(find.textContaining('技术岗位英文面试'), findsOneWidget);
+      expect(find.text('练习中心'), findsOneWidget);
+      expect(find.textContaining('当前先把英文面试做深'), findsOneWidget);
       await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
       await tester.pumpAndSettle();
 

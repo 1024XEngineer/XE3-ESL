@@ -102,10 +102,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _selectDestination(int index) {
-    if (index == 1 && widget.jobPreparationController != null) {
-      _openJobPreparation();
-      return;
-    }
     if (_selectedIndex == index) {
       if (index == 2) {
         unawaited(widget.reviewHistoryController?.refresh());
@@ -190,9 +186,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
             : null,
-        onCreatePlan: widget.jobPreparationController == null
-            ? () => _selectDestination(1)
-            : _openJobPreparation,
+        onCreatePlan: () => _selectDestination(1),
         onContinuePractice: _openPractice,
         onOpenReview: () => _selectDestination(2),
         onStartVoice: widget.agentController.supportsAgentVoice
@@ -233,6 +227,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         agentController: widget.agentController,
         preparationController: widget.preparationController,
         launchController: widget.preparationLaunchController,
+        onOpenJobPreparation: widget.jobPreparationController == null
+            ? null
+            : _openJobPreparation,
         onSceneSelected: () => _selectDestination(0),
         onPracticeStarted: _openPractice,
       ),

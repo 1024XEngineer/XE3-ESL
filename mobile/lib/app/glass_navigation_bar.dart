@@ -22,8 +22,8 @@ class GlassNavigationBar extends StatelessWidget {
     super.key,
   });
 
-  static const height = 74.0;
-  static const minimumBottomInset = 12.0;
+  static const height = 64.0;
+  static const minimumBottomInset = 10.0;
   static const _maximumLabelScale = 1.5;
 
   final List<GlassNavigationDestination> destinations;
@@ -59,32 +59,32 @@ class GlassNavigationBar extends StatelessWidget {
       ),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(32),
+          borderRadius: BorderRadius.circular(24),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x1C000000),
-              blurRadius: 34,
-              offset: Offset(0, 12),
+              color: Color(0x12000000),
+              blurRadius: 18,
+              offset: Offset(0, 6),
             ),
           ],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(32),
+          borderRadius: BorderRadius.circular(24),
           child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
             child: Container(
               key: const Key('primary-navigation'),
               height: navigationHeight,
-              padding: const EdgeInsets.all(6),
+              padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
                 color: highContrast
                     ? const Color(0xFFF8F8F6)
                     : const Color(0xDEFFFFFF),
-                borderRadius: BorderRadius.circular(32),
+                borderRadius: BorderRadius.circular(24),
                 border: Border.all(
                   color: highContrast
                       ? const Color(0xFFD8DAE2)
-                      : const Color(0xD9FFFFFF),
+                      : const Color(0xBFFFFFFF),
                 ),
               ),
               child: Semantics(
@@ -139,7 +139,7 @@ class _NavigationItem extends StatelessWidget {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            borderRadius: BorderRadius.circular(26),
+            borderRadius: BorderRadius.circular(20),
             onTap: onTap,
             child: AnimatedContainer(
               duration: reduceMotion
@@ -148,7 +148,7 @@ class _NavigationItem extends StatelessWidget {
               curve: Curves.easeOutCubic,
               decoration: BoxDecoration(
                 color: selected ? const Color(0xD9E8E8E5) : Colors.transparent,
-                borderRadius: BorderRadius.circular(26),
+                borderRadius: BorderRadius.circular(20),
                 border: selected
                     ? Border.all(color: const Color(0xCFFFFFFF))
                     : null,
@@ -158,12 +158,12 @@ class _NavigationItem extends StatelessWidget {
                 children: [
                   Icon(
                     destination.icon,
-                    size: 23,
+                    size: 21,
                     color: selected
                         ? const Color(0xFF111217)
                         : const Color(0xFF686A72),
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(

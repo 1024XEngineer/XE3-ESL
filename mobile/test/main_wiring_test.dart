@@ -228,9 +228,16 @@ void main() {
 
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('scenes-page')), findsOneWidget);
+      expect(find.byKey(const Key('training-center-title')), findsOneWidget);
+      expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
+      await tester.tap(
+        find.byKey(const Key('catalog-scenario-scn_programmer_interview')),
+      );
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);
       expect(find.byKey(const Key('job-description-field')), findsOneWidget);
-      expect(find.byKey(const Key('primary-tab-review')), findsNothing);
+      expect(find.byKey(const Key('primary-navigation')), findsNothing);
       await tester.tap(find.byKey(const Key('job-wizard-close')));
       await tester.pumpAndSettle();
 
