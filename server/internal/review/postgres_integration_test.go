@@ -440,6 +440,223 @@ func TestPostgresReviewTerminalFailureDoesNotCallGeneratorAfterRestart(
 	}
 }
 
+func TestPostgresReviewConcurrentTerminalFailureStopsAllWaiters(t *testing.T) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	command := ensureCommand(userA, "session-concurrent-quota-exhausted")
+	generator := &terminalCountingGenerator{delay: 100 * time.Millisecond}
+	service := review.NewEnsureService(
+		review.NewPostgresRepository(pool),
+		sourceReader{},
+		generator,
+	)
+
+	const callerCount = 16
+	start := make(chan struct{})
+	errs := make(chan error, callerCount)
+	var callers sync.WaitGroup
+	callers.Add(callerCount)
+	for range callerCount {
+		go func() {
+			defer callers.Done()
+			<-start
+			_, err := service.EnsureReview(context.Background(), command)
+			errs <- err
+		}()
+	}
+	close(start)
+	callers.Wait()
+	close(errs)
+
+	for err := range errs {
+		if !errors.Is(err, review.ErrGenerationFailed) {
+			t.Fatalf("concurrent quota failure error = %v", err)
+		}
+		var categorized review.StableGenerationError
+		if !errors.As(err, &categorized) ||
+			categorized.StableCategory() != "quota_exhausted" {
+			t.Fatalf("concurrent quota failure lost category: %v", err)
+		}
+	}
+	if got := generator.calls.Load(); got != 1 {
+		t.Fatalf("generator calls = %d, want 1", got)
+	}
+
+	repository := review.NewPostgresRepository(pool)
+	persisted, err := repository.EnsurePending(context.Background(), command)
+	if err != nil {
+		t.Fatalf("read persisted concurrent quota failure: %v", err)
+	}
+	attempts, err := repository.ListAttempts(
+		context.Background(),
+		command.Actor,
+		persisted.ID,
+	)
+	if err != nil {
+		t.Fatalf("list concurrent quota attempts: %v", err)
+	}
+	if len(attempts) != 1 ||
+		attempts[0].StableErrorCategory != "quota_exhausted" {
+		t.Fatalf("concurrent quota attempts = %+v", attempts)
+	}
+}
+
+func TestPostgresReviewPersistsCompletionAfterRequestCancellation(t *testing.T) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	command := ensureCommand(userA, "session-cancelled-after-success")
+	ctx, cancel := context.WithCancel(context.Background())
+	generator := &cancelingGenerator{cancel: cancel}
+
+	completed, err := review.NewEnsureService(
+		review.NewPostgresRepository(pool),
+		sourceReader{},
+		generator,
+	).EnsureReview(ctx, command)
+	if err != nil {
+		t.Fatalf("complete after request cancellation: %v", err)
+	}
+	if completed.Status != review.FormalReviewCompleted ||
+		len(completed.Evidence) != 1 {
+		t.Fatalf("completed Review = %+v", completed)
+	}
+
+	replayGenerator := &countingGenerator{}
+	replayed, err := review.NewEnsureService(
+		review.NewPostgresRepository(pool),
+		sourceReader{},
+		replayGenerator,
+	).EnsureReview(context.Background(), command)
+	if err != nil {
+		t.Fatalf("recover completion after cancellation: %v", err)
+	}
+	if replayed.ID != completed.ID || replayed.Status != review.FormalReviewCompleted {
+		t.Fatalf("replayed Review = %+v, want completed id %s", replayed, completed.ID)
+	}
+	if got := generator.calls.Load(); got != 1 {
+		t.Fatalf("canceling generator calls = %d, want 1", got)
+	}
+	if got := replayGenerator.calls.Load(); got != 0 {
+		t.Fatalf("replay generator calls = %d, want 0", got)
+	}
+}
+
+func TestPostgresReviewPersistsTerminalFailureAfterRequestCancellation(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	command := ensureCommand(userA, "session-cancelled-after-quota")
+	ctx, cancel := context.WithCancel(context.Background())
+	generator := &cancelingGenerator{
+		cancel:          cancel,
+		terminalFailure: true,
+	}
+
+	if _, err := review.NewEnsureService(
+		review.NewPostgresRepository(pool),
+		sourceReader{},
+		generator,
+	).EnsureReview(ctx, command); !errors.Is(err, review.ErrGenerationFailed) {
+		t.Fatalf("quota failure after request cancellation: %v", err)
+	}
+
+	replayGenerator := &countingGenerator{}
+	for attempt := 0; attempt < 3; attempt++ {
+		_, err := review.NewEnsureService(
+			review.NewPostgresRepository(pool),
+			sourceReader{},
+			replayGenerator,
+		).EnsureReview(context.Background(), command)
+		if !errors.Is(err, review.ErrGenerationFailed) {
+			t.Fatalf("resume %d error = %v", attempt+1, err)
+		}
+		var categorized review.StableGenerationError
+		if !errors.As(err, &categorized) ||
+			categorized.StableCategory() != "quota_exhausted" {
+			t.Fatalf("resume %d lost quota classification: %v", attempt+1, err)
+		}
+	}
+	if got := generator.calls.Load(); got != 1 {
+		t.Fatalf("canceling generator calls = %d, want 1", got)
+	}
+	if got := replayGenerator.calls.Load(); got != 0 {
+		t.Fatalf("replay generator calls = %d, want 0", got)
+	}
+
+	repository := review.NewPostgresRepository(pool)
+	persisted, err := repository.EnsurePending(context.Background(), command)
+	if err != nil {
+		t.Fatalf("read persisted quota failure: %v", err)
+	}
+	attempts, err := repository.ListAttempts(
+		context.Background(),
+		command.Actor,
+		persisted.ID,
+	)
+	if err != nil {
+		t.Fatalf("list persisted quota attempts: %v", err)
+	}
+	if persisted.Status != review.FormalReviewFailed ||
+		persisted.StableErrorCategory != "quota_exhausted" ||
+		len(attempts) != 1 ||
+		attempts[0].StableErrorCategory != "quota_exhausted" {
+		t.Fatalf(
+			"persisted terminal failure = %+v, attempts = %+v",
+			persisted,
+			attempts,
+		)
+	}
+}
+
+func TestPostgresReviewPersistsInvalidResultAfterRequestCancellation(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	command := ensureCommand(userA, "session-cancelled-after-invalid-result")
+	ctx, cancel := context.WithCancel(context.Background())
+	generator := &cancelingGenerator{
+		cancel:        cancel,
+		invalidResult: true,
+	}
+
+	if _, err := review.NewEnsureService(
+		review.NewPostgresRepository(pool),
+		sourceReader{},
+		generator,
+	).EnsureReview(ctx, command); !errors.Is(err, review.ErrGenerationFailed) {
+		t.Fatalf("invalid result after request cancellation: %v", err)
+	}
+
+	repository := review.NewPostgresRepository(pool)
+	persisted, err := repository.EnsurePending(context.Background(), command)
+	if err != nil {
+		t.Fatalf("read persisted invalid result failure: %v", err)
+	}
+	attempts, err := repository.ListAttempts(
+		context.Background(),
+		command.Actor,
+		persisted.ID,
+	)
+	if err != nil {
+		t.Fatalf("list persisted invalid result attempts: %v", err)
+	}
+	if persisted.Status != review.FormalReviewFailed ||
+		persisted.StableErrorCategory != "invalid_result" ||
+		len(attempts) != 1 ||
+		attempts[0].StableErrorCategory != "invalid_result" {
+		t.Fatalf(
+			"persisted invalid result = %+v, attempts = %+v",
+			persisted,
+			attempts,
+		)
+	}
+	if got := generator.calls.Load(); got != 1 {
+		t.Fatalf("canceling generator calls = %d, want 1", got)
+	}
+}
+
 func TestPostgresReviewOwnerIsolationDeletionAndOldWorkerFence(t *testing.T) {
 	pool := reviewDatabase(t)
 	insertUsers(t, pool, userA, userB, userC)
@@ -951,13 +1168,23 @@ func (categorizedError) StableCategory() string { return "provider_timeout" }
 
 type terminalCountingGenerator struct {
 	calls atomic.Int32
+	delay time.Duration
 }
 
 func (generator *terminalCountingGenerator) GenerateReview(
-	context.Context,
-	review.ReviewGenerationInput,
+	ctx context.Context,
+	_ review.ReviewGenerationInput,
 ) (review.GeneratedReview, error) {
 	generator.calls.Add(1)
+	if generator.delay > 0 {
+		timer := time.NewTimer(generator.delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return review.GeneratedReview{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	return review.GeneratedReview{}, terminalCategorizedError{}
 }
 
@@ -969,6 +1196,36 @@ func (terminalCategorizedError) Error() string {
 
 func (terminalCategorizedError) StableCategory() string {
 	return "quota_exhausted"
+}
+
+type cancelingGenerator struct {
+	calls           atomic.Int32
+	cancel          context.CancelFunc
+	terminalFailure bool
+	invalidResult   bool
+}
+
+func (generator *cancelingGenerator) GenerateReview(
+	context.Context,
+	review.ReviewGenerationInput,
+) (review.GeneratedReview, error) {
+	generator.calls.Add(1)
+	generator.cancel()
+	if generator.terminalFailure {
+		return review.GeneratedReview{}, terminalCategorizedError{}
+	}
+	if generator.invalidResult {
+		return review.GeneratedReview{Result: validResult()}, nil
+	}
+	return review.GeneratedReview{
+		Result: validResult(),
+		EvidenceLinks: []review.EvidenceLink{{
+			ConclusionKey: "summary",
+			SourceType:    review.SourceTypeConversationTurn,
+			SourceID:      "turn-3",
+			SourceVersion: "confirmed-v2",
+		}},
+	}, nil
 }
 
 func validResult() review.ReviewResult {

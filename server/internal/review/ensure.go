@@ -8,16 +8,18 @@ import (
 )
 
 const (
-	defaultGenerationLease = 30 * time.Second
-	defaultPollInterval    = 10 * time.Millisecond
+	defaultGenerationLease           = 30 * time.Second
+	defaultGenerationFinalizeTimeout = 5 * time.Second
+	defaultPollInterval              = 10 * time.Millisecond
 )
 
 type EnsureService struct {
-	repository   ReviewRepository
-	sourceReader ReviewSourceReader
-	generator    ReviewGenerator
-	lease        time.Duration
-	pollInterval time.Duration
+	repository      ReviewRepository
+	sourceReader    ReviewSourceReader
+	generator       ReviewGenerator
+	lease           time.Duration
+	finalizeTimeout time.Duration
+	pollInterval    time.Duration
 }
 
 func NewEnsureService(
@@ -26,11 +28,12 @@ func NewEnsureService(
 	generator ReviewGenerator,
 ) *EnsureService {
 	return &EnsureService{
-		repository:   repository,
-		sourceReader: sourceReader,
-		generator:    generator,
-		lease:        defaultGenerationLease,
-		pollInterval: defaultPollInterval,
+		repository:      repository,
+		sourceReader:    sourceReader,
+		generator:       generator,
+		lease:           defaultGenerationLease,
+		finalizeTimeout: defaultGenerationFinalizeTimeout,
+		pollInterval:    defaultPollInterval,
 	}
 }
 
@@ -53,15 +56,17 @@ func (s *EnsureService) EnsureReview(
 	if err != nil {
 		return FormalReview{}, err
 	}
-	if current.Status == FormalReviewCompleted {
-		return current, nil
-	}
-	if current.Status == FormalReviewFailed &&
-		terminalGenerationCategory(current.StableErrorCategory) {
-		return current, failedGenerationError(current.StableErrorCategory)
-	}
-
 	for {
+		if current.Status == FormalReviewCompleted {
+			return current, nil
+		}
+		if current.Status == FormalReviewFailed &&
+			terminalGenerationCategory(current.StableErrorCategory) {
+			return current, failedGenerationError(
+				current.StableErrorCategory,
+			)
+		}
+
 		current, claim, claimed, err := s.repository.ClaimGeneration(
 			ctx,
 			command.Actor,
@@ -120,7 +125,7 @@ func (s *EnsureService) generate(
 		Source:                source,
 	})
 	if err != nil {
-		return FormalReview{}, s.fail(
+		return FormalReview{}, s.finalizeFailure(
 			ctx,
 			job,
 			stableCategory(err, "generation_failed"),
@@ -130,14 +135,45 @@ func (s *EnsureService) generate(
 
 	evidence, err := validateGenerated(source, generated)
 	if err != nil {
-		return FormalReview{}, s.fail(ctx, job, "invalid_result", err)
+		return FormalReview{}, s.finalizeFailure(
+			ctx,
+			job,
+			"invalid_result",
+			err,
+		)
 	}
+	finalizeCtx, cancel := s.finalizationContext(ctx)
+	defer cancel()
 	return s.repository.CompleteGeneration(
-		ctx,
+		finalizeCtx,
 		job,
 		generated.Result,
 		evidence,
 	)
+}
+
+func (s *EnsureService) finalizeFailure(
+	ctx context.Context,
+	job GenerationJobContext,
+	category string,
+	cause error,
+) error {
+	finalizeCtx, cancel := s.finalizationContext(ctx)
+	defer cancel()
+	return s.fail(finalizeCtx, job, category, cause)
+}
+
+func (s *EnsureService) finalizationContext(
+	ctx context.Context,
+) (context.Context, context.CancelFunc) {
+	timeout := s.finalizeTimeout
+	if timeout <= 0 {
+		timeout = defaultGenerationFinalizeTimeout
+	}
+	// The Provider has already returned at every call site. Preserve request
+	// values for observability, but give the authoritative terminal write a
+	// short window to survive a disconnected client.
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
 }
 
 func (s *EnsureService) fail(

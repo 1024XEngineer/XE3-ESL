@@ -162,6 +162,13 @@ func (r *PostgresRepository) ClaimGeneration(
 		}
 		return review, GenerationJobContext{}, false, nil
 	}
+	if review.Status == FormalReviewFailed &&
+		terminalGenerationCategory(review.StableErrorCategory) {
+		if err := tx.Commit(ctx); err != nil {
+			return FormalReview{}, GenerationJobContext{}, false, err
+		}
+		return review, GenerationJobContext{}, false, nil
+	}
 
 	var runningID string
 	var leaseUntil time.Time

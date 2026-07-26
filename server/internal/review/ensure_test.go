@@ -1,10 +1,12 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStableCategoryAcceptsOnlyBoundedMachineCategories(t *testing.T) {
@@ -88,6 +90,41 @@ func TestCompletionPayloadRequiresValidResultAndCoveredEvidence(t *testing.T) {
 		oversized,
 	); !errors.Is(err, ErrInvalidReview) {
 		t.Fatalf("oversized evidence error = %v", err)
+	}
+}
+
+func TestGenerationFinalizationContextPreservesValuesAndHasBoundedLifetime(
+	t *testing.T,
+) {
+	type contextKey string
+	const key contextKey = "trace"
+	parent, cancelParent := context.WithCancel(
+		context.WithValue(context.Background(), key, "review-run"),
+	)
+	cancelParent()
+
+	service := &EnsureService{finalizeTimeout: 20 * time.Millisecond}
+	ctx, cancel := service.finalizationContext(parent)
+	defer cancel()
+
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("finalization context inherited cancellation: %v", err)
+	}
+	if got := ctx.Value(key); got != "review-run" {
+		t.Fatalf("finalization context value = %v, want review-run", got)
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > service.finalizeTimeout {
+		t.Fatalf("finalization context deadline = %v, present = %t", deadline, ok)
+	}
+
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("finalization context error = %v", ctx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("finalization context did not terminate at its deadline")
 	}
 }
 
