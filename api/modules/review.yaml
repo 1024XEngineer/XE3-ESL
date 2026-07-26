@@ -1,4 +1,67 @@
 paths:
+  /v1/formal-reviews:
+    get:
+      tags:
+        - Review
+      summary: List the current Actor's completed formal Reviews
+      description: |
+        Returns only completed, Review-owned results ordered by
+        `created_at DESC, review_id DESC`. Pagination uses an opaque keyset
+        cursor; clients must not synthesize or inspect it. `next_cursor` is
+        omitted, never `null`, when no older result remains. The server fully
+        encodes the response before writing it and rejects a body larger than
+        768 KiB without returning a partial Review page.
+      operationId: listFormalReviews
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: '^[A-Za-z0-9_-]+$'
+      responses:
+        '200':
+          description: Actor-owned completed formal Reviews in stable order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FormalReviewHistoryPage'
+              example:
+                items:
+                  - review_id: 20000000-0000-4000-8000-000000000002
+                    practice_session_id: session_demo_002
+                    status: completed
+                    implementation_version: qianwen-voice-review-v1
+                    source_turn_id: turn_demo_006
+                    source_turn_version: conversation-turn:evidence-v1
+                    result:
+                      overall_score: 91
+                      summary: The answer is clear and outcome-focused.
+                      conclusions:
+                        - key: clarity
+                          category: clarity
+                          message: The response is easy to follow.
+                          suggestion: Add one concrete metric.
+                    created_at: '2026-07-26T10:00:00Z'
+                    updated_at: '2026-07-26T10:00:01Z'
+                    completed_at: '2026-07-26T10:00:01Z'
+                next_cursor: eyJjcmVhdGVkX2F0IjoiMjAyNi0wNy0yNlQxMDowMDowMFoiLCJyZXZpZXdfaWQiOiIyMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIifQ
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/turns/{turn_id}/turn-analyses:
     post:
       tags:
@@ -232,6 +295,165 @@ components:
     IdempotencyKey:
       $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
   schemas:
+    FormalReviewHistoryPage:
+      type: object
+      additionalProperties: false
+      description: |
+        One completed Review history page. The complete UTF-8 JSON response is
+        limited to 768 KiB (786432 bytes), including field names and escaping.
+      x-max-json-bytes: 786432
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/CompletedFormalReview'
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: |
+            Opaque cursor. The encoded cursor is limited to 512 characters;
+            its decoded metadata fields remain subject to the server's
+            128-byte UTF-8 metadata boundary.
+          pattern: '^[A-Za-z0-9_-]+$'
+    CompletedFormalReview:
+      allOf:
+        - $ref: ./conversation.yaml#/components/schemas/FormalReview
+        - type: object
+          description: |
+            Completed Review projection. Each metadata string uses
+            PostgreSQL-compatible valid UTF-8, excludes U+0000, and is at most
+            128 UTF-8 bytes, even where maxLength counts Unicode code points.
+          required:
+            - result
+            - completed_at
+          properties:
+            review_id:
+              allOf:
+                - $ref: '#/components/schemas/ResourceId'
+              pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+              description: |
+                PostgreSQL-compatible valid UTF-8 without U+0000; at most
+                128 UTF-8 bytes.
+              x-max-utf8-bytes: 128
+            practice_session_id:
+              allOf:
+                - $ref: '#/components/schemas/ResourceId'
+              pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
+              description: |
+                PostgreSQL-compatible valid UTF-8 without U+0000; at most
+                128 UTF-8 bytes.
+              x-max-utf8-bytes: 128
+            status:
+              const: completed
+            implementation_version:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
+              description: |
+                PostgreSQL-compatible valid UTF-8 without U+0000; at most
+                128 UTF-8 bytes.
+              x-max-utf8-bytes: 128
+            source_turn_id:
+              allOf:
+                - $ref: '#/components/schemas/ResourceId'
+              pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
+              description: |
+                PostgreSQL-compatible valid UTF-8 without U+0000; at most
+                128 UTF-8 bytes.
+              x-max-utf8-bytes: 128
+            source_turn_version:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^conversation-turn:evidence-v[1-9][0-9]*$'
+              description: |
+                PostgreSQL-compatible valid UTF-8 without U+0000; at most
+                128 UTF-8 bytes.
+              x-max-utf8-bytes: 128
+            result:
+              $ref: '#/components/schemas/CompletedFormalReviewResult'
+    CompletedFormalReviewResult:
+      type: object
+      additionalProperties: false
+      description: |
+        Completed Review result. The complete encoded JSON value is limited to
+        12 KiB (12288 bytes), in addition to the field-level limits below.
+        Every string uses PostgreSQL-compatible valid UTF-8 and excludes
+        U+0000.
+      x-max-json-bytes: 12288
+      required:
+        - overall_score
+        - summary
+        - conclusions
+      properties:
+        overall_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
+          description: |
+            Non-blank PostgreSQL-compatible valid UTF-8 text without
+            U+0000, at most 2048 UTF-8 bytes.
+          x-max-utf8-bytes: 2048
+        conclusions:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/CompletedFormalReviewConclusion'
+    CompletedFormalReviewConclusion:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - category
+        - message
+      properties:
+        key:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^(?![\s\S]*\u0000)\S(?:[\s\S]*\S)?(?![\s\S])'
+          description: |
+            Trimmed, non-empty PostgreSQL-compatible valid UTF-8 key without
+            U+0000, at most 64 UTF-8 bytes.
+          x-max-utf8-bytes: 64
+        category:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
+          description: |
+            Non-blank PostgreSQL-compatible valid UTF-8 category
+            without U+0000, at most 64 UTF-8 bytes.
+          x-max-utf8-bytes: 64
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
+          description: |
+            Non-blank PostgreSQL-compatible valid UTF-8 message
+            without U+0000, at most 2048 UTF-8 bytes.
+          x-max-utf8-bytes: 2048
+        suggestion:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
+          description: |
+            When present, non-blank PostgreSQL-compatible valid UTF-8 text
+            without U+0000, at most 2048 UTF-8 bytes.
+          x-max-utf8-bytes: 2048
     ResourceId:
       type: string
       minLength: 1

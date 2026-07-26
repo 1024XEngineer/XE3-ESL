@@ -588,6 +588,86 @@ func (r *PostgresRepository) List(
 	return reviews, nil
 }
 
+func (r *PostgresRepository) ListCompletedHistory(
+	ctx context.Context,
+	actor Actor,
+	query HistoryQuery,
+) (HistoryPage, error) {
+	if r == nil || r.pool == nil || actor.validate() != nil ||
+		query.Limit < 1 || query.Limit > MaxHistoryPageSize ||
+		(query.Before != nil && !validHistoryCursor(*query.Before)) {
+		return HistoryPage{}, ErrInvalidReview
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockReviewUser(ctx, tx, actor.UserID); err != nil {
+		return HistoryPage{}, err
+	}
+	if err := lockActiveIdentityUser(
+		ctx,
+		tx,
+		actor.UserID,
+		actor.DeletionGeneration,
+	); err != nil {
+		return HistoryPage{}, err
+	}
+
+	var beforeCreatedAt any
+	var beforeReviewID any
+	if query.Before != nil {
+		beforeCreatedAt = query.Before.CreatedAt
+		beforeReviewID = query.Before.ReviewID
+	}
+	rows, err := tx.Query(ctx, reviewSelect+`
+		WHERE owner_user_id = $1
+		  AND deletion_generation = $2
+		  AND status = 'completed'
+		  AND (
+		      $3::timestamptz IS NULL
+		      OR created_at < $3
+		      OR (created_at = $3 AND id < $4::uuid)
+		  )
+		ORDER BY created_at DESC, id DESC
+		LIMIT $5
+	`, actor.UserID, actor.DeletionGeneration,
+		beforeCreatedAt, beforeReviewID, query.Limit+1)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	defer rows.Close()
+
+	items := make([]FormalReview, 0, query.Limit+1)
+	for rows.Next() {
+		item, scanErr := scanReview(rows)
+		if scanErr != nil {
+			return HistoryPage{}, scanErr
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return HistoryPage{}, err
+	}
+	rows.Close()
+
+	page := HistoryPage{Items: items}
+	if len(page.Items) > query.Limit {
+		page.Items = page.Items[:query.Limit]
+		last := page.Items[len(page.Items)-1]
+		page.Next = &HistoryCursor{
+			CreatedAt: last.CreatedAt,
+			ReviewID:  last.ID,
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return HistoryPage{}, err
+	}
+	return page, nil
+}
+
 func (r *PostgresRepository) ListAttempts(
 	ctx context.Context,
 	actor Actor,
@@ -758,7 +838,10 @@ func scanReview(row rowScanner) (FormalReview, error) {
 	if len(resultJSON) > 0 {
 		var result ReviewResult
 		if err := json.Unmarshal(resultJSON, &result); err != nil {
-			return FormalReview{}, err
+			return FormalReview{}, ErrInvalidReview
+		}
+		if err := validateReviewResult(result); err != nil {
+			return FormalReview{}, ErrInvalidReview
 		}
 		review.Result = &result
 	}
@@ -899,3 +982,4 @@ func errInvalidClaim(claim GenerationJobContext) bool {
 }
 
 var _ ReviewRepository = (*PostgresRepository)(nil)
+var _ HistoryRepository = (*PostgresRepository)(nil)

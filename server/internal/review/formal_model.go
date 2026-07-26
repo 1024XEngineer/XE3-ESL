@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type FormalReviewStatus string
@@ -17,6 +18,12 @@ const (
 	FormalReviewFailed     FormalReviewStatus = "failed"
 
 	SourceTypeConversationTurn = "conversation_turn"
+
+	maxReviewResultJSONBytes      = 12 * 1024
+	maxReviewSummaryUTF8Bytes     = 2048
+	maxReviewConclusions          = 8
+	maxReviewConclusionLabelBytes = 64
+	maxReviewConclusionTextBytes  = 2048
 )
 
 var (
@@ -358,8 +365,9 @@ func validateCompletionPayload(
 func validateReviewResult(result ReviewResult) error {
 	if result.OverallScore < 0 ||
 		result.OverallScore > 100 ||
-		strings.TrimSpace(result.Summary) == "" ||
-		len(result.Conclusions) == 0 {
+		!validReviewText(result.Summary, maxReviewSummaryUTF8Bytes) ||
+		len(result.Conclusions) == 0 ||
+		len(result.Conclusions) > maxReviewConclusions {
 		return ErrInvalidReview
 	}
 	conclusions := make(map[string]struct{}, len(result.Conclusions))
@@ -367,8 +375,22 @@ func validateReviewResult(result ReviewResult) error {
 		key := strings.TrimSpace(conclusion.Key)
 		if key == "" ||
 			key != conclusion.Key ||
-			strings.TrimSpace(conclusion.Category) == "" ||
-			strings.TrimSpace(conclusion.Message) == "" {
+			!validReviewText(
+				conclusion.Key,
+				maxReviewConclusionLabelBytes,
+			) ||
+			!validReviewText(
+				conclusion.Category,
+				maxReviewConclusionLabelBytes,
+			) ||
+			!validReviewText(
+				conclusion.Message,
+				maxReviewConclusionTextBytes,
+			) ||
+			!validOptionalReviewText(
+				conclusion.Suggestion,
+				maxReviewConclusionTextBytes,
+			) {
 			return ErrInvalidReview
 		}
 		if _, exists := conclusions[key]; exists {
@@ -376,7 +398,25 @@ func validateReviewResult(result ReviewResult) error {
 		}
 		conclusions[key] = struct{}{}
 	}
+	encoded, err := json.Marshal(result)
+	if err != nil || len(encoded) > maxReviewResultJSONBytes {
+		return ErrInvalidReview
+	}
 	return nil
+}
+
+func validReviewText(value string, maximumBytes int) bool {
+	return utf8.ValidString(value) &&
+		!strings.ContainsRune(value, '\x00') &&
+		len(value) <= maximumBytes &&
+		strings.TrimSpace(value) != ""
+}
+
+func validOptionalReviewText(value string, maximumBytes int) bool {
+	return utf8.ValidString(value) &&
+		!strings.ContainsRune(value, '\x00') &&
+		len(value) <= maximumBytes &&
+		(value == "" || strings.TrimSpace(value) != "")
 }
 
 func validStableErrorCategory(category string) bool {

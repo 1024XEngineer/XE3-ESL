@@ -30,6 +30,7 @@ const (
 	defaultThreadPageSize   = 20
 	defaultMessagePageSize  = 50
 	defaultVoiceReadTimeout = 15 * time.Second
+	maxReviewHistoryBody    = 768 * 1024
 )
 
 type CorrelationIDGenerator func() string
@@ -201,6 +202,7 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 			"/v1/voice-questions/:question_id/speech",
 			h.questionSpeech,
 		)
+		protected.GET("/v1/formal-reviews", h.listFormalReviews)
 		protected.GET("/v1/formal-reviews/:review_id", h.getFormalReview)
 	}
 	if h.audioAssets != nil {
@@ -904,10 +906,71 @@ func (h *HTTPHandler) getFormalReview(c *gin.Context) {
 		c.Param("review_id"),
 	)
 	if err != nil {
+		if errors.Is(err, ErrInvalidContext) {
+			h.writeError(
+				c,
+				http.StatusInternalServerError,
+				"internal_error",
+				true,
+			)
+			return
+		}
 		h.writeVoiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, formalReviewResponse(formalReview))
+	h.writeBoundedReviewJSON(c, formalReviewResponse(formalReview))
+}
+
+func (h *HTTPHandler) listFormalReviews(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	query, ok := decodeReviewHistoryQuery(c.Request)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	page, err := h.voice.ListReviews(c.Request.Context(), actor, query)
+	if err != nil {
+		if errors.Is(err, ErrInvalidContext) {
+			h.writeError(
+				c,
+				http.StatusInternalServerError,
+				"internal_error",
+				true,
+			)
+			return
+		}
+		h.writeVoiceError(c, err)
+		return
+	}
+	items := make([]gin.H, len(page.Items))
+	for index, item := range page.Items {
+		items[index] = formalReviewResponse(item)
+	}
+	result := gin.H{"items": items}
+	if page.Next != nil {
+		result["next_cursor"] = encodeReviewHistoryCursor(*page.Next)
+	}
+	h.writeBoundedReviewJSON(c, result)
+}
+
+func (h *HTTPHandler) writeBoundedReviewJSON(
+	c *gin.Context,
+	value any,
+) {
+	payload, err := json.Marshal(value)
+	if err != nil || len(payload) > maxReviewHistoryBody {
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+		return
+	}
+	c.Data(
+		http.StatusOK,
+		"application/json; charset=utf-8",
+		payload,
+	)
 }
 
 func (h *HTTPHandler) authenticationMiddleware() gin.HandlerFunc {
@@ -1173,6 +1236,81 @@ func formalReviewResponse(item VoiceSessionReview) gin.H {
 		result["completed_at"] = item.CompletedAt.UTC().Format(time.RFC3339Nano)
 	}
 	return result
+}
+
+func decodeReviewHistoryQuery(
+	request *http.Request,
+) (VoiceReviewHistoryQuery, bool) {
+	const defaultLimit = 20
+	values, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		return VoiceReviewHistoryQuery{}, false
+	}
+	for key := range values {
+		if key != "limit" && key != "cursor" {
+			return VoiceReviewHistoryQuery{}, false
+		}
+	}
+	query := VoiceReviewHistoryQuery{Limit: defaultLimit}
+	if limitValues, exists := values["limit"]; exists {
+		if len(limitValues) != 1 {
+			return VoiceReviewHistoryQuery{}, false
+		}
+		limit, err := strconv.Atoi(limitValues[0])
+		if err != nil || limit < 1 || limit > 50 {
+			return VoiceReviewHistoryQuery{}, false
+		}
+		query.Limit = limit
+	}
+	if cursorValues, exists := values["cursor"]; exists {
+		if len(cursorValues) != 1 {
+			return VoiceReviewHistoryQuery{}, false
+		}
+		cursor, ok := decodeReviewHistoryCursor(cursorValues[0])
+		if !ok {
+			return VoiceReviewHistoryQuery{}, false
+		}
+		query.Before = &cursor
+	}
+	return query, true
+}
+
+func encodeReviewHistoryCursor(cursor VoiceReviewHistoryCursor) string {
+	payload, _ := json.Marshal(gin.H{
+		"created_at": cursor.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"review_id":  cursor.ReviewID,
+	})
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeReviewHistoryCursor(
+	value string,
+) (VoiceReviewHistoryCursor, bool) {
+	if value == "" || len(value) > 512 {
+		return VoiceReviewHistoryCursor{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(payload) > 256 {
+		return VoiceReviewHistoryCursor{}, false
+	}
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err != nil ||
+		len(object) != 2 {
+		return VoiceReviewHistoryCursor{}, false
+	}
+	createdAtValue, createdAtOK := object["created_at"].(string)
+	reviewID, reviewIDOK := object["review_id"].(string)
+	if !createdAtOK || !reviewIDOK || !validUUID(reviewID) {
+		return VoiceReviewHistoryCursor{}, false
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, createdAtValue)
+	if err != nil || createdAt.IsZero() {
+		return VoiceReviewHistoryCursor{}, false
+	}
+	return VoiceReviewHistoryCursor{
+		CreatedAt: createdAt,
+		ReviewID:  reviewID,
+	}, true
 }
 
 func matterResponse(item matter.Matter) gin.H {

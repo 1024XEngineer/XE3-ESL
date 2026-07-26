@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -811,6 +812,825 @@ func TestPostgresReviewOwnerIsolationDeletionAndOldWorkerFence(t *testing.T) {
 	assertReviewCount(t, pool, userC, 0)
 }
 
+func TestPostgresCompletedHistoryUsesOwnerScopedStableKeysetPagination(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA, userB)
+
+	repository := review.NewPostgresRepository(pool)
+	ensure := review.NewEnsureService(
+		repository,
+		sourceReader{},
+		&countingGenerator{},
+	)
+	history := review.NewHistoryService(repository)
+
+	var ownerReviews []review.FormalReview
+	for index := 1; index <= 3; index++ {
+		item, err := ensure.EnsureReview(
+			context.Background(),
+			ensureCommand(userA, fmt.Sprintf("history-session-%d", index)),
+		)
+		if err != nil {
+			t.Fatalf("ensure owner Review %d: %v", index, err)
+		}
+		ownerReviews = append(ownerReviews, item)
+	}
+	foreign, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userB, "foreign-newer-history-session"),
+	)
+	if err != nil {
+		t.Fatalf("ensure foreign Review: %v", err)
+	}
+	if _, err := repository.EnsurePending(
+		context.Background(),
+		ensureCommand(userA, "history-pending"),
+	); err != nil {
+		t.Fatalf("ensure pending Review: %v", err)
+	}
+
+	newerCreatedAt := time.Now().UTC().Add(-2 * time.Hour).Truncate(
+		time.Microsecond,
+	)
+	olderCreatedAt := newerCreatedAt.Add(-time.Hour)
+	for _, item := range ownerReviews[:2] {
+		if _, err := pool.Exec(
+			context.Background(),
+			`UPDATE reviews SET created_at = $1 WHERE id = $2`,
+			newerCreatedAt,
+			item.ID,
+		); err != nil {
+			t.Fatalf("align owner Review created_at: %v", err)
+		}
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE reviews SET created_at = $1 WHERE id = $2`,
+		olderCreatedAt,
+		ownerReviews[2].ID,
+	); err != nil {
+		t.Fatalf("set older owner Review created_at: %v", err)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE reviews SET created_at = $1 WHERE id = $2`,
+		newerCreatedAt.Add(time.Hour),
+		foreign.ID,
+	); err != nil {
+		t.Fatalf("set foreign Review created_at: %v", err)
+	}
+
+	newerIDs := []string{ownerReviews[0].ID, ownerReviews[1].ID}
+	slices.Sort(newerIDs)
+	slices.Reverse(newerIDs)
+	first, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 2},
+	)
+	if err != nil {
+		t.Fatalf("list first history page: %v", err)
+	}
+	if len(first.Items) != 2 ||
+		first.Items[0].ID != newerIDs[0] ||
+		first.Items[1].ID != newerIDs[1] ||
+		first.Next == nil ||
+		first.Next.ReviewID != newerIDs[1] ||
+		!first.Next.CreatedAt.Equal(newerCreatedAt) {
+		t.Fatalf("first history page = %+v", first)
+	}
+	for _, item := range first.Items {
+		if item.OwnerUserID != userA ||
+			item.Status != review.FormalReviewCompleted {
+			t.Fatalf("history leaked non-owner/non-result: %+v", item)
+		}
+	}
+
+	second, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 2, Before: first.Next},
+	)
+	if err != nil {
+		t.Fatalf("list second history page: %v", err)
+	}
+	if len(second.Items) != 1 ||
+		second.Items[0].ID != ownerReviews[2].ID ||
+		second.Next != nil {
+		t.Fatalf("second history page = %+v", second)
+	}
+
+	// PostgreSQL jsonb rejects U+0000 before it can become a readable row.
+	// An over-budget but otherwise valid jsonb value is therefore the reachable
+	// persisted-corruption case for the repository read-boundary check.
+	corruptResult := validResult()
+	corruptResult.Summary = strings.Repeat("s", 2049)
+	corruptPayload, err := json.Marshal(corruptResult)
+	if err != nil {
+		t.Fatalf("marshal over-budget persisted Review: %v", err)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE reviews SET result = $1::jsonb WHERE id = $2`,
+		corruptPayload,
+		ownerReviews[0].ID,
+	); err != nil {
+		t.Fatalf("stage over-budget persisted Review: %v", err)
+	}
+	if _, err := repository.Get(
+		context.Background(),
+		actor(userA),
+		ownerReviews[0].ID,
+	); !errors.Is(err, review.ErrInvalidReview) {
+		t.Fatalf("over-budget persisted Review get error = %v", err)
+	}
+	if _, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 2},
+	); !errors.Is(err, review.ErrInvalidReview) {
+		t.Fatalf("over-budget persisted Review history error = %v", err)
+	}
+
+	setAccountStatus(t, pool, userA, "deleting")
+	if err := repository.DeleteUserData(
+		context.Background(),
+		review.DeleteUserReviewsCommand{
+			UserID:             userA,
+			DeletionGeneration: 1,
+		},
+	); err != nil {
+		t.Fatalf("delete owner Review data: %v", err)
+	}
+	if _, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 2},
+	); !errors.Is(err, review.ErrAccountDeleted) {
+		t.Fatalf("deleted account history error = %v", err)
+	}
+}
+
+func TestPostgresReviewRejectsNULBeforeJSONBWrite(t *testing.T) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	repository := review.NewPostgresRepository(pool)
+	command := ensureCommand(userA, "nul-result-session")
+	pending, err := repository.EnsurePending(
+		context.Background(),
+		command,
+	)
+	if err != nil {
+		t.Fatalf("ensure pending NUL Review: %v", err)
+	}
+	_, claim, claimed, err := repository.ClaimGeneration(
+		context.Background(),
+		command.Actor,
+		pending.ID,
+		time.Minute,
+	)
+	if err != nil || !claimed {
+		t.Fatalf("claim NUL Review: claimed=%v err=%v", claimed, err)
+	}
+	nulResult := validResult()
+	nulResult.Summary = "clear\x00answer"
+	if _, err := repository.CompleteGeneration(
+		context.Background(),
+		claim,
+		nulResult,
+		validEvidence(),
+	); !errors.Is(err, review.ErrInvalidReview) {
+		t.Fatalf("NUL Result completion error = %v", err)
+	}
+	persisted, err := repository.Get(
+		context.Background(),
+		command.Actor,
+		pending.ID,
+	)
+	if err != nil {
+		t.Fatalf("read Review after rejected NUL completion: %v", err)
+	}
+	if persisted.Status != review.FormalReviewGenerating ||
+		persisted.Result != nil {
+		t.Fatalf("rejected NUL completion changed Review: %+v", persisted)
+	}
+
+	_, err = pool.Exec(
+		context.Background(),
+		`SELECT $1::jsonb`,
+		`{"summary":"clear\u0000answer"}`,
+	)
+	var postgresError *pgconn.PgError
+	if !errors.As(err, &postgresError) ||
+		postgresError.Code != "22P05" {
+		t.Fatalf(
+			"PostgreSQL NUL jsonb error = %v, want SQLSTATE 22P05",
+			err,
+		)
+	}
+}
+
+func TestPostgresMaximumReviewResultCompletesAndReadsBackAtEveryBoundary(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	repository := review.NewPostgresRepository(pool)
+	command := ensureCommand(userA, "maximum-result-session")
+	pending, err := repository.EnsurePending(
+		context.Background(),
+		command,
+	)
+	if err != nil {
+		t.Fatalf("ensure maximum Result Review: %v", err)
+	}
+	_, claim, claimed, err := repository.ClaimGeneration(
+		context.Background(),
+		command.Actor,
+		pending.ID,
+		time.Minute,
+	)
+	if err != nil || !claimed {
+		t.Fatalf(
+			"claim maximum Result Review: claimed=%v err=%v",
+			claimed,
+			err,
+		)
+	}
+	maximum := maximumPersistedReviewResult(t)
+	assertReviewResultJSONBytes(t, maximum, 12*1024)
+	completed, err := repository.CompleteGeneration(
+		context.Background(),
+		claim,
+		maximum,
+		evidenceForReviewResult(maximum),
+	)
+	if err != nil {
+		t.Fatalf("complete maximum Result Review: %v", err)
+	}
+	if completed.Status != review.FormalReviewCompleted ||
+		completed.Result == nil {
+		t.Fatalf("completed maximum Result Review = %+v", completed)
+	}
+	assertReviewResultJSONBytes(t, *completed.Result, 12*1024)
+
+	recovered, err := repository.Get(
+		context.Background(),
+		command.Actor,
+		completed.ID,
+	)
+	if err != nil {
+		t.Fatalf("get maximum Result Review: %v", err)
+	}
+	if recovered.ID != completed.ID || recovered.Result == nil {
+		t.Fatalf("recovered maximum Result Review = %+v", recovered)
+	}
+	assertReviewResultJSONBytes(t, *recovered.Result, 12*1024)
+
+	page, err := review.NewHistoryService(repository).ListCompleted(
+		context.Background(),
+		command.Actor,
+		review.HistoryQuery{Limit: 1},
+	)
+	if err != nil {
+		t.Fatalf("list maximum Result Review: %v", err)
+	}
+	if len(page.Items) != 1 ||
+		page.Items[0].ID != completed.ID ||
+		page.Items[0].Result == nil ||
+		page.Next != nil {
+		t.Fatalf("maximum Result history page = %+v", page)
+	}
+	assertReviewResultJSONBytes(t, *page.Items[0].Result, 12*1024)
+}
+
+func TestPostgresCompletedHistoryExcludesEveryNonCompletedState(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	repository := review.NewPostgresRepository(pool)
+	ensure := review.NewEnsureService(
+		repository,
+		sourceReader{},
+		&countingGenerator{},
+	)
+	completed, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userA, "status-completed"),
+	)
+	if err != nil {
+		t.Fatalf("ensure completed status fixture: %v", err)
+	}
+	pending, err := repository.EnsurePending(
+		context.Background(),
+		ensureCommand(userA, "status-pending"),
+	)
+	if err != nil {
+		t.Fatalf("ensure pending status fixture: %v", err)
+	}
+	generating, err := repository.EnsurePending(
+		context.Background(),
+		ensureCommand(userA, "status-generating"),
+	)
+	if err != nil {
+		t.Fatalf("ensure generating status fixture: %v", err)
+	}
+	generating, _, claimed, err := repository.ClaimGeneration(
+		context.Background(),
+		actor(userA),
+		generating.ID,
+		time.Minute,
+	)
+	if err != nil || !claimed {
+		t.Fatalf(
+			"claim generating status fixture: claimed=%v err=%v",
+			claimed,
+			err,
+		)
+	}
+	failed, err := repository.EnsurePending(
+		context.Background(),
+		ensureCommand(userA, "status-failed"),
+	)
+	if err != nil {
+		t.Fatalf("ensure failed status fixture: %v", err)
+	}
+	failed, failedClaim, claimed, err := repository.ClaimGeneration(
+		context.Background(),
+		actor(userA),
+		failed.ID,
+		time.Minute,
+	)
+	if err != nil || !claimed {
+		t.Fatalf(
+			"claim failed status fixture: claimed=%v err=%v",
+			claimed,
+			err,
+		)
+	}
+	if err := repository.FailGeneration(
+		context.Background(),
+		failedClaim,
+		"provider_timeout",
+	); err != nil {
+		t.Fatalf("fail status fixture: %v", err)
+	}
+
+	expectedStates := map[string]review.FormalReviewStatus{
+		pending.ID:    review.FormalReviewPending,
+		generating.ID: review.FormalReviewGenerating,
+		failed.ID:     review.FormalReviewFailed,
+	}
+	for reviewID, expectedStatus := range expectedStates {
+		item, err := repository.Get(
+			context.Background(),
+			actor(userA),
+			reviewID,
+		)
+		if err != nil {
+			t.Fatalf("get %s status fixture: %v", expectedStatus, err)
+		}
+		if item.Status != expectedStatus {
+			t.Fatalf(
+				"status fixture %s = %s",
+				reviewID,
+				item.Status,
+			)
+		}
+	}
+
+	page, err := review.NewHistoryService(repository).ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 50},
+	)
+	if err != nil {
+		t.Fatalf("list completed-only status page: %v", err)
+	}
+	if len(page.Items) != 1 ||
+		page.Items[0].ID != completed.ID ||
+		page.Items[0].Status != review.FormalReviewCompleted ||
+		page.Next != nil {
+		t.Fatalf("completed-only status page = %+v", page)
+	}
+}
+
+func TestPostgresCompletedHistoryCursorKeepsItsKeysetBoundaryAfterNewerInsert(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	repository := review.NewPostgresRepository(pool)
+	ensure := review.NewEnsureService(
+		repository,
+		sourceReader{},
+		&countingGenerator{},
+	)
+	history := review.NewHistoryService(repository)
+
+	baseCreatedAt := time.Now().UTC().Add(-time.Hour).Truncate(
+		time.Microsecond,
+	)
+	originals := make([]review.FormalReview, 4)
+	for index := range originals {
+		item, err := ensure.EnsureReview(
+			context.Background(),
+			ensureCommand(
+				userA,
+				fmt.Sprintf("cursor-boundary-original-%d", index),
+			),
+		)
+		if err != nil {
+			t.Fatalf("ensure original Review %d: %v", index, err)
+		}
+		createdAt := baseCreatedAt.Add(
+			-time.Duration(index) * time.Minute,
+		)
+		if _, err := pool.Exec(
+			context.Background(),
+			`UPDATE reviews SET created_at = $1 WHERE id = $2`,
+			createdAt,
+			item.ID,
+		); err != nil {
+			t.Fatalf("set original Review %d key: %v", index, err)
+		}
+		item.CreatedAt = createdAt
+		originals[index] = item
+	}
+
+	first, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 2},
+	)
+	if err != nil {
+		t.Fatalf("list keyset first page: %v", err)
+	}
+	if len(first.Items) != 2 ||
+		first.Items[0].ID != originals[0].ID ||
+		first.Items[1].ID != originals[1].ID ||
+		first.Next == nil {
+		t.Fatalf("keyset first page = %+v", first)
+	}
+
+	inserted, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userA, "cursor-boundary-newer-insert"),
+	)
+	if err != nil {
+		t.Fatalf("ensure newly inserted Review: %v", err)
+	}
+	insertedCreatedAt := baseCreatedAt.Add(time.Minute)
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE reviews SET created_at = $1 WHERE id = $2`,
+		insertedCreatedAt,
+		inserted.ID,
+	); err != nil {
+		t.Fatalf("set newly inserted Review key: %v", err)
+	}
+
+	// The cursor is a stable lower keyset boundary, not an MVCC snapshot:
+	// a newly inserted row ahead of that boundary belongs only to a fresh
+	// traversal, while the old continuation still covers the original tail.
+	continuation, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 2, Before: first.Next},
+	)
+	if err != nil {
+		t.Fatalf("continue from old keyset cursor: %v", err)
+	}
+	if len(continuation.Items) != 2 ||
+		continuation.Items[0].ID != originals[2].ID ||
+		continuation.Items[1].ID != originals[3].ID ||
+		continuation.Next != nil {
+		t.Fatalf("old keyset continuation = %+v", continuation)
+	}
+	for _, item := range continuation.Items {
+		if item.ID == inserted.ID ||
+			item.ID == first.Items[0].ID ||
+			item.ID == first.Items[1].ID {
+			t.Fatalf(
+				"old keyset continuation repeated/mixed item: %+v",
+				item,
+			)
+		}
+	}
+
+	fresh, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 2},
+	)
+	if err != nil {
+		t.Fatalf("list fresh keyset page: %v", err)
+	}
+	if len(fresh.Items) != 2 ||
+		fresh.Items[0].ID != inserted.ID ||
+		fresh.Items[1].ID != originals[0].ID {
+		t.Fatalf("fresh keyset page after insert = %+v", fresh)
+	}
+}
+
+func TestPostgresCompletedHistoryAppliesForeignCursorOnlyAsActorKeyset(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA, userB)
+	repository := review.NewPostgresRepository(pool)
+	ensure := review.NewEnsureService(
+		repository,
+		sourceReader{},
+		&countingGenerator{},
+	)
+	history := review.NewHistoryService(repository)
+	baseCreatedAt := time.Now().UTC().Add(-time.Hour).Truncate(
+		time.Microsecond,
+	)
+
+	ownerReviews := make([]review.FormalReview, 2)
+	for index := range ownerReviews {
+		item, err := ensure.EnsureReview(
+			context.Background(),
+			ensureCommand(
+				userA,
+				fmt.Sprintf("foreign-cursor-owner-%d", index),
+			),
+		)
+		if err != nil {
+			t.Fatalf("ensure cursor owner Review %d: %v", index, err)
+		}
+		createdAt := baseCreatedAt.Add(
+			-time.Duration(index*3) * time.Minute,
+		)
+		if _, err := pool.Exec(
+			context.Background(),
+			`UPDATE reviews SET created_at = $1 WHERE id = $2`,
+			createdAt,
+			item.ID,
+		); err != nil {
+			t.Fatalf("set cursor owner Review %d key: %v", index, err)
+		}
+		ownerReviews[index] = item
+	}
+	ownerFirst, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 1},
+	)
+	if err != nil {
+		t.Fatalf("list cursor owner first page: %v", err)
+	}
+	if len(ownerFirst.Items) != 1 ||
+		ownerFirst.Items[0].ID != ownerReviews[0].ID ||
+		ownerFirst.Next == nil {
+		t.Fatalf("cursor owner first page = %+v", ownerFirst)
+	}
+
+	foreignReviews := make([]review.FormalReview, 3)
+	foreignOffsets := []time.Duration{
+		time.Minute,
+		-time.Minute,
+		-2 * time.Minute,
+	}
+	for index := range foreignReviews {
+		item, err := ensure.EnsureReview(
+			context.Background(),
+			ensureCommand(
+				userB,
+				fmt.Sprintf("foreign-cursor-reader-%d", index),
+			),
+		)
+		if err != nil {
+			t.Fatalf("ensure cursor reader Review %d: %v", index, err)
+		}
+		if _, err := pool.Exec(
+			context.Background(),
+			`UPDATE reviews SET created_at = $1 WHERE id = $2`,
+			baseCreatedAt.Add(foreignOffsets[index]),
+			item.ID,
+		); err != nil {
+			t.Fatalf("set cursor reader Review %d key: %v", index, err)
+		}
+		foreignReviews[index] = item
+	}
+
+	reused, err := history.ListCompleted(
+		context.Background(),
+		actor(userB),
+		review.HistoryQuery{Limit: 50, Before: ownerFirst.Next},
+	)
+	if err != nil {
+		t.Fatalf("reuse owner cursor as foreign Actor: %v", err)
+	}
+	if len(reused.Items) != 2 ||
+		reused.Items[0].ID != foreignReviews[1].ID ||
+		reused.Items[1].ID != foreignReviews[2].ID ||
+		reused.Next != nil {
+		t.Fatalf("foreign Actor reused cursor page = %+v", reused)
+	}
+	for _, item := range reused.Items {
+		if item.OwnerUserID != userB ||
+			item.ID == ownerReviews[0].ID ||
+			item.ID == ownerReviews[1].ID ||
+			item.ID == foreignReviews[0].ID {
+			t.Fatalf("foreign cursor leaked/crossed keyset: %+v", item)
+		}
+	}
+
+	fresh, err := history.ListCompleted(
+		context.Background(),
+		actor(userB),
+		review.HistoryQuery{Limit: 50},
+	)
+	if err != nil {
+		t.Fatalf("list fresh foreign Actor page: %v", err)
+	}
+	if len(fresh.Items) != 3 ||
+		fresh.Items[0].ID != foreignReviews[0].ID ||
+		fresh.Items[1].ID != foreignReviews[1].ID ||
+		fresh.Items[2].ID != foreignReviews[2].ID {
+		t.Fatalf("fresh foreign Actor page = %+v", fresh)
+	}
+}
+
+func TestPostgresHistoryListAndDeleteUserLinearizeOnSharedFence(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA, userB)
+	repository := review.NewPostgresRepository(pool)
+	ensure := review.NewEnsureService(
+		repository,
+		sourceReader{},
+		&countingGenerator{},
+	)
+	history := review.NewHistoryService(repository)
+	ownerReview, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userA, "list-delete-owner"),
+	)
+	if err != nil {
+		t.Fatalf("ensure list/delete owner Review: %v", err)
+	}
+	if _, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userA, "list-delete-owner-older"),
+	); err != nil {
+		t.Fatalf("ensure older list/delete owner Review: %v", err)
+	}
+	foreignReview, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userB, "list-delete-foreign"),
+	)
+	if err != nil {
+		t.Fatalf("ensure list/delete foreign Review: %v", err)
+	}
+	preDeletePage, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 1},
+	)
+	if err != nil {
+		t.Fatalf("list pre-delete owner cursor page: %v", err)
+	}
+	if len(preDeletePage.Items) != 1 ||
+		preDeletePage.Next == nil {
+		t.Fatalf("pre-delete owner cursor page = %+v", preDeletePage)
+	}
+	preDeleteCursor := *preDeletePage.Next
+	setAccountStatus(t, pool, userA, "deleting")
+
+	blocker, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin shared Review lock blocker: %v", err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	var blockerPID int
+	if err := blocker.QueryRow(
+		context.Background(),
+		`SELECT pg_backend_pid()`,
+	).Scan(&blockerPID); err != nil {
+		t.Fatalf("read shared Review lock blocker PID: %v", err)
+	}
+	if _, err := blocker.Exec(
+		context.Background(),
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		userA,
+	); err != nil {
+		t.Fatalf("hold shared Review user lock: %v", err)
+	}
+
+	type listResult struct {
+		page review.HistoryPage
+		err  error
+	}
+	listed := make(chan listResult, 1)
+	deleted := make(chan error, 1)
+	go func() {
+		page, listErr := history.ListCompleted(
+			context.Background(),
+			actor(userA),
+			review.HistoryQuery{Limit: 50},
+		)
+		listed <- listResult{page: page, err: listErr}
+	}()
+	go func() {
+		deleted <- repository.DeleteUserData(
+			context.Background(),
+			review.DeleteUserReviewsCommand{
+				UserID:             userA,
+				DeletionGeneration: 1,
+			},
+		)
+	}()
+	waitForReviewAdvisoryWaiters(t, pool, blockerPID, 2)
+	if err := blocker.Commit(context.Background()); err != nil {
+		t.Fatalf("release shared Review user lock: %v", err)
+	}
+
+	select {
+	case result := <-listed:
+		if !errors.Is(result.err, review.ErrAccountDeleted) ||
+			len(result.page.Items) != 0 ||
+			result.page.Next != nil {
+			t.Fatalf(
+				"concurrent history after deletion intent = %+v, %v",
+				result.page,
+				result.err,
+			)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent history did not resume")
+	}
+	select {
+	case err := <-deleted:
+		if err != nil {
+			t.Fatalf("concurrent DeleteUserData: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent DeleteUserData did not resume")
+	}
+
+	assertReviewCount(t, pool, userA, 0)
+	assertReviewCount(t, pool, userB, 1)
+	var fenceGeneration int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT deletion_generation
+		FROM review_deletion_fences
+		WHERE owner_user_id = $1
+	`, userA).Scan(&fenceGeneration); err != nil {
+		t.Fatalf("read committed Review deletion fence: %v", err)
+	}
+	if fenceGeneration != 1 {
+		t.Fatalf("Review deletion fence = %d, want 1", fenceGeneration)
+	}
+	if _, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 50},
+	); !errors.Is(err, review.ErrAccountDeleted) {
+		t.Fatalf("post-delete owner history error = %v", err)
+	}
+	if _, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{
+			Limit:  50,
+			Before: &preDeleteCursor,
+		},
+	); !errors.Is(err, review.ErrAccountDeleted) {
+		t.Fatalf("post-delete old cursor history error = %v", err)
+	}
+	if _, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userA, "list-delete-resurrection"),
+	); !errors.Is(err, review.ErrAccountDeleted) {
+		t.Fatalf("post-delete Review resurrection error = %v", err)
+	}
+	assertReviewCount(t, pool, userA, 0)
+	foreignPage, err := history.ListCompleted(
+		context.Background(),
+		actor(userB),
+		review.HistoryQuery{Limit: 50},
+	)
+	if err != nil {
+		t.Fatalf("list foreign history after owner deletion: %v", err)
+	}
+	if len(foreignPage.Items) != 1 ||
+		foreignPage.Items[0].ID != foreignReview.ID ||
+		foreignPage.Items[0].ID == ownerReview.ID {
+		t.Fatalf(
+			"owner deletion changed/leaked foreign history: %+v",
+			foreignPage,
+		)
+	}
+}
+
 func TestPostgresReviewDeleteWinsAgainstGeneratingWorker(t *testing.T) {
 	pool := reviewDatabase(t)
 	insertUsers(t, pool, userA)
@@ -1273,6 +2093,90 @@ func validEvidence() []review.ReviewEvidence {
 	}}
 }
 
+func maximumPersistedReviewResult(t *testing.T) review.ReviewResult {
+	t.Helper()
+	const (
+		maximumResultBytes = 12 * 1024
+		maximumSummary     = 2048
+		maximumConclusions = 8
+		maximumLabel       = 64
+		maximumText        = 2048
+	)
+	result := review.ReviewResult{
+		OverallScore: 100,
+		Summary:      strings.Repeat("s", maximumSummary),
+		Conclusions: make(
+			[]review.ReviewConclusion,
+			maximumConclusions,
+		),
+	}
+	for index := range result.Conclusions {
+		result.Conclusions[index] = review.ReviewConclusion{
+			Key: fmt.Sprintf("%02d", index) +
+				strings.Repeat("k", maximumLabel-2),
+			Category: strings.Repeat("c", maximumLabel),
+			Message:  strings.Repeat("m", 700),
+			Suggestion: strings.Repeat(
+				"s",
+				300,
+			),
+		}
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal maximum persisted Result fixture: %v", err)
+	}
+	remaining := maximumResultBytes - len(encoded)
+	last := &result.Conclusions[len(result.Conclusions)-1]
+	if remaining < 0 ||
+		len(last.Suggestion)+remaining > maximumText {
+		t.Fatalf(
+			"maximum persisted Result fixture bytes=%d remaining=%d",
+			len(encoded),
+			remaining,
+		)
+	}
+	last.Suggestion += strings.Repeat("x", remaining)
+	return result
+}
+
+func evidenceForReviewResult(
+	result review.ReviewResult,
+) []review.ReviewEvidence {
+	evidence := make(
+		[]review.ReviewEvidence,
+		len(result.Conclusions),
+	)
+	for index, conclusion := range result.Conclusions {
+		evidence[index] = review.ReviewEvidence{
+			ConclusionKey: conclusion.Key,
+			SourceType:    review.SourceTypeConversationTurn,
+			SourceID:      "turn-3",
+			SourceVersion: "confirmed-v2",
+		}
+	}
+	return evidence
+}
+
+func assertReviewResultJSONBytes(
+	t *testing.T,
+	result review.ReviewResult,
+	want int,
+) {
+	t.Helper()
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal persisted Review Result: %v", err)
+	}
+	if len(encoded) != want {
+		t.Fatalf(
+			"persisted Review Result bytes = %d, want %d",
+			len(encoded),
+			want,
+		)
+	}
+}
+
 func actor(userID string) review.Actor {
 	return review.Actor{UserID: userID, DeletionGeneration: 0}
 }
@@ -1450,4 +2354,49 @@ func waitForBlockedIdentityShareLock(t *testing.T, pool *pgxpool.Pool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("Review write did not block on Identity user row")
+}
+
+func waitForReviewAdvisoryWaiters(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	blockerPID int,
+	want int,
+) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var blocked int
+		err := pool.QueryRow(context.Background(), `
+			WITH RECURSIVE blocked(pid) AS (
+				SELECT activity.pid
+				FROM pg_stat_activity activity
+				WHERE $1 = ANY(pg_blocking_pids(activity.pid))
+				UNION
+				SELECT activity.pid
+				FROM pg_stat_activity activity
+				JOIN blocked blocker
+				  ON blocker.pid =
+				     ANY(pg_blocking_pids(activity.pid))
+			)
+			SELECT count(*)
+			FROM blocked
+			JOIN pg_stat_activity activity USING (pid)
+			WHERE activity.wait_event_type = 'Lock'
+			  AND position(
+			      'pg_advisory_xact_lock(hashtextextended($1, 0))'
+			      IN activity.query
+			  ) > 0
+		`, blockerPID).Scan(&blocked)
+		if err != nil {
+			t.Fatalf("inspect shared Review lock waiters: %v", err)
+		}
+		if blocked >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf(
+		"shared Review user lock waiters did not reach %d",
+		want,
+	)
 }
