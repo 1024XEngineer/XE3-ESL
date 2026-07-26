@@ -117,6 +117,16 @@ paths:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1preparation-profiles
   /v1/preparation-profiles/{preparation_profile_id}/snapshots:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1preparation-profiles~1{preparation_profile_id}~1snapshots
+  /v1/job-targets:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets
+  /v1/job-targets/{job_target_id}:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets~1{job_target_id}
+  /v1/job-targets/{job_target_id}/analyses:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets~1{job_target_id}~1analyses
+  /v1/job-targets/{job_target_id}/confirmations:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets~1{job_target_id}~1confirmations
+  /v1/job-targets/{job_target_id}/discard:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets~1{job_target_id}~1discard
   /v1/practice-plans:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans
   /v1/practice-plans/{practice_plan_id}:
@@ -226,6 +236,10 @@ components:
       $ref: ./modules/preparation.yaml#/components/schemas/PreparationProfile
     PreparationSnapshot:
       $ref: ./modules/preparation.yaml#/components/schemas/PreparationSnapshot
+    JobTarget:
+      $ref: ./modules/preparation.yaml#/components/schemas/JobTarget
+    JobTargetCandidate:
+      $ref: ./modules/preparation.yaml#/components/schemas/JobTargetCandidate
     PracticePlan:
       $ref: ./modules/practice.yaml#/components/schemas/PracticePlan
     PracticeSession:

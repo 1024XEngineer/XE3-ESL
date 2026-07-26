@@ -65,6 +65,10 @@ components:
         - role_definition_not_found
         - preparation_profile_not_found
         - preparation_version_conflict
+        - job_target_not_found
+        - job_target_version_conflict
+        - job_target_analysis_claim_lost
+        - job_target_analysis_failed
         - practice_plan_not_found
         - practice_plan_not_ready
         - practice_plan_archived
@@ -100,6 +104,7 @@ components:
         scenario_definition_not_found: 404
         role_definition_not_found: 404
         preparation_profile_not_found: 404
+        job_target_not_found: 404
         practice_plan_not_found: 404
         practice_session_not_found: 404
         question_not_found: 404
@@ -113,6 +118,8 @@ components:
         resource_conflict: 409
         resource_processing: 409
         preparation_version_conflict: 409
+        job_target_version_conflict: 409
+        job_target_analysis_claim_lost: 409
         practice_plan_not_ready: 409
         practice_plan_archived: 409
         practice_plan_has_active_session: 409
@@ -131,6 +138,7 @@ components:
         provider_unavailable: 503
         quota_exhausted: 503
         voice_capacity_exhausted: 503
+        job_target_analysis_failed: 503
         internal_error: 500
   responses:
     BadRequest:

@@ -385,6 +385,27 @@ func TestPostgresProfileRepositoryDeletionFenceAndOrder(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
+	jobTargetRepository := preparation.NewPostgresJobTargetRepository(pool)
+	jobTargetRequest := preparation.CreateJobTargetRequest{
+		Source:   preparation.JobTargetSourceQuickStart,
+		JobTitle: "Backend engineer",
+	}
+	if _, _, err := jobTargetRepository.Create(
+		ctx,
+		actorA,
+		preparation.CreateJobTargetCommand{
+			TargetID: "job-target-delete",
+			Request:  jobTargetRequest,
+			Intent: jobTargetIntent(
+				"POST",
+				"/v1/job-targets",
+				"job-target-delete-key",
+				jobTargetRequest,
+			),
+		},
+	); err != nil {
+		t.Fatalf("seed job target: %v", err)
+	}
 	installPreparationDeleteAudit(t, pool)
 
 	if err := repository.DeleteProfileData(
@@ -416,6 +437,8 @@ func TestPostgresProfileRepositoryDeletionFenceAndOrder(t *testing.T) {
 	}
 	assertPreparationDeleteOrder(t, pool)
 	for _, table := range []string{
+		"preparation_job_target_idempotency_records",
+		"preparation_job_targets",
 		"preparation_idempotency_records",
 		"preparation_snapshots",
 		"preparation_profiles",
@@ -649,9 +672,11 @@ func assertPreparationRowCount(
 ) {
 	t.Helper()
 	allowed := map[string]bool{
-		"preparation_idempotency_records": true,
-		"preparation_snapshots":           true,
-		"preparation_profiles":            true,
+		"preparation_job_target_idempotency_records": true,
+		"preparation_job_targets":                    true,
+		"preparation_idempotency_records":            true,
+		"preparation_snapshots":                      true,
+		"preparation_profiles":                       true,
 	}
 	if !allowed[table] {
 		t.Fatalf("unsupported test table %q", table)
