@@ -129,6 +129,35 @@ func TestGenerationFinalizationContextPreservesValuesAndHasBoundedLifetime(
 	}
 }
 
+func TestPollDelayUsesCappedExponentialBackoffWithJitter(t *testing.T) {
+	service := &EnsureService{
+		pollInterval:    20 * time.Millisecond,
+		maxPollInterval: 160 * time.Millisecond,
+	}
+	expectedWindows := []time.Duration{
+		20 * time.Millisecond,
+		40 * time.Millisecond,
+		80 * time.Millisecond,
+		160 * time.Millisecond,
+		160 * time.Millisecond,
+	}
+	for attempt, upper := range expectedWindows {
+		for sample := 0; sample < 20; sample++ {
+			delay := service.pollDelay(attempt)
+			lower := upper - upper/4
+			if delay < lower || delay > upper {
+				t.Fatalf(
+					"attempt %d delay = %v, want [%v, %v]",
+					attempt,
+					delay,
+					lower,
+					upper,
+				)
+			}
+		}
+	}
+}
+
 type categorizedReviewError string
 
 func (err categorizedReviewError) Error() string {

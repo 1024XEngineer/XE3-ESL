@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"strings"
 	"time"
 )
@@ -10,7 +11,8 @@ import (
 const (
 	defaultGenerationLease           = 30 * time.Second
 	defaultGenerationFinalizeTimeout = 5 * time.Second
-	defaultPollInterval              = 10 * time.Millisecond
+	defaultPollInterval              = 20 * time.Millisecond
+	defaultMaxPollInterval           = 500 * time.Millisecond
 )
 
 type EnsureService struct {
@@ -20,6 +22,7 @@ type EnsureService struct {
 	lease           time.Duration
 	finalizeTimeout time.Duration
 	pollInterval    time.Duration
+	maxPollInterval time.Duration
 }
 
 func NewEnsureService(
@@ -34,6 +37,7 @@ func NewEnsureService(
 		lease:           defaultGenerationLease,
 		finalizeTimeout: defaultGenerationFinalizeTimeout,
 		pollInterval:    defaultPollInterval,
+		maxPollInterval: defaultMaxPollInterval,
 	}
 }
 
@@ -56,6 +60,7 @@ func (s *EnsureService) EnsureReview(
 	if err != nil {
 		return FormalReview{}, err
 	}
+	pollAttempt := 0
 	for {
 		if current.Status == FormalReviewCompleted {
 			return current, nil
@@ -88,7 +93,8 @@ func (s *EnsureService) EnsureReview(
 			)
 		}
 
-		timer := time.NewTimer(s.pollInterval)
+		timer := time.NewTimer(s.pollDelay(pollAttempt))
+		pollAttempt++
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -100,6 +106,40 @@ func (s *EnsureService) EnsureReview(
 			return FormalReview{}, err
 		}
 	}
+}
+
+func (s *EnsureService) pollDelay(attempt int) time.Duration {
+	base := s.pollInterval
+	if base <= 0 {
+		base = defaultPollInterval
+	}
+	maximum := s.maxPollInterval
+	if maximum <= 0 {
+		maximum = defaultMaxPollInterval
+	}
+	if maximum < base {
+		maximum = base
+	}
+
+	delay := base
+	for step := 0; step < attempt && delay < maximum; step++ {
+		if delay > maximum/2 {
+			delay = maximum
+			break
+		}
+		delay *= 2
+	}
+	if delay > maximum {
+		delay = maximum
+	}
+
+	// Spread concurrent waiters across the final quarter of each backoff
+	// window so they do not repeatedly contend for the same advisory lock.
+	jitterWindow := delay / 4
+	if jitterWindow <= 0 {
+		return delay
+	}
+	return delay - jitterWindow + rand.N(jitterWindow+1)
 }
 
 func (s *EnsureService) generate(
