@@ -79,6 +79,8 @@ paths:
     $ref: ./modules/agent.yaml#/paths/~1v1~1matters~1{matter_id}
   /v1/agent-threads:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads
+  /v1/agent-threads/focused:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1focused
   /v1/agent-threads/{thread_id}:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}
   /v1/agent-threads/{thread_id}/active-matter:

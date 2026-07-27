@@ -13,6 +13,7 @@ import (
 const (
 	maxMessageContentRunes = 4096
 	maxMessageContentBytes = 16384
+	maxAgentPageSize       = 100
 )
 
 type Service struct {
@@ -56,6 +57,54 @@ func (s *Service) ListThreads(
 	return s.repository.ListThreads(ctx, actor.UserID)
 }
 
+func (s *Service) PageThreads(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	pageSize int,
+	rawCursor string,
+) (ThreadPage, error) {
+	if !actor.Valid() || pageSize < 1 || pageSize > maxAgentPageSize {
+		return ThreadPage{}, ErrInvalidRequest
+	}
+	var before *ThreadPageCursor
+	if rawCursor != "" {
+		decoded, err := decodeThreadPageCursor(rawCursor)
+		if err != nil {
+			return ThreadPage{}, err
+		}
+		before = &decoded
+	}
+	threads, err := s.repository.PageThreads(
+		ctx,
+		actor.UserID,
+		pageSize+1,
+		before,
+	)
+	if err != nil {
+		return ThreadPage{}, err
+	}
+	focused, found, err := s.repository.FindFocusedThread(ctx, actor.UserID)
+	if err != nil {
+		return ThreadPage{}, err
+	}
+	result := ThreadPage{Threads: threads}
+	if found {
+		result.FocusedThreadID = focused.ID
+	}
+	if len(result.Threads) > pageSize {
+		result.Threads = result.Threads[:pageSize]
+		last := result.Threads[len(result.Threads)-1]
+		result.NextCursor, err = encodeThreadPageCursor(ThreadPageCursor{
+			UpdatedAt: last.UpdatedAt,
+			ThreadID:  last.ID,
+		})
+		if err != nil {
+			return ThreadPage{}, err
+		}
+	}
+	return result, nil
+}
+
 func (s *Service) GetThread(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -65,6 +114,37 @@ func (s *Service) GetThread(
 		return Thread{}, ErrNotFound
 	}
 	return s.repository.FindThread(ctx, actor.UserID, threadID)
+}
+
+func (s *Service) GetFocusedThread(
+	ctx context.Context,
+	actor requestcontext.Actor,
+) (Thread, bool, error) {
+	if !actor.Valid() {
+		return Thread{}, false, ErrInvalidRequest
+	}
+	return s.repository.FindFocusedThread(ctx, actor.UserID)
+}
+
+func (s *Service) SetFocusedThread(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+) (Thread, error) {
+	if !actor.Valid() || !validUUID(threadID) {
+		return Thread{}, ErrNotFound
+	}
+	return s.repository.SetFocusedThread(ctx, actor.UserID, threadID)
+}
+
+func (s *Service) ClearFocusedThread(
+	ctx context.Context,
+	actor requestcontext.Actor,
+) error {
+	if !actor.Valid() {
+		return ErrInvalidRequest
+	}
+	return s.repository.ClearFocusedThread(ctx, actor.UserID)
 }
 
 func (s *Service) SetActiveMatter(
@@ -128,6 +208,60 @@ func (s *Service) ListMessages(
 	return s.repository.ListMessages(ctx, actor.UserID, threadID)
 }
 
+func (s *Service) PageMessages(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+	pageSize int,
+	rawCursor string,
+) (MessagePage, error) {
+	if !actor.Valid() || !validUUID(threadID) {
+		return MessagePage{}, ErrNotFound
+	}
+	if pageSize < 1 || pageSize > maxAgentPageSize {
+		return MessagePage{}, ErrInvalidRequest
+	}
+	if _, err := s.repository.FindThread(
+		ctx,
+		actor.UserID,
+		threadID,
+	); err != nil {
+		return MessagePage{}, err
+	}
+	var before *MessagePageCursor
+	if rawCursor != "" {
+		decoded, err := decodeMessagePageCursor(rawCursor, threadID)
+		if err != nil {
+			return MessagePage{}, err
+		}
+		before = &decoded
+	}
+	messages, err := s.repository.PageMessages(
+		ctx,
+		actor.UserID,
+		threadID,
+		pageSize+1,
+		before,
+	)
+	if err != nil {
+		return MessagePage{}, err
+	}
+	result := MessagePage{Messages: messages}
+	if len(result.Messages) > pageSize {
+		result.Messages = result.Messages[:pageSize]
+		oldest := result.Messages[len(result.Messages)-1]
+		result.NextCursor, err = encodeMessagePageCursor(MessagePageCursor{
+			ThreadID:       threadID,
+			BeforeSequence: oldest.Sequence,
+		})
+		if err != nil {
+			return MessagePage{}, err
+		}
+	}
+	reverseMessages(result.Messages)
+	return result, nil
+}
+
 func (s *Service) requireActiveMatter(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -147,6 +281,12 @@ func (s *Service) requireActiveMatter(
 		return ErrConflict
 	}
 	return nil
+}
+
+func reverseMessages(messages []Message) {
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
 }
 
 func validMessageContent(value string) bool {

@@ -130,14 +130,85 @@ paths:
       tags:
         - Agent
       summary: List durable Agent Threads owned by the trusted Actor
+      description: |
+        Uses endpoint-specific opaque keyset cursors over
+        `(updated_at DESC, thread_id DESC)`. A cursor from another endpoint is
+        invalid. The focused Thread ID is returned independently of whether
+        that Thread appears on the current page.
       operationId: listAgentThreads
+      parameters:
+        - $ref: '#/components/parameters/ThreadPageSize'
+        - $ref: '#/components/parameters/PageCursor'
       responses:
         '200':
-          description: The Actor's Threads ordered by latest update.
+          description: One bounded page of the Actor's Threads.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentThreadList'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/focused:
+    get:
+      tags:
+        - Agent
+      summary: Restore the trusted Actor's focused Agent Thread
+      operationId: getFocusedAgentThread
+      responses:
+        '200':
+          description: The current focused Thread.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentThread'
+        '204':
+          description: The Actor has no focused Thread.
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    put:
+      tags:
+        - Agent
+      summary: Select one owned Agent Thread as focused
+      description: |
+        Repeating the same selection is idempotent. Selecting a missing or
+        foreign-owned Thread returns the same not-found response.
+      operationId: setFocusedAgentThread
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetFocusedAgentThreadRequest'
+      responses:
+        '200':
+          description: The selected canonical Agent Thread.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentThread'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    delete:
+      tags:
+        - Agent
+      summary: Clear the trusted Actor's focused Agent Thread
+      description: Clearing an already empty focused selection is idempotent.
+      operationId: clearFocusedAgentThread
+      responses:
+        '204':
+          description: The Actor now has no focused Thread.
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         default:
@@ -204,18 +275,27 @@ paths:
     get:
       tags:
         - Agent
-      summary: Restore committed Messages in stable Thread order
+      summary: Restore a bounded page of committed Messages
       description: |
-        User Messages are created only through the Run submission command so
-        an initial pending Run is committed in the same transaction.
+        The first request returns the newest page. Every response page is
+        ordered by ascending immutable `sequence`; `next_cursor` requests the
+        immediately older page. Cursors are opaque, endpoint-specific, and
+        bound to this Thread. User Messages are created only through the Run
+        submission command so an initial pending Run is committed in the same
+        transaction.
       operationId: listAgentMessages
+      parameters:
+        - $ref: '#/components/parameters/MessagePageSize'
+        - $ref: '#/components/parameters/PageCursor'
       responses:
         '200':
-          description: Messages ordered by the server-assigned sequence.
+          description: One bounded page in ascending server sequence order.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentMessageList'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
@@ -374,6 +454,33 @@ components:
       schema:
         type: string
         format: uuid
+    ThreadPageSize:
+      name: page_size
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    MessagePageSize:
+      name: page_size
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    PageCursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 1024
+      description: Endpoint-specific opaque keyset cursor returned by the server.
   schemas:
     MatterStatus:
       type: string
@@ -486,11 +593,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AgentThread'
+        focused_thread_id:
+          type: string
+          format: uuid
+          readOnly: true
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          readOnly: true
     CreateAgentThreadRequest:
       type: object
       additionalProperties: false
       properties:
         active_matter_id:
+          type: string
+          format: uuid
+    SetFocusedAgentThreadRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - thread_id
+      properties:
+        thread_id:
           type: string
           format: uuid
     SetActiveMatterRequest:
@@ -856,6 +981,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AgentMessage'
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          readOnly: true
     AppendAgentMessageRequest:
       type: object
       additionalProperties: false

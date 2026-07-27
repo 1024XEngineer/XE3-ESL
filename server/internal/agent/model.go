@@ -132,6 +132,27 @@ type RunRetry struct {
 	Created bool
 }
 
+type ThreadPageCursor struct {
+	UpdatedAt time.Time
+	ThreadID  string
+}
+
+type MessagePageCursor struct {
+	ThreadID       string
+	BeforeSequence int64
+}
+
+type ThreadPage struct {
+	Threads         []Thread
+	FocusedThreadID string
+	NextCursor      string
+}
+
+type MessagePage struct {
+	Messages   []Message
+	NextCursor string
+}
+
 type Repository interface {
 	CreateThread(
 		ctx context.Context,
@@ -139,7 +160,23 @@ type Repository interface {
 		activeMatterID string,
 	) (Thread, error)
 	ListThreads(ctx context.Context, ownerID string) ([]Thread, error)
+	PageThreads(
+		ctx context.Context,
+		ownerID string,
+		limit int,
+		before *ThreadPageCursor,
+	) ([]Thread, error)
 	FindThread(ctx context.Context, ownerID, threadID string) (Thread, error)
+	FindFocusedThread(
+		ctx context.Context,
+		ownerID string,
+	) (Thread, bool, error)
+	SetFocusedThread(
+		ctx context.Context,
+		ownerID string,
+		threadID string,
+	) (Thread, error)
+	ClearFocusedThread(ctx context.Context, ownerID string) error
 	SetActiveMatter(
 		ctx context.Context,
 		ownerID string,
@@ -157,6 +194,13 @@ type Repository interface {
 		ctx context.Context,
 		ownerID string,
 		threadID string,
+	) ([]Message, error)
+	PageMessages(
+		ctx context.Context,
+		ownerID string,
+		threadID string,
+		limit int,
+		before *MessagePageCursor,
 	) ([]Message, error)
 }
 
@@ -170,11 +214,30 @@ type Application interface {
 		ctx context.Context,
 		actor requestcontext.Actor,
 	) ([]Thread, error)
+	PageThreads(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		pageSize int,
+		cursor string,
+	) (ThreadPage, error)
 	GetThread(
 		ctx context.Context,
 		actor requestcontext.Actor,
 		threadID string,
 	) (Thread, error)
+	GetFocusedThread(
+		ctx context.Context,
+		actor requestcontext.Actor,
+	) (Thread, bool, error)
+	SetFocusedThread(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		threadID string,
+	) (Thread, error)
+	ClearFocusedThread(
+		ctx context.Context,
+		actor requestcontext.Actor,
+	) error
 	SetActiveMatter(
 		ctx context.Context,
 		actor requestcontext.Actor,
@@ -193,6 +256,13 @@ type Application interface {
 		actor requestcontext.Actor,
 		threadID string,
 	) ([]Message, error)
+	PageMessages(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		threadID string,
+		pageSize int,
+		cursor string,
+	) (MessagePage, error)
 }
 
 type RunRepository interface {

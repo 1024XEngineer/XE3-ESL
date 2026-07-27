@@ -156,6 +156,81 @@ ORDER BY threads.updated_at DESC, threads.id DESC`,
 	return result, nil
 }
 
+func (r *PostgresRepository) PageThreads(
+	ctx context.Context,
+	ownerID string,
+	limit int,
+	before *ThreadPageCursor,
+) ([]Thread, error) {
+	query := `
+SELECT
+    threads.id::text,
+    threads.owner_user_id::text,
+    COALESCE(active_link.matter_id::text, ''),
+    threads.next_message_sequence,
+    threads.created_at,
+    threads.updated_at
+FROM agent_threads AS threads
+LEFT JOIN agent_thread_matter_links AS active_link
+  ON active_link.thread_id = threads.id
+ AND active_link.owner_user_id = threads.owner_user_id
+ AND active_link.is_active
+WHERE threads.owner_user_id = $1
+ORDER BY threads.updated_at DESC, threads.id DESC
+LIMIT $2`
+	arguments := []any{ownerID, limit}
+	if before != nil {
+		query = `
+SELECT
+    threads.id::text,
+    threads.owner_user_id::text,
+    COALESCE(active_link.matter_id::text, ''),
+    threads.next_message_sequence,
+    threads.created_at,
+    threads.updated_at
+FROM agent_threads AS threads
+LEFT JOIN agent_thread_matter_links AS active_link
+  ON active_link.thread_id = threads.id
+ AND active_link.owner_user_id = threads.owner_user_id
+ AND active_link.is_active
+WHERE threads.owner_user_id = $1
+  AND (threads.updated_at, threads.id) < ($2, $3)
+ORDER BY threads.updated_at DESC, threads.id DESC
+LIMIT $4`
+		arguments = []any{
+			ownerID,
+			before.UpdatedAt,
+			before.ThreadID,
+			limit,
+		}
+	}
+	rows, err := r.database.Query(ctx, query, arguments...)
+	if err != nil {
+		return nil, ErrRepository
+	}
+	defer rows.Close()
+
+	result := make([]Thread, 0, limit)
+	for rows.Next() {
+		var item Thread
+		if err := rows.Scan(
+			&item.ID,
+			&item.OwnerID,
+			&item.ActiveMatterID,
+			&item.NextMessageSeq,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, ErrRepository
+		}
+		result = append(result, item)
+	}
+	if rows.Err() != nil {
+		return nil, ErrRepository
+	}
+	return result, nil
+}
+
 func (r *PostgresRepository) FindThread(
 	ctx context.Context,
 	ownerID string,
@@ -190,6 +265,129 @@ WHERE threads.id = $1 AND threads.owner_user_id = $2`,
 		return Thread{}, mapPostgresError(err)
 	}
 	return result, nil
+}
+
+func (r *PostgresRepository) FindFocusedThread(
+	ctx context.Context,
+	ownerID string,
+) (Thread, bool, error) {
+	var result Thread
+	err := r.database.QueryRow(ctx, `
+SELECT
+    threads.id::text,
+    threads.owner_user_id::text,
+    COALESCE(active_link.matter_id::text, ''),
+    threads.next_message_sequence,
+    threads.created_at,
+    threads.updated_at
+FROM agent_thread_focuses AS focus
+JOIN agent_threads AS threads
+  ON threads.id = focus.thread_id
+ AND threads.owner_user_id = focus.owner_user_id
+LEFT JOIN agent_thread_matter_links AS active_link
+  ON active_link.thread_id = threads.id
+ AND active_link.owner_user_id = threads.owner_user_id
+ AND active_link.is_active
+WHERE focus.owner_user_id = $1`,
+		ownerID,
+	).Scan(
+		&result.ID,
+		&result.OwnerID,
+		&result.ActiveMatterID,
+		&result.NextMessageSeq,
+		&result.CreatedAt,
+		&result.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Thread{}, false, nil
+	}
+	if err != nil {
+		return Thread{}, false, mapPostgresError(err)
+	}
+	return result, true, nil
+}
+
+func (r *PostgresRepository) SetFocusedThread(
+	ctx context.Context,
+	ownerID string,
+	threadID string,
+) (Thread, error) {
+	var result Thread
+	err := r.database.QueryRow(ctx, `
+WITH owned_thread AS (
+    SELECT id, owner_user_id
+    FROM agent_threads
+    WHERE id = $1 AND owner_user_id = $2
+),
+selected AS (
+    INSERT INTO agent_thread_focuses (
+        owner_user_id,
+        thread_id,
+        updated_at
+    )
+    SELECT owner_user_id, id, CURRENT_TIMESTAMP
+    FROM owned_thread
+    ON CONFLICT (owner_user_id) DO UPDATE
+    SET
+        thread_id = EXCLUDED.thread_id,
+        updated_at = CASE
+            WHEN agent_thread_focuses.thread_id = EXCLUDED.thread_id
+                THEN agent_thread_focuses.updated_at
+            ELSE GREATEST(
+                CURRENT_TIMESTAMP,
+                agent_thread_focuses.updated_at + INTERVAL '1 microsecond'
+            )
+        END
+    RETURNING owner_user_id, thread_id
+)
+SELECT
+    threads.id::text,
+    threads.owner_user_id::text,
+    COALESCE(active_link.matter_id::text, ''),
+    threads.next_message_sequence,
+    threads.created_at,
+    threads.updated_at
+FROM selected
+JOIN agent_threads AS threads
+  ON threads.id = selected.thread_id
+ AND threads.owner_user_id = selected.owner_user_id
+LEFT JOIN agent_thread_matter_links AS active_link
+  ON active_link.thread_id = threads.id
+ AND active_link.owner_user_id = threads.owner_user_id
+ AND active_link.is_active`,
+		threadID,
+		ownerID,
+	).Scan(
+		&result.ID,
+		&result.OwnerID,
+		&result.ActiveMatterID,
+		&result.NextMessageSeq,
+		&result.CreatedAt,
+		&result.UpdatedAt,
+	)
+	if err != nil {
+		return Thread{}, mapPostgresError(err)
+	}
+	return result, nil
+}
+
+func (r *PostgresRepository) ClearFocusedThread(
+	ctx context.Context,
+	ownerID string,
+) error {
+	var deleted int64
+	if err := r.database.QueryRow(ctx, `
+WITH deleted AS (
+    DELETE FROM agent_thread_focuses
+    WHERE owner_user_id = $1
+    RETURNING 1
+)
+SELECT COUNT(*) FROM deleted`,
+		ownerID,
+	).Scan(&deleted); err != nil {
+		return mapPostgresError(err)
+	}
+	return nil
 }
 
 func (r *PostgresRepository) SetActiveMatter(
@@ -462,6 +660,86 @@ ORDER BY sequence_no ASC`,
 	defer rows.Close()
 
 	result := make([]Message, 0)
+	for rows.Next() {
+		var item Message
+		var role string
+		if err := rows.Scan(
+			&item.ID,
+			&item.OwnerID,
+			&item.ThreadID,
+			&item.Sequence,
+			&role,
+			&item.ClientMessageID,
+			&item.ProducedByRunID,
+			&item.Content,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, ErrRepository
+		}
+		item.Role = MessageRole(role)
+		result = append(result, item)
+	}
+	if rows.Err() != nil {
+		return nil, ErrRepository
+	}
+	return result, nil
+}
+
+func (r *PostgresRepository) PageMessages(
+	ctx context.Context,
+	ownerID string,
+	threadID string,
+	limit int,
+	before *MessagePageCursor,
+) ([]Message, error) {
+	query := `
+SELECT
+    id::text,
+    owner_user_id::text,
+    thread_id::text,
+    sequence_no,
+    role,
+    COALESCE(client_message_id, ''),
+    COALESCE(produced_by_run_id::text, ''),
+    content,
+    created_at
+FROM agent_messages
+WHERE owner_user_id = $1 AND thread_id = $2
+ORDER BY sequence_no DESC
+LIMIT $3`
+	arguments := []any{ownerID, threadID, limit}
+	if before != nil {
+		query = `
+SELECT
+    id::text,
+    owner_user_id::text,
+    thread_id::text,
+    sequence_no,
+    role,
+    COALESCE(client_message_id, ''),
+    COALESCE(produced_by_run_id::text, ''),
+    content,
+    created_at
+FROM agent_messages
+WHERE owner_user_id = $1
+  AND thread_id = $2
+  AND sequence_no < $3
+ORDER BY sequence_no DESC
+LIMIT $4`
+		arguments = []any{
+			ownerID,
+			threadID,
+			before.BeforeSequence,
+			limit,
+		}
+	}
+	rows, err := r.database.Query(ctx, query, arguments...)
+	if err != nil {
+		return nil, ErrRepository
+	}
+	defer rows.Close()
+
+	result := make([]Message, 0, limit)
 	for rows.Next() {
 		var item Message
 		var role string

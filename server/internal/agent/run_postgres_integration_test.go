@@ -143,6 +143,38 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 		messages[1].ProducedByRunID != submission.Run.ID {
 		t.Fatalf("unexpected committed messages: %#v", messages)
 	}
+	newestPage, err := dataService.PageMessages(
+		context.Background(),
+		actorA,
+		thread.ID,
+		1,
+		"",
+	)
+	if err != nil {
+		t.Fatalf("page newest Message: %v", err)
+	}
+	if len(newestPage.Messages) != 1 ||
+		newestPage.Messages[0].Role != MessageRoleAssistant ||
+		newestPage.Messages[0].ProducedByRunID != submission.Run.ID ||
+		newestPage.NextCursor == "" {
+		t.Fatalf("unexpected newest Message page: %#v", newestPage)
+	}
+	olderPage, err := dataService.PageMessages(
+		context.Background(),
+		actorA,
+		thread.ID,
+		1,
+		newestPage.NextCursor,
+	)
+	if err != nil {
+		t.Fatalf("page older Message: %v", err)
+	}
+	if len(olderPage.Messages) != 1 ||
+		olderPage.Messages[0].ID != submission.UserMessage.ID ||
+		olderPage.Messages[0].Role != MessageRoleUser ||
+		olderPage.NextCursor != "" {
+		t.Fatalf("unexpected older Message page: %#v", olderPage)
+	}
 	manifest, err := runService.GetContextManifest(
 		context.Background(),
 		actorA,
