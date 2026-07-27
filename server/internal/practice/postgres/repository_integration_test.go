@@ -1098,6 +1098,10 @@ func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
 		"000004_agent_runs.down.sql",
 		"000005_agent_run_trust_boundaries.up.sql",
 		"000005_agent_run_trust_boundaries.down.sql",
+		"000006_agent_run_worker_leases.up.sql",
+		"000006_agent_run_worker_leases.down.sql",
+		"000007_agent_thread_focus.up.sql",
+		"000007_agent_thread_focus.down.sql",
 	}
 	for _, name := range requiredDependencies {
 		if _, err := fs.Stat(migrationfiles.Files, name); errors.Is(
@@ -1106,7 +1110,7 @@ func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
 		) {
 			t.Skipf(
 				"full migration chain requires embedded dependency %s; "+
-					"000002-000005 are not yet merged into upstream/dev",
+					"000002-000007 must be available in the stacked base",
 				name,
 			)
 		} else if err != nil {
@@ -1137,9 +1141,9 @@ func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if !status.Present || status.Dirty || status.Version < 6 {
+	if !status.Present || status.Dirty || status.Version < 8 {
 		t.Fatalf(
-			"status after full Up = %+v, want clean version >= 6",
+			"status after full Up = %+v, want clean version >= 8",
 			status,
 		)
 	}
@@ -1169,7 +1173,7 @@ func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
 		}
 	}
 
-	for status.Version > 6 {
+	for status.Version > 8 {
 		changed, err = runner.DownOne()
 		if err != nil {
 			t.Fatalf("DownOne from version %d: %v", status.Version, err)
@@ -1182,33 +1186,33 @@ func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
 		}
 		status, err = runner.Version()
 		if err != nil {
-			t.Fatalf("Version while returning to 000006: %v", err)
+			t.Fatalf("Version while returning to 000008: %v", err)
 		}
-		if !status.Present || status.Dirty || status.Version < 6 {
+		if !status.Present || status.Dirty || status.Version < 8 {
 			t.Fatalf(
-				"status while returning to 000006 = %+v",
+				"status while returning to 000008 = %+v",
 				status,
 			)
 		}
 	}
-	if status.Version != 6 {
-		t.Fatalf("version after later downs = %d, want 6", status.Version)
+	if status.Version != 8 {
+		t.Fatalf("version after later downs = %d, want 8", status.Version)
 	}
 	assertPracticeTables(true)
 
 	changed, err = runner.DownOne()
 	if err != nil {
-		t.Fatalf("DownOne from version 6: %v", err)
+		t.Fatalf("DownOne from version 8: %v", err)
 	}
 	if !changed {
-		t.Fatal("DownOne from version 6 reported no change")
+		t.Fatal("DownOne from version 8 reported no change")
 	}
 	status, err = runner.Version()
 	if err != nil {
 		t.Fatalf("Version after DownOne: %v", err)
 	}
-	if !status.Present || status.Dirty || status.Version != 5 {
-		t.Fatalf("status after DownOne = %+v, want clean version 5", status)
+	if !status.Present || status.Dirty || status.Version != 7 {
+		t.Fatalf("status after DownOne = %+v, want clean version 7", status)
 	}
 	assertPracticeTables(false)
 
@@ -1217,7 +1221,7 @@ func TestMigrationFullChainUpDownAndReapply(t *testing.T) {
 		t.Fatalf("Up after DownOne: %v", err)
 	}
 	if !changed {
-		t.Fatal("Up from version 5 reported no change")
+		t.Fatal("Up from version 7 reported no change")
 	}
 	status, err = runner.Version()
 	if err != nil {
@@ -1263,12 +1267,14 @@ func applyStackedMigrations(t *testing.T, databaseURL string) {
 		"000003_agent_data.up.sql",
 		"000004_agent_runs.up.sql",
 		"000005_agent_run_trust_boundaries.up.sql",
+		"000006_agent_run_worker_leases.up.sql",
+		"000007_agent_thread_focus.up.sql",
 	}
 	for _, name := range required {
 		if _, err := os.Stat(filepath.Join(dependencyDirectory, name)); err != nil {
 			t.Skip(
 				"Practice PostgreSQL tests require stacked migrations " +
-					"000002-000005; set " +
+					"000002-000007; set " +
 					"PRACTICE_TEST_DEPENDENCY_MIGRATIONS_DIR",
 			)
 		}
@@ -1289,7 +1295,7 @@ func applyStackedMigrations(t *testing.T, databaseURL string) {
 	}
 	migrations = append(
 		migrations,
-		filepath.Join(currentDirectory, "000006_practice_sessions.up.sql"),
+		filepath.Join(currentDirectory, "000008_practice_sessions.up.sql"),
 	)
 	for _, path := range migrations {
 		sql, err := os.ReadFile(path)
