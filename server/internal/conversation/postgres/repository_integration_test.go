@@ -1298,7 +1298,7 @@ func newIntegrationRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 		t.Fatalf("create identity dependency fixture: %v", err)
 	}
 	migrationSQL, err := migrations.Files.ReadFile(
-		"000007_conversation_persistence.up.sql",
+		"000009_conversation_persistence.up.sql",
 	)
 	if err != nil {
 		t.Fatalf("read Conversation migration: %v", err)
