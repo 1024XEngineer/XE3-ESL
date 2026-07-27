@@ -441,7 +441,7 @@ func (r *PostgresRepository) FailGeneration(
 ) error {
 	category := strings.TrimSpace(stableErrorCategory)
 	if r == nil || r.pool == nil || errInvalidClaim(claim) ||
-		category == "" || len(category) > 128 {
+		!validStableErrorCategory(category) {
 		return ErrInvalidReview
 	}
 
@@ -651,17 +651,19 @@ func (r *PostgresRepository) DeleteUserData(
 		return err
 	}
 	var accountStatus string
-	if err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT account_status
 		FROM identity_users
 		WHERE id = $1
-	`, command.UserID).Scan(&accountStatus); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrAccountDeleted
-		}
+		FOR UPDATE
+	`, command.UserID).Scan(&accountStatus)
+	identityMissing := errors.Is(err, pgx.ErrNoRows)
+	if err != nil && !identityMissing {
 		return err
 	}
-	if accountStatus != "deleting" && accountStatus != "deleted" {
+	if !identityMissing &&
+		accountStatus != "deleting" &&
+		accountStatus != "deleted" {
 		return ErrInvalidReview
 	}
 

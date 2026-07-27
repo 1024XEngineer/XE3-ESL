@@ -380,18 +380,27 @@ func validateReviewResult(result ReviewResult) error {
 }
 
 func validStableErrorCategory(category string) bool {
-	if len(category) == 0 || len(category) > 64 {
+	switch strings.TrimSpace(category) {
+	case "invalid_request",
+		"configuration",
+		"authentication",
+		"authorization",
+		"quota_exhausted",
+		"rate_limited",
+		"timeout",
+		"provider_timeout",
+		"provider_unavailable",
+		"invalid_response",
+		"cancelled",
+		"source_unavailable",
+		"invalid_source",
+		"generation_failed",
+		"invalid_result",
+		"lease_expired":
+		return true
+	default:
 		return false
 	}
-	for index, character := range category {
-		if (character >= 'a' && character <= 'z') ||
-			(index > 0 && character >= '0' && character <= '9') ||
-			(index > 0 && character == '_') {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 func sourceKey(sourceType, sourceID, sourceVersion string) string {

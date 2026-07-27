@@ -20,6 +20,7 @@ func TestStableCategoryAcceptsOnlyBoundedMachineCategories(t *testing.T) {
 		{name: "uppercase", category: "ProviderTimeout", want: fallback},
 		{name: "spaces", category: "provider timeout", want: fallback},
 		{name: "punctuation", category: "provider:error", want: fallback},
+		{name: "unknown machine category", category: "provider_billing_note", want: fallback},
 		{
 			name:     "oversized",
 			category: strings.Repeat("a", 65),

@@ -290,7 +290,7 @@ func TestPostgresReviewFailureRetryPendingAndLostResponseRecovery(t *testing.T) 
 	if err := repository.FailGeneration(
 		context.Background(),
 		oldStalledJob,
-		"late_worker",
+		"provider_timeout",
 	); !errors.Is(err, review.ErrGenerationClaimLost) {
 		t.Fatalf("expired worker failure write error = %v", err)
 	}
@@ -781,6 +781,19 @@ func TestPostgresReviewOwnerIsolationDeletionAndOldWorkerFence(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("delete user C: %v", err)
 	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`DELETE FROM identity_users WHERE id = $1`,
+		userC,
+	); err != nil {
+		t.Fatalf("physically delete user C identity: %v", err)
+	}
+	if err := repository.DeleteUserData(context.Background(), review.DeleteUserReviewsCommand{
+		UserID:             userC,
+		DeletionGeneration: 1,
+	}); err != nil {
+		t.Fatalf("replay deletion after physical identity removal: %v", err)
+	}
 	if _, err := repository.CompleteGeneration(
 		context.Background(),
 		oldJob,
@@ -917,6 +930,14 @@ func TestPostgresCompletedReviewAndEvidenceOwnershipConstraints(t *testing.T) {
 		WHERE id = $1
 	`, pending.ID); err == nil {
 		t.Fatal("pending Review with stable error unexpectedly passed CHECK")
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE reviews
+		SET status = 'failed',
+		    stable_error_category = 'raw provider response'
+		WHERE id = $1
+	`, pending.ID); err == nil {
+		t.Fatal("raw provider failure category unexpectedly passed CHECK")
 	}
 
 	tx, err := pool.Begin(context.Background())
@@ -1064,7 +1085,7 @@ func TestReviewMigrationRevertsAndReappliesAfterIdentityPrerequisite(t *testing.
 		)
 	}
 	down, err := migrations.Files.ReadFile(
-		"000008_review_formal_reviews.down.sql",
+		"000011_review_formal_reviews.down.sql",
 	)
 	if err != nil {
 		t.Fatalf("read Review down migration: %v", err)
@@ -1084,7 +1105,7 @@ func TestReviewMigrationRevertsAndReappliesAfterIdentityPrerequisite(t *testing.
 	}
 
 	up, err := migrations.Files.ReadFile(
-		"000008_review_formal_reviews.up.sql",
+		"000011_review_formal_reviews.up.sql",
 	)
 	if err != nil {
 		t.Fatalf("read Review up migration: %v", err)
@@ -1326,7 +1347,7 @@ func reviewDatabase(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("create #79 identity prerequisite fixture: %v", err)
 	}
 	up, err := migrations.Files.ReadFile(
-		"000008_review_formal_reviews.up.sql",
+		"000011_review_formal_reviews.up.sql",
 	)
 	if err != nil {
 		t.Fatalf("read Review migration: %v", err)

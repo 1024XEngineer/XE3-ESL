@@ -1,8 +1,7 @@
 BEGIN;
 
 CREATE TABLE review_deletion_fences (
-    owner_user_id uuid PRIMARY KEY
-        REFERENCES identity_users (id) ON DELETE CASCADE,
+    owner_user_id uuid PRIMARY KEY,
     deletion_generation bigint NOT NULL CHECK (deletion_generation >= 0),
     deleted_at timestamptz NOT NULL DEFAULT now()
 );
@@ -24,7 +23,24 @@ CREATE TABLE reviews (
     result jsonb,
     stable_error_category text CHECK (
         stable_error_category IS NULL
-        OR octet_length(stable_error_category) BETWEEN 1 AND 128
+        OR stable_error_category IN (
+            'invalid_request',
+            'configuration',
+            'authentication',
+            'authorization',
+            'quota_exhausted',
+            'rate_limited',
+            'timeout',
+            'provider_timeout',
+            'provider_unavailable',
+            'invalid_response',
+            'cancelled',
+            'source_unavailable',
+            'invalid_source',
+            'generation_failed',
+            'invalid_result',
+            'lease_expired'
+        )
     ),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -72,7 +88,24 @@ CREATE TABLE review_generation_attempts (
     lease_until timestamptz NOT NULL,
     stable_error_category text CHECK (
         stable_error_category IS NULL
-        OR octet_length(stable_error_category) BETWEEN 1 AND 128
+        OR stable_error_category IN (
+            'invalid_request',
+            'configuration',
+            'authentication',
+            'authorization',
+            'quota_exhausted',
+            'rate_limited',
+            'timeout',
+            'provider_timeout',
+            'provider_unavailable',
+            'invalid_response',
+            'cancelled',
+            'source_unavailable',
+            'invalid_source',
+            'generation_failed',
+            'invalid_result',
+            'lease_expired'
+        )
     ),
     started_at timestamptz NOT NULL DEFAULT now(),
     finished_at timestamptz,
