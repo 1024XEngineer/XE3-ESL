@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -793,74 +792,28 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 		t.Fatalf("decode Thread response: %v", err)
 	}
 
-	firstMessage := performAgentRequest(
+	messageWrite := performAgentRequest(
 		router,
 		http.MethodPost,
 		"/v1/agent-threads/"+threadBody.ID+"/messages",
 		`{"client_message_id":"mobile-0001","content":"Help me prepare."}`,
 		"token-a",
 	)
-	replayedMessage := performAgentRequest(
-		router,
-		http.MethodPost,
-		"/v1/agent-threads/"+threadBody.ID+"/messages",
-		`{"client_message_id":"mobile-0001","content":"Help me prepare."}`,
-		"token-a",
-	)
-	if firstMessage.Code != http.StatusCreated ||
-		replayedMessage.Code != http.StatusCreated ||
-		!bytes.Equal(firstMessage.Body.Bytes(), replayedMessage.Body.Bytes()) {
+	if messageWrite.Code != http.StatusNotFound {
 		t.Fatalf(
-			"idempotent HTTP responses differ: %d %s / %d %s",
-			firstMessage.Code,
-			firstMessage.Body,
-			replayedMessage.Code,
-			replayedMessage.Body,
+			"raw Message write route must not be exposed: %d %s",
+			messageWrite.Code,
+			messageWrite.Body,
 		)
 	}
-	conflictingReplay := performAgentRequest(
-		router,
-		http.MethodPost,
-		"/v1/agent-threads/"+threadBody.ID+"/messages",
-		`{"client_message_id":"mobile-0001","content":"Changed content"}`,
-		"token-a",
-	)
-	if conflictingReplay.Code != http.StatusConflict ||
-		!strings.Contains(
-			conflictingReplay.Body.String(),
-			`"code":"idempotency_key_conflict"`,
-		) {
-		t.Fatalf(
-			"idempotency conflict response: %d %s",
-			conflictingReplay.Code,
-			conflictingReplay.Body,
-		)
-	}
-	nulMessage := performAgentRequest(
-		router,
-		http.MethodPost,
-		"/v1/agent-threads/"+threadBody.ID+"/messages",
-		`{"client_message_id":"mobile-nul","content":"invalid\u0000content"}`,
-		"token-a",
-	)
-	if nulMessage.Code != http.StatusBadRequest {
-		t.Fatalf("NUL Message response: %d %s", nulMessage.Code, nulMessage.Body)
-	}
-	maxEscapedMessage := performAgentRequest(
-		router,
-		http.MethodPost,
-		"/v1/agent-threads/"+threadBody.ID+"/messages",
-		`{"client_message_id":"mobile-max-escaped","content":"`+
-			strings.Repeat(`\ud83d\ude00`, maxMessageContentRunes)+
-			`"}`,
-		"token-a",
-	)
-	if maxEscapedMessage.Code != http.StatusCreated {
-		t.Fatalf(
-			"maximum escaped Message response: %d %s",
-			maxEscapedMessage.Code,
-			maxEscapedMessage.Body,
-		)
+	if _, err := service.AppendUserMessage(
+		context.Background(),
+		actors["token-a"],
+		threadBody.ID,
+		"seed-message-0001",
+		"Seed one committed Message for the read contract.",
+	); err != nil {
+		t.Fatalf("seed Message for read contract: %v", err)
 	}
 
 	privateThread := performAgentRequest(

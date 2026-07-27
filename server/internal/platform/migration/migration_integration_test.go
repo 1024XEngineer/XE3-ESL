@@ -257,6 +257,192 @@ WHERE id = $1`,
 	}
 }
 
+func TestAgentTrustBoundaryMigrationUpgradePaths(t *testing.T) {
+	t.Run("already_applied_version_four", func(t *testing.T) {
+		migrationConfig, admin, schema := isolatedMigrationConfig(t)
+		runner, err := openConfig(migrationConfig)
+		if err != nil {
+			t.Fatalf("open migration runner: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := runner.Close(); err != nil {
+				t.Errorf("close migration runner: %v", err)
+			}
+		})
+
+		if err := runner.migrate.Steps(4); err != nil {
+			t.Fatalf("apply migrations through version four: %v", err)
+		}
+		assertMigrationStatus(t, runner, 4)
+		assertVersionFourAgentSchema(t, admin, schema)
+
+		if err := runner.migrate.Steps(1); err != nil {
+			t.Fatalf("apply version five: %v", err)
+		}
+		assertMigrationStatus(t, runner, 5)
+		assertAgentTrustBoundarySchema(t, admin, schema)
+
+		changed, err := runner.DownOne()
+		if err != nil {
+			t.Fatalf("revert version five: %v", err)
+		}
+		if !changed {
+			t.Fatal("version five down reported no change")
+		}
+		assertMigrationStatus(t, runner, 4)
+		assertVersionFourAgentSchema(t, admin, schema)
+
+		if err := runner.migrate.Steps(1); err != nil {
+			t.Fatalf("reapply version five: %v", err)
+		}
+		assertMigrationStatus(t, runner, 5)
+		assertAgentTrustBoundarySchema(t, admin, schema)
+	})
+
+	t.Run("empty_schema", func(t *testing.T) {
+		migrationConfig, admin, schema := isolatedMigrationConfig(t)
+		runner, err := openConfig(migrationConfig)
+		if err != nil {
+			t.Fatalf("open migration runner: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := runner.Close(); err != nil {
+				t.Errorf("close migration runner: %v", err)
+			}
+		})
+
+		changed, err := runner.Up()
+		if err != nil {
+			t.Fatalf("apply all migrations to empty schema: %v", err)
+		}
+		if !changed {
+			t.Fatal("empty-schema migration reported no change")
+		}
+		status, err := runner.Version()
+		if err != nil {
+			t.Fatalf("read empty-schema migration status: %v", err)
+		}
+		if !status.Present || status.Dirty || status.Version < 5 {
+			t.Fatalf(
+				"migration status = %+v, want a clean version at or after 5",
+				status,
+			)
+		}
+		assertAgentTrustBoundarySchema(t, admin, schema)
+	})
+}
+
+func TestAgentTrustBoundaryMigrationPreservesLegacyAuditAndRetries(t *testing.T) {
+	migrationConfig, admin, schema := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open version-four migration runner: %v", err)
+	}
+	if err := runner.migrate.Steps(4); err != nil {
+		_ = runner.Close()
+		t.Fatalf("apply migrations through version four: %v", err)
+	}
+	assertMigrationStatus(t, runner, 4)
+	if err := runner.Close(); err != nil {
+		t.Fatalf("close version-four migration runner: %v", err)
+	}
+
+	legacy := insertLegacyOverBudgetRun(t, migrationConfig)
+	failingVersionFive := fstest.MapFS{
+		"000004_existing_schema.up.sql": {
+			Data: []byte("BEGIN;\nSELECT 1;\nCOMMIT;\n"),
+		},
+		"000004_existing_schema.down.sql": {
+			Data: []byte("BEGIN;\nSELECT 1;\nCOMMIT;\n"),
+		},
+		"000005_legacy_budget_failure.up.sql": {
+			Data: []byte(`BEGIN;
+ALTER TABLE agent_runs
+    ADD CONSTRAINT agent_runs_result_budget_check
+        CHECK (
+            output_tokens IS NULL
+            OR output_tokens <= max_output_tokens
+        );
+COMMIT;
+`),
+		},
+		"000005_legacy_budget_failure.down.sql": {
+			Data: []byte(`BEGIN;
+ALTER TABLE agent_runs
+    DROP CONSTRAINT agent_runs_result_budget_check;
+COMMIT;
+`),
+		},
+	}
+	failingRunner, err := openConfigWithFS(
+		migrationConfig,
+		failingVersionFive,
+	)
+	if err != nil {
+		t.Fatalf("open failing version-five runner: %v", err)
+	}
+
+	_, migrationErr := failingRunner.Up()
+	if migrationErr == nil {
+		_ = failingRunner.Close()
+		t.Fatal("validated legacy budget migration unexpectedly succeeded")
+	}
+	if strings.Contains(migrationErr.Error(), "set migration lock timeout") {
+		_ = failingRunner.Close()
+		t.Fatalf(
+			"migration error contains statement-timeout cleanup noise: %v",
+			migrationErr,
+		)
+	}
+	failedStatus, err := failingRunner.Version()
+	if err != nil {
+		_ = failingRunner.Close()
+		t.Fatalf("read failed migration status: %v", err)
+	}
+	if !failedStatus.Dirty {
+		_ = failingRunner.Close()
+		t.Fatalf(
+			"failed migration error/status = %v / %+v, want dirty",
+			migrationErr,
+			failedStatus,
+		)
+	}
+	if _, exists := readAgentRunConstraintDefinitions(
+		t,
+		admin,
+		schema,
+	)["agent_runs_result_budget_check"]; exists {
+		_ = failingRunner.Close()
+		t.Fatal("failed transactional migration left its constraint behind")
+	}
+	assertVersionFourAgentSchema(t, admin, schema)
+	if err := failingRunner.Force(4, ForceConfirmation(4)); err != nil {
+		_ = failingRunner.Close()
+		t.Fatalf("force inspected schema back to version four: %v", err)
+	}
+	assertMigrationStatus(t, failingRunner, 4)
+	if err := failingRunner.Close(); err != nil {
+		t.Fatalf("close recovered failing runner: %v", err)
+	}
+
+	retryRunner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open fixed version-five runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := retryRunner.Close(); err != nil {
+			t.Errorf("close fixed version-five runner: %v", err)
+		}
+	})
+	if err := retryRunner.migrate.Steps(1); err != nil {
+		t.Fatalf("retry fixed version five: %v", err)
+	}
+	assertMigrationStatus(t, retryRunner, 5)
+	assertAgentTrustBoundarySchema(t, admin, schema)
+	assertLegacyOverBudgetRunPreserved(t, migrationConfig, legacy)
+	assertNewOverBudgetResultRejected(t, migrationConfig, legacy.ownerID)
+}
+
 func TestIdentityMigrationEnforcesConstraintsAndIndexes(t *testing.T) {
 	migrationConfig, admin, schema := isolatedMigrationConfig(t)
 
@@ -1033,6 +1219,564 @@ func assertConstraintViolation(
 			constraint,
 		)
 	}
+}
+
+type legacyRunAudit struct {
+	runID                string
+	ownerID              string
+	status               string
+	requestedModel       string
+	maxOutputTokens      int
+	assistantMessageID   string
+	providerCompletionID string
+	providerModel        string
+	inputTokens          int
+	outputTokens         int
+	totalTokens          int
+}
+
+func insertLegacyOverBudgetRun(
+	t *testing.T,
+	config *pgx.ConnConfig,
+) legacyRunAudit {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("connect to version-four schema: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Errorf("close version-four schema connection: %v", err)
+		}
+	}()
+
+	const (
+		ownerID            = "90000000-0000-4000-8000-000000000001"
+		threadID           = "90000000-0000-4000-8000-000000000002"
+		messageID          = "90000000-0000-4000-8000-000000000003"
+		runID              = "90000000-0000-4000-8000-000000000004"
+		assistantMessageID = "90000000-0000-4000-8000-000000000005"
+	)
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO identity_users (id, canonical_email)
+VALUES ($1, 'legacy-audit@example.com')`,
+		ownerID,
+	); err != nil {
+		t.Fatalf("insert legacy audit owner: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_threads (id, owner_user_id)
+VALUES ($1, $2)`,
+		threadID,
+		ownerID,
+	); err != nil {
+		t.Fatalf("insert legacy audit thread: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    client_message_id,
+    content
+) VALUES ($1, $2, $3, 1, 'user', $4, $5)`,
+		messageID,
+		ownerID,
+		threadID,
+		"legacy-budget-input",
+		"Preserve this historical request and result.",
+	); err != nil {
+		t.Fatalf("insert legacy audit message: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_runs (
+    id,
+    owner_user_id,
+    thread_id,
+    input_message_id,
+    attempt_no,
+    status,
+    requested_provider,
+    requested_model,
+    max_output_tokens
+) VALUES (
+    $1, $2, $3, $4, 1, 'pending', 'qianwen', 'qwen-legacy',
+    512
+)`,
+		runID,
+		ownerID,
+		threadID,
+		messageID,
+	); err != nil {
+		t.Fatalf("insert legacy audit run: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    produced_by_run_id,
+    content
+) VALUES ($1, $2, $3, 2, 'assistant', $4, $5)`,
+		assistantMessageID,
+		ownerID,
+		threadID,
+		runID,
+		"Preserve the historical provider result.",
+	); err != nil {
+		t.Fatalf("insert legacy audit assistant message: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`UPDATE agent_runs
+SET
+    status = 'completed',
+    started_at = created_at,
+    completed_at = created_at,
+    updated_at = created_at,
+    assistant_message_id = $2,
+    provider_completion_id = 'completion-legacy',
+    provider_model = requested_model,
+    finish_reason = 'stop',
+    input_tokens = 39,
+    output_tokens = 688,
+    total_tokens = 727
+WHERE id = $1`,
+		runID,
+		assistantMessageID,
+	); err != nil {
+		t.Fatalf("complete legacy over-budget audit row: %v", err)
+	}
+	return legacyRunAudit{
+		runID:                runID,
+		ownerID:              ownerID,
+		status:               "completed",
+		requestedModel:       "qwen-legacy",
+		maxOutputTokens:      512,
+		assistantMessageID:   assistantMessageID,
+		providerCompletionID: "completion-legacy",
+		providerModel:        "qwen-legacy",
+		inputTokens:          39,
+		outputTokens:         688,
+		totalTokens:          727,
+	}
+}
+
+func assertLegacyOverBudgetRunPreserved(
+	t *testing.T,
+	config *pgx.ConnConfig,
+	legacy legacyRunAudit,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("connect to upgraded schema: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Errorf("close upgraded schema connection: %v", err)
+		}
+	}()
+
+	var (
+		status               string
+		requestedModel       string
+		maxOutputTokens      int
+		assistantMessageID   string
+		providerCompletionID string
+		providerModel        string
+		inputTokens          int
+		outputTokens         int
+		totalTokens          int
+	)
+	if err := conn.QueryRow(
+		ctx,
+		`SELECT
+    status,
+    requested_model,
+    max_output_tokens,
+    assistant_message_id,
+    provider_completion_id,
+    provider_model,
+    input_tokens,
+    output_tokens,
+    total_tokens
+FROM agent_runs
+WHERE id = $1 AND owner_user_id = $2`,
+		legacy.runID,
+		legacy.ownerID,
+	).Scan(
+		&status,
+		&requestedModel,
+		&maxOutputTokens,
+		&assistantMessageID,
+		&providerCompletionID,
+		&providerModel,
+		&inputTokens,
+		&outputTokens,
+		&totalTokens,
+	); err != nil {
+		t.Fatalf("read preserved legacy audit row: %v", err)
+	}
+	if status != legacy.status ||
+		requestedModel != legacy.requestedModel ||
+		maxOutputTokens != legacy.maxOutputTokens ||
+		assistantMessageID != legacy.assistantMessageID ||
+		providerCompletionID != legacy.providerCompletionID ||
+		providerModel != legacy.providerModel ||
+		inputTokens != legacy.inputTokens ||
+		outputTokens != legacy.outputTokens ||
+		totalTokens != legacy.totalTokens {
+		t.Fatalf(
+			"legacy audit changed: status=%q model=%q budget=%d assistant=%q completion=%q provider_model=%q usage=%d/%d/%d",
+			status,
+			requestedModel,
+			maxOutputTokens,
+			assistantMessageID,
+			providerCompletionID,
+			providerModel,
+			inputTokens,
+			outputTokens,
+			totalTokens,
+		)
+	}
+}
+
+func assertNewOverBudgetResultRejected(
+	t *testing.T,
+	config *pgx.ConnConfig,
+	ownerID string,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("connect to upgraded schema: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Errorf("close upgraded schema connection: %v", err)
+		}
+	}()
+
+	const (
+		threadID         = "91000000-0000-4000-8000-000000000001"
+		inputMessageID   = "91000000-0000-4000-8000-000000000002"
+		runID            = "91000000-0000-4000-8000-000000000003"
+		assistantMessage = "91000000-0000-4000-8000-000000000004"
+	)
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_threads (id, owner_user_id)
+VALUES ($1, $2)`,
+		threadID,
+		ownerID,
+	); err != nil {
+		t.Fatalf("insert current constraint probe thread: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    client_message_id,
+    content
+) VALUES ($1, $2, $3, 1, 'user', $4, $5)`,
+		inputMessageID,
+		ownerID,
+		threadID,
+		"new-budget-input",
+		"Reject an over-budget result.",
+	); err != nil {
+		t.Fatalf("insert current constraint probe input: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_runs (
+    id,
+    owner_user_id,
+    thread_id,
+    input_message_id,
+    attempt_no,
+    status,
+    requested_provider,
+    requested_model,
+    max_output_tokens
+) VALUES ($1, $2, $3, $4, 1, 'pending', 'qianwen', 'qwen-current', 1)`,
+		runID,
+		ownerID,
+		threadID,
+		inputMessageID,
+	); err != nil {
+		t.Fatalf("insert current constraint probe run: %v", err)
+	}
+	if _, err := conn.Exec(
+		ctx,
+		`INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    produced_by_run_id,
+    content
+) VALUES ($1, $2, $3, 2, 'assistant', $4, $5)`,
+		assistantMessage,
+		ownerID,
+		threadID,
+		runID,
+		"This result must not be committed.",
+	); err != nil {
+		t.Fatalf("insert current constraint probe assistant: %v", err)
+	}
+
+	assertConstraintViolation(
+		t,
+		conn,
+		ctx,
+		`UPDATE agent_runs
+SET
+    status = 'completed',
+    started_at = created_at,
+    completed_at = created_at,
+    assistant_message_id = $2,
+    provider_completion_id = 'completion-current',
+    provider_model = requested_model,
+    finish_reason = 'stop',
+    input_tokens = 3,
+    output_tokens = 2,
+    total_tokens = 5
+WHERE id = $1`,
+		[]any{runID, assistantMessage},
+		"23514",
+		"agent_runs_result_budget_check",
+	)
+}
+
+func assertMigrationStatus(t *testing.T, runner *Runner, version int) {
+	t.Helper()
+
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("read migration version: %v", err)
+	}
+	if !status.Present || status.Version != version || status.Dirty {
+		t.Fatalf(
+			"migration status = %+v, want version %d clean",
+			status,
+			version,
+		)
+	}
+}
+
+func assertVersionFourAgentSchema(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+) {
+	t.Helper()
+
+	assertContextManifestTitleColumn(t, conn, schema, true)
+	constraints := readAgentRunConstraintDefinitions(t, conn, schema)
+	for _, name := range []string{
+		"agent_runs_id_owner_thread_input_key",
+		"agent_runs_result_model_check",
+		"agent_runs_result_budget_check",
+	} {
+		if _, exists := constraints[name]; exists {
+			t.Errorf("version four unexpectedly contains constraint %s", name)
+		}
+	}
+	retryDefinition := constraints["agent_runs_retry_of_fkey"]
+	if !strings.Contains(
+		retryDefinition.definition,
+		"FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id)",
+	) || strings.Contains(
+		retryDefinition.definition,
+		"FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id, input_message_id)",
+	) {
+		t.Errorf(
+			"version four retry constraint = %q",
+			retryDefinition.definition,
+		)
+	}
+	if strings.Contains(
+		constraints["agent_runs_result_numbers_check"].definition,
+		"::bigint",
+	) {
+		t.Error("version four unexpectedly contains the token sum constraint")
+	}
+}
+
+func assertAgentTrustBoundarySchema(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+) {
+	t.Helper()
+
+	assertContextManifestTitleColumn(t, conn, schema, false)
+	constraints := readAgentRunConstraintDefinitions(t, conn, schema)
+	expectedFragments := map[string][]string{
+		"agent_runs_id_owner_thread_input_key": {
+			"UNIQUE (id, owner_user_id, thread_id, input_message_id)",
+		},
+		"agent_runs_retry_of_fkey": {
+			"FOREIGN KEY (retry_of_run_id, owner_user_id, thread_id, input_message_id)",
+			"agent_runs(id, owner_user_id, thread_id, input_message_id)",
+		},
+		"agent_runs_result_numbers_check": {
+			"input_tokens",
+			"output_tokens",
+			"total_tokens",
+			"::bigint",
+		},
+		"agent_runs_result_model_check": {
+			"provider_model = requested_model",
+		},
+		"agent_runs_result_budget_check": {
+			"output_tokens <= max_output_tokens",
+		},
+		"agent_runs_state_shape_check": {
+			"status = 'pending'::text",
+			"provider_completion_id IS NULL",
+			"total_tokens IS NULL",
+		},
+	}
+	for name, fragments := range expectedFragments {
+		constraint, exists := constraints[name]
+		if !exists {
+			t.Errorf("constraint %s is missing", name)
+			continue
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(constraint.definition, fragment) {
+				t.Errorf(
+					"constraint %s definition %q does not contain %q",
+					name,
+					constraint.definition,
+					fragment,
+				)
+			}
+		}
+		wantValidated := name != "agent_runs_result_budget_check"
+		if constraint.validated != wantValidated {
+			t.Errorf(
+				"constraint %s validated = %t, want %t",
+				name,
+				constraint.validated,
+				wantValidated,
+			)
+		}
+	}
+}
+
+func assertContextManifestTitleColumn(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+	want bool,
+) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var exists bool
+	if err := conn.QueryRow(
+		ctx,
+		`SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = $1
+      AND table_name = 'agent_context_manifests'
+      AND column_name = 'active_matter_title'
+)`,
+		schema,
+	).Scan(&exists); err != nil {
+		t.Fatalf("inspect ContextManifest title column: %v", err)
+	}
+	if exists != want {
+		t.Fatalf(
+			"ContextManifest title column exists = %t, want %t",
+			exists,
+			want,
+		)
+	}
+}
+
+func readAgentRunConstraintDefinitions(
+	t *testing.T,
+	conn *pgx.Conn,
+	schema string,
+) map[string]agentRunConstraint {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := conn.Query(
+		ctx,
+		`SELECT
+    constraint_data.conname,
+    pg_get_constraintdef(constraint_data.oid),
+    constraint_data.convalidated
+FROM pg_constraint AS constraint_data
+JOIN pg_class AS relation_data
+  ON relation_data.oid = constraint_data.conrelid
+JOIN pg_namespace AS namespace_data
+  ON namespace_data.oid = relation_data.relnamespace
+WHERE namespace_data.nspname = $1
+  AND relation_data.relname = 'agent_runs'`,
+		schema,
+	)
+	if err != nil {
+		t.Fatalf("query AgentRun constraints: %v", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]agentRunConstraint)
+	for rows.Next() {
+		var name string
+		var constraint agentRunConstraint
+		if err := rows.Scan(
+			&name,
+			&constraint.definition,
+			&constraint.validated,
+		); err != nil {
+			t.Fatalf("scan AgentRun constraint: %v", err)
+		}
+		result[name] = constraint
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate AgentRun constraints: %v", err)
+	}
+	return result
+}
+
+type agentRunConstraint struct {
+	definition string
+	validated  bool
 }
 
 func assertIdentityIndexes(

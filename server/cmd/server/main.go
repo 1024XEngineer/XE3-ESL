@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
@@ -29,6 +30,16 @@ func main() {
 func run() int {
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
+	textConfig, err := config.LoadTextGeneration()
+	if err != nil {
+		logger.Error("text generation configuration failed")
+		return 1
+	}
+	textGenerator, err := bootstrap.NewTextGenerator(textConfig)
+	if err != nil {
+		logger.Error("text generation startup failed")
+		return 1
+	}
 
 	preparationCatalog, err := preparation.NewBuiltinCatalog()
 	if err != nil {
@@ -50,11 +61,19 @@ func run() int {
 	}
 	defer databasePool.Close()
 
-	identityModule, agentDataModule, err :=
-		bootstrap.NewIdentityAndAgentDataModules(
+	identityModule, agentModule, err :=
+		bootstrap.NewIdentityAndAgentModules(
+			ctx,
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
 			cfg.TrustedProxyHeader,
+			textGenerator,
+			agent.RunConfiguration{
+				Provider:           textConfig.Provider,
+				Model:              textConfig.Model,
+				MaxOutputTokens:    textConfig.MaxOutputTokens,
+				MaxInputCharacters: textConfig.MaxContextChars,
+			},
 		)
 	if err != nil {
 		logger.Error("application startup failed", slog.Any("error", err))
@@ -64,7 +83,7 @@ func run() int {
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
 		logger,
 		databasePool,
-		[]bootstrap.RouteRegistrar{identityModule, agentDataModule},
+		[]bootstrap.RouteRegistrar{identityModule, agentModule},
 		preparation.New(),
 		practice.New(),
 		conversation.New(),

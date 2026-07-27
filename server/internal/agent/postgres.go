@@ -13,6 +13,7 @@ const rollbackTimeout = 5 * time.Second
 
 type PostgreSQL interface {
 	Begin(context.Context) (pgx.Tx, error)
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
@@ -446,6 +447,7 @@ SELECT
     sequence_no,
     role,
     COALESCE(client_message_id, ''),
+    COALESCE(produced_by_run_id::text, ''),
     content,
     created_at
 FROM agent_messages
@@ -470,6 +472,7 @@ ORDER BY sequence_no ASC`,
 			&item.Sequence,
 			&role,
 			&item.ClientMessageID,
+			&item.ProducedByRunID,
 			&item.Content,
 			&item.CreatedAt,
 		); err != nil {

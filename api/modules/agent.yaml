@@ -201,31 +201,60 @@ paths:
   /v1/agent-threads/{thread_id}/messages:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'
+    get:
+      tags:
+        - Agent
+      summary: Restore committed Messages in stable Thread order
+      description: |
+        User Messages are created only through the Run submission command so
+        an initial pending Run is committed in the same transaction.
+      operationId: listAgentMessages
+      responses:
+        '200':
+          description: Messages ordered by the server-assigned sequence.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMessageList'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/runs:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
     post:
       tags:
         - Agent
-      summary: Append one idempotent user Message
+      summary: Submit one user Message and run the text Agent
       description: |
-        `client_message_id` is the Message-specific business idempotency key.
-        The same Actor and Thread replaying the same ID and content receives
-        the original Message. Reusing it with different content returns 409.
-        This does not implement the cross-module REST Idempotency-Key platform.
-      operationId: appendAgentUserMessage
+        The user Message and its initial pending AgentRun are committed in one
+        transaction. `client_message_id` is scoped to the trusted Actor and
+        Thread. Replaying the same ID and content restores the original Run;
+        changing the content returns 409. Provider failures are represented by
+        a durable `failed` Run so clients can inspect stable retry semantics.
+      operationId: submitAgentTextRun
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AppendAgentMessageRequest'
+              $ref: '#/components/schemas/SubmitAgentRunRequest'
       responses:
         '201':
-          description: |
-            The original or replayed durable Message. Both paths return the
-            same status and body.
+          description: The original or replayed Run reached a terminal state.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentMessage'
+                $ref: '#/components/schemas/AgentRun'
+        '202':
+          description: Another request is already processing this durable Run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
@@ -236,18 +265,86 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/AgentRunId'
     get:
       tags:
         - Agent
-      summary: Restore committed Messages in stable Thread order
-      operationId: listAgentMessages
+      summary: Restore an owned AgentRun
+      operationId: getAgentRun
       responses:
         '200':
-          description: Messages ordered by the server-assigned sequence.
+          description: The current durable Run state.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentMessageList'
+                $ref: '#/components/schemas/AgentRun'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-runs/{run_id}/retries:
+    parameters:
+      - $ref: '#/components/parameters/AgentRunId'
+    post:
+      tags:
+        - Agent
+      summary: Create a new attempt for one retryable failed Run
+      description: |
+        A retry never overwrites the failed Run. `client_retry_id` makes the
+        retry command idempotent for the trusted Actor and Thread.
+      operationId: retryAgentRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetryAgentRunRequest'
+      responses:
+        '201':
+          description: The original or replayed retry reached a terminal state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+        '202':
+          description: Another request is already processing the retry Run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-runs/{run_id}/context-manifest:
+    parameters:
+      - $ref: '#/components/parameters/AgentRunId'
+    get:
+      tags:
+        - Agent
+      summary: Explain the persisted sources and budgets for one AgentRun
+      description: |
+        This audit projection contains selected Matter and Message sources,
+        trimming, and final model configuration. It never contains hidden
+        reasoning or credentials.
+      operationId: getAgentRunContextManifest
+      responses:
+        '200':
+          description: The immutable ContextManifest for the owned Run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextManifest'
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
@@ -265,6 +362,13 @@ components:
         format: uuid
     AgentThreadId:
       name: thread_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AgentRunId:
+      name: run_id
       in: path
       required: true
       schema:
@@ -436,7 +540,6 @@ components:
         - thread_id
         - sequence
         - role
-        - client_message_id
         - content
         - created_at
       properties:
@@ -455,19 +558,290 @@ components:
           readOnly: true
         role:
           type: string
-          const: user
+          enum:
+            - user
+            - assistant
           readOnly: true
         client_message_id:
           type: string
           minLength: 1
           maxLength: 128
           pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          description: Present only for a user Message.
+        produced_by_run_id:
+          type: string
+          format: uuid
+          readOnly: true
+          description: Present only for an assistant Message.
         content:
           type: string
           minLength: 1
           maxLength: 4096
           pattern: '^[^\u0000]*$'
           x-max-utf8-bytes: 16384
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+    SubmitAgentRunRequest:
+      $ref: '#/components/schemas/AppendAgentMessageRequest'
+    RetryAgentRunRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - client_retry_id
+      properties:
+        client_retry_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+    AgentRunStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - completed
+        - failed
+    AgentRunFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - retryable
+      properties:
+        kind:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,63}$'
+        retryable:
+          type: boolean
+    TokenUsage:
+      type: object
+      additionalProperties: false
+      required:
+        - input_tokens
+        - output_tokens
+        - total_tokens
+      properties:
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        total_tokens:
+          type: integer
+          minimum: 0
+    AgentRun:
+      type: object
+      additionalProperties: false
+      required:
+        - run_id
+        - thread_id
+        - input_message_id
+        - attempt
+        - status
+        - requested_provider
+        - requested_model
+        - max_output_tokens
+        - created_at
+        - updated_at
+      properties:
+        run_id:
+          type: string
+          format: uuid
+          readOnly: true
+        thread_id:
+          type: string
+          format: uuid
+          readOnly: true
+        input_message_id:
+          type: string
+          format: uuid
+          readOnly: true
+        attempt:
+          type: integer
+          minimum: 1
+          readOnly: true
+        retry_of_run_id:
+          type: string
+          format: uuid
+          readOnly: true
+        client_retry_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+        status:
+          $ref: '#/components/schemas/AgentRunStatus'
+        requested_provider:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          readOnly: true
+        requested_model:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
+        max_output_tokens:
+          type: integer
+          minimum: 1
+          readOnly: true
+        assistant_message_id:
+          type: string
+          format: uuid
+          readOnly: true
+        provider_completion_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
+        provider_model:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
+        finish_reason:
+          type: string
+          enum:
+            - stop
+            - length
+          readOnly: true
+        usage:
+          $ref: '#/components/schemas/TokenUsage'
+        failure:
+          $ref: '#/components/schemas/AgentRunFailure'
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        started_at:
+          type: string
+          format: date-time
+          readOnly: true
+        completed_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    ContextMessageSource:
+      type: object
+      additionalProperties: false
+      required:
+        - message_id
+        - sequence
+        - role
+      properties:
+        message_id:
+          type: string
+          format: uuid
+          readOnly: true
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        role:
+          type: string
+          enum:
+            - user
+            - assistant
+          readOnly: true
+    ContextMatterSource:
+      type: object
+      additionalProperties: false
+      required:
+        - matter_id
+        - version
+      properties:
+        matter_id:
+          type: string
+          format: uuid
+          readOnly: true
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+    ContextManifest:
+      type: object
+      additionalProperties: false
+      required:
+        - run_id
+        - thread_id
+        - input_message_id
+        - instruction_version
+        - selected_messages
+        - omitted_message_count
+        - trim_reason
+        - max_input_characters
+        - used_input_characters
+        - requested_provider
+        - requested_model
+        - max_output_tokens
+        - created_at
+      properties:
+        run_id:
+          type: string
+          format: uuid
+          readOnly: true
+        thread_id:
+          type: string
+          format: uuid
+          readOnly: true
+        input_message_id:
+          type: string
+          format: uuid
+          readOnly: true
+        active_matter:
+          $ref: '#/components/schemas/ContextMatterSource'
+        instruction_version:
+          type: string
+          pattern: '^[a-z][a-z0-9._-]{0,63}$'
+          readOnly: true
+        selected_messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ContextMessageSource'
+        omitted_message_count:
+          type: integer
+          minimum: 0
+          readOnly: true
+        trim_reason:
+          type: string
+          enum:
+            - none
+            - context_budget
+          readOnly: true
+        max_input_characters:
+          type: integer
+          minimum: 1
+          readOnly: true
+        used_input_characters:
+          type: integer
+          minimum: 1
+          readOnly: true
+        requested_provider:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          readOnly: true
+        requested_model:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
+        max_output_tokens:
+          type: integer
+          minimum: 1
+          readOnly: true
         created_at:
           type: string
           format: date-time

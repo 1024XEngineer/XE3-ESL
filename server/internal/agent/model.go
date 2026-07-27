@@ -4,13 +4,15 @@ import (
 	"context"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 type MessageRole string
 
 const (
-	MessageRoleUser MessageRole = "user"
+	MessageRoleUser      MessageRole = "user"
+	MessageRoleAssistant MessageRole = "assistant"
 )
 
 type Thread struct {
@@ -38,8 +40,96 @@ type Message struct {
 	Sequence        int64
 	Role            MessageRole
 	ClientMessageID string
+	ProducedByRunID string
 	Content         string
 	CreatedAt       time.Time
+}
+
+type RunStatus string
+
+const (
+	RunStatusPending   RunStatus = "pending"
+	RunStatusRunning   RunStatus = "running"
+	RunStatusCompleted RunStatus = "completed"
+	RunStatusFailed    RunStatus = "failed"
+)
+
+const (
+	RunFailureInterrupted        = "interrupted"
+	RunFailureConfigurationDrift = "configuration_drift"
+	RunFailureInvalidContext     = "invalid_context"
+	RunFailureInternal           = "internal_error"
+)
+
+type Run struct {
+	ID                   string
+	OwnerID              string
+	ThreadID             string
+	InputMessageID       string
+	Attempt              int
+	RetryOfRunID         string
+	RetryClientID        string
+	Status               RunStatus
+	RequestedProvider    string
+	RequestedModel       string
+	MaxOutputTokens      int
+	MaxInputCharacters   int
+	WorkerLeaseToken     string
+	WorkerLeaseExpiresAt time.Time
+	AssistantMessageID   string
+	ProviderCompletionID string
+	ProviderModel        string
+	FinishReason         string
+	Usage                ai.TokenUsage
+	FailureKind          string
+	FailureRetryable     bool
+	CreatedAt            time.Time
+	StartedAt            time.Time
+	CompletedAt          time.Time
+	UpdatedAt            time.Time
+}
+
+type ContextMessageSource struct {
+	MessageID string      `json:"message_id"`
+	Sequence  int64       `json:"sequence"`
+	Role      MessageRole `json:"role"`
+}
+
+type ContextManifest struct {
+	RunID               string
+	OwnerID             string
+	ThreadID            string
+	InputMessageID      string
+	ActiveMatterID      string
+	ActiveMatterVersion int64
+	InstructionVersion  string
+	SelectedMessages    []ContextMessageSource
+	OmittedMessageCount int
+	TrimReason          string
+	MaxInputCharacters  int
+	UsedInputCharacters int
+	RequestedProvider   string
+	RequestedModel      string
+	MaxOutputTokens     int
+	CreatedAt           time.Time
+}
+
+type RunConfiguration struct {
+	Provider           string
+	Model              string
+	MaxOutputTokens    int
+	MaxInputCharacters int
+}
+
+type RunSubmission struct {
+	Run         Run
+	UserMessage Message
+	Created     bool
+}
+
+type RunRetry struct {
+	Run     Run
+	Created bool
 }
 
 type Repository interface {
@@ -103,6 +193,88 @@ type Application interface {
 		actor requestcontext.Actor,
 		threadID string,
 	) ([]Message, error)
+}
+
+type RunRepository interface {
+	CreateInitialRun(
+		ctx context.Context,
+		ownerID string,
+		threadID string,
+		clientMessageID string,
+		content string,
+		configuration RunConfiguration,
+	) (RunSubmission, error)
+	CreateRetryRun(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+		retryClientID string,
+		configuration RunConfiguration,
+	) (RunRetry, error)
+	ClaimRun(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+	) (Run, bool, error)
+	FindRun(ctx context.Context, ownerID, runID string) (Run, error)
+	FindMessage(
+		ctx context.Context,
+		ownerID string,
+		threadID string,
+		messageID string,
+	) (Message, error)
+	SaveContextManifest(
+		ctx context.Context,
+		manifest ContextManifest,
+	) (ContextManifest, error)
+	FindContextManifest(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+	) (ContextManifest, error)
+	CompleteRun(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+		workerLeaseToken string,
+		content string,
+		result ai.TextResult,
+	) (Run, error)
+	FailRun(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+		workerLeaseToken string,
+		failureKind string,
+		retryable bool,
+	) (Run, error)
+	RecoverInterruptedRuns(ctx context.Context) (int64, error)
+}
+
+type RunApplication interface {
+	SubmitText(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		threadID string,
+		clientMessageID string,
+		content string,
+	) (RunSubmission, error)
+	RetryText(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		runID string,
+		retryClientID string,
+	) (RunRetry, error)
+	GetRun(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		runID string,
+	) (Run, error)
+	GetContextManifest(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		runID string,
+	) (ContextManifest, error)
 }
 
 type IDGenerator interface {

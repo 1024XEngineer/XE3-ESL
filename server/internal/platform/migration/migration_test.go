@@ -2,6 +2,7 @@ package migration
 
 import (
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -99,6 +100,26 @@ func TestMigrationTimeoutsStayBounded(t *testing.T) {
 	}
 }
 
+func TestBoundedDriverRollsBackFailedExplicitMigration(t *testing.T) {
+	t.Parallel()
+
+	migrationErr := errors.New("migration statement failed")
+	driver := &runRecoveryDriver{migrationErr: migrationErr}
+	bounded := &boundedLockDriver{Driver: driver}
+
+	err := bounded.Run(strings.NewReader("BEGIN; SELECT invalid; COMMIT;"))
+	if !errors.Is(err, migrationErr) {
+		t.Fatalf("Run error = %v, want original migration error", err)
+	}
+	wantCalls := []string{
+		"BEGIN; SELECT invalid; COMMIT;",
+		"ROLLBACK",
+	}
+	if !reflect.DeepEqual(driver.calls, wantCalls) {
+		t.Fatalf("Run calls = %#v, want %#v", driver.calls, wantCalls)
+	}
+}
+
 func TestOpenRejectsMissingDatabaseURL(t *testing.T) {
 	t.Parallel()
 
@@ -153,6 +174,25 @@ type forceSequenceDriver struct {
 	locked  bool
 	version int
 	dirty   bool
+}
+
+type runRecoveryDriver struct {
+	migratedatabase.Driver
+	calls        []string
+	migrationErr error
+}
+
+func (d *runRecoveryDriver) Run(statement io.Reader) error {
+	content, err := io.ReadAll(statement)
+	if err != nil {
+		return err
+	}
+	query := strings.TrimSpace(string(content))
+	d.calls = append(d.calls, query)
+	if query == "ROLLBACK" {
+		return nil
+	}
+	return d.migrationErr
 }
 
 func (d *forceSequenceDriver) Lock() error {
