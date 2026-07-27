@@ -61,7 +61,6 @@ func NewHTTPHandler(
 		matters,
 		authenticator,
 		correlationID,
-		voiceOptions...,
 	)
 }
 
@@ -71,7 +70,6 @@ func NewHTTPHandlerWithRuns(
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
-	voiceOptions ...VoiceHTTPOptions,
 ) (*HTTPHandler, error) {
 	return NewHTTPHandlerWithRunsAndVoice(
 		application,
@@ -100,6 +98,7 @@ func NewHTTPHandlerWithRunsAndVoice(
 		matters,
 		authenticator,
 		correlationID,
+		voiceOptions...,
 	)
 }
 
@@ -111,6 +110,7 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
+	voiceOptions ...VoiceHTTPOptions,
 ) (*HTTPHandler, error) {
 	if application == nil || matters == nil || authenticator == nil {
 		return nil, errors.New("agent: HTTP dependency is required")

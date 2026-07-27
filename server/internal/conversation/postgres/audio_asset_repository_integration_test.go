@@ -1922,7 +1922,7 @@ func TestAudioAssetMigrationEnforcesConstraintsIndexesAndDown(t *testing.T) {
 	}
 
 	downSQL, err := migrations.Files.ReadFile(
-		"000009_conversation_audio_assets.down.sql",
+		"000012_conversation_audio_assets.down.sql",
 	)
 	if err != nil {
 		t.Fatalf("read audio asset down migration: %v", err)
@@ -2002,7 +2002,7 @@ func newAudioAssetIntegrationRepository(
 		t.Fatalf("create Identity dependency fixture: %v", err)
 	}
 	migrationSQL, err := migrations.Files.ReadFile(
-		"000009_conversation_audio_assets.up.sql",
+		"000012_conversation_audio_assets.up.sql",
 	)
 	if err != nil {
 		t.Fatalf("read audio asset migration: %v", err)

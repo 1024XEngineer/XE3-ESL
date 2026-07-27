@@ -253,7 +253,7 @@ func newRecordingConfirmationIntegrationRepositories(
 	t.Helper()
 	repository, pool := newIntegrationRepository(t)
 	migrationSQL, err := migrations.Files.ReadFile(
-		"000009_conversation_audio_assets.up.sql",
+		"000012_conversation_audio_assets.up.sql",
 	)
 	if err != nil {
 		t.Fatalf("read AudioAsset migration: %v", err)
