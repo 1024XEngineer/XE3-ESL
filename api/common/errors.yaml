@@ -56,7 +56,11 @@ components:
         - rate_limited
         - resource_not_found
         - resource_conflict
+        - resource_processing
         - idempotency_key_conflict
+        - provider_unavailable
+        - quota_exhausted
+        - voice_capacity_exhausted
         - scenario_definition_not_found
         - role_definition_not_found
         - preparation_profile_not_found
@@ -107,6 +111,7 @@ components:
         account_registration_unavailable: 409
         idempotency_key_conflict: 409
         resource_conflict: 409
+        resource_processing: 409
         preparation_version_conflict: 409
         practice_plan_not_ready: 409
         practice_plan_archived: 409
@@ -123,6 +128,9 @@ components:
         retry_request_conflict: 409
         transcript_unavailable: 422
         rate_limited: 429
+        provider_unavailable: 503
+        quota_exhausted: 503
+        voice_capacity_exhausted: 503
         internal_error: 500
   responses:
     BadRequest:
@@ -185,6 +193,12 @@ components:
               correlation_id: corr_forbidden
     Conflict:
       description: The request conflicts with the current resource state.
+      headers:
+        Retry-After:
+          description: Optional minimum delay when the conflicting resource is still processing.
+          schema:
+            type: integer
+            minimum: 1
       content:
         application/json:
           schema:
@@ -216,6 +230,12 @@ components:
               correlation_id: corr_rate_limited
     DefaultError:
       description: A stable error response.
+      headers:
+        Retry-After:
+          description: Optional minimum delay for a retryable service failure.
+          schema:
+            type: integer
+            minimum: 1
       content:
         application/json:
           schema:

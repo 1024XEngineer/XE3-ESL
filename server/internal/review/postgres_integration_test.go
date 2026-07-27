@@ -1212,7 +1212,7 @@ func (generator *terminalCountingGenerator) GenerateReview(
 type terminalCategorizedError struct{}
 
 func (terminalCategorizedError) Error() string {
-	return "free quota exhausted"
+	return "provider quota exhausted"
 }
 
 func (terminalCategorizedError) StableCategory() string {

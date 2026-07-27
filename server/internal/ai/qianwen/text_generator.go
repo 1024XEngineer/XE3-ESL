@@ -40,7 +40,7 @@ type Generator struct {
 	model           string
 	timeout         time.Duration
 	maxOutputTokens int
-	apiKey          string
+	apiKey          providerSecret
 	client          httpDoer
 }
 
@@ -105,7 +105,7 @@ func newWithClient(config Config, apiKey string, client httpDoer) (*Generator, e
 		model:           model,
 		timeout:         config.Timeout,
 		maxOutputTokens: config.MaxOutputTokens,
-		apiKey:          apiKey,
+		apiKey:          newProviderSecret(apiKey),
 		client:          client,
 	}, nil
 }
@@ -174,7 +174,10 @@ func (generator *Generator) Generate(
 			err,
 		)
 	}
-	httpRequest.Header.Set(authorizationHeaderName, "Bearer "+generator.apiKey)
+	httpRequest.Header.Set(
+		authorizationHeaderName,
+		"Bearer "+generator.apiKey.reveal(),
+	)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Accept", "application/json")
 

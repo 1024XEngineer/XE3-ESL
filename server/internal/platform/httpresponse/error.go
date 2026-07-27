@@ -192,6 +192,7 @@ var canonicalHTTPStatusByCode = map[string]int{
 	"account_registration_unavailable":        http.StatusConflict,
 	"idempotency_key_conflict":                http.StatusConflict,
 	"resource_conflict":                       http.StatusConflict,
+	"resource_processing":                     http.StatusConflict,
 	"preparation_version_conflict":            http.StatusConflict,
 	"practice_plan_not_ready":                 http.StatusConflict,
 	"practice_plan_archived":                  http.StatusConflict,
@@ -208,6 +209,9 @@ var canonicalHTTPStatusByCode = map[string]int{
 	"retry_request_conflict":                  http.StatusConflict,
 	"transcript_unavailable":                  http.StatusUnprocessableEntity,
 	"rate_limited":                            http.StatusTooManyRequests,
+	"provider_unavailable":                    http.StatusServiceUnavailable,
+	"quota_exhausted":                         http.StatusServiceUnavailable,
+	"voice_capacity_exhausted":                http.StatusServiceUnavailable,
 	internalErrorCode:                         http.StatusInternalServerError,
 }
 

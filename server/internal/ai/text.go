@@ -141,3 +141,13 @@ func (e *GenerationError) Unwrap() error {
 func (e *GenerationError) Retryable() bool {
 	return e != nil && e.Kind.Retryable()
 }
+
+// StableCategory lets owning application modules persist provider-neutral
+// failure classification through a structural error port. It deliberately
+// exposes only the bounded machine category, not provider payloads.
+func (e *GenerationError) StableCategory() string {
+	if e == nil {
+		return ""
+	}
+	return string(e.Kind)
+}

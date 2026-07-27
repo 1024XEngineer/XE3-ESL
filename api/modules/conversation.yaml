@@ -1,4 +1,181 @@
 paths:
+  /v1/agent-threads/{thread_id}/voice-practice-sessions:
+    post:
+      tags:
+        - Conversation
+      summary: Start or return the Thread's targeted voice Practice Session
+      description: |
+        Requires an authenticated Actor and a Thread with an owned active
+        Matter. The server freezes that Thread/Matter association, one
+        INTERVIEWER and the Actor's `speakup.user` CANDIDATE participant in the
+        Practice Snapshot. The empty request is idempotent and never accepts a
+        user, participant, Matter, question, or transcript from the client.
+      operationId: startThreadVoicePracticeSession
+      parameters:
+        - $ref: '#/components/parameters/ThreadId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Durable Session state and its current text Question.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceSessionState'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/voice-practice-session:
+    get:
+      tags:
+        - Conversation
+      summary: Resume the Thread's current targeted voice Practice Session
+      description: |
+        Resolves the exact stable Session from the authenticated Actor and
+        Thread. It never selects a recent Session. Once Start succeeds, later
+        Thread selection changes do not rewrite the immutable Matter and
+        participant Snapshot restored here.
+      operationId: getThreadVoicePracticeSession
+      parameters:
+        - $ref: '#/components/parameters/ThreadId'
+      responses:
+        '200':
+          description: Recovered Session, latest Turn, current Question, and Review reference.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceSessionState'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/transcription-candidates:
+    post:
+      tags:
+        - Conversation
+      summary: Transcribe one bounded WAV answer into an unconfirmed candidate
+      description: |
+        The body is raw `audio/wav`. The server validates its real WAV shape,
+        byte size, duration, channels, and sample rate, keeps it only in a
+        bounded temporary lifecycle, resolves the respondent from the Bearer
+        Actor through Practice, and sends only the current recording to ASR.
+        Failure does not create a Turn or advance Practice.
+      operationId: createVoiceTranscriptionCandidate
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - $ref: '#/components/parameters/QuestionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Candidate transcript awaiting explicit confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionCandidate'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/transcription-candidates/{candidate_id}/confirmations:
+    post:
+      tags:
+        - Conversation
+      summary: Confirm a candidate and advance the durable three-round Saga
+      description: |
+        The request has no body. Confirmation creates or returns one immutable
+        Conversation Turn, applies it exactly once to Practice, creates the next
+        Question when Practice remains active, and on the authoritative
+        completion transition ensures one formal Review.
+      operationId: confirmVoiceTranscriptionCandidate
+      parameters:
+        - $ref: '#/components/parameters/CandidateId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Recovered Saga state after confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceSessionState'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/voice-questions/{question_id}/speech:
+    get:
+      tags:
+        - Conversation
+      summary: Synthesize the persisted Question on demand
+      description: |
+        Returns ephemeral WAV bytes. TTS failure never removes or hides the
+        text Question returned by the Session resource.
+      operationId: getVoiceQuestionSpeech
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      responses:
+        '200':
+          description: Synthesized Question audio.
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/formal-reviews/{review_id}:
+    get:
+      tags:
+        - Review
+      summary: Restore one Actor-owned formal Session Review
+      operationId: getFormalSessionReview
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      responses:
+        '200':
+          description: Durable formal Review and evidence-backed result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FormalReview'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-sessions/{practice_session_id}/bootstrap:
     get:
       tags:
@@ -87,8 +264,9 @@ paths:
         the Question addressees.
 
         The deterministic Mock supplies final transcript text while preserving
-        the accepted `PUSH_TO_TALK` interaction mode; this contract does not add
-        a separate text practice mode or define audio binary transport. When
+        the accepted `PUSH_TO_TALK` interaction mode. This legacy Mock endpoint
+        does not accept audio; production voice rounds use the separate bounded
+        WAV candidate and confirmation operations. When
         `retry_request_id` is present, Review and Conversation must already have
         created an `answering` Turn for the original Question. This request
         advances that same Turn to `submitted`; it never creates a second Turn.
@@ -325,6 +503,12 @@ paths:
           is_credential: false
 components:
   parameters:
+    ThreadId:
+      name: thread_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
     PracticeSessionId:
       name: practice_session_id
       in: path
@@ -343,6 +527,18 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/ResourceId'
+    CandidateId:
+      name: candidate_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    ReviewId:
+      name: review_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
     IdempotencyKey:
       $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
   schemas:
@@ -350,6 +546,242 @@ components:
       type: string
       minLength: 1
       maxLength: 128
+    VoiceSessionState:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_session_id
+        - practice_plan_id
+        - thread_id
+        - matter
+        - session_version
+        - effective_turns
+        - turn_limit
+        - session_completed
+      properties:
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_plan_id:
+          $ref: '#/components/schemas/ResourceId'
+        thread_id:
+          $ref: '#/components/schemas/ResourceId'
+        matter:
+          $ref: ./agent.yaml#/components/schemas/Matter
+        session_version:
+          type: integer
+          minimum: 1
+        effective_turns:
+          type: integer
+          minimum: 0
+        turn_limit:
+          type: integer
+          minimum: 1
+        session_completed:
+          type: boolean
+        current_question:
+          $ref: '#/components/schemas/VoiceQuestion'
+        current_turn:
+          $ref: '#/components/schemas/ConfirmedVoiceTurn'
+        review:
+          $ref: '#/components/schemas/FormalReview'
+      allOf:
+        - if:
+            properties:
+              session_completed:
+                const: true
+            required:
+              - session_completed
+          then:
+            required:
+              - current_turn
+        - if:
+            properties:
+              session_completed:
+                const: false
+            required:
+              - session_completed
+          then:
+            required:
+              - current_question
+    VoiceQuestion:
+      type: object
+      additionalProperties: false
+      required:
+        - question_id
+        - practice_session_id
+        - content
+        - speaker_participant_id
+        - addressee_participant_ids
+        - speech_path
+      properties:
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        content:
+          type: string
+          minLength: 1
+        speaker_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        addressee_participant_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ResourceId'
+        speech_path:
+          type: string
+          pattern: '^/v1/'
+    TranscriptionCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - candidate_id
+        - practice_session_id
+        - question_id
+        - respondent_participant_id
+        - transcript_id
+        - evidence_version
+        - transcript
+        - created_at
+      properties:
+        candidate_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        respondent_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        transcript_id:
+          $ref: '#/components/schemas/ResourceId'
+        evidence_version:
+          type: integer
+          format: int64
+          minimum: 1
+        transcript:
+          type: string
+          minLength: 1
+        created_at:
+          type: string
+          format: date-time
+    ConfirmedVoiceTurn:
+      type: object
+      additionalProperties: false
+      required:
+        - turn_id
+        - practice_session_id
+        - question_id
+        - respondent_participant_id
+        - candidate_id
+        - answer_text
+        - evidence_version
+        - effective_turns
+        - session_completed
+      properties:
+        turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        respondent_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        candidate_id:
+          $ref: '#/components/schemas/ResourceId'
+        answer_text:
+          type: string
+          minLength: 1
+        evidence_version:
+          type: integer
+          format: int64
+          minimum: 1
+        effective_turns:
+          type: integer
+          minimum: 1
+        session_completed:
+          type: boolean
+        review_id:
+          $ref: '#/components/schemas/ResourceId'
+    FormalReview:
+      type: object
+      additionalProperties: false
+      required:
+        - review_id
+        - practice_session_id
+        - status
+        - implementation_version
+        - source_turn_id
+        - source_turn_version
+        - created_at
+        - updated_at
+      properties:
+        review_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        status:
+          type: string
+          enum: [pending, generating, completed, failed]
+        implementation_version:
+          type: string
+          minLength: 1
+        source_turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        source_turn_version:
+          type: string
+          pattern: '^conversation-turn:evidence-v[1-9][0-9]*$'
+        result:
+          $ref: '#/components/schemas/FormalReviewResult'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+    FormalReviewResult:
+      type: object
+      additionalProperties: false
+      required:
+        - overall_score
+        - summary
+        - conclusions
+      properties:
+        overall_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        summary:
+          type: string
+          minLength: 1
+        conclusions:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/FormalReviewConclusion'
+    FormalReviewConclusion:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - category
+        - message
+      properties:
+        key:
+          type: string
+          minLength: 1
+        category:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+        suggestion:
+          type: string
+          minLength: 1
     Question:
       type: object
       additionalProperties: false
