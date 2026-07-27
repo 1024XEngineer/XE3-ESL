@@ -23,8 +23,6 @@ type CreateSnapshotRequest struct {
 // Production and deterministic smoke adapters implement the same application
 // operations without exposing transport concerns to the module.
 type Backend interface {
-	GetScenario(string) (map[string]any, bool)
-	ListRoles(string) ([]map[string]any, bool)
 	CreateProfile(CreateProfileRequest) (map[string]any, error)
 	CreateSnapshot(string, CreateSnapshotRequest) (map[string]any, error)
 	ProfileExists(string) bool
@@ -34,18 +32,39 @@ type Backend interface {
 // Service is Preparation's formal application-service entry point.
 type Service struct {
 	backend Backend
+	catalog CatalogReader
 }
 
-func NewService(backend Backend) *Service {
-	return &Service{backend: backend}
+func NewService(backend Backend, catalog CatalogReader) *Service {
+	return &Service{backend: backend, catalog: catalog}
 }
 
-func (s *Service) GetScenario(id string) (map[string]any, bool) {
-	return s.backend.GetScenario(id)
+func (s *Service) ListActiveScenarios() []ScenarioDefinition {
+	return s.catalog.ListActiveScenarios()
 }
 
-func (s *Service) ListRoles(scenarioID string) ([]map[string]any, bool) {
-	return s.backend.ListRoles(scenarioID)
+func (s *Service) GetScenarioDetail(id string) (ScenarioDetail, error) {
+	return s.catalog.GetScenarioDetail(id)
+}
+
+func (s *Service) ListRoles(scenarioID string) ([]RoleDefinition, error) {
+	return s.catalog.ListRoles(scenarioID)
+}
+
+func (s *Service) GetCatalogSnapshot(
+	scenarioDefinitionID string,
+	scenarioVersion int,
+	selectedRoleIDs []string,
+	practiceOptionID string,
+	practiceOptionVersion int,
+) (CatalogSnapshot, error) {
+	return s.catalog.GetCatalogSnapshot(
+		scenarioDefinitionID,
+		scenarioVersion,
+		selectedRoleIDs,
+		practiceOptionID,
+		practiceOptionVersion,
+	)
 }
 
 func (s *Service) CreateProfile(request CreateProfileRequest) (map[string]any, error) {

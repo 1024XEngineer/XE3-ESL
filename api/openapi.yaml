@@ -71,6 +71,8 @@ paths:
     $ref: ./modules/identity.yaml#/paths/~1v1~1auth~1logout
   /v1/me:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me
+  /v1/scenario-definitions:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions
   /v1/matters:
     $ref: ./modules/agent.yaml#/paths/~1v1~1matters
   /v1/matters/{matter_id}:
@@ -178,6 +180,8 @@ components:
       $ref: ./modules/agent.yaml#/components/schemas/AgentMessage
     ScenarioDefinition:
       $ref: ./modules/preparation.yaml#/components/schemas/ScenarioDefinition
+    ScenarioDefinitionList:
+      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioDefinitionList
     ScenarioConfig:
       $ref: ./modules/preparation.yaml#/components/schemas/ScenarioConfig
     InterviewScenarioConfig:

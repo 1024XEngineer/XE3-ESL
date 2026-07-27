@@ -23,6 +23,7 @@ const publicOperations = new Set([
   'GET /health',
   'POST /v1/auth/register',
   'POST /v1/auth/login',
+  'GET /v1/scenario-definitions',
   'GET /v1/scenario-definitions/{scenario_definition_id}',
   'GET /v1/scenario-definitions/{scenario_definition_id}/role-definitions',
 ]);

@@ -1,9 +1,41 @@
 paths:
+  /v1/scenario-definitions:
+    get:
+      tags:
+        - Preparation
+      summary: List active scenario definitions
+      description: |
+        Returns active scenarios in stable menu order. Presentation order does
+        not define a workflow or required progression.
+      operationId: listScenarioDefinitions
+      security: []
+      responses:
+        '200':
+          description: Active scenarios in stable display order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioDefinitionList'
+              example:
+                scenarios:
+                  - scenario_definition_id: scn_programmer_interview
+                    scenario_type: INTERVIEW
+                    name: English interview for technical roles
+                    version: 1
+                    status: active
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/scenario-definitions/{scenario_definition_id}:
     get:
       tags:
         - Preparation
       summary: Get an active scenario definition and its MS1 configuration
+      description: |
+        Returns the current configuration and stable practice choices for one
+        scenario. FULL_SIMULATION uses the caller's selected interviewer
+        perspective; each FOCUS option is bound to exactly one perspective.
       operationId: getScenarioDefinition
       security: []
       parameters:
@@ -19,7 +51,7 @@ paths:
                 scenario_definition:
                   scenario_definition_id: scn_programmer_interview
                   scenario_type: INTERVIEW
-                  name: Programmer English interview
+                  name: English interview for technical roles
                   version: 1
                   status: active
                 scenario_config:
@@ -44,7 +76,25 @@ paths:
                     scenario_definition_id: scn_programmer_interview
                     role_definition_id: role_technical_interviewer
                     practice_option_type: FOCUS
-                    display_name: Technical deep dive
+                    display_name: Technical depth focus
+                    version: 1
+                  - practice_option_id: option_hr_focus
+                    scenario_definition_id: scn_programmer_interview
+                    role_definition_id: role_hr_interviewer
+                    practice_option_type: FOCUS
+                    display_name: Recruiter and motivation focus
+                    version: 1
+                  - practice_option_id: option_project_manager_focus
+                    scenario_definition_id: scn_programmer_interview
+                    role_definition_id: role_project_manager
+                    practice_option_type: FOCUS
+                    display_name: Delivery and collaboration focus
+                    version: 1
+                  - practice_option_id: option_executive_focus
+                    scenario_definition_id: scn_programmer_interview
+                    role_definition_id: role_executive_interviewer
+                    practice_option_type: FOCUS
+                    display_name: Leadership and impact focus
                     version: 1
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
@@ -54,7 +104,12 @@ paths:
     get:
       tags:
         - Preparation
-      summary: List role definitions available for a scenario
+      summary: List optional interviewer perspectives for a scenario
+      description: |
+        Each role is an independently selectable interviewer perspective, not a
+        mandatory recruitment stage. The stable response order is menu
+        presentation only. Leadership and impact is an optional perspective for
+        senior, lead, or management roles.
       operationId: listRoleDefinitions
       security: []
       parameters:
@@ -68,32 +123,32 @@ paths:
                 $ref: '#/components/schemas/RoleDefinitionList'
               example:
                 roles:
-                  - role_definition_id: role_hr_interviewer
-                    scenario_definition_id: scn_programmer_interview
-                    role_type: HR_INTERVIEWER
-                    display_name: HR interviewer
-                    responsibilities: Validate motivation and communication clarity.
-                    style: Warm and structured.
-                    focus_areas:
-                      - motivation
-                      - communication
-                    version: 1
                   - role_definition_id: role_technical_interviewer
                     scenario_definition_id: scn_programmer_interview
                     role_type: TECHNICAL_INTERVIEWER
-                    display_name: Technical interviewer
-                    responsibilities: Probe technical depth and decision making.
+                    display_name: Technical depth perspective
+                    responsibilities: Probe technical depth, engineering trade-offs, and decision making.
                     style: Precise and evidence seeking.
                     focus_areas:
                       - system_design
                       - project_depth
                     version: 1
+                  - role_definition_id: role_hr_interviewer
+                    scenario_definition_id: scn_programmer_interview
+                    role_type: HR_INTERVIEWER
+                    display_name: Recruiter and motivation perspective
+                    responsibilities: Explore career motivation and communication clarity.
+                    style: Warm and structured.
+                    focus_areas:
+                      - motivation
+                      - communication
+                    version: 1
                   - role_definition_id: role_project_manager
                     scenario_definition_id: scn_programmer_interview
                     role_type: PROJECT_MANAGER
-                    display_name: Project manager
-                    responsibilities: Explore delivery, ownership, and collaboration.
-                    style: Outcome oriented.
+                    display_name: Delivery and collaboration perspective
+                    responsibilities: Explore delivery ownership and cross-functional collaboration.
+                    style: Outcome oriented and collaborative.
                     focus_areas:
                       - delivery
                       - collaboration
@@ -101,9 +156,9 @@ paths:
                   - role_definition_id: role_executive_interviewer
                     scenario_definition_id: scn_programmer_interview
                     role_type: EXECUTIVE_INTERVIEWER
-                    display_name: Executive interviewer
-                    responsibilities: Test strategic judgment and impact.
-                    style: Concise and high level.
+                    display_name: Leadership and impact perspective
+                    responsibilities: Explore leadership judgment and measurable impact for senior or management roles.
+                    style: Concise, high level, and optional for advanced roles.
                     focus_areas:
                       - impact
                       - judgment
@@ -257,6 +312,16 @@ components:
           enum:
             - active
             - inactive
+    ScenarioDefinitionList:
+      type: object
+      additionalProperties: false
+      required:
+        - scenarios
+      properties:
+        scenarios:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioDefinition'
     ScenarioConfig:
       oneOf:
         - $ref: '#/components/schemas/InterviewScenarioConfig'
@@ -300,6 +365,9 @@ components:
             minLength: 1
     RoleDefinition:
       type: object
+      description: |
+        A selectable interviewer perspective owned by Preparation. Its position
+        in a returned list is presentation order, never a required stage.
       additionalProperties: false
       required:
         - role_definition_id
@@ -318,6 +386,7 @@ components:
         role_type:
           type: string
           pattern: '^[A-Z][A-Z0-9_]*$'
+          description: Stable machine type; it does not encode workflow progression.
         display_name:
           type: string
           minLength: 1
@@ -341,6 +410,9 @@ components:
           $ref: '#/components/schemas/Version'
     PracticeOptionDefinition:
       type: object
+      description: |
+        A stable practice choice for the current perspective. FULL_SIMULATION
+        omits role_definition_id; FOCUS references exactly one role.
       additionalProperties: false
       required:
         - practice_option_id

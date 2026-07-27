@@ -36,7 +36,7 @@ func NewApplication(
 func (a *Application) CreatePlan(
 	request practice.CreatePlanRequest,
 ) (map[string]any, error) {
-	if _, ok := a.preparation.GetScenario(request.ScenarioDefinitionID); !ok {
+	if _, err := a.preparation.GetScenarioDetail(request.ScenarioDefinitionID); err != nil {
 		return nil, ErrScenarioNotFound
 	}
 	if !a.preparation.ProfileExists(request.PreparationProfileID) {
