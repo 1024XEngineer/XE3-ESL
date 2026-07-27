@@ -128,6 +128,7 @@ jobs:
           QIANWEN_TTS_VOICE: loongeva_v3.6
           QIANWEN_TTS_LANGUAGE: en
           DASHSCOPE_API_KEY: ci-readiness-not-a-secret
+          REVIEW_HISTORY_CURSOR_SIGNING_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY
         run: |
           set -euo pipefail
 
