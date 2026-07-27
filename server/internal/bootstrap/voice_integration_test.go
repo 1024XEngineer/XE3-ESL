@@ -24,8 +24,11 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -39,6 +42,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	synthesizer := fake.NewFailingSpeechSynthesizer(
 		fmt.Errorf("tts unavailable"),
 	)
+	objects := newVoiceObjectStore()
 	vault := newVoiceTestVault(t)
 	identityModule, agentModule, err := NewIdentityAndAgentModules(
 		context.Background(),
@@ -56,6 +60,8 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			Recognizer:              recognizer,
 			Synthesizer:             synthesizer,
 			TemporaryAudio:          vault,
+			ObjectStore:             objects,
+			AudioStagedTTL:          time.Hour,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
 		},
@@ -362,6 +368,10 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"confirm-round-1-0001",
 		http.StatusOK,
 	)
+	firstAudioAssetID, _ := state["current_turn"].(map[string]any)["audio_asset_id"].(string)
+	if firstAudioAssetID == "" {
+		t.Fatalf("first confirmed Turn has no AudioAsset: %#v", state)
+	}
 	competingConfirm, err := voiceRawRequest(
 		server.URL,
 		token,
@@ -465,6 +475,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Error(failure)
 	}
 	var reviewID string
+	var completedAudioAssetID string
 	var thirdTurnID string
 	for result := range results {
 		if result["effective_turns"] != float64(3) ||
@@ -490,6 +501,15 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		}
 		if turn["review_id"] != currentReviewID {
 			t.Errorf("current Turn does not link its Review: %#v", result)
+		}
+		currentAudioAssetID, _ := turn["audio_asset_id"].(string)
+		if currentAudioAssetID == "" {
+			t.Errorf("current Turn does not link its AudioAsset: %#v", result)
+		}
+		if completedAudioAssetID == "" {
+			completedAudioAssetID = currentAudioAssetID
+		} else if completedAudioAssetID != currentAudioAssetID {
+			t.Errorf("concurrent confirmations returned different AudioAssets")
 		}
 		if reviewID == "" {
 			reviewID = currentReviewID
@@ -558,6 +578,22 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			voiceTurnLimit,
 		)
 	}
+	playback := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodGet,
+		"/v1/audio-assets/"+completedAudioAssetID+"/playback",
+		"",
+		"",
+		http.StatusOK,
+	)
+	if !strings.HasPrefix(
+		playback["playback_url"].(string),
+		"https://private-audio.example.invalid/",
+	) {
+		t.Fatalf("unexpected protected playback capability: %#v", playback)
+	}
 	otherToken := registerAndLoginVoiceUser(
 		t,
 		server.URL,
@@ -566,6 +602,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	for _, path := range []string{
 		"/v1/agent-threads/" + threadID + "/voice-practice-session",
 		"/v1/formal-reviews/" + reviewID,
+		"/v1/audio-assets/" + completedAudioAssetID + "/playback",
 	} {
 		response, requestErr := voiceRawRequest(
 			server.URL,
@@ -606,6 +643,8 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			Recognizer:              recognizer,
 			Synthesizer:             synthesizer,
 			TemporaryAudio:          restartedVault,
+			ObjectStore:             objects,
+			AudioStagedTTL:          time.Hour,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
 		},
@@ -657,6 +696,76 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			"restart lost formal Review evidence identity: %#v",
 			recoveredFormalReview,
 		)
+	}
+	recoveredTurn := recovered["current_turn"].(map[string]any)
+	if recoveredTurn["audio_asset_id"] != completedAudioAssetID {
+		t.Fatalf("restart lost AudioAsset checkpoint: %#v", recovered)
+	}
+	voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodDelete,
+		"/v1/audio-assets/"+completedAudioAssetID,
+		"",
+		"",
+		http.StatusNoContent,
+	)
+	deletedPlayback, err := voiceRawRequest(
+		restartedServer.URL,
+		token,
+		http.MethodGet,
+		"/v1/audio-assets/"+completedAudioAssetID+"/playback",
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = deletedPlayback.Body.Close()
+	if deletedPlayback.StatusCode != http.StatusNotFound {
+		t.Fatalf(
+			"deleted AudioAsset playback status = %d",
+			deletedPlayback.StatusCode,
+		)
+	}
+	replayedAfterAudioDelete := voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodPost,
+		confirmPath,
+		"",
+		"confirm-round-3-shared",
+		http.StatusOK,
+	)
+	replayedDeletedTurn := replayedAfterAudioDelete["current_turn"].(map[string]any)
+	if replayedDeletedTurn["turn_id"] != thirdTurnID ||
+		replayedDeletedTurn["review_id"] != reviewID {
+		t.Fatalf(
+			"deleted recording replay changed durable Turn: %#v",
+			replayedAfterAudioDelete,
+		)
+	}
+	if _, present := replayedDeletedTurn["audio_asset_id"]; present {
+		t.Fatalf(
+			"deleted recording replay exposed AudioAsset: %#v",
+			replayedAfterAudioDelete,
+		)
+	}
+	afterAudioDelete := voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodGet,
+		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"",
+		"",
+		http.StatusOK,
+	)
+	if _, present := afterAudioDelete["current_turn"].(map[string]any)["audio_asset_id"]; present {
+		t.Fatalf("deleted AudioAsset remained in restored state: %#v", afterAudioDelete)
 	}
 	nextSession := voiceJSONRequest(
 		t,
@@ -868,6 +977,264 @@ WHERE review_id = $1`,
 			got,
 			quotaReviewCalls,
 		)
+	}
+}
+
+func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
+	t *testing.T,
+) {
+	pool := voiceIntegrationDatabase(t)
+	text := &voiceTextGenerator{}
+	recognizer := &voiceRecognizer{}
+	synthesizer := fake.NewFailingSpeechSynthesizer(
+		fmt.Errorf("tts unavailable"),
+	)
+	objects := newVoiceObjectStore()
+	buildServer := func(vault *platformmedia.TemporaryAudioVault) *httptest.Server {
+		t.Helper()
+		identityModule, agentModule, err := NewIdentityAndAgentModules(
+			context.Background(),
+			pool,
+			nil,
+			"",
+			text,
+			agent.RunConfiguration{
+				Provider:           "fake",
+				Model:              "fake-text-v1",
+				MaxOutputTokens:    256,
+				MaxInputCharacters: 12000,
+			},
+			VoiceConfiguration{
+				Recognizer:              recognizer,
+				Synthesizer:             synthesizer,
+				TemporaryAudio:          vault,
+				ObjectStore:             objects,
+				AudioStagedTTL:          time.Hour,
+				ASRLease:                5 * time.Second,
+				ReviewGenerationTimeout: 2 * time.Second,
+			},
+		)
+		if err != nil {
+			t.Fatalf("build cleanup-race composition: %v", err)
+		}
+		return httptest.NewServer(NewRouterWithReadinessAndRoutes(
+			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			pool,
+			[]RouteRegistrar{identityModule, agentModule},
+		).Handler())
+	}
+
+	vault := newVoiceTestVault(t)
+	server := buildServer(vault)
+	token := registerAndLoginVoiceUser(
+		t,
+		server.URL,
+		"voice-cleanup-race@example.com",
+	)
+	matterID := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		"/v1/matters",
+		`{"title":"Cleanup race"}`,
+		"",
+		http.StatusCreated,
+	)["matter_id"].(string)
+	threadID := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		"/v1/agent-threads",
+		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		"",
+		http.StatusCreated,
+	)["thread_id"].(string)
+	state := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		"/v1/agent-threads/"+threadID+"/voice-practice-sessions",
+		"",
+		"start-cleanup-race",
+		http.StatusCreated,
+	)
+	candidate := createVoiceCandidate(
+		t,
+		server.URL,
+		token,
+		state,
+		"cleanup-race",
+	)
+	candidateID := candidate["candidate_id"].(string)
+	var audioAssetID string
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT assets.audio_asset_id
+		 FROM conversation_audio_assets AS assets
+		 JOIN conversation_transcript_candidates AS candidates
+		   ON candidates.owner_user_id = assets.owner_user_id
+		  AND candidates.reservation_id = assets.upload_request_id
+		 WHERE candidates.candidate_id = $1`,
+		candidateID,
+	).Scan(&audioAssetID); err != nil {
+		t.Fatalf("find staged recording: %v", err)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE conversation_audio_assets
+		 SET created_at = transaction_timestamp() - interval '2 hours',
+		     updated_at = transaction_timestamp() - interval '2 hours',
+		     staged_until = transaction_timestamp() - interval '1 hour'
+		 WHERE audio_asset_id = $1`,
+		audioAssetID,
+	); err != nil {
+		t.Fatalf("expire staged recording: %v", err)
+	}
+	audioRepository, err := conversationpostgres.NewAudioAssetRepository(pool)
+	if err != nil {
+		t.Fatalf("create cleanup repository: %v", err)
+	}
+	claims, err := audioRepository.ClaimExpiredUnconfirmed(
+		context.Background(),
+		time.Minute,
+		10,
+	)
+	if err != nil || len(claims) != 1 ||
+		claims[0].Asset.ID != audioAssetID {
+		t.Fatalf("cleanup claim = %#v, %v", claims, err)
+	}
+
+	confirmPath := "/v1/transcription-candidates/" + candidateID +
+		"/confirmations"
+	assertFailedConfirm := func(baseURL string) {
+		t.Helper()
+		response, requestErr := voiceRawRequest(
+			baseURL,
+			token,
+			http.MethodPost,
+			confirmPath,
+			nil,
+			"confirm-cleanup-race",
+			"",
+		)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		defer response.Body.Close()
+		raw, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if response.StatusCode != http.StatusConflict {
+			t.Fatalf(
+				"cleanup-won confirmation status = %d: %s",
+				response.StatusCode,
+				raw,
+			)
+		}
+		var failure struct {
+			Error struct {
+				Code      string `json:"code"`
+				Retryable bool   `json:"retryable"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(raw, &failure); err != nil {
+			t.Fatalf("decode cleanup-won confirmation: %v", err)
+		}
+		if failure.Error.Code != "resource_conflict" ||
+			failure.Error.Retryable {
+			t.Fatalf("cleanup-won confirmation error = %#v", failure)
+		}
+		var turns int
+		var confirmations int
+		if err := pool.QueryRow(
+			context.Background(),
+			`SELECT
+			    (SELECT count(*)::int
+			     FROM conversation_confirmed_turns
+			     WHERE candidate_id = $1),
+			    (SELECT count(*)::int
+			     FROM conversation_turn_confirmations confirmations
+			     JOIN conversation_confirmed_turns turns
+			       ON turns.owner_user_id = confirmations.owner_user_id
+			      AND turns.turn_id = confirmations.turn_id
+			     WHERE turns.candidate_id = $1)`,
+			candidateID,
+		).Scan(&turns, &confirmations); err != nil {
+			t.Fatalf("count cleanup-race confirmations: %v", err)
+		}
+		if turns != 0 || confirmations != 0 {
+			t.Fatalf(
+				"cleanup-won confirmation persisted %d Turns and %d keys",
+				turns,
+				confirmations,
+			)
+		}
+	}
+	assertFailedConfirm(server.URL)
+
+	if err := objects.Delete(
+		context.Background(),
+		claims[0].Asset.ObjectKey,
+	); err != nil {
+		t.Fatalf("delete claimed recording object: %v", err)
+	}
+	var deletedAt time.Time
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT transaction_timestamp()`,
+	).Scan(&deletedAt); err != nil {
+		t.Fatalf("read database deletion time: %v", err)
+	}
+	deleted := claims[0].Asset
+	deleted.Status = conversation.AudioAssetDeleted
+	deleted.DeletedAt = deletedAt.UTC()
+	deleted.UpdatedAt = deleted.DeletedAt
+	deleted.Version++
+	if err := audioRepository.SaveCleanupClaim(
+		context.Background(),
+		deleted,
+		claims[0].Asset.Version,
+		claims[0].FencingToken,
+	); err != nil {
+		t.Fatalf("finish recording cleanup claim: %v", err)
+	}
+	purged, err := audioRepository.PurgeOwnerDeletedAssets(
+		context.Background(),
+		deleted.OwnerID,
+		10,
+	)
+	if err != nil || purged != 1 {
+		t.Fatalf("purge deleted recording metadata = %d, %v", purged, err)
+	}
+
+	server.Close()
+	if err := vault.Close(); err != nil {
+		t.Fatalf("close cleanup-race vault: %v", err)
+	}
+	restartedVault := newVoiceTestVault(t)
+	restartedServer := buildServer(restartedVault)
+	t.Cleanup(restartedServer.Close)
+	assertFailedConfirm(restartedServer.URL)
+	resumed := voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodGet,
+		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"",
+		"",
+		http.StatusOK,
+	)
+	if resumed["effective_turns"] != float64(0) ||
+		resumed["session_completed"] != false {
+		t.Fatalf("cleanup-won Resume advanced Session: %#v", resumed)
+	}
+	if turn, present := resumed["current_turn"]; present && turn != nil {
+		t.Fatalf("cleanup-won Resume exposed damaged Turn: %#v", resumed)
 	}
 }
 
@@ -1160,6 +1527,62 @@ func (recognizer *voiceRecognizer) Transcribe(
 		Model:      "fake-asr-v1",
 		Transcript: fmt.Sprintf("Confirmed answer number %d.", call),
 	}, nil
+}
+
+type voiceObjectStore struct {
+	mu      sync.Mutex
+	objects map[string][]byte
+}
+
+func newVoiceObjectStore() *voiceObjectStore {
+	return &voiceObjectStore{objects: make(map[string][]byte)}
+}
+
+func (store *voiceObjectStore) Put(
+	_ context.Context,
+	request objectstore.PutRequest,
+) (objectstore.PutResult, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	audio, err := io.ReadAll(request.Body)
+	if err != nil || int64(len(audio)) != request.Size {
+		return objectstore.PutResult{}, objectstore.ErrInvalidObject
+	}
+	if existing, found := store.objects[request.Key]; found {
+		if !bytes.Equal(existing, audio) {
+			return objectstore.PutResult{}, objectstore.ErrAlreadyExists
+		}
+		return objectstore.PutResult{ETag: "voice-etag"}, nil
+	}
+	store.objects[request.Key] = bytes.Clone(audio)
+	return objectstore.PutResult{ETag: "voice-etag"}, nil
+}
+
+func (store *voiceObjectStore) SignedGet(
+	_ context.Context,
+	key string,
+) (objectstore.SignedGetResult, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if _, found := store.objects[key]; !found {
+		return objectstore.SignedGetResult{},
+			objectstore.ErrOperationFailed
+	}
+	return objectstore.SignedGetResult{
+		URL: "https://private-audio.example.invalid/" +
+			url.PathEscape(key),
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}, nil
+}
+
+func (store *voiceObjectStore) Delete(
+	_ context.Context,
+	key string,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	delete(store.objects, key)
+	return nil
 }
 
 func newVoiceTestVault(t *testing.T) *platformmedia.TemporaryAudioVault {

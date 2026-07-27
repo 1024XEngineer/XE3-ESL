@@ -17,6 +17,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/database"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
@@ -90,6 +91,15 @@ func run() int {
 		return 1
 	}
 
+	storageConfig, err := config.LoadObjectStorage()
+	if err != nil {
+		logger.Error(
+			"object storage configuration invalid",
+			slog.String("error_kind", "configuration"),
+		)
+		return 1
+	}
+
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -103,6 +113,21 @@ func run() int {
 		return 1
 	}
 	defer databasePool.Close()
+
+	var recordingStore objectstore.Store
+	if storageConfig.Enabled {
+		recordingStore, err = productionAudioCleanupFactories.newStore(
+			ctx,
+			storageConfig,
+		)
+		if err != nil {
+			logger.Error(
+				"object storage startup failed",
+				slog.String("error_kind", "dependency"),
+			)
+			return 1
+		}
+	}
 
 	identityModule, agentModule, err :=
 		bootstrap.NewIdentityAndAgentModules(
@@ -121,6 +146,8 @@ func run() int {
 				Recognizer:     recognizer,
 				Synthesizer:    synthesizer,
 				TemporaryAudio: audioVault,
+				ObjectStore:    recordingStore,
+				AudioStagedTTL: 24 * time.Hour,
 				ASRLease:       asrConfig.Timeout + 15*time.Second,
 				// The existing Review lease is 30s. Bound the parent context
 				// below it even when the shared provider client allows 60s.
@@ -131,6 +158,29 @@ func run() int {
 	if err != nil {
 		logger.Error("application startup failed", slog.Any("error", err))
 		return 1
+	}
+
+	cleanupWorker, err := buildAudioCleanupWorker(
+		ctx,
+		storageConfig,
+		databasePool.Native(),
+		logger,
+		productionAudioCleanupFactories,
+	)
+	if err != nil {
+		logger.Error(
+			"audio cleanup startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	var cleanupDone chan struct{}
+	if cleanupWorker != nil {
+		cleanupDone = make(chan struct{})
+		go func() {
+			defer close(cleanupDone)
+			cleanupWorker.Run(ctx)
+		}()
 	}
 
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
@@ -156,22 +206,35 @@ func run() int {
 		serverErrors <- server.ListenAndServe()
 	}()
 
+	exitCode := 0
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server stopped unexpectedly", slog.Any("error", err))
-			return 1
+			exitCode = 1
 		}
 	case <-ctx.Done():
 		logger.Info("shutdown requested")
 	}
+	stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", slog.Any("error", err))
-		return 1
+		exitCode = 1
+	}
+	if cleanupDone != nil {
+		select {
+		case <-cleanupDone:
+		case <-shutdownCtx.Done():
+			logger.Error(
+				"audio cleanup shutdown failed",
+				slog.String("error_kind", "timeout"),
+			)
+			exitCode = 1
+		}
 	}
 
-	return 0
+	return exitCode
 }

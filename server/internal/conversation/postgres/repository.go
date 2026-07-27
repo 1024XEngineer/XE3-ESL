@@ -20,9 +20,10 @@ import (
 )
 
 type Repository struct {
-	pool            *pgxpool.Pool
-	now             func() time.Time
-	afterWriteFence func()
+	pool               *pgxpool.Pool
+	now                func() time.Time
+	afterWriteFence    func()
+	afterRecordingLock func()
 }
 
 func New(pool *pgxpool.Pool) (*Repository, error) {
@@ -674,14 +675,9 @@ func (r *Repository) ConfirmTurn(
 	actor conversation.Actor,
 	command conversation.ConfirmTurnCommand,
 ) (conversation.ConfirmedTurn, error) {
-	if !validActor(actor) ||
-		strings.TrimSpace(command.CandidateID) == "" ||
-		command.EvidenceVersion <= 0 ||
-		strings.TrimSpace(command.ConfirmedText) == "" ||
-		strings.TrimSpace(command.IdempotencyKey) == "" {
+	if !validConfirmation(actor, command) {
 		return conversation.ConfirmedTurn{}, conversation.ErrPersistenceInvalid
 	}
-	payloadHash := confirmationHash(command)
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return conversation.ConfirmedTurn{}, safeDatabaseError(err)
@@ -691,6 +687,23 @@ func (r *Repository) ConfirmTurn(
 		return conversation.ConfirmedTurn{}, err
 	}
 	r.reachedWriteFence()
+	turn, err := r.confirmTurnInTransaction(ctx, tx, actor, command)
+	if err != nil {
+		return conversation.ConfirmedTurn{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return conversation.ConfirmedTurn{}, safeDatabaseError(err)
+	}
+	return turn, nil
+}
+
+func (r *Repository) confirmTurnInTransaction(
+	ctx context.Context,
+	tx pgx.Tx,
+	actor conversation.Actor,
+	command conversation.ConfirmTurnCommand,
+) (conversation.ConfirmedTurn, error) {
+	payloadHash := confirmationHash(command)
 	if err := lockKey(
 		ctx,
 		tx,
@@ -703,7 +716,7 @@ func (r *Repository) ConfirmTurn(
 
 	var existingHash string
 	var existingTurnID string
-	err = tx.QueryRow(
+	err := tx.QueryRow(
 		ctx,
 		`SELECT payload_hash, turn_id
 		 FROM conversation_turn_confirmations
@@ -718,9 +731,6 @@ func (r *Repository) ConfirmTurn(
 		turn, turnErr := getTurn(ctx, tx, actor.UserID, existingTurnID)
 		if turnErr != nil {
 			return conversation.ConfirmedTurn{}, turnErr
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return conversation.ConfirmedTurn{}, safeDatabaseError(err)
 		}
 		return turn, nil
 	}
@@ -830,10 +840,18 @@ func (r *Repository) ConfirmTurn(
 	if err != nil {
 		return conversation.ConfirmedTurn{}, safeDatabaseError(err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return conversation.ConfirmedTurn{}, safeDatabaseError(err)
-	}
 	return turn, nil
+}
+
+func validConfirmation(
+	actor conversation.Actor,
+	command conversation.ConfirmTurnCommand,
+) bool {
+	return validActor(actor) &&
+		strings.TrimSpace(command.CandidateID) != "" &&
+		command.EvidenceVersion > 0 &&
+		strings.TrimSpace(command.ConfirmedText) != "" &&
+		strings.TrimSpace(command.IdempotencyKey) != ""
 }
 
 func (r *Repository) GetTurn(

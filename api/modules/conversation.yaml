@@ -384,6 +384,88 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/audio-assets/{audio_asset_id}:
+    delete:
+      tags:
+        - Conversation
+      summary: Delete the current user's recording
+      description: |
+        The server derives the trusted Actor from the validated Bearer Session
+        and verifies AudioAsset ownership before accessing object storage. A
+        missing AudioAsset and an AudioAsset owned by another user produce the
+        same `404` response.
+
+        Deletion is idempotent. Repeating deletion for an AudioAsset already in
+        `deleting` resumes the same cleanup, and repeating it after `deleted`
+        returns `204`. The server returns `204` only after the object is no
+        longer readable; provider deletion failures remain retryable and never
+        restore playback access.
+      operationId: deleteAudioAsset
+      parameters:
+        - $ref: '#/components/parameters/AudioAssetId'
+      responses:
+        '204':
+          description: |
+            The owned recording was deleted and is no longer readable. The
+            response has no body.
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/audio-assets/{audio_asset_id}/playback:
+    get:
+      tags:
+        - Conversation
+      summary: Get temporary playback access to the current user's recording
+      description: |
+        The server derives the trusted Actor from the validated Bearer Session
+        and verifies AudioAsset ownership and `readable` state before asking
+        object storage for a signed URL. A missing, non-readable, deleted, or
+        differently owned AudioAsset produces the same `404` response.
+
+        The returned HTTPS URL expires no later than two minutes after issuance
+        and is itself a bearer capability, so clients must not persist, log, or
+        share it. An OSS Presign URL may expose provider routing information,
+        including the bucket, an AccessKey identifier, and the object key; the
+        object key must therefore be an unguessable opaque path. The URL never
+        contains an AccessKey Secret, reusable server credential, or permanent
+        playback capability.
+      operationId: getAudioAssetPlayback
+      parameters:
+        - $ref: '#/components/parameters/AudioAssetId'
+      responses:
+        '200':
+          description: Temporary playback access for the owned recording.
+          headers:
+            Cache-Control:
+              description: Prevent clients and intermediaries from storing the capability response.
+              schema:
+                type: string
+                const: no-store
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioAssetPlayback'
+              example:
+                playback_url: https://media.example.invalid/temporary-playback
+                expires_at: '2026-07-25T12:02:00Z'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-sessions/{practice_session_id}/events:
     get:
       tags:
@@ -537,6 +619,16 @@ components:
       name: review_id
       in: path
       required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    AudioAssetId:
+      name: audio_asset_id
+      in: path
+      required: true
+      description: |
+        Opaque server-generated identifier. The UTF-8 encoded path value is
+        accepted only when it is between 1 and 128 bytes and has no leading or
+        trailing whitespace.
       schema:
         $ref: '#/components/schemas/ResourceId'
     IdempotencyKey:
@@ -703,6 +795,8 @@ components:
           type: boolean
         review_id:
           $ref: '#/components/schemas/ResourceId'
+        audio_asset_id:
+          $ref: '#/components/schemas/ResourceId'
     FormalReview:
       type: object
       additionalProperties: false
@@ -782,6 +876,29 @@ components:
         suggestion:
           type: string
           minLength: 1
+    AudioAssetPlayback:
+      type: object
+      additionalProperties: false
+      description: |
+        Ephemeral bearer capability for an owned recording. The URL is never
+        stored as AudioAsset metadata, is invalid after `expires_at`, and never
+        contains an AccessKey Secret or reusable server credential.
+      required:
+        - playback_url
+        - expires_at
+      properties:
+        playback_url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          readOnly: true
+          description: |
+            A signed HTTPS GET bearer capability valid for no more than two
+            minutes. Its path may reveal the unguessable opaque object key.
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
     Question:
       type: object
       additionalProperties: false

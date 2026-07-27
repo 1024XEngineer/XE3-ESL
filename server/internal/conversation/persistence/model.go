@@ -197,6 +197,26 @@ type TurnReviewCheckpoint struct {
 	SourceTurnID string
 }
 
+// RecordingConfirmationStore is the narrow Conversation-owned transaction
+// boundary used when a confirmed Turn also owns a durable recording. The
+// implementation must create or replay the Turn and bind the staged recording
+// atomically. A previously bound recording that was later deleted replays the
+// Turn with an empty AudioAssetID.
+type RecordingConfirmation struct {
+	Turn             ConfirmedTurn
+	AudioAssetID     string
+	RecordingDeleted bool
+}
+
+type RecordingConfirmationStore interface {
+	ConfirmTurnWithRecording(
+		context.Context,
+		Actor,
+		ConfirmTurnCommand,
+		string,
+	) (RecordingConfirmation, error)
+}
+
 // PersistenceStore is the Conversation-owned durable boundary. It returns
 // only Conversation data and never imports Practice or Review repositories.
 type PersistenceStore interface {

@@ -36,6 +36,7 @@ type VoiceQuestion struct {
 
 type TranscriptionCandidate struct {
 	ID                      string
+	ReservationID           string
 	SessionID               string
 	QuestionID              string
 	QuestionSpeakerID       string
@@ -52,6 +53,7 @@ type TranscriptionCandidate struct {
 
 type ConfirmedVoiceTurn struct {
 	ID                      string
+	AudioAssetID            string
 	SessionID               string
 	QuestionID              string
 	QuestionSpeakerID       string
@@ -190,6 +192,23 @@ type VoiceRoundStore interface {
 	) (ConfirmedVoiceTurn, error)
 }
 
+// VoiceRecordingConfirmationStore is implemented by a production
+// Conversation store that can create or replay a Turn and bind its durable
+// recording in one transaction.
+type VoiceRecordingConfirmation struct {
+	Turn             ConfirmedVoiceTurn
+	RecordingDeleted bool
+}
+
+type VoiceRecordingConfirmationStore interface {
+	ReserveRecordingConfirmation(
+		context.Context,
+		requestcontext.Actor,
+		ConfirmVoiceTurnCommand,
+		string,
+	) (VoiceRecordingConfirmation, error)
+}
+
 type TemporaryAudioVault interface {
 	Capture(
 		context.Context,
@@ -209,6 +228,7 @@ type VoiceRoundService struct {
 	vault       TemporaryAudioVault
 	recognizer  ai.SpeechRecognizer
 	synthesizer ai.SpeechSynthesizer
+	recordings  VoiceRecordingLifecycle
 	now         func() time.Time
 }
 
@@ -218,14 +238,38 @@ func NewVoiceRoundService(
 	recognizer ai.SpeechRecognizer,
 	synthesizer ai.SpeechSynthesizer,
 ) (*VoiceRoundService, error) {
+	return NewVoiceRoundServiceWithRecordings(
+		store,
+		vault,
+		recognizer,
+		synthesizer,
+		nil,
+	)
+}
+
+func NewVoiceRoundServiceWithRecordings(
+	store VoiceRoundStore,
+	vault TemporaryAudioVault,
+	recognizer ai.SpeechRecognizer,
+	synthesizer ai.SpeechSynthesizer,
+	recordings VoiceRecordingLifecycle,
+) (*VoiceRoundService, error) {
 	if store == nil || vault == nil || recognizer == nil || synthesizer == nil {
 		return nil, errors.New("conversation voice round dependencies are required")
+	}
+	if recordings != nil {
+		if _, ok := store.(VoiceRecordingConfirmationStore); !ok {
+			return nil, errors.New(
+				"conversation recording confirmation transaction is required",
+			)
+		}
 	}
 	return &VoiceRoundService{
 		store:       store,
 		vault:       vault,
 		recognizer:  recognizer,
 		synthesizer: synthesizer,
+		recordings:  recordings,
 		now:         time.Now,
 	}, nil
 }
@@ -331,7 +375,6 @@ func (service *VoiceRoundService) Transcribe(
 		) {
 			return TranscriptionCandidate{}, ErrVoiceRoundConflict
 		}
-		return reservation.Candidate, nil
 	case TranscriptionProcessing:
 		if strings.TrimSpace(reservation.ID) == "" ||
 			reservation.LeaseToken != "" {
@@ -345,6 +388,19 @@ func (service *VoiceRoundService) Transcribe(
 		}
 	default:
 		return TranscriptionCandidate{}, ErrVoiceRoundConflict
+	}
+	if service.recordings != nil {
+		if _, err := service.stageRecording(
+			ctx,
+			actor,
+			reservation.ID,
+			source,
+		); err != nil {
+			return TranscriptionCandidate{}, err
+		}
+	}
+	if reservation.Status == TranscriptionCompleted {
+		return reservation.Candidate, nil
 	}
 
 	startedAt := service.now()
@@ -457,6 +513,26 @@ func (service *VoiceRoundService) Confirm(
 	if err != nil {
 		return ConfirmedVoiceTurn{}, err
 	}
+	if service.recordings != nil {
+		result, err := service.store.(VoiceRecordingConfirmationStore).
+			ReserveRecordingConfirmation(
+				ctx,
+				actor,
+				command,
+				candidate.ReservationID,
+			)
+		if err != nil {
+			return ConfirmedVoiceTurn{}, err
+		}
+		if !validRecordedVoiceTurn(
+			candidate,
+			result.Turn,
+			result.RecordingDeleted,
+		) {
+			return ConfirmedVoiceTurn{}, ErrVoiceRoundConflict
+		}
+		return result.Turn, nil
+	}
 	turn, err := service.store.ReserveConfirmation(
 		ctx,
 		actor,
@@ -499,12 +575,24 @@ func (service *VoiceRoundService) SaveTurnProgress(
 		progress.EffectiveTurns < 1 {
 		return ConfirmedVoiceTurn{}, ErrVoiceRoundInvalid
 	}
-	return service.store.SaveTurnProgress(
+	turn, err := service.store.SaveTurnProgress(
 		ctx,
 		actor,
 		turnID,
 		progress,
 	)
+	if err != nil || service.recordings == nil {
+		return turn, err
+	}
+	candidate, err := service.store.GetTranscriptionCandidate(
+		ctx,
+		actor,
+		turn.CandidateID,
+	)
+	if err != nil {
+		return ConfirmedVoiceTurn{}, err
+	}
+	return service.withReadableRecording(ctx, actor, candidate, turn)
 }
 
 // SaveTurnReview records only Conversation's reference to a Review resource.
@@ -520,12 +608,24 @@ func (service *VoiceRoundService) SaveTurnReview(
 		strings.TrimSpace(reviewID) == "" {
 		return ConfirmedVoiceTurn{}, ErrVoiceRoundInvalid
 	}
-	return service.store.SaveTurnReview(
+	turn, err := service.store.SaveTurnReview(
 		ctx,
 		actor,
 		turnID,
 		reviewID,
 	)
+	if err != nil || service.recordings == nil {
+		return turn, err
+	}
+	candidate, err := service.store.GetTranscriptionCandidate(
+		ctx,
+		actor,
+		turn.CandidateID,
+	)
+	if err != nil {
+		return ConfirmedVoiceTurn{}, err
+	}
+	return service.withReadableRecording(ctx, actor, candidate, turn)
 }
 
 type QuestionSpeech struct {
@@ -640,6 +740,32 @@ func validTranscriptionCandidate(
 		validVoiceIdentifier(candidate.Model) &&
 		validVoiceIdentifier(candidate.ProviderRequestID) &&
 		!candidate.CreatedAt.IsZero()
+}
+
+func validRecordedVoiceTurn(
+	candidate TranscriptionCandidate,
+	turn ConfirmedVoiceTurn,
+	recordingDeleted bool,
+) bool {
+	if !validVoiceIdentifier(turn.ID) ||
+		turn.SessionID != candidate.SessionID ||
+		turn.QuestionID != candidate.QuestionID ||
+		turn.QuestionSpeakerID != candidate.QuestionSpeakerID ||
+		!slices.Equal(
+			turn.AddresseeParticipantIDs,
+			candidate.AddresseeParticipantIDs,
+		) ||
+		turn.RespondentParticipantID != candidate.RespondentParticipantID ||
+		turn.CandidateID != candidate.ID ||
+		turn.TranscriptID != candidate.TranscriptID ||
+		turn.EvidenceVersion != candidate.EvidenceVersion ||
+		turn.AnswerText != candidate.Transcript {
+		return false
+	}
+	if recordingDeleted {
+		return turn.AudioAssetID == ""
+	}
+	return validVoiceIdentifier(turn.AudioAssetID)
 }
 
 func validSynthesisResult(result ai.SynthesisResult) bool {
