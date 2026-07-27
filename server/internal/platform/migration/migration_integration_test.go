@@ -106,6 +106,148 @@ func TestRunnerAppliesIdempotentlyAndRevertsLatestMigration(t *testing.T) {
 	}
 }
 
+func TestConversationHardeningNormalizesLegacyFailureCodes(t *testing.T) {
+	migrationConfig, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(migrationConfig)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("close migration runner: %v", err)
+		}
+	})
+
+	if err := runner.migrate.Steps(9); err != nil {
+		t.Fatalf("apply migrations through Conversation v9: %v", err)
+	}
+	status, err := runner.Version()
+	if err != nil {
+		t.Fatalf("read Conversation v9 status: %v", err)
+	}
+	if !status.Present || status.Version != 9 || status.Dirty {
+		t.Fatalf("Conversation migration status = %+v, want clean version 9", status)
+	}
+
+	scoped, err := pgx.ConnectConfig(context.Background(), migrationConfig)
+	if err != nil {
+		t.Fatalf("connect to Conversation v9 schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := scoped.Close(context.Background()); err != nil {
+			t.Errorf("close Conversation v9 schema connection: %v", err)
+		}
+	})
+
+	const userID = "10000000-0000-4000-8000-000000000127"
+	const reservationID = "legacy-reservation"
+	const attemptID = "legacy-attempt"
+	fixtures := []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{
+			name: "Identity user",
+			sql: `INSERT INTO identity_users (id, canonical_email)
+			      VALUES ($1, 'conversation-upgrade@example.com')`,
+			args: []any{userID},
+		},
+		{
+			name: "Conversation question",
+			sql: `INSERT INTO conversation_questions (
+			          owner_user_id, question_id, practice_session_id,
+			          speaker_participant_id, addressee_participant_ids,
+			          objective_id, question_type, content, sequence, created_at
+			      ) VALUES (
+			          $1, 'legacy-question', 'legacy-session',
+			          'interviewer', ARRAY['candidate']::text[],
+			          'legacy-objective', 'PRIMARY', 'Legacy question?', 1, now()
+			      )`,
+			args: []any{userID},
+		},
+		{
+			name: "transcription reservation",
+			sql: `INSERT INTO conversation_transcription_reservations (
+			          owner_user_id, reservation_id, question_id,
+			          practice_session_id, idempotency_key, input_fingerprint,
+			          respondent_participant_id, status, fencing_token,
+			          deletion_generation, lease_expires_at, current_attempt_id,
+			          created_at, updated_at
+			      ) VALUES (
+			          $1, $2, 'legacy-question', 'legacy-session',
+			          'legacy-key', 'legacy-fingerprint', 'candidate',
+			          'failed', 1, 0, now() + interval '1 minute',
+			          $3, now(), now()
+			      )`,
+			args: []any{userID, reservationID, attemptID},
+		},
+		{
+			name: "processing attempt",
+			sql: `INSERT INTO conversation_processing_attempts (
+			          owner_user_id, attempt_id, reservation_id, operation,
+			          fencing_token, status, lease_expires_at, error_code,
+			          retryable, provider_request_id, duration_ms,
+			          started_at, finished_at
+			      ) VALUES (
+			          $1, $3, $2, 'transcription',
+			          1, 'failed', now() + interval '1 minute',
+			          'HTTP 500: upstream secret response',
+			          true, 'legacy-request', 25, now(), now()
+			      )`,
+			args: []any{userID, reservationID, attemptID},
+		},
+	}
+	for _, fixture := range fixtures {
+		if _, err := scoped.Exec(
+			context.Background(),
+			fixture.sql,
+			fixture.args...,
+		); err != nil {
+			t.Fatalf("insert %s fixture: %v", fixture.name, err)
+		}
+	}
+
+	if err := runner.migrate.Steps(1); err != nil {
+		t.Fatalf("upgrade Conversation v9 to v10: %v", err)
+	}
+	status, err = runner.Version()
+	if err != nil {
+		t.Fatalf("read Conversation v10 status: %v", err)
+	}
+	if !status.Present || status.Version != 10 || status.Dirty {
+		t.Fatalf("Conversation migration status = %+v, want clean version 10", status)
+	}
+
+	var errorCode string
+	if err := scoped.QueryRow(
+		context.Background(),
+		`SELECT error_code
+		 FROM conversation_processing_attempts
+		 WHERE owner_user_id = $1 AND attempt_id = $2`,
+		userID,
+		attemptID,
+	).Scan(&errorCode); err != nil {
+		t.Fatalf("restore normalized legacy failure: %v", err)
+	}
+	if errorCode != "legacy_provider_failure" {
+		t.Fatalf(
+			"normalized legacy failure code = %q, want legacy_provider_failure",
+			errorCode,
+		)
+	}
+	if _, err := scoped.Exec(
+		context.Background(),
+		`UPDATE conversation_processing_attempts
+		 SET error_code = 'raw provider response'
+		 WHERE owner_user_id = $1 AND attempt_id = $2`,
+		userID,
+		attemptID,
+	); err == nil {
+		t.Fatal("Conversation v10 accepted an unnormalized failure code")
+	}
+}
+
 func TestAgentDataMigrationUpgradesIdentitySchemaAndReapplies(t *testing.T) {
 	migrationConfig, admin, schema := isolatedMigrationConfig(t)
 	runner, err := openConfig(migrationConfig)

@@ -1545,7 +1545,8 @@ func validProcessingFailureCode(code string) bool {
 		"provider_timeout",
 		"provider_unavailable",
 		"invalid_response",
-		"cancelled":
+		"cancelled",
+		"legacy_provider_failure":
 		return true
 	default:
 		return false
