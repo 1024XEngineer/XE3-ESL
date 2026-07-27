@@ -517,7 +517,7 @@ func TestVoiceHTTPReviewHistoryResponseBudget(t *testing.T) {
 	})
 }
 
-func TestVoiceHTTPRejectsOverBudgetReviewResultAdapterAsInternalError(
+func TestVoiceHTTPRestoresLegacyOverBudgetReviewResult(
 	t *testing.T,
 ) {
 	item := completedVoiceHistoryReview(
@@ -546,18 +546,21 @@ func TestVoiceHTTPRejectsOverBudgetReviewResultAdapterAsInternalError(
 		nil,
 		nil,
 	)
-	if response.Code != http.StatusInternalServerError {
+	if response.Code != http.StatusOK {
 		t.Fatalf(
-			"invalid adapter history status = %d, body = %s",
+			"legacy adapter history status = %d, body = %s",
 			response.Code,
 			response.Body,
 		)
 	}
 	root := decodeVoiceJSONObject(t, response)
-	requireVoiceKeys(t, root, "error")
-	if strings.Contains(response.Body.String(), `"items"`) ||
-		strings.Contains(response.Body.String(), strings.Repeat("s", 64)) {
-		t.Fatalf("invalid adapter data leaked: %s", response.Body)
+	items, ok := root["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("legacy adapter history = %#v", root)
+	}
+	result, ok := items[0].(map[string]any)["result"].(map[string]any)
+	if !ok || result["summary"] != item.Result.Summary {
+		t.Fatalf("legacy adapter result = %#v", items[0])
 	}
 }
 

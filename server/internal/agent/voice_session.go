@@ -303,7 +303,7 @@ func (application *VoiceSessionApplication) GetReview(
 	if err != nil {
 		return VoiceSessionReview{}, err
 	}
-	if !validVoiceSessionReview(item, reviewID) {
+	if !validPersistedVoiceSessionReview(item, reviewID) {
 		return VoiceSessionReview{}, ErrInvalidContext
 	}
 	return item, nil
@@ -334,7 +334,7 @@ func (application *VoiceSessionApplication) ListReviews(
 	for index := range page.Items {
 		item := &page.Items[index]
 		if !validUUID(item.ID) ||
-			!validVoiceSessionReview(*item, item.ID) ||
+			!validPersistedVoiceSessionReview(*item, item.ID) ||
 			item.Status != "completed" {
 			return VoiceReviewHistoryPage{}, ErrInvalidContext
 		}
@@ -510,6 +510,29 @@ func validVoiceSessionReview(
 	item VoiceSessionReview,
 	expectedID string,
 ) bool {
+	return validVoiceSessionReviewWithResult(
+		item,
+		expectedID,
+		validVoiceReviewResult,
+	)
+}
+
+func validPersistedVoiceSessionReview(
+	item VoiceSessionReview,
+	expectedID string,
+) bool {
+	return validVoiceSessionReviewWithResult(
+		item,
+		expectedID,
+		validPersistedVoiceReviewResult,
+	)
+}
+
+func validVoiceSessionReviewWithResult(
+	item VoiceSessionReview,
+	expectedID string,
+	validResult func(*VoiceReviewResult) bool,
+) bool {
 	if item.ID != expectedID ||
 		!validVoiceReviewMetadata(item.ID) ||
 		!validVoiceReviewMetadata(item.SessionID) ||
@@ -528,10 +551,35 @@ func validVoiceSessionReview(
 	default:
 		return false
 	}
-	if !validVoiceReviewResult(item.Result) ||
+	if !validResult(item.Result) ||
 		item.CompletedAt == nil ||
 		item.CompletedAt.Before(item.CreatedAt) {
 		return false
+	}
+	return true
+}
+
+func validPersistedVoiceReviewResult(result *VoiceReviewResult) bool {
+	if result == nil ||
+		result.OverallScore < 0 ||
+		result.OverallScore > 100 ||
+		strings.TrimSpace(result.Summary) == "" ||
+		len(result.Conclusions) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(result.Conclusions))
+	for _, conclusion := range result.Conclusions {
+		key := strings.TrimSpace(conclusion.Key)
+		if key == "" ||
+			key != conclusion.Key ||
+			strings.TrimSpace(conclusion.Category) == "" ||
+			strings.TrimSpace(conclusion.Message) == "" {
+			return false
+		}
+		if _, exists := seen[key]; exists {
+			return false
+		}
+		seen[key] = struct{}{}
 	}
 	return true
 }

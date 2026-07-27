@@ -561,6 +561,46 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		reviewOwnerID,
 		"restart-cursor-older",
 	)
+	legacyHistorySummary := strings.Repeat("legacy summary ", 1100)
+	legacyHistoryResult := *olderHistoryReview.Result
+	legacyHistoryResult.Summary = legacyHistorySummary
+	legacyHistoryPayload, err := json.Marshal(legacyHistoryResult)
+	if err != nil {
+		t.Fatalf("marshal legacy HTTP Review: %v", err)
+	}
+	if len(legacyHistoryPayload) <= 12*1024 {
+		t.Fatalf(
+			"legacy HTTP Review bytes = %d, want over 12 KiB",
+			len(legacyHistoryPayload),
+		)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE reviews SET result = $1::jsonb WHERE id = $2`,
+		legacyHistoryPayload,
+		olderHistoryReview.ID,
+	); err != nil {
+		t.Fatalf("stage legacy HTTP Review: %v", err)
+	}
+	legacyHistoryItem := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodGet,
+		"/v1/formal-reviews/"+olderHistoryReview.ID,
+		"",
+		"",
+		http.StatusOK,
+	)
+	legacyHistoryHTTPResult, ok :=
+		legacyHistoryItem["result"].(map[string]any)
+	if !ok ||
+		legacyHistoryHTTPResult["summary"] != legacyHistorySummary {
+		t.Fatalf(
+			"legacy HTTP Review result = %#v",
+			legacyHistoryItem,
+		)
+	}
 	oldestHistoryReview := completeBootstrapHistoryReview(
 		t,
 		pool,
@@ -841,6 +881,13 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		continuedReview["review_id"] != olderHistoryReview.ID {
 		t.Fatalf(
 			"restart cursor first continuation item = %#v",
+			restartedContinuation,
+		)
+	}
+	continuedResult, ok := continuedReview["result"].(map[string]any)
+	if !ok || continuedResult["summary"] != legacyHistorySummary {
+		t.Fatalf(
+			"restart cursor lost legacy Review result: %#v",
 			restartedContinuation,
 		)
 	}
@@ -1168,7 +1215,7 @@ WHERE review_id = $1`,
 			to_jsonb($1::text)
 		)
 		WHERE id = $2
-	`, strings.Repeat("s", 2049), reviewID); err != nil {
+	`, " \t\n", reviewID); err != nil {
 		t.Fatalf("stage corrupt persisted Review for HTTP boundary: %v", err)
 	}
 	for _, path := range []string{
