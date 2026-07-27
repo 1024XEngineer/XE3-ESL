@@ -28,7 +28,11 @@ var productionAudioCleanupFactories = audioCleanupFactories{
 		ctx context.Context,
 		storageConfig config.ObjectStorageConfig,
 	) (objectstore.Store, error) {
-		return ossstore.NewFromEnvironment(ctx, storageConfig)
+		provider, err := ossstore.NewCredentialsProvider(storageConfig)
+		if err != nil {
+			return nil, err
+		}
+		return ossstore.New(ctx, storageConfig, provider)
 	},
 	newRepository: func(
 		pool *pgxpool.Pool,

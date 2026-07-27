@@ -93,3 +93,25 @@ func TestBuildAudioCleanupWorkerFailsEnabledStoreInitialization(t *testing.T) {
 		t.Fatal("repository constructed after storage initialization failed")
 	}
 }
+
+func TestProductionAudioStoreRejectsUnknownCredentialSourceBeforeNetwork(
+	t *testing.T,
+) {
+	t.Setenv("OSS_ACCESS_KEY_ID", "must-not-be-used")
+	t.Setenv("OSS_ACCESS_KEY_SECRET", "must-not-be-used")
+
+	store, err := productionAudioCleanupFactories.newStore(
+		context.Background(),
+		config.ObjectStorageConfig{
+			Enabled:             true,
+			CredentialsProvider: "unknown",
+		},
+	)
+	if store != nil || !errors.Is(err, objectstore.ErrCredentials) {
+		t.Fatalf(
+			"production newStore() = %#v, %v, want nil ErrCredentials",
+			store,
+			err,
+		)
+	}
+}

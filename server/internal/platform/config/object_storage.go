@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -15,6 +16,13 @@ const (
 	maxSignedURLTTL            = 2 * time.Minute
 )
 
+type ObjectStorageCredentialsProvider string
+
+const (
+	ObjectStorageCredentialsECSRole     ObjectStorageCredentialsProvider = "ecs_role"
+	ObjectStorageCredentialsEnvironment ObjectStorageCredentialsProvider = "environment"
+)
+
 var (
 	ErrObjectStorageEnabledInvalid = errors.New("OSS_ENABLED must be 0, 1, false, or true")
 	ErrObjectStorageRegionRequired = errors.New("OSS_REGION is required when object storage is enabled")
@@ -22,18 +30,24 @@ var (
 	ErrObjectStorageBucketRequired = errors.New("OSS_BUCKET is required when object storage is enabled")
 	ErrObjectStoragePrefix         = errors.New("OSS_AUDIO_PREFIX must be audio/v1")
 	ErrObjectStorageSignedURLTTL   = errors.New("OSS_SIGNED_URL_TTL must be positive and no greater than 2m")
+	ErrObjectStorageCredentials    = errors.New("OSS_CREDENTIALS_PROVIDER must be ecs_role or environment")
+	ErrObjectStorageRAMRoleName    = errors.New("OSS_RAM_ROLE_NAME must be a valid RAM role name and is only allowed with ecs_role")
 )
+
+var ramRoleNamePattern = regexp.MustCompile(`\A[A-Za-z0-9.@_-]{1,64}\z`)
 
 // ObjectStorageConfig contains only non-secret object-storage settings.
 // Access credentials stay in the SDK credential provider so Config values can
 // be logged during local debugging without disclosing an AccessKey secret.
 type ObjectStorageConfig struct {
-	Enabled      bool
-	Region       string
-	Endpoint     string
-	Bucket       string
-	AudioPrefix  string
-	SignedURLTTL time.Duration
+	Enabled             bool
+	Region              string
+	Endpoint            string
+	Bucket              string
+	AudioPrefix         string
+	SignedURLTTL        time.Duration
+	CredentialsProvider ObjectStorageCredentialsProvider
+	RAMRoleName         string
 }
 
 // LoadObjectStorage reads and validates the server-only OSS configuration.
@@ -51,6 +65,13 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 		Bucket:       strings.TrimSpace(os.Getenv("OSS_BUCKET")),
 		AudioPrefix:  valueOrDefault("OSS_AUDIO_PREFIX", defaultObjectStoragePrefix),
 		SignedURLTTL: defaultSignedURLTTL,
+		CredentialsProvider: ObjectStorageCredentialsProvider(strings.TrimSpace(
+			valueOrDefault(
+				"OSS_CREDENTIALS_PROVIDER",
+				string(ObjectStorageCredentialsECSRole),
+			),
+		)),
+		RAMRoleName: strings.TrimSpace(os.Getenv("OSS_RAM_ROLE_NAME")),
 	}
 
 	if rawTTL := strings.TrimSpace(os.Getenv("OSS_SIGNED_URL_TTL")); rawTTL != "" {
@@ -75,6 +96,20 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 	if !config.Enabled {
 		return config, nil
 	}
+	switch config.CredentialsProvider {
+	case ObjectStorageCredentialsECSRole:
+		if config.RAMRoleName != "" &&
+			!ramRoleNamePattern.MatchString(config.RAMRoleName) {
+			return ObjectStorageConfig{}, ErrObjectStorageRAMRoleName
+		}
+	case ObjectStorageCredentialsEnvironment:
+		if config.RAMRoleName != "" {
+			return ObjectStorageConfig{}, ErrObjectStorageRAMRoleName
+		}
+	default:
+		return ObjectStorageConfig{}, ErrObjectStorageCredentials
+	}
+
 	if config.Region == "" {
 		return ObjectStorageConfig{}, ErrObjectStorageRegionRequired
 	}
