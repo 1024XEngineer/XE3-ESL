@@ -159,6 +159,7 @@ func (service *RunService) process(
 			ctx,
 			actor.UserID,
 			claimed.ID,
+			claimed.WorkerLeaseToken,
 			RunFailureConfigurationDrift,
 			true,
 		)
@@ -181,6 +182,7 @@ func (service *RunService) process(
 			ctx,
 			actor.UserID,
 			claimed.ID,
+			claimed.WorkerLeaseToken,
 			kind,
 			retryable,
 		)
@@ -193,6 +195,7 @@ func (service *RunService) process(
 			ctx,
 			actor.UserID,
 			claimed.ID,
+			claimed.WorkerLeaseToken,
 			RunFailureInternal,
 			true,
 		)
@@ -209,6 +212,7 @@ func (service *RunService) process(
 			ctx,
 			actor.UserID,
 			claimed.ID,
+			claimed.WorkerLeaseToken,
 			kind,
 			retryable,
 		)
@@ -221,6 +225,7 @@ func (service *RunService) process(
 			ctx,
 			actor.UserID,
 			claimed.ID,
+			claimed.WorkerLeaseToken,
 			string(ai.ErrorInvalidResponse),
 			ai.ErrorInvalidResponse.Retryable(),
 		)
@@ -231,6 +236,7 @@ func (service *RunService) process(
 		persistContext,
 		actor.UserID,
 		claimed.ID,
+		claimed.WorkerLeaseToken,
 		result.Content,
 		result,
 	)
@@ -240,6 +246,7 @@ func (service *RunService) persistFailure(
 	ctx context.Context,
 	ownerID string,
 	runID string,
+	workerLeaseToken string,
 	kind string,
 	retryable bool,
 ) (Run, error) {
@@ -249,6 +256,7 @@ func (service *RunService) persistFailure(
 		persistContext,
 		ownerID,
 		runID,
+		workerLeaseToken,
 		kind,
 		retryable,
 	)
@@ -294,5 +302,6 @@ func runConfigurationMatches(
 ) bool {
 	return run.RequestedProvider == configuration.Provider &&
 		run.RequestedModel == configuration.Model &&
-		run.MaxOutputTokens == configuration.MaxOutputTokens
+		run.MaxOutputTokens == configuration.MaxOutputTokens &&
+		run.MaxInputCharacters == configuration.MaxInputCharacters
 }

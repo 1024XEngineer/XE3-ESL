@@ -21,7 +21,13 @@ const (
 
 type ContextRepository interface {
 	FindThread(ctx context.Context, ownerID, threadID string) (Thread, error)
-	ListMessages(ctx context.Context, ownerID, threadID string) ([]Message, error)
+	ListMessagesForContext(
+		ctx context.Context,
+		ownerID string,
+		threadID string,
+		maxSequence int64,
+		characterBudget int,
+	) ([]Message, int, error)
 	FindMessage(
 		ctx context.Context,
 		ownerID string,
@@ -119,43 +125,27 @@ func (assembler *ContextAssembler) Assemble(
 		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
 	}
 
-	messages, err := assembler.repository.ListMessages(
-		ctx,
-		actor.UserID,
-		run.ThreadID,
-	)
+	messages, omittedMessageCount, err :=
+		assembler.repository.ListMessagesForContext(
+			ctx,
+			actor.UserID,
+			run.ThreadID,
+			input.Sequence,
+			configuration.MaxInputCharacters-usedCharacters,
+		)
 	if err != nil {
 		return ContextManifest{}, ai.TextRequest{}, err
 	}
-	eligible := make([]Message, 0, len(messages))
+	if len(messages) == 0 ||
+		messages[len(messages)-1].ID != input.ID {
+		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+	}
+	manifest.OmittedMessageCount = omittedMessageCount
+	if omittedMessageCount > 0 {
+		manifest.TrimReason = contextTrimBudget
+	}
 	for _, message := range messages {
-		if message.Sequence <= input.Sequence {
-			eligible = append(eligible, message)
-		}
-	}
-	if len(eligible) == 0 ||
-		eligible[len(eligible)-1].ID != input.ID {
-		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
-	}
-
-	selectedReverse := make([]Message, 0, len(eligible))
-	for index := len(eligible) - 1; index >= 0; index-- {
-		message := eligible[index]
-		characters := utf8.RuneCountInString(message.Content)
-		if usedCharacters+characters > configuration.MaxInputCharacters {
-			manifest.OmittedMessageCount = index + 1
-			manifest.TrimReason = contextTrimBudget
-			break
-		}
-		selectedReverse = append(selectedReverse, message)
-		usedCharacters += characters
-	}
-	selected := make([]Message, len(selectedReverse))
-	for index := range selectedReverse {
-		selected[len(selectedReverse)-1-index] = selectedReverse[index]
-	}
-	if len(selected) == 0 || selected[len(selected)-1].ID != input.ID {
-		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+		usedCharacters += utf8.RuneCountInString(message.Content)
 	}
 
 	request := ai.TextRequest{
@@ -167,9 +157,9 @@ func (assembler *ContextAssembler) Assemble(
 	manifest.SelectedMessages = make(
 		[]ContextMessageSource,
 		0,
-		len(selected),
+		len(messages),
 	)
-	for _, message := range selected {
+	for _, message := range messages {
 		role, ok := providerRole(message.Role)
 		if !ok {
 			return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext

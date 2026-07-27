@@ -10,9 +10,10 @@ func TestRunConfigurationMatchesPersistedProviderModelAndBudget(t *testing.T) {
 		MaxInputCharacters: 12000,
 	}
 	run := Run{
-		RequestedProvider: configuration.Provider,
-		RequestedModel:    configuration.Model,
-		MaxOutputTokens:   configuration.MaxOutputTokens,
+		RequestedProvider:  configuration.Provider,
+		RequestedModel:     configuration.Model,
+		MaxOutputTokens:    configuration.MaxOutputTokens,
+		MaxInputCharacters: configuration.MaxInputCharacters,
 	}
 	tests := map[string]struct {
 		configuration RunConfiguration
@@ -46,13 +47,13 @@ func TestRunConfigurationMatchesPersistedProviderModelAndBudget(t *testing.T) {
 			}(),
 			want: false,
 		},
-		"context budget does not change the persisted request": {
+		"context budget drift": {
 			configuration: func() RunConfiguration {
 				changed := configuration
 				changed.MaxInputCharacters++
 				return changed
 			}(),
-			want: true,
+			want: false,
 		},
 	}
 	for name, test := range tests {

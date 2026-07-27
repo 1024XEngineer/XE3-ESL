@@ -73,6 +73,9 @@ type Run struct {
 	RequestedProvider    string
 	RequestedModel       string
 	MaxOutputTokens      int
+	MaxInputCharacters   int
+	WorkerLeaseToken     string
+	WorkerLeaseExpiresAt time.Time
 	AssistantMessageID   string
 	ProviderCompletionID string
 	ProviderModel        string
@@ -233,6 +236,7 @@ type RunRepository interface {
 		ctx context.Context,
 		ownerID string,
 		runID string,
+		workerLeaseToken string,
 		content string,
 		result ai.TextResult,
 	) (Run, error)
@@ -240,6 +244,7 @@ type RunRepository interface {
 		ctx context.Context,
 		ownerID string,
 		runID string,
+		workerLeaseToken string,
 		failureKind string,
 		retryable bool,
 	) (Run, error)

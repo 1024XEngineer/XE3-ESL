@@ -26,6 +26,9 @@ const runSelectColumns = `
     requested_provider,
     requested_model,
     max_output_tokens,
+    max_input_characters,
+    COALESCE(worker_lease_token::text, ''),
+    worker_lease_expires_at,
     COALESCE(assistant_message_id::text, ''),
     COALESCE(provider_completion_id, ''),
     COALESCE(provider_model, ''),
@@ -273,11 +276,17 @@ func (r *PostgresRepository) ClaimRun(
 	ownerID string,
 	runID string,
 ) (Run, bool, error) {
+	workerLeaseToken, err := r.ids.NewID()
+	if err != nil {
+		return Run{}, false, ErrRepository
+	}
 	row := r.database.QueryRow(ctx, `
 UPDATE agent_runs
 SET
     status = 'running',
     started_at = GREATEST(CURRENT_TIMESTAMP, created_at),
+    worker_lease_token = $3,
+    worker_lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '10 minutes',
     updated_at = GREATEST(
         CURRENT_TIMESTAMP,
         updated_at + INTERVAL '1 microsecond'
@@ -288,6 +297,7 @@ WHERE id = $1
 RETURNING `+runSelectColumns,
 		runID,
 		ownerID,
+		workerLeaseToken,
 	)
 	run, err := scanRun(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -360,6 +370,98 @@ WHERE id = $1
 	}
 	result.Role = MessageRole(role)
 	return result, nil
+}
+
+func (r *PostgresRepository) ListMessagesForContext(
+	ctx context.Context,
+	ownerID string,
+	threadID string,
+	maxSequence int64,
+	characterBudget int,
+) ([]Message, int, error) {
+	// Every committed message contains at least one Unicode character, so a
+	// character budget also bounds the maximum row count read from the index.
+	// Thread sequence numbers are contiguous and never reused, which makes the
+	// omitted count derivable without counting the full history.
+	rows, err := r.database.Query(ctx, `
+WITH recent AS (
+    SELECT
+        id,
+        owner_user_id,
+        thread_id,
+        sequence_no,
+        role,
+        client_message_id,
+        produced_by_run_id,
+        content,
+        created_at
+    FROM agent_messages
+    WHERE owner_user_id = $1
+      AND thread_id = $2
+      AND sequence_no <= $3
+    ORDER BY sequence_no DESC
+    LIMIT $4
+),
+eligible AS (
+    SELECT
+        recent.*,
+        SUM(char_length(content)) OVER (
+            ORDER BY sequence_no DESC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS cumulative_characters
+    FROM recent
+),
+selected AS (
+    SELECT *
+    FROM eligible
+    WHERE cumulative_characters <= $4
+)
+SELECT
+    id::text,
+    owner_user_id::text,
+    thread_id::text,
+    sequence_no,
+    role,
+    COALESCE(client_message_id, ''),
+    COALESCE(produced_by_run_id::text, ''),
+    content,
+    created_at
+FROM selected
+ORDER BY sequence_no ASC`,
+		ownerID,
+		threadID,
+		maxSequence,
+		characterBudget,
+	)
+	if err != nil {
+		return nil, 0, ErrRepository
+	}
+	defer rows.Close()
+
+	result := make([]Message, 0)
+	for rows.Next() {
+		var item Message
+		var role string
+		if err := rows.Scan(
+			&item.ID,
+			&item.OwnerID,
+			&item.ThreadID,
+			&item.Sequence,
+			&role,
+			&item.ClientMessageID,
+			&item.ProducedByRunID,
+			&item.Content,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, 0, ErrRepository
+		}
+		item.Role = MessageRole(role)
+		result = append(result, item)
+	}
+	if rows.Err() != nil {
+		return nil, 0, ErrRepository
+	}
+	return result, int(maxSequence) - len(result), nil
 }
 
 func (r *PostgresRepository) SaveContextManifest(
@@ -534,6 +636,7 @@ func (r *PostgresRepository) CompleteRun(
 	ctx context.Context,
 	ownerID string,
 	runID string,
+	workerLeaseToken string,
 	content string,
 	result ai.TextResult,
 ) (Run, error) {
@@ -552,7 +655,8 @@ func (r *PostgresRepository) CompleteRun(
 		}
 		return run, nil
 	}
-	if run.Status != RunStatusRunning {
+	if run.Status != RunStatusRunning ||
+		run.WorkerLeaseToken != workerLeaseToken {
 		return Run{}, ErrConflict
 	}
 
@@ -618,6 +722,8 @@ SET
     input_tokens = $7,
     output_tokens = $8,
     total_tokens = $9,
+    worker_lease_token = NULL,
+    worker_lease_expires_at = NULL,
     completed_at = GREATEST(CURRENT_TIMESTAMP, started_at),
     updated_at = GREATEST(
         CURRENT_TIMESTAMP,
@@ -626,6 +732,8 @@ SET
 WHERE id = $1
   AND owner_user_id = $2
   AND status = 'running'
+  AND worker_lease_token = $10
+  AND worker_lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+runSelectColumns,
 		runID,
 		ownerID,
@@ -636,7 +744,11 @@ RETURNING `+runSelectColumns,
 		result.Usage.InputTokens,
 		result.Usage.OutputTokens,
 		result.Usage.TotalTokens,
+		workerLeaseToken,
 	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrConflict
+	}
 	if err != nil {
 		return Run{}, mapPostgresError(err)
 	}
@@ -650,6 +762,7 @@ func (r *PostgresRepository) FailRun(
 	ctx context.Context,
 	ownerID string,
 	runID string,
+	workerLeaseToken string,
 	failureKind string,
 	retryable bool,
 ) (Run, error) {
@@ -659,6 +772,8 @@ SET
     status = 'failed',
     failure_kind = $3,
     failure_retryable = $4,
+    worker_lease_token = NULL,
+    worker_lease_expires_at = NULL,
     completed_at = GREATEST(CURRENT_TIMESTAMP, started_at),
     updated_at = GREATEST(
         CURRENT_TIMESTAMP,
@@ -667,11 +782,14 @@ SET
 WHERE id = $1
   AND owner_user_id = $2
   AND status = 'running'
+  AND worker_lease_token = $5
+  AND worker_lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+runSelectColumns,
 		runID,
 		ownerID,
 		failureKind,
 		retryable,
+		workerLeaseToken,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		current, findErr := r.FindRun(ctx, ownerID, runID)
@@ -692,21 +810,21 @@ RETURNING `+runSelectColumns,
 func (r *PostgresRepository) RecoverInterruptedRuns(
 	ctx context.Context,
 ) (int64, error) {
-	// The production composition is a single modular-monolith process. Startup
-	// recovery only makes abandoned running attempts explicitly retryable; it
-	// never claims pending work or repeats an external provider call.
 	command, err := r.database.Exec(ctx, `
 UPDATE agent_runs
 SET
     status = 'failed',
     failure_kind = 'interrupted',
     failure_retryable = true,
+    worker_lease_token = NULL,
+    worker_lease_expires_at = NULL,
     completed_at = GREATEST(CURRENT_TIMESTAMP, started_at),
     updated_at = GREATEST(
         CURRENT_TIMESTAMP,
         updated_at + INTERVAL '1 microsecond'
     )
-WHERE status = 'running'`)
+WHERE status = 'running'
+  AND worker_lease_expires_at <= CURRENT_TIMESTAMP`)
 	if err != nil {
 		return 0, ErrRepository
 	}
@@ -744,10 +862,11 @@ INSERT INTO agent_runs (
     requested_provider,
     requested_model,
     max_output_tokens,
+    max_input_characters,
     created_at,
     updated_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10,
+    $1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11,
     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 )
 RETURNING `+runSelectColumns,
@@ -761,6 +880,7 @@ RETURNING `+runSelectColumns,
 		configuration.Provider,
 		configuration.Model,
 		configuration.MaxOutputTokens,
+		configuration.MaxInputCharacters,
 	))
 	if err != nil {
 		return Run{}, mapPostgresError(err)
@@ -850,6 +970,7 @@ func scanRun(row rowScanner) (Run, error) {
 	var failureRetryable pgtype.Bool
 	var startedAt pgtype.Timestamptz
 	var completedAt pgtype.Timestamptz
+	var workerLeaseExpiresAt pgtype.Timestamptz
 	err := row.Scan(
 		&result.ID,
 		&result.OwnerID,
@@ -862,6 +983,9 @@ func scanRun(row rowScanner) (Run, error) {
 		&result.RequestedProvider,
 		&result.RequestedModel,
 		&result.MaxOutputTokens,
+		&result.MaxInputCharacters,
+		&result.WorkerLeaseToken,
+		&workerLeaseExpiresAt,
 		&result.AssistantMessageID,
 		&result.ProviderCompletionID,
 		&result.ProviderModel,
@@ -897,6 +1021,9 @@ func scanRun(row rowScanner) (Run, error) {
 	}
 	if completedAt.Valid {
 		result.CompletedAt = completedAt.Time
+	}
+	if workerLeaseExpiresAt.Valid {
+		result.WorkerLeaseExpiresAt = workerLeaseExpiresAt.Time
 	}
 	return result, nil
 }

@@ -230,9 +230,10 @@ SELECT
     input_message_id,
     attempt_no,
     status,
-    requested_provider,
-    requested_model,
-    max_output_tokens
+	    requested_provider,
+	    requested_model,
+	    max_output_tokens,
+	    max_input_characters
 ) VALUES (
     '40000000-0000-4000-8000-000000000001',
     $1,
@@ -242,7 +243,8 @@ SELECT
     'pending',
     'fake',
     'configured-model',
-    256
+	    256,
+	    12000
 )`,
 		[]any{actorA.UserID, threadB.ID, messageB.ID},
 		"23503",
@@ -614,10 +616,19 @@ func TestPostgresAgentRunPendingClaimHasOneWinner(t *testing.T) {
 	if winners != 1 {
 		t.Fatalf("claim winners = %d, want 1", winners)
 	}
+	claimed, err := repository.FindRun(
+		context.Background(),
+		actor.UserID,
+		submission.Run.ID,
+	)
+	if err != nil {
+		t.Fatalf("find claimed Run: %v", err)
+	}
 	if _, err := repository.FailRun(
 		context.Background(),
 		actor.UserID,
 		submission.Run.ID,
+		claimed.WorkerLeaseToken,
 		RunFailureInternal,
 		true,
 	); err != nil {
@@ -773,11 +784,12 @@ WHERE id = $1 AND owner_user_id = $2`,
 		"23514",
 		"agent_runs_state_shape_check",
 	)
-	if _, acquired, err := repository.ClaimRun(
+	claimed, acquired, err := repository.ClaimRun(
 		context.Background(),
 		actor.UserID,
 		submission.Run.ID,
-	); err != nil || !acquired {
+	)
+	if err != nil || !acquired {
 		t.Fatalf("claim pending Run: acquired=%v err=%v", acquired, err)
 	}
 	assertPostgresConstraint(
@@ -794,6 +806,7 @@ WHERE id = $1 AND owner_user_id = $2`,
 		context.Background(),
 		actor.UserID,
 		submission.Run.ID,
+		claimed.WorkerLeaseToken,
 		RunFailureInternal,
 		true,
 	); err != nil {
@@ -827,11 +840,12 @@ func TestPostgresAgentRunRollsBackAssistantWhenCompletionCannotCommit(
 	if err != nil {
 		t.Fatalf("create pending Run: %v", err)
 	}
-	if _, acquired, err := repository.ClaimRun(
+	claimed, acquired, err := repository.ClaimRun(
 		context.Background(),
 		actor.UserID,
 		submission.Run.ID,
-	); err != nil || !acquired {
+	)
+	if err != nil || !acquired {
 		t.Fatalf("claim pending Run: acquired=%v err=%v", acquired, err)
 	}
 	invalidResult := successfulTextResult()
@@ -840,6 +854,7 @@ func TestPostgresAgentRunRollsBackAssistantWhenCompletionCannotCommit(
 		context.Background(),
 		actor.UserID,
 		submission.Run.ID,
+		claimed.WorkerLeaseToken,
 		"Must be rolled back with the failed state transition.",
 		invalidResult,
 	); !errors.Is(err, ErrInvalidRequest) {
@@ -886,6 +901,7 @@ WHERE owner_user_id = $1 AND id = $3`,
 		context.Background(),
 		actor.UserID,
 		submission.Run.ID,
+		claimed.WorkerLeaseToken,
 		RunFailureInternal,
 		true,
 	); err != nil {
@@ -1165,10 +1181,11 @@ func TestPostgresAgentRunRetryCannotChangeInputMessage(t *testing.T) {
     retry_of_run_id,
     retry_client_id,
     status,
-    requested_provider,
-    requested_model,
-    max_output_tokens,
-    failure_kind,
+	    requested_provider,
+	    requested_model,
+	    max_output_tokens,
+	    max_input_characters,
+	    failure_kind,
     failure_retryable,
     created_at,
     started_at,
@@ -1184,8 +1201,9 @@ func TestPostgresAgentRunRetryCannotChangeInputMessage(t *testing.T) {
     'different-input-retry',
     'failed',
     'fake',
-    'configured-model',
-    256,
+	    'configured-model',
+	    256,
+	    12000,
     'timeout',
     true,
     CURRENT_TIMESTAMP,
@@ -1340,12 +1358,17 @@ func TestPostgresAgentRunRecoversRunningAndResumesPendingAfterRestart(
 	if err != nil {
 		t.Fatalf("create running submission: %v", err)
 	}
-	if _, acquired, err := repository.ClaimRun(
+	claimed, acquired, err := repository.ClaimRun(
 		context.Background(),
 		actor.UserID,
 		running.Run.ID,
-	); err != nil || !acquired {
+	)
+	if err != nil || !acquired {
 		t.Fatalf("claim running submission: acquired=%v err=%v", acquired, err)
+	}
+	if claimed.WorkerLeaseToken == "" ||
+		!claimed.WorkerLeaseExpiresAt.After(claimed.StartedAt) {
+		t.Fatalf("claimed Run has invalid worker lease: %#v", claimed)
 	}
 
 	pendingThread, err := dataService.CreateThread(
@@ -1371,7 +1394,7 @@ func TestPostgresAgentRunRecoversRunningAndResumesPendingAfterRestart(
 	database.pool.Close()
 	reopenedPool := database.reopen(t)
 	recoveryGenerator := &recordingTextGenerator{result: successfulTextResult()}
-	_, _, recoveredService, _ := newAgentRunServices(
+	_, _, recoveredService, recoveredRepository := newAgentRunServices(
 		t,
 		reopenedPool,
 		recoveryGenerator,
@@ -1380,8 +1403,45 @@ func TestPostgresAgentRunRecoversRunningAndResumesPendingAfterRestart(
 	recoveredCount, err := recoveredService.RecoverInterruptedRuns(
 		context.Background(),
 	)
+	if err != nil || recoveredCount != 0 {
+		t.Fatalf(
+			"recover live lease count = %d, %v; want 0",
+			recoveredCount,
+			err,
+		)
+	}
+	live, err := recoveredService.GetRun(
+		context.Background(),
+		actor,
+		running.Run.ID,
+	)
+	if err != nil || live.Status != RunStatusRunning {
+		t.Fatalf("live leased Run = %#v, %v", live, err)
+	}
+	if _, err := reopenedPool.Exec(context.Background(), `
+UPDATE agent_runs
+SET worker_lease_expires_at = started_at + INTERVAL '1 microsecond'
+WHERE id = $1 AND owner_user_id = $2`,
+		running.Run.ID,
+		actor.UserID,
+	); err != nil {
+		t.Fatalf("expire worker lease: %v", err)
+	}
+	if _, err := recoveredRepository.CompleteRun(
+		context.Background(),
+		actor.UserID,
+		running.Run.ID,
+		claimed.WorkerLeaseToken,
+		"Expired workers must not persist this result.",
+		successfulTextResult(),
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("expired worker completion error = %v, want conflict", err)
+	}
+	recoveredCount, err = recoveredService.RecoverInterruptedRuns(
+		context.Background(),
+	)
 	if err != nil || recoveredCount != 1 {
-		t.Fatalf("recover interrupted count = %d, %v; want 1", recoveredCount, err)
+		t.Fatalf("recover expired lease count = %d, %v; want 1", recoveredCount, err)
 	}
 	if recoveryGenerator.CallCount() != 0 {
 		t.Fatalf(
@@ -1399,6 +1459,16 @@ func TestPostgresAgentRunRecoversRunningAndResumesPendingAfterRestart(
 		interrupted.FailureKind != RunFailureInterrupted ||
 		!interrupted.FailureRetryable {
 		t.Fatalf("interrupted Run = %#v, %v", interrupted, err)
+	}
+	if _, err := recoveredRepository.CompleteRun(
+		context.Background(),
+		actor.UserID,
+		running.Run.ID,
+		claimed.WorkerLeaseToken,
+		"Stale workers must not persist this result.",
+		successfulTextResult(),
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale worker completion error = %v, want conflict", err)
 	}
 	resumed, err := recoveredService.SubmitText(
 		context.Background(),
@@ -1457,6 +1527,7 @@ func TestPostgresAgentRunRejectsPendingReplayAfterConfigurationDrift(
 	reconfigured.Provider = "fake_reconfigured"
 	reconfigured.Model = "fake-reconfigured-model"
 	reconfigured.MaxOutputTokens++
+	reconfigured.MaxInputCharacters++
 	reconfiguredResult := successfulTextResult()
 	reconfiguredResult.Provider = reconfigured.Provider
 	reconfiguredResult.Model = reconfigured.Model
@@ -1488,7 +1559,9 @@ func TestPostgresAgentRunRejectsPendingReplayAfterConfigurationDrift(
 	if replayed.Run.RequestedProvider != testRunConfiguration.Provider ||
 		replayed.Run.RequestedModel != testRunConfiguration.Model ||
 		replayed.Run.MaxOutputTokens !=
-			testRunConfiguration.MaxOutputTokens {
+			testRunConfiguration.MaxOutputTokens ||
+		replayed.Run.MaxInputCharacters !=
+			testRunConfiguration.MaxInputCharacters {
 		t.Fatalf(
 			"configuration-drift replay changed the durable request: %#v",
 			replayed.Run,
@@ -1526,7 +1599,8 @@ func TestPostgresAgentRunRejectsPendingReplayAfterConfigurationDrift(
 		retry.Run.RetryOfRunID != replayed.Run.ID ||
 		retry.Run.RequestedProvider != reconfigured.Provider ||
 		retry.Run.RequestedModel != reconfigured.Model ||
-		retry.Run.MaxOutputTokens != reconfigured.MaxOutputTokens {
+		retry.Run.MaxOutputTokens != reconfigured.MaxOutputTokens ||
+		retry.Run.MaxInputCharacters != reconfigured.MaxInputCharacters {
 		t.Fatalf("configuration-drift retry = %#v", retry)
 	}
 	if generator.CallCount() != 1 {
