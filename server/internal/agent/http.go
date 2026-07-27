@@ -2,7 +2,9 @@ package agent
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -31,12 +33,16 @@ const (
 	defaultMessagePageSize  = 50
 	defaultVoiceReadTimeout = 15 * time.Second
 	maxReviewHistoryBody    = 768 * 1024
+	reviewCursorVersion     = 1
+	reviewCursorKind        = "formal_reviews"
+	minReviewCursorKeyBytes = 32
 )
 
 type CorrelationIDGenerator func() string
 
 type VoiceHTTPOptions struct {
-	AudioReadTimeout time.Duration
+	AudioReadTimeout       time.Duration
+	ReviewHistoryCursorKey []byte
 }
 
 type HTTPHandler struct {
@@ -48,6 +54,7 @@ type HTTPHandler struct {
 	authenticator    identity.Authenticator
 	correlationID    CorrelationIDGenerator
 	voiceReadTimeout time.Duration
+	reviewCursorKey  []byte
 }
 
 func NewHTTPHandler(
@@ -124,10 +131,26 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 		return nil, errors.New("agent: duplicate voice HTTP options")
 	}
 	if len(voiceOptions) == 1 {
-		if voiceOptions[0].AudioReadTimeout <= 0 {
+		if voiceOptions[0].AudioReadTimeout < 0 {
 			return nil, errors.New("agent: voice audio read timeout is required")
 		}
-		voiceReadTimeout = voiceOptions[0].AudioReadTimeout
+		if voiceOptions[0].AudioReadTimeout > 0 {
+			voiceReadTimeout = voiceOptions[0].AudioReadTimeout
+		}
+	}
+	var reviewCursorKey []byte
+	if voice != nil {
+		if len(voiceOptions) != 1 ||
+			len(voiceOptions[0].ReviewHistoryCursorKey) <
+				minReviewCursorKeyBytes {
+			return nil, errors.New(
+				"agent: Review history cursor signing key is required",
+			)
+		}
+		reviewCursorKey = append(
+			[]byte(nil),
+			voiceOptions[0].ReviewHistoryCursorKey...,
+		)
 	}
 	return &HTTPHandler{
 		application:      application,
@@ -138,6 +161,7 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 		authenticator:    authenticator,
 		correlationID:    correlationID,
 		voiceReadTimeout: voiceReadTimeout,
+		reviewCursorKey:  reviewCursorKey,
 	}, nil
 }
 
@@ -927,7 +951,7 @@ func (h *HTTPHandler) listFormalReviews(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	query, ok := decodeReviewHistoryQuery(c.Request)
+	query, ok := h.decodeReviewHistoryQuery(c.Request, actor.UserID)
 	if !ok {
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
 		return
@@ -952,7 +976,20 @@ func (h *HTTPHandler) listFormalReviews(c *gin.Context) {
 	}
 	result := gin.H{"items": items}
 	if page.Next != nil {
-		result["next_cursor"] = encodeReviewHistoryCursor(*page.Next)
+		cursor, cursorOK := h.encodeReviewHistoryCursor(
+			actor.UserID,
+			*page.Next,
+		)
+		if !cursorOK {
+			h.writeError(
+				c,
+				http.StatusInternalServerError,
+				"internal_error",
+				true,
+			)
+			return
+		}
+		result["next_cursor"] = cursor
 	}
 	h.writeBoundedReviewJSON(c, result)
 }
@@ -1238,8 +1275,9 @@ func formalReviewResponse(item VoiceSessionReview) gin.H {
 	return result
 }
 
-func decodeReviewHistoryQuery(
+func (h *HTTPHandler) decodeReviewHistoryQuery(
 	request *http.Request,
+	actorUserID string,
 ) (VoiceReviewHistoryQuery, bool) {
 	const defaultLimit = 20
 	values, err := url.ParseQuery(request.URL.RawQuery)
@@ -1266,7 +1304,10 @@ func decodeReviewHistoryQuery(
 		if len(cursorValues) != 1 {
 			return VoiceReviewHistoryQuery{}, false
 		}
-		cursor, ok := decodeReviewHistoryCursor(cursorValues[0])
+		cursor, ok := h.decodeReviewHistoryCursor(
+			actorUserID,
+			cursorValues[0],
+		)
 		if !ok {
 			return VoiceReviewHistoryQuery{}, false
 		}
@@ -1275,42 +1316,105 @@ func decodeReviewHistoryQuery(
 	return query, true
 }
 
-func encodeReviewHistoryCursor(cursor VoiceReviewHistoryCursor) string {
-	payload, _ := json.Marshal(gin.H{
-		"created_at": cursor.CreatedAt.UTC().Format(time.RFC3339Nano),
-		"review_id":  cursor.ReviewID,
-	})
-	return base64.RawURLEncoding.EncodeToString(payload)
+type reviewHistoryCursorEnvelope struct {
+	Version   int    `json:"v"`
+	Kind      string `json:"kind"`
+	CreatedAt string `json:"created_at"`
+	ReviewID  string `json:"review_id"`
 }
 
-func decodeReviewHistoryCursor(
+func (h *HTTPHandler) encodeReviewHistoryCursor(
+	actorUserID string,
+	cursor VoiceReviewHistoryCursor,
+) (string, bool) {
+	if h == nil || len(h.reviewCursorKey) < minReviewCursorKeyBytes ||
+		strings.TrimSpace(actorUserID) == "" ||
+		cursor.CreatedAt.IsZero() ||
+		!validUUID(cursor.ReviewID) {
+		return "", false
+	}
+	payload, err := json.Marshal(reviewHistoryCursorEnvelope{
+		Version:   reviewCursorVersion,
+		Kind:      reviewCursorKind,
+		CreatedAt: cursor.CreatedAt.UTC().Format(time.RFC3339Nano),
+		ReviewID:  cursor.ReviewID,
+	})
+	if err != nil {
+		return "", false
+	}
+	signature := reviewHistoryCursorMAC(
+		h.reviewCursorKey,
+		actorUserID,
+		payload,
+	)
+	return base64.RawURLEncoding.EncodeToString(payload) + "." +
+		base64.RawURLEncoding.EncodeToString(signature), true
+}
+
+func (h *HTTPHandler) decodeReviewHistoryCursor(
+	actorUserID string,
 	value string,
 ) (VoiceReviewHistoryCursor, bool) {
-	if value == "" || len(value) > 512 {
+	if h == nil || len(h.reviewCursorKey) < minReviewCursorKeyBytes ||
+		strings.TrimSpace(actorUserID) == "" ||
+		value == "" || len(value) > 512 ||
+		strings.Count(value, ".") != 1 {
 		return VoiceReviewHistoryCursor{}, false
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(value)
+	parts := strings.SplitN(value, ".", 2)
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(parts[0])
 	if err != nil || len(payload) > 256 {
 		return VoiceReviewHistoryCursor{}, false
 	}
-	var object map[string]any
-	if err := json.Unmarshal(payload, &object); err != nil ||
-		len(object) != 2 {
+	signature, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
+	if err != nil || len(signature) != sha256.Size ||
+		!hmac.Equal(
+			signature,
+			reviewHistoryCursorMAC(
+				h.reviewCursorKey,
+				actorUserID,
+				payload,
+			),
+		) {
 		return VoiceReviewHistoryCursor{}, false
 	}
-	createdAtValue, createdAtOK := object["created_at"].(string)
-	reviewID, reviewIDOK := object["review_id"].(string)
-	if !createdAtOK || !reviewIDOK || !validUUID(reviewID) {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var envelope reviewHistoryCursorEnvelope
+	if err := decoder.Decode(&envelope); err != nil ||
+		decoder.Decode(&struct{}{}) != io.EOF ||
+		envelope.Version != reviewCursorVersion ||
+		envelope.Kind != reviewCursorKind ||
+		!validUUID(envelope.ReviewID) {
 		return VoiceReviewHistoryCursor{}, false
 	}
-	createdAt, err := time.Parse(time.RFC3339Nano, createdAtValue)
+	createdAt, err := time.Parse(time.RFC3339Nano, envelope.CreatedAt)
 	if err != nil || createdAt.IsZero() {
 		return VoiceReviewHistoryCursor{}, false
 	}
-	return VoiceReviewHistoryCursor{
+	cursor := VoiceReviewHistoryCursor{
 		CreatedAt: createdAt,
-		ReviewID:  reviewID,
-	}, true
+		ReviewID:  envelope.ReviewID,
+	}
+	canonical, ok := h.encodeReviewHistoryCursor(actorUserID, cursor)
+	if !ok || canonical != value {
+		return VoiceReviewHistoryCursor{}, false
+	}
+	return cursor, true
+}
+
+func reviewHistoryCursorMAC(
+	key []byte,
+	actorUserID string,
+	payload []byte,
+) []byte {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(reviewCursorKind))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(actorUserID))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write(payload)
+	return mac.Sum(nil)
 }
 
 func matterResponse(item matter.Matter) gin.H {

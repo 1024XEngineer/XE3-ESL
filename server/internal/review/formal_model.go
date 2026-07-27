@@ -363,22 +363,18 @@ func validateCompletionPayload(
 }
 
 func validateReviewResult(result ReviewResult) error {
-	if result.OverallScore < 0 ||
-		result.OverallScore > 100 ||
-		!validReviewText(result.Summary, maxReviewSummaryUTF8Bytes) ||
-		len(result.Conclusions) == 0 ||
+	if err := validatePersistedReviewResult(result); err != nil {
+		return err
+	}
+	if !validReviewText(result.Summary, maxReviewSummaryUTF8Bytes) ||
 		len(result.Conclusions) > maxReviewConclusions {
 		return ErrInvalidReview
 	}
-	conclusions := make(map[string]struct{}, len(result.Conclusions))
 	for _, conclusion := range result.Conclusions {
-		key := strings.TrimSpace(conclusion.Key)
-		if key == "" ||
-			key != conclusion.Key ||
-			!validReviewText(
-				conclusion.Key,
-				maxReviewConclusionLabelBytes,
-			) ||
+		if !validReviewText(
+			conclusion.Key,
+			maxReviewConclusionLabelBytes,
+		) ||
 			!validReviewText(
 				conclusion.Category,
 				maxReviewConclusionLabelBytes,
@@ -393,14 +389,38 @@ func validateReviewResult(result ReviewResult) error {
 			) {
 			return ErrInvalidReview
 		}
-		if _, exists := conclusions[key]; exists {
-			return ErrInvalidReview
-		}
-		conclusions[key] = struct{}{}
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil || len(encoded) > maxReviewResultJSONBytes {
 		return ErrInvalidReview
+	}
+	return nil
+}
+
+// validatePersistedReviewResult preserves the validation contract that was in
+// production before response budgets were introduced. Reads must continue to
+// restore those committed results; the stricter limits apply only to new
+// writes, while the HTTP layer still enforces its total response budget.
+func validatePersistedReviewResult(result ReviewResult) error {
+	if result.OverallScore < 0 ||
+		result.OverallScore > 100 ||
+		strings.TrimSpace(result.Summary) == "" ||
+		len(result.Conclusions) == 0 {
+		return ErrInvalidReview
+	}
+	conclusions := make(map[string]struct{}, len(result.Conclusions))
+	for _, conclusion := range result.Conclusions {
+		key := strings.TrimSpace(conclusion.Key)
+		if key == "" ||
+			key != conclusion.Key ||
+			strings.TrimSpace(conclusion.Category) == "" ||
+			strings.TrimSpace(conclusion.Message) == "" {
+			return ErrInvalidReview
+		}
+		if _, exists := conclusions[key]; exists {
+			return ErrInvalidReview
+		}
+		conclusions[key] = struct{}{}
 	}
 	return nil
 }

@@ -66,6 +66,7 @@ type VoiceConfiguration struct {
 	ASRLease                time.Duration
 	ReviewGenerationTimeout time.Duration
 	AudioReadTimeout        time.Duration
+	ReviewHistoryCursorKey  []byte
 }
 
 // NewSpeechRecognizer is the server-side ASR registration boundary. Production

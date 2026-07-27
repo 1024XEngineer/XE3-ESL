@@ -89,12 +89,15 @@ func NewIdentityAndAgentModules(
 		}
 	}
 	var voiceHTTPOptions []agent.VoiceHTTPOptions
-	if len(voiceConfigurations) == 1 &&
-		voiceConfigurations[0].AudioReadTimeout > 0 {
+	if len(voiceConfigurations) == 1 {
 		voiceHTTPOptions = append(
 			voiceHTTPOptions,
 			agent.VoiceHTTPOptions{
 				AudioReadTimeout: voiceConfigurations[0].AudioReadTimeout,
+				ReviewHistoryCursorKey: append(
+					[]byte(nil),
+					voiceConfigurations[0].ReviewHistoryCursorKey...,
+				),
 			},
 		)
 	}

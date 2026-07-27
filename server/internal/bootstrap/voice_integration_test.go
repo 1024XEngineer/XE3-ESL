@@ -34,6 +34,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+var testReviewHistoryCursorKey = []byte(
+	"0123456789abcdef0123456789abcdef",
+)
+
 func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	t *testing.T,
 ) {
@@ -65,6 +69,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			AudioStagedTTL:          time.Hour,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
+			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 		},
 	)
 	if err != nil {
@@ -721,6 +726,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			AudioStagedTTL:          time.Hour,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
+			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 		},
 	)
 	if err != nil {
@@ -1119,6 +1125,7 @@ WHERE review_id = $1`,
 			TemporaryAudio:          terminalVault,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
+			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 		},
 	)
 	if err != nil {
@@ -1223,6 +1230,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 				AudioStagedTTL:          time.Hour,
 				ASRLease:                5 * time.Second,
 				ReviewGenerationTimeout: 2 * time.Second,
+				ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 			},
 		)
 		if err != nil {

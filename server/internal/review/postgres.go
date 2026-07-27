@@ -517,37 +517,41 @@ func (r *PostgresRepository) Get(
 		strings.TrimSpace(reviewID) == "" {
 		return FormalReview{}, ErrInvalidReview
 	}
-	unavailable, err := accountUnavailable(ctx, r.pool, actor.UserID)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return FormalReview{}, err
 	}
-	if unavailable {
-		return FormalReview{}, ErrAccountDeleted
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockReviewUser(ctx, tx, actor.UserID); err != nil {
+		return FormalReview{}, err
 	}
-	review, err := scanReview(r.pool.QueryRow(ctx, reviewSelect+`
-		WHERE id = $1 AND owner_user_id = $2
-	`, reviewID, actor.UserID))
+	if err := lockActiveIdentityUser(
+		ctx,
+		tx,
+		actor.UserID,
+		actor.DeletionGeneration,
+	); err != nil {
+		return FormalReview{}, err
+	}
+	review, err := scanReview(tx.QueryRow(ctx, reviewSelect+`
+		WHERE id = $1
+		  AND owner_user_id = $2
+		  AND deletion_generation = $3
+	`, reviewID, actor.UserID, actor.DeletionGeneration))
 	if errors.Is(err, pgx.ErrNoRows) {
-		deleted, checkErr := accountUnavailable(ctx, r.pool, actor.UserID)
-		if checkErr != nil {
-			return FormalReview{}, checkErr
-		}
-		if deleted {
-			return FormalReview{}, ErrAccountDeleted
-		}
 		return FormalReview{}, ErrReviewNotFound
 	}
 	if err != nil {
 		return FormalReview{}, err
 	}
-	if review.DeletionGeneration != actor.DeletionGeneration {
-		return FormalReview{}, ErrAccountDeleted
-	}
-	evidence, err := listEvidence(ctx, r.pool, review.ID, actor.UserID)
+	evidence, err := listEvidence(ctx, tx, review.ID, actor.UserID)
 	if err != nil {
 		return FormalReview{}, err
 	}
 	review.Evidence = evidence
+	if err := tx.Commit(ctx); err != nil {
+		return FormalReview{}, err
+	}
 	return review, nil
 }
 
@@ -840,7 +844,7 @@ func scanReview(row rowScanner) (FormalReview, error) {
 		if err := json.Unmarshal(resultJSON, &result); err != nil {
 			return FormalReview{}, ErrInvalidReview
 		}
-		if err := validateReviewResult(result); err != nil {
+		if err := validatePersistedReviewResult(result); err != nil {
 			return FormalReview{}, ErrInvalidReview
 		}
 		review.Result = &result

@@ -922,36 +922,48 @@ func TestPostgresCompletedHistoryUsesOwnerScopedStableKeysetPagination(
 		t.Fatalf("second history page = %+v", second)
 	}
 
-	// PostgreSQL jsonb rejects U+0000 before it can become a readable row.
-	// An over-budget but otherwise valid jsonb value is therefore the reachable
-	// persisted-corruption case for the repository read-boundary check.
-	corruptResult := validResult()
-	corruptResult.Summary = strings.Repeat("s", 2049)
-	corruptPayload, err := json.Marshal(corruptResult)
+	// Results committed before the write budget was introduced remain valid
+	// history. New writes are stricter, but repository reads preserve the
+	// previous production validation contract.
+	legacyResult := validResult()
+	legacyResult.Summary = strings.Repeat("s", 2049)
+	legacyPayload, err := json.Marshal(legacyResult)
 	if err != nil {
-		t.Fatalf("marshal over-budget persisted Review: %v", err)
+		t.Fatalf("marshal legacy persisted Review: %v", err)
 	}
 	if _, err := pool.Exec(
 		context.Background(),
 		`UPDATE reviews SET result = $1::jsonb WHERE id = $2`,
-		corruptPayload,
+		legacyPayload,
 		ownerReviews[0].ID,
 	); err != nil {
-		t.Fatalf("stage over-budget persisted Review: %v", err)
+		t.Fatalf("stage legacy persisted Review: %v", err)
 	}
-	if _, err := repository.Get(
+	legacy, err := repository.Get(
 		context.Background(),
 		actor(userA),
 		ownerReviews[0].ID,
-	); !errors.Is(err, review.ErrInvalidReview) {
-		t.Fatalf("over-budget persisted Review get error = %v", err)
+	)
+	if err != nil || legacy.Result == nil ||
+		legacy.Result.Summary != legacyResult.Summary {
+		t.Fatalf("legacy persisted Review = %+v, %v", legacy, err)
 	}
-	if _, err := history.ListCompleted(
+	legacyPage, err := history.ListCompleted(
 		context.Background(),
 		actor(userA),
 		review.HistoryQuery{Limit: 2},
-	); !errors.Is(err, review.ErrInvalidReview) {
-		t.Fatalf("over-budget persisted Review history error = %v", err)
+	)
+	legacyIndex := slices.IndexFunc(
+		legacyPage.Items,
+		func(item review.FormalReview) bool {
+			return item.ID == ownerReviews[0].ID
+		},
+	)
+	if err != nil || len(legacyPage.Items) != 2 ||
+		legacyIndex < 0 ||
+		legacyPage.Items[legacyIndex].Result == nil ||
+		legacyPage.Items[legacyIndex].Result.Summary != legacyResult.Summary {
+		t.Fatalf("legacy persisted Review history = %+v, %v", legacyPage, err)
 	}
 
 	setAccountStatus(t, pool, userA, "deleting")
@@ -1458,6 +1470,68 @@ func TestPostgresCompletedHistoryAppliesForeignCursorOnlyAsActorKeyset(
 	}
 }
 
+func TestPostgresHistoryRestoresLegacyResultAboveNewWriteBudget(t *testing.T) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	repository := review.NewPostgresRepository(pool)
+	ensure := review.NewEnsureService(
+		repository,
+		sourceReader{},
+		&countingGenerator{},
+	)
+	history := review.NewHistoryService(repository)
+	item, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userA, "legacy-large-result"),
+	)
+	if err != nil {
+		t.Fatalf("ensure legacy Review: %v", err)
+	}
+	legacyResult := validResult()
+	legacyResult.Summary = strings.Repeat("legacy summary ", 1100)
+	encoded, err := json.Marshal(legacyResult)
+	if err != nil {
+		t.Fatalf("marshal legacy result: %v", err)
+	}
+	if len(encoded) <= 12*1024 {
+		t.Fatalf("legacy result fixture is only %d bytes", len(encoded))
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE reviews
+		SET result = $2::jsonb
+		WHERE id = $1
+	`, item.ID, encoded); err != nil {
+		t.Fatalf("persist legacy result: %v", err)
+	}
+
+	recovered, err := history.Get(
+		context.Background(),
+		actor(userA),
+		item.ID,
+	)
+	if err != nil {
+		t.Fatalf("restore legacy Review: %v", err)
+	}
+	if recovered.Result == nil ||
+		recovered.Result.Summary != legacyResult.Summary {
+		t.Fatalf("restored legacy Review = %+v", recovered)
+	}
+	page, err := history.ListCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistoryQuery{Limit: 20},
+	)
+	if err != nil {
+		t.Fatalf("list legacy Review: %v", err)
+	}
+	if len(page.Items) != 1 ||
+		page.Items[0].ID != item.ID ||
+		page.Items[0].Result == nil ||
+		page.Items[0].Result.Summary != legacyResult.Summary {
+		t.Fatalf("legacy history page = %+v", page)
+	}
+}
+
 func TestPostgresHistoryListAndDeleteUserLinearizeOnSharedFence(
 	t *testing.T,
 ) {
@@ -1529,7 +1603,12 @@ func TestPostgresHistoryListAndDeleteUserLinearizeOnSharedFence(
 		page review.HistoryPage
 		err  error
 	}
+	type getResult struct {
+		item review.FormalReview
+		err  error
+	}
 	listed := make(chan listResult, 1)
+	got := make(chan getResult, 1)
 	deleted := make(chan error, 1)
 	go func() {
 		page, listErr := history.ListCompleted(
@@ -1540,6 +1619,14 @@ func TestPostgresHistoryListAndDeleteUserLinearizeOnSharedFence(
 		listed <- listResult{page: page, err: listErr}
 	}()
 	go func() {
+		item, getErr := history.Get(
+			context.Background(),
+			actor(userA),
+			ownerReview.ID,
+		)
+		got <- getResult{item: item, err: getErr}
+	}()
+	go func() {
 		deleted <- repository.DeleteUserData(
 			context.Background(),
 			review.DeleteUserReviewsCommand{
@@ -1548,7 +1635,7 @@ func TestPostgresHistoryListAndDeleteUserLinearizeOnSharedFence(
 			},
 		)
 	}()
-	waitForReviewAdvisoryWaiters(t, pool, blockerPID, 2)
+	waitForReviewAdvisoryWaiters(t, pool, blockerPID, 3)
 	if err := blocker.Commit(context.Background()); err != nil {
 		t.Fatalf("release shared Review user lock: %v", err)
 	}
@@ -1566,6 +1653,19 @@ func TestPostgresHistoryListAndDeleteUserLinearizeOnSharedFence(
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("concurrent history did not resume")
+	}
+	select {
+	case result := <-got:
+		if !errors.Is(result.err, review.ErrAccountDeleted) ||
+			result.item.ID != "" {
+			t.Fatalf(
+				"concurrent Review get after deletion intent = %+v, %v",
+				result.item,
+				result.err,
+			)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent Review get did not resume")
 	}
 	select {
 	case err := <-deleted:

@@ -22,6 +22,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func testVoiceHTTPOptions() VoiceHTTPOptions {
+	return VoiceHTTPOptions{
+		AudioReadTimeout: defaultVoiceReadTimeout,
+		ReviewHistoryCursorKey: []byte(
+			"0123456789abcdef0123456789abcdef",
+		),
+	}
+}
+
 func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 	conversations := newAgentVoiceConversation(3)
 	practice := newAgentVoicePractice(0)
@@ -46,6 +55,7 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 		voiceHTTPMatters{},
 		voiceHTTPAuthenticator{},
 		func() string { return "corr_voice" },
+		testVoiceHTTPOptions(),
 	)
 	if err != nil {
 		t.Fatalf("new voice HTTP handler: %v", err)
@@ -236,6 +246,7 @@ func TestVoiceHTTPListsAuthenticatedReviewHistoryWithOpaqueCursor(
 		voiceHTTPMatters{},
 		voiceHTTPAuthenticator{},
 		func() string { return "corr_review_history" },
+		testVoiceHTTPOptions(),
 	)
 	if err != nil {
 		t.Fatalf("new voice HTTP handler: %v", err)
@@ -329,6 +340,48 @@ func TestVoiceHTTPListsAuthenticatedReviewHistoryWithOpaqueCursor(
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("invalid history %q status = %d", path, response.Code)
 		}
+	}
+}
+
+func TestReviewHistoryCursorIsSignedCanonicalAndActorBound(t *testing.T) {
+	key := testVoiceHTTPOptions().ReviewHistoryCursorKey
+	handler := &HTTPHandler{reviewCursorKey: key}
+	cursor := VoiceReviewHistoryCursor{
+		CreatedAt: time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC),
+		ReviewID:  "20000000-0000-4000-8000-000000000002",
+	}
+	encoded, ok := handler.encodeReviewHistoryCursor("actor-a", cursor)
+	if !ok || strings.Count(encoded, ".") != 1 {
+		t.Fatalf("encodeReviewHistoryCursor() = %q, %t", encoded, ok)
+	}
+	decoded, ok := handler.decodeReviewHistoryCursor("actor-a", encoded)
+	if !ok || decoded != cursor {
+		t.Fatalf("decodeReviewHistoryCursor() = %+v, %t", decoded, ok)
+	}
+	if _, ok := handler.decodeReviewHistoryCursor("actor-b", encoded); ok {
+		t.Fatal("cursor was accepted for another Actor")
+	}
+	otherHandler := &HTTPHandler{
+		reviewCursorKey: []byte("fedcba9876543210fedcba9876543210"),
+	}
+	if _, ok := otherHandler.decodeReviewHistoryCursor(
+		"actor-a",
+		encoded,
+	); ok {
+		t.Fatal("cursor was accepted with another signing key")
+	}
+	tampered := "A" + encoded[1:]
+	if _, ok := handler.decodeReviewHistoryCursor(
+		"actor-a",
+		tampered,
+	); ok {
+		t.Fatal("tampered cursor was accepted")
+	}
+	if _, ok := handler.decodeReviewHistoryCursor(
+		"actor-a",
+		encoded+"=",
+	); ok {
+		t.Fatal("non-canonical padded cursor was accepted")
 	}
 }
 
@@ -583,7 +636,11 @@ func TestVoiceHTTPReadDeadlineInterruptsStalledUpload(t *testing.T) {
 		voiceHTTPMatters{},
 		voiceHTTPAuthenticator{},
 		func() string { return "corr_voice_timeout" },
-		VoiceHTTPOptions{AudioReadTimeout: 100 * time.Millisecond},
+		VoiceHTTPOptions{
+			AudioReadTimeout: 100 * time.Millisecond,
+			ReviewHistoryCursorKey: testVoiceHTTPOptions().
+				ReviewHistoryCursorKey,
+		},
 	)
 	if err != nil {
 		t.Fatalf("new voice HTTP handler: %v", err)
@@ -669,6 +726,7 @@ func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 		voiceHTTPMatters{},
 		voiceHTTPAuthenticator{},
 		func() string { return "corr_voice" },
+		testVoiceHTTPOptions(),
 	)
 	if err != nil {
 		t.Fatalf("new voice HTTP handler: %v", err)
@@ -826,6 +884,7 @@ func voiceHistoryTestRouterWithReader(
 		voiceHTTPMatters{},
 		voiceHTTPAuthenticator{},
 		func() string { return "corr_review_budget" },
+		testVoiceHTTPOptions(),
 	)
 	if err != nil {
 		t.Fatalf("new voice HTTP handler: %v", err)

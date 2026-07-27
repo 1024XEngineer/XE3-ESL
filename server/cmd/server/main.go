@@ -67,6 +67,11 @@ func run() int {
 		logger.Error("temporary audio configuration failed")
 		return 1
 	}
+	reviewHistoryConfig, err := config.LoadReviewHistory()
+	if err != nil {
+		logger.Error("Review history configuration failed")
+		return 1
+	}
 	audioVault, err := platformmedia.NewTemporaryAudioVault(
 		platformmedia.TemporaryAudioVaultConfig{
 			ScratchDirectory:              ttsConfig.TempDirectory,
@@ -153,6 +158,9 @@ func run() int {
 				// below it even when the shared provider client allows 60s.
 				ReviewGenerationTimeout: 20 * time.Second,
 				AudioReadTimeout:        temporaryAudioConfig.ReadTimeout,
+				ReviewHistoryCursorKey: []byte(
+					reviewHistoryConfig.CursorSigningKey.Reveal(),
+				),
 			},
 		)
 	if err != nil {
