@@ -486,7 +486,7 @@ func (r *Repository) FailTranscription(
 	failure conversation.ProcessingFailure,
 ) error {
 	if !validJob(job) ||
-		strings.TrimSpace(failure.Code) == "" ||
+		!validProcessingFailureCode(failure.Code) ||
 		failure.Duration < 0 {
 		return conversation.ErrPersistenceInvalid
 	}
@@ -1039,15 +1039,13 @@ func (r *Repository) DeleteUserData(
 		`SELECT account_status FROM identity_users WHERE id = $1 FOR UPDATE`,
 		deletion.OwnerUserID,
 	).Scan(&accountStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
-		// A repeated coordinator call after final Identity removal is complete.
-		// The RESTRICT root foreign key guarantees no Question aggregate remains.
-		return nil
-	}
-	if err != nil {
+	identityMissing := errors.Is(err, pgx.ErrNoRows)
+	if err != nil && !identityMissing {
 		return safeDatabaseError(err)
 	}
-	if accountStatus != "deleting" && accountStatus != "deleted" {
+	if !identityMissing &&
+		accountStatus != "deleting" &&
+		accountStatus != "deleted" {
 		return conversation.ErrPersistenceConflict
 	}
 	now := databaseTime(r.now)
@@ -1533,6 +1531,26 @@ func validJob(job conversation.JobContext) bool {
 
 func validDeletion(deletion conversation.DeletionContext) bool {
 	return deletion.Valid() && validUUID(deletion.OwnerUserID)
+}
+
+func validProcessingFailureCode(code string) bool {
+	switch code {
+	case "invalid_request",
+		"configuration",
+		"authentication",
+		"authorization",
+		"quota_exhausted",
+		"rate_limited",
+		"timeout",
+		"provider_timeout",
+		"provider_unavailable",
+		"invalid_response",
+		"cancelled",
+		"legacy_provider_failure":
+		return true
+	default:
+		return false
+	}
 }
 
 func validUUID(value string) bool {
