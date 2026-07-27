@@ -74,7 +74,7 @@ class ConversationPage extends StatefulWidget {
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final textScaler = MediaQuery.textScalerOf(context);
-    final titleSize = width < 350 ? 30.0 : 36.0;
+    final titleSize = width < 350 ? 28.0 : 32.0;
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
     final acceptedUserMessage = _lastUserMessage(messages);
 
@@ -119,7 +119,13 @@ class ConversationPage extends StatefulWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            SizedBox(height: width < 350 ? 20 : 32),
+                            SizedBox(
+                              height: hasFocusedThread && messages.isNotEmpty
+                                  ? 4
+                                  : width < 350
+                                  ? 16
+                                  : 24,
+                            ),
                             if (!hasFocusedThread) ...[
                               _NoFocusedConversation(
                                 onCreateConversation: onCreateConversation,
@@ -128,7 +134,7 @@ class ConversationPage extends StatefulWidget {
                               ),
                             ] else if (messages.isEmpty) ...[
                               const _Greeting(),
-                              const SizedBox(height: 8),
+                              const SizedBox(height: 5),
                               Text(
                                 '我能为你做什么？',
                                 style: TextStyle(
@@ -139,7 +145,7 @@ class ConversationPage extends StatefulWidget {
                                   letterSpacing: -0.8,
                                 ),
                               ),
-                              SizedBox(height: width < 350 ? 20 : 26),
+                              SizedBox(height: width < 350 ? 16 : 20),
                               if (practiceAvailable)
                                 _QuickActions(
                                   compact:
@@ -178,7 +184,7 @@ class ConversationPage extends StatefulWidget {
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 8),
                               ],
                               if (hasEarlierMessages) ...[
                                 Align(
@@ -210,7 +216,7 @@ class ConversationPage extends StatefulWidget {
                                     ),
                                   ),
                                 ),
-                                const SizedBox(height: 8),
+                                const SizedBox(height: 4),
                               ],
                               _MessageList(
                                 messages: messages,
@@ -558,7 +564,7 @@ class _Greeting extends StatelessWidget {
       '你好',
       style: TextStyle(
         color: Color(0xFF5F6064),
-        fontSize: 29,
+        fontSize: 22,
         fontWeight: FontWeight.w500,
         height: 1.1,
         letterSpacing: -0.5,
@@ -634,37 +640,59 @@ class _QuickActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _QuickActionButton(
-          actionKey: const Key('quick-action-create-plan'),
-          label: '创建模拟面试',
-          compact: compact,
-          onPressed: onCreatePlan,
-        ),
-        const SizedBox(height: 10),
-        _QuickActionButton(
-          actionKey: const Key('quick-action-continue-practice'),
-          label: '继续上次练习',
-          compact: compact,
-          onPressed: onContinuePractice,
-        ),
-        const SizedBox(height: 10),
-        _QuickActionButton(
-          actionKey: const Key('quick-action-browse-scenes'),
-          label: '浏览练习场景',
-          compact: compact,
-          onPressed: onCreatePlan,
-        ),
-        const SizedBox(height: 10),
-        _QuickActionButton(
-          actionKey: const Key('quick-action-recent-review'),
-          label: '查看最近复盘',
-          compact: compact,
-          onPressed: onOpenReview,
-        ),
-      ],
+    final actions = <_QuickActionButton>[
+      _QuickActionButton(
+        actionKey: const Key('quick-action-create-plan'),
+        icon: Icons.auto_awesome_outlined,
+        label: '创建模拟面试',
+        compact: compact,
+        onPressed: onCreatePlan,
+      ),
+      _QuickActionButton(
+        actionKey: const Key('quick-action-continue-practice'),
+        icon: Icons.play_arrow_rounded,
+        label: '继续上次练习',
+        compact: compact,
+        onPressed: onContinuePractice,
+      ),
+      _QuickActionButton(
+        actionKey: const Key('quick-action-browse-scenes'),
+        icon: Icons.grid_view_rounded,
+        label: '浏览练习场景',
+        compact: compact,
+        onPressed: onCreatePlan,
+      ),
+      _QuickActionButton(
+        actionKey: const Key('quick-action-recent-review'),
+        icon: Icons.fact_check_outlined,
+        label: '查看最近复盘',
+        compact: compact,
+        onPressed: onOpenReview,
+      ),
+    ];
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var index = 0; index < actions.length; index++) ...[
+            actions[index],
+            if (index != actions.length - 1) const SizedBox(height: 8),
+          ],
+        ],
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final itemWidth = (constraints.maxWidth - 10) / 2;
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final action in actions)
+              SizedBox(width: itemWidth, child: action),
+          ],
+        );
+      },
     );
   }
 }
@@ -672,54 +700,67 @@ class _QuickActions extends StatelessWidget {
 class _QuickActionButton extends StatelessWidget {
   const _QuickActionButton({
     this.actionKey,
+    required this.icon,
     required this.label,
     required this.compact,
     required this.onPressed,
   });
 
   final Key? actionKey;
+  final IconData icon;
   final String label;
   final bool compact;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
+    return Semantics(
+      key: actionKey,
+      button: true,
+      enabled: onPressed != null,
+      label: label,
+      onTap: onPressed,
+      excludeSemantics: true,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(28),
+          borderRadius: BorderRadius.circular(18),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x10000000),
-              blurRadius: 14,
-              offset: Offset(0, 6),
+              color: Color(0x0D000000),
+              blurRadius: 10,
+              offset: Offset(0, 4),
             ),
           ],
         ),
         child: Material(
-          color: const Color(0xDEFFFFFF),
+          color: const Color(0xE8FFFFFF),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(28),
-            side: const BorderSide(color: Color(0xF2FFFFFF)),
+            borderRadius: BorderRadius.circular(18),
+            side: const BorderSide(color: Color(0xFFE5E5E0)),
           ),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
-            key: actionKey,
             onTap: onPressed,
             child: Container(
-              constraints: const BoxConstraints(minHeight: 50),
-              padding: EdgeInsets.symmetric(
-                horizontal: compact ? 18 : 22,
-                vertical: 11,
-              ),
-              child: Text(
-                label,
-                style: TextStyle(
-                  color: const Color(0xFF15161A),
-                  fontSize: compact ? 15 : 16,
-                  fontWeight: FontWeight.w500,
-                ),
+              constraints: const BoxConstraints(minHeight: 46),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(icon, size: 19, color: const Color(0xFF55575E)),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: compact ? 2 : 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF15161A),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

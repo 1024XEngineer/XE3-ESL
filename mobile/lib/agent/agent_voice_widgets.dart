@@ -90,7 +90,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
       child: Container(
         key: Key('agent-message-${message.id}'),
         constraints: const BoxConstraints(maxWidth: 340),
-        margin: const EdgeInsets.only(bottom: 10),
+        margin: const EdgeInsets.only(bottom: 7),
         padding: isUser
             ? const EdgeInsets.fromLTRB(14, 11, 12, 11)
             : const EdgeInsets.fromLTRB(2, 7, 12, 9),
