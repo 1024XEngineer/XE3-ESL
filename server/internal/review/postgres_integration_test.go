@@ -15,6 +15,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -1598,6 +1599,20 @@ func TestPostgresHistoryListAndDeleteUserLinearizeOnSharedFence(
 	); err != nil {
 		t.Fatalf("hold shared Review user lock: %v", err)
 	}
+	monitorConfig, err := pgxpool.ParseConfig(
+		os.Getenv("TEST_DATABASE_URL"),
+	)
+	if err != nil {
+		t.Fatalf("parse Review lock monitor config: %v", err)
+	}
+	monitor, err := pgx.ConnectConfig(
+		context.Background(),
+		monitorConfig.ConnConfig,
+	)
+	if err != nil {
+		t.Fatalf("connect Review lock monitor: %v", err)
+	}
+	defer func() { _ = monitor.Close(context.Background()) }()
 
 	type listResult struct {
 		page review.HistoryPage
@@ -1635,7 +1650,7 @@ func TestPostgresHistoryListAndDeleteUserLinearizeOnSharedFence(
 			},
 		)
 	}()
-	waitForReviewAdvisoryWaiters(t, pool, blockerPID, 3)
+	waitForReviewAdvisoryWaiters(t, monitor, blockerPID, 3)
 	if err := blocker.Commit(context.Background()); err != nil {
 		t.Fatalf("release shared Review user lock: %v", err)
 	}
@@ -2458,7 +2473,7 @@ func waitForBlockedIdentityShareLock(t *testing.T, pool *pgxpool.Pool) {
 
 func waitForReviewAdvisoryWaiters(
 	t *testing.T,
-	pool *pgxpool.Pool,
+	monitor *pgx.Conn,
 	blockerPID int,
 	want int,
 ) {
@@ -2466,7 +2481,7 @@ func waitForReviewAdvisoryWaiters(
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		var blocked int
-		err := pool.QueryRow(context.Background(), `
+		err := monitor.QueryRow(context.Background(), `
 			WITH RECURSIVE blocked(pid) AS (
 				SELECT activity.pid
 				FROM pg_stat_activity activity
