@@ -821,6 +821,65 @@ func TestFailedAttemptCreatesNoTurnAndStoresOnlyNormalizedAudit(t *testing.T) {
 	}
 }
 
+func TestFailureCodeBoundaryRejectsUnnormalizedValues(t *testing.T) {
+	repository, pool := newIntegrationRepository(t)
+	actor := testActor(testUserA)
+	question := saveTestQuestion(
+		t,
+		repository,
+		actor,
+		"question-failure-code",
+		"session-failure-code",
+	)
+	reservation := reserveTestTranscription(
+		t,
+		repository,
+		actor,
+		question,
+		"reserve-failure-code",
+	)
+	job := jobFromReservation(actor.UserID, reservation)
+
+	for _, code := range []string{
+		"",
+		"provider timeout",
+		"Provider_Timeout",
+		"provider_timeout\ncredential",
+		"sk-secret-value",
+		strings.Repeat("a", 65),
+	} {
+		if err := repository.FailTranscription(
+			context.Background(),
+			job,
+			conversation.ProcessingFailure{Code: code, Retryable: true},
+		); !errors.Is(err, conversation.ErrPersistenceInvalid) {
+			t.Fatalf("failure code %q error = %v, want invalid", code, err)
+		}
+	}
+
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE conversation_processing_attempts
+		 SET status = 'failed', error_code = 'raw provider response'
+		 WHERE owner_user_id = $1 AND attempt_id = $2`,
+		actor.UserID,
+		reservation.CurrentAttemptID,
+	); err == nil {
+		t.Fatal("database accepted an unnormalized failure code")
+	}
+
+	if err := repository.FailTranscription(
+		context.Background(),
+		job,
+		conversation.ProcessingFailure{
+			Code:      "provider_timeout",
+			Retryable: true,
+		},
+	); err != nil {
+		t.Fatalf("normalized failure code rejected: %v", err)
+	}
+}
+
 func TestReviewCheckpointCannotBindTwoTurns(t *testing.T) {
 	repository, _ := newIntegrationRepository(t)
 	actor := testActor(testUserA)
@@ -1247,6 +1306,86 @@ func TestMigrationUsesIdentityUUIDOwnershipAndPersistsNoAudio(t *testing.T) {
 	}
 }
 
+func TestDeletionFenceSurvivesPhysicalIdentityRemoval(t *testing.T) {
+	repository, pool := newIntegrationRepository(t)
+	actor := testActor(testUserA)
+	saveTestQuestion(
+		t,
+		repository,
+		actor,
+		"question-durable-fence",
+		"session-durable-fence",
+	)
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE identity_users SET account_status = 'deleting' WHERE id = $1`,
+		actor.UserID,
+	); err != nil {
+		t.Fatalf("start account deletion: %v", err)
+	}
+	deletion := conversation.DeletionContext{
+		OwnerUserID:        actor.UserID,
+		DeletionGeneration: 2,
+	}
+	if err := repository.DeleteUserData(context.Background(), deletion); err != nil {
+		t.Fatalf("delete Conversation data: %v", err)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`DELETE FROM identity_users WHERE id = $1`,
+		actor.UserID,
+	); err != nil {
+		t.Fatalf("physically delete Identity user: %v", err)
+	}
+
+	var generation int64
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT deletion_generation
+		 FROM conversation_deletion_fences
+		 WHERE owner_user_id = $1`,
+		actor.UserID,
+	).Scan(&generation); err != nil {
+		t.Fatalf("restore durable deletion fence: %v", err)
+	}
+	if generation != 2 {
+		t.Fatalf("deletion generation = %d, want 2", generation)
+	}
+	if err := repository.DeleteUserData(
+		context.Background(),
+		conversation.DeletionContext{
+			OwnerUserID:        actor.UserID,
+			DeletionGeneration: 1,
+		},
+	); !errors.Is(err, conversation.ErrPersistenceConflict) {
+		t.Fatalf("stale deletion error = %v, want conflict", err)
+	}
+	if err := repository.DeleteUserData(context.Background(), deletion); err != nil {
+		t.Fatalf("repeat final deletion: %v", err)
+	}
+	if err := repository.DeleteUserData(
+		context.Background(),
+		conversation.DeletionContext{
+			OwnerUserID:        actor.UserID,
+			DeletionGeneration: 3,
+		},
+	); err != nil {
+		t.Fatalf("advance deletion generation: %v", err)
+	}
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT deletion_generation
+		 FROM conversation_deletion_fences
+		 WHERE owner_user_id = $1`,
+		actor.UserID,
+	).Scan(&generation); err != nil {
+		t.Fatalf("restore advanced deletion fence: %v", err)
+	}
+	if generation != 3 {
+		t.Fatalf("advanced deletion generation = %d, want 3", generation)
+	}
+}
+
 func newIntegrationRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 	t.Helper()
 	databaseURL := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
@@ -1297,14 +1436,20 @@ func newIntegrationRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 	if _, err := pool.Exec(context.Background(), identityFixture); err != nil {
 		t.Fatalf("create identity dependency fixture: %v", err)
 	}
-	migrationSQL, err := migrations.Files.ReadFile(
+	for _, migrationName := range []string{
 		"000009_conversation_persistence.up.sql",
-	)
-	if err != nil {
-		t.Fatalf("read Conversation migration: %v", err)
-	}
-	if _, err := pool.Exec(context.Background(), string(migrationSQL)); err != nil {
-		t.Fatalf("apply Conversation migration: %v", err)
+		"000010_conversation_persistence_hardening.up.sql",
+	} {
+		migrationSQL, err := migrations.Files.ReadFile(migrationName)
+		if err != nil {
+			t.Fatalf("read Conversation migration %s: %v", migrationName, err)
+		}
+		if _, err := pool.Exec(
+			context.Background(),
+			string(migrationSQL),
+		); err != nil {
+			t.Fatalf("apply Conversation migration %s: %v", migrationName, err)
+		}
 	}
 	for _, userID := range []string{testUserA, testUserB} {
 		if _, err := pool.Exec(
