@@ -30,11 +30,9 @@ import (
 )
 
 const (
-	voiceTurnLimit            = 3
 	voiceReviewImplementation = "qianwen-voice-review-v1"
 	voiceReviewMaxGeneration  = 20 * time.Second
 	voiceQuestionObjective    = "targeted-english-practice"
-	voiceInterviewerSubject   = "qianwen-interviewer-v1"
 )
 
 // VoiceReviewGateway is the narrow Review capability consumed by the Agent
@@ -234,7 +232,6 @@ func buildProductionVoiceApplication(
 	}
 	practiceAdapter := &voicePracticeAdapter{
 		repository: practiceRepository,
-		matters:    matters,
 	}
 	questionAdapter := &voiceQuestionAdapter{
 		repository: conversationRepository,
@@ -287,8 +284,7 @@ func buildProductionVoiceApplication(
 }
 
 type voicePracticeAdapter struct {
-	repository practicepersistence.Repository
-	matters    matter.Reader
+	repository practicepersistence.ContextVoiceRepository
 }
 
 func (adapter *voicePracticeAdapter) Start(
@@ -298,120 +294,69 @@ func (adapter *voicePracticeAdapter) Start(
 	matterID string,
 	idempotencyKey string,
 ) (agent.VoicePracticeSession, error) {
-	if adapter == nil || adapter.repository == nil || adapter.matters == nil ||
+	if adapter == nil || adapter.repository == nil ||
 		!actor.Valid() ||
 		strings.TrimSpace(threadID) == "" ||
-		strings.TrimSpace(matterID) == "" ||
 		strings.TrimSpace(idempotencyKey) == "" {
 		return agent.VoicePracticeSession{}, agent.ErrInvalidRequest
 	}
-	sessionID := stableVoiceID(
-		"voice_session",
-		actor.UserID,
-		threadID,
-		idempotencyKey,
-	)
 	practiceActor := practiceActor(actor)
-	existing, err := adapter.repository.GetSession(ctx, practiceActor, sessionID)
-	if err == nil {
-		// The idempotency key identifies the immutable Session Snapshot. A
-		// later Thread selection change must not reinterpret that replay.
-		return mapPracticeSession(existing, actor.UserID, threadID, "")
+	intent := practicepersistence.ContextIdempotencyIntent{
+		Method: "POST",
+		CanonicalPath: "/v1/agent-threads/" + threadID +
+			"/voice-practice-sessions",
+		Key:                idempotencyKey,
+		PayloadFingerprint: sha256.Sum256(nil),
 	}
-	if !errors.Is(err, practicepersistence.ErrNotFound) {
-		return agent.VoicePracticeSession{}, mapPracticeError(err)
-	}
-	selectedMatter, err := adapter.matters.ReadOwned(ctx, actor, matterID)
-	if err != nil {
-		return agent.VoicePracticeSession{}, mapVoiceMatterError(err)
-	}
-	if selectedMatter.ID != matterID ||
-		selectedMatter.Status != matter.StatusActive {
-		return agent.VoicePracticeSession{}, agent.ErrConflict
-	}
-	hashKey := actor.UserID + "\x00" + threadID
-	created, err := adapter.repository.CreateSession(
+	replayed, found, err := adapter.repository.ReplayContextVoiceStart(
 		ctx,
 		practiceActor,
-		practicepersistence.CreateSessionCommand{
-			SessionID: sessionID,
-			// P0 has no separate Plan creation endpoint. Preserve the exact
-			// authoritative Thread association in Practice's existing Plan
-			// reference instead of selecting a recent Session later.
-			PlanID: "agent-thread:" + threadID,
-			Snapshot: practicepersistence.SessionSnapshot{
-				Mode:      "INTERVIEW",
-				TargetIDs: []string{matterID},
-				Participants: []practicepersistence.ParticipantSnapshot{
-					{
-						ParticipantID: stableVoiceID(
-							"participant_interviewer",
-							hashKey,
-						),
-						ParticipantRole: "INTERVIEWER",
-						SubjectRef: practicepersistence.SubjectRef{
-							Namespace: "speakup.agent",
-							SubjectID: voiceInterviewerSubject,
-						},
-						Order: 0,
-					},
-					{
-						ParticipantID: stableVoiceID(
-							"participant_candidate",
-							hashKey,
-						),
-						ParticipantRole: "CANDIDATE",
-						SubjectRef: practicepersistence.SubjectRef{
-							Namespace: "speakup.user",
-							SubjectID: actor.UserID,
-						},
-						Order: 1,
-					},
-				},
-				TurnLimit: voiceTurnLimit,
-			},
-		},
+		intent,
 	)
 	if err != nil {
-		// A concurrent replay may have committed the same stable Session.
-		if errors.Is(err, practicepersistence.ErrConflict) {
-			created, err = adapter.repository.GetSession(
-				ctx,
-				practiceActor,
-				sessionID,
-			)
-			if errors.Is(err, practicepersistence.ErrNotFound) {
-				// The Plan already has a different active Session. Only an
-				// exact stable-ID replay is idempotent.
-				return agent.VoicePracticeSession{}, agent.ErrConflict
-			}
-			if err == nil {
-				return mapPracticeSession(
-					created,
-					actor.UserID,
-					threadID,
-					"",
-				)
-			}
-		}
-		if err != nil {
-			return agent.VoicePracticeSession{}, mapPracticeError(err)
-		}
+		return agent.VoicePracticeSession{}, mapPracticeError(err)
 	}
-	return mapPracticeSession(created, actor.UserID, threadID, matterID)
-}
-
-func mapVoiceMatterError(err error) error {
-	switch {
-	case errors.Is(err, matter.ErrInvalidRequest):
-		return agent.ErrInvalidRequest
-	case errors.Is(err, matter.ErrNotFound):
-		return agent.ErrNotFound
-	case errors.Is(err, matter.ErrConflict):
-		return agent.ErrConflict
-	default:
-		return err
+	if found {
+		return adapter.mapContextPracticeSession(
+			ctx,
+			practiceActor,
+			replayed,
+			actor.UserID,
+			threadID,
+			"",
+		)
 	}
+	if strings.TrimSpace(matterID) == "" {
+		return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+	}
+	resolved, err := adapter.repository.ResolveContextSession(
+		ctx,
+		practiceActor,
+		threadID,
+		matterID,
+	)
+	if err != nil {
+		return agent.VoicePracticeSession{}, mapPracticeError(err)
+	}
+	activated, err := adapter.repository.ActivateContextSession(
+		ctx,
+		practiceActor,
+		resolved.Session.ID,
+		threadID,
+		matterID,
+		intent,
+	)
+	if err != nil {
+		return agent.VoicePracticeSession{}, mapPracticeError(err)
+	}
+	return adapter.mapContextPracticeSession(
+		ctx,
+		practiceActor,
+		activated,
+		actor.UserID,
+		threadID,
+		matterID,
+	)
 }
 
 func (adapter *voicePracticeAdapter) GetByThread(
@@ -420,34 +365,27 @@ func (adapter *voicePracticeAdapter) GetByThread(
 	threadID string,
 	matterID string,
 ) (agent.VoicePracticeSession, error) {
-	sessions, err := adapter.repository.ListSessions(
+	if adapter == nil || adapter.repository == nil || !actor.Valid() ||
+		strings.TrimSpace(threadID) == "" {
+		return agent.VoicePracticeSession{}, agent.ErrInvalidRequest
+	}
+	practiceActor := practiceActor(actor)
+	resolved, err := adapter.repository.ResolveContextSessionByThread(
 		ctx,
-		practiceActor(actor),
+		practiceActor,
+		threadID,
 	)
 	if err != nil {
 		return agent.VoicePracticeSession{}, mapPracticeError(err)
 	}
-	planID := "agent-thread:" + threadID
-	var selected practicepersistence.Session
-	found := false
-	for _, session := range sessions {
-		if session.PlanID != planID {
-			continue
-		}
-		if session.Status == practicepersistence.SessionStatusActive {
-			selected = session
-			found = true
-			break
-		}
-		if !found || session.CreatedAt.After(selected.CreatedAt) {
-			selected = session
-			found = true
-		}
-	}
-	if !found {
-		return agent.VoicePracticeSession{}, agent.ErrNotFound
-	}
-	return mapPracticeSession(selected, actor.UserID, threadID, matterID)
+	return adapter.mapContextPracticeSession(
+		ctx,
+		practiceActor,
+		resolved,
+		actor.UserID,
+		threadID,
+		"",
+	)
 }
 
 func (adapter *voicePracticeAdapter) GetByID(
@@ -455,64 +393,66 @@ func (adapter *voicePracticeAdapter) GetByID(
 	actor requestcontext.Actor,
 	sessionID string,
 ) (agent.VoicePracticeSession, error) {
-	session, err := adapter.repository.GetSession(
+	if adapter == nil || adapter.repository == nil || !actor.Valid() ||
+		strings.TrimSpace(sessionID) == "" {
+		return agent.VoicePracticeSession{}, agent.ErrInvalidRequest
+	}
+	practiceActor := practiceActor(actor)
+	session, err := adapter.repository.GetContextSession(
 		ctx,
-		practiceActor(actor),
+		practiceActor,
 		sessionID,
 	)
 	if err != nil {
 		return agent.VoicePracticeSession{}, mapPracticeError(err)
 	}
-	return mapPracticeSession(session, actor.UserID, "", "")
-}
-
-func (adapter *voicePracticeAdapter) ResolveActorParticipant(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	sessionID string,
-) (string, error) {
-	session, err := adapter.GetByID(ctx, actor, sessionID)
-	if err != nil {
-		return "", err
-	}
-	if session.CandidateParticipantID == "" {
-		return "", agent.ErrNotFound
-	}
-	return session.CandidateParticipantID, nil
-}
-
-func (adapter *voicePracticeAdapter) ApplyEffectiveTurn(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	sessionID string,
-	turnID string,
-) (agent.VoiceTurnProgress, error) {
-	result, err := adapter.repository.ConsumeTurn(
+	snapshot, err := adapter.repository.GetContextSessionSnapshot(
 		ctx,
-		practiceActor(actor),
-		practicepersistence.ConsumeTurnCommand{
-			SessionID: sessionID,
-			TurnID:    turnID,
-			Payload:   []byte("conversation-turn:" + turnID),
-		},
-	)
-	if err != nil {
-		return agent.VoiceTurnProgress{}, mapPracticeError(err)
-	}
-	session, err := adapter.repository.GetSession(
-		ctx,
-		practiceActor(actor),
+		practiceActor,
 		sessionID,
 	)
 	if err != nil {
-		return agent.VoiceTurnProgress{}, mapPracticeError(err)
+		return agent.VoicePracticeSession{}, mapPracticeError(err)
 	}
-	return agent.VoiceTurnProgress{
-		EffectiveTurns:   result.EffectiveTurns,
-		SessionVersion:   result.SessionVersion,
-		TurnLimit:        session.Snapshot.TurnLimit,
-		SessionCompleted: result.Completed,
-	}, nil
+	plan, err := adapter.repository.GetPlan(ctx, practiceActor, session.PlanID)
+	if err != nil {
+		return agent.VoicePracticeSession{}, mapPracticeError(err)
+	}
+	return mapContextPracticeSession(
+		practicepersistence.ContextSessionBootstrap{
+			Session:  session,
+			Snapshot: snapshot,
+		},
+		plan,
+		actor.UserID,
+		"",
+		"",
+	)
+}
+
+func (adapter *voicePracticeAdapter) mapContextPracticeSession(
+	ctx context.Context,
+	actor practicepersistence.Actor,
+	bootstrap practicepersistence.ContextSessionBootstrap,
+	actorUserID string,
+	threadID string,
+	matterID string,
+) (agent.VoicePracticeSession, error) {
+	plan, err := adapter.repository.GetPlan(
+		ctx,
+		actor,
+		bootstrap.Session.PlanID,
+	)
+	if err != nil {
+		return agent.VoicePracticeSession{}, mapPracticeError(err)
+	}
+	return mapContextPracticeSession(
+		bootstrap,
+		plan,
+		actorUserID,
+		threadID,
+		matterID,
+	)
 }
 
 func practiceActor(actor requestcontext.Actor) practicepersistence.Actor {
@@ -522,65 +462,166 @@ func practiceActor(actor requestcontext.Actor) practicepersistence.Actor {
 	}
 }
 
-func mapPracticeSession(
-	session practicepersistence.Session,
+func mapContextPracticeSession(
+	bootstrap practicepersistence.ContextSessionBootstrap,
+	plan practicepersistence.Plan,
 	actorUserID string,
 	threadID string,
 	matterID string,
 ) (agent.VoicePracticeSession, error) {
+	session := bootstrap.Session
+	snapshot := bootstrap.Snapshot
+	if plan.ID == "" ||
+		plan.UserID != actorUserID ||
+		plan.ID != session.PlanID ||
+		!validMappedContextVoicePlanStatus(plan.Status, session.Status) ||
+		snapshot.ID != session.SnapshotID ||
+		snapshot.SessionID != session.ID ||
+		snapshot.ScenarioType != session.ScenarioType ||
+		snapshot.PlanRevision != plan.Revision ||
+		snapshot.ScenarioDefinition.ID != plan.ScenarioDefinitionID ||
+		snapshot.ScenarioDefinition.Version !=
+			plan.ScenarioDefinitionVersion ||
+		snapshot.ScenarioConfig.ID != plan.ScenarioConfigID ||
+		snapshot.ScenarioConfig.Version != plan.ScenarioConfigVersion ||
+		snapshot.Preparation.SourceProfileID !=
+			plan.PreparationProfileID ||
+		(threadID != "" && plan.AgentThreadID != threadID) ||
+		(matterID != "" && plan.MatterID != matterID) {
+		return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+	}
 	result := agent.VoicePracticeSession{
 		ID:             session.ID,
 		PlanID:         session.PlanID,
-		ThreadID:       threadID,
+		ThreadID:       plan.AgentThreadID,
+		MatterID:       plan.MatterID,
 		SessionVersion: session.Version,
 		EffectiveTurns: session.EffectiveTurns,
-		TurnLimit:      session.Snapshot.TurnLimit,
-		Completed:      session.Status == practicepersistence.SessionStatusCompleted,
+		TurnLimit:      snapshot.SessionPolicy.MaxEffectiveTurns,
+		Completed: session.Status ==
+			practicepersistence.ContextSessionCompleted,
+		Status: string(session.Status),
 	}
-	if threadID == "" {
-		const prefix = "agent-thread:"
-		if !strings.HasPrefix(session.PlanID, prefix) ||
-			strings.TrimSpace(strings.TrimPrefix(
-				session.PlanID,
-				prefix,
-			)) == "" {
+	participantIDs := make(map[string]struct{}, len(snapshot.Participants))
+	participantOrders := make(map[int]struct{}, len(snapshot.Participants))
+	interviewerRoles := make(map[string]struct{})
+	selectedRoles := make(map[string]struct{}, len(plan.SelectedRoleIDs))
+	for _, roleID := range plan.SelectedRoleIDs {
+		selectedRoles[roleID] = struct{}{}
+	}
+	interviewerOrder := 0
+	for _, participant := range snapshot.Participants {
+		if participant.ID == "" ||
+			participant.SessionID != session.ID ||
+			participant.Order < 1 {
 			return agent.VoicePracticeSession{}, agent.ErrInvalidContext
 		}
-		result.ThreadID = strings.TrimPrefix(session.PlanID, prefix)
-	}
-	if threadID != "" && session.PlanID != "agent-thread:"+threadID {
-		return agent.VoicePracticeSession{}, agent.ErrConflict
-	}
-	if len(session.Snapshot.TargetIDs) != 1 ||
-		(matterID != "" && session.Snapshot.TargetIDs[0] != matterID) {
-		return agent.VoicePracticeSession{}, agent.ErrConflict
-	}
-	result.MatterID = session.Snapshot.TargetIDs[0]
-	for _, participant := range session.Snapshot.Participants {
-		switch participant.ParticipantRole {
+		if _, duplicate := participantIDs[participant.ID]; duplicate {
+			return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+		}
+		if _, duplicate := participantOrders[participant.Order]; duplicate {
+			return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+		}
+		participantIDs[participant.ID] = struct{}{}
+		participantOrders[participant.Order] = struct{}{}
+		switch participant.Role {
 		case "INTERVIEWER":
-			if result.InterviewerParticipantID != "" {
+			if participant.SubjectRef.Namespace != "speakup.role" ||
+				participant.SubjectRef.SubjectID !=
+					participant.RoleDefinitionID ||
+				participant.RoleDefinitionID == "" ||
+				participant.RoleSnapshot == nil ||
+				participant.RoleSnapshot.ID !=
+					participant.RoleDefinitionID {
 				return agent.VoicePracticeSession{}, agent.ErrInvalidContext
 			}
-			result.InterviewerParticipantID = participant.ParticipantID
+			if _, selected := selectedRoles[participant.RoleDefinitionID]; !selected {
+				return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+			}
+			if _, duplicate := interviewerRoles[participant.RoleDefinitionID]; duplicate {
+				return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+			}
+			interviewerRoles[participant.RoleDefinitionID] = struct{}{}
+			if result.InterviewerParticipantID == "" ||
+				participant.Order < interviewerOrder {
+				result.InterviewerParticipantID = participant.ID
+				interviewerOrder = participant.Order
+			}
 		case "CANDIDATE":
 			if result.CandidateParticipantID != "" ||
 				participant.SubjectRef.Namespace != "speakup.user" ||
-				participant.SubjectRef.SubjectID != actorUserID {
+				participant.SubjectRef.SubjectID != actorUserID ||
+				participant.RoleDefinitionID != "" ||
+				participant.RoleSnapshot != nil {
 				return agent.VoicePracticeSession{}, agent.ErrNotFound
 			}
-			result.CandidateParticipantID = participant.ParticipantID
+			result.CandidateParticipantID = participant.ID
+		default:
+			return agent.VoicePracticeSession{}, agent.ErrInvalidContext
 		}
 	}
 	if result.InterviewerParticipantID == "" ||
 		result.CandidateParticipantID == "" ||
-		result.TurnLimit <= 0 ||
+		len(interviewerRoles) != len(selectedRoles) ||
+		result.TurnLimit < 1 ||
+		result.TurnLimit > 6 ||
 		result.EffectiveTurns < 0 ||
 		result.EffectiveTurns > result.TurnLimit ||
-		result.Completed != (result.EffectiveTurns == result.TurnLimit) {
+		(result.Status == string(
+			practicepersistence.ContextSessionCompleted,
+		)) != result.Completed ||
+		!validMappedContextVoiceLifecycle(session, result.TurnLimit) {
 		return agent.VoicePracticeSession{}, agent.ErrInvalidContext
 	}
 	return result, nil
+}
+
+func validMappedContextVoicePlanStatus(
+	planStatus practicepersistence.PlanStatus,
+	sessionStatus practicepersistence.ContextSessionStatus,
+) bool {
+	if planStatus == practicepersistence.PlanStatusReady {
+		return true
+	}
+	return planStatus == practicepersistence.PlanStatusArchived &&
+		(sessionStatus == practicepersistence.ContextSessionCompleted ||
+			sessionStatus == practicepersistence.ContextSessionEndedEarly)
+}
+
+func validMappedContextVoiceLifecycle(
+	session practicepersistence.ContextSession,
+	turnLimit int,
+) bool {
+	if turnLimit < 1 || turnLimit > 6 ||
+		session.EffectiveTurns < 0 ||
+		session.EffectiveTurns > turnLimit {
+		return false
+	}
+	switch session.Status {
+	case practicepersistence.ContextSessionStarting:
+		return session.EffectiveTurns == 0 &&
+			session.StartedAt == nil &&
+			session.EndedAt == nil &&
+			session.EndReason == ""
+	case practicepersistence.ContextSessionProgress,
+		practicepersistence.ContextSessionPaused:
+		return session.EffectiveTurns < turnLimit &&
+			session.StartedAt != nil &&
+			session.EndedAt == nil &&
+			session.EndReason == ""
+	case practicepersistence.ContextSessionCompleted:
+		return session.EffectiveTurns > 0 &&
+			session.StartedAt != nil &&
+			session.EndedAt != nil &&
+			strings.TrimSpace(session.EndReason) != ""
+	case practicepersistence.ContextSessionEndedEarly:
+		return session.EffectiveTurns < turnLimit &&
+			session.StartedAt != nil &&
+			session.EndedAt != nil &&
+			strings.TrimSpace(session.EndReason) != ""
+	default:
+		return false
+	}
 }
 
 func mapPracticeError(err error) error {
@@ -1423,7 +1464,18 @@ func mapVoiceSessionReview(
 
 type voiceReviewSourceReader struct {
 	conversations conversationpersistence.PersistenceStore
-	practice      practicepersistence.Repository
+	practice      interface {
+		GetContextSession(
+			context.Context,
+			practicepersistence.Actor,
+			string,
+		) (practicepersistence.ContextSession, error)
+		GetContextSessionSnapshot(
+			context.Context,
+			practicepersistence.Actor,
+			string,
+		) (practicepersistence.ContextSessionSnapshot, error)
+	}
 }
 
 func (reader *voiceReviewSourceReader) ReadReviewSource(
@@ -1447,19 +1499,32 @@ func (reader *voiceReviewSourceReader) ReadReviewSource(
 	if err != nil {
 		return review.ReviewSourceSnapshot{}, mapConversationError(err)
 	}
-	session, err := reader.practice.GetSession(
+	practiceActor := practicepersistence.Actor{
+		UserID:    actor.UserID,
+		SessionID: trustedActor.SessionID,
+	}
+	session, err := reader.practice.GetContextSession(
 		ctx,
-		practicepersistence.Actor{
-			UserID:    actor.UserID,
-			SessionID: trustedActor.SessionID,
-		},
+		practiceActor,
 		practiceSessionID,
 	)
 	if err != nil {
 		return review.ReviewSourceSnapshot{}, mapPracticeError(err)
 	}
-	if session.Status != practicepersistence.SessionStatusCompleted ||
-		len(turns) != session.Snapshot.TurnLimit {
+	snapshot, err := reader.practice.GetContextSessionSnapshot(
+		ctx,
+		practiceActor,
+		practiceSessionID,
+	)
+	if err != nil {
+		return review.ReviewSourceSnapshot{}, mapPracticeError(err)
+	}
+	turnLimit := snapshot.SessionPolicy.MaxEffectiveTurns
+	if session.Status != practicepersistence.ContextSessionCompleted ||
+		session.EffectiveTurns < 1 ||
+		session.EffectiveTurns > turnLimit ||
+		turnLimit < 1 || turnLimit > 6 ||
+		len(turns) != session.EffectiveTurns {
 		return review.ReviewSourceSnapshot{}, review.ErrInvalidReview
 	}
 	sources := make([]review.SourceObject, 0, len(turns))
@@ -1638,7 +1703,6 @@ func stripJSONFence(value string) string {
 }
 
 var (
-	_ agent.VoicePracticePort      = (*voicePracticeAdapter)(nil)
 	_ agent.VoiceSessionPort       = (*voicePracticeAdapter)(nil)
 	_ conversation.VoiceRoundStore = (*voiceConversationStore)(nil)
 	_ agent.VoiceQuestionPort      = (*voiceQuestionAdapter)(nil)

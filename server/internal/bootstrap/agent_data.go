@@ -25,43 +25,75 @@ func NewIdentityAndAgentModules(
 	runConfiguration agent.RunConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identity.Module, *agent.Module, error) {
+	composition, err := buildIdentityAgentComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		voiceConfigurations...,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	return composition.identity.module, composition.agentModule, nil
+}
+
+type identityAgentComposition struct {
+	identity      *identityComposition
+	agentModule   *agent.Module
+	agentService  *agent.Service
+	matterService *matter.Service
+	ids           *identity.UUIDv4Generator
+}
+
+func buildIdentityAgentComposition(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration agent.RunConfiguration,
+	voiceConfigurations ...VoiceConfiguration,
+) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || generator == nil ||
 		len(voiceConfigurations) > 1 {
-		return nil, nil, errors.New(
+		return nil, errors.New(
 			"bootstrap: Agent Run dependencies are required",
 		)
 	}
-	identityModule, authenticator, err := newIdentityComposition(
+	identityContext, err := buildIdentityComposition(
 		database,
 		trustedProxyCIDRs,
 		trustedProxyHeader,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	ids := identity.NewUUIDv4Generator(nil)
 	matterRepository, err := matter.NewPostgresRepository(database, ids)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	matterService, err := matter.NewService(matterRepository)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	agentRepository, err := agent.NewPostgresRepository(database, ids)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	agentService, err := agent.NewService(agentRepository, matterService)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	contextAssembler, err := agent.NewContextAssembler(
 		agentRepository,
 		matterService,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	runService, err := agent.NewRunService(
 		agentRepository,
@@ -70,10 +102,10 @@ func NewIdentityAndAgentModules(
 		runConfiguration,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if _, err := runService.RecoverInterruptedRuns(ctx); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var voiceApplication *agent.VoiceSessionApplication
 	var audioAssets *conversation.AudioAssetService
@@ -85,7 +117,7 @@ func NewIdentityAndAgentModules(
 			voiceConfigurations[0],
 		)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	var voiceHTTPOptions []agent.VoiceHTTPOptions
@@ -107,16 +139,22 @@ func NewIdentityAndAgentModules(
 		voiceApplication,
 		audioAssets,
 		matterService,
-		authenticator,
+		identityContext.service,
 		nil,
 		voiceHTTPOptions...,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	agentModule, err := agent.NewModule(handler)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return identityModule, agentModule, nil
+	return &identityAgentComposition{
+		identity:      identityContext,
+		agentModule:   agentModule,
+		agentService:  agentService,
+		matterService: matterService,
+		ids:           ids,
+	}, nil
 }

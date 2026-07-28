@@ -14,29 +14,42 @@ func TestVoiceApplicationResolvesActorFromFrozenSnapshot(t *testing.T) {
 		SessionID: "20000000-0000-4000-8000-000000000001",
 	}
 	repository := &voiceRepositoryStub{
-		session: persistence.Session{
-			ID:          "practice-session",
-			OwnerUserID: actor.UserID,
-			Snapshot: persistence.SessionSnapshot{
-				Participants: []persistence.ParticipantSnapshot{
-					{
-						ParticipantID: "agent-participant",
-						SubjectRef: persistence.SubjectRef{
-							Namespace: "speakup.agent",
-							SubjectID: actor.UserID,
-						},
+		session: persistence.ContextSession{
+			ID:     "practice-session",
+			Status: persistence.ContextSessionProgress,
+		},
+		snapshot: persistence.ContextSessionSnapshot{
+			ID:        "snapshot-1",
+			SessionID: "practice-session",
+			Participants: []persistence.ContextParticipant{
+				{
+					ID:               "agent-participant",
+					SessionID:        "practice-session",
+					Role:             "INTERVIEWER",
+					RoleDefinitionID: "role-interviewer",
+					RoleSnapshot: &persistence.RoleSnapshot{
+						ID: "role-interviewer",
 					},
-					{
-						ParticipantID: "actor-participant",
-						SubjectRef: persistence.SubjectRef{
-							Namespace: "speakup.user",
-							SubjectID: actor.UserID,
-						},
+					Order: 1,
+					SubjectRef: persistence.SubjectRef{
+						Namespace: "speakup.role",
+						SubjectID: "role-interviewer",
+					},
+				},
+				{
+					ID:        "actor-participant",
+					SessionID: "practice-session",
+					Role:      "CANDIDATE",
+					Order:     2,
+					SubjectRef: persistence.SubjectRef{
+						Namespace: "speakup.user",
+						SubjectID: actor.UserID,
 					},
 				},
 			},
 		},
 	}
+	repository.session.SnapshotID = repository.snapshot.ID
 	application, err := NewVoiceApplication(repository, "speakup.user")
 	if err != nil {
 		t.Fatalf("NewVoiceApplication: %v", err)
@@ -61,18 +74,27 @@ func TestVoiceApplicationHidesMissingActorParticipant(t *testing.T) {
 		SessionID: "20000000-0000-4000-8000-000000000002",
 	}
 	application, err := NewVoiceApplication(
-		&voiceRepositoryStub{session: persistence.Session{
-			ID: "practice-session",
-			Snapshot: persistence.SessionSnapshot{
-				Participants: []persistence.ParticipantSnapshot{{
-					ParticipantID: "another-user",
+		&voiceRepositoryStub{
+			session: persistence.ContextSession{
+				ID:         "practice-session",
+				SnapshotID: "snapshot-1",
+				Status:     persistence.ContextSessionProgress,
+			},
+			snapshot: persistence.ContextSessionSnapshot{
+				ID:        "snapshot-1",
+				SessionID: "practice-session",
+				Participants: []persistence.ContextParticipant{{
+					ID:        "another-user",
+					SessionID: "practice-session",
+					Role:      "CANDIDATE",
+					Order:     1,
 					SubjectRef: persistence.SubjectRef{
 						Namespace: "speakup.user",
 						SubjectID: "10000000-0000-4000-8000-000000000003",
 					},
 				}},
 			},
-		}},
+		},
 		"speakup.user",
 	)
 	if err != nil {
@@ -170,22 +192,31 @@ func TestVoiceApplicationRejectsIncompleteProgressEvidence(t *testing.T) {
 }
 
 type voiceRepositoryStub struct {
-	session    persistence.Session
+	session    persistence.ContextSession
+	snapshot   persistence.ContextSessionSnapshot
 	getErr     error
 	turnResult persistence.TurnResult
 	consumeErr error
 	consumed   persistence.ConsumeTurnCommand
 }
 
-func (r *voiceRepositoryStub) GetSession(
+func (r *voiceRepositoryStub) GetContextSession(
 	context.Context,
 	persistence.Actor,
 	string,
-) (persistence.Session, error) {
+) (persistence.ContextSession, error) {
 	return r.session, r.getErr
 }
 
-func (r *voiceRepositoryStub) ConsumeTurn(
+func (r *voiceRepositoryStub) GetContextSessionSnapshot(
+	context.Context,
+	persistence.Actor,
+	string,
+) (persistence.ContextSessionSnapshot, error) {
+	return r.snapshot, r.getErr
+}
+
+func (r *voiceRepositoryStub) AdvanceContextVoiceTurn(
 	_ context.Context,
 	_ persistence.Actor,
 	command persistence.ConsumeTurnCommand,

@@ -87,7 +87,7 @@ func TestVoiceSessionResumeRecoversSagaCrashWindows(t *testing.T) {
 				context.Background(),
 				agentVoiceActor("a"),
 				"thread-1",
-				"",
+				"matter-1",
 			)
 			if err != nil {
 				t.Fatalf("resume: %v", err)
@@ -412,6 +412,71 @@ func maximumVoiceReviewResult(t *testing.T) *VoiceReviewResult {
 	return result
 }
 
+func TestVoiceSessionRestoresFormalEarlyCompletionBeforeMaximum(t *testing.T) {
+	session := VoicePracticeSession{
+		ID:                       "session-early",
+		PlanID:                   "plan-early",
+		ThreadID:                 "thread-1",
+		MatterID:                 "matter-1",
+		SessionVersion:           4,
+		EffectiveTurns:           2,
+		TurnLimit:                3,
+		Completed:                true,
+		Status:                   "completed",
+		InterviewerParticipantID: "participant-interviewer",
+		CandidateParticipantID:   "participant-a",
+	}
+	turn := conversation.ConfirmedVoiceTurn{
+		ID:               "turn-early",
+		SessionID:        session.ID,
+		EffectiveTurns:   session.EffectiveTurns,
+		SessionCompleted: true,
+		ReviewID:         "review-early",
+	}
+	reviews := newAgentVoiceReview()
+	reviews.bySession[session.ID] = VoiceReviewCheckpoint{
+		ID:           turn.ReviewID,
+		SessionID:    session.ID,
+		SourceTurnID: turn.ID,
+	}
+	orchestrator := newAgentVoiceOrchestrator(
+		t,
+		newAgentVoiceConversation(3),
+		newAgentVoicePractice(0),
+		reviews,
+	)
+	application, err := NewVoiceSessionApplication(
+		fixedVoiceSessionPort{session: session},
+		voiceSessionTestQuestions{},
+		fixedVoiceCheckpoint{turn: turn},
+		orchestrator,
+		voiceSessionTestReviews{reviews: reviews},
+		voiceSessionTestMatters{},
+	)
+	if err != nil {
+		t.Fatalf("NewVoiceSessionApplication: %v", err)
+	}
+
+	state, err := application.Resume(
+		context.Background(),
+		agentVoiceActor("a"),
+		session.ThreadID,
+		session.MatterID,
+	)
+	if err != nil {
+		t.Fatalf("Resume early-completed Session: %v", err)
+	}
+	if !state.Session.Completed ||
+		state.Session.EffectiveTurns != 2 ||
+		state.Session.TurnLimit != 3 ||
+		state.Question != nil ||
+		state.Turn == nil ||
+		state.Review == nil ||
+		state.Review.ID != turn.ReviewID {
+		t.Fatalf("early-completed state = %#v", state)
+	}
+}
+
 func newVoiceSessionTestApplication(
 	t *testing.T,
 	conversations *agentVoiceConversation,
@@ -436,6 +501,49 @@ func newVoiceSessionTestApplication(
 
 type voiceSessionTestSessions struct {
 	practice *agentVoicePractice
+}
+
+type fixedVoiceSessionPort struct {
+	session VoicePracticeSession
+}
+
+func (port fixedVoiceSessionPort) Start(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+	string,
+) (VoicePracticeSession, error) {
+	return port.session, nil
+}
+
+func (port fixedVoiceSessionPort) GetByThread(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+) (VoicePracticeSession, error) {
+	return port.session, nil
+}
+
+func (port fixedVoiceSessionPort) GetByID(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (VoicePracticeSession, error) {
+	return port.session, nil
+}
+
+type fixedVoiceCheckpoint struct {
+	turn conversation.ConfirmedVoiceTurn
+}
+
+func (checkpoint fixedVoiceCheckpoint) LatestTurn(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (conversation.ConfirmedVoiceTurn, bool, error) {
+	return checkpoint.turn, true, nil
 }
 
 func (sessions *voiceSessionTestSessions) Start(
@@ -470,14 +578,20 @@ func (sessions *voiceSessionTestSessions) current() VoicePracticeSession {
 	defer sessions.practice.mu.Unlock()
 	effective := sessions.practice.effectiveTurns
 	return VoicePracticeSession{
-		ID:                       "session-1",
-		PlanID:                   "agent-thread:thread-1",
-		ThreadID:                 "thread-1",
-		MatterID:                 "matter-1",
-		SessionVersion:           effective + 1,
-		EffectiveTurns:           effective,
-		TurnLimit:                3,
-		Completed:                effective == 3,
+		ID:             "session-1",
+		PlanID:         "plan-1",
+		ThreadID:       "thread-1",
+		MatterID:       "matter-1",
+		SessionVersion: effective + 1,
+		EffectiveTurns: effective,
+		TurnLimit:      3,
+		Completed:      effective == 3,
+		Status: func() string {
+			if effective == 3 {
+				return "completed"
+			}
+			return "in_progress"
+		}(),
 		InterviewerParticipantID: "participant-interviewer",
 		CandidateParticipantID:   "participant-a",
 	}

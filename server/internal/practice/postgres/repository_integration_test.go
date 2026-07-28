@@ -25,20 +25,59 @@ import (
 )
 
 func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
-	repository, pool := newRepository(t)
+	repository, pool := newContextRepository(t)
 	ctx := context.Background()
-	actor := persistence.Actor{
-		UserID:    "10000000-0000-4000-8000-000000000011",
-		SessionID: "20000000-0000-4000-8000-000000000011",
+	owner := contextOwnerA()
+	seedContextOwner(t, pool, &owner)
+	plan, _, err := repository.CreatePlan(
+		ctx,
+		owner.Actor,
+		contextPlanCommand(
+			owner,
+			"plan-voice-application",
+			"plan-voice-application-key",
+		),
+	)
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
 	}
-	ensureIdentityUsers(t, pool, actor)
-	command := newSession("voice-application-session", "voice-plan", 3)
-	command.Snapshot.Participants[1].SubjectRef = persistence.SubjectRef{
-		Namespace: "speakup.user",
-		SubjectID: actor.UserID,
+	command := contextSessionCommand(
+		owner,
+		plan,
+		"voice-application-session",
+		"voice-application-snapshot",
+		"voice-application-session-key",
+	)
+	command.Snapshot.PracticeOption.Type = "FOCUS"
+	command.Snapshot.PracticeOption.RoleDefinitionID =
+		"role_technical_interviewer"
+	command.Snapshot.PracticeOption.DisplayName = "Technical focus"
+	command.Snapshot.SessionPolicy.SuggestedDurationSeconds = 600
+	command.Snapshot.SessionPolicy.MinEffectiveTurns = 1
+	command.Snapshot.SessionPolicy.MaxEffectiveTurns = 3
+	command.Snapshot.SessionPolicy.CoverageCheckpointTurn = 1
+	created, _, err := repository.CreateContextSession(
+		ctx,
+		owner.Actor,
+		command,
+	)
+	if err != nil {
+		t.Fatalf("CreateContextSession: %v", err)
 	}
-	if _, err := repository.CreateSession(ctx, actor, command); err != nil {
-		t.Fatalf("CreateSession: %v", err)
+	activated, err := repository.ActivateContextSession(
+		ctx,
+		owner.Actor,
+		created.Session.ID,
+		owner.ThreadID,
+		owner.MatterID,
+		contextIntent(
+			"/v1/agent-threads/"+owner.ThreadID+"/voice-practice-sessions",
+			"voice-application-start-key",
+			"",
+		),
+	)
+	if err != nil {
+		t.Fatalf("ActivateContextSession: %v", err)
 	}
 
 	application, err := practice.NewVoiceApplication(
@@ -50,19 +89,19 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	}
 	participantID, err := application.ResolveActorParticipant(
 		ctx,
-		actor,
-		command.SessionID,
+		owner.Actor,
+		created.Session.ID,
 	)
 	if err != nil {
 		t.Fatalf("ResolveActorParticipant: %v", err)
 	}
-	if participantID != command.Snapshot.Participants[1].ParticipantID {
+	if participantID != created.Snapshot.Participants[1].ID {
 		t.Fatalf("participant ID = %q", participantID)
 	}
 	first, err := application.ApplyEffectiveTurn(
 		ctx,
-		actor,
-		command.SessionID,
+		owner.Actor,
+		created.Session.ID,
 		"voice-turn-1",
 	)
 	if err != nil {
@@ -71,7 +110,8 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	if first.EffectiveTurns != 1 || first.SessionCompleted {
 		t.Fatalf("first progress = %#v", first)
 	}
-	if first.SessionVersion != 2 || first.TurnLimit != 3 {
+	if first.SessionVersion != activated.Session.Version+1 ||
+		first.TurnLimit != 3 {
 		t.Fatalf("first progress evidence = %#v", first)
 	}
 
@@ -84,8 +124,8 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	}
 	replayed, err := restarted.ApplyEffectiveTurn(
 		ctx,
-		actor,
-		command.SessionID,
+		owner.Actor,
+		created.Session.ID,
 		"voice-turn-1",
 	)
 	if err != nil {
@@ -96,8 +136,8 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	}
 	if recoveredID, err := restarted.ResolveActorParticipant(
 		ctx,
-		actor,
-		command.SessionID,
+		owner.Actor,
+		created.Session.ID,
 	); err != nil || recoveredID != participantID {
 		t.Fatalf("resolved after restart = %q, %v", recoveredID, err)
 	}

@@ -36,6 +36,7 @@ type VoicePracticeSession struct {
 	EffectiveTurns           int
 	TurnLimit                int
 	Completed                bool
+	Status                   string
 	InterviewerParticipantID string
 	CandidateParticipantID   string
 }
@@ -187,7 +188,6 @@ func (application *VoiceSessionApplication) Start(
 ) (VoiceSessionState, error) {
 	if err := validateVoiceActor(ctx, actor); err != nil ||
 		strings.TrimSpace(threadID) == "" ||
-		strings.TrimSpace(matterID) == "" ||
 		strings.TrimSpace(idempotencyKey) == "" {
 		return VoiceSessionState{}, ErrInvalidRequest
 	}
@@ -386,10 +386,11 @@ func (application *VoiceSessionApplication) state(
 		session.ThreadID == "" ||
 		session.MatterID == "" ||
 		session.SessionVersion < 1 ||
-		session.TurnLimit != 3 ||
+		session.TurnLimit < 1 ||
+		session.TurnLimit > 6 ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > session.TurnLimit ||
-		session.Completed != (session.EffectiveTurns == session.TurnLimit) ||
+		!validVoiceSessionLifecycle(session) ||
 		session.InterviewerParticipantID == "" ||
 		session.CandidateParticipantID == "" ||
 		session.InterviewerParticipantID == session.CandidateParticipantID {
@@ -406,6 +407,9 @@ func (application *VoiceSessionApplication) state(
 	}
 	state.Matter = currentMatter
 	state.Session.MatterTitle = currentMatter.Title
+	if session.Status == "paused" || session.Status == "ended_early" {
+		return state, nil
+	}
 	latest, found, err := application.checkpoints.LatestTurn(
 		ctx,
 		actor,
@@ -504,6 +508,26 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return state, nil
+}
+
+func validVoiceSessionLifecycle(session VoicePracticeSession) bool {
+	switch session.Status {
+	case "in_progress":
+		return !session.Completed &&
+			session.EffectiveTurns < session.TurnLimit
+	case "paused":
+		return !session.Completed &&
+			session.EffectiveTurns < session.TurnLimit
+	case "completed":
+		return session.Completed &&
+			session.EffectiveTurns > 0 &&
+			session.EffectiveTurns <= session.TurnLimit
+	case "ended_early":
+		return !session.Completed &&
+			session.EffectiveTurns < session.TurnLimit
+	default:
+		return false
+	}
 }
 
 func validVoiceSessionReview(

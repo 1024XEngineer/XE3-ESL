@@ -8,6 +8,8 @@ func New() Module { return Module{} }
 func (Module) Name() string { return "practice" }
 
 type CreatePlanRequest struct {
+	AgentThreadID             string   `json:"agent_thread_id"`
+	MatterID                  string   `json:"matter_id"`
 	ScenarioDefinitionID      string   `json:"scenario_definition_id"`
 	ScenarioDefinitionVersion int      `json:"scenario_definition_version"`
 	ScenarioConfigID          string   `json:"scenario_config_id"`

@@ -29,6 +29,7 @@ import (
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -49,18 +50,15 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	)
 	objects := newVoiceObjectStore()
 	vault := newVoiceTestVault(t)
-	identityModule, agentModule, err := NewIdentityAndAgentModules(
-		context.Background(),
+	catalog, err := preparation.NewBuiltinCatalog()
+	if err != nil {
+		t.Fatalf("build Preparation catalog: %v", err)
+	}
+	server := newVoiceProductionIntegrationServer(
+		t,
 		pool,
-		nil,
-		"",
+		catalog,
 		text,
-		agent.RunConfiguration{
-			Provider:           "fake",
-			Model:              "fake-text-v1",
-			MaxOutputTokens:    256,
-			MaxInputCharacters: 12000,
-		},
 		VoiceConfiguration{
 			Recognizer:              recognizer,
 			Synthesizer:             synthesizer,
@@ -72,15 +70,6 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 		},
 	)
-	if err != nil {
-		t.Fatalf("build production composition: %v", err)
-	}
-	server := httptest.NewServer(NewRouterWithReadinessAndRoutes(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		pool,
-		[]RouteRegistrar{identityModule, agentModule},
-	).Handler())
-	t.Cleanup(server.Close)
 
 	token := registerAndLoginVoiceUser(t, server.URL, "voice-a@example.com")
 	matterID := voiceJSONRequest(
@@ -103,6 +92,14 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
+	formalContext := createVoiceFormalContext(
+		t,
+		server.URL,
+		token,
+		threadID,
+		matterID,
+		"primary",
+	)
 
 	startPath := "/v1/agent-threads/" + threadID +
 		"/voice-practice-sessions"
@@ -126,6 +123,14 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
+	archivedContext := createVoiceFormalContext(
+		t,
+		server.URL,
+		token,
+		archivedThreadID,
+		archivedMatterID,
+		"archived",
+	)
 	voiceJSONRequest(
 		t,
 		server.URL,
@@ -150,9 +155,15 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatal(err)
 	}
 	_ = archivedStart.Body.Close()
-	if archivedStart.StatusCode != http.StatusConflict {
+	if archivedStart.StatusCode != http.StatusNotFound {
 		t.Fatalf("archived Matter Start status = %d", archivedStart.StatusCode)
 	}
+	assertNoLegacyVoiceSession(
+		t,
+		pool,
+		archivedContext.SessionID,
+		archivedThreadID,
+	)
 	replayMatterID := voiceJSONRequest(
 		t,
 		server.URL,
@@ -173,6 +184,14 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
+	replayContext := createVoiceFormalContext(
+		t,
+		server.URL,
+		token,
+		replayThreadID,
+		replayMatterID,
+		"archive-replay",
+	)
 	replayPath := "/v1/agent-threads/" + replayThreadID +
 		"/voice-practice-sessions"
 	firstReplay := voiceJSONRequest(
@@ -185,6 +204,12 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"start-replay-after-archive",
 		http.StatusCreated,
 	)
+	if firstReplay["practice_session_id"] != replayContext.SessionID {
+		t.Fatalf(
+			"voice Start did not activate formal Context Session: %#v",
+			firstReplay,
+		)
+	}
 	voiceJSONRequest(
 		t,
 		server.URL,
@@ -205,11 +230,9 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"start-replay-after-archive",
 		http.StatusCreated,
 	)
-	if replayedAfterArchive["practice_session_id"] !=
-		firstReplay["practice_session_id"] {
+	if replayedAfterArchive["practice_session_id"] != replayContext.SessionID {
 		t.Fatalf(
-			"archived Matter changed Start replay: first=%#v replay=%#v",
-			firstReplay,
+			"archived Matter replay lost original Session: %#v",
 			replayedAfterArchive,
 		)
 	}
@@ -224,10 +247,13 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		http.StatusCreated,
 	)
 	sessionID := state["practice_session_id"].(string)
-	if state["matter"].(map[string]any)["matter_id"] != matterID ||
+	if sessionID != formalContext.SessionID ||
+		state["practice_plan_id"] != formalContext.PlanID ||
+		state["matter"].(map[string]any)["matter_id"] != matterID ||
 		state["thread_id"] != threadID {
-		t.Fatalf("voice Session lost Thread/Matter binding: %#v", state)
+		t.Fatalf("voice Session lost formal Context binding: %#v", state)
 	}
+	assertNoLegacyVoiceSession(t, pool, sessionID, threadID)
 	replayedStart := voiceJSONRequest(
 		t,
 		server.URL,
@@ -275,8 +301,26 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		replayedAfterMatterSwitch["matter"].(map[string]any)["matter_id"] !=
 			matterID {
 		t.Fatalf(
-			"Start replay rewrote immutable Matter Snapshot: %#v",
+			"Start replay after active Matter switch = %#v",
 			replayedAfterMatterSwitch,
+		)
+	}
+	resumedAfterMatterSwitch := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodGet,
+		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"",
+		"",
+		http.StatusOK,
+	)
+	if resumedAfterMatterSwitch["practice_session_id"] != sessionID ||
+		resumedAfterMatterSwitch["matter"].(map[string]any)["matter_id"] !=
+			matterID {
+		t.Fatalf(
+			"GET recovery reinterpreted active Matter: %#v",
+			resumedAfterMatterSwitch,
 		)
 	}
 	conflictingStart, err := voiceRawRequest(
@@ -292,9 +336,22 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatal(err)
 	}
 	_ = conflictingStart.Body.Close()
-	if conflictingStart.StatusCode != http.StatusConflict {
-		t.Fatalf("new key with active Plan status = %d", conflictingStart.StatusCode)
+	if conflictingStart.StatusCode != http.StatusNotFound {
+		t.Fatalf(
+			"new key without exact Context status = %d",
+			conflictingStart.StatusCode,
+		)
 	}
+	voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPut,
+		"/v1/agent-threads/"+threadID+"/active-matter",
+		fmt.Sprintf(`{"matter_id":%q}`, matterID),
+		"",
+		http.StatusOK,
+	)
 
 	question := state["current_question"].(map[string]any)
 	speechResponse, err := voiceRawRequest(
@@ -526,6 +583,23 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	if text.ReviewCalls() != 1 {
 		t.Fatalf("Review generator calls = %d, want 1", text.ReviewCalls())
 	}
+	replayedAfterCompletion := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		startPath,
+		"",
+		"start-voice-session-0001",
+		http.StatusCreated,
+	)
+	if replayedAfterCompletion["practice_session_id"] != sessionID ||
+		replayedAfterCompletion["session_completed"] != true {
+		t.Fatalf(
+			"completed Start replay did not return original Session: %#v",
+			replayedAfterCompletion,
+		)
+	}
 
 	reviewResult := voiceJSONRequest(
 		t,
@@ -675,13 +749,13 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	).Scan(&evidenceCount, &matchedEvidenceCount); err != nil {
 		t.Fatalf("read formal Review evidence: %v", err)
 	}
-	if evidenceCount != voiceTurnLimit ||
-		matchedEvidenceCount != voiceTurnLimit {
+	if evidenceCount != 3 ||
+		matchedEvidenceCount != 3 {
 		t.Fatalf(
 			"formal Review evidence = %d/%d, want %d matched",
 			matchedEvidenceCount,
 			evidenceCount,
-			voiceTurnLimit,
+			3,
 		)
 	}
 	playback := voiceJSONRequest(
@@ -746,18 +820,11 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatalf("close first audio vault: %v", err)
 	}
 	restartedVault := newVoiceTestVault(t)
-	restartedIdentity, restartedAgent, err := NewIdentityAndAgentModules(
-		context.Background(),
+	restartedServer := newVoiceProductionIntegrationServer(
+		t,
 		pool,
-		nil,
-		"",
+		catalog,
 		text,
-		agent.RunConfiguration{
-			Provider:           "fake",
-			Model:              "fake-text-v1",
-			MaxOutputTokens:    256,
-			MaxInputCharacters: 12000,
-		},
 		VoiceConfiguration{
 			Recognizer:              recognizer,
 			Synthesizer:             synthesizer,
@@ -769,15 +836,6 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 		},
 	)
-	if err != nil {
-		t.Fatalf("restart production composition: %v", err)
-	}
-	restartedServer := httptest.NewServer(NewRouterWithReadinessAndRoutes(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		pool,
-		[]RouteRegistrar{restartedIdentity, restartedAgent},
-	).Handler())
-	t.Cleanup(restartedServer.Close)
 	recovered := voiceJSONRequest(
 		t,
 		restartedServer.URL,
@@ -994,18 +1052,30 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	if _, present := afterAudioDelete["current_turn"].(map[string]any)["audio_asset_id"]; present {
 		t.Fatalf("deleted AudioAsset remained in restored state: %#v", afterAudioDelete)
 	}
+	retryContext := createVoiceFormalThreadContext(
+		t,
+		restartedServer.URL,
+		token,
+		"Review retry",
+		"retry-review",
+	)
+	retryStartPath := "/v1/agent-threads/" + retryContext.ThreadID +
+		"/voice-practice-sessions"
 	nextSession := voiceJSONRequest(
 		t,
 		restartedServer.URL,
 		token,
 		http.MethodPost,
-		startPath,
+		retryStartPath,
 		"",
 		"start-voice-session-0002",
 		http.StatusCreated,
 	)
-	if nextSession["practice_session_id"] == sessionID {
-		t.Fatal("completed Plan could not start a new idempotent Session")
+	if nextSession["practice_session_id"] != retryContext.SessionID {
+		t.Fatalf(
+			"voice Start did not use next formal Context Session: %#v",
+			nextSession,
+		)
 	}
 
 	text.FailNextReviews(1)
@@ -1078,7 +1148,8 @@ GROUP BY r.id, r.status`,
 		restartedServer.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/agent-threads/"+retryContext.ThreadID+
+			"/voice-practice-session",
 		"",
 		"",
 		http.StatusOK,
@@ -1104,16 +1175,31 @@ WHERE review_id = $1`,
 		t.Fatalf("recovered Review attempts = %d, want 2", recoveredAttempts)
 	}
 
+	quotaContext := createVoiceFormalThreadContext(
+		t,
+		restartedServer.URL,
+		token,
+		"Quota terminal review",
+		"quota-review",
+	)
+	quotaStartPath := "/v1/agent-threads/" + quotaContext.ThreadID +
+		"/voice-practice-sessions"
 	quotaSession := voiceJSONRequest(
 		t,
 		restartedServer.URL,
 		token,
 		http.MethodPost,
-		startPath,
+		quotaStartPath,
 		"",
 		"start-voice-session-quota",
 		http.StatusCreated,
 	)
+	if quotaSession["practice_session_id"] != quotaContext.SessionID {
+		t.Fatalf(
+			"quota voice Start did not use formal Context Session: %#v",
+			quotaSession,
+		)
+	}
 	for round := 1; round <= 2; round++ {
 		quotaSession = transcribeAndConfirmVoiceRound(
 			t,
@@ -1154,42 +1240,29 @@ WHERE review_id = $1`,
 		t.Fatalf("close retry audio vault: %v", err)
 	}
 	terminalVault := newVoiceTestVault(t)
-	terminalIdentity, terminalAgent, err := NewIdentityAndAgentModules(
-		context.Background(),
+	terminalServer := newVoiceProductionIntegrationServer(
+		t,
 		pool,
-		nil,
-		"",
+		catalog,
 		text,
-		agent.RunConfiguration{
-			Provider:           "fake",
-			Model:              "fake-text-v1",
-			MaxOutputTokens:    256,
-			MaxInputCharacters: 12000,
-		},
 		VoiceConfiguration{
 			Recognizer:              recognizer,
 			Synthesizer:             synthesizer,
 			TemporaryAudio:          terminalVault,
+			ObjectStore:             objects,
+			AudioStagedTTL:          time.Hour,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
 			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 		},
 	)
-	if err != nil {
-		t.Fatalf("restart terminal Review composition: %v", err)
-	}
-	terminalServer := httptest.NewServer(NewRouterWithReadinessAndRoutes(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		pool,
-		[]RouteRegistrar{terminalIdentity, terminalAgent},
-	).Handler())
-	t.Cleanup(terminalServer.Close)
 	for resume := 0; resume < 3; resume++ {
 		response, err := voiceRawRequest(
 			terminalServer.URL,
 			token,
 			http.MethodGet,
-			"/v1/agent-threads/"+threadID+"/voice-practice-session",
+			"/v1/agent-threads/"+quotaContext.ThreadID+
+				"/voice-practice-session",
 			nil,
 			"",
 			"",
@@ -1255,20 +1328,17 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		fmt.Errorf("tts unavailable"),
 	)
 	objects := newVoiceObjectStore()
+	catalog, err := preparation.NewBuiltinCatalog()
+	if err != nil {
+		t.Fatalf("build cleanup-race Preparation catalog: %v", err)
+	}
 	buildServer := func(vault *platformmedia.TemporaryAudioVault) *httptest.Server {
 		t.Helper()
-		identityModule, agentModule, err := NewIdentityAndAgentModules(
-			context.Background(),
+		return newVoiceProductionIntegrationServer(
+			t,
 			pool,
-			nil,
-			"",
+			catalog,
 			text,
-			agent.RunConfiguration{
-				Provider:           "fake",
-				Model:              "fake-text-v1",
-				MaxOutputTokens:    256,
-				MaxInputCharacters: 12000,
-			},
 			VoiceConfiguration{
 				Recognizer:              recognizer,
 				Synthesizer:             synthesizer,
@@ -1280,14 +1350,6 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 				ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 			},
 		)
-		if err != nil {
-			t.Fatalf("build cleanup-race composition: %v", err)
-		}
-		return httptest.NewServer(NewRouterWithReadinessAndRoutes(
-			slog.New(slog.NewTextHandler(io.Discard, nil)),
-			pool,
-			[]RouteRegistrar{identityModule, agentModule},
-		).Handler())
 	}
 
 	vault := newVoiceTestVault(t)
@@ -1317,6 +1379,14 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
+	formalContext := createVoiceFormalContext(
+		t,
+		server.URL,
+		token,
+		threadID,
+		matterID,
+		"cleanup-race",
+	)
 	state := voiceJSONRequest(
 		t,
 		server.URL,
@@ -1327,6 +1397,14 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		"start-cleanup-race",
 		http.StatusCreated,
 	)
+	if state["practice_session_id"] != formalContext.SessionID ||
+		state["practice_plan_id"] != formalContext.PlanID {
+		t.Fatalf(
+			"cleanup-race Start lost formal Context binding: %#v",
+			state,
+		)
+	}
+	assertNoLegacyVoiceSession(t, pool, formalContext.SessionID, threadID)
 	candidate := createVoiceCandidate(
 		t,
 		server.URL,
@@ -1483,7 +1561,6 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 	}
 	restartedVault := newVoiceTestVault(t)
 	restartedServer := buildServer(restartedVault)
-	t.Cleanup(restartedServer.Close)
 	assertFailedConfirm(restartedServer.URL)
 	resumed := voiceJSONRequest(
 		t,
@@ -1501,6 +1578,245 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 	}
 	if turn, present := resumed["current_turn"]; present && turn != nil {
 		t.Fatalf("cleanup-won Resume exposed damaged Turn: %#v", resumed)
+	}
+}
+
+type voiceFormalContext struct {
+	PlanID                string
+	PreparationSnapshotID string
+	SessionID             string
+	ThreadID              string
+	MatterID              string
+}
+
+func newVoiceProductionIntegrationServer(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	catalog preparation.CatalogReader,
+	generator ai.TextGenerator,
+	configuration VoiceConfiguration,
+) *httptest.Server {
+	t.Helper()
+	composition, err := NewIdentityAgentAndPracticeComposition(
+		context.Background(),
+		pool,
+		nil,
+		"",
+		generator,
+		agent.RunConfiguration{
+			Provider:           "fake",
+			Model:              "fake-text-v1",
+			MaxOutputTokens:    256,
+			MaxInputCharacters: 12000,
+		},
+		catalog,
+		configuration,
+	)
+	if err != nil {
+		t.Fatalf("build production Practice/Voice composition: %v", err)
+	}
+	protectedRoutes, err := composition.ProtectedRoutes()
+	if err != nil {
+		t.Fatalf("build protected Practice routes: %v", err)
+	}
+	router := NewRouterWithReadinessAndRoutes(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pool,
+		[]RouteRegistrar{
+			composition.IdentityModule(),
+			composition.AgentModule(),
+			protectedRoutes,
+		},
+	)
+	RegisterPreparationCatalog(router, catalog)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+	return server
+}
+
+func createVoiceFormalThreadContext(
+	t *testing.T,
+	baseURL string,
+	token string,
+	title string,
+	key string,
+) voiceFormalContext {
+	t.Helper()
+	matterID := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/matters",
+		fmt.Sprintf(`{"title":%q}`, title),
+		"",
+		http.StatusCreated,
+	)["matter_id"].(string)
+	threadID := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/agent-threads",
+		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		"",
+		http.StatusCreated,
+	)["thread_id"].(string)
+	return createVoiceFormalContext(
+		t,
+		baseURL,
+		token,
+		threadID,
+		matterID,
+		key,
+	)
+}
+
+func createVoiceFormalContext(
+	t *testing.T,
+	baseURL string,
+	token string,
+	threadID string,
+	matterID string,
+	key string,
+) voiceFormalContext {
+	t.Helper()
+	profile := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/preparation-profiles",
+		fmt.Sprintf(`{
+			"resume_ref":"resume-%s",
+			"job_description_ref":"job-%s",
+			"background_summary":"Voice integration context %s."
+		}`, key, key, key),
+		"voice-"+key+"-profile",
+		http.StatusCreated,
+	)
+	profileID := profile["preparation_profile_id"].(string)
+	snapshot := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/preparation-profiles/"+profileID+"/snapshots",
+		`{"source_version":1}`,
+		"voice-"+key+"-preparation-snapshot",
+		http.StatusCreated,
+	)
+	context := voiceFormalContext{
+		PreparationSnapshotID: snapshot["preparation_snapshot_id"].(string),
+		ThreadID:              threadID,
+		MatterID:              matterID,
+	}
+	plan := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/practice-plans",
+		fmt.Sprintf(`{
+			"agent_thread_id":%q,
+			"matter_id":%q,
+			"scenario_definition_id":%q,
+			"scenario_definition_version":1,
+			"scenario_config_id":%q,
+			"scenario_config_version":1,
+			"preparation_profile_id":%q,
+			"selected_role_ids":[%q]
+		}`,
+			threadID,
+			matterID,
+			preparation.ProgrammerInterviewScenarioID,
+			preparation.BackendEngineerConfigID,
+			profileID,
+			preparation.TechnicalInterviewerRoleID,
+		),
+		"voice-"+key+"-plan",
+		http.StatusCreated,
+	)
+	context.PlanID = plan["practice_plan_id"].(string)
+	context.SessionID = createVoiceFormalContextSession(
+		t,
+		baseURL,
+		token,
+		context,
+		key+"-initial",
+	)
+	return context
+}
+
+func createVoiceFormalContextSession(
+	t *testing.T,
+	baseURL string,
+	token string,
+	formalContext voiceFormalContext,
+	key string,
+) string {
+	t.Helper()
+	bootstrap := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/practice-plans/"+formalContext.PlanID+"/practice-sessions",
+		fmt.Sprintf(`{
+			"expected_plan_revision":1,
+			"preparation_snapshot_id":%q,
+			"practice_option_id":%q,
+			"role_definition_ids":[%q]
+		}`,
+			formalContext.PreparationSnapshotID,
+			preparation.TechnicalFocusOptionID,
+			preparation.TechnicalInterviewerRoleID,
+		),
+		"voice-"+key+"-context-session",
+		http.StatusCreated,
+	)
+	session, ok := bootstrap["practice_session"].(map[string]any)
+	if !ok {
+		t.Fatalf("formal Context bootstrap lost Session: %#v", bootstrap)
+	}
+	sessionID, _ := session["practice_session_id"].(string)
+	if sessionID == "" {
+		t.Fatalf("formal Context bootstrap has no Session ID: %#v", bootstrap)
+	}
+	return sessionID
+}
+
+func assertNoLegacyVoiceSession(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	formalSessionID string,
+	threadID string,
+) {
+	t.Helper()
+	var formalCount, legacyCount int
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT
+		    count(*) FILTER (
+		        WHERE session_id = $1
+		          AND context_plan_id IS NOT NULL
+		    )::int,
+		    count(*) FILTER (
+		        WHERE plan_id = $2
+		          AND context_plan_id IS NULL
+		    )::int
+		 FROM practice_sessions`,
+		formalSessionID,
+		"agent-thread:"+threadID,
+	).Scan(&formalCount, &legacyCount); err != nil {
+		t.Fatalf("read formal/legacy voice Sessions: %v", err)
+	}
+	if formalCount != 1 || legacyCount != 0 {
+		t.Fatalf(
+			"formal/legacy voice Sessions = %d/%d, want 1/0",
+			formalCount,
+			legacyCount,
+		)
 	}
 }
 

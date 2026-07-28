@@ -406,10 +406,34 @@ func (r *Repository) DeleteUserData(
 		return persistence.ErrDeletionGeneration
 	}
 
+	var contextPersistencePresent bool
+	if err := tx.QueryRow(ctx, `
+		SELECT to_regclass('practice_plans') IS NOT NULL
+	`).Scan(&contextPersistencePresent); err != nil {
+		return fmt.Errorf("inspect Practice context persistence: %w", err)
+	}
+	if contextPersistencePresent {
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM practice_idempotency_records
+			WHERE owner_user_id = $1
+		`, deletion.UserID); err != nil {
+			return fmt.Errorf(
+				"delete Practice idempotency records: %w",
+				err,
+			)
+		}
+	}
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM practice_sessions WHERE owner_user_id = $1
 	`, deletion.UserID); err != nil {
 		return fmt.Errorf("delete practice user data: %w", err)
+	}
+	if contextPersistencePresent {
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM practice_plans WHERE owner_user_id = $1
+		`, deletion.UserID); err != nil {
+			return fmt.Errorf("delete Practice Plans: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit practice user deletion: %w", err)
@@ -441,6 +465,7 @@ type rowScanner interface {
 func scanSession(row rowScanner) (persistence.Session, error) {
 	var session persistence.Session
 	var targets, participants []byte
+	var startedAt, completedAt pgtype.Timestamptz
 	err := row.Scan(
 		&session.ID,
 		&session.OwnerUserID,
@@ -450,8 +475,8 @@ func scanSession(row rowScanner) (persistence.Session, error) {
 		&session.EffectiveTurns,
 		&session.CreatedAt,
 		&session.UpdatedAt,
-		&session.StartedAt,
-		&session.CompletedAt,
+		&startedAt,
+		&completedAt,
 		&session.Snapshot.Mode,
 		&targets,
 		&participants,
@@ -468,6 +493,13 @@ func scanSession(row rowScanner) (persistence.Session, error) {
 	}
 	if err := json.Unmarshal(participants, &session.Snapshot.Participants); err != nil {
 		return persistence.Session{}, fmt.Errorf("decode practice participant snapshot: %w", err)
+	}
+	if startedAt.Valid {
+		session.StartedAt = startedAt.Time
+	}
+	if completedAt.Valid {
+		completed := completedAt.Time
+		session.CompletedAt = &completed
 	}
 	return session, nil
 }

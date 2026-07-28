@@ -13,12 +13,17 @@ const voiceEffectiveTurnPayload = "agent.voice_effective_turn/v1"
 // voice-round application boundary. It deliberately excludes deletion and
 // aggregate-creation operations.
 type VoiceRepository interface {
-	GetSession(
+	GetContextSession(
 		context.Context,
 		persistence.Actor,
 		string,
-	) (persistence.Session, error)
-	ConsumeTurn(
+	) (persistence.ContextSession, error)
+	GetContextSessionSnapshot(
+		context.Context,
+		persistence.Actor,
+		string,
+	) (persistence.ContextSessionSnapshot, error)
+	AdvanceContextVoiceTurn(
 		context.Context,
 		persistence.Actor,
 		persistence.ConsumeTurnCommand,
@@ -72,23 +77,73 @@ func (a *VoiceApplication) ResolveActorParticipant(
 		return "", err
 	}
 
-	session, err := a.repository.GetSession(ctx, actor, sessionID)
+	session, err := a.repository.GetContextSession(ctx, actor, sessionID)
 	if err != nil {
 		return "", err
 	}
+	if session.Status != persistence.ContextSessionProgress {
+		return "", persistence.ErrConflict
+	}
+	snapshot, err := a.repository.GetContextSessionSnapshot(
+		ctx,
+		actor,
+		sessionID,
+	)
+	if err != nil {
+		return "", err
+	}
+	if snapshot.ID != session.SnapshotID ||
+		snapshot.SessionID != session.ID {
+		return "", persistence.ErrConflict
+	}
 
 	participantID := ""
-	for _, participant := range session.Snapshot.Participants {
-		if participant.SubjectRef.Namespace != a.actorSubjectNamespace ||
-			participant.SubjectRef.SubjectID != actor.UserID {
-			continue
-		}
-		if participantID != "" {
+	interviewers := 0
+	participantIDs := make(map[string]struct{}, len(snapshot.Participants))
+	participantOrders := make(map[int]struct{}, len(snapshot.Participants))
+	for _, participant := range snapshot.Participants {
+		if participant.ID == "" ||
+			participant.SessionID != session.ID ||
+			participant.Order < 1 {
 			return "", persistence.ErrConflict
 		}
-		participantID = participant.ParticipantID
+		if _, duplicate := participantIDs[participant.ID]; duplicate {
+			return "", persistence.ErrConflict
+		}
+		if _, duplicate := participantOrders[participant.Order]; duplicate {
+			return "", persistence.ErrConflict
+		}
+		participantIDs[participant.ID] = struct{}{}
+		participantOrders[participant.Order] = struct{}{}
+		switch participant.Role {
+		case "INTERVIEWER":
+			if participant.SubjectRef.Namespace != "speakup.role" ||
+				participant.SubjectRef.SubjectID !=
+					participant.RoleDefinitionID ||
+				participant.RoleDefinitionID == "" ||
+				participant.RoleSnapshot == nil ||
+				participant.RoleSnapshot.ID !=
+					participant.RoleDefinitionID {
+				return "", persistence.ErrConflict
+			}
+			interviewers++
+		case "CANDIDATE":
+			if participantID != "" {
+				return "", persistence.ErrConflict
+			}
+			if participant.SubjectRef.Namespace !=
+				a.actorSubjectNamespace ||
+				participant.SubjectRef.SubjectID != actor.UserID ||
+				participant.RoleDefinitionID != "" ||
+				participant.RoleSnapshot != nil {
+				return "", persistence.ErrNotFound
+			}
+			participantID = participant.ID
+		default:
+			return "", persistence.ErrConflict
+		}
 	}
-	if participantID == "" {
+	if participantID == "" || interviewers == 0 {
 		return "", persistence.ErrNotFound
 	}
 	return participantID, nil
@@ -113,7 +168,7 @@ func (a *VoiceApplication) ApplyEffectiveTurn(
 		return VoiceTurnProgress{}, err
 	}
 
-	result, err := a.repository.ConsumeTurn(
+	result, err := a.repository.AdvanceContextVoiceTurn(
 		ctx,
 		actor,
 		persistence.ConsumeTurnCommand{
@@ -129,6 +184,8 @@ func (a *VoiceApplication) ApplyEffectiveTurn(
 		result.TurnID != turnID ||
 		result.EffectiveTurns < 1 ||
 		result.SessionVersion <= 1 ||
+		result.TurnLimit < 1 ||
+		result.TurnLimit > 6 ||
 		result.TurnLimit < result.EffectiveTurns ||
 		result.Completed != (result.EffectiveTurns == result.TurnLimit) {
 		return VoiceTurnProgress{}, persistence.ErrConflict

@@ -98,6 +98,33 @@ const bundleOpenApi = async () => {
 
 const openApi = await bundleOpenApi();
 const schemas = openApi.components?.schemas ?? {};
+const preparationProfileRequest =
+  schemas.CreatePreparationProfileRequest?.properties ?? {};
+const preparationTextPattern =
+  preparationProfileRequest.background_summary?.pattern;
+assert.equal(preparationProfileRequest.resume_ref?.maxLength, 16 * 1024);
+assert.equal(
+  preparationProfileRequest.job_description_ref?.maxLength,
+  16 * 1024,
+);
+assert.equal(
+  preparationProfileRequest.background_summary?.maxLength,
+  64 * 1024,
+);
+assert.equal(
+  preparationProfileRequest.resume_ref?.pattern,
+  preparationTextPattern,
+);
+assert.equal(
+  preparationProfileRequest.job_description_ref?.pattern,
+  preparationTextPattern,
+);
+const preparationTextExpression = new RegExp(preparationTextPattern, 'u');
+assert.match('a', preparationTextExpression);
+assert.match('internal whitespace is allowed', preparationTextExpression);
+assert.doesNotMatch(' leading', preparationTextExpression);
+assert.doesNotMatch('trailing ', preparationTextExpression);
+assert.doesNotMatch('contains\u0000nul', preparationTextExpression);
 const responses = openApi.components?.responses ?? {};
 
 const resolveLocalReference = (value) => {
@@ -456,13 +483,16 @@ const register = requireOperation('POST /v1/auth/register');
 const login = requireOperation('POST /v1/auth/login');
 const logout = requireOperation('POST /v1/auth/logout');
 const me = requireOperation('GET /v1/me');
+const createPracticePlan = requireOperation('POST /v1/practice-plans');
 
 assert.equal(register.operationId, 'registerUser');
 assert.equal(login.operationId, 'loginUser');
 assert.equal(logout.operationId, 'logoutCurrentSession');
 assert.equal(me.operationId, 'getCurrentUser');
+assert.equal(createPracticePlan.operationId, 'createPracticePlan');
 assert.ok(register.requestBody?.required);
 assert.ok(login.requestBody?.required);
+assert.ok(createPracticePlan.requestBody?.required);
 assert.equal(
   getJsonSchema(register.requestBody)?.$ref,
   '#/components/schemas/RegisterRequest',
@@ -470,6 +500,15 @@ assert.equal(
 assert.equal(
   getJsonSchema(login.requestBody)?.$ref,
   '#/components/schemas/LoginRequest',
+);
+assert.equal(
+  getJsonSchema(createPracticePlan.requestBody)?.$ref,
+  '#/components/schemas/CreatePracticePlanRequest',
+);
+assert.deepEqual(
+  createPracticePlan.security ?? openApi.security,
+  bearerSecurity,
+  'Practice Plan creation must resolve its Actor from BearerSession.',
 );
 assert.ok(register.responses?.['201']);
 assert.ok(register.responses?.['409']);
@@ -479,6 +518,7 @@ assert.ok(login.responses?.['401']);
 assert.ok(login.responses?.['429']);
 assert.ok(logout.responses?.['204']);
 assert.ok(me.responses?.['200']);
+assert.ok(createPracticePlan.responses?.['201']);
 assert.equal(logout.requestBody, undefined);
 assert.equal(logout.responses?.['429'], undefined);
 assert.equal(me.responses?.['429'], undefined);
@@ -528,6 +568,65 @@ assert.ok(
   login.requestBody?.content?.['application/json']?.example,
   'Login must provide a request example.',
 );
+const createPracticePlanRequestExample =
+  createPracticePlan.requestBody?.content?.['application/json']?.example;
+assert.ok(
+  createPracticePlanRequestExample,
+  'Practice Plan creation must provide a request example.',
+);
+assert.ok(createPracticePlanRequestExample.agent_thread_id);
+assert.ok(createPracticePlanRequestExample.matter_id);
+const createPracticePlanResponse = resolveLocalReference(
+  createPracticePlan.responses['201'],
+);
+assert.equal(
+  createPracticePlanResponse?.content?.['application/json']?.schema?.$ref,
+  '#/components/schemas/PracticePlan',
+);
+assert.ok(
+  createPracticePlanResponse?.content?.['application/json']?.example
+    ?.agent_thread_id,
+);
+assert.ok(
+  createPracticePlanResponse?.content?.['application/json']?.example?.matter_id,
+);
+
+const createPracticePlanRequestSchema = schemas.CreatePracticePlanRequest;
+assert.deepEqual(sorted(createPracticePlanRequestSchema?.required ?? []), [
+  'agent_thread_id',
+  'matter_id',
+  'preparation_profile_id',
+  'scenario_config_id',
+  'scenario_config_version',
+  'scenario_definition_id',
+  'scenario_definition_version',
+  'selected_role_ids',
+]);
+assert.deepEqual(
+  sorted(Object.keys(createPracticePlanRequestSchema?.properties ?? {})),
+  sorted(createPracticePlanRequestSchema?.required ?? []),
+);
+assert.equal(createPracticePlanRequestSchema?.additionalProperties, false);
+for (const anchorField of ['agent_thread_id', 'matter_id']) {
+  assert.equal(
+    createPracticePlanRequestSchema?.properties?.[anchorField]?.$ref,
+    '#/components/schemas/ResourceId',
+    `${anchorField} must reuse ResourceId.`,
+  );
+}
+
+const practicePlanSchema = schemas.PracticePlan;
+for (const anchorField of ['agent_thread_id', 'matter_id']) {
+  assert.ok(
+    practicePlanSchema?.required?.includes(anchorField),
+    `PracticePlan must require ${anchorField}.`,
+  );
+  assert.equal(
+    practicePlanSchema?.properties?.[anchorField]?.$ref,
+    '#/components/schemas/ResourceId',
+    `PracticePlan ${anchorField} must reuse ResourceId.`,
+  );
+}
 
 const userSchema = schemas.User;
 assert.deepEqual(sorted(userSchema?.required ?? []), ['email', 'user_id']);

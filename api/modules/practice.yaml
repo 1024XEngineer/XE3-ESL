@@ -4,6 +4,11 @@ paths:
       tags:
         - Practice
       summary: Create or return a practice plan for one intent
+      description: |
+        The client supplies Agent Thread and Matter identifiers as resource
+        references, never as trusted ownership. The service resolves the Actor
+        from the Bearer Session and verifies that the owned Thread is linked to
+        the owned, active Matter before anchoring the Plan to both resources.
       operationId: createPracticePlan
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -14,6 +19,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreatePracticePlanRequest'
             example:
+              agent_thread_id: 20000000-0000-4000-8000-000000000001
+              matter_id: 10000000-0000-4000-8000-000000000001
               scenario_definition_id: scn_programmer_interview
               scenario_definition_version: 1
               scenario_config_id: scfg_backend_engineer
@@ -31,6 +38,8 @@ paths:
               example:
                 practice_plan_id: plan_demo_backend
                 user_id: user_demo
+                agent_thread_id: 20000000-0000-4000-8000-000000000001
+                matter_id: 10000000-0000-4000-8000-000000000001
                 scenario_definition_id: scn_programmer_interview
                 scenario_definition_version: 1
                 scenario_type: INTERVIEW
@@ -424,6 +433,8 @@ components:
       type: object
       additionalProperties: false
       required:
+        - agent_thread_id
+        - matter_id
         - scenario_definition_id
         - scenario_definition_version
         - scenario_config_id
@@ -431,6 +442,10 @@ components:
         - preparation_profile_id
         - selected_role_ids
       properties:
+        agent_thread_id:
+          $ref: '#/components/schemas/ResourceId'
+        matter_id:
+          $ref: '#/components/schemas/ResourceId'
         scenario_definition_id:
           $ref: '#/components/schemas/ResourceId'
         scenario_definition_version:
@@ -453,6 +468,8 @@ components:
       required:
         - practice_plan_id
         - user_id
+        - agent_thread_id
+        - matter_id
         - scenario_definition_id
         - scenario_definition_version
         - scenario_type
@@ -468,6 +485,10 @@ components:
         practice_plan_id:
           $ref: '#/components/schemas/ResourceId'
         user_id:
+          $ref: '#/components/schemas/ResourceId'
+        agent_thread_id:
+          $ref: '#/components/schemas/ResourceId'
+        matter_id:
           $ref: '#/components/schemas/ResourceId'
         scenario_definition_id:
           $ref: '#/components/schemas/ResourceId'

@@ -771,6 +771,107 @@ func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 	}
 }
 
+func TestVoiceHTTPResumeUsesFrozenSessionMatter(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		activeMatterID   string
+		wantStatus       int
+		wantResumeCalls  int
+		wantResumeMatter string
+	}{
+		{
+			name:            "current active Matter matches",
+			activeMatterID:  "matter-1",
+			wantStatus:      http.StatusOK,
+			wantResumeCalls: 1,
+		},
+		{
+			name:            "active Matter was cleared",
+			wantStatus:      http.StatusOK,
+			wantResumeCalls: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conversations := newAgentVoiceConversation(3)
+			practice := newAgentVoicePractice(0)
+			reviews := newAgentVoiceReview()
+			orchestrator := newAgentVoiceOrchestrator(
+				t,
+				conversations,
+				practice,
+				reviews,
+			)
+			sessions := &voiceHTTPRecordingSessionPort{
+				session: VoicePracticeSession{
+					ID:                       "session-1",
+					PlanID:                   "plan-1",
+					ThreadID:                 "thread-1",
+					MatterID:                 "matter-1",
+					SessionVersion:           1,
+					TurnLimit:                3,
+					Status:                   "in_progress",
+					InterviewerParticipantID: "participant-interviewer",
+					CandidateParticipantID:   "participant-a",
+				},
+			}
+			voice, err := NewVoiceSessionApplication(
+				sessions,
+				voiceSessionTestQuestions{},
+				voiceSessionTestCheckpoints{conversations: conversations},
+				orchestrator,
+				voiceSessionTestReviews{reviews: reviews},
+				voiceSessionTestMatters{},
+			)
+			if err != nil {
+				t.Fatalf("new Voice Session application: %v", err)
+			}
+			handler, err := NewHTTPHandlerWithRunsAndVoice(
+				voiceHTTPThreadApplication{
+					activeMatterID: test.activeMatterID,
+				},
+				nil,
+				voice,
+				voiceHTTPMatters{},
+				voiceHTTPAuthenticator{},
+				func() string { return "corr_voice_resume" },
+				testVoiceHTTPOptions(),
+			)
+			if err != nil {
+				t.Fatalf("new voice HTTP handler: %v", err)
+			}
+			gin.SetMode(gin.ReleaseMode)
+			router := gin.New()
+			handler.RegisterRoutes(router)
+
+			response := voiceHTTPRequest(
+				t,
+				router,
+				http.MethodGet,
+				"/v1/agent-threads/thread-1/voice-practice-session",
+				nil,
+				nil,
+			)
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"resume status = %d, body = %s",
+					response.Code,
+					response.Body,
+				)
+			}
+			if sessions.resumeCalls != test.wantResumeCalls ||
+				sessions.resumeMatterID != test.wantResumeMatter {
+				t.Fatalf(
+					"Resume calls/Matter = %d/%q, want %d/%q",
+					sessions.resumeCalls,
+					sessions.resumeMatterID,
+					test.wantResumeCalls,
+					test.wantResumeMatter,
+				)
+			}
+		})
+	}
+}
+
 type voiceHTTPApplication struct {
 	Application
 }
@@ -788,6 +889,61 @@ func (voiceHTTPApplication) GetThread(
 		OwnerID:        actor.UserID,
 		ActiveMatterID: "matter-1",
 	}, nil
+}
+
+type voiceHTTPThreadApplication struct {
+	Application
+	activeMatterID string
+}
+
+func (application voiceHTTPThreadApplication) GetThread(
+	_ context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+) (Thread, error) {
+	if actor.UserID != "user-a" || threadID != "thread-1" {
+		return Thread{}, ErrNotFound
+	}
+	return Thread{
+		ID:             threadID,
+		OwnerID:        actor.UserID,
+		ActiveMatterID: application.activeMatterID,
+	}, nil
+}
+
+type voiceHTTPRecordingSessionPort struct {
+	session        VoicePracticeSession
+	resumeCalls    int
+	resumeMatterID string
+}
+
+func (port *voiceHTTPRecordingSessionPort) Start(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+	string,
+) (VoicePracticeSession, error) {
+	return port.session, nil
+}
+
+func (port *voiceHTTPRecordingSessionPort) GetByThread(
+	_ context.Context,
+	_ requestcontext.Actor,
+	_ string,
+	matterID string,
+) (VoicePracticeSession, error) {
+	port.resumeCalls++
+	port.resumeMatterID = matterID
+	return port.session, nil
+}
+
+func (port *voiceHTTPRecordingSessionPort) GetByID(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (VoicePracticeSession, error) {
+	return port.session, nil
 }
 
 type voiceHTTPMatters struct {

@@ -43,17 +43,19 @@ func TestVoiceTurnProgressRequiresAuthoritativeLimitCompletionEquivalence(
 			EffectiveTurns: 1,
 			TurnLimit:      3,
 		},
-		"non-MVP turn limit": {
-			EffectiveTurns: 1,
-			SessionVersion: 2,
-			TurnLimit:      4,
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if validVoiceTurnProgress(progress) {
 				t.Fatalf("invalid Practice progress accepted: %#v", progress)
 			}
 		})
+	}
+	if !validVoiceTurnProgress(VoiceTurnProgress{
+		EffectiveTurns: 1,
+		SessionVersion: 2,
+		TurnLimit:      6,
+	}) {
+		t.Fatal("frozen six-turn Practice progress was rejected")
 	}
 }
 

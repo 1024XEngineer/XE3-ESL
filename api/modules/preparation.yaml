@@ -188,7 +188,7 @@ paths:
             example:
               resume_ref: resume_demo_backend_v1
               job_description_ref: jd_demo_backend_v1
-              background_summary: |
+              background_summary: |-
                 Backend engineer with three years of Go experience, responsible
                 for an API reliability project and cross-team delivery.
       responses:
@@ -473,12 +473,18 @@ components:
         resume_ref:
           type: string
           minLength: 1
+          maxLength: 16384
+          pattern: '^[^\s\u0000](?:[^\u0000]*[^\s\u0000])?$'
         job_description_ref:
           type: string
           minLength: 1
+          maxLength: 16384
+          pattern: '^[^\s\u0000](?:[^\u0000]*[^\s\u0000])?$'
         background_summary:
           type: string
           minLength: 1
+          maxLength: 65536
+          pattern: '^[^\s\u0000](?:[^\u0000]*[^\s\u0000])?$'
     PreparationProfile:
       type: object
       additionalProperties: false

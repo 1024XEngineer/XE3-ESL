@@ -49,7 +49,7 @@ type VoiceConversationPort interface {
 
 // VoicePracticePort is the Agent-owned application view of Practice.
 // Implementations remain authoritative for Actor-participant resolution and
-// the effective three-turn state machine.
+// the frozen per-Session effective-turn state machine.
 type VoicePracticePort interface {
 	ResolveActorParticipant(
 		context.Context,
@@ -279,9 +279,11 @@ func candidateMatchesTurn(
 
 func validVoiceTurnProgress(progress VoiceTurnProgress) bool {
 	return progress.EffectiveTurns >= 1 &&
-		progress.EffectiveTurns <= 3 &&
+		progress.EffectiveTurns <= 6 &&
 		progress.SessionVersion > 1 &&
-		progress.TurnLimit == 3 &&
+		progress.TurnLimit >= 1 &&
+		progress.TurnLimit <= 6 &&
+		progress.EffectiveTurns <= progress.TurnLimit &&
 		progress.SessionCompleted ==
 			(progress.EffectiveTurns == progress.TurnLimit)
 }
@@ -296,14 +298,11 @@ func validVoiceTurnCheckpoint(turn conversation.ConfirmedVoiceTurn) bool {
 		turn.EvidenceVersion < 1 ||
 		strings.TrimSpace(turn.AnswerText) == "" ||
 		turn.EffectiveTurns < 0 ||
-		turn.EffectiveTurns > 3 {
+		turn.EffectiveTurns > 6 {
 		return false
 	}
 	if turn.EffectiveTurns == 0 {
 		return !turn.SessionCompleted && turn.ReviewID == ""
-	}
-	if turn.SessionCompleted != (turn.EffectiveTurns == 3) {
-		return false
 	}
 	return turn.ReviewID == "" || turn.SessionCompleted
 }

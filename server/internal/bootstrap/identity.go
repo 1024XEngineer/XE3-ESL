@@ -15,37 +15,46 @@ func NewIdentityModule(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 ) (*identity.Module, error) {
-	module, _, err := newIdentityComposition(
+	composition, err := buildIdentityComposition(
 		database,
 		trustedProxyCIDRs,
 		trustedProxyHeader,
 	)
-	return module, err
+	if err != nil {
+		return nil, err
+	}
+	return composition.module, nil
 }
 
-func newIdentityComposition(
+type identityComposition struct {
+	module  *identity.Module
+	service *identity.Service
+	handler *identity.HTTPHandler
+}
+
+func buildIdentityComposition(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
-) (*identity.Module, *identity.Service, error) {
+) (*identityComposition, error) {
 	if database == nil {
-		return nil, nil, errors.New("bootstrap: identity database is required")
+		return nil, errors.New("bootstrap: identity database is required")
 	}
 	clock := identity.SystemClock{}
 	passwords, err := identity.NewDefaultArgon2idHasher()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	tokens := identity.NewOpaqueSessionTokens(nil)
 	dummyMaterial, _, err := tokens.Generate()
 	if err != nil {
-		return nil, nil, errors.New(
+		return nil, errors.New(
 			"bootstrap: identity random source unavailable",
 		)
 	}
 	dummyHash, err := passwords.Hash(context.Background(), dummyMaterial)
 	if err != nil {
-		return nil, nil, errors.New(
+		return nil, errors.New(
 			"bootstrap: identity password hashing unavailable",
 		)
 	}
@@ -54,7 +63,7 @@ func newIdentityComposition(
 		identity.NewUUIDv4Generator(nil),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	service, err := identity.NewService(
 		repository,
@@ -63,18 +72,18 @@ func newIdentityComposition(
 		dummyHash,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	rateLimits, err := identity.NewDefaultRateLimiters(clock)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	sourceIPs, err := identity.NewTrustedProxyResolver(
 		trustedProxyCIDRs,
 		trustedProxyHeader,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	handler, err := identity.NewHTTPHandler(
 		service,
@@ -84,11 +93,15 @@ func newIdentityComposition(
 		identity.WithSourceIPResolver(sourceIPs),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	module, err := identity.NewModule(handler)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return module, service, nil
+	return &identityComposition{
+		module:  module,
+		service: service,
+		handler: handler,
+	}, nil
 }
