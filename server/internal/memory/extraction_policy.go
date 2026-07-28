@@ -150,7 +150,8 @@ func compatibleKey(memoryType Type, key string) bool {
 
 func sensitiveCandidate(candidate ExtractedCandidate) bool {
 	combined := strings.ToLower(
-		candidate.CanonicalKey + " " + candidate.Content,
+		candidate.CanonicalKey + " " + candidate.Content + " " +
+			candidate.Evidence,
 	)
 	for _, marker := range []string{
 		"password",

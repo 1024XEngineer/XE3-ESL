@@ -131,6 +131,37 @@ func TestExtractionPolicyRequiresMatterAndGenderUse(t *testing.T) {
 	}
 }
 
+func TestExtractionPolicyRejectsSensitiveEvidence(t *testing.T) {
+	t.Parallel()
+
+	policy, err := NewExtractionPolicy(
+		"memory-policy-v1",
+		30*24*time.Hour,
+		time.Now,
+	)
+	if err != nil {
+		t.Fatalf("NewExtractionPolicy: %v", err)
+	}
+	source := validCompletedRunSource()
+	source.UserText = "My password is hunter2."
+	output := ExtractionOutput{Candidates: []ExtractedCandidate{{
+		Action:       CandidateUpsert,
+		Type:         TypeProfile,
+		CanonicalKey: "profile.login_note",
+		Content:      "hunter2",
+		Scope:        ScopeUser,
+		Evidence:     "My password is hunter2",
+	}}}
+
+	batch, err := policy.Decide(source, output)
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if len(batch.Decisions) != 0 {
+		t.Fatalf("sensitive evidence decisions = %#v", batch.Decisions)
+	}
+}
+
 func validCompletedRunSource() CompletedRunSource {
 	return CompletedRunSource{
 		OwnerID:            integrationUserA,
