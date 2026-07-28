@@ -578,7 +578,7 @@ String _registrationMessage(IdentityClientException error) {
   return switch (error.kind) {
     IdentityFailureKind.registrationUnavailable => '无法使用这些信息创建账号。',
     IdentityFailureKind.rateLimited => '尝试次数过多，请稍后重试。',
-    IdentityFailureKind.invalidRequest => '请输入有效邮箱和 15–128 个字符的密码。',
+    IdentityFailureKind.invalidRequest => '请输入有效邮箱和至少 8 个字符的密码。',
     _ => _tryAgainMessage,
   };
 }

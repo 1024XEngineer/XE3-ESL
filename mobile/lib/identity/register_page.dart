@@ -65,9 +65,9 @@ class _RegisterPageState extends State<RegisterPage> {
               AuthPasswordField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
-                minimumLength: 15,
+                minimumLength: 8,
                 autofillHint: AutofillHints.newPassword,
-                helperText: '15–128 个字符',
+                helperText: '至少 8 个字符',
                 onToggleVisibility: () =>
                     setState(() => _obscurePassword = !_obscurePassword),
                 onSubmitted: (_) => _submit(),

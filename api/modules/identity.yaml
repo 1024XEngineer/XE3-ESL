@@ -293,13 +293,22 @@ components:
       readOnly: true
     Password:
       type: string
-      minLength: 15
+      minLength: 8
       maxLength: 128
       writeOnly: true
       description: |
-        An opaque password string. The service does not trim, case-fold,
-        truncate, or apply Unicode normalization. No character-class
-        composition rule is required.
+        A new opaque password string used during registration. The service
+        does not trim, case-fold, truncate, or apply Unicode normalization.
+        No character-class composition rule is required.
+    LoginPassword:
+      type: string
+      minLength: 1
+      maxLength: 128
+      writeOnly: true
+      description: |
+        An existing opaque password submitted for login. Registration policy
+        is not re-applied during authentication so legacy credentials remain
+        usable. The service never trims, normalizes, or truncates this value.
     User:
       type: object
       additionalProperties: false
@@ -383,7 +392,7 @@ components:
         email:
           $ref: '#/components/schemas/EmailInput'
         password:
-          $ref: '#/components/schemas/Password'
+          $ref: '#/components/schemas/LoginPassword'
     OpaqueSessionToken:
       type: string
       minLength: 6
