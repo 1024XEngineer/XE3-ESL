@@ -269,8 +269,11 @@ func TestTransitionSessionUsesCanonicalWireAction(t *testing.T) {
 
 type contextRepositoryStub struct {
 	replayPlan        func(persistence.ContextIdempotencyIntent) (persistence.Plan, bool, error)
+	createPlan        func(persistence.CreatePlanCommand) (persistence.Plan, bool, error)
+	updatePlan        func(persistence.UpdatePlanCommand) (persistence.Plan, bool, error)
 	getPlan           func(string) (persistence.Plan, error)
 	replaySession     func(persistence.ContextIdempotencyIntent) (persistence.ContextSessionBootstrap, bool, error)
+	createSession     func(persistence.CreateContextSessionCommand) (persistence.ContextSessionBootstrap, bool, error)
 	transitionSession func(persistence.TransitionContextSessionCommand) (persistence.ContextSession, bool, error)
 }
 
@@ -286,11 +289,25 @@ func (s *contextRepositoryStub) ReplayPlan(
 }
 
 func (s *contextRepositoryStub) CreatePlan(
-	context.Context,
-	persistence.Actor,
-	persistence.CreatePlanCommand,
+	_ context.Context,
+	_ persistence.Actor,
+	command persistence.CreatePlanCommand,
 ) (persistence.Plan, bool, error) {
+	if s.createPlan != nil {
+		return s.createPlan(command)
+	}
 	return persistence.Plan{}, false, errors.New("unexpected CreatePlan")
+}
+
+func (s *contextRepositoryStub) UpdatePlan(
+	_ context.Context,
+	_ persistence.Actor,
+	command persistence.UpdatePlanCommand,
+) (persistence.Plan, bool, error) {
+	if s.updatePlan != nil {
+		return s.updatePlan(command)
+	}
+	return persistence.Plan{}, false, errors.New("unexpected UpdatePlan")
 }
 
 func (s *contextRepositoryStub) GetPlan(
@@ -316,10 +333,13 @@ func (s *contextRepositoryStub) ReplayContextSession(
 }
 
 func (s *contextRepositoryStub) CreateContextSession(
-	context.Context,
-	persistence.Actor,
-	persistence.CreateContextSessionCommand,
+	_ context.Context,
+	_ persistence.Actor,
+	command persistence.CreateContextSessionCommand,
 ) (persistence.ContextSessionBootstrap, bool, error) {
+	if s.createSession != nil {
+		return s.createSession(command)
+	}
 	return persistence.ContextSessionBootstrap{}, false,
 		errors.New("unexpected CreateContextSession")
 }

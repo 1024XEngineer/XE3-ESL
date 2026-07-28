@@ -175,7 +175,10 @@ paths:
       description: |
         The authenticated actor is resolved from the Bearer Session and owns the
         created profile. The request does not accept a trusted `user_id`. A fixed
-        actor may be supplied only by an explicit Mock or Test adapter.
+        actor may be supplied only by an explicit Mock or Test adapter. When
+        supplied, `job_target_id` and `job_target_confirmation_version` bind
+        the profile to one exact server-confirmed JobTarget version; the pair
+        must be supplied together.
       operationId: createPreparationProfile
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -696,6 +699,15 @@ components:
           minLength: 1
           maxLength: 65536
           pattern: '^[^\s\u0000](?:[^\u0000]*[^\s\u0000])?$'
+        job_target_id:
+          $ref: '#/components/schemas/ResourceId'
+        job_target_confirmation_version:
+          $ref: '#/components/schemas/Version'
+      dependentRequired:
+        job_target_id:
+          - job_target_confirmation_version
+        job_target_confirmation_version:
+          - job_target_id
     PreparationProfile:
       type: object
       additionalProperties: false
@@ -719,11 +731,20 @@ components:
         background_summary:
           type: string
           minLength: 1
+        job_target_id:
+          $ref: '#/components/schemas/ResourceId'
+        job_target_confirmation_version:
+          $ref: '#/components/schemas/Version'
         version:
           $ref: '#/components/schemas/Version'
         updated_at:
           type: string
           format: date-time
+      dependentRequired:
+        job_target_id:
+          - job_target_confirmation_version
+        job_target_confirmation_version:
+          - job_target_id
     CreatePreparationSnapshotRequest:
       type: object
       additionalProperties: false
@@ -748,6 +769,14 @@ components:
           $ref: '#/components/schemas/ResourceId'
         source_version:
           $ref: '#/components/schemas/Version'
+        source_job_target_id:
+          $ref: '#/components/schemas/ResourceId'
+        source_job_target_confirmation_version:
+          $ref: '#/components/schemas/Version'
+        job_target_input_snapshot:
+          $ref: '#/components/schemas/JobTargetInput'
+        job_target_candidate_snapshot:
+          $ref: '#/components/schemas/JobTargetCandidate'
         resume_snapshot:
           type: string
           minLength: 1
@@ -760,6 +789,23 @@ components:
         created_at:
           type: string
           format: date-time
+      dependentRequired:
+        source_job_target_id:
+          - source_job_target_confirmation_version
+          - job_target_input_snapshot
+          - job_target_candidate_snapshot
+        source_job_target_confirmation_version:
+          - source_job_target_id
+          - job_target_input_snapshot
+          - job_target_candidate_snapshot
+        job_target_input_snapshot:
+          - source_job_target_id
+          - source_job_target_confirmation_version
+          - job_target_candidate_snapshot
+        job_target_candidate_snapshot:
+          - source_job_target_id
+          - source_job_target_confirmation_version
+          - job_target_input_snapshot
     JobTargetSource:
       type: string
       enum:
@@ -888,6 +934,9 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
+          description: |
+            INTERVIEW recommendations contain exactly one independently
+            selected interviewer. A Session never combines hiring stages.
           items:
             $ref: '#/components/schemas/ResourceId'
         practice_option_id:

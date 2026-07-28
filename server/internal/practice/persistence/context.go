@@ -16,21 +16,25 @@ const (
 )
 
 type Plan struct {
-	ID                        string     `json:"practice_plan_id"`
-	UserID                    string     `json:"user_id"`
-	AgentThreadID             string     `json:"agent_thread_id"`
-	MatterID                  string     `json:"matter_id"`
-	ScenarioDefinitionID      string     `json:"scenario_definition_id"`
-	ScenarioDefinitionVersion int        `json:"scenario_definition_version"`
-	ScenarioType              string     `json:"scenario_type"`
-	ScenarioConfigID          string     `json:"scenario_config_id"`
-	ScenarioConfigVersion     int        `json:"scenario_config_version"`
-	PreparationProfileID      string     `json:"preparation_profile_id"`
-	SelectedRoleIDs           []string   `json:"selected_role_ids"`
-	Revision                  int        `json:"plan_revision"`
-	Status                    PlanStatus `json:"practice_plan_status"`
-	CreatedAt                 time.Time  `json:"created_at"`
-	UpdatedAt                 time.Time  `json:"updated_at"`
+	ID                        string                `json:"practice_plan_id"`
+	UserID                    string                `json:"user_id"`
+	AgentThreadID             string                `json:"agent_thread_id"`
+	MatterID                  string                `json:"matter_id"`
+	ScenarioDefinitionID      string                `json:"scenario_definition_id"`
+	ScenarioDefinitionVersion int                   `json:"scenario_definition_version"`
+	ScenarioType              string                `json:"scenario_type"`
+	ScenarioConfigID          string                `json:"scenario_config_id"`
+	ScenarioConfigVersion     int                   `json:"scenario_config_version"`
+	PreparationProfileID      string                `json:"preparation_profile_id"`
+	SelectedRoleIDs           []string              `json:"selected_role_ids"`
+	PreparationSnapshot       *PreparationSnapshot  `json:"preparation_snapshot,omitempty"`
+	CatalogSnapshot           *PlanCatalogSnapshot  `json:"catalog_snapshot,omitempty"`
+	SessionPolicy             *ContextSessionPolicy `json:"session_policy,omitempty"`
+	PracticeFocuses           []PracticeObjective   `json:"practice_focuses,omitempty"`
+	Revision                  int                   `json:"plan_revision"`
+	Status                    PlanStatus            `json:"practice_plan_status"`
+	CreatedAt                 time.Time             `json:"created_at"`
+	UpdatedAt                 time.Time             `json:"updated_at"`
 }
 
 type ContextIdempotencyIntent struct {
@@ -51,7 +55,21 @@ type CreatePlanCommand struct {
 	ScenarioConfigVersion     int
 	PreparationProfileID      string
 	SelectedRoleIDs           []string
+	PreparationSnapshot       *PreparationSnapshot
+	CatalogSnapshot           *PlanCatalogSnapshot
+	SessionPolicy             *ContextSessionPolicy
+	PracticeFocuses           []PracticeObjective
 	Intent                    ContextIdempotencyIntent
+}
+
+type UpdatePlanCommand struct {
+	PlanID               string
+	ExpectedPlanRevision int
+	SelectedRoleIDs      []string
+	CatalogSnapshot      PlanCatalogSnapshot
+	SessionPolicy        ContextSessionPolicy
+	PracticeFocuses      []PracticeObjective
+	Intent               ContextIdempotencyIntent
 }
 
 type ContextSessionStatus string
@@ -100,13 +118,49 @@ type ScenarioConfigSnapshot struct {
 }
 
 type PreparationSnapshot struct {
-	ID                     string    `json:"preparation_snapshot_id"`
-	SourceProfileID        string    `json:"source_profile_id"`
-	SourceVersion          int       `json:"source_version"`
-	ResumeSnapshot         string    `json:"resume_snapshot,omitempty"`
-	JobDescriptionSnapshot string    `json:"job_description_snapshot,omitempty"`
-	BackgroundSnapshot     string    `json:"background_snapshot"`
-	CreatedAt              time.Time `json:"created_at"`
+	ID                                 string                      `json:"preparation_snapshot_id"`
+	SourceProfileID                    string                      `json:"source_profile_id"`
+	SourceVersion                      int                         `json:"source_version"`
+	SourceJobTargetID                  string                      `json:"source_job_target_id,omitempty"`
+	SourceJobTargetConfirmationVersion int                         `json:"source_job_target_confirmation_version,omitempty"`
+	JobTargetInputSnapshot             *JobTargetInputSnapshot     `json:"job_target_input_snapshot,omitempty"`
+	JobTargetCandidateSnapshot         *JobTargetCandidateSnapshot `json:"job_target_candidate_snapshot,omitempty"`
+	ResumeSnapshot                     string                      `json:"resume_snapshot,omitempty"`
+	JobDescriptionSnapshot             string                      `json:"job_description_snapshot,omitempty"`
+	BackgroundSnapshot                 string                      `json:"background_snapshot"`
+	CreatedAt                          time.Time                   `json:"created_at"`
+}
+
+type JobTargetInputSnapshot struct {
+	Source              string `json:"source"`
+	JobTitle            string `json:"job_title,omitempty"`
+	JobDescription      string `json:"job_description,omitempty"`
+	Company             string `json:"company,omitempty"`
+	Seniority           string `json:"seniority,omitempty"`
+	CandidateBackground string `json:"candidate_background,omitempty"`
+	ResumeRef           string `json:"resume_ref,omitempty"`
+	PracticeFocus       string `json:"practice_focus,omitempty"`
+}
+
+type JobTargetCatalogRecommendationSnapshot struct {
+	ScenarioDefinitionID      string   `json:"scenario_definition_id"`
+	ScenarioDefinitionVersion int      `json:"scenario_definition_version"`
+	SelectedRoleIDs           []string `json:"selected_role_ids"`
+	PracticeOptionID          string   `json:"practice_option_id"`
+	PracticeOptionVersion     int      `json:"practice_option_version"`
+}
+
+type JobTargetCandidateSnapshot struct {
+	Source                string                                 `json:"source"`
+	GeneralAdviceOnly     bool                                   `json:"general_advice_only"`
+	JobTitle              string                                 `json:"job_title"`
+	Seniority             string                                 `json:"seniority"`
+	Responsibilities      []string                               `json:"responsibilities"`
+	CoreSkills            []string                               `json:"core_skills"`
+	CommunicationFocus    []string                               `json:"communication_focus"`
+	PracticeGoals         []string                               `json:"practice_goals"`
+	ScopeNotice           string                                 `json:"scope_notice"`
+	CatalogRecommendation JobTargetCatalogRecommendationSnapshot `json:"catalog_recommendation"`
 }
 
 type RoleSnapshot struct {
@@ -128,6 +182,13 @@ type PracticeOptionSnapshot struct {
 	Type                 string `json:"practice_option_type"`
 	DisplayName          string `json:"display_name"`
 	Version              int    `json:"version"`
+}
+
+type PlanCatalogSnapshot struct {
+	ScenarioDefinition ScenarioDefinitionSnapshot `json:"scenario_definition"`
+	ScenarioConfig     ScenarioConfigSnapshot     `json:"scenario_config"`
+	SelectedRoles      []RoleSnapshot             `json:"selected_roles"`
+	PracticeOption     PracticeOptionSnapshot     `json:"practice_option"`
 }
 
 type ContextParticipant struct {
@@ -213,6 +274,11 @@ type ContextRepository interface {
 		context.Context,
 		Actor,
 		CreatePlanCommand,
+	) (Plan, bool, error)
+	UpdatePlan(
+		context.Context,
+		Actor,
+		UpdatePlanCommand,
 	) (Plan, bool, error)
 	GetPlan(context.Context, Actor, string) (Plan, error)
 	ReplayContextSession(

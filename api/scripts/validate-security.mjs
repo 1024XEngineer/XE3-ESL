@@ -595,18 +595,23 @@ const createPracticePlanRequestSchema = schemas.CreatePracticePlanRequest;
 assert.deepEqual(sorted(createPracticePlanRequestSchema?.required ?? []), [
   'agent_thread_id',
   'matter_id',
-  'preparation_profile_id',
-  'scenario_config_id',
-  'scenario_config_version',
-  'scenario_definition_id',
-  'scenario_definition_version',
-  'selected_role_ids',
 ]);
 assert.deepEqual(
   sorted(Object.keys(createPracticePlanRequestSchema?.properties ?? {})),
-  sorted(createPracticePlanRequestSchema?.required ?? []),
+  [
+    'agent_thread_id',
+    'matter_id',
+    'preparation_profile_id',
+    'preparation_snapshot_id',
+    'scenario_config_id',
+    'scenario_config_version',
+    'scenario_definition_id',
+    'scenario_definition_version',
+    'selected_role_ids',
+  ],
 );
 assert.equal(createPracticePlanRequestSchema?.additionalProperties, false);
+assert.equal(createPracticePlanRequestSchema?.oneOf?.length, 2);
 for (const anchorField of ['agent_thread_id', 'matter_id']) {
   assert.equal(
     createPracticePlanRequestSchema?.properties?.[anchorField]?.$ref,

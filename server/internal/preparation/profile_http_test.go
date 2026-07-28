@@ -119,6 +119,66 @@ func TestProfileHTTPCreateProfileUsesTrustedActor(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("response = %#v, want %#v", got, want)
 	}
+	if strings.Contains(response.Body.String(), "job_target") {
+		t.Fatal("legacy Profile response exposed targeted-only fields")
+	}
+}
+
+func TestProfileHTTPAcceptsExactConfirmedJobTargetReference(t *testing.T) {
+	actor := profileHTTPActor()
+	want := Profile{
+		ID:                           "profile-targeted",
+		UserID:                       actor.UserID,
+		BackgroundSummary:            "Confirmed background.",
+		JobTargetID:                  "target-1",
+		JobTargetConfirmationVersion: 2,
+		Version:                      1,
+		UpdatedAt: time.Date(
+			2026,
+			time.July,
+			26,
+			11,
+			12,
+			13,
+			0,
+			time.UTC,
+		),
+	}
+	router := newProfileHTTPTestRouter(t, profileHTTPApplicationStub{
+		createProfile: func(
+			_ context.Context,
+			gotActor requestcontext.Actor,
+			key string,
+			request CreateProfileRequest,
+		) (Profile, bool, error) {
+			if gotActor != actor || key != "profile-targeted-key" ||
+				request.JobTargetID != want.JobTargetID ||
+				request.JobTargetConfirmationVersion !=
+					want.JobTargetConfirmationVersion {
+				t.Fatalf("targeted Profile request = %+v", request)
+			}
+			return want, false, nil
+		},
+	})
+	response := serveProfileHTTPRequest(
+		router,
+		http.MethodPost,
+		"/v1/preparation-profiles",
+		`{"background_summary":"Confirmed background.",`+
+			`"job_target_id":"target-1",`+
+			`"job_target_confirmation_version":2}`,
+		"application/json",
+		"profile-targeted-key",
+		&actor,
+	)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+	}
+	var got Profile
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil ||
+		!reflect.DeepEqual(got, want) {
+		t.Fatalf("targeted Profile response = (%+v, %v)", got, err)
+	}
 }
 
 func TestProfileHTTPCreateSnapshotReplayKeepsCreatedSemantics(t *testing.T) {
@@ -178,6 +238,9 @@ func TestProfileHTTPCreateSnapshotReplayKeepsCreatedSemantics(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("response = %#v, want %#v", got, want)
 	}
+	if strings.Contains(response.Body.String(), "job_target") {
+		t.Fatal("legacy Snapshot response exposed targeted-only fields")
+	}
 }
 
 func TestProfileHTTPRejectsInvalidTransportBeforeApplication(t *testing.T) {
@@ -224,6 +287,28 @@ func TestProfileHTTPRejectsInvalidTransportBeforeApplication(t *testing.T) {
 			name:        "unknown field",
 			path:        "/v1/preparation-profiles",
 			body:        `{"background_summary":"Confirmed.","user_id":"forged"}`,
+			contentType: "application/json",
+			key:         "profile-key-0001",
+			actor:       &actor,
+			status:      http.StatusBadRequest,
+			code:        "invalid_request",
+		},
+		{
+			name: "JobTarget ID without confirmation version",
+			path: "/v1/preparation-profiles",
+			body: `{"background_summary":"Confirmed.",` +
+				`"job_target_id":"target-1"}`,
+			contentType: "application/json",
+			key:         "profile-key-0001",
+			actor:       &actor,
+			status:      http.StatusBadRequest,
+			code:        "invalid_request",
+		},
+		{
+			name: "JobTarget confirmation version without ID",
+			path: "/v1/preparation-profiles",
+			body: `{"background_summary":"Confirmed.",` +
+				`"job_target_confirmation_version":1}`,
 			contentType: "application/json",
 			key:         "profile-key-0001",
 			actor:       &actor,

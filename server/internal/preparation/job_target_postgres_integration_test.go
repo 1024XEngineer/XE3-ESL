@@ -424,6 +424,122 @@ func TestPostgresJobTargetLifecycleRecoveryAndFencing(t *testing.T) {
 	}
 }
 
+func TestPostgresJobTargetConfirmationRejectsMultiRoleInterview(
+	t *testing.T,
+) {
+	_, pool := newPreparationRepository(t)
+	insertPreparationUsers(t, pool, preparationUserA)
+	repository := preparation.NewPostgresJobTargetRepository(pool)
+	ctx := context.Background()
+	actor := preparationActor(preparationUserA, preparationSessionA)
+	createRequest := preparation.CreateJobTargetRequest{
+		Source:         preparation.JobTargetSourceJobDescription,
+		JobTitle:       "Platform engineer",
+		JobDescription: "Own reliable APIs and explain system trade-offs.",
+	}
+	target, _, err := repository.Create(
+		ctx,
+		actor,
+		preparation.CreateJobTargetCommand{
+			TargetID: "target-multi-role-confirmation",
+			Request:  createRequest,
+			Intent: jobTargetIntent(
+				"POST",
+				"/v1/job-targets",
+				"multi-role-create-key",
+				createRequest,
+			),
+		},
+	)
+	if err != nil {
+		t.Fatalf("Create JobTarget: %v", err)
+	}
+	analysisRequest := preparation.AnalyzeJobTargetRequest{
+		ExpectedInputVersion: 1,
+	}
+	_, claim, claimed, _, err := repository.ClaimAnalysis(
+		ctx,
+		actor,
+		preparation.AnalyzeJobTargetCommand{
+			TargetID: target.ID,
+			Request:  analysisRequest,
+			Intent: jobTargetIntent(
+				"POST",
+				"/v1/job-targets/"+target.ID+"/analyses",
+				"multi-role-analysis-key",
+				analysisRequest,
+			),
+			Lease: time.Minute,
+		},
+	)
+	if err != nil || !claimed {
+		t.Fatalf("ClaimAnalysis = (%+v, %t, %v)", claim, claimed, err)
+	}
+	multiRole := jobTargetCandidate(
+		preparation.JobTargetSourceJobDescription,
+	)
+	multiRole.CatalogRecommendation.PracticeOptionID =
+		preparation.FullSimulationOptionID
+	multiRole.CatalogRecommendation.SelectedRoleIDs = []string{
+		preparation.TechnicalInterviewerRoleID,
+		preparation.HRInterviewerRoleID,
+	}
+	if _, err := repository.CompleteAnalysis(
+		ctx,
+		claim,
+		multiRole,
+	); err != nil {
+		t.Fatalf("CompleteAnalysis: %v", err)
+	}
+	catalog, err := preparation.NewBuiltinCatalog()
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog: %v", err)
+	}
+	service, err := preparation.NewJobTargetService(
+		repository,
+		integrationJobTargetDependency{},
+		integrationJobTargetDependency{},
+		catalog,
+	)
+	if err != nil {
+		t.Fatalf("NewJobTargetService: %v", err)
+	}
+	confirmation := preparation.ConfirmJobTargetRequest{
+		ExpectedInputVersion:    1,
+		ExpectedAnalysisVersion: 1,
+		Candidate:               multiRole,
+	}
+	if _, _, err := service.Confirm(
+		ctx,
+		actor,
+		target.ID,
+		"multi-role-confirm-key",
+		confirmation,
+	); !errors.Is(err, preparation.ErrJobTargetInvalid) {
+		t.Fatalf("multi-role Confirm error = %v", err)
+	}
+	persisted, err := repository.Get(ctx, actor, target.ID)
+	if err != nil ||
+		persisted.Stage != preparation.JobTargetStageAwaitingConfirmation ||
+		persisted.Confirmation != nil {
+		t.Fatalf("target after rejected Confirm = (%+v, %v)", persisted, err)
+	}
+
+	confirmation.Candidate.CatalogRecommendation.SelectedRoleIDs = []string{
+		preparation.TechnicalInterviewerRoleID,
+	}
+	confirmed, _, err := service.Confirm(
+		ctx,
+		actor,
+		target.ID,
+		"single-role-full-confirm-key",
+		confirmation,
+	)
+	if err != nil || confirmed.Stage != preparation.JobTargetStageConfirmed {
+		t.Fatalf("single-role FULL Confirm = (%+v, %v)", confirmed, err)
+	}
+}
+
 func TestPostgresJobTargetDraftDiscardIsActorScoped(t *testing.T) {
 	_, pool := newPreparationRepository(t)
 	insertPreparationUsers(t, pool, preparationUserA, preparationUserB)
@@ -677,4 +793,17 @@ func jobTargetIntent(
 		Key:                key,
 		PayloadFingerprint: sha256.Sum256(encoded),
 	}
+}
+
+type integrationJobTargetDependency struct{}
+
+func (integrationJobTargetDependency) NewID() (string, error) {
+	return "unused-target-id", nil
+}
+
+func (integrationJobTargetDependency) ParseJobTarget(
+	context.Context,
+	preparation.JobTargetInput,
+) (preparation.JobTargetCandidate, error) {
+	return preparation.JobTargetCandidate{}, errors.New("unused parser")
 }

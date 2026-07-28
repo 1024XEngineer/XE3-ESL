@@ -9,6 +9,9 @@ paths:
         references, never as trusted ownership. The service resolves the Actor
         from the Bearer Session and verifies that the owned Thread is linked to
         the owned, active Matter before anchoring the Plan to both resources.
+        Supplying `preparation_snapshot_id` selects the JobTarget-backed path:
+        the server derives and freezes the recommended catalog selection,
+        SessionPolicy, and focuses without creating a PracticeSession.
       operationId: createPracticePlan
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -21,13 +24,7 @@ paths:
             example:
               agent_thread_id: 20000000-0000-4000-8000-000000000001
               matter_id: 10000000-0000-4000-8000-000000000001
-              scenario_definition_id: scn_programmer_interview
-              scenario_definition_version: 1
-              scenario_config_id: scfg_backend_engineer
-              scenario_config_version: 1
-              preparation_profile_id: prep_demo_backend
-              selected_role_ids:
-                - role_technical_interviewer
+              preparation_snapshot_id: psnap_demo_backend_v1
       responses:
         '201':
           description: A ready practice plan for the current actor.
@@ -81,18 +78,52 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+    put:
+      tags:
+        - Practice
+      summary: Create a new revision of a JobTarget-backed plan preview
+      description: |
+        Replaces the adjustable role, option, and effective-Turn selection on
+        the expected revision. The immutable Preparation Snapshot is unchanged,
+        and this operation never creates a PracticeSession.
+      operationId: updatePracticePlan
+      parameters:
+        - $ref: '#/components/parameters/PracticePlanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePracticePlanRequest'
+      responses:
+        '200':
+          description: Revised ready plan preview or its idempotent result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticePlan'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-plans/{practice_plan_id}/practice-sessions:
     post:
       tags:
         - Practice
       summary: Create a session and its immutable snapshot
       description: |
-        The server resolves the candidate from actor context and constructs the
-        immutable participant collection. The client selects a role definition
-        but never submits trusted participant identifiers. The service verifies
-        that the preparation snapshot belongs to the Plan profile, every role is
-        selected by the Plan, and the practice option belongs to the frozen
-        Scenario before atomically creating the Session and Snapshot.
+        For a JobTarget-backed plan, `expected_plan_revision` is the only
+        required selection: the server constructs the immutable Session
+        Snapshot exclusively from the frozen Plan revision. Legacy selection
+        fields remain optional for compatibility and, when supplied, must equal
+        the Plan. Repeating the same idempotency key returns the same Session.
       operationId: createPracticeSession
       parameters:
         - $ref: '#/components/parameters/PracticePlanId'
@@ -105,10 +136,6 @@ paths:
               $ref: '#/components/schemas/CreatePracticeSessionRequest'
             example:
               expected_plan_revision: 1
-              preparation_snapshot_id: psnap_demo_backend_v1
-              practice_option_id: option_full_simulation
-              role_definition_ids:
-                - role_technical_interviewer
       responses:
         '201':
           description: Session and immutable bootstrap snapshot created atomically.
@@ -435,16 +462,12 @@ components:
       required:
         - agent_thread_id
         - matter_id
-        - scenario_definition_id
-        - scenario_definition_version
-        - scenario_config_id
-        - scenario_config_version
-        - preparation_profile_id
-        - selected_role_ids
       properties:
         agent_thread_id:
           $ref: '#/components/schemas/ResourceId'
         matter_id:
+          $ref: '#/components/schemas/ResourceId'
+        preparation_snapshot_id:
           $ref: '#/components/schemas/ResourceId'
         scenario_definition_id:
           $ref: '#/components/schemas/ResourceId'
@@ -460,8 +483,23 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
+          description: |
+            A JobTarget-backed INTERVIEW plan selects exactly one interviewer.
           items:
             $ref: '#/components/schemas/ResourceId'
+      oneOf:
+        - required:
+            - preparation_snapshot_id
+        - required:
+            - scenario_definition_id
+            - scenario_definition_version
+            - scenario_config_id
+            - scenario_config_version
+            - preparation_profile_id
+            - selected_role_ids
+          not:
+            required:
+              - preparation_snapshot_id
     PracticePlan:
       type: object
       additionalProperties: false
@@ -506,8 +544,22 @@ components:
           type: array
           minItems: 1
           uniqueItems: true
+          description: |
+            A JobTarget-backed INTERVIEW plan contains exactly one interviewer.
           items:
             $ref: '#/components/schemas/ResourceId'
+        preparation_snapshot:
+          $ref: ./preparation.yaml#/components/schemas/PreparationSnapshot
+        catalog_snapshot:
+          $ref: '#/components/schemas/PlanCatalogSnapshot'
+        session_policy:
+          $ref: '#/components/schemas/PracticeSessionPolicy'
+        practice_focuses:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/PracticeObjective'
         plan_revision:
           type: integer
           minimum: 1
@@ -524,14 +576,76 @@ components:
         updated_at:
           type: string
           format: date-time
+      dependentRequired:
+        preparation_snapshot:
+          - catalog_snapshot
+          - session_policy
+          - practice_focuses
+        catalog_snapshot:
+          - preparation_snapshot
+          - session_policy
+          - practice_focuses
+        session_policy:
+          - preparation_snapshot
+          - catalog_snapshot
+          - practice_focuses
+        practice_focuses:
+          - preparation_snapshot
+          - catalog_snapshot
+          - session_policy
+    UpdatePracticePlanRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_plan_revision
+        - selected_role_ids
+        - practice_option_id
+        - practice_option_version
+        - max_effective_turns
+      properties:
+        expected_plan_revision:
+          $ref: '#/components/schemas/Version'
+        selected_role_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          description: |
+            INTERVIEW revisions select exactly one independent interviewer.
+          items:
+            $ref: '#/components/schemas/ResourceId'
+        practice_option_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_option_version:
+          $ref: '#/components/schemas/Version'
+        max_effective_turns:
+          type: integer
+          minimum: 1
+    PlanCatalogSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - scenario_definition
+        - scenario_config
+        - selected_roles
+        - practice_option
+      properties:
+        scenario_definition:
+          $ref: ./preparation.yaml#/components/schemas/ScenarioDefinition
+        scenario_config:
+          $ref: ./preparation.yaml#/components/schemas/ScenarioConfig
+        selected_roles:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: ./preparation.yaml#/components/schemas/RoleDefinition
+        practice_option:
+          $ref: ./preparation.yaml#/components/schemas/PracticeOptionDefinition
     CreatePracticeSessionRequest:
       type: object
       additionalProperties: false
       required:
         - expected_plan_revision
-        - preparation_snapshot_id
-        - practice_option_id
-        - role_definition_ids
       properties:
         expected_plan_revision:
           type: integer

@@ -70,7 +70,8 @@ func (h *ProfileHTTPHandler) createProfile(c *gin.Context) {
 		return
 	}
 	var request CreateProfileRequest
-	if !decodeProfileJSONObject(c, &request) {
+	if !decodeProfileJSONObject(c, &request) ||
+		!validCreateProfileRequest(request) {
 		writeProfileHTTPError(c, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -105,7 +106,8 @@ func (h *ProfileHTTPHandler) createSnapshot(c *gin.Context) {
 		return
 	}
 	var request CreateSnapshotRequest
-	if !decodeProfileJSONObject(c, &request) {
+	if !decodeProfileJSONObject(c, &request) ||
+		request.SourceVersion < 1 {
 		writeProfileHTTPError(c, http.StatusBadRequest, "invalid_request")
 		return
 	}

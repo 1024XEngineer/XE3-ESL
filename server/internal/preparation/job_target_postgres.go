@@ -877,6 +877,10 @@ func (r *PostgresJobTargetRepository) Confirm(
 	if command.Request.Candidate.Source != current.Input.Source {
 		return JobTarget{}, false, ErrJobTargetInvalid
 	}
+	inputSnapshot, err := json.Marshal(current.Input)
+	if err != nil {
+		return JobTarget{}, false, ErrJobTargetInvalid
+	}
 
 	var confirmationVersion int
 	err = tx.QueryRow(ctx, `
@@ -884,17 +888,19 @@ func (r *PostgresJobTargetRepository) Confirm(
 			owner_user_id,
 			target_id,
 			input_version,
-			analysis_version,
-			confirmation_version,
-			candidate
-		)
+				analysis_version,
+				confirmation_version,
+				input_snapshot,
+				candidate
+			)
 		SELECT
 			$1,
 			$2,
-			$3,
-			$4,
-			coalesce(max(confirmation_version), 0) + 1,
-			$5
+				$3,
+				$4,
+				coalesce(max(confirmation_version), 0) + 1,
+				$5,
+				$6
 		FROM preparation_job_target_confirmations
 		WHERE owner_user_id = $1
 		  AND target_id = $2
@@ -904,6 +910,7 @@ func (r *PostgresJobTargetRepository) Confirm(
 		command.TargetID,
 		current.InputVersion,
 		command.Request.ExpectedAnalysisVersion,
+		inputSnapshot,
 		encoded,
 	).Scan(&confirmationVersion)
 	if err != nil {

@@ -226,6 +226,24 @@ func TestPracticeCatalogContextReaderRejectsStaleAndForgedSelections(
 	) {
 		t.Fatalf("forged role error = %v", err)
 	}
+	unknownOption := validPlan
+	unknownOption.PracticeOptionID = "option_forged"
+	unknownOption.PracticeOptionVersion = 1
+	if _, err := reader.ReadPlanCatalog(unknownOption); !errors.Is(
+		err,
+		practicepersistence.ErrNotFound,
+	) {
+		t.Fatalf("forged option error = %v", err)
+	}
+	staleOption := validPlan
+	staleOption.PracticeOptionID = preparation.TechnicalFocusOptionID
+	staleOption.PracticeOptionVersion = 2
+	if _, err := reader.ReadPlanCatalog(staleOption); !errors.Is(
+		err,
+		practicepersistence.ErrNotFound,
+	) {
+		t.Fatalf("stale option error = %v", err)
+	}
 
 	plan := practicepersistence.Plan{
 		ScenarioDefinitionID:      preparation.ProgrammerInterviewScenarioID,

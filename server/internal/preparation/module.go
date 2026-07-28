@@ -9,9 +9,11 @@ func (Module) Name() string { return "preparation" }
 
 // CreateProfileRequest is the application input for one preparation profile.
 type CreateProfileRequest struct {
-	ResumeRef         string `json:"resume_ref,omitempty"`
-	JobDescriptionRef string `json:"job_description_ref,omitempty"`
-	BackgroundSummary string `json:"background_summary"`
+	ResumeRef                    string `json:"resume_ref,omitempty"`
+	JobDescriptionRef            string `json:"job_description_ref,omitempty"`
+	BackgroundSummary            string `json:"background_summary"`
+	JobTargetID                  string `json:"job_target_id,omitempty"`
+	JobTargetConfirmationVersion int    `json:"job_target_confirmation_version,omitempty"`
 }
 
 // CreateSnapshotRequest pins one immutable version of a preparation profile.

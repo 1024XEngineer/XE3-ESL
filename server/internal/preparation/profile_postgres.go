@@ -118,24 +118,39 @@ func (r *PostgresProfileRepository) CreateProfile(
 		}
 		return replayed, true, nil
 	}
+	if command.Request.JobTargetID != "" {
+		if err := lockConfirmedProfileJobTarget(
+			ctx,
+			tx,
+			actor.UserID,
+			command.Request.JobTargetID,
+			command.Request.JobTargetConfirmationVersion,
+		); err != nil {
+			return Profile{}, false, err
+		}
+	}
 
 	profile := Profile{
-		ID:                command.ProfileID,
-		UserID:            actor.UserID,
-		ResumeRef:         command.Request.ResumeRef,
-		JobDescriptionRef: command.Request.JobDescriptionRef,
-		BackgroundSummary: command.Request.BackgroundSummary,
-		Version:           1,
+		ID:                           command.ProfileID,
+		UserID:                       actor.UserID,
+		ResumeRef:                    command.Request.ResumeRef,
+		JobDescriptionRef:            command.Request.JobDescriptionRef,
+		BackgroundSummary:            command.Request.BackgroundSummary,
+		JobTargetID:                  command.Request.JobTargetID,
+		JobTargetConfirmationVersion: command.Request.JobTargetConfirmationVersion,
+		Version:                      1,
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO preparation_profiles (
 			owner_user_id,
 			profile_id,
-			resume_ref,
-			job_description_ref,
-			background_summary
-		)
-		VALUES ($1, $2, $3, $4, $5)
+				resume_ref,
+				job_description_ref,
+				background_summary,
+				job_target_id,
+				job_target_confirmation_version
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING version, updated_at
 	`,
 		actor.UserID,
@@ -143,6 +158,10 @@ func (r *PostgresProfileRepository) CreateProfile(
 		nullablePreparationText(profile.ResumeRef),
 		nullablePreparationText(profile.JobDescriptionRef),
 		profile.BackgroundSummary,
+		nullablePreparationText(profile.JobTargetID),
+		nullablePreparationVersion(
+			profile.JobTargetConfirmationVersion,
+		),
 	).Scan(&profile.Version, &profile.UpdatedAt)
 	if err != nil {
 		return Profile{}, false, classifyPreparationWriteError(err)
@@ -274,21 +293,35 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 		SourceVersion:   command.Request.SourceVersion,
 	}
 	var sourceVersion int
+	var targetInput, targetCandidate []byte
 	err = tx.QueryRow(ctx, `
 		SELECT
-			COALESCE(resume_ref, ''),
-			COALESCE(job_description_ref, ''),
-			background_summary,
-			version
-		FROM preparation_profiles
-		WHERE owner_user_id = $1
-		  AND profile_id = $2
-		FOR SHARE
+			COALESCE(profile.resume_ref, ''),
+			COALESCE(profile.job_description_ref, ''),
+			profile.background_summary,
+			profile.version,
+			COALESCE(profile.job_target_id, ''),
+			COALESCE(profile.job_target_confirmation_version, 0),
+			confirmation.input_snapshot,
+			confirmation.candidate
+		FROM preparation_profiles AS profile
+		LEFT JOIN preparation_job_target_confirmations AS confirmation
+		  ON confirmation.owner_user_id = profile.owner_user_id
+		 AND confirmation.target_id = profile.job_target_id
+		 AND confirmation.confirmation_version =
+		     profile.job_target_confirmation_version
+		WHERE profile.owner_user_id = $1
+		  AND profile.profile_id = $2
+		FOR SHARE OF profile
 	`, actor.UserID, command.ProfileID).Scan(
 		&snapshot.ResumeSnapshot,
 		&snapshot.JobDescriptionSnapshot,
 		&snapshot.BackgroundSnapshot,
 		&sourceVersion,
+		&snapshot.SourceJobTargetID,
+		&snapshot.SourceJobTargetConfirmationVersion,
+		&targetInput,
+		&targetCandidate,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Snapshot{}, false, ErrProfileNotFound
@@ -301,18 +334,46 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 	if sourceVersion != command.Request.SourceVersion {
 		return Snapshot{}, false, ErrProfileConflict
 	}
+	if snapshot.SourceJobTargetID != "" {
+		if len(targetInput) == 0 || len(targetCandidate) == 0 {
+			return Snapshot{}, false, ErrProfileConflict
+		}
+		var input JobTargetInput
+		var candidate JobTargetCandidate
+		if err := json.Unmarshal(targetInput, &input); err != nil ||
+			json.Unmarshal(targetCandidate, &candidate) != nil ||
+			!validJobTargetInput(input) ||
+			!validJobTargetCandidateShape(candidate, input.Source) {
+			return Snapshot{}, false, profileDatabaseFailure(
+				"decode confirmed job target snapshot",
+			)
+		}
+		snapshot.JobTargetInputSnapshot = &input
+		snapshot.JobTargetCandidateSnapshot = &candidate
+	}
 
+	encodedTargetInput, encodedTargetCandidate, err :=
+		encodeSnapshotJobTarget(snapshot)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO preparation_snapshots (
 			owner_user_id,
 			snapshot_id,
 			source_profile_id,
 			source_version,
-			resume_snapshot,
-			job_description_snapshot,
-			background_snapshot
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+				resume_snapshot,
+				job_description_snapshot,
+				background_snapshot,
+				source_job_target_id,
+				source_job_target_confirmation_version,
+				job_target_input_snapshot,
+				job_target_candidate_snapshot
+			)
+			VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+			)
 		RETURNING created_at
 	`,
 		actor.UserID,
@@ -322,6 +383,12 @@ func (r *PostgresProfileRepository) CreateSnapshot(
 		nullablePreparationText(snapshot.ResumeSnapshot),
 		nullablePreparationText(snapshot.JobDescriptionSnapshot),
 		snapshot.BackgroundSnapshot,
+		nullablePreparationText(snapshot.SourceJobTargetID),
+		nullablePreparationVersion(
+			snapshot.SourceJobTargetConfirmationVersion,
+		),
+		encodedTargetInput,
+		encodedTargetCandidate,
 	).Scan(&snapshot.CreatedAt)
 	if err != nil {
 		return Snapshot{}, false, classifyPreparationWriteError(err)
@@ -363,9 +430,11 @@ func (r *PostgresProfileRepository) ReadProfile(
 			profile.profile_id,
 			profile.owner_user_id::text,
 			COALESCE(profile.resume_ref, ''),
-			COALESCE(profile.job_description_ref, ''),
-			profile.background_summary,
-			profile.version,
+				COALESCE(profile.job_description_ref, ''),
+				profile.background_summary,
+				COALESCE(profile.job_target_id, ''),
+				COALESCE(profile.job_target_confirmation_version, 0),
+				profile.version,
 			profile.updated_at
 		FROM preparation_profiles AS profile
 		JOIN identity_users AS owner
@@ -403,9 +472,16 @@ func (r *PostgresProfileRepository) ReadSnapshot(
 			snapshot.source_profile_id,
 			snapshot.source_version,
 			COALESCE(snapshot.resume_snapshot, ''),
-			COALESCE(snapshot.job_description_snapshot, ''),
-			snapshot.background_snapshot,
-			snapshot.created_at
+				COALESCE(snapshot.job_description_snapshot, ''),
+				snapshot.background_snapshot,
+				COALESCE(snapshot.source_job_target_id, ''),
+				COALESCE(
+				    snapshot.source_job_target_confirmation_version,
+				    0
+				),
+				snapshot.job_target_input_snapshot,
+				snapshot.job_target_candidate_snapshot,
+				snapshot.created_at
 		FROM preparation_snapshots AS snapshot
 		JOIN identity_users AS owner
 		  ON owner.id = snapshot.owner_user_id
@@ -498,20 +574,6 @@ func (r *PostgresProfileRepository) DeleteProfileData(
 	}
 
 	if _, err := tx.Exec(ctx, `
-		DELETE FROM preparation_job_target_idempotency_records
-		WHERE owner_user_id = $1
-	`, command.UserID); err != nil {
-		return profileDatabaseFailure(
-			"delete job target idempotency records",
-		)
-	}
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM preparation_job_targets
-		WHERE owner_user_id = $1
-	`, command.UserID); err != nil {
-		return profileDatabaseFailure("delete job targets")
-	}
-	if _, err := tx.Exec(ctx, `
 		DELETE FROM preparation_idempotency_records
 		WHERE owner_user_id = $1
 	`, command.UserID); err != nil {
@@ -528,6 +590,20 @@ func (r *PostgresProfileRepository) DeleteProfileData(
 		WHERE owner_user_id = $1
 	`, command.UserID); err != nil {
 		return profileDatabaseFailure("delete profiles")
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM preparation_job_target_idempotency_records
+		WHERE owner_user_id = $1
+	`, command.UserID); err != nil {
+		return profileDatabaseFailure(
+			"delete job target idempotency records",
+		)
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM preparation_job_targets
+		WHERE owner_user_id = $1
+	`, command.UserID); err != nil {
+		return profileDatabaseFailure("delete job targets")
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return profileDatabaseFailure("commit profile data deletion")
@@ -551,6 +627,8 @@ func scanPreparationProfile(row preparationRowScanner) (Profile, error) {
 		&profile.ResumeRef,
 		&profile.JobDescriptionRef,
 		&profile.BackgroundSummary,
+		&profile.JobTargetID,
+		&profile.JobTargetConfirmationVersion,
 		&profile.Version,
 		&profile.UpdatedAt,
 	)
@@ -560,6 +638,7 @@ func scanPreparationProfile(row preparationRowScanner) (Profile, error) {
 
 func scanPreparationSnapshot(row preparationRowScanner) (Snapshot, error) {
 	var snapshot Snapshot
+	var targetInput, targetCandidate []byte
 	err := row.Scan(
 		&snapshot.ID,
 		&snapshot.SourceProfileID,
@@ -567,8 +646,23 @@ func scanPreparationSnapshot(row preparationRowScanner) (Snapshot, error) {
 		&snapshot.ResumeSnapshot,
 		&snapshot.JobDescriptionSnapshot,
 		&snapshot.BackgroundSnapshot,
+		&snapshot.SourceJobTargetID,
+		&snapshot.SourceJobTargetConfirmationVersion,
+		&targetInput,
+		&targetCandidate,
 		&snapshot.CreatedAt,
 	)
+	if err == nil && snapshot.SourceJobTargetID != "" {
+		var input JobTargetInput
+		var candidate JobTargetCandidate
+		if len(targetInput) == 0 || len(targetCandidate) == 0 ||
+			json.Unmarshal(targetInput, &input) != nil ||
+			json.Unmarshal(targetCandidate, &candidate) != nil {
+			return Snapshot{}, ErrProfileRepository
+		}
+		snapshot.JobTargetInputSnapshot = &input
+		snapshot.JobTargetCandidateSnapshot = &candidate
+	}
 	snapshot.CreatedAt = snapshot.CreatedAt.UTC()
 	return snapshot, err
 }
@@ -593,7 +687,9 @@ func replayProfile(
 	if err := json.Unmarshal(body, &profile); err != nil ||
 		profile.ID != resourceID ||
 		profile.UserID != userID ||
-		!validResourceIdentifier(profile.ID) {
+		!validResourceIdentifier(profile.ID) ||
+		((profile.JobTargetID == "") !=
+			(profile.JobTargetConfirmationVersion == 0)) {
 		return Profile{}, false, profileDatabaseFailure(
 			"decode profile replay",
 		)
@@ -623,7 +719,9 @@ func replaySnapshot(
 		snapshot.ID != resourceID ||
 		!validResourceIdentifier(snapshot.ID) ||
 		!validResourceIdentifier(snapshot.SourceProfileID) ||
-		snapshot.SourceVersion < 1 {
+		snapshot.SourceVersion < 1 ||
+		((snapshot.SourceJobTargetID == "") !=
+			(snapshot.SourceJobTargetConfirmationVersion == 0)) {
 		return Snapshot{}, false, profileDatabaseFailure(
 			"decode snapshot replay",
 		)
@@ -754,6 +852,37 @@ func lockActivePreparationActor(
 	return nil
 }
 
+func lockConfirmedProfileJobTarget(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID string,
+	targetID string,
+	confirmationVersion int,
+) error {
+	var confirmed bool
+	err := tx.QueryRow(ctx, `
+		SELECT true
+		FROM preparation_job_targets AS target
+		JOIN preparation_job_target_confirmations AS confirmation
+		  ON confirmation.owner_user_id = target.owner_user_id
+		 AND confirmation.target_id = target.target_id
+		 AND confirmation.input_version = target.input_version
+		WHERE target.owner_user_id = $1
+		  AND target.target_id = $2
+		  AND confirmation.confirmation_version = $3
+		  AND confirmation.input_snapshot IS NOT NULL
+		  AND target.stage = 'confirmed'
+		FOR SHARE OF target, confirmation
+	`, userID, targetID, confirmationVersion).Scan(&confirmed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrProfileNotFound
+	}
+	if err != nil {
+		return profileDatabaseFailure("lock confirmed job target")
+	}
+	return nil
+}
+
 func lockPreparationIdempotency(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -817,6 +946,34 @@ func nullablePreparationText(value string) any {
 		return nil
 	}
 	return value
+}
+
+func nullablePreparationVersion(value int) any {
+	if value == 0 {
+		return nil
+	}
+	return value
+}
+
+func encodeSnapshotJobTarget(snapshot Snapshot) (any, any, error) {
+	if snapshot.SourceJobTargetID == "" &&
+		snapshot.SourceJobTargetConfirmationVersion == 0 &&
+		snapshot.JobTargetInputSnapshot == nil &&
+		snapshot.JobTargetCandidateSnapshot == nil {
+		return nil, nil, nil
+	}
+	if !targetedPreparationSnapshot(snapshot) {
+		return nil, nil, ErrProfileConflict
+	}
+	input, err := json.Marshal(snapshot.JobTargetInputSnapshot)
+	if err != nil {
+		return nil, nil, ErrProfileRepository
+	}
+	candidate, err := json.Marshal(snapshot.JobTargetCandidateSnapshot)
+	if err != nil {
+		return nil, nil, ErrProfileRepository
+	}
+	return input, candidate, nil
 }
 
 func rollbackPreparationTransaction(ctx context.Context, tx pgx.Tx) {
