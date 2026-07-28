@@ -41,6 +41,7 @@ class PreparationPage extends StatefulWidget {
 
 class _PreparationPageState extends State<PreparationPage> {
   TextEditingController? _backgroundController;
+  String? _selectedFamily;
 
   @override
   void initState() {
@@ -119,6 +120,9 @@ class _PreparationPageState extends State<PreparationPage> {
         role == null ||
         option == null) {
       return;
+    }
+    if (launch.backgroundSummary.trim().isEmpty) {
+      launch.updateBackgroundSummary('默认示例：${config.prompt.publicSceneBrief}');
     }
     final started = await launch.start(
       PreparationLaunchSelection.fromCatalog(
@@ -222,6 +226,10 @@ class _PreparationPageState extends State<PreparationPage> {
         onRetry: _retryLaunch,
       );
     }
+    final selectedFamily = _selectedFamily;
+    if (selectedFamily != null) {
+      return _buildFamilyScenarios(controller, selectedFamily);
+    }
     return ListView(
       key: const Key('preparation-catalog-list'),
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
@@ -240,13 +248,25 @@ class _PreparationPageState extends State<PreparationPage> {
         ),
         const SizedBox(height: 8),
         const Text(
-          '按目标选择训练专题。当前先把英文面试做深，后续专题会沿用同一套练习与复盘能力。',
+          '先选择一个使用场景，再挑选可直接开始的基础练习。',
           style: TextStyle(
             color: Color(0xFF696B73),
             fontSize: 14,
             height: 1.45,
           ),
         ),
+        if (widget.onOpenJobPreparation != null) ...[
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            key: const Key('open-job-preparation'),
+            onPressed: widget.onOpenJobPreparation,
+            icon: const Icon(Icons.description_outlined),
+            label: const Text('有职位描述？使用 JD 专项准备'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+            ),
+          ),
+        ],
         const SizedBox(height: 22),
         if (controller.isLoadingScenarios)
           const _CatalogLoading(key: Key('preparation-catalog-loading'))
@@ -259,20 +279,65 @@ class _PreparationPageState extends State<PreparationPage> {
         else if (controller.scenarios.isEmpty)
           const _CatalogEmpty()
         else
-          for (final scenario in controller.scenarios) ...[
-            _CatalogScenarioCard(
-              scenario: scenario,
-              jdFirstAvailable:
-                  widget.onOpenJobPreparation != null &&
-                  scenario.id == _jobInterviewScenarioId,
-              onPressed:
-                  widget.onOpenJobPreparation == null ||
-                      scenario.id != _jobInterviewScenarioId
-                  ? () => controller.selectScenario(scenario)
-                  : widget.onOpenJobPreparation!,
+          for (final family in const [
+            'INTERVIEW',
+            'EXAM',
+            'WORKPLACE',
+            'DAILY',
+          ]) ...[
+            _ScenarioFamilyCard(
+              family: family,
+              scenarios: controller.scenarios
+                  .where((scenario) => scenario.type == family)
+                  .toList(growable: false),
+              onPressed: () => setState(() => _selectedFamily = family),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
           ],
+      ],
+    );
+  }
+
+  Widget _buildFamilyScenarios(
+    PreparationController controller,
+    String family,
+  ) {
+    final scenarios = controller.scenarios
+        .where((scenario) => scenario.type == family)
+        .toList(growable: false);
+    return ListView(
+      key: Key('preparation-family-list-$family'),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const Key('preparation-back-to-families'),
+            onPressed: () => setState(() => _selectedFamily = null),
+            icon: const Icon(Icons.arrow_back_rounded),
+            label: const Text('四大场景'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _ScenarioFamilyHeading(family: family),
+        const SizedBox(height: 8),
+        Text(
+          '${scenarios.length} 个基础子场景，均可使用默认设定直接开始。',
+          style: const TextStyle(color: Color(0xFF696B73), height: 1.45),
+        ),
+        const SizedBox(height: 20),
+        for (final scenario in scenarios) ...[
+          _CatalogScenarioCard(
+            scenario: scenario,
+            onPressed: () => controller.selectScenario(scenario),
+            onOpenJobPreparation:
+                widget.onOpenJobPreparation != null &&
+                    scenario.id == _jobInterviewScenarioId
+                ? widget.onOpenJobPreparation
+                : null,
+          ),
+          const SizedBox(height: 14),
+        ],
       ],
     );
   }
@@ -367,10 +432,19 @@ class _ScenarioDetailView extends StatelessWidget {
                     controller.showScenarioList();
                   },
             icon: const Icon(Icons.arrow_back_rounded),
-            label: const Text('全部场景'),
+            label: Text('返回${_scenarioFamilyLabel(scenario.type)}'),
           ),
         ),
         const SizedBox(height: 8),
+        Text(
+          _scenarioFamilyLabel(scenario.type),
+          style: const TextStyle(
+            color: Color(0xFF696B73),
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 6),
         Text(
           scenario.name,
           key: const Key('preparation-scenario-title'),
@@ -378,7 +452,7 @@ class _ScenarioDetailView extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text(
-          '这是同一个 SpeakUp Agent 中的重点练习内容包。',
+          '先预览场景目标和双方角色，确认后再创建本次语音练习。',
           style: TextStyle(color: Color(0xFF696B73), fontSize: 15),
         ),
         const SizedBox(height: 24),
@@ -392,58 +466,67 @@ class _ScenarioDetailView extends StatelessWidget {
           )
         else if (detail != null) ...[
           _ScenarioConfigCard(config: detail.config),
-          const SizedBox(height: 28),
-          const Text(
-            '选择面试官视角',
-            style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            '每个视角都可以独立练习，排列顺序不代表固定招聘阶段。',
-            style: TextStyle(color: Color(0xFF696B73), height: 1.45),
-          ),
-          const SizedBox(height: 14),
-          for (final role in controller.roles) ...[
-            _RoleCard(
-              role: role,
-              selected: selectedRole?.id == role.id,
-              onPressed: launchLocked
-                  ? null
-                  : () {
-                      launchController?.selectionChanged();
-                      controller.selectRole(role);
-                    },
-            ),
-            const SizedBox(height: 10),
-          ],
-          if (selectedRole != null) ...[
-            const SizedBox(height: 18),
+          if (controller.roles.length > 1) ...[
+            const SizedBox(height: 28),
             const Text(
-              '选择练习方式',
+              '选择对话角色',
               style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
             const Text(
-              '完整模拟和专项练习都围绕当前选择的视角进行。',
+              'AI 会按所选角色和场景目标推进对话。',
               style: TextStyle(color: Color(0xFF696B73), height: 1.45),
             ),
             const SizedBox(height: 14),
-            for (final option in controller.availableOptions) ...[
-              _OptionCard(
-                option: option,
-                selected: controller.selectedOption?.id == option.id,
+            for (final role in controller.roles) ...[
+              _RoleCard(
+                role: role,
+                selected: selectedRole?.id == role.id,
                 onPressed: launchLocked
                     ? null
                     : () {
                         launchController?.selectionChanged();
-                        controller.selectOption(option);
+                        controller.selectRole(role);
                       },
               ),
               const SizedBox(height: 10),
             ],
+            if (selectedRole != null) ...[
+              const SizedBox(height: 18),
+              const Text(
+                '选择练习方式',
+                style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                '完整模拟和专项练习都围绕当前选择的视角进行。',
+                style: TextStyle(color: Color(0xFF696B73), height: 1.45),
+              ),
+              const SizedBox(height: 14),
+              for (final option in controller.availableOptions) ...[
+                _OptionCard(
+                  option: option,
+                  selected: controller.selectedOption?.id == option.id,
+                  onPressed: launchLocked
+                      ? null
+                      : () {
+                          launchController?.selectionChanged();
+                          controller.selectOption(option);
+                        },
+                ),
+                const SizedBox(height: 10),
+              ],
+            ],
           ],
           if (controller.hasCompleteSelection) ...[
             const SizedBox(height: 18),
+            _PracticePreviewCard(
+              scenario: scenario,
+              config: detail.config,
+              role: selectedRole!,
+              option: controller.selectedOption!,
+            ),
+            const SizedBox(height: 12),
             if (launchController case final launch?)
               _LaunchSelectionCard(
                 controller: launch,
@@ -557,16 +640,163 @@ class _CatalogEmpty extends StatelessWidget {
   }
 }
 
-class _CatalogScenarioCard extends StatelessWidget {
-  const _CatalogScenarioCard({
-    required this.scenario,
-    required this.jdFirstAvailable,
+class _ScenarioFamilyHeading extends StatelessWidget {
+  const _ScenarioFamilyHeading({required this.family});
+
+  final String family;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      header: true,
+      child: Row(
+        children: [
+          Icon(
+            _scenarioFamilyIcon(family),
+            size: 20,
+            color: const Color(0xFF4F5054),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _scenarioFamilyLabel(family),
+            key: Key('preparation-family-$family'),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScenarioFamilyCard extends StatelessWidget {
+  const _ScenarioFamilyCard({
+    required this.family,
+    required this.scenarios,
     required this.onPressed,
   });
 
-  final PreparationScenario scenario;
-  final bool jdFirstAvailable;
+  final String family;
+  final List<PreparationScenario> scenarios;
   final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final examples = scenarios
+        .take(3)
+        .map((scenario) => scenario.name)
+        .join(' · ');
+    return Card(
+      elevation: 0,
+      color: Colors.white,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: Color(0xFFDEDEDA)),
+      ),
+      child: Semantics(
+        button: true,
+        label:
+            '${_scenarioFamilyLabel(family)}，${scenarios.length} 个子场景。'
+            '${_scenarioFamilyDescription(family)}',
+        excludeSemantics: true,
+        child: InkWell(
+          key: Key('preparation-family-entry-$family'),
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE9E9E5),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    _scenarioFamilyIcon(family),
+                    color: const Color(0xFF4F5054),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _scenarioFamilyLabel(family),
+                              key: Key('preparation-family-$family'),
+                              style: const TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            '${scenarios.length} 个',
+                            style: const TextStyle(
+                              color: Color(0xFF777980),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _scenarioFamilyDescription(family),
+                        style: const TextStyle(
+                          color: Color(0xFF5F6168),
+                          height: 1.4,
+                        ),
+                      ),
+                      if (examples.isNotEmpty) ...[
+                        const SizedBox(height: 9),
+                        Text(
+                          examples,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF85878D),
+                            fontSize: 13,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 15,
+                    color: Color(0xFF777980),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CatalogScenarioCard extends StatelessWidget {
+  const _CatalogScenarioCard({
+    required this.scenario,
+    required this.onPressed,
+    this.onOpenJobPreparation,
+  });
+
+  final PreparationScenario scenario;
+  final VoidCallback onPressed;
+  final VoidCallback? onOpenJobPreparation;
 
   @override
   Widget build(BuildContext context) {
@@ -593,8 +823,8 @@ class _CatalogScenarioCard extends StatelessWidget {
                   color: const Color(0xFFE9E9E5),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(
-                  Icons.work_outline_rounded,
+                child: Icon(
+                  _scenarioFamilyIcon(scenario.type),
                   color: Color(0xFF4F5054),
                 ),
               ),
@@ -612,53 +842,37 @@ class _CatalogScenarioCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      jdFirstAvailable ? '从岗位与 JD 开始，生成专属练习计划' : '查看练习方式与训练重点',
+                      scenario.summary,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Color(0xFF696B73),
                         height: 1.4,
                       ),
                     ),
-                    if (jdFirstAvailable) ...[
+                    if (onOpenJobPreparation != null) ...[
                       const SizedBox(height: 9),
-                      const _AvailableTopicLabel(),
+                      OutlinedButton.icon(
+                        key: const Key('open-job-preparation'),
+                        onPressed: onOpenJobPreparation,
+                        icon: const Icon(Icons.description_outlined, size: 18),
+                        label: const Text('按岗位与 JD 定制'),
+                      ),
                     ],
                   ],
                 ),
               ),
-              const Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 15,
-                color: Color(0xFF777980),
+              const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: Text(
+                  '开始练习',
+                  style: TextStyle(
+                    color: Color(0xFF303136),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AvailableTopicLabel extends StatelessWidget {
-  const _AvailableTopicLabel();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Align(
-      alignment: Alignment.centerLeft,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Color(0xFFE7ECE6),
-          borderRadius: BorderRadius.all(Radius.circular(99)),
-        ),
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-          child: Text(
-            '可用',
-            style: TextStyle(
-              color: Color(0xFF405846),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
           ),
         ),
       ),
@@ -673,6 +887,7 @@ class _ScenarioConfigCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final prompt = config.prompt;
     return Material(
       key: const Key('preparation-scenario-config'),
       color: Colors.white,
@@ -683,14 +898,91 @@ class _ScenarioConfigCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              config.jobTitle,
+              '默认示例',
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Text(
-              config.jobDescription,
+              prompt.publicSceneBrief,
               style: const TextStyle(color: Color(0xFF5F6168), height: 1.45),
             ),
+            const SizedBox(height: 16),
+            const Text('练习目标', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 5),
+            Text(
+              prompt.practiceGoal,
+              style: const TextStyle(color: Color(0xFF5F6168), height: 1.45),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _PreviewLabel(
+                  icon: Icons.person_outline_rounded,
+                  text: '你：${prompt.userRole}',
+                ),
+                _PreviewLabel(
+                  icon: Icons.smart_toy_outlined,
+                  text: 'AI：${prompt.aiRole}',
+                ),
+                _PreviewLabel(
+                  icon: Icons.schedule_rounded,
+                  text:
+                      '约 ${_durationMinutes(prompt.suggestedDurationSeconds)} 分钟',
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            const Text('对话重点', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 7),
+            for (final blueprint in prompt.turnBlueprints.take(4))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('• '),
+                    Expanded(
+                      child: Text(
+                        blueprint,
+                        style: const TextStyle(
+                          color: Color(0xFF5F6168),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewLabel extends StatelessWidget {
+  const _PreviewLabel({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF1F1EE),
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: const Color(0xFF55575E)),
+            const SizedBox(width: 6),
+            Flexible(child: Text(text, style: const TextStyle(fontSize: 13))),
           ],
         ),
       ),
@@ -855,6 +1147,80 @@ class _OptionCard extends StatelessWidget {
   }
 }
 
+class _PracticePreviewCard extends StatelessWidget {
+  const _PracticePreviewCard({
+    required this.scenario,
+    required this.config,
+    required this.role,
+    required this.option,
+  });
+
+  final PreparationScenario scenario;
+  final PreparationScenarioConfig config;
+  final PreparationRole role;
+  final PreparationOption option;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      key: const Key('preparation-practice-preview'),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.fact_check_outlined, size: 21),
+                SizedBox(width: 8),
+                Text('开始前确认', style: TextStyle(fontWeight: FontWeight.w800)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _PreviewRow(label: '场景', value: scenario.name),
+            _PreviewRow(label: '目标', value: config.prompt.practiceGoal),
+            _PreviewRow(label: '你的角色', value: config.prompt.userRole),
+            _PreviewRow(label: 'AI 角色', value: role.displayName),
+            _PreviewRow(label: '练习方式', value: option.displayName),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewRow extends StatelessWidget {
+  const _PreviewRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF777980),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(child: Text(value, style: const TextStyle(height: 1.35))),
+        ],
+      ),
+    );
+  }
+}
+
 class _LaunchSelectionCard extends StatelessWidget {
   const _LaunchSelectionCard({
     required this.controller,
@@ -881,10 +1247,13 @@ class _LaunchSelectionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('准备开始练习', style: TextStyle(fontWeight: FontWeight.w800)),
+            const Text(
+              '自定义设置（可选）',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 6),
             const Text(
-              '请补充真实背景和练习目标。这里只创建本次练习上下文，不会从昵称或历史消息猜测。',
+              '留空会直接使用上方默认示例；也可以补充一句真实背景或练习目标。',
               style: TextStyle(color: Color(0xFF5F6168), height: 1.45),
             ),
             const SizedBox(height: 12),
@@ -897,8 +1266,8 @@ class _LaunchSelectionCard extends StatelessWidget {
               maxLength: 4000,
               textInputAction: TextInputAction.newline,
               decoration: const InputDecoration(
-                labelText: '你的背景与本次练习目标（必填）',
-                hintText: '例如：你的岗位、经历，以及这次最想练习的表达。',
+                labelText: '一句话背景或目标',
+                hintText: '可留空直接开始',
                 filled: true,
                 fillColor: Colors.white,
                 border: OutlineInputBorder(),
@@ -937,7 +1306,7 @@ class _LaunchSelectionCard extends StatelessWidget {
             FilledButton(
               key: const Key('preparation-start-practice'),
               onPressed: controller.isStarting ? null : onStart,
-              child: Text(controller.isStarting ? '正在创建练习' : '开始语音练习'),
+              child: Text(controller.isStarting ? '正在创建练习' : '使用当前设定开始练习'),
             ),
             if (controller.canRetry && !controller.isStarting)
               TextButton(
@@ -981,6 +1350,38 @@ String _launchStageLabel(PreparationLaunchStage? stage) {
     null => '正在准备练习',
   };
 }
+
+String _scenarioFamilyLabel(String family) {
+  return switch (family) {
+    'INTERVIEW' => '求职面试',
+    'EXAM' => '考试口语',
+    'WORKPLACE' => '职场沟通',
+    'DAILY' => '生活沟通',
+    _ => family,
+  };
+}
+
+String _scenarioFamilyDescription(String family) {
+  return switch (family) {
+    'INTERVIEW' => '练习自我介绍、项目表达、行为问题与岗位沟通。',
+    'EXAM' => '覆盖 IELTS 分段练习、完整模拟与自定义题型。',
+    'WORKPLACE' => '处理汇报、会议、协作、客户沟通和条件协商。',
+    'DAILY' => '练习餐厅、交通、酒店、购物、预约等真实交流。',
+    _ => '选择一个基础子场景开始对话。',
+  };
+}
+
+IconData _scenarioFamilyIcon(String family) {
+  return switch (family) {
+    'INTERVIEW' => Icons.work_outline_rounded,
+    'EXAM' => Icons.school_outlined,
+    'WORKPLACE' => Icons.groups_outlined,
+    'DAILY' => Icons.hotel_outlined,
+    _ => Icons.record_voice_over_outlined,
+  };
+}
+
+int _durationMinutes(int seconds) => (seconds / 60).ceil();
 
 class _InlineFailure extends StatelessWidget {
   const _InlineFailure({

@@ -119,6 +119,8 @@ paths:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1voice-practice-session
   /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/transcription-candidates:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1transcription-candidates
+  /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/text-answers:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1text-answers
   /v1/transcription-candidates/{candidate_id}/confirmations:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1transcription-candidates~1{candidate_id}~1confirmations
   /v1/voice-questions/{question_id}/speech:
@@ -260,8 +262,12 @@ components:
       $ref: ./modules/preparation.yaml#/components/schemas/ScenarioDefinition
     ScenarioDefinitionList:
       $ref: ./modules/preparation.yaml#/components/schemas/ScenarioDefinitionList
+    ScenarioModel:
+      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioModel
     ScenarioConfig:
       $ref: ./modules/preparation.yaml#/components/schemas/ScenarioConfig
+    ScenarioPromptModel:
+      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioPromptModel
     InterviewScenarioConfig:
       $ref: ./modules/preparation.yaml#/components/schemas/InterviewScenarioConfig
     RoleDefinition:

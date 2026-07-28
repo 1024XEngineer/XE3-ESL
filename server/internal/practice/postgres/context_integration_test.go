@@ -1265,6 +1265,7 @@ func targetedContextPlanCommand(
 		ScenarioDefinition: persistence.ScenarioDefinitionSnapshot{
 			ID:      "scn_programmer_interview",
 			Type:    "INTERVIEW",
+			Model:   persistence.ScenarioModelProjectExperienceDeepDive,
 			Name:    "English interview for technical roles",
 			Version: 1,
 			Status:  "active",
@@ -1273,10 +1274,11 @@ func targetedContextPlanCommand(
 			ID:                   "scfg_backend_engineer",
 			ScenarioDefinitionID: "scn_programmer_interview",
 			Type:                 "INTERVIEW",
+			Model:                persistence.ScenarioModelProjectExperienceDeepDive,
 			Version:              1,
 			JobTitle:             "Backend engineer",
 			JobDescription:       "Build reliable APIs.",
-			FocusAreas:           []string{"introduction", "system_design"},
+			PromptModel:          contextScenarioPromptModel(),
 		},
 		SelectedRoles: []persistence.RoleSnapshot{role},
 		PracticeOption: persistence.PracticeOptionSnapshot{
@@ -1322,6 +1324,7 @@ func targetedContextPlanCommand(
 		ScenarioDefinitionID:      catalog.ScenarioDefinition.ID,
 		ScenarioDefinitionVersion: catalog.ScenarioDefinition.Version,
 		ScenarioType:              catalog.ScenarioDefinition.Type,
+		ScenarioModel:             catalog.ScenarioDefinition.Model,
 		ScenarioConfigID:          catalog.ScenarioConfig.ID,
 		ScenarioConfigVersion:     catalog.ScenarioConfig.Version,
 		PreparationProfileID:      owner.ProfileID,
@@ -1353,6 +1356,19 @@ func contextHRRoleSnapshot(
 	}
 }
 
+func contextScenarioPromptModel() persistence.ScenarioPromptModel {
+	return persistence.ScenarioPromptModel{
+		PublicSceneBrief:         "Discuss one backend project.",
+		PracticeGoal:             "Explain decisions with evidence.",
+		UserRole:                 "Candidate",
+		AIRole:                   "Technical interviewer",
+		PersonaSummary:           "A precise interviewer.",
+		FocusAreas:               []string{"introduction", "system_design"},
+		TurnBlueprints:           []string{"Clarify the project"},
+		SuggestedDurationSeconds: 900,
+	}
+}
+
 func targetedContextSessionCommand(
 	owner contextOwnerFixture,
 	plan persistence.Plan,
@@ -1367,6 +1383,7 @@ func targetedContextSessionCommand(
 		SessionID:          sessionID,
 		PlanRevision:       plan.Revision,
 		ScenarioType:       plan.ScenarioType,
+		ScenarioModel:      plan.ScenarioModel,
 		ScenarioDefinition: catalog.ScenarioDefinition,
 		ScenarioConfig:     catalog.ScenarioConfig,
 		Preparation:        *plan.PreparationSnapshot,
@@ -1425,6 +1442,7 @@ func contextPlanCommand(
 		ScenarioDefinitionID:      "scn_programmer_interview",
 		ScenarioDefinitionVersion: 1,
 		ScenarioType:              "INTERVIEW",
+		ScenarioModel:             persistence.ScenarioModelProjectExperienceDeepDive,
 		ScenarioConfigID:          "scfg_backend_engineer",
 		ScenarioConfigVersion:     1,
 		PreparationProfileID:      owner.ProfileID,
@@ -1470,13 +1488,15 @@ func contextSessionCommand(
 		)
 	}
 	snapshot := persistence.ContextSessionSnapshot{
-		ID:           snapshotID,
-		SessionID:    sessionID,
-		PlanRevision: plan.Revision,
-		ScenarioType: plan.ScenarioType,
+		ID:            snapshotID,
+		SessionID:     sessionID,
+		PlanRevision:  plan.Revision,
+		ScenarioType:  plan.ScenarioType,
+		ScenarioModel: plan.ScenarioModel,
 		ScenarioDefinition: persistence.ScenarioDefinitionSnapshot{
 			ID:      plan.ScenarioDefinitionID,
 			Type:    plan.ScenarioType,
+			Model:   plan.ScenarioModel,
 			Name:    "English interview for technical roles",
 			Version: plan.ScenarioDefinitionVersion,
 			Status:  "active",
@@ -1485,10 +1505,11 @@ func contextSessionCommand(
 			ID:                   plan.ScenarioConfigID,
 			ScenarioDefinitionID: plan.ScenarioDefinitionID,
 			Type:                 plan.ScenarioType,
+			Model:                plan.ScenarioModel,
 			Version:              plan.ScenarioConfigVersion,
 			JobTitle:             "Backend engineer",
 			JobDescription:       "Build reliable APIs.",
-			FocusAreas:           []string{"introduction", "system_design"},
+			PromptModel:          contextScenarioPromptModel(),
 		},
 		Preparation: persistence.PreparationSnapshot{
 			ID:                     owner.PreparationID,

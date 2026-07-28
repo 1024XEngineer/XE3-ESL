@@ -51,6 +51,7 @@ type agentVoiceConversation struct {
 	turnCreations        int
 	reviewSaves          int
 	transcribeCalls      int
+	textSubmitCalls      int
 	progressSaveFailures int
 	reviewSaveFailures   int
 	speech               conversation.QuestionSpeech
@@ -115,6 +116,49 @@ func (port *agentVoiceConversation) Transcribe(
 			conversation.ErrVoiceRoundNotFound
 	}
 	return port.candidates["candidate-1"], nil
+}
+
+func (port *agentVoiceConversation) SubmitTextAnswer(
+	_ context.Context,
+	actor requestcontext.Actor,
+	participantID string,
+	command conversation.SubmitTextAnswerCommand,
+) (conversation.TranscriptionCandidate, error) {
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	if actor.UserID != "user-a" ||
+		participantID != "participant-a" ||
+		command.SessionID != "session-1" ||
+		strings.TrimSpace(command.AnswerText) == "" {
+		return conversation.TranscriptionCandidate{},
+			conversation.ErrVoiceRoundNotFound
+	}
+	port.textSubmitCalls++
+	candidate := conversation.TranscriptionCandidate{
+		ID:                      "text-candidate-" + command.QuestionID,
+		SessionID:               command.SessionID,
+		QuestionID:              command.QuestionID,
+		QuestionSpeakerID:       "participant-interviewer",
+		AddresseeParticipantIDs: []string{"participant-a"},
+		RespondentParticipantID: participantID,
+		TranscriptID:            "text-transcript-" + command.QuestionID,
+		EvidenceVersion:         1,
+		Transcript:              strings.TrimSpace(command.AnswerText),
+		Provider:                "speakup",
+		Model:                   "direct_text",
+		ProviderRequestID:       "text-request-" + command.QuestionID,
+		CreatedAt:               time.Unix(1, 0).UTC(),
+	}
+	port.candidates[candidate.ID] = candidate
+	return candidate, nil
+}
+
+func (port *agentVoiceConversation) ConfirmText(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command conversation.ConfirmVoiceTurnCommand,
+) (conversation.ConfirmedVoiceTurn, error) {
+	return port.Confirm(ctx, actor, command)
 }
 
 func (port *agentVoiceConversation) GetTranscriptionCandidate(
@@ -540,10 +584,21 @@ func (sessions *voiceSessionTestSessions) current() VoicePracticeSession {
 	defer sessions.practice.mu.Unlock()
 	effective := sessions.practice.effectiveTurns
 	return VoicePracticeSession{
-		ID:             "session-1",
-		PlanID:         "plan-1",
-		ThreadID:       "thread-1",
-		MatterID:       "matter-1",
+		ID:            "session-1",
+		PlanID:        "plan-1",
+		ThreadID:      "thread-1",
+		MatterID:      "matter-1",
+		ScenarioType:  "INTERVIEW",
+		ScenarioModel: "PROJECT_EXPERIENCE_DEEP_DIVE",
+		PromptModel: VoiceScenarioPrompt{
+			PublicSceneBrief: "Discuss one project.",
+			PracticeGoal:     "Explain decisions clearly.",
+			UserRole:         "Candidate",
+			AIRole:           "Technical interviewer",
+			PersonaSummary:   "Professional and concise",
+			FocusAreas:       []string{"clarity"},
+			TurnBlueprints:   []string{"Ask about the project"},
+		},
 		SessionVersion: effective + 1,
 		EffectiveTurns: effective,
 		TurnLimit:      3,

@@ -392,6 +392,37 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Practice hint shows one concise complete answer', (
+    tester,
+  ) async {
+    final controller = _controller(
+      snapshot: _activeSnapshot(audioAssetId: 'audio-1'),
+      media: _MediaClient(),
+      player: _AudioPlayer(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+    await tester.tap(find.byKey(const Key('practice-hint-question-2')));
+    await tester.pump();
+
+    expect(find.text('参考回答'), findsOneWidget);
+    expect(
+      find.text(
+        'From my perspective, the core responsibility of this role is to '
+        'understand the goal, work closely with the team, and deliver '
+        'reliable results.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('建议回答结构'), findsNothing);
+    expect(find.text('可用英文表达'), findsNothing);
+    expect(find.textContaining('...'), findsNothing);
+  });
+
   testWidgets('Practice media buttons are disabled while recording', (
     tester,
   ) async {
@@ -696,6 +727,16 @@ final class _SnapshotPracticeClient implements PracticeClient {
     required String sessionId,
     required String questionId,
     required String candidateId,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
     required String idempotencyKey,
   }) {
     throw UnimplementedError();

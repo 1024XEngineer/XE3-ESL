@@ -282,6 +282,125 @@ type TranscribeVoiceCommand struct {
 	Audio          io.Reader
 }
 
+type SubmitTextAnswerCommand struct {
+	SessionID      string
+	QuestionID     string
+	IdempotencyKey string
+	AnswerText     string
+}
+
+func (service *VoiceRoundService) SubmitTextAnswer(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	respondentParticipantID string,
+	command SubmitTextAnswerCommand,
+) (conversationCandidate TranscriptionCandidate, returnErr error) {
+	answer := strings.TrimSpace(command.AnswerText)
+	if err := validateVoiceContext(ctx, actor); err != nil ||
+		strings.TrimSpace(respondentParticipantID) == "" ||
+		strings.TrimSpace(command.SessionID) == "" ||
+		strings.TrimSpace(command.QuestionID) == "" ||
+		strings.TrimSpace(command.IdempotencyKey) == "" ||
+		answer == "" ||
+		len(answer) > 8000 ||
+		!utf8.ValidString(answer) {
+		return TranscriptionCandidate{}, ErrVoiceRoundInvalid
+	}
+	question, err := service.store.GetVoiceQuestion(
+		ctx,
+		actor,
+		command.SessionID,
+		command.QuestionID,
+	)
+	if err != nil {
+		return TranscriptionCandidate{}, err
+	}
+	if !validVoiceQuestion(
+		question,
+		command.SessionID,
+		command.QuestionID,
+		respondentParticipantID,
+	) {
+		return TranscriptionCandidate{}, ErrVoiceRoundNotFound
+	}
+
+	fingerprint := textInputFingerprint(
+		answer,
+		command.SessionID,
+		command.QuestionID,
+	)
+	reservation, err := service.store.ReserveTranscription(
+		ctx,
+		actor,
+		ReserveTranscriptionCommand{
+			SessionID:               command.SessionID,
+			QuestionID:              command.QuestionID,
+			RespondentParticipantID: respondentParticipantID,
+			IdempotencyKey:          command.IdempotencyKey,
+			InputFingerprint:        fingerprint,
+		},
+	)
+	if err != nil {
+		return TranscriptionCandidate{}, err
+	}
+	switch reservation.Status {
+	case TranscriptionCompleted:
+		if !validTranscriptionCandidate(
+			reservation.Candidate,
+			command.SessionID,
+			command.QuestionID,
+			respondentParticipantID,
+		) {
+			return TranscriptionCandidate{}, ErrVoiceRoundConflict
+		}
+		return reservation.Candidate, nil
+	case TranscriptionProcessing:
+		if strings.TrimSpace(reservation.ID) == "" ||
+			reservation.LeaseToken != "" {
+			return TranscriptionCandidate{}, ErrVoiceRoundConflict
+		}
+		return TranscriptionCandidate{}, ErrVoiceRoundProcessing
+	case TranscriptionReserved:
+		if strings.TrimSpace(reservation.ID) == "" ||
+			strings.TrimSpace(reservation.LeaseToken) == "" {
+			return TranscriptionCandidate{}, ErrVoiceRoundConflict
+		}
+	default:
+		return TranscriptionCandidate{}, ErrVoiceRoundConflict
+	}
+
+	requestID := "text_" + fingerprint[:32]
+	persistenceContext, cancel := voicePersistenceContext(ctx)
+	conversationCandidate, err = service.store.CompleteTranscription(
+		persistenceContext,
+		actor,
+		CompleteTranscriptionCommand{
+			ReservationID:     reservation.ID,
+			LeaseToken:        reservation.LeaseToken,
+			TranscriptID:      requestID,
+			EvidenceVersion:   1,
+			Transcript:        answer,
+			Provider:          "speakup",
+			Model:             "direct_text",
+			ProviderRequestID: requestID,
+			CompletedAt:       service.now().UTC(),
+		},
+	)
+	cancel()
+	if err != nil {
+		return TranscriptionCandidate{}, err
+	}
+	if !validTranscriptionCandidate(
+		conversationCandidate,
+		command.SessionID,
+		command.QuestionID,
+		respondentParticipantID,
+	) {
+		return TranscriptionCandidate{}, ErrVoiceRoundConflict
+	}
+	return conversationCandidate, nil
+}
+
 func (service *VoiceRoundService) Transcribe(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -543,6 +662,41 @@ func (service *VoiceRoundService) Confirm(
 	)
 	if err != nil {
 		return ConfirmedVoiceTurn{}, err
+	}
+	return turn, nil
+}
+
+func (service *VoiceRoundService) ConfirmText(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command ConfirmVoiceTurnCommand,
+) (ConfirmedVoiceTurn, error) {
+	if err := validateVoiceContext(ctx, actor); err != nil ||
+		strings.TrimSpace(command.CandidateID) == "" ||
+		strings.TrimSpace(command.IdempotencyKey) == "" {
+		return ConfirmedVoiceTurn{}, ErrVoiceRoundInvalid
+	}
+	candidate, err := service.store.GetTranscriptionCandidate(
+		ctx,
+		actor,
+		command.CandidateID,
+	)
+	if err != nil {
+		return ConfirmedVoiceTurn{}, err
+	}
+	turn, err := service.store.ReserveConfirmation(
+		ctx,
+		actor,
+		ReserveConfirmationCommand{
+			CandidateID:    candidate.ID,
+			IdempotencyKey: command.IdempotencyKey,
+		},
+	)
+	if err != nil {
+		return ConfirmedVoiceTurn{}, err
+	}
+	if !validRecordedVoiceTurn(candidate, turn, true) {
+		return ConfirmedVoiceTurn{}, ErrVoiceRoundConflict
 	}
 	return turn, nil
 }
@@ -825,6 +979,15 @@ func voiceInputFingerprint(
 	}
 	_, _ = io.WriteString(hash, "\x00"+sessionID+"\x00"+questionID)
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func textInputFingerprint(text string, sessionID string, questionID string) string {
+	hash := sha256.New()
+	_, _ = io.WriteString(
+		hash,
+		"conversation.text-answer/v1\x00"+sessionID+"\x00"+questionID+"\x00"+text,
+	)
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func safeAttempt(

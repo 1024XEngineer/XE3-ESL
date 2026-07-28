@@ -23,12 +23,16 @@ final class PracticeWireEndpoints {
     this.transcribe =
         '/v1/voice-practice-sessions/{practice_session_id}/questions/'
         '{question_id}/transcription-candidates',
+    this.submitText =
+        '/v1/voice-practice-sessions/{practice_session_id}/questions/'
+        '{question_id}/text-answers',
     this.confirm = '/v1/transcription-candidates/{candidate_id}/confirmations',
   });
 
   final String restoreByThread;
   final String startByThread;
   final String transcribe;
+  final String submitText;
   final String confirm;
 
   String restorePath(String threadId) =>
@@ -43,6 +47,10 @@ final class PracticeWireEndpoints {
 
   String confirmPath(String candidateId) =>
       confirm.replaceAll('{candidate_id}', _pathSegment(candidateId));
+
+  String submitTextPath(String sessionId, String questionId) => submitText
+      .replaceAll('{practice_session_id}', _pathSegment(sessionId))
+      .replaceAll('{question_id}', _pathSegment(questionId));
 }
 
 String _pathSegment(String value) => Uri.encodeComponent(value);
@@ -283,11 +291,53 @@ final class WirePracticeClient implements PracticeClient {
     });
   }
 
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(sessionId);
+      _requireOpaqueId(questionId);
+      _requireClientId(idempotencyKey);
+      final text = answerText.trim();
+      if (text.isEmpty || text.length > 8000) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidRequest,
+          errorCode: 'invalid_answer_text',
+        );
+      }
+      final response = await _sendJson(
+        generation: generation,
+        method: 'POST',
+        path: _endpoints.submitTextPath(sessionId, questionId),
+        body: <String, Object?>{'answer_text': text},
+        extraHeaders: <String, String>{'Idempotency-Key': idempotencyKey},
+      );
+      _requireStatus(response, const {HttpStatus.ok});
+      final state = _decodeSessionState(
+        response.body,
+        expectedSessionId: sessionId,
+      );
+      final confirmation = _confirmationFromState(
+        state,
+        expectedQuestionId: questionId,
+      );
+      if (confirmation.answer.text != text) {
+        throw _invalidResponse();
+      }
+      return confirmation;
+    });
+  }
+
   Future<PracticeWireResponse> _sendJson({
     required int generation,
     required String method,
     required String path,
     Map<String, Object?>? body,
+    Map<String, String>? extraHeaders,
   }) {
     return _send(
       generation: generation,
@@ -295,6 +345,7 @@ final class WirePracticeClient implements PracticeClient {
       method: method,
       path: path,
       jsonBody: body == null ? null : jsonEncode(body),
+      extraHeaders: extraHeaders,
     );
   }
 
@@ -614,12 +665,13 @@ TranscriptionCandidate _decodeCandidate(
 PracticeTurnConfirmation _confirmationFromState(
   PracticeSessionSnapshot state, {
   required String expectedQuestionId,
-  required String expectedCandidateId,
+  String? expectedCandidateId,
 }) {
   final turn = state.currentTurn;
   if (turn == null ||
       turn.questionId != expectedQuestionId ||
-      turn.candidateId != expectedCandidateId) {
+      (expectedCandidateId != null &&
+          turn.candidateId != expectedCandidateId)) {
     throw _invalidResponse();
   }
   return PracticeTurnConfirmation(

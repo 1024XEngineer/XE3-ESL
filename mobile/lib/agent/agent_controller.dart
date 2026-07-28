@@ -98,6 +98,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   PracticeQuestion? _currentQuestion;
   TranscriptionCandidate? _candidate;
   String? _activeConfirmationId;
+  String? _activeTextAnswer;
   AgentMatter? _activeMatter;
   List<AgentMessage> _messages = const <AgentMessage>[];
   PracticeRecordingState _recordingState = PracticeRecordingState.idle;
@@ -1303,6 +1304,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final generation = ++_practiceGeneration;
     _candidate = null;
     _activeConfirmationId = null;
+    _activeTextAnswer = null;
     _retry = null;
     _errorMessage = null;
     _cancelRecordingLimit();
@@ -1425,6 +1427,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _validateCandidate(candidate, sessionId, question.id);
       _candidate = candidate;
       _activeConfirmationId = null;
+      _activeTextAnswer = null;
       _recordingState = PracticeRecordingState.awaitingConfirmation;
       _errorMessage = null;
     } catch (error) {
@@ -1454,6 +1457,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _practiceGeneration++;
     _candidate = null;
     _activeConfirmationId = null;
+    _activeTextAnswer = null;
     _recordingState = PracticeRecordingState.idle;
     _errorMessage = null;
     notifyListeners();
@@ -1497,40 +1501,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         return;
       }
       _validateConfirmation(confirmation, candidate);
-      _completedTurns = confirmation.completedTurns;
-      _turnLimit = confirmation.turnLimit;
-      _sessionCompleted = confirmation.sessionCompleted;
-      _currentQuestion = confirmation.nextQuestion;
-      _review = confirmation.review;
-      final audioAssetId = confirmation.audioAssetId;
-      if (audioAssetId != null &&
-          !_recordings.any(
-            (recording) => recording.audioAssetId == audioAssetId,
-          )) {
-        _recordings = [
-          ..._recordings,
-          PracticeRecordingReference(
-            audioAssetId: audioAssetId,
-            effectiveTurn: confirmation.completedTurns,
-          ),
-        ];
-      }
-      _candidate = null;
-      _activeConfirmationId = null;
-      _appendMessages([
-        confirmation.answer,
-        ?confirmation.nextQuestion?.presentation,
-      ]);
-      if (confirmation.sessionCompleted) {
-        _recordingState = confirmation.review == null
-            ? PracticeRecordingState.reviewFailed
-            : PracticeRecordingState.completed;
-        _errorMessage = confirmation.review == null
-            ? '练习已完成，正在等待服务端恢复同一次复盘。'
-            : null;
-      } else {
-        _recordingState = PracticeRecordingState.idle;
-      }
+      _applyPracticeConfirmation(confirmation);
     } catch (error) {
       if (_isOperationCurrent(fence)) {
         _recordingState = PracticeRecordingState.awaitingConfirmation;
@@ -1539,6 +1510,109 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
     if (_isCurrent(fence.epoch)) {
       notifyListeners();
+    }
+  }
+
+  Future<bool> submitPracticeText(String answerText) async {
+    final practice = practiceClient;
+    final sessionId = _practiceSessionId;
+    final question = _currentQuestion;
+    final text = answerText.trim();
+    if (practice == null ||
+        sessionId == null ||
+        question == null ||
+        text.isEmpty ||
+        text.length > 8000 ||
+        _isSessionCompleted ||
+        isBusy ||
+        _recordingState != PracticeRecordingState.idle) {
+      return false;
+    }
+    final generation = ++_practiceGeneration;
+    if (_activeTextAnswer != text) {
+      _activeConfirmationId = _newClientId('text-turn');
+      _activeTextAnswer = text;
+    }
+    final fence = _captureOperationFence(
+      threadId: _threadId,
+      practiceGeneration: generation,
+      practiceSessionId: sessionId,
+      questionId: question.id,
+    );
+    _recordingState = PracticeRecordingState.submitting;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await stopPracticeAudio();
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      final confirmation = await practice.submitText(
+        sessionId: sessionId,
+        questionId: question.id,
+        answerText: text,
+        idempotencyKey: _activeConfirmationId!,
+      );
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      _validateConfirmationFields(
+        confirmation,
+        expectedSessionId: sessionId,
+        expectedQuestionId: question.id,
+        expectedAnswer: text,
+      );
+      _applyPracticeConfirmation(confirmation);
+      _activeTextAnswer = null;
+      return true;
+    } catch (error) {
+      if (_isOperationCurrent(fence)) {
+        _recordingState = PracticeRecordingState.idle;
+        _errorMessage = _confirmationFailureMessage(error);
+      }
+      return false;
+    } finally {
+      if (_isCurrent(fence.epoch)) {
+        notifyListeners();
+      }
+    }
+  }
+
+  void _applyPracticeConfirmation(PracticeTurnConfirmation confirmation) {
+    _completedTurns = confirmation.completedTurns;
+    _turnLimit = confirmation.turnLimit;
+    _sessionCompleted = confirmation.sessionCompleted;
+    _currentQuestion = confirmation.nextQuestion;
+    _review = confirmation.review;
+    final audioAssetId = confirmation.audioAssetId;
+    if (audioAssetId != null &&
+        !_recordings.any(
+          (recording) => recording.audioAssetId == audioAssetId,
+        )) {
+      _recordings = [
+        ..._recordings,
+        PracticeRecordingReference(
+          audioAssetId: audioAssetId,
+          effectiveTurn: confirmation.completedTurns,
+        ),
+      ];
+    }
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+    _appendMessages([
+      confirmation.answer,
+      ?confirmation.nextQuestion?.presentation,
+    ]);
+    if (confirmation.sessionCompleted) {
+      _recordingState = confirmation.review == null
+          ? PracticeRecordingState.reviewFailed
+          : PracticeRecordingState.completed;
+      _errorMessage = confirmation.review == null
+          ? '练习已完成，正在等待服务端恢复同一次复盘。'
+          : null;
+    } else {
+      _recordingState = PracticeRecordingState.idle;
     }
   }
 
@@ -1613,6 +1687,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _currentQuestion = null;
     _candidate = null;
     _activeConfirmationId = null;
+    _activeTextAnswer = null;
     _activeMatter = null;
     _messages = const <AgentMessage>[];
     _recordingState = PracticeRecordingState.idle;
@@ -1759,6 +1834,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _practiceGeneration++;
     _candidate = null;
     _activeConfirmationId = null;
+    _activeTextAnswer = null;
     _playingMediaKey = null;
     _loadingMediaKey = null;
     _deletingAudioAssetId = null;
@@ -2209,11 +2285,29 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     PracticeTurnConfirmation confirmation,
     TranscriptionCandidate candidate,
   ) {
+    _validateConfirmationFields(
+      confirmation,
+      expectedSessionId: candidate.sessionId,
+      expectedQuestionId: candidate.questionId,
+      expectedCandidateId: candidate.id,
+      expectedAnswer: candidate.text,
+    );
+  }
+
+  void _validateConfirmationFields(
+    PracticeTurnConfirmation confirmation, {
+    required String expectedSessionId,
+    required String expectedQuestionId,
+    String? expectedCandidateId,
+    required String expectedAnswer,
+  }) {
     if (confirmation.turnId.trim().isEmpty ||
-        confirmation.sessionId != candidate.sessionId ||
-        confirmation.questionId != candidate.questionId ||
-        confirmation.candidateId != candidate.id ||
-        confirmation.answer.text != candidate.text ||
+        confirmation.candidateId.trim().isEmpty ||
+        confirmation.sessionId != expectedSessionId ||
+        confirmation.questionId != expectedQuestionId ||
+        (expectedCandidateId != null &&
+            confirmation.candidateId != expectedCandidateId) ||
+        confirmation.answer.text != expectedAnswer ||
         confirmation.completedTurns < 1 ||
         confirmation.turnLimit < 1 ||
         confirmation.turnLimit > 6 ||

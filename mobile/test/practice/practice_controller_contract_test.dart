@@ -512,13 +512,17 @@ void main() {
     );
     await controller.initialize();
     await controller.selectScene(agentScenes.first);
+    expect(controller.hasActivePractice, isTrue);
+    expect(controller.errorMessage, isNull);
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: controller)),
     );
 
-    await tester.tap(find.byKey(const Key('practice-record')));
-    await tester.pump();
+    await controller.startRecording();
+    await tester.pumpAndSettle();
 
+    expect(controller.recordingState, PracticeRecordingState.idle);
+    expect(controller.errorMessage, '需要麦克风权限；请在 iOS“设置”中允许 SpeakUp 使用麦克风。');
     expect(find.text('需要麦克风权限；请在 iOS“设置”中允许 SpeakUp 使用麦克风。'), findsOneWidget);
   });
 
@@ -543,14 +547,57 @@ void main() {
       MaterialApp(home: PracticePage(agentController: controller)),
     );
 
-    await tester.tap(find.byKey(const Key('practice-record')));
+    await controller.startRecording();
     await tester.pump();
-    await tester.tap(find.byKey(const Key('practice-stop-recording')));
+    await controller.stopRecording();
     await tester.pumpAndSettle();
 
     expect(find.text('今日免费语音额度已用完，本轮未计入进度。'), findsOneWidget);
     expect(controller.completedTurns, 0);
     expect(controller.recordingState, PracticeRecordingState.idle);
+  });
+
+  testWidgets('practice submits a typed English answer and advances one turn', (
+    tester,
+  ) async {
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: FakePracticeClient(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+
+    const answer =
+        'I led the rollout, communicated the risk, and delivered it safely.';
+    final input = find.byKey(const Key('practice-text-answer'));
+    await tester.scrollUntilVisible(
+      input,
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.enterText(input, answer);
+    await tester.tap(find.byKey(const Key('practice-submit-text')));
+    await tester.pumpAndSettle();
+
+    expect(controller.completedTurns, 1);
+    expect(controller.recordingState, PracticeRecordingState.idle);
+    expect(
+      controller.messages
+          .lastWhere((message) => message.role == AgentMessageRole.user)
+          .text,
+      answer,
+    );
+    await tester.scrollUntilVisible(
+      find.text(answer),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text(answer), findsOneWidget);
+    expect(tester.widget<TextField>(input).controller?.text, isEmpty);
   });
 
   testWidgets('practice keeps candidate text after a confirm network error', (
@@ -742,6 +789,16 @@ final class _TwoTurnPracticeClient implements PracticeClient {
           : null,
       audioAssetId: includeAudioAssets ? 'audio-$completed' : null,
     );
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
   }
 }
 

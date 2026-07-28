@@ -107,6 +107,7 @@ void main() {
               {
                 'scenario_definition_id': 'scn_programmer_interview',
                 'scenario_type': 'INTERVIEW',
+                'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
                 'name': 'English interview for technical roles',
                 'version': 1,
                 'status': 'active',
@@ -231,9 +232,7 @@ void main() {
       expect(find.byKey(const Key('scenes-page')), findsOneWidget);
       expect(find.byKey(const Key('training-center-title')), findsOneWidget);
       expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
-      await tester.tap(
-        find.byKey(const Key('catalog-scenario-scn_programmer_interview')),
-      );
+      await tester.tap(find.byKey(const Key('open-job-preparation')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);
       expect(find.byKey(const Key('job-description-field')), findsOneWidget);

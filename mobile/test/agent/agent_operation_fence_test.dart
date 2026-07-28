@@ -354,6 +354,16 @@ final class _AccountPracticeClient implements PracticeClient {
       audioAssetId: 'audio-${account.value}-2',
     );
   }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
+  }
 }
 
 final class _AccountMediaClient implements PracticeMediaClient {

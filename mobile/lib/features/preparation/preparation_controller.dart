@@ -154,6 +154,14 @@ final class PreparationController extends ChangeNotifier {
       );
       _detail = detail;
       _roles = List<PreparationRole>.unmodifiable(roles);
+      if (roles.length == 1) {
+        _selectedRole = roles.single;
+        _selectedOption = detail.options
+            .where(
+              (option) => option.type == PreparationOptionType.fullSimulation,
+            )
+            .firstOrNull;
+      }
     } on PreparationCatalogException catch (error) {
       if (_isCurrentSelection(
             accountEpoch,
@@ -286,10 +294,12 @@ void _validateAggregate({
   if (scenario.id != summary.id ||
       scenario.version != summary.version ||
       scenario.type != summary.type ||
+      scenario.model != summary.model ||
       scenario.name != summary.name ||
       scenario.status != 'active' ||
       detail.config.scenarioId != scenario.id ||
       detail.config.type != scenario.type ||
+      detail.config.model != scenario.model ||
       roles.isEmpty ||
       roles.any((role) => role.scenarioId != scenario.id)) {
     throw const PreparationCatalogException(
