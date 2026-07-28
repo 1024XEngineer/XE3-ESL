@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 String normalizeIdentityEmailInput(String value) {
   var start = 0;
   var end = value.length;
@@ -50,6 +52,32 @@ bool isValidIdentityEmailInput(String value) {
       (unit) => _isAlphaNumeric(unit) || unit == 0x2d,
     );
   });
+}
+
+String? validateDisplayNameInput(String? value) {
+  final displayName = value?.trim() ?? '';
+  if (displayName.isEmpty ||
+      displayName.runes.length > 40 ||
+      utf8.encode(displayName).length > 120) {
+    return '请输入 1–40 个字符的昵称';
+  }
+  for (final character in displayName.runes) {
+    if (character <= 0x1f ||
+        (character >= 0x7f && character <= 0x9f) ||
+        character == 0x00ad ||
+        character == 0x034f ||
+        character == 0x061c ||
+        character == 0x180e ||
+        character == 0x200b ||
+        character == 0x200e ||
+        character == 0x200f ||
+        (character >= 0x2028 && character <= 0x202e) ||
+        (character >= 0x2060 && character <= 0x2069) ||
+        character == 0xfeff) {
+      return '昵称包含不可使用的字符';
+    }
+  }
+  return null;
 }
 
 bool _isAsciiWhitespace(int codeUnit) {

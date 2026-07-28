@@ -53,6 +53,8 @@ components:
         - authentication_required
         - invalid_credentials
         - account_registration_unavailable
+        - profile_not_found
+        - profile_version_conflict
         - rate_limited
         - resource_not_found
         - resource_conflict
@@ -113,7 +115,9 @@ components:
         feedback_item_not_found: 404
         retry_request_not_found: 404
         resource_not_found: 404
+        profile_not_found: 404
         account_registration_unavailable: 409
+        profile_version_conflict: 409
         idempotency_key_conflict: 409
         resource_conflict: 409
         resource_processing: 409

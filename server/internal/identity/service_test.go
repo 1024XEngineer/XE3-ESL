@@ -19,6 +19,8 @@ type repositoryStub struct {
 	findSession       func(context.Context, []byte) (SessionIdentity, error)
 	findLogoutSession func(context.Context, []byte) (SessionIdentity, error)
 	findUser          func(context.Context, string) (User, error)
+	findProfile       func(context.Context, string) (UserProfile, error)
+	persistProfile    func(context.Context, PersistProfileCommand) (UserProfile, error)
 	revokeSession     func(context.Context, string, string, string) error
 	revokeAllSession  func(context.Context, string, string) error
 }
@@ -27,8 +29,23 @@ func (r repositoryStub) CreateUserWithCredential(
 	ctx context.Context,
 	email string,
 	hash string,
+	_ ...*string,
 ) (User, error) {
 	return r.createUser(ctx, email, hash)
+}
+
+func (r repositoryStub) FindProfileByUserID(
+	ctx context.Context,
+	userID string,
+) (UserProfile, error) {
+	return r.findProfile(ctx, userID)
+}
+
+func (r repositoryStub) PersistProfile(
+	ctx context.Context,
+	command PersistProfileCommand,
+) (UserProfile, error) {
+	return r.persistProfile(ctx, command)
 }
 
 func (r repositoryStub) FindCredentialByEmail(
@@ -487,6 +504,15 @@ func completeRepositoryStub() repositoryStub {
 		},
 		findUser: func(context.Context, string) (User, error) {
 			return User{}, ErrNotFound
+		},
+		findProfile: func(context.Context, string) (UserProfile, error) {
+			return UserProfile{}, ErrNotFound
+		},
+		persistProfile: func(
+			context.Context,
+			PersistProfileCommand,
+		) (UserProfile, error) {
+			return UserProfile{}, nil
 		},
 		revokeSession: func(
 			context.Context,

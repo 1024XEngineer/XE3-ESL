@@ -21,6 +21,7 @@ paths:
             example:
               email: learner@example.com
               password: correct horse battery staple
+              display_name: 小林
       responses:
         '201':
           description: The minimal User was created. No Session Token is issued.
@@ -133,7 +134,73 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/me/profile:
+    get:
+      tags:
+        - Identity
+      summary: Get the current UserProfile
+      description: |
+        Resolves the profile only for the trusted User represented by the
+        validated Session. Historical accounts without a profile receive
+        `profile_not_found`; the service never derives a name from email.
+      operationId: getCurrentUserProfile
+      responses:
+        '200':
+          description: The current UserProfile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: '#/components/responses/ProfileNotFound'
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    patch:
+      tags:
+        - Identity
+      summary: Create or update the current UserProfile
+      description: |
+        Creates a missing profile when `expected_profile_version` is omitted,
+        or updates an existing profile when the expected version matches.
+        `Idempotency-Key` is required. The trusted User is always derived from
+        the Session and cannot be supplied in the request body.
+      operationId: updateCurrentUserProfile
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserProfileRequest'
+      responses:
+        '200':
+          description: The created, updated, or idempotently replayed profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: '#/components/responses/ProfileConflict'
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._~+/-]+$'
   responses:
     InvalidCredentials:
       description: |
@@ -163,6 +230,41 @@ components:
               message: Account registration is unavailable.
               retryable: false
               correlation_id: corr_registration_unavailable
+    ProfileNotFound:
+      description: The current account does not yet have a UserProfile.
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+          example:
+            error:
+              code: profile_not_found
+              message: User profile was not found.
+              retryable: false
+              correlation_id: corr_profile_not_found
+    ProfileConflict:
+      description: |
+        The expected profile version is stale, or the Idempotency-Key was
+        previously used with a different normalized request.
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+          examples:
+            staleVersion:
+              value:
+                error:
+                  code: profile_version_conflict
+                  message: User profile changed before this update.
+                  retryable: false
+                  correlation_id: corr_profile_version_conflict
+            reusedKey:
+              value:
+                error:
+                  code: idempotency_key_conflict
+                  message: Idempotency key was already used for a different request.
+                  retryable: false
+                  correlation_id: corr_idempotency_key_conflict
   schemas:
     UserId:
       type: string
@@ -210,6 +312,54 @@ components:
           readOnly: true
         email:
           $ref: '#/components/schemas/Email'
+    DisplayName:
+      type: string
+      minLength: 1
+      maxLength: 40
+      description: |
+        User-edited display name. The server trims surrounding Unicode
+        whitespace, normalizes to NFC, limits UTF-8 to 120 bytes, and rejects
+        controls, line separators, bidi controls and invisible separators.
+    UserProfile:
+      type: object
+      additionalProperties: false
+      required:
+        - user_id
+        - display_name
+        - profile_version
+        - created_at
+        - updated_at
+      properties:
+        user_id:
+          $ref: '#/components/schemas/UserId'
+          readOnly: true
+        display_name:
+          $ref: '#/components/schemas/DisplayName'
+        profile_version:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    UpdateUserProfileRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - display_name
+      properties:
+        display_name:
+          $ref: '#/components/schemas/DisplayName'
+        expected_profile_version:
+          type: integer
+          format: int64
+          minimum: 1
     RegisterRequest:
       type: object
       additionalProperties: false
@@ -221,6 +371,8 @@ components:
           $ref: '#/components/schemas/EmailInput'
         password:
           $ref: '#/components/schemas/Password'
+        display_name:
+          $ref: '#/components/schemas/DisplayName'
     LoginRequest:
       type: object
       additionalProperties: false

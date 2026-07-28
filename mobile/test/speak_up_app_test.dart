@@ -20,9 +20,8 @@ void main() {
     await tester.pumpWidget(const SpeakUpApp.preview());
 
     expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
-    expect(find.text('你好'), findsOneWidget);
+    expect(find.text('你好，今天想练什么？'), findsOneWidget);
     expect(find.text('Hi, 智'), findsNothing);
-    expect(find.text('我能为你做什么？'), findsOneWidget);
     expect(find.byKey(const Key('quick-action-create-plan')), findsOneWidget);
     expect(
       find.byKey(const Key('quick-action-continue-practice')),

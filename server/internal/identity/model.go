@@ -24,6 +24,28 @@ type User struct {
 	UpdatedAt time.Time
 }
 
+type UserProfile struct {
+	UserID         string
+	DisplayName    string
+	ProfileVersion int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type UpdateProfileCommand struct {
+	DisplayName            string
+	ExpectedProfileVersion *int64
+	IdempotencyKey         string
+}
+
+type PersistProfileCommand struct {
+	UserID                 string
+	DisplayName            string
+	ExpectedProfileVersion *int64
+	IdempotencyKey         string
+	RequestDigest          []byte
+}
+
 type Credential struct {
 	User         User
 	PasswordHash string
@@ -64,6 +86,7 @@ type Repository interface {
 		ctx context.Context,
 		canonicalEmail string,
 		passwordHash string,
+		displayName ...*string,
 	) (User, error)
 	FindCredentialByEmail(ctx context.Context, canonicalEmail string) (Credential, error)
 	CreateSession(ctx context.Context, params CreateSessionParams) (Session, error)
@@ -76,6 +99,11 @@ type Repository interface {
 		tokenDigest []byte,
 	) (SessionIdentity, error)
 	FindUserByID(ctx context.Context, userID string) (User, error)
+	FindProfileByUserID(ctx context.Context, userID string) (UserProfile, error)
+	PersistProfile(
+		ctx context.Context,
+		command PersistProfileCommand,
+	) (UserProfile, error)
 	RevokeSession(
 		ctx context.Context,
 		userID string,
@@ -105,9 +133,23 @@ type SessionTokens interface {
 }
 
 type Application interface {
-	Register(ctx context.Context, email, password string) (User, error)
+	Register(
+		ctx context.Context,
+		email string,
+		password string,
+		displayName ...*string,
+	) (User, error)
 	Login(ctx context.Context, email, password string) (LoginResult, error)
 	Logout(ctx context.Context, actor requestcontext.Actor) error
 	CurrentUser(ctx context.Context, actor requestcontext.Actor) (User, error)
+	CurrentProfile(
+		ctx context.Context,
+		actor requestcontext.Actor,
+	) (UserProfile, error)
+	UpdateProfile(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		command UpdateProfileCommand,
+	) (UserProfile, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID, reason string) error
 }

@@ -46,6 +46,81 @@ void main() {
       });
     });
 
+    test(
+      'profile registration and update use the frozen wire contract',
+      () async {
+        transport.response = const IdentityHttpResponse(
+          statusCode: 201,
+          body: '{"user_id":"user_1","email":"learner@example.com"}',
+        );
+        await client.registerWithProfile(
+          email: 'learner@example.com',
+          password: 'correct horse battery staple',
+          displayName: '小林',
+        );
+        expect(jsonDecode(transport.body!), <String, Object?>{
+          'email': 'learner@example.com',
+          'password': 'correct horse battery staple',
+          'display_name': '小林',
+        });
+
+        transport.response = const IdentityHttpResponse(
+          statusCode: 200,
+          body:
+              '{"user_id":"user_1","display_name":"林同学",'
+              '"profile_version":2,"created_at":"2026-08-23T10:00:00Z",'
+              '"updated_at":"2026-08-23T11:00:00Z"}',
+        );
+        final profile = await client.updateProfile(
+          sessionToken: 'sess_opaque-secret',
+          displayName: '林同学',
+          expectedProfileVersion: 1,
+          idempotencyKey: 'profile-request-0001',
+        );
+        expect(profile.displayName, '林同学');
+        expect(profile.profileVersion, 2);
+        expect(transport.method, 'PATCH');
+        expect(transport.uri!.path, '/v1/me/profile');
+        expect(transport.headers?['Idempotency-Key'], 'profile-request-0001');
+        expect(
+          transport.headers?[HttpHeaders.authorizationHeader],
+          'Bearer sess_opaque-secret',
+        );
+        expect(jsonDecode(transport.body!), <String, Object?>{
+          'display_name': '林同学',
+          'expected_profile_version': 1,
+        });
+      },
+    );
+
+    test(
+      'missing profile remains distinct from authentication failure',
+      () async {
+        transport.response = const IdentityHttpResponse(
+          statusCode: 404,
+          body:
+              '{"error":{"code":"profile_not_found","message":"missing",'
+              '"retryable":false,"correlation_id":"corr_profile"}}',
+        );
+        await expectLater(
+          client.currentProfile(sessionToken: 'sess_opaque-secret'),
+          throwsA(
+            isA<IdentityClientException>()
+                .having(
+                  (error) => error.kind,
+                  'kind',
+                  IdentityFailureKind.profileNotFound,
+                )
+                .having(
+                  (error) => error.isAuthenticationFailure,
+                  'isAuthenticationFailure',
+                  false,
+                ),
+          ),
+        );
+      },
+    );
+
     test('login parses the one-time Bearer Session result', () async {
       transport.response = const IdentityHttpResponse(
         statusCode: 200,

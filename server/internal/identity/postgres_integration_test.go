@@ -25,6 +25,182 @@ import (
 
 const integrationPasswordHash = "$argon2id$v=19$m=8,t=1,p=1$MDEyMzQ1Njc4OWFiY2RlZg$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 
+func TestPostgresUserProfileRegistrationVersionAndIdempotency(
+	t *testing.T,
+) {
+	pool := identityTestDatabase(t)
+	repository, err := NewPostgresRepository(pool, NewUUIDv4Generator(nil))
+	if err != nil {
+		t.Fatalf("new repository: %v", err)
+	}
+	displayName := "小林"
+	user, err := repository.CreateUserWithCredential(
+		context.Background(),
+		"profile@example.com",
+		integrationPasswordHash,
+		&displayName,
+	)
+	if err != nil {
+		t.Fatalf("create profiled user: %v", err)
+	}
+	created, err := repository.FindProfileByUserID(
+		context.Background(),
+		user.ID,
+	)
+	if err != nil ||
+		created.DisplayName != displayName ||
+		created.ProfileVersion != 1 {
+		t.Fatalf("created profile/error = %#v / %v", created, err)
+	}
+
+	expected := int64(1)
+	command := PersistProfileCommand{
+		UserID:                 user.ID,
+		DisplayName:            "林同学",
+		ExpectedProfileVersion: &expected,
+		IdempotencyKey:         "profile-postgres-0001",
+		RequestDigest: profileRequestDigest(
+			"林同学",
+			&expected,
+		),
+	}
+	updated, err := repository.PersistProfile(context.Background(), command)
+	if err != nil || updated.ProfileVersion != 2 {
+		t.Fatalf("update profile/error = %#v / %v", updated, err)
+	}
+	replayed, err := repository.PersistProfile(context.Background(), command)
+	if err != nil ||
+		replayed.ProfileVersion != updated.ProfileVersion ||
+		!replayed.UpdatedAt.Equal(updated.UpdatedAt) {
+		t.Fatalf("replayed profile/error = %#v / %v", replayed, err)
+	}
+
+	conflictingKey := command
+	conflictingKey.DisplayName = "不同昵称"
+	conflictingKey.RequestDigest = profileRequestDigest("不同昵称", &expected)
+	if _, err := repository.PersistProfile(
+		context.Background(),
+		conflictingKey,
+	); !errors.Is(err, ErrIdempotencyKeyConflict) {
+		t.Fatalf("idempotency conflict error = %v", err)
+	}
+
+	stale := command
+	stale.IdempotencyKey = "profile-postgres-0002"
+	stale.RequestDigest = profileRequestDigest(stale.DisplayName, &expected)
+	if _, err := repository.PersistProfile(
+		context.Background(),
+		stale,
+	); !errors.Is(err, ErrProfileVersionConflict) {
+		t.Fatalf("stale version error = %v", err)
+	}
+}
+
+func TestPostgresProfileIdempotencyRetentionAndBound(t *testing.T) {
+	pool := identityTestDatabase(t)
+	repository, err := NewPostgresRepository(pool, NewUUIDv4Generator(nil))
+	if err != nil {
+		t.Fatalf("new repository: %v", err)
+	}
+	displayName := "小林"
+	user, err := repository.CreateUserWithCredential(
+		context.Background(),
+		"profile-retention@example.com",
+		integrationPasswordHash,
+		&displayName,
+	)
+	if err != nil {
+		t.Fatalf("create profiled user: %v", err)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`
+INSERT INTO identity_profile_idempotency (
+    user_id,
+    idempotency_key,
+    request_digest,
+    response_display_name,
+    response_profile_version,
+    response_created_at,
+    response_updated_at,
+    created_at
+)
+SELECT
+    $1,
+    'profile-retention-' || series_value,
+    decode(repeat('00', 32), 'hex'),
+    $2,
+    1,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP - make_interval(mins => series_value)
+FROM generate_series(1, 70) AS generated(series_value)`,
+		user.ID,
+		displayName,
+	); err != nil {
+		t.Fatalf("seed idempotency records: %v", err)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`
+UPDATE identity_profile_idempotency
+SET created_at = CURRENT_TIMESTAMP - INTERVAL '48 hours'
+WHERE user_id = $1
+  AND idempotency_key IN (
+      SELECT idempotency_key
+      FROM identity_profile_idempotency
+      WHERE user_id = $1
+      ORDER BY created_at
+      LIMIT 5
+  )`,
+		user.ID,
+	); err != nil {
+		t.Fatalf("age idempotency records: %v", err)
+	}
+
+	expected := int64(1)
+	command := PersistProfileCommand{
+		UserID:                 user.ID,
+		DisplayName:            "林同学",
+		ExpectedProfileVersion: &expected,
+		IdempotencyKey:         "profile-retention-current",
+		RequestDigest: profileRequestDigest(
+			"林同学",
+			&expected,
+		),
+	}
+	if _, err := repository.PersistProfile(
+		context.Background(),
+		command,
+	); err != nil {
+		t.Fatalf("persist profile: %v", err)
+	}
+
+	var total int
+	var expired int
+	if err := pool.QueryRow(
+		context.Background(),
+		`
+SELECT
+    count(*),
+    count(*) FILTER (
+        WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '24 hours'
+    )
+FROM identity_profile_idempotency
+WHERE user_id = $1`,
+		user.ID,
+	).Scan(&total, &expired); err != nil {
+		t.Fatalf("count idempotency records: %v", err)
+	}
+	if total != profileIdempotencyRecordsPerUser || expired != 0 {
+		t.Fatalf(
+			"idempotency retention total/expired = %d/%d",
+			total,
+			expired,
+		)
+	}
+}
+
 func TestPostgresIdentityVerticalSlice(t *testing.T) {
 	pool := identityTestDatabase(t)
 	postgresRepository, err := NewPostgresRepository(

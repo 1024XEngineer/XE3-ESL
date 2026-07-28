@@ -182,6 +182,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         practiceAvailable: practiceAvailable,
         restingComposerBottom: composerBottomInset,
         threadId: widget.agentController.threadId,
+        displayName: widget.authController?.profile?.displayName,
         onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
@@ -244,6 +245,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       _ProfilePage(
         showBackButton: widget.showBackButton,
         user: widget.user,
+        profile: widget.authController?.profile,
+        profileErrorMessage: widget.authController?.profileErrorMessage,
+        profileSaving: widget.authController?.profileSaving ?? false,
+        onSaveDisplayName: widget.authController?.updateDisplayName,
         onLogout: widget.authController?.logout,
       ),
     ];
@@ -488,11 +493,19 @@ class _ProfilePage extends StatelessWidget {
   const _ProfilePage({
     required this.showBackButton,
     required this.user,
+    required this.profile,
+    required this.profileErrorMessage,
+    required this.profileSaving,
+    required this.onSaveDisplayName,
     required this.onLogout,
   });
 
   final bool showBackButton;
   final User? user;
+  final UserProfile? profile;
+  final String? profileErrorMessage;
+  final bool profileSaving;
+  final Future<String?> Function(String)? onSaveDisplayName;
   final VoidCallback? onLogout;
 
   @override
@@ -533,15 +546,37 @@ class _ProfilePage extends StatelessWidget {
               elevation: 0,
               color: Colors.white,
               child: ListTile(
-                leading: const CircleAvatar(
+                leading: CircleAvatar(
                   backgroundColor: Color(0xFFE8E8E5),
                   foregroundColor: Color(0xFF35363A),
-                  child: Icon(Icons.person_rounded),
+                  child: Text(
+                    _profileInitial(profile?.displayName),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                 ),
-                title: Text(user?.email ?? '本地界面预览'),
-                subtitle: Text(user == null ? '尚未连接正式账号' : '当前登录账号'),
+                title: Text(
+                  profile?.displayName ?? (user == null ? '本地界面预览' : '尚未设置昵称'),
+                ),
+                subtitle: Text(user?.email ?? '尚未连接正式账号'),
+                trailing: user == null
+                    ? null
+                    : IconButton(
+                        key: const Key('profile-edit-display-name'),
+                        tooltip: '编辑昵称',
+                        onPressed: profileSaving || onSaveDisplayName == null
+                            ? null
+                            : () => _editDisplayName(context),
+                        icon: const Icon(Icons.edit_rounded),
+                      ),
               ),
             ),
+            if (profileErrorMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                profileErrorMessage!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
             const SizedBox(height: 16),
             OutlinedButton.icon(
               key: const Key('profile-logout-button'),
@@ -554,4 +589,104 @@ class _ProfilePage extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _editDisplayName(BuildContext context) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _DisplayNameDialog(
+        initialName: profile?.displayName ?? '',
+        onSave: onSaveDisplayName!,
+      ),
+    );
+    if (saved == true && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('昵称已更新')));
+    }
+  }
+}
+
+class _DisplayNameDialog extends StatefulWidget {
+  const _DisplayNameDialog({required this.initialName, required this.onSave});
+
+  final String initialName;
+  final Future<String?> Function(String) onSave;
+
+  @override
+  State<_DisplayNameDialog> createState() => _DisplayNameDialogState();
+}
+
+class _DisplayNameDialogState extends State<_DisplayNameDialog> {
+  late final TextEditingController _controller;
+  String? _errorMessage;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('编辑昵称'),
+      content: TextField(
+        key: const Key('profile-display-name-input'),
+        controller: _controller,
+        autofocus: true,
+        enabled: !_saving,
+        maxLength: 40,
+        decoration: InputDecoration(labelText: '昵称', errorText: _errorMessage),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('profile-save-display-name'),
+          onPressed: _saving ? null : _save,
+          child: Text(_saving ? '正在保存…' : '保存'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _save() async {
+    final value = _controller.text.trim();
+    if (value.isEmpty) {
+      setState(() => _errorMessage = '请输入昵称');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _errorMessage = null;
+    });
+    final error = await widget.onSave(value);
+    if (!mounted) {
+      return;
+    }
+    if (error != null) {
+      setState(() {
+        _saving = false;
+        _errorMessage = error;
+      });
+      return;
+    }
+    Navigator.of(context).pop(true);
+  }
+}
+
+String _profileInitial(String? displayName) {
+  if (displayName == null || displayName.isEmpty) {
+    return '我';
+  }
+  return String.fromCharCode(displayName.runes.first).toUpperCase();
 }

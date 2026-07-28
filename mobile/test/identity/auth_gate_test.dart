@@ -96,6 +96,10 @@ void main() {
     await tester.pump();
 
     await tester.enterText(
+      find.byKey(const Key('register-display-name')),
+      '小林',
+    );
+    await tester.enterText(
       find.widgetWithText(TextFormField, '邮箱'),
       'learner@example.com',
     );

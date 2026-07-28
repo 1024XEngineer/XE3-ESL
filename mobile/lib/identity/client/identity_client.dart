@@ -12,6 +12,9 @@ enum IdentityFailureKind {
   invalidCredentials,
   authenticationRequired,
   registrationUnavailable,
+  profileNotFound,
+  profileVersionConflict,
+  idempotencyKeyConflict,
   rateLimited,
   server,
   network,
@@ -19,7 +22,14 @@ enum IdentityFailureKind {
   unexpected,
 }
 
-enum _IdentityOperation { register, login, currentUser, logout }
+enum _IdentityOperation {
+  register,
+  login,
+  currentUser,
+  currentProfile,
+  updateProfile,
+  logout,
+}
 
 final class IdentityClientException implements Exception {
   const IdentityClientException({
@@ -57,7 +67,27 @@ abstract interface class IdentityClient {
   Future<void> logout({required String sessionToken});
 }
 
-final class WireIdentityClient implements IdentityClient {
+abstract interface class ProfileRegistrationClient {
+  Future<User> registerWithProfile({
+    required String email,
+    required String password,
+    required String displayName,
+  });
+}
+
+abstract interface class UserProfileClient {
+  Future<UserProfile> currentProfile({required String sessionToken});
+
+  Future<UserProfile> updateProfile({
+    required String sessionToken,
+    required String displayName,
+    required int? expectedProfileVersion,
+    required String idempotencyKey,
+  });
+}
+
+final class WireIdentityClient
+    implements IdentityClient, ProfileRegistrationClient, UserProfileClient {
   factory WireIdentityClient({
     required Uri baseUri,
     IdentityHttpTransport? transport,
@@ -91,6 +121,25 @@ final class WireIdentityClient implements IdentityClient {
   }
 
   @override
+  Future<User> registerWithProfile({
+    required String email,
+    required String password,
+    required String displayName,
+  }) async {
+    final response = await _send(
+      method: 'POST',
+      path: '/v1/auth/register',
+      body: <String, Object?>{
+        'email': email,
+        'password': password,
+        'display_name': displayName,
+      },
+    );
+    _requireStatus(response, 201, _IdentityOperation.register);
+    return _decode(response, (json) => User.fromJson(json));
+  }
+
+  @override
   Future<LoginResult> login({
     required String email,
     required String password,
@@ -116,6 +165,39 @@ final class WireIdentityClient implements IdentityClient {
   }
 
   @override
+  Future<UserProfile> currentProfile({required String sessionToken}) async {
+    final response = await _send(
+      method: 'GET',
+      path: '/v1/me/profile',
+      sessionToken: sessionToken,
+    );
+    _requireStatus(response, 200, _IdentityOperation.currentProfile);
+    return _decode(response, (json) => UserProfile.fromJson(json));
+  }
+
+  @override
+  Future<UserProfile> updateProfile({
+    required String sessionToken,
+    required String displayName,
+    required int? expectedProfileVersion,
+    required String idempotencyKey,
+  }) async {
+    final body = <String, Object?>{'display_name': displayName};
+    if (expectedProfileVersion != null) {
+      body['expected_profile_version'] = expectedProfileVersion;
+    }
+    final response = await _send(
+      method: 'PATCH',
+      path: '/v1/me/profile',
+      sessionToken: sessionToken,
+      headers: <String, String>{'Idempotency-Key': idempotencyKey},
+      body: body,
+    );
+    _requireStatus(response, 200, _IdentityOperation.updateProfile);
+    return _decode(response, (json) => UserProfile.fromJson(json));
+  }
+
+  @override
   Future<void> logout({required String sessionToken}) async {
     final response = await _send(
       method: 'POST',
@@ -130,11 +212,13 @@ final class WireIdentityClient implements IdentityClient {
     required String path,
     Map<String, Object?>? body,
     String? sessionToken,
+    Map<String, String> headers = const {},
   }) async {
     final uri = _baseUri.resolve(path);
     _trustedOrigin.validateResourceUri(uri);
     validateNoSessionCredentialInUri(uri, sessionToken: sessionToken);
-    final headers = <String, String>{
+    final requestHeaders = <String, String>{
+      ...headers,
       HttpHeaders.acceptHeader: ContentType.json.mimeType,
       if (body != null)
         HttpHeaders.contentTypeHeader: ContentType.json.mimeType,
@@ -146,7 +230,7 @@ final class WireIdentityClient implements IdentityClient {
       return await _transport.send(
         method: method,
         uri: uri,
-        headers: headers,
+        headers: requestHeaders,
         body: body == null ? null : jsonEncode(body),
       );
     } on IdentityClientException {
@@ -223,6 +307,9 @@ final class WireIdentityClient implements IdentityClient {
       'authentication_required' => IdentityFailureKind.authenticationRequired,
       'account_registration_unavailable' =>
         IdentityFailureKind.registrationUnavailable,
+      'profile_not_found' => IdentityFailureKind.profileNotFound,
+      'profile_version_conflict' => IdentityFailureKind.profileVersionConflict,
+      'idempotency_key_conflict' => IdentityFailureKind.idempotencyKeyConflict,
       'rate_limited' => IdentityFailureKind.rateLimited,
       'internal_error' => IdentityFailureKind.server,
       _ => IdentityFailureKind.unexpected,
@@ -254,13 +341,24 @@ final class WireIdentityClient implements IdentityClient {
       (_IdentityOperation.login, 401, 'invalid_credentials') =>
         'invalid_credentials',
       (
-        _IdentityOperation.currentUser || _IdentityOperation.logout,
+        _IdentityOperation.currentUser ||
+            _IdentityOperation.currentProfile ||
+            _IdentityOperation.updateProfile ||
+            _IdentityOperation.logout,
         401,
         'authentication_required',
       ) =>
         'authentication_required',
       (_IdentityOperation.register, 409, 'account_registration_unavailable') =>
         'account_registration_unavailable',
+      (_IdentityOperation.currentProfile, 404, 'profile_not_found') =>
+        'profile_not_found',
+      (_IdentityOperation.updateProfile, 409, 'profile_version_conflict') =>
+        'profile_version_conflict',
+      (_IdentityOperation.updateProfile, 409, 'idempotency_key_conflict') =>
+        'idempotency_key_conflict',
+      (_IdentityOperation.updateProfile, 400, 'invalid_request') =>
+        'invalid_request',
       (
         _IdentityOperation.register || _IdentityOperation.login,
         429,
@@ -278,9 +376,18 @@ final class WireIdentityClient implements IdentityClient {
       (_IdentityOperation.register || _IdentityOperation.login, 400) =>
         'invalid_request',
       (_IdentityOperation.login, 401) => 'invalid_credentials',
-      (_IdentityOperation.currentUser || _IdentityOperation.logout, 401) =>
+      (
+        _IdentityOperation.currentUser ||
+            _IdentityOperation.currentProfile ||
+            _IdentityOperation.updateProfile ||
+            _IdentityOperation.logout,
+        401,
+      ) =>
         'authentication_required',
       (_IdentityOperation.register, 409) => 'account_registration_unavailable',
+      (_IdentityOperation.currentProfile, 404) => 'profile_not_found',
+      (_IdentityOperation.updateProfile, 400) => 'invalid_request',
+      (_IdentityOperation.updateProfile, 409) => 'profile_version_conflict',
       (_IdentityOperation.register || _IdentityOperation.login, 429) =>
         'rate_limited',
       (_, >= 500) => 'internal_error',
