@@ -291,17 +291,30 @@ INSERT INTO agent_memory_vectors (
 			index+1,
 		)
 		if _, err := database.Exec(ctx, `
-INSERT INTO agent_memories (
-    id,
-    owner_user_id,
-    memory_type,
-    canonical_key,
-    content,
-    scope_type,
-    status,
-    version,
-    policy_version
-) VALUES ($1, $2, 'interest', $3, $4, 'user', 'active', 1, 'memory-policy-v1');
+WITH inserted_memory AS (
+    INSERT INTO agent_memories (
+        id,
+        owner_user_id,
+        memory_type,
+        canonical_key,
+        content,
+        scope_type,
+        status,
+        version,
+        policy_version
+    ) VALUES (
+        $1,
+        $2,
+        'interest',
+        $3,
+        $4,
+        'user',
+        'active',
+        1,
+        'memory-policy-v1'
+    )
+    RETURNING id, owner_user_id, version
+)
 INSERT INTO agent_memory_vectors (
     memory_id,
     owner_user_id,
@@ -311,7 +324,17 @@ INSERT INTO agent_memory_vectors (
     dimension,
     embedding_policy_version,
     embedding
-) VALUES ($1, $2, 1, $5, $6, $7, $8, $9::public.vector)`,
+)
+SELECT
+    inserted_memory.id,
+    inserted_memory.owner_user_id,
+    inserted_memory.version,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9::public.vector
+FROM inserted_memory`,
 			memoryID,
 			integrationUserB,
 			fmt.Sprintf("foreign.interest.%d", index),
