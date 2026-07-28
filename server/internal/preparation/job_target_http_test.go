@@ -172,6 +172,63 @@ func TestJobTargetHTTPAnalysisRecoveryAndSanitizedFailure(t *testing.T) {
 	}
 }
 
+func TestJobTargetHTTPPrioritizesAnalysisTerminalErrors(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name: "invalid provider output remains retryable",
+			err: errors.Join(
+				ErrJobTargetAnalysisFailed,
+				ErrJobTargetInvalid,
+			),
+			wantStatus: http.StatusServiceUnavailable,
+			wantCode:   "job_target_analysis_failed",
+		},
+		{
+			name: "lost worker claim remains retryable",
+			err: errors.Join(
+				ErrJobTargetAnalysisClaimLost,
+				ErrJobTargetInvalid,
+			),
+			wantStatus: http.StatusConflict,
+			wantCode:   "job_target_analysis_claim_lost",
+		},
+	}
+
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			writeJobTargetServiceError(context, testCase.err)
+
+			if response.Code != testCase.wantStatus ||
+				!strings.Contains(
+					response.Body.String(),
+					`"code":"`+testCase.wantCode+`"`,
+				) ||
+				!strings.Contains(
+					response.Body.String(),
+					`"retryable":true`,
+				) {
+				t.Fatalf(
+					"status=%d body=%s",
+					response.Code,
+					response.Body.String(),
+				)
+			}
+		})
+	}
+}
+
 func TestJobTargetHTTPRequiresTrustedActor(t *testing.T) {
 	t.Parallel()
 

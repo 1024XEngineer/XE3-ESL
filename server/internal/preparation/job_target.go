@@ -645,14 +645,19 @@ func validateJobTargetCandidate(
 		return ErrJobTargetInvalid
 	}
 	recommendation := candidate.CatalogRecommendation
-	if _, err := catalog.GetCatalogSnapshot(
+	snapshot, err := catalog.GetCatalogSnapshot(
 		recommendation.ScenarioDefinitionID,
 		recommendation.ScenarioDefinitionVersion,
 		append([]string(nil), recommendation.SelectedRoleIDs...),
 		recommendation.PracticeOptionID,
 		recommendation.PracticeOptionVersion,
-	); err != nil {
+	)
+	if err != nil {
 		return errors.Join(ErrJobTargetInvalid, err)
+	}
+	if snapshot.ScenarioDefinition.Type == ScenarioTypeInterview &&
+		len(snapshot.SelectedRoles) != 1 {
+		return ErrJobTargetInvalid
 	}
 	return nil
 }

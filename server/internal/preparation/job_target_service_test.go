@@ -150,6 +150,59 @@ func TestJobTargetServiceRejectsUnknownCatalogOutputAndFailsClaim(t *testing.T) 
 	}
 }
 
+func TestJobTargetServiceRejectsMultipleInterviewRolesFromParser(t *testing.T) {
+	t.Parallel()
+
+	input := JobTargetInput{
+		Source:         JobTargetSourceJobDescription,
+		JobDescription: "Build reliable APIs.",
+	}
+	candidate := validJobTargetCandidateFixture(
+		JobTargetSourceJobDescription,
+	)
+	candidate.CatalogRecommendation.SelectedRoleIDs = []string{
+		TechnicalInterviewerRoleID,
+		HRInterviewerRoleID,
+	}
+	candidate.CatalogRecommendation.PracticeOptionID =
+		FullSimulationOptionID
+
+	repository := &jobTargetRepositoryStub{}
+	repository.claim = claimedJobTargetAnalysis(input)
+	failedCategory := ""
+	repository.fail = func(
+		_ context.Context,
+		_ JobTargetAnalysisClaim,
+		category string,
+	) (JobTarget, error) {
+		failedCategory = category
+		return JobTarget{Stage: JobTargetStageAnalysisFailed}, nil
+	}
+	service := mustJobTargetService(
+		t,
+		repository,
+		&jobTargetParserStub{candidate: candidate},
+		mustBuiltinCatalog(t),
+	)
+
+	_, _, err := service.Analyze(
+		context.Background(),
+		jobTargetActor(),
+		"target-1",
+		"analyze-key-multiple-roles",
+		AnalyzeJobTargetRequest{ExpectedInputVersion: 1},
+	)
+	if !errors.Is(err, ErrJobTargetAnalysisFailed) {
+		t.Fatalf("Analyze error = %v, want analysis failed", err)
+	}
+	if failedCategory != "invalid_result" {
+		t.Fatalf("failed category = %q, want invalid_result", failedCategory)
+	}
+	if repository.completeCalled {
+		t.Fatal("multi-role interview output reached completion")
+	}
+}
+
 func TestJobTargetServicePropagatesLateWorkerFence(t *testing.T) {
 	t.Parallel()
 
@@ -324,6 +377,51 @@ func TestJobTargetConfirmRequiresExplicitVersionsAndValidCandidate(
 			called,
 			err,
 		)
+	}
+}
+
+func TestJobTargetConfirmRejectsMultipleInterviewRoles(t *testing.T) {
+	t.Parallel()
+
+	repository := &jobTargetRepositoryStub{
+		confirm: func(
+			context.Context,
+			requestcontext.Actor,
+			ConfirmJobTargetCommand,
+		) (JobTarget, bool, error) {
+			t.Fatal("multi-role interview confirmation reached repository")
+			return JobTarget{}, false, nil
+		},
+	}
+	service := mustJobTargetService(
+		t,
+		repository,
+		&jobTargetParserStub{},
+		mustBuiltinCatalog(t),
+	)
+	candidate := validJobTargetCandidateFixture(
+		JobTargetSourceJobDescription,
+	)
+	candidate.CatalogRecommendation.SelectedRoleIDs = []string{
+		TechnicalInterviewerRoleID,
+		HRInterviewerRoleID,
+	}
+	candidate.CatalogRecommendation.PracticeOptionID =
+		FullSimulationOptionID
+
+	_, _, err := service.Confirm(
+		context.Background(),
+		jobTargetActor(),
+		"target-1",
+		"confirm-key-multiple-roles",
+		ConfirmJobTargetRequest{
+			ExpectedInputVersion:    1,
+			ExpectedAnalysisVersion: 1,
+			Candidate:               candidate,
+		},
+	)
+	if !errors.Is(err, ErrJobTargetInvalid) {
+		t.Fatalf("Confirm error = %v, want invalid", err)
 	}
 }
 

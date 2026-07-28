@@ -394,6 +394,20 @@ func jsonContainsNull(value any) bool {
 
 func writeJobTargetServiceError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, ErrJobTargetAnalysisClaimLost):
+		writeJobTargetHTTPError(
+			c,
+			http.StatusConflict,
+			"job_target_analysis_claim_lost",
+			true,
+		)
+	case errors.Is(err, ErrJobTargetAnalysisFailed):
+		writeJobTargetHTTPError(
+			c,
+			http.StatusServiceUnavailable,
+			"job_target_analysis_failed",
+			true,
+		)
 	case errors.Is(err, ErrJobTargetInvalid):
 		writeJobTargetHTTPError(
 			c,
@@ -421,20 +435,6 @@ func writeJobTargetServiceError(c *gin.Context, err error) {
 			http.StatusConflict,
 			"job_target_version_conflict",
 			false,
-		)
-	case errors.Is(err, ErrJobTargetAnalysisClaimLost):
-		writeJobTargetHTTPError(
-			c,
-			http.StatusConflict,
-			"job_target_analysis_claim_lost",
-			true,
-		)
-	case errors.Is(err, ErrJobTargetAnalysisFailed):
-		writeJobTargetHTTPError(
-			c,
-			http.StatusServiceUnavailable,
-			"job_target_analysis_failed",
-			true,
 		)
 	default:
 		writeJobTargetHTTPError(
