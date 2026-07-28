@@ -211,6 +211,7 @@ ReviewHistoryItem _decodeHistoryItem(Object? value) {
       'updated_at',
       'completed_at',
     },
+    optional: const <String>{'evaluation_context_type', 'evaluation_context'},
   );
   final id = _uuid(root['review_id']);
   final practiceSessionId = _nonEmptyString(
@@ -222,7 +223,7 @@ ReviewHistoryItem _decodeHistoryItem(Object? value) {
       kind: ReviewHistoryFailureKind.invalidResponse,
     );
   }
-  _nonEmptyString(
+  final implementationVersion = _nonEmptyString(
     root['implementation_version'],
     maxBytes: _maxReviewMetadataBytes,
   );
@@ -246,29 +247,64 @@ ReviewHistoryItem _decodeHistoryItem(Object? value) {
       kind: ReviewHistoryFailureKind.invalidResponse,
     );
   }
+  final contextType = root.containsKey('evaluation_context_type')
+      ? _evaluationContextType(root['evaluation_context_type'])
+      : null;
+  if (root.containsKey('evaluation_context')) {
+    _validateEvaluationContext(root['evaluation_context'], contextType);
+  }
+  if (implementationVersion == 'qianwen-scenario-review-v2' &&
+      (contextType == null || !root.containsKey('evaluation_context'))) {
+    throw const ReviewHistoryException(
+      kind: ReviewHistoryFailureKind.invalidResponse,
+    );
+  }
   final result = _object(
     root['result'],
-    required: const <String>{'overall_score', 'summary', 'conclusions'},
+    required: const <String>{'summary', 'conclusions'},
+    optional: const <String>{
+      'summary_eligibility',
+      'overall_score',
+      'feedback_items',
+      'repractice_suggestion_refs',
+      'insufficient_evidence_reasons',
+    },
   );
   if (utf8.encode(jsonEncode(result)).length > _maxReviewResultBytes) {
     throw const ReviewHistoryException(
       kind: ReviewHistoryFailureKind.invalidResponse,
     );
   }
-  final score = result['overall_score'];
-  if (score is! int || score < 0 || score > 100) {
+  final eligibility = result.containsKey('summary_eligibility')
+      ? result['summary_eligibility']
+      : 'eligible';
+  if (eligibility != 'eligible' && eligibility != 'insufficient_evidence') {
     throw const ReviewHistoryException(
       kind: ReviewHistoryFailureKind.invalidResponse,
     );
   }
+  final score = result['overall_score'];
   final summary = _nonEmptyString(
     result['summary'],
     maxBytes: _maxReviewTextBytes,
   );
   final rawConclusions = result['conclusions'];
   if (rawConclusions is! List<Object?> ||
-      rawConclusions.isEmpty ||
       rawConclusions.length > _maxReviewConclusions) {
+    throw const ReviewHistoryException(
+      kind: ReviewHistoryFailureKind.invalidResponse,
+    );
+  }
+  if (eligibility == 'eligible' &&
+      (score is! int || score < 0 || score > 100 || rawConclusions.isEmpty)) {
+    throw const ReviewHistoryException(
+      kind: ReviewHistoryFailureKind.invalidResponse,
+    );
+  }
+  if (eligibility == 'insufficient_evidence' &&
+      (result.containsKey('overall_score') ||
+          rawConclusions.isNotEmpty ||
+          !_validReasonList(result['insufficient_evidence_reasons']))) {
     throw const ReviewHistoryException(
       kind: ReviewHistoryFailureKind.invalidResponse,
     );
@@ -276,17 +312,38 @@ ReviewHistoryItem _decodeHistoryItem(Object? value) {
   final conclusions = rawConclusions
       .map(_decodeConclusion)
       .toList(growable: false);
-  final strength = conclusions.first.message;
+  final feedback = _decodeFeedbackItems(result['feedback_items']);
+  final strength =
+      feedback
+          .where((item) => item.kind == 'strength')
+          .map((item) => item.message)
+          .firstOrNull ??
+      conclusions.map((item) => item.message).firstOrNull ??
+      summary;
   final nextFocus =
+      feedback
+          .where(
+            (item) =>
+                item.kind == 'improvement' ||
+                item.kind == 'correction' ||
+                item.kind == 'recommended_expression',
+          )
+          .map((item) => item.suggestion ?? item.message)
+          .firstOrNull ??
       conclusions
           .map((item) => item.suggestion)
           .whereType<String>()
           .firstOrNull ??
-      conclusions.last.message;
+      conclusions.map((item) => item.message).lastOrNull ??
+      '完成一段更充分的回答后重新评测。';
   return ReviewHistoryItem(
     review: AgentReview(
       id: id,
-      title: '本次练习 · $score 分',
+      title: _reviewTitle(
+        eligibility: eligibility as String,
+        score: score as int?,
+        contextType: contextType,
+      ),
       summary: summary,
       strength: strength,
       nextFocus: nextFocus,
@@ -301,7 +358,7 @@ ReviewHistoryItem _decodeHistoryItem(Object? value) {
   final root = _object(
     value,
     required: const <String>{'key', 'category', 'message'},
-    optional: const <String>{'suggestion'},
+    optional: const <String>{'score', 'suggestion'},
   );
   _nonEmptyString(root['key'], maxBytes: _maxReviewLabelBytes);
   _nonEmptyString(root['category'], maxBytes: _maxReviewLabelBytes);
@@ -313,6 +370,157 @@ ReviewHistoryItem _decodeHistoryItem(Object? value) {
       ? _nonEmptyString(root['suggestion'], maxBytes: _maxReviewTextBytes)
       : null;
   return (message: message, suggestion: suggestion);
+}
+
+List<({String kind, String message, String? suggestion})> _decodeFeedbackItems(
+  Object? value,
+) {
+  if (value == null) {
+    return const [];
+  }
+  if (value is! List<Object?> || value.length > 16) {
+    throw const ReviewHistoryException(
+      kind: ReviewHistoryFailureKind.invalidResponse,
+    );
+  }
+  return value
+      .map((item) {
+        final root = _object(
+          item,
+          required: const <String>{'key', 'kind', 'message'},
+          optional: const <String>{'suggestion'},
+        );
+        _nonEmptyString(root['key'], maxBytes: _maxReviewLabelBytes);
+        final kind = _nonEmptyString(
+          root['kind'],
+          maxBytes: _maxReviewLabelBytes,
+        );
+        if (!const <String>{
+          'correction',
+          'strength',
+          'improvement',
+          'recommended_expression',
+        }.contains(kind)) {
+          throw const ReviewHistoryException(
+            kind: ReviewHistoryFailureKind.invalidResponse,
+          );
+        }
+        final message = _nonEmptyString(
+          root['message'],
+          maxBytes: _maxReviewTextBytes,
+        );
+        final suggestion = root.containsKey('suggestion')
+            ? _nonEmptyString(root['suggestion'], maxBytes: _maxReviewTextBytes)
+            : null;
+        return (kind: kind, message: message, suggestion: suggestion);
+      })
+      .toList(growable: false);
+}
+
+bool _validReasonList(Object? value) {
+  return value is List<Object?> &&
+      value.isNotEmpty &&
+      value.every(
+        (item) =>
+            item is String &&
+            item.trim().isNotEmpty &&
+            utf8.encode(item).length <= _maxReviewLabelBytes,
+      );
+}
+
+String? _evaluationContextType(Object? value) {
+  const allowed = <String>{
+    'interview.project_deep_dive',
+    'ielts.speaking_part2',
+    'workplace.progress_risk_update',
+    'daily.hotel_checkin_issue',
+    'generic.practice',
+  };
+  if (value is! String || !allowed.contains(value)) {
+    throw const ReviewHistoryException(
+      kind: ReviewHistoryFailureKind.invalidResponse,
+    );
+  }
+  return value;
+}
+
+void _validateEvaluationContext(Object? value, String? contextType) {
+  final context = _object(
+    value,
+    required: const <String>{
+      'schema_version',
+      'context_type',
+      'scene_key',
+      'scenario_definition_id',
+      'scenario_definition_version',
+      'practice_option_type',
+      'difficulty_ref',
+      'assistance_ref',
+      'turn_policy_ref',
+      'session_policy_ref',
+      'scene_specific_context',
+    },
+  );
+  final embeddedType = _evaluationContextType(context['context_type']);
+  if (context['schema_version'] != 'evaluation-context.v1' ||
+      embeddedType != contextType ||
+      context['scenario_definition_version'] is! int ||
+      (context['scenario_definition_version']! as int) < 1) {
+    throw const ReviewHistoryException(
+      kind: ReviewHistoryFailureKind.invalidResponse,
+    );
+  }
+  for (final key in const <String>[
+    'scene_key',
+    'scenario_definition_id',
+    'practice_option_type',
+    'difficulty_ref',
+    'assistance_ref',
+    'turn_policy_ref',
+    'session_policy_ref',
+  ]) {
+    _nonEmptyString(context[key], maxBytes: _maxReviewMetadataBytes);
+  }
+  final variantKey = switch (embeddedType) {
+    'interview.project_deep_dive' => 'interview_project_deep_dive',
+    'ielts.speaking_part2' => 'ielts_speaking_part2',
+    'workplace.progress_risk_update' => 'workplace_progress_risk_update',
+    'daily.hotel_checkin_issue' => 'daily_hotel_checkin_issue',
+    'generic.practice' => 'generic_practice',
+    _ => throw const ReviewHistoryException(
+      kind: ReviewHistoryFailureKind.invalidResponse,
+    ),
+  };
+  final sceneSpecific = _object(
+    context['scene_specific_context'],
+    required: <String>{'type', variantKey},
+  );
+  if (sceneSpecific['type'] != embeddedType ||
+      sceneSpecific[variantKey] is! Map<String, Object?>) {
+    throw const ReviewHistoryException(
+      kind: ReviewHistoryFailureKind.invalidResponse,
+    );
+  }
+}
+
+String _reviewTitle({
+  required String eligibility,
+  required int? score,
+  required String? contextType,
+}) {
+  if (eligibility == 'insufficient_evidence') {
+    return '证据不足 · 暂不评分';
+  }
+  switch (contextType) {
+    case 'ielts.speaking_part2':
+      return 'IELTS Speaking Part 2 场景评测（AI 文本估分，非官方成绩）';
+    case 'generic.practice':
+      return '通用英语沟通反馈（非官方考试评分）';
+    case null:
+      return '本次练习 · $score 分';
+    default:
+      return '本次场景评测 · $score 分';
+  }
 }
 
 Map<String, Object?> _object(

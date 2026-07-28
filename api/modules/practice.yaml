@@ -170,6 +170,8 @@ paths:
                     name: Programmer English interview
                     version: 1
                     status: active
+                    turn_policy_ref: interview.project_deep_dive.turn.v1
+                    session_policy_ref: interview.project_deep_dive.session.v1
                   scenario_config_snapshot:
                     scenario_config_id: scfg_backend_engineer
                     scenario_definition_id: scn_programmer_interview

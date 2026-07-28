@@ -43,13 +43,15 @@ const (
 
 // ScenarioDefinition is the public, versioned scenario identity.
 type ScenarioDefinition struct {
-	ID           string         `json:"scenario_definition_id"`
-	Type         ScenarioFamily `json:"scenario_type"`
-	Model        ScenarioModel  `json:"scenario_model"`
-	Name         string         `json:"name"`
-	Version      int            `json:"version"`
-	Status       ScenarioStatus `json:"status"`
-	DisplayOrder int            `json:"-"`
+	ID               string         `json:"scenario_definition_id"`
+	Type             ScenarioFamily `json:"scenario_type"`
+	Model            ScenarioModel  `json:"scenario_model"`
+	Name             string         `json:"name"`
+	Version          int            `json:"version"`
+	Status           ScenarioStatus `json:"status"`
+	TurnPolicyRef    string         `json:"turn_policy_ref"`
+	SessionPolicyRef string         `json:"session_policy_ref"`
+	DisplayOrder     int            `json:"-"`
 }
 
 // ScenarioPromptModel is the shared prompt and preview content frozen into a

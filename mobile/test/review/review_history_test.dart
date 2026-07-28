@@ -62,6 +62,59 @@ void main() {
     expect(transport.authorization, 'Bearer sess_review-history');
   });
 
+  test(
+    'wire client decodes scenario and insufficient-evidence results',
+    () async {
+      final ielts = _wireItem(
+        id: _newerId,
+        createdAt: '2026-07-26T10:00:00Z',
+        score: 84,
+        implementationVersion: 'qianwen-scenario-review-v2',
+        contextType: 'ielts.speaking_part2',
+        evaluationContext: _evaluationContext('ielts.speaking_part2'),
+        result: {
+          'summary_eligibility': 'eligible',
+          'overall_score': 84,
+          'summary': 'A developed response.',
+          'conclusions': [
+            {
+              'key': 'coherence',
+              'category': 'coherence',
+              'score': 84,
+              'message': 'The answer is coherent.',
+            },
+          ],
+        },
+      );
+      final insufficient = _wireItem(
+        id: _olderId,
+        createdAt: '2026-07-26T09:00:00Z',
+        score: 0,
+        implementationVersion: 'qianwen-scenario-review-v2',
+        contextType: 'generic.practice',
+        evaluationContext: _evaluationContext('generic.practice'),
+        result: {
+          'summary_eligibility': 'insufficient_evidence',
+          'summary': 'Not enough evidence to score.',
+          'conclusions': <Object?>[],
+          'insufficient_evidence_reasons': ['answer_too_short'],
+        },
+      );
+
+      final page = await _wireClientForBody(
+        jsonEncode({
+          'items': [ielts, insufficient],
+        }),
+      ).list(limit: 2);
+
+      expect(
+        page.items.first.review.title,
+        'IELTS Speaking Part 2 场景评测（AI 文本估分，非官方成绩）',
+      );
+      expect(page.items.last.review.title, '证据不足 · 暂不评分');
+    },
+  );
+
   test('wire decoder accepts exact UTF-8 field budgets', () async {
     final result = <String, Object?>{
       'overall_score': 93,
@@ -1728,9 +1781,11 @@ Map<String, Object?> _wireItem({
   String? implementationVersion,
   String? sourceTurnId,
   String? sourceTurnVersion,
+  String? contextType,
+  Map<String, Object?>? evaluationContext,
   Map<String, Object?>? result,
 }) {
-  return {
+  final item = <String, Object?>{
     'review_id': id,
     'practice_session_id': practiceSessionId ?? 'session-$score',
     'status': 'completed',
@@ -1754,6 +1809,37 @@ Map<String, Object?> _wireItem({
     'created_at': createdAt,
     'updated_at': createdAt,
     'completed_at': createdAt,
+  };
+  if (contextType != null) {
+    item['evaluation_context_type'] = contextType;
+  }
+  if (evaluationContext != null) {
+    item['evaluation_context'] = evaluationContext;
+  }
+  return item;
+}
+
+Map<String, Object?> _evaluationContext(String contextType) {
+  final variantKey = switch (contextType) {
+    'ielts.speaking_part2' => 'ielts_speaking_part2',
+    'generic.practice' => 'generic_practice',
+    _ => throw ArgumentError.value(contextType),
+  };
+  return {
+    'schema_version': 'evaluation-context.v1',
+    'context_type': contextType,
+    'scene_key': contextType,
+    'scenario_definition_id': 'scenario-definition',
+    'scenario_definition_version': 1,
+    'practice_option_type': 'practice-option',
+    'difficulty_ref': 'difficulty.intermediate.v1',
+    'assistance_ref': 'assistance.standard.v1',
+    'turn_policy_ref': '$contextType.turn.v1',
+    'session_policy_ref': '$contextType.session.v1',
+    'scene_specific_context': {
+      'type': contextType,
+      variantKey: {'version': '$contextType.v1'},
+    },
   };
 }
 

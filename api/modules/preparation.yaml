@@ -25,6 +25,8 @@ paths:
                     summary: 围绕一个真实项目说明个人职责、关键难点、技术取舍和结果。
                     version: 1
                     status: active
+                    turn_policy_ref: interview.project_deep_dive.turn.v1
+                    session_policy_ref: interview.project_deep_dive.session.v1
                   - scenario_definition_id: scn_ielts_speaking_part_2
                     scenario_type: EXAM
                     scenario_model: IELTS_SPEAKING_PART_2
@@ -32,6 +34,8 @@ paths:
                     summary: 根据一张 Cue Card 进行连续表达，并回答考官的必要追问。
                     version: 1
                     status: active
+                    turn_policy_ref: ielts.speaking_part2.turn.v1
+                    session_policy_ref: ielts.speaking_part2.session.v1
                   - scenario_definition_id: scn_workplace_progress_risk_update
                     scenario_type: WORKPLACE
                     scenario_model: PROGRESS_AND_RISK_UPDATE
@@ -39,6 +43,8 @@ paths:
                     summary: 向直属领导汇报项目进展、证据、风险和需要的支持。
                     version: 1
                     status: active
+                    turn_policy_ref: workplace.progress_risk_update.turn.v1
+                    session_policy_ref: workplace.progress_risk_update.session.v1
                   - scenario_definition_id: scn_daily_hotel_checkin_issue
                     scenario_type: DAILY
                     scenario_model: HOTEL_CHECKIN_AND_ISSUE_HANDLING
@@ -46,6 +52,8 @@ paths:
                     summary: 在酒店前台核验预订、办理入住并处理一个房间问题。
                     version: 1
                     status: active
+                    turn_policy_ref: daily.hotel_checkin_issue.turn.v1
+                    session_policy_ref: daily.hotel_checkin_issue.session.v1
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         default:
@@ -78,6 +86,8 @@ paths:
                   name: 项目经历深挖
                   version: 1
                   status: active
+                  turn_policy_ref: interview.project_deep_dive.turn.v1
+                  session_policy_ref: interview.project_deep_dive.session.v1
                 scenario_config:
                   scenario_config_id: scfg_backend_engineer
                   scenario_definition_id: scn_programmer_interview
@@ -560,6 +570,8 @@ components:
         - name
         - version
         - status
+        - turn_policy_ref
+        - session_policy_ref
       properties:
         scenario_definition_id:
           $ref: '#/components/schemas/ResourceId'
@@ -577,6 +589,10 @@ components:
           enum:
             - active
             - inactive
+        turn_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        session_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
     ScenarioDefinitionList:
       type: object
       additionalProperties: false
@@ -598,6 +614,8 @@ components:
         - summary
         - version
         - status
+        - turn_policy_ref
+        - session_policy_ref
       properties:
         scenario_definition_id:
           $ref: '#/components/schemas/ResourceId'
@@ -619,6 +637,10 @@ components:
           enum:
             - active
             - inactive
+        turn_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        session_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
     ScenarioConfig:
       type: object
       additionalProperties: false

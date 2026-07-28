@@ -158,6 +158,22 @@ func (s *EnsureService) generate(
 	if err := validateSource(command, source); err != nil {
 		return FormalReview{}, s.fail(ctx, job, "invalid_source", err)
 	}
+	if command.ImplementationVersion == "qianwen-scenario-review-v2" {
+		eligibility, reasons, err := deriveSummaryEligibility(source)
+		if err != nil {
+			return FormalReview{}, s.fail(ctx, job, "invalid_source", err)
+		}
+		if eligibility == SummaryInsufficientEvidence {
+			finalizeCtx, cancel := s.finalizationContext(ctx)
+			defer cancel()
+			return s.repository.CompleteGeneration(
+				finalizeCtx,
+				job,
+				insufficientEvidenceResult(reasons),
+				nil,
+			)
+		}
+	}
 
 	generated, err := s.generator.GenerateReview(ctx, ReviewGenerationInput{
 		ReviewID:              job.ReviewID,
@@ -173,7 +189,16 @@ func (s *EnsureService) generate(
 		)
 	}
 
-	evidence, err := validateGenerated(source, generated)
+	var (
+		result   ReviewResult
+		evidence []ReviewEvidence
+	)
+	if command.ImplementationVersion == "qianwen-scenario-review-v2" {
+		result, evidence, err = validateGenerated(source, generated)
+	} else {
+		result = generated.Result
+		evidence, err = validateGeneratedLegacy(source, generated)
+	}
 	if err != nil {
 		return FormalReview{}, s.finalizeFailure(
 			ctx,
@@ -187,7 +212,7 @@ func (s *EnsureService) generate(
 	return s.repository.CompleteGeneration(
 		finalizeCtx,
 		job,
-		generated.Result,
+		result,
 		evidence,
 	)
 }
