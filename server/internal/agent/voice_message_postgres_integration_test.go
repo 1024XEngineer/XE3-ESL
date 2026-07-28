@@ -13,6 +13,7 @@ import (
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	objectfake "github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/fake"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestPostgresAgentVoiceMessageConfirmationHistoryAndDeletion(
@@ -323,6 +324,166 @@ SELECT
 	}
 }
 
+func TestPostgresAgentVoiceDeletionLocksCandidateBeforeAudio(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	_, dataService, runService, repository := newAgentRunServices(
+		t,
+		database.pool,
+		aifake.NewTextGenerator(successfulTextResult()),
+		testRunConfiguration,
+	)
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	store, err := objectfake.New("audio/v1", 2*time.Minute)
+	if err != nil {
+		t.Fatalf("new fake ObjectStore: %v", err)
+	}
+	service, err := NewVoiceMessageService(
+		repository,
+		store,
+		&storedVoiceSourceLoader{
+			store:     store,
+			directory: t.TempDir(),
+		},
+		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
+		aifake.NewSpeechSynthesizer(ai.SynthesisResult{}, nil),
+		runService,
+		identity.NewUUIDv4Generator(nil),
+		VoiceMessageConfig{
+			RunConfiguration: testRunConfiguration,
+			ScratchDirectory: t.TempDir(),
+		},
+	)
+	if err != nil {
+		t.Fatalf("new voice Message service: %v", err)
+	}
+	candidate, err := service.Upload(
+		context.Background(),
+		actor,
+		UploadVoiceCandidateRequest{
+			ThreadID:       thread.ID,
+			IdempotencyKey: "postgres-voice-lock-order-upload",
+			ContentType:    "audio/wav",
+			Audio:          bytes.NewReader(voiceTestWAV(0x61)),
+		},
+	)
+	if err != nil {
+		t.Fatalf("upload voice candidate: %v", err)
+	}
+	confirmation, err := service.Confirm(
+		context.Background(),
+		actor,
+		ConfirmVoiceCandidateCommand{
+			CandidateID:      candidate.ID,
+			CandidateVersion: candidate.CandidateVersion,
+			ClientMessageID:  "postgres-voice-lock-order-message",
+			ConfirmedText:    "Confirm deletion lock ordering.",
+		},
+	)
+	if err != nil {
+		t.Fatalf("confirm voice candidate: %v", err)
+	}
+
+	const advisoryLockKey int64 = 731136
+	blocker, err := database.pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire advisory lock connection: %v", err)
+	}
+	if _, err := blocker.Exec(
+		context.Background(),
+		"SELECT pg_advisory_lock($1)",
+		advisoryLockKey,
+	); err != nil {
+		t.Fatalf("hold advisory lock: %v", err)
+	}
+	advisoryHeld := true
+	t.Cleanup(func() {
+		if advisoryHeld {
+			_, _ = blocker.Exec(
+				context.Background(),
+				"SELECT pg_advisory_unlock($1)",
+				advisoryLockKey,
+			)
+		}
+		blocker.Release()
+	})
+	if _, err := database.pool.Exec(context.Background(), `
+CREATE FUNCTION agent_voice_audio_delete_lock_order()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(731136);
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER agent_voice_audio_delete_lock_order
+BEFORE UPDATE ON agent_message_audios
+FOR EACH ROW
+WHEN (NEW.status = 'deleting')
+EXECUTE FUNCTION agent_voice_audio_delete_lock_order()`); err != nil {
+		t.Fatalf("install deletion lock-order trigger: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	errs := make(chan error, 2)
+	go func() {
+		_, beginErr := repository.BeginMessageAudioDeletion(
+			ctx,
+			actor.UserID,
+			confirmation.Audio.ID,
+		)
+		errs <- beginErr
+	}()
+	waitForAdvisoryLockWaiter(
+		t,
+		ctx,
+		database.pool,
+		advisoryLockKey,
+	)
+	go func() {
+		_, beginErr := repository.BeginVoiceCandidateDeletion(
+			ctx,
+			actor.UserID,
+			candidate.ID,
+		)
+		errs <- beginErr
+	}()
+	waitForPostgresLockWaiters(t, ctx, database.pool, 2)
+
+	if _, err := blocker.Exec(
+		context.Background(),
+		"SELECT pg_advisory_unlock($1)",
+		advisoryLockKey,
+	); err != nil {
+		t.Fatalf("release advisory lock: %v", err)
+	}
+	advisoryHeld = false
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent deletion begin failed: %v", err)
+		}
+	}
+	if _, err := repository.FinishMessageAudioDeletion(
+		ctx,
+		actor.UserID,
+		confirmation.Audio.ID,
+	); err != nil {
+		t.Fatalf("finish Message audio deletion: %v", err)
+	}
+	if _, err := repository.FinishVoiceCandidateDeletion(
+		ctx,
+		actor.UserID,
+		candidate.ID,
+	); err != nil {
+		t.Fatalf("finish voice candidate deletion: %v", err)
+	}
+}
+
 func TestPostgresAgentVoiceCleanupRecoversExpiredLeaseAndDeletingOwners(
 	t *testing.T,
 ) {
@@ -518,6 +679,77 @@ SELECT
 			audioStatus,
 			messageContent,
 		)
+	}
+}
+
+func waitForAdvisoryLockWaiter(
+	t *testing.T,
+	ctx context.Context,
+	pool interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	},
+	key int64,
+) {
+	t.Helper()
+	waitForPostgresCondition(t, ctx, func() (bool, error) {
+		var waiting bool
+		err := pool.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM pg_locks
+    WHERE locktype = 'advisory'
+      AND NOT granted
+      AND classid = 0
+      AND objid = $1
+)`,
+			key,
+		).Scan(&waiting)
+		return waiting, err
+	})
+}
+
+func waitForPostgresLockWaiters(
+	t *testing.T,
+	ctx context.Context,
+	pool interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	},
+	minimum int,
+) {
+	t.Helper()
+	waitForPostgresCondition(t, ctx, func() (bool, error) {
+		var count int
+		err := pool.QueryRow(ctx, `
+SELECT COUNT(*)
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND pid <> pg_backend_pid()
+  AND wait_event_type = 'Lock'`).Scan(&count)
+		return count >= minimum, err
+	})
+}
+
+func waitForPostgresCondition(
+	t *testing.T,
+	ctx context.Context,
+	check func() (bool, error),
+) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		ok, err := check()
+		if err != nil {
+			t.Fatalf("query PostgreSQL lock state: %v", err)
+		}
+		if ok {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for PostgreSQL lock state: %v", ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }
 

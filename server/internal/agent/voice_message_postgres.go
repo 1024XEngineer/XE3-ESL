@@ -1102,9 +1102,29 @@ func (r *PostgresRepository) BeginMessageAudioDeletion(
 		return MessageAudio{}, ErrRepository
 	}
 	defer rollback(tx)
+	candidateID, err := findMessageAudioCandidateID(
+		ctx,
+		tx,
+		ownerID,
+		audioID,
+	)
+	if err != nil {
+		return MessageAudio{}, err
+	}
+	if _, err := findVoiceCandidateForUpdate(
+		ctx,
+		tx,
+		ownerID,
+		candidateID,
+	); err != nil {
+		return MessageAudio{}, err
+	}
 	audio, err := findMessageAudioForUpdate(ctx, tx, ownerID, audioID)
 	if err != nil {
 		return MessageAudio{}, err
+	}
+	if audio.CandidateID != candidateID {
+		return MessageAudio{}, ErrRepository
 	}
 	if audio.Status == MessageAudioDeleted {
 		if err := tx.Commit(ctx); err != nil {
@@ -1170,9 +1190,29 @@ func (r *PostgresRepository) FinishMessageAudioDeletion(
 		return MessageAudio{}, ErrRepository
 	}
 	defer rollback(tx)
+	candidateID, err := findMessageAudioCandidateID(
+		ctx,
+		tx,
+		ownerID,
+		audioID,
+	)
+	if err != nil {
+		return MessageAudio{}, err
+	}
+	if _, err := findVoiceCandidateForUpdate(
+		ctx,
+		tx,
+		ownerID,
+		candidateID,
+	); err != nil {
+		return MessageAudio{}, err
+	}
 	audio, err := findMessageAudioForUpdate(ctx, tx, ownerID, audioID)
 	if err != nil {
 		return MessageAudio{}, err
+	}
+	if audio.CandidateID != candidateID {
+		return MessageAudio{}, ErrRepository
 	}
 	if audio.Status == MessageAudioDeleted {
 		if err := tx.Commit(ctx); err != nil {
@@ -1482,6 +1522,26 @@ FOR UPDATE`,
 		return MessageAudio{}, mapVoicePostgresError(err)
 	}
 	return audio, nil
+}
+
+func findMessageAudioCandidateID(
+	ctx context.Context,
+	tx pgx.Tx,
+	ownerID string,
+	audioID string,
+) (string, error) {
+	var candidateID string
+	if err := tx.QueryRow(ctx, `
+SELECT candidate_id::text
+FROM agent_message_audios
+WHERE audio_id = $1
+  AND owner_user_id = $2`,
+		audioID,
+		ownerID,
+	).Scan(&candidateID); err != nil {
+		return "", mapVoicePostgresError(err)
+	}
+	return candidateID, nil
 }
 
 func loadVoiceConfirmation(
