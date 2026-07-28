@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18.4-bookworm@sha256:1961f96e6029a02c3812d7cb329a3b03a3ac2bb067058dec17b0f5596aca9296
+    image: pgvector/pgvector:pg18-bookworm@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-xe3_esl}
       POSTGRES_USER: ${POSTGRES_USER:-xe3_esl}
