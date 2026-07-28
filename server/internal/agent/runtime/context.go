@@ -27,6 +27,7 @@ type Run = core.Run
 type ContextMessageSource = core.ContextMessageSource
 type ContextMemorySource = core.ContextMemorySource
 type ContextManifest = core.ContextManifest
+type ToolCallRecord = core.ToolCallRecord
 type RunConfiguration = core.RunConfiguration
 type RunRepository = core.RunRepository
 type RunSubmission = core.RunSubmission
@@ -126,7 +127,11 @@ func (assembler *ContextAssembler) Assemble(
 	}
 
 	systemContent := "You are SpeakUp, an English communication coach. " +
-		"Give one concise, actionable reply and one helpful follow-up question."
+		"Give one concise, actionable reply and one helpful follow-up question. " +
+		"When internal tools are available, you may use them to look up " +
+		"practice scenarios, historical reviews, user materials, and recurring " +
+		"mistakes. Do not expose tool names, schemas, or implementation details; " +
+		"describe capabilities naturally."
 	manifest := ContextManifest{
 		RunID:                      run.ID,
 		OwnerID:                    actor.UserID,

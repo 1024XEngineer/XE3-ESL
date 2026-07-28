@@ -79,6 +79,37 @@ func TestPolicyFiltersWriteTools(t *testing.T) {
 	}
 }
 
+func TestPolicyRequiresConfirmedNameForConfirmationRisk(t *testing.T) {
+	registry, err := NewRegistry(
+		&stubTool{definition: readToolDefinition("review.search.v1")},
+		&stubTool{definition: confirmToolDefinition("scenario.create.v1")},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	definitions, err := (Policy{AllowWrites: true}).Select(registry)
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	if got, want := len(definitions), 1; got != want {
+		t.Fatalf("len(Select()) = %d, want %d", got, want)
+	}
+	if got, want := definitions[0].Name, "review.search.v1"; got != want {
+		t.Fatalf("selected tool = %q, want %q", got, want)
+	}
+
+	definitions, err = (Policy{
+		AllowWrites:    true,
+		ConfirmedNames: []string{"scenario.create.v1"},
+	}).Select(registry)
+	if err != nil {
+		t.Fatalf("Select() confirmed error = %v", err)
+	}
+	if got, want := len(definitions), 2; got != want {
+		t.Fatalf("len(Select() confirmed) = %d, want %d", got, want)
+	}
+}
+
 func TestExecutorValidatesAndRunsTool(t *testing.T) {
 	tool := &stubTool{
 		definition: readToolDefinition("review.search.v1"),
@@ -199,6 +230,12 @@ func writeToolDefinition(name string) Definition {
 		ReadOnly: false,
 		Risk:     RiskLowRiskWrite,
 	}
+}
+
+func confirmToolDefinition(name string) Definition {
+	definition := writeToolDefinition(name)
+	definition.Risk = RiskRequiresConfirm
+	return definition
 }
 
 func validCallContext() CallContext {

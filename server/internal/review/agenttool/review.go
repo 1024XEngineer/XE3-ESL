@@ -48,7 +48,7 @@ func NewReviewSearchTool(port ReviewPort) ReviewSearchTool {
 func (tool ReviewSearchTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewSearchToolName,
-		Description: "Search the user's historical practice reviews or interview evaluations.",
+		Description: "Search the user's historical practice reviews or interview evaluations. Use when the user asks for 上次评价, 复盘, feedback, review, 面试表现, or previous practice results. Do not use for immediate grammar correction of the current sentence.",
 		InputSchema: ObjectSchema(map[string]any{
 			"query":       StringSchema("What review or evaluation the user wants to find."),
 			"scenario_id": StringSchema("Optional scenario id to restrict the search."),
@@ -104,7 +104,7 @@ func NewReviewGetTool(port ReviewPort) ReviewGetTool {
 func (tool ReviewGetTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewGetToolName,
-		Description: "Read one structured review or interview evaluation by id.",
+		Description: "Read one structured review or interview evaluation by id after a review search or when the user asks to expand a specific review, such as 第一条评价 or details of a previous feedback item.",
 		InputSchema: ObjectSchema(map[string]any{
 			"review_id": StringSchema("Review id to read."),
 		}, []string{"review_id"}),

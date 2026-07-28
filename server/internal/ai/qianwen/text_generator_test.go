@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -80,6 +81,9 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 	if _, exists := rawPayload["max_completion_tokens"]; exists {
 		t.Fatal("request used max_completion_tokens, which the compatibility endpoint ignores")
 	}
+	if _, exists := rawPayload["tools"]; exists {
+		t.Fatal("plain text request unexpectedly included tools")
+	}
 	if _, exists := rawPayload["response_format"]; exists {
 		t.Fatal("default request unexpectedly selected a response format")
 	}
@@ -108,7 +112,7 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 			TotalTokens:  16,
 		},
 	}
-	if result != expected {
+	if !reflect.DeepEqual(result, expected) {
 		t.Fatalf("result = %#v, want %#v", result, expected)
 	}
 }
@@ -142,6 +146,255 @@ func TestGenerateRequestsJSONObjectResponse(t *testing.T) {
 	if received.ResponseFormat == nil ||
 		received.ResponseFormat.Type != "json_object" {
 		t.Fatalf("response format = %#v", received.ResponseFormat)
+	}
+}
+
+func TestGenerateMapsToolCallingContract(t *testing.T) {
+	t.Parallel()
+
+	var received chatCompletionRequest
+	var rawPayload map[string]json.RawMessage
+	doer := doerFunc(func(request *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if err := json.Unmarshal(body, &received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if err := json.Unmarshal(body, &rawPayload); err != nil {
+			t.Fatalf("decode raw request: %v", err)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-tools-1",
+			"model":"qwen3.5-flash",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{
+					"role":"assistant",
+					"content":null,
+					"tool_calls":[
+						{
+							"id":"call-1",
+							"type":"function",
+							"index":0,
+							"function":{
+								"name":"scenario_create_v1",
+								"arguments":"{\"type\":\"interview\"}"
+							}
+						},
+						{
+							"id":"call-2",
+							"type":"function",
+							"index":1,
+							"function":{
+								"name":"material_search_v1",
+								"arguments":"{\"kind\":\"resume\"}"
+							}
+						}
+					]
+				}
+			}],
+			"usage":{"prompt_tokens":20,"completion_tokens":8,"total_tokens":28}
+		}`), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+	request := ai.TextRequest{
+		Messages: []ai.TextMessage{{
+			Role:    ai.TextRoleUser,
+			Content: "Prepare for my interview using my resume.",
+		}},
+		Tools: []ai.ToolDefinition{
+			{
+				Name:        "scenario.create.v1",
+				Description: "Create a confirmed preparation scenario.",
+				InputSchema: map[string]any{"type": "object"},
+			},
+			{
+				Name:        "material.search.v1",
+				Description: "Search resume and job description material.",
+				InputSchema: map[string]any{"type": "object"},
+			},
+		},
+		ToolChoice: ai.ToolChoice{
+			Mode: ai.ToolChoiceSpecific,
+			Name: "material.search.v1",
+		},
+	}
+
+	result, err := generator.Generate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if len(received.Tools) != 2 ||
+		received.Tools[0].Type != "function" ||
+		received.Tools[0].Function.Name != "scenario_create_v1" ||
+		received.Tools[1].Function.Name != "material_search_v1" {
+		t.Fatalf("unexpected provider tools: %#v", received.Tools)
+	}
+	if got := string(rawPayload["tool_choice"]); got !=
+		`{"type":"function","function":{"name":"material_search_v1"}}` {
+		t.Fatalf("tool_choice = %s", got)
+	}
+	expectedCalls := []ai.ToolCall{
+		{
+			ID:        "call-1",
+			Name:      "scenario.create.v1",
+			Arguments: json.RawMessage(`{"type":"interview"}`),
+		},
+		{
+			ID:        "call-2",
+			Name:      "material.search.v1",
+			Arguments: json.RawMessage(`{"kind":"resume"}`),
+		},
+	}
+	if result.Content != "" ||
+		result.FinishReason != "tool_calls" ||
+		!reflect.DeepEqual(result.ToolCalls, expectedCalls) {
+		t.Fatalf("unexpected tool result: %#v", result)
+	}
+}
+
+func TestGenerateParsesSingleToolCall(t *testing.T) {
+	t.Parallel()
+
+	doer := doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-tools-single",
+			"model":"qwen3.5-flash",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{
+					"role":"assistant",
+					"tool_calls":[{
+						"id":"call-review-1",
+						"type":"function",
+						"function":{
+							"name":"review_search_v1",
+							"arguments":"{\"limit\":1}"
+						}
+					}]
+				}
+			}],
+			"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}
+		}`), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+
+	result, err := generator.Generate(context.Background(), toolRequest())
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	expected := []ai.ToolCall{{
+		ID:        "call-review-1",
+		Name:      "review.search.v1",
+		Arguments: json.RawMessage(`{"limit":1}`),
+	}}
+	if !reflect.DeepEqual(result.ToolCalls, expected) {
+		t.Fatalf("tool calls = %#v, want %#v", result.ToolCalls, expected)
+	}
+}
+
+func TestGenerateNormalizesStopFinishReasonWithToolCalls(t *testing.T) {
+	t.Parallel()
+
+	doer := doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-tools-stop",
+			"model":"qwen3.5-flash",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{
+					"role":"assistant",
+					"content":"",
+					"tool_calls":[{
+						"id":"call-review-stop",
+						"type":"function",
+						"function":{
+							"name":"review_search_v1",
+							"arguments":"{\"query\":\"PM interview\"}"
+						}
+					}]
+				}
+			}],
+			"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}
+		}`), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+
+	result, err := generator.Generate(context.Background(), toolRequest())
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if result.FinishReason != "tool_calls" ||
+		len(result.ToolCalls) != 1 ||
+		result.ToolCalls[0].Name != "review.search.v1" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestGenerateMapsAssistantCallsAndToolResultsBackToProvider(t *testing.T) {
+	t.Parallel()
+
+	var received chatCompletionRequest
+	doer := doerFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-tools-2",
+			"model":"qwen3.5-flash",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"I found one review."}
+			}],
+			"usage":{"prompt_tokens":24,"completion_tokens":5,"total_tokens":29}
+		}`), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+	request := ai.TextRequest{
+		Messages: []ai.TextMessage{
+			{Role: ai.TextRoleUser, Content: "Find my last review."},
+			{
+				Role: ai.TextRoleAssistant,
+				ToolCalls: []ai.ToolCall{{
+					ID:        "call-review-1",
+					Name:      "review.search.v1",
+					Arguments: json.RawMessage(`{"limit":1}`),
+				}},
+			},
+			{
+				Role:       ai.TextRoleTool,
+				Content:    `{"reviews":[{"id":"review-1"}]}`,
+				ToolCallID: "call-review-1",
+			},
+		},
+		Tools: []ai.ToolDefinition{{
+			Name:        "review.search.v1",
+			Description: "Search review summaries.",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+	}
+
+	if _, err := generator.Generate(context.Background(), request); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if len(received.Messages) != 3 {
+		t.Fatalf("provider messages = %d, want 3", len(received.Messages))
+	}
+	assistantMessage := received.Messages[1]
+	if assistantMessage.Content != "" ||
+		len(assistantMessage.ToolCalls) != 1 ||
+		assistantMessage.ToolCalls[0].ID != "call-review-1" ||
+		assistantMessage.ToolCalls[0].Index != 0 ||
+		assistantMessage.ToolCalls[0].Function.Name != "review_search_v1" {
+		t.Fatalf("unexpected assistant tool message: %#v", assistantMessage)
+	}
+	toolMessage := received.Messages[2]
+	if toolMessage.Role != "tool" ||
+		toolMessage.ToolCallID != "call-review-1" ||
+		toolMessage.Content != request.Messages[2].Content {
+		t.Fatalf("unexpected tool result message: %#v", toolMessage)
 	}
 }
 
@@ -394,6 +647,91 @@ func TestGenerateRejectsInvalidResponses(t *testing.T) {
 	}
 }
 
+func TestGenerateRejectsInvalidToolResponses(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"unknown tool": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"tool_calls","message":{
+				"role":"assistant","tool_calls":[{
+					"id":"call-1","type":"function",
+					"function":{"name":"unknown_tool","arguments":"{}"}
+				}]
+			}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`,
+		"missing call ID": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"tool_calls","message":{
+				"role":"assistant","tool_calls":[{
+					"id":"","type":"function",
+					"function":{"name":"review_search_v1","arguments":"{}"}
+				}]
+			}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`,
+		"malformed arguments": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"tool_calls","message":{
+				"role":"assistant","tool_calls":[{
+					"id":"call-1","type":"function",
+					"function":{"name":"review_search_v1","arguments":"{"}
+				}]
+			}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`,
+		"non-object arguments": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"tool_calls","message":{
+				"role":"assistant","tool_calls":[{
+					"id":"call-1","type":"function",
+					"function":{"name":"review_search_v1","arguments":"[]"}
+				}]
+			}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`,
+		"duplicate call IDs": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"tool_calls","message":{
+				"role":"assistant","tool_calls":[
+					{
+						"id":"call-1","type":"function",
+						"function":{"name":"review_search_v1","arguments":"{}"}
+					},
+					{
+						"id":"call-1","type":"function",
+						"function":{"name":"review_search_v1","arguments":"{}"}
+					}
+				]
+			}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`,
+		"unsupported tool type": `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"tool_calls","message":{
+				"role":"assistant","tool_calls":[{
+					"id":"call-1","type":"web_search",
+					"function":{"name":"review_search_v1","arguments":"{}"}
+				}]
+			}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`,
+	}
+	for name, body := range tests {
+		body := body
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			generator := mustGenerator(t, doerFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusOK, body), nil
+			}), "test-api-key")
+
+			_, err := generator.Generate(context.Background(), toolRequest())
+			assertGenerationErrorKind(t, err, ai.ErrorInvalidResponse, true)
+		})
+	}
+}
+
 func TestGenerateRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
 	t.Parallel()
 
@@ -408,6 +746,68 @@ func TestGenerateRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatalf("provider calls = %d, want zero", calls.Load())
 	}
+}
+
+func TestGenerateRejectsProviderToolNameCollisionsBeforeProviderCall(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	generator := mustGenerator(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return jsonResponse(http.StatusOK, `{}`), nil
+	}), "test-api-key")
+	request := validRequest()
+	request.Tools = []ai.ToolDefinition{
+		{
+			Name:        "review.search.v1",
+			Description: "Search reviews.",
+			InputSchema: map[string]any{},
+		},
+		{
+			Name:        "review_search_v1",
+			Description: "Colliding provider name.",
+			InputSchema: map[string]any{},
+		},
+	}
+
+	_, err := generator.Generate(context.Background(), request)
+	assertGenerationErrorKind(t, err, ai.ErrorInvalidRequest, false)
+	if calls.Load() != 0 {
+		t.Fatalf("provider calls = %d, want zero", calls.Load())
+	}
+}
+
+func TestGenerateRejectsHistoricalToolNotExposedThisTurn(t *testing.T) {
+	t.Parallel()
+
+	generator := mustGenerator(t, doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-1","model":"qwen3.5-flash",
+			"choices":[{"finish_reason":"tool_calls","message":{
+				"role":"assistant","tool_calls":[{
+					"id":"call-2","type":"function",
+					"function":{"name":"material_search_v1","arguments":"{}"}
+				}]
+			}}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`), nil
+	}), "test-api-key")
+	request := toolRequest()
+	request.Messages = []ai.TextMessage{
+		{Role: ai.TextRoleUser, Content: "Use my resume."},
+		{
+			Role: ai.TextRoleAssistant,
+			ToolCalls: []ai.ToolCall{{
+				ID:        "call-1",
+				Name:      "material.search.v1",
+				Arguments: json.RawMessage(`{}`),
+			}},
+		},
+		{Role: ai.TextRoleTool, Content: `{}`, ToolCallID: "call-1"},
+	}
+
+	_, err := generator.Generate(context.Background(), request)
+	assertGenerationErrorKind(t, err, ai.ErrorInvalidResponse, true)
 }
 
 func TestGenerateRejectsMissingHTTPResponseWithoutPanicking(t *testing.T) {
@@ -717,6 +1117,16 @@ func validRequest() ai.TextRequest {
 		Role:    ai.TextRoleUser,
 		Content: "question",
 	}}}
+}
+
+func toolRequest() ai.TextRequest {
+	request := validRequest()
+	request.Tools = []ai.ToolDefinition{{
+		Name:        "review.search.v1",
+		Description: "Search review summaries.",
+		InputSchema: map[string]any{"type": "object"},
+	}}
+	return request
 }
 
 func jsonResponse(statusCode int, body string) *http.Response {

@@ -130,6 +130,10 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	runOptions, err := agentRunServiceOptions()
+	if err != nil {
+		return nil, err
+	}
 	runRepository := core.RunRepository(agentRepository)
 	if memoryExtractionNotifier != nil {
 		runRepository = &runCompletionNotifyingRepository{
@@ -142,6 +146,7 @@ func buildIdentityAgentComposition(
 		contextAssembler,
 		generator,
 		runConfiguration,
+		runOptions...,
 	)
 	if err != nil {
 		return nil, err

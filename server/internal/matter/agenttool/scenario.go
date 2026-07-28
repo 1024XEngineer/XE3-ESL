@@ -50,14 +50,14 @@ func NewScenarioCreateTool(port ScenarioPort) ScenarioCreateTool {
 func (tool ScenarioCreateTool) Definition() Definition {
 	return Definition{
 		Name:        ScenarioCreateToolName,
-		Description: "Create a user's real-world interview, meeting, client, or speaking scenario.",
+		Description: "Create a user's real-world interview, meeting, client, presentation, or speaking scenario. Use when the user explicitly wants to prepare a new 面试, 会议, 客户沟通, 演讲, or 场景. Do not use for simple translation, grammar, or wording help.",
 		InputSchema: ObjectSchema(map[string]any{
 			"type":  StringSchema("Scenario type such as interview, meeting, client, presentation, or speaking."),
 			"title": StringSchema("Short user-facing scenario title."),
 			"goal":  StringSchema("What the user wants to prepare or improve."),
 		}, []string{"type"}),
 		ReadOnly: false,
-		Risk:     RiskLowRiskWrite,
+		Risk:     RiskRequiresConfirm,
 	}
 }
 
@@ -94,7 +94,7 @@ func NewScenarioSearchTool(port ScenarioPort) ScenarioSearchTool {
 func (tool ScenarioSearchTool) Definition() Definition {
 	return Definition{
 		Name:        ScenarioSearchToolName,
-		Description: "Search the user's existing scenarios when the current scenario is ambiguous.",
+		Description: "Search the user's existing scenarios when the current scenario is ambiguous. Use for 上次那个面试, 继续准备, previous interview, existing meeting, or when the user refers to an earlier 场景. Do not create a new scenario with this tool.",
 		InputSchema: ObjectSchema(map[string]any{
 			"query": StringSchema("User phrase describing the scenario to find."),
 			"limit": map[string]any{

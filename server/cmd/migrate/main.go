@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	platformmigration "github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 )
 
@@ -52,6 +53,10 @@ type migrationRunner interface {
 }
 
 func main() {
+	if err := config.LoadDotEnvUpwards(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "load .env failed: %v\n", err)
+		os.Exit(1)
+	}
 	if err := execute(
 		os.Args[1:],
 		os.Getenv("DATABASE_URL"),

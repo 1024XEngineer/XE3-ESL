@@ -3,6 +3,7 @@ package fake
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
@@ -32,7 +33,7 @@ func TestTextGeneratorReturnsDeterministicResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second generation failed: %v", err)
 	}
-	if first != expected || second != expected {
+	if !reflect.DeepEqual(first, expected) || !reflect.DeepEqual(second, expected) {
 		t.Fatalf("fake result changed: first=%#v second=%#v", first, second)
 	}
 }

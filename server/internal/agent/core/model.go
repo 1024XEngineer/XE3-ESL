@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
@@ -127,6 +128,40 @@ type Run struct {
 	UpdatedAt            time.Time
 }
 
+type ToolCallStatus string
+
+const (
+	ToolCallStatusProposed  ToolCallStatus = "proposed"
+	ToolCallStatusRunning   ToolCallStatus = "running"
+	ToolCallStatusSucceeded ToolCallStatus = "succeeded"
+	ToolCallStatusFailed    ToolCallStatus = "failed"
+	ToolCallStatusRejected  ToolCallStatus = "rejected"
+)
+
+type ToolCallRecord struct {
+	ID            string
+	RunID         string
+	OwnerID       string
+	ThreadID      string
+	Name          string
+	SchemaVersion string
+	Input         json.RawMessage
+	Status        ToolCallStatus
+	Result        json.RawMessage
+	ErrorCategory string
+	RequestID     string
+	SourceRefs    []ToolSourceRef
+	ProposedAt    time.Time
+	StartedAt     time.Time
+	CompletedAt   time.Time
+	UpdatedAt     time.Time
+}
+
+type ToolSourceRef struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
 type ContextMessageSource struct {
 	MessageID string      `json:"message_id"`
 	Sequence  int64       `json:"sequence"`
@@ -166,7 +201,19 @@ type ContextManifest struct {
 	RequestedProvider          string
 	RequestedModel             string
 	MaxOutputTokens            int
+	ExposedTools               []string
+	BlockedTools               []ContextBlockedTool
+	IntentMode                 string
+	IntentReasonCode           string
+	IntentGuardVersion         string
+	ToolPolicyVersion          string
+	ToolSchemaHashes           map[string]string
 	CreatedAt                  time.Time
+}
+
+type ContextBlockedTool struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 type RunConfiguration struct {
@@ -357,6 +404,42 @@ type RunRepository interface {
 		ownerID string,
 		runID string,
 	) (ContextManifest, error)
+	SaveContextToolSnapshot(
+		ctx context.Context,
+		manifest ContextManifest,
+	) (ContextManifest, error)
+	SaveToolCallProposed(
+		ctx context.Context,
+		record ToolCallRecord,
+	) (ToolCallRecord, error)
+	MarkToolCallRunning(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+		toolCallID string,
+		requestID string,
+	) (ToolCallRecord, error)
+	MarkToolCallSucceeded(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+		toolCallID string,
+		result json.RawMessage,
+		sourceRefs []ToolSourceRef,
+	) (ToolCallRecord, error)
+	MarkToolCallFailed(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+		toolCallID string,
+		status ToolCallStatus,
+		errorCategory string,
+	) (ToolCallRecord, error)
+	ListToolCalls(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+	) ([]ToolCallRecord, error)
 	CompleteRun(
 		ctx context.Context,
 		ownerID string,
@@ -400,6 +483,11 @@ type RunApplication interface {
 		actor requestcontext.Actor,
 		runID string,
 	) (ContextManifest, error)
+	GetToolCalls(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		runID string,
+	) ([]ToolCallRecord, error)
 }
 
 type IDGenerator interface {

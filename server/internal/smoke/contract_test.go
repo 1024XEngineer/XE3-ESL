@@ -103,6 +103,106 @@ func TestStrictRequestAndIdempotencyKeyValidation(t *testing.T) {
 	}
 }
 
+func TestAgentToolCapabilityDisplay(t *testing.T) {
+	client := newContractClient(t)
+	body := client.must(
+		t,
+		http.MethodGet,
+		"/v1/agent-tools",
+		"",
+		nil,
+		http.StatusOK,
+	)
+	var response struct {
+		Tools []struct {
+			Name          string   `json:"name"`
+			Risk          string   `json:"risk"`
+			ReadOnly      bool     `json:"read_only"`
+			SchemaFields  []string `json:"schema_fields"`
+			RequiredNames []string `json:"required_names"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode agent tools: %v", err)
+	}
+	if got, want := len(response.Tools), 6; got != want {
+		t.Fatalf("tool count = %d, want %d", got, want)
+	}
+	if response.Tools[0].Name != "material.search.v1" ||
+		response.Tools[4].Name != "scenario.create.v1" ||
+		response.Tools[4].Risk != "requires_confirm" ||
+		response.Tools[4].ReadOnly {
+		t.Fatalf("unexpected tool summaries: %#v", response.Tools)
+	}
+}
+
+func TestMockIdentityRoutesSupportLocalFlutterLogin(t *testing.T) {
+	client := newContractClient(t)
+	loginBody := client.must(
+		t,
+		http.MethodPost,
+		"/v1/auth/login",
+		`{"email":"Learner.QQ@example.com","password":"local password"}`,
+		nil,
+		http.StatusOK,
+	)
+	var login struct {
+		User struct {
+			ID    string `json:"user_id"`
+			Email string `json:"email"`
+		} `json:"user"`
+		SessionToken string `json:"session_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresAt    string `json:"expires_at"`
+	}
+	if err := json.Unmarshal(loginBody, &login); err != nil {
+		t.Fatalf("decode login: %v", err)
+	}
+	if login.User.ID == "" ||
+		login.User.Email != "learner.qq@example.com" ||
+		!strings.HasPrefix(login.SessionToken, "sess_mock_") ||
+		login.TokenType != "Bearer" {
+		t.Fatalf("unexpected login response: %#v", login)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, login.ExpiresAt); err != nil {
+		t.Fatalf("expires_at is not RFC3339Nano: %v", err)
+	}
+	me := client.must(
+		t,
+		http.MethodGet,
+		"/v1/me",
+		"",
+		map[string]string{"Authorization": "Bearer " + login.SessionToken},
+		http.StatusOK,
+	)
+	var user struct {
+		ID    string `json:"user_id"`
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(me, &user); err != nil {
+		t.Fatalf("decode current user: %v", err)
+	}
+	if user != login.User {
+		t.Fatalf("current user = %#v, want %#v", user, login.User)
+	}
+	client.must(
+		t,
+		http.MethodPost,
+		"/v1/auth/logout",
+		"",
+		map[string]string{"Authorization": "Bearer " + login.SessionToken},
+		http.StatusNoContent,
+	)
+	status, body := client.request(
+		t,
+		http.MethodGet,
+		"/v1/me",
+		"",
+		map[string]string{"Authorization": "Bearer " + login.SessionToken},
+	)
+	assertError(t, status, body, http.StatusUnauthorized, "authentication_required")
+}
+
 func TestIdempotencyReplayScopeAndNoRepeatedSideEffects(t *testing.T) {
 	client := newContractClient(t)
 
