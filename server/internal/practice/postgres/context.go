@@ -161,6 +161,8 @@ func (r *Repository) CreatePlan(
 		return persistence.Plan{}, false,
 			classifyContextWriteError("insert practice plan", err)
 	}
+	plan.CreatedAt = plan.CreatedAt.UTC()
+	plan.UpdatedAt = plan.UpdatedAt.UTC()
 	if err := saveContextIdempotency(
 		ctx,
 		tx,
@@ -346,6 +348,7 @@ func (r *Repository) CreateContextSession(
 		return persistence.ContextSessionBootstrap{}, false,
 			fmt.Errorf("lock preparation snapshot: %w", err)
 	}
+	storedPreparation.CreatedAt = storedPreparation.CreatedAt.UTC()
 	if resumeSnapshot.Valid {
 		storedPreparation.ResumeSnapshot = resumeSnapshot.String
 	}
@@ -394,6 +397,7 @@ func (r *Repository) CreateContextSession(
 		return persistence.ContextSessionBootstrap{}, false,
 			classifyContextWriteError("insert context session", err)
 	}
+	session.CreatedAt = session.CreatedAt.UTC()
 
 	snapshot := cloneContextSessionSnapshot(command.Snapshot)
 	snapshot.ID = command.SnapshotID
@@ -877,7 +881,7 @@ func (r *Repository) ActivateContextSession(
 			return persistence.ContextSessionBootstrap{},
 				persistence.ErrConflict
 		}
-		value := startedAt.Time
+		value := startedAt.Time.UTC()
 		session.Status = persistence.ContextSessionProgress
 		session.Version++
 		session.StartedAt = &value
@@ -1172,6 +1176,8 @@ func scanContextPlan(row contextRowScanner) (persistence.Plan, error) {
 	if err != nil {
 		return persistence.Plan{}, fmt.Errorf("read practice plan: %w", err)
 	}
+	plan.CreatedAt = plan.CreatedAt.UTC()
+	plan.UpdatedAt = plan.UpdatedAt.UTC()
 	if err := json.Unmarshal(selectedRoles, &plan.SelectedRoleIDs); err != nil ||
 		!validUniqueContextIDs(plan.SelectedRoleIDs) {
 		return persistence.Plan{}, persistence.ErrConflict
@@ -1218,12 +1224,13 @@ func scanContextSession(row contextRowScanner) (persistence.ContextSession, erro
 		return persistence.ContextSession{},
 			fmt.Errorf("read context Session: %w", err)
 	}
+	session.CreatedAt = session.CreatedAt.UTC()
 	if startedAt.Valid {
-		value := startedAt.Time
+		value := startedAt.Time.UTC()
 		session.StartedAt = &value
 	}
 	if completedAt.Valid {
-		value := completedAt.Time
+		value := completedAt.Time.UTC()
 		session.EndedAt = &value
 	}
 	if endReason.Valid {
@@ -1260,12 +1267,13 @@ func scanResolvedContextSession(
 		return persistence.ContextSession{}, nil,
 			fmt.Errorf("scan resolved context Session: %w", err)
 	}
+	session.CreatedAt = session.CreatedAt.UTC()
 	if startedAt.Valid {
-		value := startedAt.Time
+		value := startedAt.Time.UTC()
 		session.StartedAt = &value
 	}
 	if completedAt.Valid {
-		value := completedAt.Time
+		value := completedAt.Time.UTC()
 		session.EndedAt = &value
 	}
 	if endReason.Valid {

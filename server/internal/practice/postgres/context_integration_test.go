@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -37,7 +38,9 @@ func TestContextRepositoryPersistsExactRecoverableAggregate(t *testing.T) {
 	if plan.AgentThreadID != owner.ThreadID ||
 		plan.MatterID != owner.MatterID ||
 		plan.Status != persistence.PlanStatusReady ||
-		plan.Revision != 1 {
+		plan.Revision != 1 ||
+		plan.CreatedAt.Location() != time.UTC ||
+		plan.UpdatedAt.Location() != time.UTC {
 		t.Fatalf("persisted Plan = %+v", plan)
 	}
 	replayedPlan, found, err := repository.ReplayPlan(
@@ -45,8 +48,12 @@ func TestContextRepositoryPersistsExactRecoverableAggregate(t *testing.T) {
 		owner.Actor,
 		planCommand.Intent,
 	)
-	if err != nil || !found || replayedPlan.ID != plan.ID {
+	if err != nil || !found || !reflect.DeepEqual(replayedPlan, plan) {
 		t.Fatalf("ReplayPlan = (%+v, %t, %v)", replayedPlan, found, err)
+	}
+	storedPlan, err := repository.GetPlan(ctx, owner.Actor, plan.ID)
+	if err != nil || !reflect.DeepEqual(storedPlan, plan) {
+		t.Fatalf("GetPlan = (%+v, %v), want %+v", storedPlan, err, plan)
 	}
 	differentIntent := planCommand.Intent
 	differentIntent.PayloadFingerprint = sha256.Sum256([]byte("different"))
