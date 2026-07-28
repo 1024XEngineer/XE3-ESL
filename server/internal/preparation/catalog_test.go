@@ -10,8 +10,8 @@ func TestBuiltinCatalogExposesAllMVPScenariosAcrossFourFamilies(t *testing.T) {
 	catalog := mustBuiltinCatalog(t)
 
 	scenarios := catalog.ListActiveScenarios()
-	if len(scenarios) != 4 {
-		t.Fatalf("ListActiveScenarios length=%d, want 4", len(scenarios))
+	if len(scenarios) != 31 {
+		t.Fatalf("ListActiveScenarios length=%d, want 31", len(scenarios))
 	}
 	familyCounts := map[ScenarioFamily]int{}
 	byID := make(map[string]ScenarioDefinition, len(scenarios))
@@ -20,10 +20,10 @@ func TestBuiltinCatalogExposesAllMVPScenariosAcrossFourFamilies(t *testing.T) {
 		byID[scenario.ID] = scenario
 	}
 	wantFamilyCounts := map[ScenarioFamily]int{
-		ScenarioFamilyInterview: 1,
-		ScenarioFamilyExam:      1,
-		ScenarioFamilyWorkplace: 1,
-		ScenarioFamilyDaily:     1,
+		ScenarioFamilyInterview: 7,
+		ScenarioFamilyExam:      5,
+		ScenarioFamilyWorkplace: 8,
+		ScenarioFamilyDaily:     11,
 	}
 	if !reflect.DeepEqual(familyCounts, wantFamilyCounts) {
 		t.Fatalf("family counts=%v, want %v", familyCounts, wantFamilyCounts)

@@ -45,7 +45,7 @@ func TestCatalogHTTPRoutesReturnCanonicalStableResponses(t *testing.T) {
 	if err := json.Unmarshal(listResponse.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if len(list.Scenarios) != 4 {
+	if len(list.Scenarios) != 31 {
 		t.Fatalf("unexpected list: %#v", list)
 	}
 	listIDs := make(map[string]struct{}, len(list.Scenarios))
@@ -57,6 +57,10 @@ func TestCatalogHTTPRoutesReturnCanonicalStableResponses(t *testing.T) {
 		IELTSSpeakingPart2ScenarioID,
 		WorkplaceProgressRiskScenarioID,
 		DailyHotelCheckinScenarioID,
+		"scn_interview_self_introduction",
+		"scn_ielts_speaking_full",
+		"scn_workplace_custom",
+		"scn_daily_custom",
 	} {
 		if _, ok := listIDs[id]; !ok {
 			t.Fatalf("list is missing %q", id)
@@ -77,8 +81,8 @@ func TestCatalogHTTPRoutesReturnCanonicalStableResponses(t *testing.T) {
 		}
 		summaries[id] = summary
 	}
-	if summaries[ProgrammerInterviewScenarioID] ==
-		summaries[IELTSSpeakingPart2ScenarioID] {
+	if summaries["scn_interview_self_introduction"] ==
+		summaries["scn_interview_recruiter_screening"] {
 		t.Fatalf("distinct scenarios share one summary: %#v", summaries)
 	}
 
