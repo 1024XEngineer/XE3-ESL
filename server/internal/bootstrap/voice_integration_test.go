@@ -29,8 +29,13 @@ import (
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var testReviewHistoryCursorKey = []byte(
+	"0123456789abcdef0123456789abcdef",
 )
 
 func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
@@ -64,6 +69,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			AudioStagedTTL:          time.Hour,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
+			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 		},
 	)
 	if err != nil {
@@ -540,6 +546,106 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			"conversation-turn:evidence-v1" {
 		t.Fatalf("formal Review lost source identity: %#v", reviewResult)
 	}
+	var reviewOwnerID string
+	var reviewCreatedAt time.Time
+	if err := pool.QueryRow(context.Background(), `
+		SELECT owner_user_id::text, created_at
+		FROM reviews
+		WHERE id = $1
+	`, reviewID).Scan(&reviewOwnerID, &reviewCreatedAt); err != nil {
+		t.Fatalf("read formal Review history key: %v", err)
+	}
+	olderHistoryReview := completeBootstrapHistoryReview(
+		t,
+		pool,
+		reviewOwnerID,
+		"restart-cursor-older",
+	)
+	legacyHistorySummary := strings.Repeat("legacy summary ", 1100)
+	legacyHistoryResult := *olderHistoryReview.Result
+	legacyHistoryResult.Summary = legacyHistorySummary
+	legacyHistoryPayload, err := json.Marshal(legacyHistoryResult)
+	if err != nil {
+		t.Fatalf("marshal legacy HTTP Review: %v", err)
+	}
+	if len(legacyHistoryPayload) <= 12*1024 {
+		t.Fatalf(
+			"legacy HTTP Review bytes = %d, want over 12 KiB",
+			len(legacyHistoryPayload),
+		)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE reviews SET result = $1::jsonb WHERE id = $2`,
+		legacyHistoryPayload,
+		olderHistoryReview.ID,
+	); err != nil {
+		t.Fatalf("stage legacy HTTP Review: %v", err)
+	}
+	legacyHistoryItem := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodGet,
+		"/v1/formal-reviews/"+olderHistoryReview.ID,
+		"",
+		"",
+		http.StatusOK,
+	)
+	legacyHistoryHTTPResult, ok :=
+		legacyHistoryItem["result"].(map[string]any)
+	if !ok ||
+		legacyHistoryHTTPResult["summary"] != legacyHistorySummary {
+		t.Fatalf(
+			"legacy HTTP Review result = %#v",
+			legacyHistoryItem,
+		)
+	}
+	oldestHistoryReview := completeBootstrapHistoryReview(
+		t,
+		pool,
+		reviewOwnerID,
+		"restart-cursor-oldest",
+	)
+	for index, item := range []review.FormalReview{
+		olderHistoryReview,
+		oldestHistoryReview,
+	} {
+		if _, err := pool.Exec(
+			context.Background(),
+			`UPDATE reviews SET created_at = $1 WHERE id = $2`,
+			reviewCreatedAt.Add(-time.Duration(index+1)*time.Minute),
+			item.ID,
+		); err != nil {
+			t.Fatalf("set restart cursor Review %d key: %v", index, err)
+		}
+	}
+	historyResult := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodGet,
+		"/v1/formal-reviews?limit=1",
+		"",
+		"",
+		http.StatusOK,
+	)
+	historyItems, ok := historyResult["items"].([]any)
+	if !ok || len(historyItems) != 1 {
+		t.Fatalf("formal Review history items = %#v, want one", historyResult)
+	}
+	historyReview, ok := historyItems[0].(map[string]any)
+	if !ok || historyReview["review_id"] != reviewID ||
+		historyReview["source_turn_id"] != thirdTurnID {
+		t.Fatalf("formal Review history lost source identity: %#v", historyResult)
+	}
+	restartHistoryCursor, ok := historyResult["next_cursor"].(string)
+	if !ok || restartHistoryCursor == "" {
+		t.Fatalf(
+			"formal Review history omitted restart cursor: %#v",
+			historyResult,
+		)
+	}
 	var evidenceCount int
 	var matchedEvidenceCount int
 	if err := pool.QueryRow(
@@ -599,6 +705,19 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		"voice-b@example.com",
 	)
+	otherHistory := voiceJSONRequest(
+		t,
+		server.URL,
+		otherToken,
+		http.MethodGet,
+		"/v1/formal-reviews",
+		"",
+		"",
+		http.StatusOK,
+	)
+	if items, ok := otherHistory["items"].([]any); !ok || len(items) != 0 {
+		t.Fatalf("foreign user history = %#v, want empty", otherHistory)
+	}
 	for _, path := range []string{
 		"/v1/agent-threads/" + threadID + "/voice-practice-session",
 		"/v1/formal-reviews/" + reviewID,
@@ -647,6 +766,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 			AudioStagedTTL:          time.Hour,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
+			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 		},
 	)
 	if err != nil {
@@ -695,6 +815,113 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatalf(
 			"restart lost formal Review evidence identity: %#v",
 			recoveredFormalReview,
+		)
+	}
+	recoveredHistory := voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodGet,
+		"/v1/formal-reviews",
+		"",
+		"",
+		http.StatusOK,
+	)
+	recoveredHistoryItems, ok := recoveredHistory["items"].([]any)
+	if !ok || len(recoveredHistoryItems) != 3 {
+		t.Fatalf(
+			"restart lost formal Review history: %#v",
+			recoveredHistory,
+		)
+	}
+	recoveredHistoryReview, ok :=
+		recoveredHistoryItems[0].(map[string]any)
+	if !ok || recoveredHistoryReview["review_id"] != reviewID ||
+		recoveredHistoryReview["source_turn_id"] != thirdTurnID {
+		t.Fatalf(
+			"restart changed formal Review history: %#v",
+			recoveredHistory,
+		)
+	}
+	for index, reviewID := range []string{
+		olderHistoryReview.ID,
+		oldestHistoryReview.ID,
+	} {
+		item, ok := recoveredHistoryItems[index+1].(map[string]any)
+		if !ok || item["review_id"] != reviewID {
+			t.Fatalf(
+				"restart history item %d = %#v, want %s",
+				index+1,
+				recoveredHistoryItems[index+1],
+				reviewID,
+			)
+		}
+	}
+	restartedContinuation := voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodGet,
+		"/v1/formal-reviews?limit=1&cursor="+
+			url.QueryEscape(restartHistoryCursor),
+		"",
+		"",
+		http.StatusOK,
+	)
+	continuationItems, ok :=
+		restartedContinuation["items"].([]any)
+	if !ok || len(continuationItems) != 1 {
+		t.Fatalf(
+			"restart cursor continuation = %#v",
+			restartedContinuation,
+		)
+	}
+	continuedReview, ok := continuationItems[0].(map[string]any)
+	if !ok ||
+		continuedReview["review_id"] != olderHistoryReview.ID {
+		t.Fatalf(
+			"restart cursor first continuation item = %#v",
+			restartedContinuation,
+		)
+	}
+	continuedResult, ok := continuedReview["result"].(map[string]any)
+	if !ok || continuedResult["summary"] != legacyHistorySummary {
+		t.Fatalf(
+			"restart cursor lost legacy Review result: %#v",
+			restartedContinuation,
+		)
+	}
+	restartedTailCursor, ok :=
+		restartedContinuation["next_cursor"].(string)
+	if !ok || restartedTailCursor == "" {
+		t.Fatalf(
+			"restart cursor first continuation omitted tail: %#v",
+			restartedContinuation,
+		)
+	}
+	restartedTail := voiceJSONRequest(
+		t,
+		restartedServer.URL,
+		token,
+		http.MethodGet,
+		"/v1/formal-reviews?limit=1&cursor="+
+			url.QueryEscape(restartedTailCursor),
+		"",
+		"",
+		http.StatusOK,
+	)
+	tailItems, ok := restartedTail["items"].([]any)
+	if !ok || len(tailItems) != 1 {
+		t.Fatalf("restart cursor tail = %#v", restartedTail)
+	}
+	tailReview, ok := tailItems[0].(map[string]any)
+	if !ok || tailReview["review_id"] != oldestHistoryReview.ID {
+		t.Fatalf("restart cursor tail item = %#v", restartedTail)
+	}
+	if _, present := restartedTail["next_cursor"]; present {
+		t.Fatalf(
+			"restart cursor tail exposed another cursor: %#v",
+			restartedTail,
 		)
 	}
 	recoveredTurn := recovered["current_turn"].(map[string]any)
@@ -945,6 +1172,7 @@ WHERE review_id = $1`,
 			TemporaryAudio:          terminalVault,
 			ASRLease:                5 * time.Second,
 			ReviewGenerationTimeout: 2 * time.Second,
+			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 		},
 	)
 	if err != nil {
@@ -977,6 +1205,43 @@ WHERE review_id = $1`,
 			got,
 			quotaReviewCalls,
 		)
+	}
+
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE reviews
+		SET result = jsonb_set(
+			result,
+			'{summary}',
+			to_jsonb($1::text)
+		)
+		WHERE id = $2
+	`, " \t\n", reviewID); err != nil {
+		t.Fatalf("stage corrupt persisted Review for HTTP boundary: %v", err)
+	}
+	for _, path := range []string{
+		"/v1/formal-reviews/" + reviewID,
+		"/v1/formal-reviews",
+	} {
+		failure := voiceJSONRequest(
+			t,
+			terminalServer.URL,
+			token,
+			http.MethodGet,
+			path,
+			"",
+			"",
+			http.StatusInternalServerError,
+		)
+		errorObject, ok := failure["error"].(map[string]any)
+		if !ok ||
+			errorObject["code"] != "internal_error" ||
+			errorObject["retryable"] != true {
+			t.Fatalf(
+				"corrupt persisted Review response for %s = %#v",
+				path,
+				failure,
+			)
+		}
 	}
 }
 
@@ -1012,6 +1277,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 				AudioStagedTTL:          time.Hour,
 				ASRLease:                5 * time.Second,
 				ReviewGenerationTimeout: 2 * time.Second,
+				ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
 			},
 		)
 		if err != nil {
@@ -1270,6 +1536,71 @@ func assertQuotaExhaustedVoiceResponse(
 		payload.Error.Retryable {
 		t.Fatalf("quota response = %#v", payload)
 	}
+}
+
+func completeBootstrapHistoryReview(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	ownerUserID string,
+	sessionID string,
+) review.FormalReview {
+	t.Helper()
+	repository := review.NewPostgresRepository(pool)
+	actor := review.Actor{UserID: ownerUserID}
+	sourceTurnID := "turn-" + sessionID
+	sourceTurnVersion := "conversation-turn:evidence-v1"
+	pending, err := repository.EnsurePending(
+		context.Background(),
+		review.EnsureReviewCommand{
+			Actor:                     actor,
+			PracticeSessionID:         sessionID,
+			ImplementationVersion:     voiceReviewImplementation,
+			SourceTurnID:              sourceTurnID,
+			SourceTurnVersion:         sourceTurnVersion,
+			SourceManifestFingerprint: "manifest-" + sessionID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("ensure bootstrap history Review %s: %v", sessionID, err)
+	}
+	_, claim, claimed, err := repository.ClaimGeneration(
+		context.Background(),
+		actor,
+		pending.ID,
+		time.Minute,
+	)
+	if err != nil || !claimed {
+		t.Fatalf(
+			"claim bootstrap history Review %s: claimed=%v err=%v",
+			sessionID,
+			claimed,
+			err,
+		)
+	}
+	completed, err := repository.CompleteGeneration(
+		context.Background(),
+		claim,
+		review.ReviewResult{
+			OverallScore: 80,
+			Summary:      "Persisted restart cursor fixture.",
+			Conclusions: []review.ReviewConclusion{{
+				Key:        "summary",
+				Category:   "clarity",
+				Message:    "The response is clear.",
+				Suggestion: "Add one concrete outcome.",
+			}},
+		},
+		[]review.ReviewEvidence{{
+			ConclusionKey: "summary",
+			SourceType:    review.SourceTypeConversationTurn,
+			SourceID:      sourceTurnID,
+			SourceVersion: sourceTurnVersion,
+		}},
+	)
+	if err != nil {
+		t.Fatalf("complete bootstrap history Review %s: %v", sessionID, err)
+	}
+	return completed
 }
 
 func registerAndLoginVoiceUser(

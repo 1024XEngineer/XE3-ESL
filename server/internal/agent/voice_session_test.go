@@ -2,7 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,6 +175,243 @@ func TestVoiceSessionReviewRequiresFrozenCompletedShape(t *testing.T) {
 	}
 }
 
+func TestVoiceSessionReviewEnforcesMetadataAndResultBudgets(t *testing.T) {
+	now := time.Unix(2, 0).UTC()
+	valid := VoiceSessionReview{
+		ID:                    "review-1",
+		SessionID:             "session-1",
+		Status:                "completed",
+		ImplementationVersion: "review-v1",
+		SourceTurnID:          "turn-3",
+		SourceTurnVersion:     "conversation-turn:evidence-v1",
+		Result:                maximumVoiceReviewResult(t),
+		CreatedAt:             now,
+		UpdatedAt:             now,
+		CompletedAt:           &now,
+	}
+	if !validVoiceSessionReview(valid, valid.ID) {
+		t.Fatal("maximum valid Review result was rejected")
+	}
+
+	invalidUTF8 := string([]byte{0xff})
+	for name, mutate := range map[string]func(*VoiceSessionReview){
+		"review id over 128 bytes": func(item *VoiceSessionReview) {
+			item.ID = strings.Repeat("r", 129)
+		},
+		"session id over 128 bytes": func(item *VoiceSessionReview) {
+			item.SessionID = strings.Repeat("s", 129)
+		},
+		"implementation version over 128 bytes": func(item *VoiceSessionReview) {
+			item.ImplementationVersion = strings.Repeat("i", 129)
+		},
+		"source turn id over 128 bytes": func(item *VoiceSessionReview) {
+			item.SourceTurnID = strings.Repeat("t", 129)
+		},
+		"metadata invalid UTF-8": func(item *VoiceSessionReview) {
+			item.ImplementationVersion = invalidUTF8
+		},
+		"metadata contains NUL": func(item *VoiceSessionReview) {
+			item.ImplementationVersion = "review\x00v1"
+		},
+		"summary over 2048 bytes": func(item *VoiceSessionReview) {
+			item.Result.Summary = strings.Repeat("s", 2049)
+		},
+		"more than eight conclusions": func(item *VoiceSessionReview) {
+			item.Result.Conclusions = append(
+				item.Result.Conclusions,
+				item.Result.Conclusions[0],
+			)
+		},
+		"key over 64 bytes": func(item *VoiceSessionReview) {
+			item.Result.Conclusions[0].Key = strings.Repeat("k", 65)
+		},
+		"category over 64 bytes": func(item *VoiceSessionReview) {
+			item.Result.Conclusions[0].Category = strings.Repeat("c", 65)
+		},
+		"message over 2048 bytes": func(item *VoiceSessionReview) {
+			item.Result.Conclusions[0].Message = strings.Repeat("m", 2049)
+		},
+		"suggestion over 2048 bytes": func(item *VoiceSessionReview) {
+			item.Result.Conclusions[0].Suggestion = strings.Repeat("s", 2049)
+		},
+		"suggestion trims to empty": func(item *VoiceSessionReview) {
+			item.Result.Conclusions[0].Suggestion = " \t\n"
+		},
+		"result string invalid UTF-8": func(item *VoiceSessionReview) {
+			item.Result.Conclusions[0].Message = invalidUTF8
+		},
+		"result string contains NUL": func(item *VoiceSessionReview) {
+			item.Result.Conclusions[0].Message = "clear\x00answer"
+		},
+		"marshaled result over 12 KiB": func(item *VoiceSessionReview) {
+			for index := range item.Result.Conclusions {
+				item.Result.Conclusions[index].Message =
+					strings.Repeat("m", maxVoiceReviewTextUTF8Bytes)
+				item.Result.Conclusions[index].Suggestion =
+					strings.Repeat("s", maxVoiceReviewTextUTF8Bytes)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			item := valid
+			result := *valid.Result
+			result.Conclusions = append(
+				[]VoiceReviewConclusion(nil),
+				valid.Result.Conclusions...,
+			)
+			item.Result = &result
+			mutate(&item)
+			if validVoiceSessionReview(item, item.ID) {
+				t.Fatalf("invalid Review accepted: %#v", item)
+			}
+		})
+	}
+}
+
+func TestVoiceSessionListReviewsRejectsNonUUIDCursorIdentifiers(
+	t *testing.T,
+) {
+	now := time.Unix(2, 0).UTC()
+	completedAt := now.Add(time.Second)
+	valid := VoiceSessionReview{
+		ID:                    "20000000-0000-4000-8000-000000000001",
+		SessionID:             "session-1",
+		Status:                "completed",
+		ImplementationVersion: "review-v1",
+		SourceTurnID:          "turn-3",
+		SourceTurnVersion:     "conversation-turn:evidence-v1",
+		Result: &VoiceReviewResult{
+			OverallScore: 80,
+			Summary:      "Clear answer.",
+			Conclusions: []VoiceReviewConclusion{{
+				Key:      "overall",
+				Category: "fluency",
+				Message:  "Clear.",
+			}},
+		},
+		CreatedAt:   now,
+		UpdatedAt:   completedAt,
+		CompletedAt: &completedAt,
+	}
+	tests := []struct {
+		name    string
+		page    VoiceReviewHistoryPage
+		query   VoiceReviewHistoryQuery
+		wantErr error
+	}{
+		{
+			name: "item Review ID is not UUID",
+			page: VoiceReviewHistoryPage{Items: []VoiceSessionReview{
+				func() VoiceSessionReview {
+					item := valid
+					item.ID = "review-not-uuid"
+					return item
+				}(),
+			}},
+			wantErr: ErrInvalidContext,
+		},
+		{
+			name: "next Review ID is not UUID",
+			page: VoiceReviewHistoryPage{
+				Items: []VoiceSessionReview{valid},
+				Next: &VoiceReviewHistoryCursor{
+					CreatedAt: valid.CreatedAt,
+					ReviewID:  "review-not-uuid",
+				},
+			},
+			wantErr: ErrInvalidContext,
+		},
+		{
+			name: "input cursor Review ID is not UUID",
+			page: VoiceReviewHistoryPage{
+				Items: []VoiceSessionReview{valid},
+			},
+			query: VoiceReviewHistoryQuery{
+				Limit: 1,
+				Before: &VoiceReviewHistoryCursor{
+					CreatedAt: now.Add(time.Second),
+					ReviewID:  "review-not-uuid",
+				},
+			},
+			wantErr: ErrInvalidRequest,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			conversations := newAgentVoiceConversation(3)
+			practice := newAgentVoicePractice(0)
+			reviews := newAgentVoiceReview()
+			orchestrator := newAgentVoiceOrchestrator(
+				t,
+				conversations,
+				practice,
+				reviews,
+			)
+			application := newVoiceSessionTestApplication(
+				t,
+				conversations,
+				practice,
+				reviews,
+				orchestrator,
+			)
+			application.reviews = fixedVoiceReviewPageReader{
+				page: test.page,
+			}
+			query := test.query
+			if query.Limit == 0 {
+				query.Limit = 1
+			}
+			if _, err := application.ListReviews(
+				context.Background(),
+				agentVoiceActor("a"),
+				query,
+			); !errors.Is(err, test.wantErr) {
+				t.Fatalf("non-UUID adapter identifier error = %v", err)
+			}
+		})
+	}
+}
+
+func maximumVoiceReviewResult(t *testing.T) *VoiceReviewResult {
+	t.Helper()
+	result := &VoiceReviewResult{
+		OverallScore: 100,
+		Summary:      strings.Repeat("s", maxVoiceReviewSummaryUTF8Bytes),
+		Conclusions: make(
+			[]VoiceReviewConclusion,
+			maxVoiceReviewConclusions,
+		),
+	}
+	for index := range result.Conclusions {
+		result.Conclusions[index] = VoiceReviewConclusion{
+			Key: fmt.Sprintf("%02d", index) +
+				strings.Repeat("k", maxVoiceReviewLabelUTF8Bytes-2),
+			Category: strings.Repeat(
+				"c",
+				maxVoiceReviewLabelUTF8Bytes,
+			),
+			Message:    strings.Repeat("m", 700),
+			Suggestion: strings.Repeat("s", 300),
+		}
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal Voice Review Result fixture: %v", err)
+	}
+	remaining := maxVoiceReviewResultJSONBytes - len(payload)
+	last := &result.Conclusions[len(result.Conclusions)-1]
+	if remaining < 0 ||
+		len(last.Suggestion)+remaining > maxVoiceReviewTextUTF8Bytes {
+		t.Fatalf(
+			"Voice Review fixture cannot reach budget: bytes=%d remaining=%d",
+			len(payload),
+			remaining,
+		)
+	}
+	last.Suggestion += strings.Repeat("x", remaining)
+	return result
+}
+
 func newVoiceSessionTestApplication(
 	t *testing.T,
 	conversations *agentVoiceConversation,
@@ -296,6 +536,7 @@ func (checkpoints voiceSessionTestCheckpoints) LatestTurn(
 
 type voiceSessionTestReviews struct {
 	reviews *agentVoiceReview
+	history []VoiceSessionReview
 }
 
 func (reader voiceSessionTestReviews) GetReview(
@@ -331,6 +572,70 @@ func (reader voiceSessionTestReviews) GetReview(
 		}
 	}
 	return VoiceSessionReview{}, ErrNotFound
+}
+
+func (reader voiceSessionTestReviews) ListReviews(
+	_ context.Context,
+	_ requestcontext.Actor,
+	query VoiceReviewHistoryQuery,
+) (VoiceReviewHistoryPage, error) {
+	items := make([]VoiceSessionReview, 0, query.Limit)
+	for _, item := range reader.history {
+		if query.Before != nil &&
+			!reviewHistoryKeyBefore(
+				item.CreatedAt,
+				item.ID,
+				query.Before.CreatedAt,
+				query.Before.ReviewID,
+			) {
+			continue
+		}
+		items = append(items, item)
+		if len(items) == query.Limit {
+			break
+		}
+	}
+	page := VoiceReviewHistoryPage{Items: items}
+	consumed := 0
+	for _, item := range reader.history {
+		if query.Before == nil ||
+			reviewHistoryKeyBefore(
+				item.CreatedAt,
+				item.ID,
+				query.Before.CreatedAt,
+				query.Before.ReviewID,
+			) {
+			consumed++
+		}
+	}
+	if consumed > len(items) && len(items) > 0 {
+		last := items[len(items)-1]
+		page.Next = &VoiceReviewHistoryCursor{
+			CreatedAt: last.CreatedAt,
+			ReviewID:  last.ID,
+		}
+	}
+	return page, nil
+}
+
+type fixedVoiceReviewPageReader struct {
+	page VoiceReviewHistoryPage
+}
+
+func (reader fixedVoiceReviewPageReader) GetReview(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (VoiceSessionReview, error) {
+	return VoiceSessionReview{}, ErrNotFound
+}
+
+func (reader fixedVoiceReviewPageReader) ListReviews(
+	context.Context,
+	requestcontext.Actor,
+	VoiceReviewHistoryQuery,
+) (VoiceReviewHistoryPage, error) {
+	return reader.page, nil
 }
 
 type voiceSessionTestMatters struct{}

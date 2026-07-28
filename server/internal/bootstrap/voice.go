@@ -66,6 +66,7 @@ type VoiceConfiguration struct {
 	ASRLease                time.Duration
 	ReviewGenerationTimeout time.Duration
 	AudioReadTimeout        time.Duration
+	ReviewHistoryCursorKey  []byte
 }
 
 // NewSpeechRecognizer is the server-side ASR registration boundary. Production
@@ -260,7 +261,7 @@ func buildProductionVoiceApplication(
 	)
 	reviewAdapter := &voiceReviewAdapter{
 		service:      ensureReviews,
-		repository:   reviewRepository,
+		history:      review.NewHistoryService(reviewRepository),
 		sourceReader: sourceReader,
 	}
 	orchestrator, err := agent.NewVoiceRoundOrchestrator(
@@ -1226,7 +1227,7 @@ func (adapter *voiceCheckpointAdapter) LatestTurn(
 
 type voiceReviewAdapter struct {
 	service      *review.EnsureService
-	repository   review.ReviewRepository
+	history      *review.HistoryService
 	sourceReader review.ReviewSourceReader
 }
 
@@ -1276,13 +1277,55 @@ func (adapter *voiceReviewAdapter) GetReview(
 	actor requestcontext.Actor,
 	reviewID string,
 ) (agent.VoiceSessionReview, error) {
-	formalReview, err := adapter.repository.Get(ctx, review.Actor{
+	formalReview, err := adapter.history.Get(ctx, review.Actor{
 		UserID: actor.UserID,
 	}, reviewID)
 	if err != nil {
-		return agent.VoiceSessionReview{}, mapReviewError(err)
+		return agent.VoiceSessionReview{}, mapReviewReadError(err)
 	}
 	return mapVoiceSessionReview(formalReview), nil
+}
+
+func (adapter *voiceReviewAdapter) ListReviews(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	query agent.VoiceReviewHistoryQuery,
+) (agent.VoiceReviewHistoryPage, error) {
+	reviewQuery := review.HistoryQuery{Limit: query.Limit}
+	if query.Before != nil {
+		reviewQuery.Before = &review.HistoryCursor{
+			CreatedAt: query.Before.CreatedAt,
+			ReviewID:  query.Before.ReviewID,
+		}
+	}
+	page, err := adapter.history.ListCompleted(
+		ctx,
+		review.Actor{UserID: actor.UserID},
+		reviewQuery,
+	)
+	if err != nil {
+		return agent.VoiceReviewHistoryPage{}, mapReviewReadError(err)
+	}
+	result := agent.VoiceReviewHistoryPage{
+		Items: make([]agent.VoiceSessionReview, len(page.Items)),
+	}
+	for index, item := range page.Items {
+		result.Items[index] = mapVoiceSessionReview(item)
+	}
+	if page.Next != nil {
+		result.Next = &agent.VoiceReviewHistoryCursor{
+			CreatedAt: page.Next.CreatedAt,
+			ReviewID:  page.Next.ReviewID,
+		}
+	}
+	return result, nil
+}
+
+func mapReviewReadError(err error) error {
+	if errors.Is(err, review.ErrInvalidReview) {
+		return agent.ErrInvalidContext
+	}
+	return mapReviewError(err)
 }
 
 func mapReviewError(err error) error {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type FormalReviewStatus string
@@ -17,6 +18,12 @@ const (
 	FormalReviewFailed     FormalReviewStatus = "failed"
 
 	SourceTypeConversationTurn = "conversation_turn"
+
+	maxReviewResultJSONBytes      = 12 * 1024
+	maxReviewSummaryUTF8Bytes     = 2048
+	maxReviewConclusions          = 8
+	maxReviewConclusionLabelBytes = 64
+	maxReviewConclusionTextBytes  = 2048
 )
 
 var (
@@ -356,6 +363,45 @@ func validateCompletionPayload(
 }
 
 func validateReviewResult(result ReviewResult) error {
+	if err := validatePersistedReviewResult(result); err != nil {
+		return err
+	}
+	if !validReviewText(result.Summary, maxReviewSummaryUTF8Bytes) ||
+		len(result.Conclusions) > maxReviewConclusions {
+		return ErrInvalidReview
+	}
+	for _, conclusion := range result.Conclusions {
+		if !validReviewText(
+			conclusion.Key,
+			maxReviewConclusionLabelBytes,
+		) ||
+			!validReviewText(
+				conclusion.Category,
+				maxReviewConclusionLabelBytes,
+			) ||
+			!validReviewText(
+				conclusion.Message,
+				maxReviewConclusionTextBytes,
+			) ||
+			!validOptionalReviewText(
+				conclusion.Suggestion,
+				maxReviewConclusionTextBytes,
+			) {
+			return ErrInvalidReview
+		}
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil || len(encoded) > maxReviewResultJSONBytes {
+		return ErrInvalidReview
+	}
+	return nil
+}
+
+// validatePersistedReviewResult preserves the validation contract that was in
+// production before response budgets were introduced. Reads must continue to
+// restore those committed results; the stricter limits apply only to new
+// writes, while the HTTP layer still enforces its total response budget.
+func validatePersistedReviewResult(result ReviewResult) error {
 	if result.OverallScore < 0 ||
 		result.OverallScore > 100 ||
 		strings.TrimSpace(result.Summary) == "" ||
@@ -377,6 +423,20 @@ func validateReviewResult(result ReviewResult) error {
 		conclusions[key] = struct{}{}
 	}
 	return nil
+}
+
+func validReviewText(value string, maximumBytes int) bool {
+	return utf8.ValidString(value) &&
+		!strings.ContainsRune(value, '\x00') &&
+		len(value) <= maximumBytes &&
+		strings.TrimSpace(value) != ""
+}
+
+func validOptionalReviewText(value string, maximumBytes int) bool {
+	return utf8.ValidString(value) &&
+		!strings.ContainsRune(value, '\x00') &&
+		len(value) <= maximumBytes &&
+		(value == "" || strings.TrimSpace(value) != "")
 }
 
 func validStableErrorCategory(category string) bool {

@@ -2,14 +2,25 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+)
+
+const (
+	maxVoiceReviewMetadataUTF8Bytes = 128
+	maxVoiceReviewResultJSONBytes   = 12 * 1024
+	maxVoiceReviewSummaryUTF8Bytes  = 2048
+	maxVoiceReviewConclusions       = 8
+	maxVoiceReviewLabelUTF8Bytes    = 64
+	maxVoiceReviewTextUTF8Bytes     = 2048
 )
 
 // VoicePracticeSession is the Agent application view of Practice state. It
@@ -78,6 +89,11 @@ type VoiceReviewReader interface {
 		requestcontext.Actor,
 		string,
 	) (VoiceSessionReview, error)
+	ListReviews(
+		context.Context,
+		requestcontext.Actor,
+		VoiceReviewHistoryQuery,
+	) (VoiceReviewHistoryPage, error)
 }
 
 // VoiceSessionReview is the Agent application view of Review. Review owns the
@@ -106,6 +122,21 @@ type VoiceReviewConclusion struct {
 	Category   string `json:"category"`
 	Message    string `json:"message"`
 	Suggestion string `json:"suggestion,omitempty"`
+}
+
+type VoiceReviewHistoryCursor struct {
+	CreatedAt time.Time
+	ReviewID  string
+}
+
+type VoiceReviewHistoryQuery struct {
+	Limit  int
+	Before *VoiceReviewHistoryCursor
+}
+
+type VoiceReviewHistoryPage struct {
+	Items []VoiceSessionReview
+	Next  *VoiceReviewHistoryCursor
 }
 
 type VoiceSessionState struct {
@@ -272,10 +303,77 @@ func (application *VoiceSessionApplication) GetReview(
 	if err != nil {
 		return VoiceSessionReview{}, err
 	}
-	if !validVoiceSessionReview(item, reviewID) {
+	if !validPersistedVoiceSessionReview(item, reviewID) {
 		return VoiceSessionReview{}, ErrInvalidContext
 	}
 	return item, nil
+}
+
+func (application *VoiceSessionApplication) ListReviews(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	query VoiceReviewHistoryQuery,
+) (VoiceReviewHistoryPage, error) {
+	if err := validateVoiceActor(ctx, actor); err != nil ||
+		query.Limit < 1 || query.Limit > 50 ||
+		(query.Before != nil &&
+			(query.Before.CreatedAt.IsZero() ||
+				!validUUID(query.Before.ReviewID))) {
+		return VoiceReviewHistoryPage{}, ErrInvalidRequest
+	}
+	page, err := application.reviews.ListReviews(ctx, actor, query)
+	if err != nil {
+		return VoiceReviewHistoryPage{}, err
+	}
+	if len(page.Items) > query.Limit ||
+		(page.Next != nil && len(page.Items) != query.Limit) {
+		return VoiceReviewHistoryPage{}, ErrInvalidContext
+	}
+	var previous *VoiceSessionReview
+	seen := make(map[string]struct{}, len(page.Items))
+	for index := range page.Items {
+		item := &page.Items[index]
+		if !validUUID(item.ID) ||
+			!validPersistedVoiceSessionReview(*item, item.ID) ||
+			item.Status != "completed" {
+			return VoiceReviewHistoryPage{}, ErrInvalidContext
+		}
+		if _, exists := seen[item.ID]; exists {
+			return VoiceReviewHistoryPage{}, ErrInvalidContext
+		}
+		seen[item.ID] = struct{}{}
+		if previous != nil &&
+			!reviewHistoryKeyBefore(
+				item.CreatedAt,
+				item.ID,
+				previous.CreatedAt,
+				previous.ID,
+			) {
+			return VoiceReviewHistoryPage{}, ErrInvalidContext
+		}
+		if query.Before != nil &&
+			!reviewHistoryKeyBefore(
+				item.CreatedAt,
+				item.ID,
+				query.Before.CreatedAt,
+				query.Before.ReviewID,
+			) {
+			return VoiceReviewHistoryPage{}, ErrInvalidContext
+		}
+		previous = item
+	}
+	if page.Next != nil {
+		if len(page.Items) == 0 {
+			return VoiceReviewHistoryPage{}, ErrInvalidContext
+		}
+		last := page.Items[len(page.Items)-1]
+		if !validUUID(page.Next.ReviewID) ||
+			!page.Next.CreatedAt.Equal(last.CreatedAt) ||
+			page.Next.ReviewID != last.ID {
+			return VoiceReviewHistoryPage{}, ErrInvalidContext
+		}
+	}
+	return page, nil
 }
 
 func (application *VoiceSessionApplication) state(
@@ -412,10 +510,35 @@ func validVoiceSessionReview(
 	item VoiceSessionReview,
 	expectedID string,
 ) bool {
+	return validVoiceSessionReviewWithResult(
+		item,
+		expectedID,
+		validVoiceReviewResult,
+	)
+}
+
+func validPersistedVoiceSessionReview(
+	item VoiceSessionReview,
+	expectedID string,
+) bool {
+	return validVoiceSessionReviewWithResult(
+		item,
+		expectedID,
+		validPersistedVoiceReviewResult,
+	)
+}
+
+func validVoiceSessionReviewWithResult(
+	item VoiceSessionReview,
+	expectedID string,
+	validResult func(*VoiceReviewResult) bool,
+) bool {
 	if item.ID != expectedID ||
-		item.SessionID == "" ||
-		item.ImplementationVersion == "" ||
-		item.SourceTurnID == "" ||
+		!validVoiceReviewMetadata(item.ID) ||
+		!validVoiceReviewMetadata(item.SessionID) ||
+		!validVoiceReviewMetadata(item.ImplementationVersion) ||
+		!validVoiceReviewMetadata(item.SourceTurnID) ||
+		!validVoiceReviewMetadata(item.SourceTurnVersion) ||
 		!validVoiceSourceTurnVersion(item.SourceTurnVersion) ||
 		item.CreatedAt.IsZero() ||
 		item.UpdatedAt.Before(item.CreatedAt) {
@@ -428,23 +551,99 @@ func validVoiceSessionReview(
 	default:
 		return false
 	}
-	if item.Result == nil ||
-		item.Result.OverallScore < 0 ||
-		item.Result.OverallScore > 100 ||
-		strings.TrimSpace(item.Result.Summary) == "" ||
-		len(item.Result.Conclusions) == 0 ||
+	if !validResult(item.Result) ||
 		item.CompletedAt == nil ||
 		item.CompletedAt.Before(item.CreatedAt) {
 		return false
 	}
-	for _, conclusion := range item.Result.Conclusions {
-		if strings.TrimSpace(conclusion.Key) == "" ||
+	return true
+}
+
+func validPersistedVoiceReviewResult(result *VoiceReviewResult) bool {
+	if result == nil ||
+		result.OverallScore < 0 ||
+		result.OverallScore > 100 ||
+		strings.TrimSpace(result.Summary) == "" ||
+		len(result.Conclusions) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(result.Conclusions))
+	for _, conclusion := range result.Conclusions {
+		key := strings.TrimSpace(conclusion.Key)
+		if key == "" ||
+			key != conclusion.Key ||
 			strings.TrimSpace(conclusion.Category) == "" ||
 			strings.TrimSpace(conclusion.Message) == "" {
 			return false
 		}
+		if _, exists := seen[key]; exists {
+			return false
+		}
+		seen[key] = struct{}{}
 	}
 	return true
+}
+
+func validVoiceReviewResult(result *VoiceReviewResult) bool {
+	if result == nil ||
+		result.OverallScore < 0 ||
+		result.OverallScore > 100 ||
+		!validVoiceReviewText(
+			result.Summary,
+			maxVoiceReviewSummaryUTF8Bytes,
+		) ||
+		len(result.Conclusions) == 0 ||
+		len(result.Conclusions) > maxVoiceReviewConclusions {
+		return false
+	}
+	seen := make(map[string]struct{}, len(result.Conclusions))
+	for _, conclusion := range result.Conclusions {
+		key := strings.TrimSpace(conclusion.Key)
+		if key == "" ||
+			key != conclusion.Key ||
+			!validVoiceReviewText(
+				conclusion.Key,
+				maxVoiceReviewLabelUTF8Bytes,
+			) ||
+			!validVoiceReviewText(
+				conclusion.Category,
+				maxVoiceReviewLabelUTF8Bytes,
+			) ||
+			!validVoiceReviewText(
+				conclusion.Message,
+				maxVoiceReviewTextUTF8Bytes,
+			) ||
+			!validOptionalVoiceReviewText(
+				conclusion.Suggestion,
+				maxVoiceReviewTextUTF8Bytes,
+			) {
+			return false
+		}
+		if _, exists := seen[key]; exists {
+			return false
+		}
+		seen[key] = struct{}{}
+	}
+	encoded, err := json.Marshal(result)
+	return err == nil && len(encoded) <= maxVoiceReviewResultJSONBytes
+}
+
+func validVoiceReviewMetadata(value string) bool {
+	return validVoiceReviewText(value, maxVoiceReviewMetadataUTF8Bytes)
+}
+
+func validVoiceReviewText(value string, maximumBytes int) bool {
+	return utf8.ValidString(value) &&
+		!strings.ContainsRune(value, '\x00') &&
+		len(value) <= maximumBytes &&
+		strings.TrimSpace(value) != ""
+}
+
+func validOptionalVoiceReviewText(value string, maximumBytes int) bool {
+	return utf8.ValidString(value) &&
+		!strings.ContainsRune(value, '\x00') &&
+		len(value) <= maximumBytes &&
+		(value == "" || strings.TrimSpace(value) != "")
 }
 
 func validVoiceSourceTurnVersion(value string) bool {
@@ -458,4 +657,14 @@ func validVoiceSourceTurnVersion(value string) bool {
 		64,
 	)
 	return err == nil && version >= 1
+}
+
+func reviewHistoryKeyBefore(
+	createdAt time.Time,
+	reviewID string,
+	boundaryCreatedAt time.Time,
+	boundaryReviewID string,
+) bool {
+	return createdAt.Before(boundaryCreatedAt) ||
+		(createdAt.Equal(boundaryCreatedAt) && reviewID < boundaryReviewID)
 }

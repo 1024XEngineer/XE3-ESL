@@ -872,6 +872,35 @@ assert.equal(
 );
 assert.equal(websocketParameters.after_sequence?.in, 'query');
 
+const formalReviewHistory = requireOperation('GET /v1/formal-reviews');
+const formalReviewHistoryParameters = Object.fromEntries(
+  (formalReviewHistory.parameters ?? []).map((parameterValue) => {
+    const parameter = resolveLocalReference(parameterValue);
+    return [parameter.name, parameter];
+  }),
+);
+const formalReviewCursorPattern = resolveLocalReference(
+  formalReviewHistoryParameters.cursor?.schema,
+)?.pattern;
+const formalReviewHistoryResponse = resolveLocalReference(
+  formalReviewHistory.responses?.['200'],
+);
+const formalReviewHistorySchema = resolveLocalReference(
+  getJsonSchema(formalReviewHistoryResponse),
+);
+const formalReviewNextCursorPattern = resolveLocalReference(
+  formalReviewHistorySchema?.properties?.next_cursor,
+)?.pattern;
+assert.equal(
+  formalReviewCursorPattern,
+  formalReviewNextCursorPattern,
+  'Formal Review request cursor must accept the server next_cursor format.',
+);
+assert.match(
+  'signed_payload.signed_mac',
+  new RegExp(formalReviewCursorPattern, 'u'),
+);
+
 console.log(
   `Validated ${operations.length} operations: ` +
     `${actualPublicOperations.size} public and ` +
