@@ -377,6 +377,7 @@ func newPracticeContextIntegrationComposition(
 			MaxOutputTokens:    128,
 			MaxInputCharacters: 12000,
 		},
+		emptyBootstrapMemorySearcher{},
 		catalog,
 	)
 	if err != nil {

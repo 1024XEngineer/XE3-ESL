@@ -54,6 +54,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	assembler, err := agentruntime.NewContextAssembler(
 		agentRepository,
 		matterService,
+		emptyAgentMemorySearcher{},
 	)
 	if err != nil {
 		t.Fatalf("NewContextAssembler: %v", err)
@@ -327,4 +328,13 @@ WHERE source_run_id IN ($1, $2)`,
 	if jobCount != 2 {
 		t.Fatalf("job count = %d, want 2", jobCount)
 	}
+}
+
+type emptyAgentMemorySearcher struct{}
+
+func (emptyAgentMemorySearcher) Search(
+	context.Context,
+	agentruntime.MemorySearchRequest,
+) ([]agentruntime.MemorySearchHit, error) {
+	return []agentruntime.MemorySearchHit{}, nil
 }

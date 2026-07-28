@@ -53,6 +53,7 @@ func NewIdentityAgentAndPracticeComposition(
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
 	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
 	catalog preparation.CatalogReader,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
@@ -66,6 +67,7 @@ func NewIdentityAgentAndPracticeComposition(
 		trustedProxyHeader,
 		generator,
 		runConfiguration,
+		memorySearcher,
 		voiceConfigurations...,
 	)
 	if err != nil {

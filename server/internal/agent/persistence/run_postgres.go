@@ -484,6 +484,10 @@ func (r *PostgresRepository) SaveContextManifest(
 	if err != nil {
 		return ContextManifest{}, ErrInvalidRequest
 	}
+	selectedMemories, err := json.Marshal(manifest.SelectedMemories)
+	if err != nil {
+		return ContextManifest{}, ErrInvalidRequest
+	}
 	var activeMatterID any
 	var activeMatterVersion any
 	if manifest.ActiveMatterID != "" {
@@ -492,6 +496,7 @@ func (r *PostgresRepository) SaveContextManifest(
 	}
 	var result ContextManifest
 	var selectedJSON []byte
+	var selectedMemoriesJSON []byte
 	var persistedMatterID pgtype.Text
 	var persistedMatterVersion pgtype.Int8
 	err = r.database.QueryRow(ctx, `
@@ -503,6 +508,8 @@ INSERT INTO agent_context_manifests (
     active_matter_id,
     active_matter_version,
     instruction_version,
+    memory_context_policy_version,
+    selected_memories,
     selected_messages,
     omitted_message_count,
     trim_reason,
@@ -513,8 +520,8 @@ INSERT INTO agent_context_manifests (
     max_output_tokens,
     created_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13,
-    $14, $15,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11,
+    $12, $13, $14, $15, $16, $17,
     CURRENT_TIMESTAMP
 )
 RETURNING
@@ -525,6 +532,8 @@ RETURNING
     active_matter_id::text,
     active_matter_version,
     instruction_version,
+    memory_context_policy_version,
+    selected_memories,
     selected_messages,
     omitted_message_count,
     trim_reason,
@@ -541,6 +550,8 @@ RETURNING
 		activeMatterID,
 		activeMatterVersion,
 		manifest.InstructionVersion,
+		manifest.MemoryContextPolicyVersion,
+		selectedMemories,
 		selectedMessages,
 		manifest.OmittedMessageCount,
 		manifest.TrimReason,
@@ -557,6 +568,8 @@ RETURNING
 		&persistedMatterID,
 		&persistedMatterVersion,
 		&result.InstructionVersion,
+		&result.MemoryContextPolicyVersion,
+		&selectedMemoriesJSON,
 		&selectedJSON,
 		&result.OmittedMessageCount,
 		&result.TrimReason,
@@ -575,6 +588,7 @@ RETURNING
 		persistedMatterID,
 		persistedMatterVersion,
 		selectedJSON,
+		selectedMemoriesJSON,
 	); err != nil {
 		return ContextManifest{}, err
 	}
@@ -588,6 +602,7 @@ func (r *PostgresRepository) FindContextManifest(
 ) (ContextManifest, error) {
 	var result ContextManifest
 	var selectedJSON []byte
+	var selectedMemoriesJSON []byte
 	var activeMatterID pgtype.Text
 	var activeMatterVersion pgtype.Int8
 	err := r.database.QueryRow(ctx, `
@@ -599,6 +614,8 @@ SELECT
     active_matter_id::text,
     active_matter_version,
     instruction_version,
+    memory_context_policy_version,
+    selected_memories,
     selected_messages,
     omitted_message_count,
     trim_reason,
@@ -620,6 +637,8 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&activeMatterID,
 		&activeMatterVersion,
 		&result.InstructionVersion,
+		&result.MemoryContextPolicyVersion,
+		&selectedMemoriesJSON,
 		&selectedJSON,
 		&result.OmittedMessageCount,
 		&result.TrimReason,
@@ -638,6 +657,7 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		activeMatterID,
 		activeMatterVersion,
 		selectedJSON,
+		selectedMemoriesJSON,
 	); err != nil {
 		return ContextManifest{}, err
 	}
@@ -1048,6 +1068,7 @@ func decodeManifestOptionals(
 	activeMatterID pgtype.Text,
 	activeMatterVersion pgtype.Int8,
 	selectedJSON []byte,
+	selectedMemoriesJSON []byte,
 ) error {
 	if activeMatterID.Valid {
 		manifest.ActiveMatterID = activeMatterID.String
@@ -1056,6 +1077,12 @@ func decodeManifestOptionals(
 		manifest.ActiveMatterVersion = activeMatterVersion.Int64
 	}
 	if err := json.Unmarshal(selectedJSON, &manifest.SelectedMessages); err != nil {
+		return ErrRepository
+	}
+	if err := json.Unmarshal(
+		selectedMemoriesJSON,
+		&manifest.SelectedMemories,
+	); err != nil {
 		return ErrRepository
 	}
 	return nil
