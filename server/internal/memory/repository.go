@@ -19,6 +19,7 @@ var (
 	ErrExtractionExhausted = errors.New(
 		"memory: extraction attempts exhausted during recovery",
 	)
+	ErrIndexResponse = errors.New("memory: invalid index response")
 )
 
 type CreateCommand struct {

@@ -42,6 +42,16 @@ func run() int {
 		logger.Error("text generation startup failed")
 		return 1
 	}
+	embeddingConfig, err := config.LoadEmbedding()
+	if err != nil {
+		logger.Error("embedding configuration failed")
+		return 1
+	}
+	embedder, err := bootstrap.NewEmbedder(embeddingConfig)
+	if err != nil {
+		logger.Error("embedding startup failed")
+		return 1
+	}
 	asrConfig, err := config.LoadSpeechRecognition()
 	if err != nil {
 		logger.Error("speech recognition configuration failed")
@@ -128,6 +138,19 @@ func run() int {
 	}
 	defer databasePool.Close()
 
+	memoryIndexComposition, err := bootstrap.NewMemoryIndexComposition(
+		databasePool.Native(),
+		embedder,
+		embeddingConfig,
+	)
+	if err != nil {
+		logger.Error(
+			"memory index composition failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+
 	var recordingStore objectstore.Store
 	if storageConfig.Enabled {
 		recordingStore, err = productionAudioCleanupFactories.newStore(
@@ -209,6 +232,17 @@ func run() int {
 		)
 		return 1
 	}
+	memoryIndex, err := buildMemoryIndexWorker(
+		memoryIndexComposition.Processor(),
+		logger,
+	)
+	if err != nil {
+		logger.Error(
+			"memory index startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
 
 	cleanupWorker, err := buildAudioCleanupWorker(
 		ctx,
@@ -244,6 +278,11 @@ func run() int {
 	go func() {
 		defer close(memoryExtractionDone)
 		memoryExtraction.Run(ctx)
+	}()
+	memoryIndexDone := make(chan struct{})
+	go func() {
+		defer close(memoryIndexDone)
+		memoryIndex.Run(ctx)
 	}()
 
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
@@ -318,6 +357,15 @@ func run() int {
 	case <-shutdownCtx.Done():
 		logger.Error(
 			"memory extraction shutdown failed",
+			slog.String("error_kind", "timeout"),
+		)
+		exitCode = 1
+	}
+	select {
+	case <-memoryIndexDone:
+	case <-shutdownCtx.Done():
+		logger.Error(
+			"memory index shutdown failed",
 			slog.String("error_kind", "timeout"),
 		)
 		exitCode = 1

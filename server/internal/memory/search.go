@@ -1,0 +1,240 @@
+package memory
+
+import (
+	"context"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+)
+
+const (
+	maxSearchResults    = 10
+	maxSearchCandidates = 40
+)
+
+type SearchConfig struct {
+	Provider               string
+	Model                  string
+	Dimensions             int
+	EmbeddingPolicyVersion string
+	RetrievalPolicyVersion string
+	CandidateLimit         int
+	MinimumSimilarity      float64
+}
+
+func (configuration SearchConfig) Valid() bool {
+	return providerIdentifierPattern.MatchString(configuration.Provider) &&
+		modelIdentifierPattern.MatchString(configuration.Model) &&
+		configuration.Dimensions == MemoryEmbeddingDimensions &&
+		validPolicyVersion(configuration.EmbeddingPolicyVersion) &&
+		validPolicyVersion(configuration.RetrievalPolicyVersion) &&
+		configuration.CandidateLimit >= 1 &&
+		configuration.CandidateLimit <= maxSearchCandidates &&
+		configuration.MinimumSimilarity >= -1 &&
+		configuration.MinimumSimilarity <= 1
+}
+
+type SearchRequest struct {
+	Actor    requestcontext.Actor
+	Query    string
+	MatterID string
+	Limit    int
+}
+
+func (request SearchRequest) Valid() bool {
+	return request.Actor.Valid() &&
+		request.Query != "" &&
+		request.Query == strings.TrimSpace(request.Query) &&
+		len(request.Query) <= ai.MaxEmbeddingInputBytes &&
+		(request.MatterID == "" || validUUID(request.MatterID)) &&
+		request.Limit >= 1 &&
+		request.Limit <= maxSearchResults
+}
+
+type SearchCandidate struct {
+	Memory     Memory
+	Similarity float64
+}
+
+type SearchHit struct {
+	MemoryID               string
+	MemoryVersion          int64
+	Type                   Type
+	Content                string
+	Scope                  ScopeType
+	MatterID               string
+	Similarity             float64
+	Score                  float64
+	EmbeddingProvider      string
+	EmbeddingModel         string
+	EmbeddingDimensions    int
+	EmbeddingPolicyVersion string
+	RetrievalPolicyVersion string
+}
+
+type SearchCandidateRepository interface {
+	SearchCandidates(
+		context.Context,
+		requestcontext.Actor,
+		[]float32,
+		string,
+		SearchConfig,
+	) ([]SearchCandidate, error)
+}
+
+type Searcher interface {
+	Search(context.Context, SearchRequest) ([]SearchHit, error)
+}
+
+type SearchService struct {
+	repository SearchCandidateRepository
+	embedder   ai.Embedder
+	config     SearchConfig
+	now        func() time.Time
+}
+
+func NewSearchService(
+	repository SearchCandidateRepository,
+	embedder ai.Embedder,
+	configuration SearchConfig,
+	now func() time.Time,
+) (*SearchService, error) {
+	if repository == nil ||
+		embedder == nil ||
+		!configuration.Valid() ||
+		now == nil {
+		return nil, ErrInvalidArgument
+	}
+	return &SearchService{
+		repository: repository,
+		embedder:   embedder,
+		config:     configuration,
+		now:        now,
+	}, nil
+}
+
+func (service *SearchService) Search(
+	ctx context.Context,
+	request SearchRequest,
+) ([]SearchHit, error) {
+	if ctx == nil || !request.Valid() {
+		return nil, ErrInvalidArgument
+	}
+	embeddingRequest := ai.EmbeddingRequest{
+		Inputs:     []string{request.Query},
+		Dimensions: service.config.Dimensions,
+	}
+	result, err := service.embedder.Embed(ctx, embeddingRequest)
+	if err != nil {
+		return nil, err
+	}
+	if err := ai.ValidateEmbeddingResult(
+		embeddingRequest,
+		result,
+	); err != nil {
+		return nil, ErrIndexResponse
+	}
+	if result.Provider != service.config.Provider ||
+		result.Model != service.config.Model ||
+		result.Dimensions != service.config.Dimensions ||
+		len(result.Vectors) != 1 {
+		return nil, ErrIndexResponse
+	}
+	candidates, err := service.repository.SearchCandidates(
+		ctx,
+		request.Actor,
+		result.Vectors[0],
+		request.MatterID,
+		service.config,
+	)
+	if err != nil {
+		return nil, err
+	}
+	hits := make([]SearchHit, 0, min(request.Limit, len(candidates)))
+	now := service.now().UTC()
+	for _, candidate := range candidates {
+		if !candidate.Memory.Valid() ||
+			candidate.Memory.OwnerID != request.Actor.UserID ||
+			candidate.Similarity < service.config.MinimumSimilarity ||
+			candidate.Similarity < -1 ||
+			candidate.Similarity > 1 {
+			continue
+		}
+		if candidate.Memory.Scope == ScopeMatter &&
+			candidate.Memory.MatterID != request.MatterID {
+			return nil, ErrRepository
+		}
+		hits = append(hits, SearchHit{
+			MemoryID:               candidate.Memory.ID,
+			MemoryVersion:          candidate.Memory.Version,
+			Type:                   candidate.Memory.Type,
+			Content:                candidate.Memory.Content,
+			Scope:                  candidate.Memory.Scope,
+			MatterID:               candidate.Memory.MatterID,
+			Similarity:             candidate.Similarity,
+			Score:                  rerankScore(candidate, request.MatterID, now),
+			EmbeddingProvider:      service.config.Provider,
+			EmbeddingModel:         service.config.Model,
+			EmbeddingDimensions:    service.config.Dimensions,
+			EmbeddingPolicyVersion: service.config.EmbeddingPolicyVersion,
+			RetrievalPolicyVersion: service.config.RetrievalPolicyVersion,
+		})
+	}
+	sort.Slice(hits, func(left, right int) bool {
+		if hits[left].Score != hits[right].Score {
+			return hits[left].Score > hits[right].Score
+		}
+		if hits[left].Similarity != hits[right].Similarity {
+			return hits[left].Similarity > hits[right].Similarity
+		}
+		return hits[left].MemoryID < hits[right].MemoryID
+	})
+	if len(hits) > request.Limit {
+		hits = hits[:request.Limit]
+	}
+	return hits, nil
+}
+
+func rerankScore(
+	candidate SearchCandidate,
+	matterID string,
+	now time.Time,
+) float64 {
+	score := candidate.Similarity * 0.75
+	if candidate.Memory.Scope == ScopeMatter &&
+		candidate.Memory.MatterID == matterID {
+		score += 0.10
+	}
+	score += memoryTypeWeight(candidate.Memory.Type)
+	age := now.Sub(candidate.Memory.UpdatedAt)
+	if age < 0 {
+		age = 0
+	}
+	const recencyWindow = 30 * 24 * time.Hour
+	if age < recencyWindow {
+		score += 0.05 * (1 - float64(age)/float64(recencyWindow))
+	}
+	return score
+}
+
+func memoryTypeWeight(memoryType Type) float64 {
+	switch memoryType {
+	case TypeGoal, TypePreference:
+		return 0.10
+	case TypeIdentity, TypeProfile:
+		return 0.08
+	case TypeStrength, TypeWeakness, TypeProgress:
+		return 0.07
+	case TypeInterest:
+		return 0.05
+	case TypeTopic:
+		return 0.03
+	default:
+		return 0
+	}
+}
+
+var _ Searcher = (*SearchService)(nil)
