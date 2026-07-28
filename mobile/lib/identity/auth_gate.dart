@@ -60,9 +60,12 @@ class _AuthGateState extends State<AuthGate> {
       AuthSignedOut(
         form: AuthForm.register,
       ) => _buildSignedOut(widget.controller.state as AuthSignedOut),
-      AuthRetryableError(:final message) => _RetryPage(
+      AuthRetryableError(:final message, :final action) => _RetryPage(
         message: message,
         onRetry: widget.controller.retry,
+        onSwitchAccount: action == AuthRetryAction.restoreSession
+            ? widget.controller.switchAccount
+            : null,
       ),
       AuthAuthenticated(:final user) => widget.authenticatedBuilder(
         context,
@@ -96,7 +99,7 @@ class _LoadingPage extends StatelessWidget {
     return Scaffold(
       body: Center(
         child: Semantics(
-          label: 'Restoring your session',
+          label: '正在恢复登录状态',
           child: const CircularProgressIndicator(),
         ),
       ),
@@ -105,10 +108,15 @@ class _LoadingPage extends StatelessWidget {
 }
 
 class _RetryPage extends StatelessWidget {
-  const _RetryPage({required this.message, required this.onRetry});
+  const _RetryPage({
+    required this.message,
+    required this.onRetry,
+    required this.onSwitchAccount,
+  });
 
   final String message;
   final VoidCallback onRetry;
+  final VoidCallback? onSwitchAccount;
 
   @override
   Widget build(BuildContext context) {
@@ -125,16 +133,21 @@ class _RetryPage extends StatelessWidget {
                   const Icon(Icons.cloud_off_outlined, size: 40),
                   const SizedBox(height: 20),
                   Text(
-                    'Connection needed',
+                    '需要网络连接',
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                   const SizedBox(height: 8),
                   Text(message, textAlign: TextAlign.center),
                   const SizedBox(height: 24),
-                  FilledButton(
-                    onPressed: onRetry,
-                    child: const Text('Try again'),
-                  ),
+                  FilledButton(onPressed: onRetry, child: const Text('重试')),
+                  if (onSwitchAccount != null) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      key: const Key('auth-switch-account'),
+                      onPressed: onSwitchAccount,
+                      child: const Text('使用其他账号'),
+                    ),
+                  ],
                 ],
               ),
             ),

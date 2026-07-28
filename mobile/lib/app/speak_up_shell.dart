@@ -1,16 +1,37 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/features/conversation/conversation.dart';
 import 'package:speakup/features/preparation/preparation.dart';
+import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/features/review/review.dart';
+import 'package:speakup/identity/auth_controller.dart';
+import 'package:speakup/identity/model/identity_models.dart';
+import 'package:speakup/review/review_history_controller.dart';
 
 class SpeakUpShell extends StatefulWidget {
-  const SpeakUpShell({this.showBackButton = false, super.key});
+  const SpeakUpShell({
+    this.showBackButton = false,
+    this.previewMode = false,
+    this.user,
+    this.authController,
+    this.preparationController,
+    this.reviewHistoryController,
+    required this.agentController,
+    super.key,
+  });
 
   final bool showBackButton;
+  final bool previewMode;
+  final User? user;
+  final AuthController? authController;
+  final AgentController agentController;
+  final PreparationController? preparationController;
+  final ReviewHistoryController? reviewHistoryController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -42,10 +63,47 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
+  bool _reviewPresented = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.agentController.addListener(_handleAgentState);
+    _restorePresentedReview();
+  }
+
+  @override
+  void didUpdateWidget(covariant SpeakUpShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final agentControllerChanged =
+        oldWidget.agentController != widget.agentController;
+    final historyControllerChanged =
+        oldWidget.reviewHistoryController != widget.reviewHistoryController;
+    if (agentControllerChanged) {
+      oldWidget.agentController.removeListener(_handleAgentState);
+      widget.agentController.addListener(_handleAgentState);
+    }
+    if (agentControllerChanged || historyControllerChanged) {
+      _restorePresentedReview();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.agentController.removeListener(_handleAgentState);
+    super.dispose();
+  }
 
   void _selectDestination(int index) {
     if (_selectedIndex == index) {
+      if (index == 2) {
+        unawaited(widget.reviewHistoryController?.refresh());
+      }
       return;
+    }
+    unawaited(widget.agentController.stopPracticeAudio());
+    if (index == 2) {
+      unawaited(widget.reviewHistoryController?.refresh());
     }
     setState(() => _selectedIndex = index);
   }
@@ -56,8 +114,63 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _openPractice() {
+    if (!widget.agentController.supportsPracticeFlow) {
+      _showMockNotice('场景、语音练习与复盘尚未开放，当前可以使用 Agent 文本对话');
+      return;
+    }
+    if (widget.agentController.review != null) {
+      _selectDestination(2);
+      return;
+    }
+    Navigator.of(context).pushNamed(AppRoutes.practice);
+  }
+
+  void _openVoicePractice() {
+    if (!widget.agentController.supportsPracticeFlow) {
+      _showMockNotice('语音练习尚未开放，当前可以使用 Agent 文本对话');
+      return;
+    }
+    if (widget.agentController.review != null) {
+      _selectDestination(2);
+      return;
+    }
+    if (!widget.agentController.hasActivePractice) {
+      _selectDestination(1);
+      _showMockNotice('请先选择一个练习场景');
+      return;
+    }
+    _openPractice();
+  }
+
+  void _handleAgentState() {
+    if (!mounted) {
+      return;
+    }
+    final review = widget.agentController.review;
+    if (review == null) {
+      _reviewPresented = false;
+    } else if (!_reviewPresented) {
+      _reviewPresented = true;
+      _selectedIndex = 2;
+      unawaited(widget.reviewHistoryController?.refresh());
+    }
+    setState(() {});
+  }
+
+  void _restorePresentedReview() {
+    if (widget.agentController.review == null) {
+      _reviewPresented = false;
+      return;
+    }
+    _reviewPresented = true;
+    _selectedIndex = 2;
+    unawaited(widget.reviewHistoryController?.refresh());
+  }
+
   @override
   Widget build(BuildContext context) {
+    final practiceAvailable = widget.agentController.supportsPracticeFlow;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final safeBottom = math.max(
       MediaQuery.viewPaddingOf(context).bottom,
@@ -67,20 +180,46 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         GlassNavigationBar.heightFor(context) + safeBottom + 10;
     final pages = [
       ConversationPage(
+        previewMode: widget.previewMode,
+        practiceAvailable: practiceAvailable,
         restingComposerBottom: composerBottomInset,
         onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
             : null,
         onCreatePlan: () => _selectDestination(1),
-        onContinuePractice: () =>
-            Navigator.of(context).pushNamed(AppRoutes.practice),
+        onContinuePractice: _openPractice,
         onOpenReview: () => _selectDestination(2),
-        onVoicePlaceholder: () => _showMockNotice('该能力将在后续任务接入'),
+        onVoicePlaceholder: practiceAvailable ? _openVoicePractice : null,
+        messages: widget.agentController.messages,
+        activeScene: widget.agentController.scene,
+        isBusy: widget.agentController.isBusy,
+        errorMessage: widget.agentController.errorMessage,
+        onSubmitText: widget.agentController.sendText,
+        onRetryOperation: widget.agentController.canRetry
+            ? widget.agentController.retryLastOperation
+            : null,
       ),
-      PreparationPage(showBackButton: widget.showBackButton),
-      ReviewPage(showBackButton: widget.showBackButton),
-      _ProfilePage(showBackButton: widget.showBackButton),
+      PreparationPage(
+        showBackButton: widget.showBackButton,
+        previewMode: widget.previewMode,
+        agentController: widget.agentController,
+        preparationController: widget.preparationController,
+        onSceneSelected: () => _selectDestination(0),
+      ),
+      ReviewPage(
+        showBackButton: widget.showBackButton,
+        previewMode: widget.previewMode,
+        practiceAvailable: practiceAvailable,
+        historyController: widget.reviewHistoryController,
+        agentController: widget.agentController,
+        autoload: false,
+      ),
+      _ProfilePage(
+        showBackButton: widget.showBackButton,
+        user: widget.user,
+        onLogout: widget.authController?.logout,
+      ),
     ];
 
     return Scaffold(
@@ -88,7 +227,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       extendBody: true,
       resizeToAvoidBottomInset: false,
       backgroundColor: Colors.transparent,
-      drawer: const _ConversationDrawer(),
+      drawer: _ConversationDrawer(previewMode: widget.previewMode),
       drawerScrimColor: const Color(0x330E1120),
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: keyboardVisible
@@ -103,7 +242,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 }
 
 class _ConversationDrawer extends StatelessWidget {
-  const _ConversationDrawer();
+  const _ConversationDrawer({required this.previewMode});
+
+  final bool previewMode;
 
   @override
   Widget build(BuildContext context) {
@@ -129,16 +270,9 @@ class _ConversationDrawer extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              key: const Key('new-conversation-button'),
-              onPressed: () => Navigator.of(context).pop(),
-              icon: const Icon(Icons.edit_square),
-              label: const Text('开始新对话'),
-            ),
             const SizedBox(height: 28),
             const Text(
-              '最近对话',
+              '当前对话',
               style: TextStyle(
                 color: Color(0xFF777983),
                 fontSize: 13,
@@ -146,14 +280,11 @@ class _ConversationDrawer extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            const _ConversationTile(title: '准备后端开发模拟面试', subtitle: '刚刚'),
-            const _ConversationTile(title: '项目经历怎么说更清楚', subtitle: '昨天'),
-            const _ConversationTile(title: '系统设计表达复盘', subtitle: '7 月 22 日'),
-            const SizedBox(height: 28),
-            const Text(
-              '当前内容为 UI Mock',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF989AA3), fontSize: 12),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+              leading: const Icon(Icons.chat_bubble_outline_rounded),
+              title: const Text('Agent 对话'),
+              subtitle: Text(previewMode ? '本地 Fake 预览，未连接正式账号' : '已连接当前账号'),
             ),
           ],
         ),
@@ -162,28 +293,16 @@ class _ConversationDrawer extends StatelessWidget {
   }
 }
 
-class _ConversationTile extends StatelessWidget {
-  const _ConversationTile({required this.title, required this.subtitle});
-
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-      leading: const Icon(Icons.chat_bubble_outline_rounded),
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(subtitle),
-      onTap: () => Navigator.of(context).pop(),
-    );
-  }
-}
-
 class _ProfilePage extends StatelessWidget {
-  const _ProfilePage({required this.showBackButton});
+  const _ProfilePage({
+    required this.showBackButton,
+    required this.user,
+    required this.onLogout,
+  });
 
   final bool showBackButton;
+  final User? user;
+  final VoidCallback? onLogout;
 
   @override
   Widget build(BuildContext context) {
@@ -208,24 +327,36 @@ class _ProfilePage extends StatelessWidget {
         bottom: false,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 28, 20, 140),
-          children: const [
-            Text(
+          children: [
+            const Text(
               '我的',
               style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
             ),
-            SizedBox(height: 8),
-            Text(
-              '个人资料与偏好将在后续任务中接入。',
+            const SizedBox(height: 8),
+            const Text(
+              '当前账号与本机登录状态。',
               style: TextStyle(color: Color(0xFF696B73), fontSize: 15),
             ),
-            SizedBox(height: 28),
+            const SizedBox(height: 28),
             Card(
               elevation: 0,
+              color: Colors.white,
               child: ListTile(
-                leading: CircleAvatar(child: Icon(Icons.person_rounded)),
-                title: Text('演示用户'),
-                subtitle: Text('固定身份 · UI Mock'),
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFE8E8E5),
+                  foregroundColor: Color(0xFF35363A),
+                  child: Icon(Icons.person_rounded),
+                ),
+                title: Text(user?.email ?? '本地界面预览'),
+                subtitle: Text(user == null ? '尚未连接正式账号' : '当前登录账号'),
               ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              key: const Key('profile-logout-button'),
+              onPressed: onLogout,
+              icon: const Icon(Icons.logout_rounded),
+              label: Text(user == null ? '预览模式不可退出' : '退出登录'),
             ),
           ],
         ),

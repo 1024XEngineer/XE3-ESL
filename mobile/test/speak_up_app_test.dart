@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
@@ -16,6 +17,8 @@ void main() {
     await tester.pumpWidget(const SpeakUpApp.preview());
 
     expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
+    expect(find.text('你好'), findsOneWidget);
+    expect(find.text('Hi, 智'), findsNothing);
     expect(find.text('我能为你做什么？'), findsOneWidget);
     expect(find.byKey(const Key('quick-action-create-plan')), findsOneWidget);
     expect(
@@ -24,6 +27,7 @@ void main() {
     );
     expect(find.byKey(const Key('quick-action-recent-review')), findsOneWidget);
     expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
+    expect(find.byKey(const Key('agent-preview-label')), findsOneWidget);
 
     for (final key in _primaryTabKeys) {
       expect(find.byKey(Key(key)), findsOneWidget);
@@ -76,12 +80,88 @@ void main() {
       key: 'primary-tab-profile',
       expectedPageKey: 'profile-page',
     );
+    expect(find.text('当前账号与本机登录状态。'), findsOneWidget);
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-agent',
       expectedPageKey: 'agent-home-page',
     );
     semantics.dispose();
+  });
+
+  testWidgets('clears retained text after an external retry is accepted', (
+    tester,
+  ) async {
+    var messages = const <AgentMessage>[];
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              messages: messages,
+              onSubmitText: (_) async => false,
+            );
+          },
+        ),
+      ),
+    );
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    await tester.enterText(composer, 'retry this retained text');
+    expect(tester.widget<TextField>(composer).controller?.text, isNotEmpty);
+
+    update(() {
+      messages = const <AgentMessage>[
+        AgentMessage(
+          id: 'accepted-user-message',
+          role: AgentMessageRole.user,
+          text: 'retry this retained text',
+        ),
+      ];
+    });
+    await tester.pump();
+
+    expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
+  });
+
+  testWidgets('preserves a new draft when an older retry is accepted', (
+    tester,
+  ) async {
+    var messages = const <AgentMessage>[];
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              messages: messages,
+              onSubmitText: (_) async => false,
+            );
+          },
+        ),
+      ),
+    );
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    await tester.enterText(composer, 'a newer draft');
+    update(() {
+      messages = const <AgentMessage>[
+        AgentMessage(
+          id: 'accepted-older-message',
+          role: AgentMessageRole.user,
+          text: 'the older failed text',
+        ),
+      ];
+    });
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(composer).controller?.text,
+      'a newer draft',
+    );
   });
 
   testWidgets('keeps all four Agent actions above the composer on iPhone', (
@@ -131,10 +211,18 @@ void main() {
         of: drawer,
         matching: find.byKey(const Key('new-conversation-button')),
       ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: drawer, matching: find.text('开始新对话')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: drawer, matching: find.text('当前对话')),
       findsOneWidget,
     );
     expect(
-      find.descendant(of: drawer, matching: find.text('最近对话')),
+      find.descendant(of: drawer, matching: find.text('本地 Fake 预览，未连接正式账号')),
       findsOneWidget,
     );
     expect(
@@ -158,11 +246,13 @@ void main() {
 
     await _tapVisible(tester, 'quick-action-create-plan');
     expect(find.byKey(const Key('scenes-page')), findsOneWidget);
+    expect(find.text('本地 UI Mock；练习结果不会写入正式服务。'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
     await _tapVisible(tester, 'quick-action-recent-review');
     expect(find.byKey(const Key('review-page')), findsOneWidget);
+    expect(find.text('本地 UI Mock；复盘结果不会写入正式服务。'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
@@ -358,8 +448,8 @@ void main() {
 
       await tester.drag(find.byType(ListView), const Offset(0, -1000));
       await tester.pumpAndSettle();
-      final mockLabel = find.text('当前内容为 UI Mock');
-      expect(mockLabel.hitTestable(), findsOneWidget);
+      final accountLabel = find.text('本地 Fake 预览，未连接正式账号');
+      expect(accountLabel.hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

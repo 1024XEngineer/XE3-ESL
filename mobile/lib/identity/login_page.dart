@@ -29,8 +29,8 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return AuthFormScaffold(
-      title: 'Welcome back',
-      subtitle: 'Sign in to continue with SpeakUp.',
+      title: '欢迎回来',
+      subtitle: '登录后继续使用 SpeakUp。',
       message: widget.state.noticeMessage,
       errorMessage: widget.state.errorMessage,
       child: Form(
@@ -51,14 +51,14 @@ class _LoginPageState extends State<LoginPage> {
               onPressed: widget.state.isSubmitting ? null : _submit,
               child: widget.state.isSubmitting
                   ? const AuthButtonProgress()
-                  : const Text('Sign in'),
+                  : const Text('登录'),
             ),
             const SizedBox(height: 12),
             TextButton(
               onPressed: widget.state.isSubmitting
                   ? null
                   : widget.controller.showRegister,
-              child: const Text('Create an account'),
+              child: const Text('创建账号'),
             ),
           ],
         ),
@@ -162,12 +162,12 @@ class AuthEmailField extends StatelessWidget {
       autocorrect: false,
       textInputAction: TextInputAction.next,
       decoration: const InputDecoration(
-        labelText: 'Email',
+        labelText: '邮箱',
         border: OutlineInputBorder(),
       ),
       validator: (value) {
         if (!isValidIdentityEmailInput(value ?? '')) {
-          return 'Enter a valid email address.';
+          return '请输入有效的邮箱地址。';
         }
         return null;
       },
@@ -196,12 +196,12 @@ class AuthPasswordField extends StatelessWidget {
       enableSuggestions: false,
       autocorrect: false,
       decoration: InputDecoration(
-        labelText: 'Password',
-        helperText: '15–128 characters',
+        labelText: '密码',
+        helperText: '15–128 个字符',
         border: const OutlineInputBorder(),
         suffixIcon: IconButton(
           onPressed: onToggleVisibility,
-          tooltip: obscureText ? 'Show password' : 'Hide password',
+          tooltip: obscureText ? '显示密码' : '隐藏密码',
           icon: Icon(
             obscureText
                 ? Icons.visibility_outlined
@@ -212,7 +212,7 @@ class AuthPasswordField extends StatelessWidget {
       validator: (value) {
         final length = value?.runes.length ?? 0;
         if (length < 15 || length > 128) {
-          return 'Password must be between 15 and 128 characters.';
+          return '密码长度需为 15–128 个字符。';
         }
         return null;
       },
