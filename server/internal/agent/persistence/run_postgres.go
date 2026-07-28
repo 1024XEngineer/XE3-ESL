@@ -44,6 +44,24 @@ const runSelectColumns = `
     completed_at,
     updated_at`
 
+const toolCallSelectColumns = `
+    id,
+    run_id::text,
+    owner_user_id::text,
+    thread_id::text,
+    tool_name,
+    schema_version,
+    input,
+    status,
+    result,
+    COALESCE(error_category, ''),
+    COALESCE(request_id, ''),
+    source_refs,
+    proposed_at,
+    started_at,
+    completed_at,
+    updated_at`
+
 func (r *PostgresRepository) CreateInitialRun(
 	ctx context.Context,
 	ownerID string,
@@ -497,8 +515,15 @@ func (r *PostgresRepository) SaveContextManifest(
 	var result ContextManifest
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
+	var exposedToolsJSON []byte
+	var blockedToolsJSON []byte
+	var toolSchemaHashesJSON []byte
 	var persistedMatterID pgtype.Text
 	var persistedMatterVersion pgtype.Int8
+	var intentMode pgtype.Text
+	var intentReasonCode pgtype.Text
+	var intentGuardVersion pgtype.Text
+	var toolPolicyVersion pgtype.Text
 	err = r.database.QueryRow(ctx, `
 INSERT INTO agent_context_manifests (
     run_id,
@@ -542,6 +567,13 @@ RETURNING
     requested_provider,
     requested_model,
     max_output_tokens,
+    exposed_tools,
+    blocked_tools,
+    intent_mode,
+    intent_reason_code,
+    intent_guard_version,
+    tool_policy_version,
+    tool_schema_hashes,
     created_at`,
 		manifest.RunID,
 		manifest.OwnerID,
@@ -578,6 +610,13 @@ RETURNING
 		&result.RequestedProvider,
 		&result.RequestedModel,
 		&result.MaxOutputTokens,
+		&exposedToolsJSON,
+		&blockedToolsJSON,
+		&intentMode,
+		&intentReasonCode,
+		&intentGuardVersion,
+		&toolPolicyVersion,
+		&toolSchemaHashesJSON,
 		&result.CreatedAt,
 	)
 	if err != nil {
@@ -589,6 +628,13 @@ RETURNING
 		persistedMatterVersion,
 		selectedJSON,
 		selectedMemoriesJSON,
+		exposedToolsJSON,
+		blockedToolsJSON,
+		intentMode,
+		intentReasonCode,
+		intentGuardVersion,
+		toolPolicyVersion,
+		toolSchemaHashesJSON,
 	); err != nil {
 		return ContextManifest{}, err
 	}
@@ -603,8 +649,15 @@ func (r *PostgresRepository) FindContextManifest(
 	var result ContextManifest
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
+	var exposedToolsJSON []byte
+	var blockedToolsJSON []byte
+	var toolSchemaHashesJSON []byte
 	var activeMatterID pgtype.Text
 	var activeMatterVersion pgtype.Int8
+	var intentMode pgtype.Text
+	var intentReasonCode pgtype.Text
+	var intentGuardVersion pgtype.Text
+	var toolPolicyVersion pgtype.Text
 	err := r.database.QueryRow(ctx, `
 SELECT
     run_id::text,
@@ -624,6 +677,13 @@ SELECT
     requested_provider,
     requested_model,
     max_output_tokens,
+    exposed_tools,
+    blocked_tools,
+    intent_mode,
+    intent_reason_code,
+    intent_guard_version,
+    tool_policy_version,
+    tool_schema_hashes,
     created_at
 FROM agent_context_manifests
 WHERE run_id = $1 AND owner_user_id = $2`,
@@ -647,6 +707,13 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result.RequestedProvider,
 		&result.RequestedModel,
 		&result.MaxOutputTokens,
+		&exposedToolsJSON,
+		&blockedToolsJSON,
+		&intentMode,
+		&intentReasonCode,
+		&intentGuardVersion,
+		&toolPolicyVersion,
+		&toolSchemaHashesJSON,
 		&result.CreatedAt,
 	)
 	if err != nil {
@@ -658,10 +725,280 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		activeMatterVersion,
 		selectedJSON,
 		selectedMemoriesJSON,
+		exposedToolsJSON,
+		blockedToolsJSON,
+		intentMode,
+		intentReasonCode,
+		intentGuardVersion,
+		toolPolicyVersion,
+		toolSchemaHashesJSON,
 	); err != nil {
 		return ContextManifest{}, err
 	}
 	return result, nil
+}
+
+func (r *PostgresRepository) SaveContextToolSnapshot(
+	ctx context.Context,
+	manifest ContextManifest,
+) (ContextManifest, error) {
+	exposedTools, err := json.Marshal(nonNilStrings(manifest.ExposedTools))
+	if err != nil {
+		return ContextManifest{}, ErrInvalidRequest
+	}
+	blockedTools, err := json.Marshal(nonNilBlockedTools(manifest.BlockedTools))
+	if err != nil {
+		return ContextManifest{}, ErrInvalidRequest
+	}
+	schemaHashes, err := json.Marshal(nonNilStringMap(manifest.ToolSchemaHashes))
+	if err != nil {
+		return ContextManifest{}, ErrInvalidRequest
+	}
+	var intentMode any
+	var intentReason any
+	var guardVersion any
+	var policyVersion any
+	if manifest.IntentMode != "" {
+		intentMode = manifest.IntentMode
+	}
+	if manifest.IntentReasonCode != "" {
+		intentReason = manifest.IntentReasonCode
+	}
+	if manifest.IntentGuardVersion != "" {
+		guardVersion = manifest.IntentGuardVersion
+	}
+	if manifest.ToolPolicyVersion != "" {
+		policyVersion = manifest.ToolPolicyVersion
+	}
+	command, err := r.database.Exec(ctx, `
+UPDATE agent_context_manifests
+SET
+    exposed_tools = $3::jsonb,
+    blocked_tools = $4::jsonb,
+    intent_mode = $5,
+    intent_reason_code = $6,
+    intent_guard_version = $7,
+    tool_policy_version = $8,
+    tool_schema_hashes = $9::jsonb
+WHERE run_id = $1 AND owner_user_id = $2`,
+		manifest.RunID,
+		manifest.OwnerID,
+		exposedTools,
+		blockedTools,
+		intentMode,
+		intentReason,
+		guardVersion,
+		policyVersion,
+		schemaHashes,
+	)
+	if err != nil {
+		return ContextManifest{}, mapPostgresError(err)
+	}
+	if command.RowsAffected() == 0 {
+		return ContextManifest{}, ErrNotFound
+	}
+	return r.FindContextManifest(ctx, manifest.OwnerID, manifest.RunID)
+}
+
+func (r *PostgresRepository) SaveToolCallProposed(
+	ctx context.Context,
+	record ToolCallRecord,
+) (ToolCallRecord, error) {
+	input, err := json.Marshal(record.Input)
+	if err != nil {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	if !validToolCallRecordIdentity(record) ||
+		record.Name == "" ||
+		record.SchemaVersion == "" ||
+		len(record.Input) == 0 {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	return scanToolCall(r.database.QueryRow(ctx, `
+INSERT INTO agent_tool_calls (
+    id,
+    run_id,
+    owner_user_id,
+    thread_id,
+    tool_name,
+    schema_version,
+    input,
+    status,
+    source_refs,
+    proposed_at,
+    updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7::jsonb, 'proposed', '[]'::jsonb,
+    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+ON CONFLICT (run_id, id) DO UPDATE
+SET
+    updated_at = agent_tool_calls.updated_at
+RETURNING `+toolCallSelectColumns,
+		record.ID,
+		record.RunID,
+		record.OwnerID,
+		record.ThreadID,
+		record.Name,
+		record.SchemaVersion,
+		input,
+	))
+}
+
+func (r *PostgresRepository) MarkToolCallRunning(
+	ctx context.Context,
+	ownerID string,
+	runID string,
+	toolCallID string,
+	requestID string,
+) (ToolCallRecord, error) {
+	record, err := scanToolCall(r.database.QueryRow(ctx, `
+UPDATE agent_tool_calls
+SET
+    status = 'running',
+    request_id = $4,
+    started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE run_id = $1
+  AND owner_user_id = $2
+  AND id = $3
+  AND status IN ('proposed', 'running')
+RETURNING `+toolCallSelectColumns,
+		runID,
+		ownerID,
+		toolCallID,
+		requestID,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ToolCallRecord{}, ErrConflict
+	}
+	if err != nil {
+		return ToolCallRecord{}, mapPostgresError(err)
+	}
+	return record, nil
+}
+
+func (r *PostgresRepository) MarkToolCallSucceeded(
+	ctx context.Context,
+	ownerID string,
+	runID string,
+	toolCallID string,
+	result json.RawMessage,
+	sourceRefs []ToolSourceRef,
+) (ToolCallRecord, error) {
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	refsJSON, err := json.Marshal(sourceRefs)
+	if err != nil {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	record, err := scanToolCall(r.database.QueryRow(ctx, `
+UPDATE agent_tool_calls
+SET
+    status = 'succeeded',
+    result = $4::jsonb,
+    source_refs = $5::jsonb,
+    completed_at = GREATEST(CURRENT_TIMESTAMP, started_at),
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE run_id = $1
+  AND owner_user_id = $2
+  AND id = $3
+  AND status = 'running'
+RETURNING `+toolCallSelectColumns,
+		runID,
+		ownerID,
+		toolCallID,
+		resultJSON,
+		refsJSON,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ToolCallRecord{}, ErrConflict
+	}
+	if err != nil {
+		return ToolCallRecord{}, mapPostgresError(err)
+	}
+	return record, nil
+}
+
+func (r *PostgresRepository) MarkToolCallFailed(
+	ctx context.Context,
+	ownerID string,
+	runID string,
+	toolCallID string,
+	status ToolCallStatus,
+	errorCategory string,
+) (ToolCallRecord, error) {
+	if status != ToolCallStatusFailed && status != ToolCallStatusRejected {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	record, err := scanToolCall(r.database.QueryRow(ctx, `
+UPDATE agent_tool_calls
+SET
+    status = $4,
+    error_category = $5,
+    started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+    completed_at = GREATEST(CURRENT_TIMESTAMP, COALESCE(started_at, proposed_at)),
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE run_id = $1
+  AND owner_user_id = $2
+  AND id = $3
+  AND status IN ('proposed', 'running')
+RETURNING `+toolCallSelectColumns,
+		runID,
+		ownerID,
+		toolCallID,
+		string(status),
+		errorCategory,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ToolCallRecord{}, ErrConflict
+	}
+	if err != nil {
+		return ToolCallRecord{}, mapPostgresError(err)
+	}
+	return record, nil
+}
+
+func (r *PostgresRepository) ListToolCalls(
+	ctx context.Context,
+	ownerID string,
+	runID string,
+) ([]ToolCallRecord, error) {
+	rows, err := r.database.Query(ctx, `
+SELECT `+toolCallSelectColumns+`
+FROM agent_tool_calls
+WHERE owner_user_id = $1 AND run_id = $2
+ORDER BY proposed_at ASC, id ASC`,
+		ownerID,
+		runID,
+	)
+	if err != nil {
+		return nil, ErrRepository
+	}
+	defer rows.Close()
+	records := make([]ToolCallRecord, 0)
+	for rows.Next() {
+		record, err := scanToolCall(rows)
+		if err != nil {
+			return nil, mapPostgresError(err)
+		}
+		records = append(records, record)
+	}
+	if rows.Err() != nil {
+		return nil, ErrRepository
+	}
+	return records, nil
 }
 
 func (r *PostgresRepository) CompleteRun(
@@ -1063,12 +1400,74 @@ func scanRun(row rowScanner) (Run, error) {
 	return result, nil
 }
 
+func scanToolCall(row rowScanner) (ToolCallRecord, error) {
+	var result ToolCallRecord
+	var status string
+	var inputJSON []byte
+	var resultJSON []byte
+	var sourceRefsJSON []byte
+	var startedAt pgtype.Timestamptz
+	var completedAt pgtype.Timestamptz
+	err := row.Scan(
+		&result.ID,
+		&result.RunID,
+		&result.OwnerID,
+		&result.ThreadID,
+		&result.Name,
+		&result.SchemaVersion,
+		&inputJSON,
+		&status,
+		&resultJSON,
+		&result.ErrorCategory,
+		&result.RequestID,
+		&sourceRefsJSON,
+		&result.ProposedAt,
+		&startedAt,
+		&completedAt,
+		&result.UpdatedAt,
+	)
+	if err != nil {
+		return ToolCallRecord{}, err
+	}
+	result.Status = ToolCallStatus(status)
+	result.Input = append(json.RawMessage(nil), inputJSON...)
+	if len(resultJSON) > 0 {
+		result.Result = append(json.RawMessage(nil), resultJSON...)
+	}
+	if len(sourceRefsJSON) > 0 {
+		if err := json.Unmarshal(sourceRefsJSON, &result.SourceRefs); err != nil {
+			return ToolCallRecord{}, ErrRepository
+		}
+	}
+	if startedAt.Valid {
+		result.StartedAt = startedAt.Time
+	}
+	if completedAt.Valid {
+		result.CompletedAt = completedAt.Time
+	}
+	return result, nil
+}
+
+func validToolCallRecordIdentity(record ToolCallRecord) bool {
+	return ValidModelID(record.ID) &&
+		ValidUUID(record.RunID) &&
+		ValidUUID(record.OwnerID) &&
+		ValidUUID(record.ThreadID)
+}
+
 func decodeManifestOptionals(
 	manifest *ContextManifest,
 	activeMatterID pgtype.Text,
 	activeMatterVersion pgtype.Int8,
 	selectedJSON []byte,
 	selectedMemoriesJSON []byte,
+	exposedToolsJSON []byte,
+	blockedToolsJSON []byte,
+	intentMode pgtype.Text,
+	intentReasonCode pgtype.Text,
+	intentGuardVersion pgtype.Text,
+	toolPolicyVersion pgtype.Text,
+	toolSchemaHashesJSON []byte,
 ) error {
 	if activeMatterID.Valid {
 		manifest.ActiveMatterID = activeMatterID.String
@@ -1085,5 +1484,56 @@ func decodeManifestOptionals(
 	); err != nil {
 		return ErrRepository
 	}
+	if len(exposedToolsJSON) > 0 {
+		if err := json.Unmarshal(exposedToolsJSON, &manifest.ExposedTools); err != nil {
+			return ErrRepository
+		}
+	}
+	if len(blockedToolsJSON) > 0 {
+		if err := json.Unmarshal(blockedToolsJSON, &manifest.BlockedTools); err != nil {
+			return ErrRepository
+		}
+	}
+	if intentMode.Valid {
+		manifest.IntentMode = intentMode.String
+	}
+	if intentReasonCode.Valid {
+		manifest.IntentReasonCode = intentReasonCode.String
+	}
+	if intentGuardVersion.Valid {
+		manifest.IntentGuardVersion = intentGuardVersion.String
+	}
+	if toolPolicyVersion.Valid {
+		manifest.ToolPolicyVersion = toolPolicyVersion.String
+	}
+	if len(toolSchemaHashesJSON) > 0 {
+		if err := json.Unmarshal(
+			toolSchemaHashesJSON,
+			&manifest.ToolSchemaHashes,
+		); err != nil {
+			return ErrRepository
+		}
+	}
 	return nil
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func nonNilBlockedTools(values []ContextBlockedTool) []ContextBlockedTool {
+	if values == nil {
+		return []ContextBlockedTool{}
+	}
+	return values
+}
+
+func nonNilStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return map[string]string{}
+	}
+	return values
 }

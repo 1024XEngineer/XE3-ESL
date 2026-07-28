@@ -1,0 +1,265 @@
+package runtime
+
+import (
+	"bytes"
+	"context"
+	"log/slog"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
+)
+
+func TestToolPolicyKeepsEmptyAllowedNamesAsAllRegisteredTools(t *testing.T) {
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	policy := tool.Policy{AllowWrites: true}
+	definitions, err := policy.Select(registry)
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	if got, want := toolNames(definitions), []string{
+		mocktool.MaterialSearchToolName,
+		mocktool.MistakeSearchToolName,
+		reviewtool.ReviewGetToolName,
+		reviewtool.ReviewSearchToolName,
+		mattertool.ScenarioSearchToolName,
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("selected names = %#v, want %#v", got, want)
+	}
+}
+
+func TestToolPolicyBuilderFiltersByFeaturesAndDirectIntent(t *testing.T) {
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	decision := NewToolPolicyBuilder(registry, nil).Build(
+		"run-1",
+		PolicyContext{
+			Actor:    validPolicyActor(),
+			ThreadID: "thread-1",
+			Intent: IntentDecision{
+				Mode:       IntentDirectOnly,
+				ReasonCode: ReasonDirectLanguageHelp,
+			},
+			AvailableFeatures: map[string]bool{
+				mattertool.ScenarioCreateToolName: true,
+				mattertool.ScenarioSearchToolName: true,
+				reviewtool.ReviewSearchToolName:   true,
+			},
+		},
+	)
+	if decision.Policy.AllowWrites {
+		t.Fatal("AllowWrites = true, want false")
+	}
+	if got, want := decision.AllowedTools, []string(nil); !reflect.DeepEqual(got, want) {
+		t.Fatalf("AllowedTools = %#v, want %#v", got, want)
+	}
+	if !blockedWithReason(
+		decision.BlockedTools,
+		mattertool.ScenarioCreateToolName,
+		ReasonDirectLanguageHelp,
+	) {
+		t.Fatalf("scenario.create blocked tools = %#v", decision.BlockedTools)
+	}
+	if !blockedWithReason(
+		decision.BlockedTools,
+		mocktool.MaterialSearchToolName,
+		ReasonDirectLanguageHelp,
+	) {
+		t.Fatalf("material.search blocked tools = %#v", decision.BlockedTools)
+	}
+}
+
+func TestToolPolicyBuilderRequiresConfirmationForScenarioCreate(t *testing.T) {
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	base := PolicyContext{
+		Actor:    validPolicyActor(),
+		ThreadID: "thread-1",
+		Intent: IntentDecision{
+			Mode:       IntentToolEligible,
+			ReasonCode: ReasonNewRealWorldScenario,
+		},
+	}
+	decision := NewToolPolicyBuilder(registry, nil).Build("run-1", base)
+	if containsString(decision.AllowedTools, mattertool.ScenarioCreateToolName) {
+		t.Fatalf("unconfirmed AllowedTools = %#v, should not include scenario.create", decision.AllowedTools)
+	}
+
+	base.ConfirmedActions = []string{mattertool.ScenarioCreateToolName}
+	decision = NewToolPolicyBuilder(registry, nil).Build("run-1", base)
+	if !containsString(decision.AllowedTools, mattertool.ScenarioCreateToolName) {
+		t.Fatalf("confirmed AllowedTools = %#v, should include scenario.create", decision.AllowedTools)
+	}
+}
+
+func TestToolPolicyBuilderUsesActiveMatterToAvoidScenarioSearch(t *testing.T) {
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	decision := NewToolPolicyBuilder(registry, nil).Build(
+		"run-1",
+		PolicyContext{
+			Actor:          validPolicyActor(),
+			ThreadID:       "thread-1",
+			ActiveMatterID: "matter-1",
+			Intent: IntentDecision{
+				Mode:       IntentToolEligible,
+				ReasonCode: ReasonNewRealWorldScenario,
+			},
+		},
+	)
+	if containsString(decision.AllowedTools, mattertool.ScenarioSearchToolName) {
+		t.Fatalf("AllowedTools = %#v, should not include scenario.search with active matter", decision.AllowedTools)
+	}
+	if !containsString(decision.AllowedTools, mocktool.MaterialSearchToolName) {
+		t.Fatalf("AllowedTools = %#v, should include material.search", decision.AllowedTools)
+	}
+}
+
+func TestToolPolicyBuilderLimitsExplicitCommandToParsedTool(t *testing.T) {
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	decision := NewToolPolicyBuilder(registry, nil).Build(
+		"run-1",
+		PolicyContext{
+			Actor:            validPolicyActor(),
+			ThreadID:         "thread-1",
+			EntryPoint:       "command",
+			ExplicitToolName: reviewtool.ReviewSearchToolName,
+			Intent: IntentDecision{
+				Mode:       IntentToolEligible,
+				ReasonCode: ReasonExplicitCommand,
+			},
+		},
+	)
+	if got, want := decision.Policy.AllowedNames, []string{reviewtool.ReviewSearchToolName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("AllowedNames = %#v, want %#v", got, want)
+	}
+	if got, want := decision.AllowedTools, []string{reviewtool.ReviewSearchToolName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("AllowedTools = %#v, want %#v", got, want)
+	}
+	if _, err := tool.NewExecutor(registry).Execute(
+		context.Background(),
+		validCallContextForPolicy(),
+		tool.Invocation{Name: reviewtool.ReviewSearchToolName, Input: []byte(`{"query":"last review"}`)},
+		decision.Policy,
+	); err != nil {
+		t.Fatalf("Execute() with command policy error = %v", err)
+	}
+}
+
+func TestToolPolicyBuilderRejectsInvalidTrustedContext(t *testing.T) {
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	decision := NewToolPolicyBuilder(registry, nil).Build(
+		"run-1",
+		PolicyContext{
+			Actor:    requestcontext.Actor{UserID: "user-1"},
+			ThreadID: "thread-1",
+			Intent: IntentDecision{
+				Mode:       IntentToolEligible,
+				ReasonCode: ReasonNewRealWorldScenario,
+			},
+		},
+	)
+	if decision.ReasonCode != ReasonPolicyRejected {
+		t.Fatalf("ReasonCode = %q, want %q", decision.ReasonCode, ReasonPolicyRejected)
+	}
+	if decision.Policy.AllowWrites {
+		t.Fatal("AllowWrites = true, want false")
+	}
+}
+
+func TestToolPolicyBuilderLogsCandidateEvent(t *testing.T) {
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+	NewToolPolicyBuilder(registry, logger).Build(
+		"run-1",
+		PolicyContext{
+			Actor:    validPolicyActor(),
+			ThreadID: "thread-1",
+			Intent: IntentDecision{
+				Mode:       IntentToolEligible,
+				ReasonCode: ReasonHistoricalReviewRequest,
+			},
+			AvailableFeatures: map[string]bool{
+				reviewtool.ReviewSearchToolName: true,
+			},
+		},
+	)
+
+	logged := output.String()
+	for _, want := range []string{
+		"agent.routing.candidates",
+		"run_id=run-1",
+		"policy_version=tool-policy-v1",
+		"reason_code=historical_review_request",
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("log output = %q, want %q", logged, want)
+		}
+	}
+}
+
+func validPolicyActor() requestcontext.Actor {
+	return requestcontext.Actor{UserID: "user-1", SessionID: "session-1"}
+}
+
+func validCallContextForPolicy() tool.CallContext {
+	return tool.CallContext{
+		Actor:      validPolicyActor(),
+		ThreadID:   "thread-1",
+		RunID:      "run-1",
+		ToolCallID: "tool-call-1",
+		RequestID:  "request-1",
+	}
+}
+
+func toolNames(definitions []tool.Definition) []string {
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, definition.Name)
+	}
+	return names
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func blockedWithReason(blocked []BlockedTool, name string, reason string) bool {
+	for _, item := range blocked {
+		if item.Name == name && item.Reason == reason {
+			return true
+		}
+	}
+	return false
+}

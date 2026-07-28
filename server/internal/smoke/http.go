@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -38,6 +39,7 @@ type Server struct {
 	review       *review.Service
 	application  *Application
 	idempotency  *idempotencyStore
+	identity     *mockIdentityStore
 	tools        []mocktool.CapabilitySummary
 }
 
@@ -78,6 +80,7 @@ func NewServer(logger *slog.Logger) *Server {
 			provider,
 		),
 		idempotency: newIdempotencyStore(),
+		identity:    newMockIdentityStore(),
 		tools:       mocktool.CapabilitySummaries(toolRegistry),
 	}
 	bootstrap.RegisterPreparationCatalog(router, preparationService)
@@ -91,6 +94,10 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) registerRoutes() {
+	s.router.POST("/v1/auth/register", s.registerAuth)
+	s.router.POST("/v1/auth/login", s.loginAuth)
+	s.router.POST("/v1/auth/logout", s.logoutAuth)
+	s.router.GET("/v1/me", s.currentUser)
 	s.router.POST("/v1/preparation-profiles", s.createProfile)
 	s.router.POST("/v1/preparation-profiles/:preparation_profile_id/snapshots", s.createSnapshot)
 	s.router.POST("/v1/practice-plans", s.createPlan)
@@ -113,6 +120,63 @@ func (s *Server) registerRoutes() {
 
 func (s *Server) listAgentTools(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"tools": s.tools})
+}
+
+func (s *Server) registerAuth(c *gin.Context) {
+	raw, ok := readBody(c)
+	if !ok {
+		return
+	}
+	request, ok := decodeMockCredentials(c, raw)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusCreated, s.identity.userForEmail(request.Email))
+}
+
+func (s *Server) loginAuth(c *gin.Context) {
+	raw, ok := readBody(c)
+	if !ok {
+		return
+	}
+	request, ok := decodeMockCredentials(c, raw)
+	if !ok {
+		return
+	}
+	user := s.identity.userForEmail(request.Email)
+	token := s.identity.createSession(user)
+	c.Header("Cache-Control", "no-store")
+	c.Header("Pragma", "no-cache")
+	c.JSON(http.StatusOK, gin.H{
+		"user":          user,
+		"session_token": token,
+		"token_type":    "Bearer",
+		"expires_at":    time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano),
+	})
+}
+
+func (s *Server) logoutAuth(c *gin.Context) {
+	token, ok := bearerToken(c.Request.Header.Values("Authorization"))
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "authentication_required", "Authentication is required.", false)
+		return
+	}
+	s.identity.deleteSession(token)
+	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) currentUser(c *gin.Context) {
+	token, ok := bearerToken(c.Request.Header.Values("Authorization"))
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "authentication_required", "Authentication is required.", false)
+		return
+	}
+	user, ok := s.identity.userForSession(token)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "authentication_required", "Authentication is required.", false)
+		return
+	}
+	c.JSON(http.StatusOK, user)
 }
 
 func (s *Server) createProfile(c *gin.Context) {
@@ -568,6 +632,107 @@ func decodeStrict(body []byte, target any) error {
 
 func emptyBody(body []byte) bool {
 	return len(bytes.TrimSpace(body)) == 0
+}
+
+type mockCredentials struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func decodeMockCredentials(c *gin.Context, raw []byte) (mockCredentials, bool) {
+	var request mockCredentials
+	if err := decodeStrict(raw, &request); err != nil ||
+		!validMockEmail(request.Email) ||
+		len(request.Password) < 1 ||
+		len(request.Password) > 128 {
+		writeAPIResponse(c, invalidRequest())
+		return mockCredentials{}, false
+	}
+	request.Email = strings.ToLower(strings.TrimSpace(request.Email))
+	return request, true
+}
+
+func validMockEmail(email string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	at := strings.Index(email, "@")
+	return at > 0 &&
+		at == strings.LastIndex(email, "@") &&
+		at < len(email)-1 &&
+		strings.Contains(email[at+1:], ".")
+}
+
+type mockIdentityStore struct {
+	mu       sync.Mutex
+	users    map[string]gin.H
+	sessions map[string]gin.H
+}
+
+func newMockIdentityStore() *mockIdentityStore {
+	return &mockIdentityStore{
+		users:    make(map[string]gin.H),
+		sessions: make(map[string]gin.H),
+	}
+}
+
+func (s *mockIdentityStore) userForEmail(email string) gin.H {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	email = strings.ToLower(strings.TrimSpace(email))
+	if user, ok := s.users[email]; ok {
+		return cloneGinH(user)
+	}
+	sum := sha256.Sum256([]byte(email))
+	user := gin.H{
+		"user_id": fmt.Sprintf("mock-user-%x", sum[:8]),
+		"email":   email,
+	}
+	s.users[email] = user
+	return cloneGinH(user)
+}
+
+func (s *mockIdentityStore) createSession(user gin.H) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	email, _ := user["email"].(string)
+	sum := sha256.Sum256([]byte(email))
+	token := fmt.Sprintf("sess_mock_%x", sum[:16])
+	s.sessions[token] = cloneGinH(user)
+	return token
+}
+
+func (s *mockIdentityStore) userForSession(token string) (gin.H, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.sessions[token]
+	if !ok {
+		return nil, false
+	}
+	return cloneGinH(user), true
+}
+
+func (s *mockIdentityStore) deleteSession(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, token)
+}
+
+func cloneGinH(value gin.H) gin.H {
+	clone := make(gin.H, len(value))
+	for key, item := range value {
+		clone[key] = item
+	}
+	return clone
+}
+
+func bearerToken(values []string) (string, bool) {
+	if len(values) != 1 {
+		return "", false
+	}
+	parts := strings.Fields(values[0])
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", false
+	}
+	return parts[1], true
 }
 
 func fieldPresent(body []byte, field string) bool {

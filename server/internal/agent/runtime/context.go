@@ -27,6 +27,7 @@ type Run = core.Run
 type ContextMessageSource = core.ContextMessageSource
 type ContextMemorySource = core.ContextMemorySource
 type ContextManifest = core.ContextManifest
+type ToolCallRecord = core.ToolCallRecord
 type RunConfiguration = core.RunConfiguration
 type RunRepository = core.RunRepository
 type RunSubmission = core.RunSubmission

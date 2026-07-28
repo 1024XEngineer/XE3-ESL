@@ -12,12 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -312,6 +314,154 @@ SELECT
 	)
 	if err != nil || len(recoveredMessages) != 2 {
 		t.Fatalf("recovered messages = %#v, %v", recoveredMessages, err)
+	}
+}
+
+func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("new mock registry: %v", err)
+	}
+	generator := newSequenceTextGenerator(
+		ai.TextResult{
+			ID:           "fake-completion-tools",
+			Provider:     "fake",
+			Model:        "configured-model",
+			FinishReason: "tool_calls",
+			ToolCalls: []ai.ToolCall{{
+				ID:        "call-review-1",
+				Name:      reviewtool.ReviewSearchToolName,
+				Arguments: json.RawMessage(`{"query":"metrics","limit":1}`),
+			}},
+			Usage: ai.TokenUsage{
+				InputTokens:  20,
+				OutputTokens: 4,
+				TotalTokens:  24,
+			},
+		},
+		ai.TextResult{
+			ID:           "fake-completion-final",
+			Provider:     "fake",
+			Model:        "configured-model",
+			Content:      "I found the latest review and summarized it.",
+			FinishReason: "stop",
+			Usage: ai.TokenUsage{
+				InputTokens:  44,
+				OutputTokens: 9,
+				TotalTokens:  53,
+			},
+		},
+	)
+	matterService, dataService, _, repository := newAgentRunServices(
+		t,
+		database.pool,
+		generator,
+		testRunConfiguration,
+	)
+	assembler, err := NewContextAssembler(
+		repository,
+		matterService,
+		&recordingMemorySearcher{},
+	)
+	if err != nil {
+		t.Fatalf("new ContextAssembler: %v", err)
+	}
+	runService, err := NewRunService(
+		repository,
+		assembler,
+		generator,
+		testRunConfiguration,
+		WithToolRegistry(registry),
+	)
+	if err != nil {
+		t.Fatalf("new Run service with tools: %v", err)
+	}
+	actorA := testActorA()
+	actorB := testActorB()
+	thread, err := dataService.CreateThread(
+		context.Background(),
+		actorA,
+		"",
+	)
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	submission, err := runService.SubmitText(
+		context.Background(),
+		actorA,
+		thread.ID,
+		"ios-tool-call-0001",
+		"看看我面试评价",
+	)
+	if err != nil {
+		t.Fatalf("submit text: %v", err)
+	}
+	if submission.Run.Status != RunStatusCompleted ||
+		generator.CallCount() != 2 {
+		t.Fatalf(
+			"unexpected run status/calls: %#v calls=%d",
+			submission.Run,
+			generator.CallCount(),
+		)
+	}
+	manifest, err := runService.GetContextManifest(
+		context.Background(),
+		actorA,
+		submission.Run.ID,
+	)
+	if err != nil {
+		t.Fatalf("get ContextManifest: %v", err)
+	}
+	if manifest.IntentMode == "" ||
+		manifest.IntentReasonCode == "" ||
+		manifest.IntentGuardVersion == "" ||
+		manifest.ToolPolicyVersion == "" ||
+		!containsString(manifest.ExposedTools, reviewtool.ReviewSearchToolName) ||
+		manifest.ToolSchemaHashes[reviewtool.ReviewSearchToolName] == "" {
+		t.Fatalf("unexpected ContextManifest tool snapshot: %#v", manifest)
+	}
+	records, err := runService.GetToolCalls(
+		context.Background(),
+		actorA,
+		submission.Run.ID,
+	)
+	if err != nil {
+		t.Fatalf("get ToolCalls: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("ToolCall count = %d, want 1: %#v", len(records), records)
+	}
+	record := records[0]
+	if record.ID != "call-review-1" ||
+		record.RunID != submission.Run.ID ||
+		record.OwnerID != actorA.UserID ||
+		record.ThreadID != thread.ID ||
+		record.Name != reviewtool.ReviewSearchToolName ||
+		record.SchemaVersion == "" ||
+		record.Status != ToolCallStatusSucceeded ||
+		record.RequestID == "" ||
+		record.ProposedAt.IsZero() ||
+		record.StartedAt.IsZero() ||
+		record.CompletedAt.IsZero() ||
+		record.UpdatedAt.IsZero() ||
+		len(record.SourceRefs) != 1 ||
+		record.ErrorCategory != "" {
+		t.Fatalf("unexpected ToolCall record: %#v", record)
+	}
+	if !strings.Contains(string(record.Input), `"query": "metrics"`) &&
+		!strings.Contains(string(record.Input), `"query":"metrics"`) {
+		t.Fatalf("ToolCall input = %s", record.Input)
+	}
+	if !strings.Contains(string(record.Result), `"reviews"`) {
+		t.Fatalf("ToolCall result = %s", record.Result)
+	}
+	if _, err := runService.GetToolCalls(
+		context.Background(),
+		actorB,
+		submission.Run.ID,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner ToolCalls error = %v, want not found", err)
 	}
 }
 
@@ -2448,6 +2598,16 @@ type recordingTextGenerator struct {
 	requests []ai.TextRequest
 }
 
+type sequenceTextGenerator struct {
+	mu       sync.Mutex
+	results  []ai.TextResult
+	requests []ai.TextRequest
+}
+
+func newSequenceTextGenerator(results ...ai.TextResult) *sequenceTextGenerator {
+	return &sequenceTextGenerator{results: results}
+}
+
 type blockingTextGenerator struct {
 	started chan struct{}
 	release chan struct{}
@@ -2507,6 +2667,27 @@ func (generator *recordingTextGenerator) Generate(
 	return generator.result, generator.err
 }
 
+func (generator *sequenceTextGenerator) Generate(
+	ctx context.Context,
+	request ai.TextRequest,
+) (ai.TextResult, error) {
+	if err := ai.ValidateTextRequest(request); err != nil {
+		return ai.TextResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ai.TextResult{}, err
+	}
+	generator.mu.Lock()
+	defer generator.mu.Unlock()
+	generator.requests = append(generator.requests, request)
+	if len(generator.results) == 0 {
+		return successfulTextResult(), nil
+	}
+	result := generator.results[0]
+	generator.results = generator.results[1:]
+	return result, nil
+}
+
 func (generator *recordingTextGenerator) CallCount() int {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
@@ -2514,6 +2695,20 @@ func (generator *recordingTextGenerator) CallCount() int {
 }
 
 func (generator *recordingTextGenerator) Requests() []ai.TextRequest {
+	generator.mu.Lock()
+	defer generator.mu.Unlock()
+	result := make([]ai.TextRequest, len(generator.requests))
+	copy(result, generator.requests)
+	return result
+}
+
+func (generator *sequenceTextGenerator) CallCount() int {
+	generator.mu.Lock()
+	defer generator.mu.Unlock()
+	return len(generator.requests)
+}
+
+func (generator *sequenceTextGenerator) Requests() []ai.TextRequest {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
 	result := make([]ai.TextRequest, len(generator.requests))
@@ -2707,4 +2902,13 @@ func testContextMemoryHit(content string) MemorySearchHit {
 		EmbeddingPolicyVersion: "memory-embedding-v1",
 		RetrievalPolicyVersion: "memory-retrieval-v1",
 	}
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }

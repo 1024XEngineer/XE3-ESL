@@ -2,10 +2,17 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"time"
+	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/command"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -13,6 +20,14 @@ import (
 const (
 	runPersistenceTimeout  = 5 * time.Second
 	maxPersistedTokenCount = 1<<31 - 1
+	defaultMaxIterations   = 3
+	defaultMaxToolCalls    = 4
+	defaultMaxWriteCalls   = 1
+	defaultToolTimeout     = 5 * time.Second
+	defaultLoopTimeout     = 25 * time.Second
+	defaultMaxToolResult   = 16 * 1024
+	loopFallbackID         = "agent-loop-fallback"
+	toolSchemaVersionV1    = "tool-schema-v1"
 )
 
 type RunService struct {
@@ -20,24 +35,148 @@ type RunService struct {
 	assembler     *ContextAssembler
 	generator     ai.TextGenerator
 	configuration RunConfiguration
+	registry      *tool.Registry
+	executor      *tool.Executor
+	loopLimits    LoopLimits
+	commands      *command.Router
+	confirmed     ConfirmedActionsProvider
+	logger        *slog.Logger
+	logOptions    LogOptions
 }
+
+type LoopLimits struct {
+	MaxIterations      int
+	MaxToolCalls       int
+	MaxWriteToolCalls  int
+	ToolTimeout        time.Duration
+	LoopTimeout        time.Duration
+	MaxToolResultBytes int
+}
+
+type ConfirmedActionsProvider func(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	run Run,
+) []string
+
+type LogOptions struct {
+	LogUserInput    bool
+	LogToolPayloads bool
+	InputPreviewMax int
+}
+
+type RunServiceOption func(*RunService) error
 
 func NewRunService(
 	repository RunRepository,
 	assembler *ContextAssembler,
 	generator ai.TextGenerator,
 	configuration RunConfiguration,
+	options ...RunServiceOption,
 ) (*RunService, error) {
 	if repository == nil || assembler == nil || generator == nil ||
 		!core.ValidRunConfiguration(configuration) {
 		return nil, errors.New("agent: run dependency or configuration is invalid")
 	}
-	return &RunService{
+	service := &RunService{
 		repository:    repository,
 		assembler:     assembler,
 		generator:     generator,
 		configuration: configuration,
-	}, nil
+		loopLimits:    defaultLoopLimits(),
+		logOptions:    normalizeLogOptions(LogOptions{}),
+	}
+	for _, option := range options {
+		if option == nil {
+			return nil, errors.New("agent: run option is invalid")
+		}
+		if err := option(service); err != nil {
+			return nil, err
+		}
+	}
+	return service, nil
+}
+
+func WithToolRegistry(registry *tool.Registry) RunServiceOption {
+	return func(service *RunService) error {
+		if registry == nil {
+			return errors.New("agent: tool registry is required")
+		}
+		service.registry = registry
+		service.executor = tool.NewExecutorWithLogger(
+			registry,
+			service.logger,
+			service.logOptions.LogToolPayloads,
+		)
+		return nil
+	}
+}
+
+func WithRunLogger(logger *slog.Logger) RunServiceOption {
+	return func(service *RunService) error {
+		if logger == nil {
+			return errors.New("agent: run logger is required")
+		}
+		service.logger = logger
+		if service.registry != nil {
+			service.executor = tool.NewExecutorWithLogger(
+				service.registry,
+				logger,
+				service.logOptions.LogToolPayloads,
+			)
+		}
+		return nil
+	}
+}
+
+func WithLogOptions(options LogOptions) RunServiceOption {
+	return func(service *RunService) error {
+		service.logOptions = normalizeLogOptions(options)
+		if service.registry != nil {
+			service.executor = tool.NewExecutorWithLogger(
+				service.registry,
+				service.logger,
+				service.logOptions.LogToolPayloads,
+			)
+		}
+		return nil
+	}
+}
+
+func WithLoopLimits(limits LoopLimits) RunServiceOption {
+	return func(service *RunService) error {
+		normalized := normalizeLoopLimits(limits)
+		if normalized.MaxIterations <= 0 ||
+			normalized.MaxToolCalls <= 0 ||
+			normalized.MaxWriteToolCalls < 0 ||
+			normalized.ToolTimeout <= 0 ||
+			normalized.LoopTimeout <= 0 ||
+			normalized.MaxToolResultBytes <= 0 {
+			return errors.New("agent: loop limits are invalid")
+		}
+		service.loopLimits = normalized
+		return nil
+	}
+}
+
+func WithCommandRouter(router *command.Router) RunServiceOption {
+	return func(service *RunService) error {
+		if router == nil {
+			return errors.New("agent: command router is required")
+		}
+		service.commands = router
+		return nil
+	}
+}
+
+func WithConfirmedActions(provider ConfirmedActionsProvider) RunServiceOption {
+	return func(service *RunService) error {
+		if provider == nil {
+			return errors.New("agent: confirmed action provider is required")
+		}
+		service.confirmed = provider
+		return nil
+	}
 }
 
 func (service *RunService) SubmitText(
@@ -130,6 +269,24 @@ func (service *RunService) GetContextManifest(
 	return service.repository.FindContextManifest(ctx, actor.UserID, runID)
 }
 
+func (service *RunService) GetToolCalls(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	runID string,
+) ([]ToolCallRecord, error) {
+	if !actor.Valid() || !core.ValidUUID(runID) {
+		return nil, ErrNotFound
+	}
+	if _, err := service.repository.FindRun(
+		ctx,
+		actor.UserID,
+		runID,
+	); err != nil {
+		return nil, err
+	}
+	return service.repository.ListToolCalls(ctx, actor.UserID, runID)
+}
+
 func (service *RunService) RecoverInterruptedRuns(
 	ctx context.Context,
 ) (int64, error) {
@@ -174,7 +331,7 @@ func (service *RunService) process(
 		return claimed, nil
 	}
 	if !runConfigurationMatches(claimed, service.configuration) {
-		return service.persistFailure(
+		failed, failErr := service.persistFailure(
 			ctx,
 			actor.UserID,
 			claimed.ID,
@@ -182,6 +339,13 @@ func (service *RunService) process(
 			RunFailureConfigurationDrift,
 			true,
 		)
+		service.logRunFailed(
+			claimed,
+			RunFailureConfigurationDrift,
+			true,
+			claimed.StartedAt,
+		)
+		return failed, failErr
 	}
 
 	manifest, request, err := service.assembler.Assemble(
@@ -197,7 +361,7 @@ func (service *RunService) process(
 			kind = RunFailureInvalidContext
 			retryable = false
 		}
-		return service.persistFailure(
+		failed, failErr := service.persistFailure(
 			ctx,
 			actor.UserID,
 			claimed.ID,
@@ -205,6 +369,8 @@ func (service *RunService) process(
 			kind,
 			retryable,
 		)
+		service.logRunFailed(claimed, kind, retryable, claimed.StartedAt)
+		return failed, failErr
 	}
 	if _, err := service.repository.SaveContextManifest(
 		ctx,
@@ -224,10 +390,10 @@ func (service *RunService) process(
 		return failed, nil
 	}
 
-	result, err := service.generator.Generate(ctx, request)
+	result, err := service.generate(ctx, actor, claimed, manifest, request)
 	if err != nil {
 		kind, retryable := generationFailure(err)
-		return service.persistFailure(
+		failed, failErr := service.persistFailure(
 			ctx,
 			actor.UserID,
 			claimed.ID,
@@ -235,12 +401,14 @@ func (service *RunService) process(
 			kind,
 			retryable,
 		)
+		service.logRunFailed(claimed, kind, retryable, claimed.StartedAt)
+		return failed, failErr
 	}
-	if !validTextResult(result) ||
+	if !validFinalTextResult(result) ||
 		result.Provider != service.configuration.Provider ||
 		result.Model != service.configuration.Model ||
 		result.Usage.OutputTokens > service.configuration.MaxOutputTokens {
-		return service.persistFailure(
+		failed, failErr := service.persistFailure(
 			ctx,
 			actor.UserID,
 			claimed.ID,
@@ -248,16 +416,615 @@ func (service *RunService) process(
 			string(ai.ErrorInvalidResponse),
 			ai.ErrorInvalidResponse.Retryable(),
 		)
+		service.logRunFailed(
+			claimed,
+			string(ai.ErrorInvalidResponse),
+			ai.ErrorInvalidResponse.Retryable(),
+			claimed.StartedAt,
+		)
+		return failed, failErr
 	}
 	persistContext, cancel := runPersistenceContext(ctx)
 	defer cancel()
-	return service.repository.CompleteRun(
+	completed, err := service.repository.CompleteRun(
 		persistContext,
 		actor.UserID,
 		claimed.ID,
 		claimed.WorkerLeaseToken,
 		result.Content,
 		result,
+	)
+	return completed, err
+}
+
+func (service *RunService) generate(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	run Run,
+	manifest ContextManifest,
+	request ai.TextRequest,
+) (ai.TextResult, error) {
+	if service.registry == nil || service.executor == nil {
+		return service.generator.Generate(ctx, request)
+	}
+	loopCtx, cancel := context.WithTimeout(ctx, service.loopLimits.LoopTimeout)
+	defer cancel()
+	startedAt := time.Now()
+
+	input := lastUserContent(request)
+	service.logRunReceived(run, input)
+	intent := NewIntentGuard(service.logger).Guard(run.ID, input)
+	policyContext := PolicyContext{
+		Actor:            actor,
+		ThreadID:         run.ThreadID,
+		ActiveMatterID:   manifest.ActiveMatterID,
+		ConfirmedActions: service.confirmedActions(ctx, actor, run),
+		Intent:           intent,
+	}
+	if parsed, ok, err := service.parseCommand(input); err != nil {
+		return fallbackResult(
+			service.configuration,
+			"我暂时无法识别这条命令，请换成自然语言告诉我你想做什么。",
+		), nil
+	} else if ok {
+		policyContext.EntryPoint = "command"
+		policyContext.ExplicitToolName = parsed.Invocation.Name
+		result, handled, err := service.executeCommand(
+			loopCtx,
+			actor,
+			run,
+			manifest,
+			request,
+			parsed.Invocation,
+			policyContext,
+		)
+		if handled || err != nil {
+			return result, err
+		}
+	}
+
+	policyDecision := NewToolPolicyBuilder(service.registry, service.logger).Build(
+		run.ID,
+		policyContext,
+	)
+	request.Tools = service.toolDefinitions(policyDecision.AllowedTools)
+	manifest.ExposedTools = exposedToolNameList(request.Tools)
+	manifest.BlockedTools = contextBlockedTools(policyDecision.BlockedTools)
+	manifest.IntentMode = string(intent.Mode)
+	manifest.IntentReasonCode = intent.ReasonCode
+	manifest.IntentGuardVersion = intent.GuardVersion
+	manifest.ToolPolicyVersion = policyDecision.PolicyVersion
+	manifest.ToolSchemaHashes = toolSchemaHashes(request.Tools)
+	if err := service.saveContextToolSnapshot(loopCtx, manifest); err != nil {
+		return ai.TextResult{}, err
+	}
+	exposed := exposedToolNames(request.Tools)
+	toolCalls := 0
+	writeCalls := 0
+	finalDecision := "direct_response"
+	for iteration := 0; iteration < service.loopLimits.MaxIterations; iteration++ {
+		service.logLoopIteration(run, iteration, toolCalls)
+		result, err := service.generator.Generate(loopCtx, request)
+		if err != nil {
+			return ai.TextResult{}, err
+		}
+		if !validLoopTextResult(result) ||
+			result.Provider != service.configuration.Provider ||
+			result.Model != service.configuration.Model ||
+			result.Usage.OutputTokens > service.configuration.MaxOutputTokens {
+			return result, nil
+		}
+		if len(result.ToolCalls) == 0 {
+			service.logRoutingDecision(
+				run,
+				finalDecision,
+				nil,
+				policyDecision.ReasonCode,
+				reasonSummary(policyDecision.ReasonCode, finalDecision),
+				iteration+1,
+			)
+			service.logRunCompleted(
+				run,
+				finalDecision,
+				iteration+1,
+				toolCalls,
+				startedAt,
+				result.Content,
+			)
+			return result, nil
+		}
+		selected := toolCallNames(result.ToolCalls)
+		finalDecision = "tool_call"
+		service.logRoutingDecision(
+			run,
+			finalDecision,
+			selected,
+			policyDecision.ReasonCode,
+			reasonSummary(policyDecision.ReasonCode, finalDecision),
+			iteration+1,
+		)
+		if toolCalls+len(result.ToolCalls) > service.loopLimits.MaxToolCalls {
+			service.logRoutingDecision(
+				run,
+				"budget_exhausted",
+				selected,
+				"budget_exhausted",
+				reasonSummary("budget_exhausted", "budget_exhausted"),
+				iteration+1,
+			)
+			result := fallbackResult(
+				service.configuration,
+				"这次需要调用的工具太多了，我先暂停一下。请把需求拆成一个更具体的问题。",
+			)
+			service.logRunCompleted(
+				run,
+				"budget_exhausted",
+				iteration+1,
+				toolCalls,
+				startedAt,
+				result.Content,
+			)
+			return result, nil
+		}
+		request.Messages = append(request.Messages, ai.TextMessage{
+			Role:      ai.TextRoleAssistant,
+			ToolCalls: result.ToolCalls,
+		})
+		for _, call := range result.ToolCalls {
+			if err := service.saveToolCallProposed(
+				loopCtx,
+				run,
+				call,
+			); err != nil {
+				return ai.TextResult{}, err
+			}
+			if !toolExposed(exposed, call.Name) {
+				_ = service.markToolCallRejected(
+					loopCtx,
+					run,
+					call.ID,
+					"permission_denied",
+				)
+				result := fallbackResult(
+					service.configuration,
+					"这个工具当前没有开放给本轮对话，我先不执行它。",
+				)
+				service.logRunCompleted(
+					run,
+					"policy_rejected",
+					iteration+1,
+					toolCalls,
+					startedAt,
+					result.Content,
+				)
+				return result, nil
+			}
+			definition, ok := service.toolDefinition(call.Name)
+			if !ok || !policyDecision.Policy.Allows(definition) {
+				_ = service.markToolCallRejected(
+					loopCtx,
+					run,
+					call.ID,
+					"permission_denied",
+				)
+				result := fallbackResult(
+					service.configuration,
+					"这个操作当前不可用或需要额外确认，我先不执行它。",
+				)
+				service.logRunCompleted(
+					run,
+					"policy_rejected",
+					iteration+1,
+					toolCalls,
+					startedAt,
+					result.Content,
+				)
+				return result, nil
+			}
+			if !definition.ReadOnly {
+				if writeCalls >= service.loopLimits.MaxWriteToolCalls {
+					result := fallbackResult(
+						service.configuration,
+						"这次已经达到写操作上限，我先不继续执行新的写操作。",
+					)
+					service.logRunCompleted(
+						run,
+						"budget_exhausted",
+						iteration+1,
+						toolCalls,
+						startedAt,
+						result.Content,
+					)
+					return result, nil
+				}
+				writeCalls++
+			}
+			toolMessage, err := service.executeToolCall(
+				loopCtx,
+				actor,
+				run,
+				call,
+				policyDecision.Policy,
+			)
+			if err != nil {
+				result := fallbackResult(
+					service.configuration,
+					"工具执行失败了，我先给出一个保守回复：请稍后重试，或把需求说得更具体一点。",
+				)
+				service.logRunCompleted(
+					run,
+					"tool_call_failed",
+					iteration+1,
+					toolCalls,
+					startedAt,
+					result.Content,
+				)
+				return result, nil
+			}
+			request.Messages = append(request.Messages, toolMessage)
+			toolCalls++
+		}
+		finalDecision = "tool_call_then_response"
+	}
+	service.logRoutingDecision(
+		run,
+		"budget_exhausted",
+		nil,
+		"budget_exhausted",
+		reasonSummary("budget_exhausted", "budget_exhausted"),
+		service.loopLimits.MaxIterations,
+	)
+	result := fallbackResult(
+		service.configuration,
+		"这次对话需要更多步骤才能完成，我先停在这里。请把最重要的一步单独发给我。",
+	)
+	service.logRunCompleted(
+		run,
+		"budget_exhausted",
+		service.loopLimits.MaxIterations,
+		toolCalls,
+		startedAt,
+		result.Content,
+	)
+	return result, nil
+}
+
+func (service *RunService) executeCommand(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	run Run,
+	manifest ContextManifest,
+	request ai.TextRequest,
+	invocation tool.Invocation,
+	policyContext PolicyContext,
+) (ai.TextResult, bool, error) {
+	policyDecision := NewToolPolicyBuilder(service.registry, service.logger).Build(
+		run.ID,
+		policyContext,
+	)
+	request.Tools = service.toolDefinitions(policyDecision.AllowedTools)
+	manifest.ExposedTools = exposedToolNameList(request.Tools)
+	manifest.BlockedTools = contextBlockedTools(policyDecision.BlockedTools)
+	manifest.IntentMode = string(policyContext.Intent.Mode)
+	manifest.IntentReasonCode = policyDecision.ReasonCode
+	manifest.IntentGuardVersion = policyContext.Intent.GuardVersion
+	manifest.ToolPolicyVersion = policyDecision.PolicyVersion
+	manifest.ToolSchemaHashes = toolSchemaHashes(request.Tools)
+	if err := service.saveContextToolSnapshot(ctx, manifest); err != nil {
+		return ai.TextResult{}, true, err
+	}
+	commandCall := ai.ToolCall{
+		ID:        "command-call",
+		Name:      invocation.Name,
+		Arguments: invocation.Input,
+	}
+	if err := service.saveToolCallProposed(ctx, run, commandCall); err != nil {
+		return ai.TextResult{}, true, err
+	}
+	toolMessage, err := service.executeToolCall(
+		ctx,
+		actor,
+		run,
+		commandCall,
+		policyDecision.Policy,
+	)
+	if err != nil {
+		return fallbackResult(
+			service.configuration,
+			"这条命令当前无法执行，可能需要确认或参数不完整。",
+		), true, nil
+	}
+	request.Messages = append(request.Messages, ai.TextMessage{
+		Role:      ai.TextRoleAssistant,
+		ToolCalls: []ai.ToolCall{commandCall},
+	}, toolMessage)
+	result, err := service.generator.Generate(ctx, request)
+	return result, true, err
+}
+
+func (service *RunService) executeToolCall(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	run Run,
+	call ai.ToolCall,
+	policy tool.Policy,
+) (ai.TextMessage, error) {
+	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
+	defer cancel()
+	requestID := run.ID + "-" + call.ID
+	if service.repository != nil {
+		if _, err := service.repository.MarkToolCallRunning(
+			toolCtx,
+			actor.UserID,
+			run.ID,
+			call.ID,
+			requestID,
+		); err != nil {
+			return ai.TextMessage{}, err
+		}
+	}
+	result, err := service.executor.Execute(
+		toolCtx,
+		tool.CallContext{
+			Actor:      actor,
+			ThreadID:   run.ThreadID,
+			RunID:      run.ID,
+			ToolCallID: call.ID,
+			RequestID:  requestID,
+		},
+		tool.Invocation{Name: call.Name, Input: call.Arguments},
+		policy,
+	)
+	if err != nil {
+		if service.repository != nil {
+			_, _ = service.repository.MarkToolCallFailed(
+				context.WithoutCancel(ctx),
+				actor.UserID,
+				run.ID,
+				call.ID,
+				core.ToolCallStatusFailed,
+				tool.ErrorCategory(err),
+			)
+		}
+		return ai.TextMessage{}, err
+	}
+	content, err := marshalToolResult(result, service.loopLimits.MaxToolResultBytes)
+	if err != nil {
+		return ai.TextMessage{}, err
+	}
+	if service.repository != nil {
+		if _, err := service.repository.MarkToolCallSucceeded(
+			context.WithoutCancel(ctx),
+			actor.UserID,
+			run.ID,
+			call.ID,
+			json.RawMessage(content),
+			toolSourceRefs(result.SourceRefs),
+		); err != nil {
+			return ai.TextMessage{}, err
+		}
+	}
+	return ai.TextMessage{
+		Role:       ai.TextRoleTool,
+		Content:    content,
+		ToolCallID: call.ID,
+	}, nil
+}
+
+func (service *RunService) saveToolCallProposed(
+	ctx context.Context,
+	run Run,
+	call ai.ToolCall,
+) error {
+	if service.repository == nil {
+		return nil
+	}
+	_, err := service.repository.SaveToolCallProposed(
+		ctx,
+		core.ToolCallRecord{
+			ID:            call.ID,
+			RunID:         run.ID,
+			OwnerID:       run.OwnerID,
+			ThreadID:      run.ThreadID,
+			Name:          call.Name,
+			SchemaVersion: toolSchemaVersionV1,
+			Input:         call.Arguments,
+			Status:        core.ToolCallStatusProposed,
+		},
+	)
+	return err
+}
+
+func (service *RunService) markToolCallRejected(
+	ctx context.Context,
+	run Run,
+	toolCallID string,
+	errorCategory string,
+) error {
+	if service.repository == nil {
+		return nil
+	}
+	_, err := service.repository.MarkToolCallFailed(
+		ctx,
+		run.OwnerID,
+		run.ID,
+		toolCallID,
+		core.ToolCallStatusRejected,
+		errorCategory,
+	)
+	return err
+}
+
+func (service *RunService) saveContextToolSnapshot(
+	ctx context.Context,
+	manifest ContextManifest,
+) error {
+	if service.repository == nil {
+		return nil
+	}
+	_, err := service.repository.SaveContextToolSnapshot(ctx, manifest)
+	return err
+}
+
+func toolSourceRefs(refs []tool.SourceRef) []core.ToolSourceRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	result := make([]core.ToolSourceRef, 0, len(refs))
+	for _, ref := range refs {
+		result = append(result, core.ToolSourceRef{
+			Type: ref.Type,
+			ID:   ref.ID,
+		})
+	}
+	return result
+}
+
+func contextBlockedTools(blocked []BlockedTool) []core.ContextBlockedTool {
+	if len(blocked) == 0 {
+		return nil
+	}
+	result := make([]core.ContextBlockedTool, 0, len(blocked))
+	for _, item := range blocked {
+		result = append(result, core.ContextBlockedTool{
+			Name:   item.Name,
+			Reason: item.Reason,
+		})
+	}
+	return result
+}
+
+func exposedToolNameList(definitions []ai.ToolDefinition) []string {
+	if len(definitions) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, definition.Name)
+	}
+	return names
+}
+
+func toolSchemaHashes(definitions []ai.ToolDefinition) map[string]string {
+	if len(definitions) == 0 {
+		return nil
+	}
+	hashes := make(map[string]string, len(definitions))
+	for _, definition := range definitions {
+		raw, err := json.Marshal(definition.InputSchema)
+		if err != nil {
+			hashes[definition.Name] = "sha256:error"
+			continue
+		}
+		sum := sha256.Sum256(raw)
+		hashes[definition.Name] = fmt.Sprintf(
+			"sha256:%x",
+			sum[:],
+		)
+	}
+	return hashes
+}
+
+func (service *RunService) logRunReceived(run Run, input string) {
+	if service.logger == nil {
+		return
+	}
+	attrs := []any{
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"message_id", run.InputMessageID,
+		"input_length", utf8.RuneCountInString(input),
+	}
+	if service.logOptions.LogUserInput {
+		attrs = append(
+			attrs,
+			"input_preview",
+			inputPreview(input, service.logOptions.InputPreviewMax),
+		)
+	}
+	service.logger.Info("agent.run.received", attrs...)
+}
+
+func (service *RunService) logLoopIteration(
+	run Run,
+	iteration int,
+	toolCallCount int,
+) {
+	if service.logger == nil {
+		return
+	}
+	service.logger.Debug(
+		"agent.loop.iteration",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"iteration", iteration+1,
+		"tool_call_count", toolCallCount,
+		"remaining_budget", service.loopLimits.MaxToolCalls-toolCallCount,
+	)
+}
+
+func (service *RunService) logRoutingDecision(
+	run Run,
+	decision string,
+	selectedTools []string,
+	reasonCode string,
+	summary string,
+	iteration int,
+) {
+	if service.logger == nil {
+		return
+	}
+	service.logger.Info(
+		"agent.routing.decision",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"decision", decision,
+		"selected_tools", selectedTools,
+		"reason_code", reasonCode,
+		"reason_summary", truncateString(summary, 200),
+		"iteration", iteration,
+	)
+}
+
+func (service *RunService) logRunCompleted(
+	run Run,
+	decision string,
+	iterations int,
+	toolCallCount int,
+	startedAt time.Time,
+	output string,
+) {
+	if service.logger == nil {
+		return
+	}
+	service.logger.Info(
+		"agent.run.completed",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"decision", decision,
+		"iterations", iterations,
+		"tool_call_count", toolCallCount,
+		"duration_ms", durationSince(startedAt).Milliseconds(),
+		"output_length", utf8.RuneCountInString(output),
+	)
+}
+
+func (service *RunService) logRunFailed(
+	run Run,
+	kind string,
+	retryable bool,
+	startedAt time.Time,
+) {
+	if service.logger == nil {
+		return
+	}
+	service.logger.Error(
+		"agent.run.failed",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"failure_category", kind,
+		"retryable", retryable,
+		"duration_ms", durationSince(startedAt).Milliseconds(),
 	)
 }
 
@@ -296,13 +1063,40 @@ func generationFailure(err error) (string, bool) {
 	return string(ai.ErrorProviderUnavailable), true
 }
 
-func validTextResult(result ai.TextResult) bool {
+func validFinalTextResult(result ai.TextResult) bool {
 	return core.ValidModelID(result.ID) &&
 		core.ValidProviderID(result.Provider) &&
 		core.ValidModelID(result.Model) &&
 		(result.FinishReason == "stop" || result.FinishReason == "length") &&
 		validTokenUsage(result.Usage) &&
-		core.ValidMessageContent(result.Content)
+		core.ValidMessageContent(result.Content) &&
+		len(result.ToolCalls) == 0
+}
+
+func validLoopTextResult(result ai.TextResult) bool {
+	if !core.ValidModelID(result.ID) ||
+		!core.ValidProviderID(result.Provider) ||
+		!core.ValidModelID(result.Model) ||
+		!validTokenUsage(result.Usage) {
+		return false
+	}
+	switch result.FinishReason {
+	case "stop", "length":
+		return core.ValidMessageContent(result.Content) &&
+			len(result.ToolCalls) == 0
+	case "tool_calls":
+		if len(result.ToolCalls) == 0 {
+			return false
+		}
+		for _, call := range result.ToolCalls {
+			if err := ai.ValidateToolCall(call); err != nil {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func validTokenUsage(usage ai.TokenUsage) bool {
@@ -323,4 +1117,134 @@ func runConfigurationMatches(
 		run.RequestedModel == configuration.Model &&
 		run.MaxOutputTokens == configuration.MaxOutputTokens &&
 		run.MaxInputCharacters == configuration.MaxInputCharacters
+}
+
+func defaultLoopLimits() LoopLimits {
+	return LoopLimits{
+		MaxIterations:      defaultMaxIterations,
+		MaxToolCalls:       defaultMaxToolCalls,
+		MaxWriteToolCalls:  defaultMaxWriteCalls,
+		ToolTimeout:        defaultToolTimeout,
+		LoopTimeout:        defaultLoopTimeout,
+		MaxToolResultBytes: defaultMaxToolResult,
+	}
+}
+
+func normalizeLoopLimits(limits LoopLimits) LoopLimits {
+	defaults := defaultLoopLimits()
+	if limits.MaxIterations == 0 {
+		limits.MaxIterations = defaults.MaxIterations
+	}
+	if limits.MaxToolCalls == 0 {
+		limits.MaxToolCalls = defaults.MaxToolCalls
+	}
+	if limits.MaxWriteToolCalls == 0 {
+		limits.MaxWriteToolCalls = defaults.MaxWriteToolCalls
+	}
+	if limits.ToolTimeout == 0 {
+		limits.ToolTimeout = defaults.ToolTimeout
+	}
+	if limits.LoopTimeout == 0 {
+		limits.LoopTimeout = defaults.LoopTimeout
+	}
+	if limits.MaxToolResultBytes == 0 {
+		limits.MaxToolResultBytes = defaults.MaxToolResultBytes
+	}
+	return limits
+}
+
+func (service *RunService) confirmedActions(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	run Run,
+) []string {
+	if service.confirmed == nil {
+		return nil
+	}
+	return service.confirmed(ctx, actor, run)
+}
+
+func (service *RunService) parseCommand(input string) (command.Parsed, bool, error) {
+	if service.commands == nil {
+		return command.Parsed{}, false, nil
+	}
+	return service.commands.Parse(input)
+}
+
+func (service *RunService) toolDefinitions(names []string) []ai.ToolDefinition {
+	if service.registry == nil || len(names) == 0 {
+		return nil
+	}
+	definitions := make([]ai.ToolDefinition, 0, len(names))
+	for _, name := range names {
+		registered, ok := service.registry.Get(name)
+		if !ok {
+			continue
+		}
+		definition := registered.Definition()
+		definitions = append(definitions, ai.ToolDefinition{
+			Name:        definition.Name,
+			Description: definition.Description,
+			InputSchema: definition.InputSchema,
+		})
+	}
+	return definitions
+}
+
+func (service *RunService) toolDefinition(name string) (tool.Definition, bool) {
+	if service.registry == nil {
+		return tool.Definition{}, false
+	}
+	registered, ok := service.registry.Get(name)
+	if !ok {
+		return tool.Definition{}, false
+	}
+	return registered.Definition(), true
+}
+
+func lastUserContent(request ai.TextRequest) string {
+	for index := len(request.Messages) - 1; index >= 0; index-- {
+		if request.Messages[index].Role == ai.TextRoleUser {
+			return request.Messages[index].Content
+		}
+	}
+	return ""
+}
+
+func marshalToolResult(result tool.Result, maxBytes int) (string, error) {
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	if len(raw) <= maxBytes {
+		return string(raw), nil
+	}
+	return `{"error":{"category":"internal","message":"tool result too large"}}`, nil
+}
+
+func exposedToolNames(definitions []ai.ToolDefinition) map[string]struct{} {
+	names := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		names[definition.Name] = struct{}{}
+	}
+	return names
+}
+
+func toolExposed(exposed map[string]struct{}, name string) bool {
+	_, ok := exposed[name]
+	return ok
+}
+
+func fallbackResult(
+	configuration RunConfiguration,
+	content string,
+) ai.TextResult {
+	return ai.TextResult{
+		ID:           loopFallbackID,
+		Provider:     configuration.Provider,
+		Model:        configuration.Model,
+		Content:      content,
+		FinishReason: "stop",
+		Usage:        ai.TokenUsage{},
+	}
 }
