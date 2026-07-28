@@ -186,6 +186,7 @@ func TestJobTargetHTTPPrioritizesAnalysisTerminalErrors(t *testing.T) {
 			err: errors.Join(
 				ErrJobTargetAnalysisFailed,
 				ErrJobTargetInvalid,
+				ErrJobTargetRepository,
 			),
 			wantStatus: http.StatusServiceUnavailable,
 			wantCode:   "job_target_analysis_failed",

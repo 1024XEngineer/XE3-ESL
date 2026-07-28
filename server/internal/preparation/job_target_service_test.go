@@ -150,6 +150,55 @@ func TestJobTargetServiceRejectsUnknownCatalogOutputAndFailsClaim(t *testing.T) 
 	}
 }
 
+func TestJobTargetServiceKeepsAnalysisFailureWhenFailureWriteFails(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	input := JobTargetInput{
+		Source:         JobTargetSourceJobDescription,
+		JobDescription: "Build reliable APIs.",
+	}
+	candidate := validJobTargetCandidateFixture(
+		JobTargetSourceJobDescription,
+	)
+	candidate.CatalogRecommendation.SelectedRoleIDs = []string{
+		"role_model_invented",
+	}
+	repository := &jobTargetRepositoryStub{
+		claim: claimedJobTargetAnalysis(input),
+		fail: func(
+			context.Context,
+			JobTargetAnalysisClaim,
+			string,
+		) (JobTarget, error) {
+			return JobTarget{}, ErrJobTargetRepository
+		},
+	}
+	service := mustJobTargetService(
+		t,
+		repository,
+		&jobTargetParserStub{candidate: candidate},
+		mustBuiltinCatalog(t),
+	)
+
+	_, _, err := service.Analyze(
+		context.Background(),
+		jobTargetActor(),
+		"target-1",
+		"analyze-key-failure-write",
+		AnalyzeJobTargetRequest{ExpectedInputVersion: 1},
+	)
+	if !errors.Is(err, ErrJobTargetAnalysisFailed) ||
+		!errors.Is(err, ErrJobTargetInvalid) ||
+		!errors.Is(err, ErrJobTargetRepository) {
+		t.Fatalf(
+			"Analyze error = %v, want analysis/invalid/repository failure",
+			err,
+		)
+	}
+}
+
 func TestJobTargetServiceRejectsMultipleInterviewRolesFromParser(t *testing.T) {
 	t.Parallel()
 

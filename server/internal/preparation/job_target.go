@@ -423,7 +423,11 @@ func (s *JobTargetService) Analyze(
 			jobTargetParserErrorCategory(parseErr),
 		)
 		if failErr != nil {
-			return JobTarget{}, false, errors.Join(parseErr, failErr)
+			return JobTarget{}, false, errors.Join(
+				ErrJobTargetAnalysisFailed,
+				parseErr,
+				failErr,
+			)
 		}
 		return JobTarget{}, false, errors.Join(
 			ErrJobTargetAnalysisFailed,
@@ -443,7 +447,11 @@ func (s *JobTargetService) Analyze(
 			"invalid_result",
 		)
 		if failErr != nil {
-			return JobTarget{}, false, errors.Join(err, failErr)
+			return JobTarget{}, false, errors.Join(
+				ErrJobTargetAnalysisFailed,
+				err,
+				failErr,
+			)
 		}
 		return JobTarget{}, false, errors.Join(
 			ErrJobTargetAnalysisFailed,
