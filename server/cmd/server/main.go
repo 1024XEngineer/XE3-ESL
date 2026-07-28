@@ -104,6 +104,15 @@ func run() int {
 		)
 		return 1
 	}
+	agentVoiceObjectReadHosts, err :=
+		bootstrap.AgentVoiceObjectReadAllowedHosts(storageConfig)
+	if err != nil {
+		logger.Error(
+			"agent voice object storage configuration invalid",
+			slog.String("error_kind", "configuration"),
+		)
+		return 1
+	}
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
@@ -149,12 +158,16 @@ func run() int {
 			},
 			preparationCatalog,
 			bootstrap.VoiceConfiguration{
-				Recognizer:     recognizer,
-				Synthesizer:    synthesizer,
-				TemporaryAudio: audioVault,
-				ObjectStore:    recordingStore,
-				AudioStagedTTL: 24 * time.Hour,
-				ASRLease:       asrConfig.Timeout + 15*time.Second,
+				Recognizer:                recognizer,
+				Synthesizer:               synthesizer,
+				TemporaryAudio:            audioVault,
+				ObjectStore:               recordingStore,
+				AgentVoiceMessagesEnabled: storageConfig.Enabled,
+				ScratchDirectory:          ttsConfig.TempDirectory,
+				ObjectReadAllowedHosts:    agentVoiceObjectReadHosts,
+				AudioStagedTTL:            24 * time.Hour,
+				AudioUploadLease:          2 * time.Minute,
+				ASRLease:                  asrConfig.Timeout + 15*time.Second,
 				// The existing Review lease is 30s. Bound the parent context
 				// below it even when the shared provider client allows 60s.
 				ReviewGenerationTimeout: 20 * time.Second,
@@ -171,6 +184,18 @@ func run() int {
 	contextRoutes, err := applicationComposition.ProtectedRoutes()
 	if err != nil {
 		logger.Error("context route startup failed", slog.Any("error", err))
+		return 1
+	}
+	agentVoiceCleanup, err := buildAgentVoiceCleanupWorker(
+		storageConfig,
+		applicationComposition.AgentVoiceReclaimer(),
+		logger,
+	)
+	if err != nil {
+		logger.Error(
+			"agent voice cleanup startup failed",
+			slog.String("error_kind", "dependency"),
+		)
 		return 1
 	}
 
@@ -194,6 +219,14 @@ func run() int {
 		go func() {
 			defer close(cleanupDone)
 			cleanupWorker.Run(ctx)
+		}()
+	}
+	var agentVoiceCleanupDone chan struct{}
+	if agentVoiceCleanup != nil {
+		agentVoiceCleanupDone = make(chan struct{})
+		go func() {
+			defer close(agentVoiceCleanupDone)
+			agentVoiceCleanup.Run(ctx)
 		}()
 	}
 
@@ -248,6 +281,17 @@ func run() int {
 		case <-shutdownCtx.Done():
 			logger.Error(
 				"audio cleanup shutdown failed",
+				slog.String("error_kind", "timeout"),
+			)
+			exitCode = 1
+		}
+	}
+	if agentVoiceCleanupDone != nil {
+		select {
+		case <-agentVoiceCleanupDone:
+		case <-shutdownCtx.Done():
+			logger.Error(
+				"agent voice cleanup shutdown failed",
 				slog.String("error_kind", "timeout"),
 			)
 			exitCode = 1

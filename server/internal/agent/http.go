@@ -22,6 +22,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
@@ -43,12 +44,14 @@ type CorrelationIDGenerator func() string
 type VoiceHTTPOptions struct {
 	AudioReadTimeout       time.Duration
 	ReviewHistoryCursorKey []byte
+	AgentMessages          VoiceMessageApplication
 }
 
 type HTTPHandler struct {
 	application      Application
 	runs             RunApplication
 	voice            *VoiceSessionApplication
+	agentMessages    VoiceMessageApplication
 	audioAssets      conversation.AudioAssetHTTPService
 	matters          matter.Application
 	authenticator    identity.Authenticator
@@ -127,6 +130,7 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 		correlationID = newCorrelationID
 	}
 	voiceReadTimeout := defaultVoiceReadTimeout
+	var agentMessages VoiceMessageApplication
 	if len(voiceOptions) > 1 {
 		return nil, errors.New("agent: duplicate voice HTTP options")
 	}
@@ -152,10 +156,21 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 			voiceOptions[0].ReviewHistoryCursorKey...,
 		)
 	}
+	if len(voiceOptions) == 1 {
+		if voiceOptions[0].AgentMessages != nil {
+			if nilVoiceDependency(voiceOptions[0].AgentMessages) {
+				return nil, errors.New(
+					"agent: voice message application is required",
+				)
+			}
+			agentMessages = voiceOptions[0].AgentMessages
+		}
+	}
 	return &HTTPHandler{
 		application:      application,
 		runs:             runs,
 		voice:            voice,
+		agentMessages:    agentMessages,
 		audioAssets:      audioAssets,
 		matters:          matters,
 		authenticator:    authenticator,
@@ -228,6 +243,40 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 		)
 		protected.GET("/v1/formal-reviews", h.listFormalReviews)
 		protected.GET("/v1/formal-reviews/:review_id", h.getFormalReview)
+	}
+	if h.agentMessages != nil {
+		protected.POST(
+			"/v1/agent-threads/:thread_id/voice-message-candidates",
+			h.uploadAgentVoiceCandidate,
+		)
+		protected.GET(
+			"/v1/agent-voice-message-candidates/:candidate_id",
+			h.getAgentVoiceCandidate,
+		)
+		protected.POST(
+			"/v1/agent-voice-message-candidates/:candidate_id/retries",
+			h.retryAgentVoiceCandidate,
+		)
+		protected.DELETE(
+			"/v1/agent-voice-message-candidates/:candidate_id",
+			h.deleteAgentVoiceCandidate,
+		)
+		protected.POST(
+			"/v1/agent-voice-message-candidates/:candidate_id/confirmations",
+			h.confirmAgentVoiceCandidate,
+		)
+		protected.GET(
+			"/v1/agent-message-audios/:audio_id/playback",
+			h.agentMessageAudioPlayback,
+		)
+		protected.DELETE(
+			"/v1/agent-message-audios/:audio_id",
+			h.deleteAgentMessageAudio,
+		)
+		protected.GET(
+			"/v1/agent-messages/:message_id/speech",
+			h.agentMessageSpeech,
+		)
 	}
 	if h.audioAssets != nil {
 		_ = conversation.RegisterAudioAssetRoutes(
@@ -914,6 +963,254 @@ func (h *HTTPHandler) questionSpeech(c *gin.Context) {
 	)
 }
 
+func (h *HTTPHandler) uploadAgentVoiceCandidate(c *gin.Context) {
+	key, ok := voiceIdempotencyKey(c)
+	if !ok || c.Request.Body == nil ||
+		c.Request.ContentLength > platformmedia.MaxAudioBytes ||
+		!strings.EqualFold(
+			strings.TrimSpace(c.GetHeader("Content-Type")),
+			platformmedia.ContentTypeWAV,
+		) {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	thread, err := h.application.GetThread(
+		c.Request.Context(),
+		actor,
+		c.Param("thread_id"),
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	controller := http.NewResponseController(c.Writer)
+	if err := controller.SetReadDeadline(
+		time.Now().Add(h.voiceReadTimeout),
+	); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+		return
+	}
+	defer func() {
+		_ = controller.SetReadDeadline(time.Time{})
+	}()
+	body := http.MaxBytesReader(
+		c.Writer,
+		c.Request.Body,
+		platformmedia.MaxAudioBytes,
+	)
+	candidate, err := h.agentMessages.Upload(
+		c.Request.Context(),
+		actor,
+		UploadVoiceCandidateRequest{
+			ThreadID:       thread.ID,
+			IdempotencyKey: key,
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          body,
+		},
+	)
+	if err != nil {
+		h.writeAgentVoiceMessageError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, agentVoiceCandidateResponse(candidate))
+}
+
+func (h *HTTPHandler) getAgentVoiceCandidate(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	candidate, err := h.agentMessages.GetCandidate(
+		c.Request.Context(),
+		actor,
+		c.Param("candidate_id"),
+	)
+	if err != nil {
+		h.writeAgentVoiceMessageError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, agentVoiceCandidateResponse(candidate))
+}
+
+func (h *HTTPHandler) retryAgentVoiceCandidate(c *gin.Context) {
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	candidate, err := h.agentMessages.Retry(
+		c.Request.Context(),
+		actor,
+		c.Param("candidate_id"),
+	)
+	if err != nil {
+		h.writeAgentVoiceMessageError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, agentVoiceCandidateResponse(candidate))
+}
+
+func (h *HTTPHandler) deleteAgentVoiceCandidate(c *gin.Context) {
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	if err := h.agentMessages.DeleteCandidate(
+		c.Request.Context(),
+		actor,
+		c.Param("candidate_id"),
+	); err != nil {
+		h.writeAgentVoiceMessageError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *HTTPHandler) confirmAgentVoiceCandidate(c *gin.Context) {
+	values, ok := decodeObject(
+		c,
+		[]string{
+			"candidate_version",
+			"client_message_id",
+			"confirmed_text",
+		},
+		[]string{
+			"candidate_version",
+			"client_message_id",
+			"confirmed_text",
+		},
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	version, versionOK := decodeInt64(values["candidate_version"])
+	clientMessageID, clientOK := decodeString(values["client_message_id"])
+	confirmedText, textOK := decodeString(values["confirmed_text"])
+	if !versionOK || !clientOK || !textOK {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	confirmation, err := h.agentMessages.Confirm(
+		c.Request.Context(),
+		actor,
+		ConfirmVoiceCandidateCommand{
+			CandidateID:      c.Param("candidate_id"),
+			CandidateVersion: version,
+			ClientMessageID:  clientMessageID,
+			ConfirmedText:    confirmedText,
+		},
+	)
+	if err != nil {
+		h.writeAgentVoiceMessageError(c, err)
+		return
+	}
+	confirmation.Message.Audio = &confirmation.Audio
+	c.JSON(
+		runWriteStatus(confirmation.Run),
+		agentVoiceConfirmationResponse(confirmation),
+	)
+}
+
+func (h *HTTPHandler) agentMessageAudioPlayback(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	result, err := h.agentMessages.Playback(
+		c.Request.Context(),
+		actor,
+		c.Param("audio_id"),
+	)
+	if err != nil {
+		h.writeAgentVoiceMessageError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{
+		"playback_url": result.URL,
+		"expires_at":   result.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func (h *HTTPHandler) deleteAgentMessageAudio(c *gin.Context) {
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	if err := h.agentMessages.DeleteAudio(
+		c.Request.Context(),
+		actor,
+		c.Param("audio_id"),
+	); err != nil {
+		h.writeAgentVoiceMessageError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *HTTPHandler) agentMessageSpeech(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	speech, err := h.agentMessages.SynthesizeMessage(
+		c.Request.Context(),
+		actor,
+		c.Param("message_id"),
+	)
+	if err != nil {
+		h.writeAgentVoiceMessageError(c, err)
+		return
+	}
+	if speech.Audio == nil {
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+		return
+	}
+	defer func() { _ = speech.Audio.Close() }()
+	reader, err := speech.Audio.Open()
+	if err != nil {
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+		return
+	}
+	defer reader.Close()
+	c.Header("Cache-Control", "no-store")
+	c.DataFromReader(
+		http.StatusOK,
+		speech.Audio.Size(),
+		speech.Audio.MediaType(),
+		reader,
+		nil,
+	)
+}
+
 func (h *HTTPHandler) getFormalReview(c *gin.Context) {
 	actor, ok := trustedActor(c)
 	if !ok {
@@ -1113,6 +1410,42 @@ func (h *HTTPHandler) writeVoiceError(c *gin.Context, err error) {
 		h.writeProviderError(c, speechError.Kind)
 	case errors.As(err, &generationError):
 		h.writeProviderError(c, generationError.Kind)
+	default:
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+	}
+}
+
+func (h *HTTPHandler) writeAgentVoiceMessageError(
+	c *gin.Context,
+	err error,
+) {
+	var speechError *ai.SpeechError
+	switch {
+	case errors.Is(err, ErrInvalidRequest):
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+	case errors.Is(err, ErrNotFound):
+		h.writeError(c, http.StatusNotFound, "resource_not_found", false)
+	case errors.Is(err, ErrIdempotencyConflict):
+		h.writeError(c, http.StatusConflict, "idempotency_key_conflict", false)
+	case errors.Is(err, ErrVoiceCandidateProcessing):
+		c.Header("Retry-After", "1")
+		h.writeError(c, http.StatusConflict, "resource_processing", true)
+	case errors.Is(err, ErrVoiceCandidateStale),
+		errors.Is(err, ErrConflict):
+		h.writeError(c, http.StatusConflict, "resource_conflict", false)
+	case errors.Is(err, ErrVoiceCleanupPending),
+		errors.Is(err, objectstore.ErrOperationFailed),
+		errors.Is(err, objectstore.ErrDisabled),
+		errors.Is(err, objectstore.ErrCredentials):
+		c.Header("Retry-After", "1")
+		h.writeError(
+			c,
+			http.StatusServiceUnavailable,
+			"provider_unavailable",
+			true,
+		)
+	case errors.As(err, &speechError):
+		h.writeProviderError(c, speechError.Kind)
 	default:
 		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
 	}
@@ -1461,7 +1794,102 @@ func messageResponse(message Message) gin.H {
 	if message.ProducedByRunID != "" {
 		result["produced_by_run_id"] = message.ProducedByRunID
 	}
+	if message.Audio != nil {
+		result["modality"] = MessageModalityVoice
+		result["audio"] = agentMessageAudioResponse(*message.Audio)
+	}
 	return result
+}
+
+func agentVoiceCandidateResponse(candidate VoiceCandidate) gin.H {
+	result := gin.H{
+		"candidate_id":      candidate.ID,
+		"thread_id":         candidate.ThreadID,
+		"status":            candidate.Status,
+		"asr_attempt":       candidate.ASRAttempt,
+		"candidate_version": candidate.CandidateVersion,
+		"recording": gin.H{
+			"content_type": candidate.ContentType,
+			"size_bytes":   candidate.Size,
+			"duration_ms":  durationMilliseconds(candidate.Duration),
+			"sample_rate":  candidate.SampleRate,
+		},
+		"expires_at": candidate.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		"created_at": candidate.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at": candidate.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if candidate.ASRCandidateText != "" {
+		transcript := gin.H{
+			"candidate_text": candidate.ASRCandidateText,
+			"request_id":     candidate.ASRRequestID,
+			"provider":       candidate.ASRProvider,
+			"model":          candidate.ASRModel,
+		}
+		if candidate.ASRLanguage != "" {
+			transcript["language"] = candidate.ASRLanguage
+		}
+		if candidate.ASREmotion != "" {
+			transcript["emotion"] = candidate.ASREmotion
+		}
+		if candidate.ASRFinishReason != "" {
+			transcript["finish_reason"] = candidate.ASRFinishReason
+		}
+		result["transcript"] = transcript
+	}
+	if candidate.FailureKind != "" {
+		result["failure"] = gin.H{
+			"kind":      candidate.FailureKind,
+			"retryable": candidate.FailureRetryable,
+		}
+	}
+	if candidate.ConfirmedMessageID != "" {
+		result["confirmed_message_id"] = candidate.ConfirmedMessageID
+		result["confirmed_run_id"] = candidate.ConfirmedRunID
+		result["message_audio_id"] = candidate.MessageAudioID
+		result["confirmed_at"] = candidate.ConfirmedAt.UTC().
+			Format(time.RFC3339Nano)
+	}
+	if !candidate.DeletedAt.IsZero() {
+		result["deleted_at"] = candidate.DeletedAt.UTC().
+			Format(time.RFC3339Nano)
+	}
+	return result
+}
+
+func agentVoiceConfirmationResponse(
+	confirmation VoiceConfirmation,
+) gin.H {
+	return gin.H{
+		"candidate": agentVoiceCandidateResponse(confirmation.Candidate),
+		"message":   messageResponse(confirmation.Message),
+		"run":       runResponse(confirmation.Run),
+	}
+}
+
+func agentMessageAudioResponse(audio MessageAudio) gin.H {
+	result := gin.H{
+		"audio_id":     audio.ID,
+		"status":       audio.Status,
+		"content_type": audio.ContentType,
+		"size_bytes":   audio.Size,
+		"duration_ms":  durationMilliseconds(audio.Duration),
+	}
+	if audio.Status == MessageAudioReadable {
+		result["playback_path"] =
+			"/v1/agent-message-audios/" + audio.ID + "/playback"
+	}
+	if !audio.DeletedAt.IsZero() {
+		result["deleted_at"] = audio.DeletedAt.UTC().
+			Format(time.RFC3339Nano)
+	}
+	return result
+}
+
+func durationMilliseconds(duration time.Duration) int64 {
+	if duration <= 0 {
+		return 0
+	}
+	return int64((duration + time.Millisecond - 1) / time.Millisecond)
 }
 
 func runWriteStatus(run Run) int {

@@ -135,6 +135,24 @@ func (service *RunService) RecoverInterruptedRuns(
 	return service.repository.RecoverInterruptedRuns(ctx)
 }
 
+// ProcessPending resumes a Run that was atomically created by another
+// Agent-owned input workflow, such as voice-candidate confirmation. It does
+// not create or mutate the input Message itself.
+func (service *RunService) ProcessPending(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	run Run,
+) (Run, error) {
+	if ctx == nil || !actor.Valid() ||
+		run.OwnerID != actor.UserID ||
+		!validUUID(run.ID) ||
+		!validUUID(run.ThreadID) ||
+		!validUUID(run.InputMessageID) {
+		return Run{}, ErrInvalidRequest
+	}
+	return service.process(ctx, actor, run)
+}
+
 func (service *RunService) process(
 	ctx context.Context,
 	actor requestcontext.Actor,

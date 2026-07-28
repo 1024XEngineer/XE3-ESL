@@ -87,6 +87,20 @@ paths:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1active-matter
   /v1/agent-threads/{thread_id}/messages:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1messages
+  /v1/agent-threads/{thread_id}/voice-message-candidates:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1voice-message-candidates
+  /v1/agent-voice-message-candidates/{candidate_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-voice-message-candidates~1{candidate_id}
+  /v1/agent-voice-message-candidates/{candidate_id}/retries:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-voice-message-candidates~1{candidate_id}~1retries
+  /v1/agent-voice-message-candidates/{candidate_id}/confirmations:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-voice-message-candidates~1{candidate_id}~1confirmations
+  /v1/agent-message-audios/{audio_id}/playback:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-message-audios~1{audio_id}~1playback
+  /v1/agent-message-audios/{audio_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-message-audios~1{audio_id}
+  /v1/agent-messages/{message_id}/speech:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-messages~1{message_id}~1speech
   /v1/agent-threads/{thread_id}/runs:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1runs
   /v1/agent-runs/{run_id}:
@@ -206,6 +220,14 @@ components:
       $ref: ./modules/agent.yaml#/components/schemas/ThreadMatterLink
     AgentMessage:
       $ref: ./modules/agent.yaml#/components/schemas/AgentMessage
+    AgentMessageAudio:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentMessageAudio
+    AgentVoiceMessageCandidate:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentVoiceMessageCandidate
+    AgentVoiceMessageConfirmation:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentVoiceMessageConfirmation
+    AgentMessageAudioPlayback:
+      $ref: ./modules/agent.yaml#/components/schemas/AgentMessageAudioPlayback
     AgentRun:
       $ref: ./modules/agent.yaml#/components/schemas/AgentRun
     ContextManifest:
