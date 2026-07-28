@@ -203,13 +203,14 @@ func (decision MemoryDecision) Valid() bool {
 type ExtractionBatch struct {
 	CandidateCount int
 	Decisions      []MemoryDecision
+	Rejections     []CandidateRejection
 	Source         SourceInput
 }
 
 func (batch ExtractionBatch) Valid() bool {
 	if batch.CandidateCount < 0 ||
 		batch.CandidateCount > maxExtractionCandidates ||
-		len(batch.Decisions) > batch.CandidateCount ||
+		len(batch.Decisions)+len(batch.Rejections) != batch.CandidateCount ||
 		!batch.Source.Valid() {
 		return false
 	}
@@ -218,7 +219,68 @@ func (batch ExtractionBatch) Valid() bool {
 			return false
 		}
 	}
+	seenRejectedIndexes := make(map[int]struct{}, len(batch.Rejections))
+	for _, rejection := range batch.Rejections {
+		if !rejection.Valid() ||
+			rejection.CandidateIndex >= batch.CandidateCount {
+			return false
+		}
+		if _, duplicate := seenRejectedIndexes[rejection.CandidateIndex]; duplicate {
+			return false
+		}
+		seenRejectedIndexes[rejection.CandidateIndex] = struct{}{}
+	}
 	return true
+}
+
+type CandidateRejectionReason string
+
+const (
+	RejectionInvalidAction                CandidateRejectionReason = "invalid_action"
+	RejectionUnsupportedType              CandidateRejectionReason = "unsupported_type"
+	RejectionInvalidCanonicalKey          CandidateRejectionReason = "invalid_canonical_key"
+	RejectionIncompatibleKey              CandidateRejectionReason = "incompatible_key"
+	RejectionEvidenceMismatch             CandidateRejectionReason = "evidence_mismatch"
+	RejectionSensitiveCandidate           CandidateRejectionReason = "sensitive_candidate"
+	RejectionGenderInteractionUseRequired CandidateRejectionReason = "gender_interaction_use_required"
+	RejectionMissingMatter                CandidateRejectionReason = "missing_matter"
+	RejectionInvalidScope                 CandidateRejectionReason = "invalid_scope"
+	RejectionInvalidContent               CandidateRejectionReason = "invalid_content"
+	RejectionInactivateContentNotEmpty    CandidateRejectionReason = "inactivate_content_not_empty"
+	RejectionDuplicateCandidate           CandidateRejectionReason = "duplicate_candidate"
+	RejectionInvalidDecision              CandidateRejectionReason = "invalid_decision"
+)
+
+func (reason CandidateRejectionReason) Valid() bool {
+	switch reason {
+	case RejectionInvalidAction,
+		RejectionUnsupportedType,
+		RejectionInvalidCanonicalKey,
+		RejectionIncompatibleKey,
+		RejectionEvidenceMismatch,
+		RejectionSensitiveCandidate,
+		RejectionGenderInteractionUseRequired,
+		RejectionMissingMatter,
+		RejectionInvalidScope,
+		RejectionInvalidContent,
+		RejectionInactivateContentNotEmpty,
+		RejectionDuplicateCandidate,
+		RejectionInvalidDecision:
+		return true
+	default:
+		return false
+	}
+}
+
+type CandidateRejection struct {
+	CandidateIndex int
+	Reason         CandidateRejectionReason
+}
+
+func (rejection CandidateRejection) Valid() bool {
+	return rejection.CandidateIndex >= 0 &&
+		rejection.CandidateIndex < maxExtractionCandidates &&
+		rejection.Reason.Valid()
 }
 
 type ExtractionRepository interface {
@@ -246,11 +308,26 @@ type ExtractionRepository interface {
 }
 
 type ExtractionSweepResult struct {
-	Claimed   int
-	Completed int
-	Retried   int
-	Failed    int
-	Discarded int
+	Claimed    int
+	Completed  int
+	Retried    int
+	Failed     int
+	Discarded  int
+	Rejections []CandidateRejectionEvent
+}
+
+type CandidateRejectionEvent struct {
+	RunID          string
+	CandidateIndex int
+	Reason         CandidateRejectionReason
+}
+
+func (event CandidateRejectionEvent) Valid() bool {
+	return validUUID(event.RunID) &&
+		CandidateRejection{
+			CandidateIndex: event.CandidateIndex,
+			Reason:         event.Reason,
+		}.Valid()
 }
 
 type ExtractionProcessor interface {

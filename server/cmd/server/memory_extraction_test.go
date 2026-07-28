@@ -85,6 +85,67 @@ func TestMemoryExtractionWorkerStopsWithContext(t *testing.T) {
 	}
 }
 
+func TestMemoryExtractionWorkerLogsSafeCandidateRejection(t *testing.T) {
+	t.Parallel()
+
+	const runID = "a3000000-0000-4000-8000-000000000001"
+	processor := memoryExtractionProcessorFunc(func(
+		context.Context,
+		int,
+	) (memory.ExtractionSweepResult, error) {
+		return memory.ExtractionSweepResult{
+			Claimed:   1,
+			Completed: 1,
+			Rejections: []memory.CandidateRejectionEvent{{
+				RunID:          runID,
+				CandidateIndex: 2,
+				Reason:         memory.RejectionEvidenceMismatch,
+			}},
+		}, nil
+	})
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(
+		&logs,
+		&slog.HandlerOptions{Level: slog.LevelDebug},
+	))
+	worker, err := newMemoryExtractionWorker(
+		processor,
+		logger,
+		time.Second,
+		time.Second,
+		1,
+		func(context.Context, time.Duration) bool { return false },
+	)
+	if err != nil {
+		t.Fatalf("newMemoryExtractionWorker: %v", err)
+	}
+	worker.Run(context.Background())
+	output := logs.String()
+	for _, want := range []string{
+		`"msg":"memory extraction candidate rejected"`,
+		`"run_id":"` + runID + `"`,
+		`"candidate_index":2`,
+		`"reason":"evidence_mismatch"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("rejection log missing %q: %s", want, output)
+		}
+	}
+	for _, forbidden := range []string{
+		"Private Name",
+		`"query":`,
+		`"content":`,
+		`"evidence":`,
+		`"canonical_key":`,
+		`"api_key":`,
+		"secret",
+	} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("rejection log contains %q: %s", forbidden, output)
+		}
+	}
+}
+
 func TestBuildMemoryExtractionWorkerRequiresDependency(t *testing.T) {
 	t.Parallel()
 

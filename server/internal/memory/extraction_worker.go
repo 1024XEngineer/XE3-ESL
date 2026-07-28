@@ -63,7 +63,8 @@ func (worker *Worker) ProcessPending(
 			return result, nil
 		}
 		result.Claimed++
-		outcome, err := worker.processClaim(ctx, claim)
+		outcome, rejections, err := worker.processClaim(ctx, claim)
+		result.Rejections = append(result.Rejections, rejections...)
 		if err != nil {
 			return result, err
 		}
@@ -86,29 +87,33 @@ func (worker *Worker) ProcessPending(
 func (worker *Worker) processClaim(
 	ctx context.Context,
 	claim ExtractionClaim,
-) (ExtractionStatus, error) {
+) (ExtractionStatus, []CandidateRejectionEvent, error) {
 	source, err := worker.sources.ReadCompletedRun(
 		ctx,
 		claim.OwnerID,
 		claim.RunID,
 	)
 	if err != nil {
-		return worker.recordFailure(ctx, claim, err)
+		status, failureErr := worker.recordFailure(ctx, claim, err)
+		return status, nil, failureErr
 	}
 	if !sourceMatchesClaim(source, claim) {
-		return worker.recordFailure(
+		status, failureErr := worker.recordFailure(
 			ctx,
 			claim,
 			ErrExtractionResponse,
 		)
+		return status, nil, failureErr
 	}
 	output, err := worker.extractor.Extract(ctx, source)
 	if err != nil {
-		return worker.recordFailure(ctx, claim, err)
+		status, failureErr := worker.recordFailure(ctx, claim, err)
+		return status, nil, failureErr
 	}
 	batch, err := worker.policy.Decide(source, output)
 	if err != nil {
-		return worker.recordFailure(ctx, claim, err)
+		status, failureErr := worker.recordFailure(ctx, claim, err)
+		return status, nil, failureErr
 	}
 	_, err = worker.repository.CompleteExtraction(ctx, claim, batch)
 	if errors.Is(err, ErrAccountDeleted) {
@@ -118,14 +123,30 @@ func (worker *Worker) processClaim(
 			"account_deleted",
 		)
 		if discardErr != nil {
-			return "", discardErr
+			return "", nil, discardErr
 		}
-		return job.Status, nil
+		return job.Status, nil, nil
 	}
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return ExtractionCompleted, nil
+	rejections := make(
+		[]CandidateRejectionEvent,
+		0,
+		len(batch.Rejections),
+	)
+	for _, rejection := range batch.Rejections {
+		event := CandidateRejectionEvent{
+			RunID:          claim.RunID,
+			CandidateIndex: rejection.CandidateIndex,
+			Reason:         rejection.Reason,
+		}
+		if !event.Valid() {
+			return "", nil, ErrRepository
+		}
+		rejections = append(rejections, event)
+	}
+	return ExtractionCompleted, rejections, nil
 }
 
 func (worker *Worker) recordFailure(
