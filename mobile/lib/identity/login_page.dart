@@ -49,8 +49,7 @@ class _LoginPageState extends State<LoginPage> {
               AuthPasswordField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
-                minimumLength: 15,
-                helperText: '15–128 个字符',
+                minimumLength: 1,
                 onToggleVisibility: () =>
                     setState(() => _obscurePassword = !_obscurePassword),
                 onSubmitted: (_) => _submit(),
@@ -449,8 +448,14 @@ class AuthPasswordField extends StatelessWidget {
       ),
       validator: (value) {
         final length = value?.runes.length ?? 0;
-        if (length < minimumLength || length > 128) {
-          return '密码长度需为 $minimumLength–128 个字符。';
+        if (length == 0) {
+          return '请输入密码。';
+        }
+        if (length < minimumLength) {
+          return '密码至少需要 $minimumLength 个字符。';
+        }
+        if (length > 128) {
+          return '密码不能超过 128 个字符。';
         }
         return null;
       },

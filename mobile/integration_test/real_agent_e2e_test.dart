@@ -29,7 +29,7 @@ void main() {
     const validateAudioMedia = bool.fromEnvironment(
       'SPEAKUP_E2E_VALIDATE_AUDIO_MEDIA',
     );
-    if (email.isEmpty || password.runes.length < 15) {
+    if (email.isEmpty || password.runes.length < 8) {
       fail('A disposable E2E account with a valid password is required.');
     }
     final voiceFixture = _decodeVoiceFixture(voiceWavBase64);

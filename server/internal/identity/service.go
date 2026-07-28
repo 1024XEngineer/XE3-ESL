@@ -147,7 +147,7 @@ func (s *Service) Login(
 	password string,
 ) (LoginResult, error) {
 	canonicalEmail, err := NormalizeEmail(email)
-	if err != nil || ValidatePassword(password) != nil {
+	if err != nil || ValidateLoginPassword(password) != nil {
 		return LoginResult{}, ErrInvalidRequest
 	}
 

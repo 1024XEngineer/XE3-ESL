@@ -128,14 +128,26 @@ func TestArgon2idRejectsUnsafeStoredParameters(t *testing.T) {
 }
 
 func TestValidatePasswordUsesCharacterLengthWithoutNormalization(t *testing.T) {
-	if err := ValidatePassword("ééééééééééééééé"); err != nil {
-		t.Fatalf("expected 15-character password to pass: %v", err)
+	if err := ValidatePassword("éééééééé"); err != nil {
+		t.Fatalf("expected 8-character password to pass: %v", err)
 	}
-	if err := ValidatePassword("short password"); err == nil {
-		t.Fatal("expected short password to fail")
+	if err := ValidatePassword("ééééééé"); err == nil {
+		t.Fatal("expected 7-character password to fail")
 	}
 	if err := ValidatePassword(strings.Repeat("a", 129)); err == nil {
 		t.Fatal("expected long password to fail")
+	}
+}
+
+func TestValidateLoginPasswordAcceptsExistingNonEmptyPassword(t *testing.T) {
+	if err := ValidateLoginPassword("x"); err != nil {
+		t.Fatalf("expected non-empty login password to pass: %v", err)
+	}
+	if err := ValidateLoginPassword(""); err == nil {
+		t.Fatal("expected empty login password to fail")
+	}
+	if err := ValidateLoginPassword(strings.Repeat("a", 129)); err == nil {
+		t.Fatal("expected overlong login password to fail")
 	}
 }
 

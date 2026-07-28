@@ -696,8 +696,12 @@ assert.deepEqual(
 assert.equal(updateProfileRequestSchema?.additionalProperties, false);
 const passwordSchema = schemas.Password;
 assert.equal(passwordSchema?.writeOnly, true);
-assert.equal(passwordSchema?.minLength, 15);
+assert.equal(passwordSchema?.minLength, 8);
 assert.equal(passwordSchema?.maxLength, 128);
+const loginPasswordSchema = schemas.LoginPassword;
+assert.equal(loginPasswordSchema?.writeOnly, true);
+assert.equal(loginPasswordSchema?.minLength, 1);
+assert.equal(loginPasswordSchema?.maxLength, 128);
 const emailInputPattern = new RegExp(schemas.EmailInput?.pattern, 'u');
 for (const email of [
   'learner@example.com',
