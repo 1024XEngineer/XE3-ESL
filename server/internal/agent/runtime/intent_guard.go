@@ -138,6 +138,12 @@ func routeDecision(input string) RouteDecision {
 		decision.Confidence = RouteConfidenceHigh
 		decision.ToolUseMode = RouteToolUseNone
 		decision.ReasonCode = ReasonDirectLanguageHelp
+	case hasAny(text, reviewCandidateSignals):
+		decision.Intent = RouteIntentHistoricalReview
+		decision.Confidence = RouteConfidenceHigh
+		decision.ToolUseMode = RouteToolUseSpecific
+		decision.PreferredTools = []string{toolReviewGet}
+		decision.ReasonCode = ReasonHistoricalReviewRequest
 	case hasAny(text, materialSignals):
 		decision.Intent = RouteIntentMaterialContext
 		decision.Confidence = RouteConfidenceHigh
@@ -252,9 +258,16 @@ var scenarioCreateSignals = []string{
 
 var reviewSignals = []string{
 	"评价",
+	"评家",
 	"复盘",
 	"review",
 	"feedback",
+}
+
+var reviewCandidateSignals = []string{
+	"第一条评价",
+	"第1条评价",
+	"first review",
 }
 
 var materialSignals = []string{
