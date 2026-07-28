@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
 class PreparationPage extends StatefulWidget {
@@ -15,7 +17,9 @@ class PreparationPage extends StatefulWidget {
     this.previewMode = false,
     this.agentController,
     this.preparationController,
+    this.launchController,
     this.onSceneSelected,
+    this.onPracticeStarted,
     super.key,
   });
 
@@ -23,18 +27,24 @@ class PreparationPage extends StatefulWidget {
   final bool previewMode;
   final AgentController? agentController;
   final PreparationController? preparationController;
+  final PreparationLaunchController? launchController;
   final VoidCallback? onSceneSelected;
+  final VoidCallback? onPracticeStarted;
 
   @override
   State<PreparationPage> createState() => _PreparationPageState();
 }
 
 class _PreparationPageState extends State<PreparationPage> {
+  TextEditingController? _backgroundController;
+
   @override
   void initState() {
     super.initState();
     widget.agentController?.addListener(_rebuild);
     widget.preparationController?.addListener(_rebuild);
+    widget.launchController?.addListener(_rebuild);
+    _backgroundController = _newBackgroundController(widget.launchController);
     unawaited(widget.preparationController?.loadIfNeeded());
   }
 
@@ -50,18 +60,79 @@ class _PreparationPageState extends State<PreparationPage> {
       widget.preparationController?.addListener(_rebuild);
       unawaited(widget.preparationController?.loadIfNeeded());
     }
+    if (oldWidget.launchController != widget.launchController) {
+      oldWidget.launchController?.removeListener(_rebuild);
+      widget.launchController?.addListener(_rebuild);
+      _backgroundController?.dispose();
+      _backgroundController = _newBackgroundController(widget.launchController);
+    }
   }
 
   @override
   void dispose() {
     widget.agentController?.removeListener(_rebuild);
     widget.preparationController?.removeListener(_rebuild);
+    widget.launchController?.removeListener(_rebuild);
+    _backgroundController?.dispose();
     super.dispose();
   }
 
   void _rebuild() {
     if (mounted) {
+      final launchBackground = widget.launchController?.backgroundSummary;
+      final textController = _backgroundController;
+      if (launchBackground != null &&
+          textController != null &&
+          textController.text != launchBackground) {
+        textController.value = TextEditingValue(
+          text: launchBackground,
+          selection: TextSelection.collapsed(offset: launchBackground.length),
+        );
+      }
       setState(() {});
+    }
+  }
+
+  TextEditingController? _newBackgroundController(
+    PreparationLaunchController? controller,
+  ) {
+    return controller == null
+        ? null
+        : TextEditingController(text: controller.backgroundSummary);
+  }
+
+  Future<void> _startPractice() async {
+    final catalog = widget.preparationController;
+    final launch = widget.launchController;
+    final scenario = catalog?.selectedScenario;
+    final config = catalog?.detail?.config;
+    final role = catalog?.selectedRole;
+    final option = catalog?.selectedOption;
+    if (catalog == null ||
+        launch == null ||
+        scenario == null ||
+        config == null ||
+        role == null ||
+        option == null) {
+      return;
+    }
+    final started = await launch.start(
+      PreparationLaunchSelection.fromCatalog(
+        scenario: scenario,
+        config: config,
+        role: role,
+        option: option,
+      ),
+    );
+    if (started && mounted) {
+      widget.onPracticeStarted?.call();
+    }
+  }
+
+  Future<void> _retryLaunch() async {
+    final started = await widget.launchController?.retry() ?? false;
+    if (started && mounted) {
+      widget.onPracticeStarted?.call();
     }
   }
 
@@ -102,26 +173,34 @@ class _PreparationPageState extends State<PreparationPage> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.preparationController;
-    return Scaffold(
-      key: const Key('scenes-page'),
-      backgroundColor: const Color(0xFFF3F3F0),
-      appBar: widget.showBackButton
-          ? AppBar(
-              backgroundColor: const Color(0xFFF3F3F0),
-              surfaceTintColor: Colors.transparent,
-              elevation: 0,
-              scrolledUnderElevation: 0,
-              leading: IconButton(
-                key: const Key('preparation-route-back-button'),
-                tooltip: '返回',
-                onPressed: () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.arrow_back_rounded),
-              ),
-            )
-          : null,
-      body: SafeArea(
-        bottom: false,
-        child: controller == null ? _buildPreview() : _buildCatalog(controller),
+    final launchLocked = widget.launchController?.isSelectionLocked ?? false;
+    return PopScope<void>(
+      canPop: !launchLocked,
+      child: Scaffold(
+        key: const Key('scenes-page'),
+        backgroundColor: const Color(0xFFF3F3F0),
+        appBar: widget.showBackButton
+            ? AppBar(
+                backgroundColor: const Color(0xFFF3F3F0),
+                surfaceTintColor: Colors.transparent,
+                elevation: 0,
+                scrolledUnderElevation: 0,
+                leading: IconButton(
+                  key: const Key('preparation-route-back-button'),
+                  tooltip: '返回',
+                  onPressed: launchLocked
+                      ? null
+                      : () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                ),
+              )
+            : null,
+        body: SafeArea(
+          bottom: false,
+          child: controller == null
+              ? _buildPreview()
+              : _buildCatalog(controller),
+        ),
       ),
     );
   }
@@ -132,6 +211,11 @@ class _PreparationPageState extends State<PreparationPage> {
       return _ScenarioDetailView(
         controller: controller,
         scenario: selectedScenario,
+        launchController: widget.launchController,
+        backgroundController: _backgroundController,
+        hasAgentContext: widget.agentController?.threadId != null,
+        onStart: _startPractice,
+        onRetry: _retryLaunch,
       );
     }
     return ListView(
@@ -226,15 +310,29 @@ class _PreparationPageState extends State<PreparationPage> {
 }
 
 class _ScenarioDetailView extends StatelessWidget {
-  const _ScenarioDetailView({required this.controller, required this.scenario});
+  const _ScenarioDetailView({
+    required this.controller,
+    required this.scenario,
+    required this.launchController,
+    required this.backgroundController,
+    required this.hasAgentContext,
+    required this.onStart,
+    required this.onRetry,
+  });
 
   final PreparationController controller;
   final PreparationScenario scenario;
+  final PreparationLaunchController? launchController;
+  final TextEditingController? backgroundController;
+  final bool hasAgentContext;
+  final Future<void> Function() onStart;
+  final Future<void> Function() onRetry;
 
   @override
   Widget build(BuildContext context) {
     final detail = controller.detail;
     final selectedRole = controller.selectedRole;
+    final launchLocked = launchController?.isSelectionLocked ?? false;
     return ListView(
       key: const Key('preparation-scenario-detail'),
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 140),
@@ -243,7 +341,12 @@ class _ScenarioDetailView extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
             key: const Key('preparation-back-to-catalog'),
-            onPressed: controller.showScenarioList,
+            onPressed: launchLocked
+                ? null
+                : () {
+                    launchController?.selectionChanged();
+                    controller.showScenarioList();
+                  },
             icon: const Icon(Icons.arrow_back_rounded),
             label: const Text('全部场景'),
           ),
@@ -285,7 +388,12 @@ class _ScenarioDetailView extends StatelessWidget {
             _RoleCard(
               role: role,
               selected: selectedRole?.id == role.id,
-              onPressed: () => controller.selectRole(role),
+              onPressed: launchLocked
+                  ? null
+                  : () {
+                      launchController?.selectionChanged();
+                      controller.selectRole(role);
+                    },
             ),
             const SizedBox(height: 10),
           ],
@@ -305,14 +413,28 @@ class _ScenarioDetailView extends StatelessWidget {
               _OptionCard(
                 option: option,
                 selected: controller.selectedOption?.id == option.id,
-                onPressed: () => controller.selectOption(option),
+                onPressed: launchLocked
+                    ? null
+                    : () {
+                        launchController?.selectionChanged();
+                        controller.selectOption(option);
+                      },
               ),
               const SizedBox(height: 10),
             ],
           ],
           if (controller.hasCompleteSelection) ...[
             const SizedBox(height: 18),
-            const _ReadOnlySelectionNotice(),
+            if (launchController case final launch?)
+              _LaunchSelectionCard(
+                controller: launch,
+                backgroundController: backgroundController!,
+                hasAgentContext: hasAgentContext,
+                onStart: onStart,
+                onRetry: onRetry,
+              )
+            else
+              const _LaunchUnavailableNotice(),
           ],
         ],
       ],
@@ -495,7 +617,7 @@ class _RoleCard extends StatelessWidget {
 
   final PreparationRole role;
   final bool selected;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -579,7 +701,7 @@ class _OptionCard extends StatelessWidget {
 
   final PreparationOption option;
   final bool selected;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -643,13 +765,25 @@ class _OptionCard extends StatelessWidget {
   }
 }
 
-class _ReadOnlySelectionNotice extends StatelessWidget {
-  const _ReadOnlySelectionNotice();
+class _LaunchSelectionCard extends StatelessWidget {
+  const _LaunchSelectionCard({
+    required this.controller,
+    required this.backgroundController,
+    required this.hasAgentContext,
+    required this.onStart,
+    required this.onRetry,
+  });
+
+  final PreparationLaunchController controller;
+  final TextEditingController backgroundController;
+  final bool hasAgentContext;
+  final Future<void> Function() onStart;
+  final Future<void> Function() onRetry;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      key: const Key('preparation-read-only-selection'),
+      key: const Key('preparation-launch-selection'),
       color: const Color(0xFFEDEDEA),
       borderRadius: BorderRadius.circular(18),
       child: Padding(
@@ -657,26 +791,105 @@ class _ReadOnlySelectionNotice extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              '目录选择已完成',
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
+            const Text('准备开始练习', style: TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 6),
             const Text(
-              '当前语音练习接口还不能接收这组服务端目录配置，因此本次选择尚未创建练习或写入业务数据。',
+              '请补充真实背景和练习目标。这里只创建本次练习上下文，不会从昵称或历史消息猜测。',
               style: TextStyle(color: Color(0xFF5F6168), height: 1.45),
             ),
             const SizedBox(height: 12),
-            FilledButton(
-              key: Key('preparation-start-unavailable'),
-              onPressed: null,
-              child: Text('练习接线准备中'),
+            TextField(
+              key: const Key('preparation-background-summary'),
+              controller: backgroundController,
+              enabled: !controller.isSelectionLocked,
+              minLines: 3,
+              maxLines: 6,
+              maxLength: 4000,
+              textInputAction: TextInputAction.newline,
+              decoration: const InputDecoration(
+                labelText: '你的背景与本次练习目标（必填）',
+                hintText: '例如：你的岗位、经历，以及这次最想练习的表达。',
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(),
+              ),
+              onChanged: controller.updateBackgroundSummary,
             ),
+            if (!hasAgentContext) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'Agent 对话仍在恢复。无需预先建立事项，恢复完成后可从这里直接开始。',
+                key: Key('preparation-agent-context-missing'),
+                style: TextStyle(color: Color(0xFF6A5B38), height: 1.4),
+              ),
+            ],
+            if (controller.errorMessage case final message?) ...[
+              const SizedBox(height: 8),
+              Text(
+                message,
+                key: const Key('preparation-launch-error'),
+                style: const TextStyle(color: Color(0xFF9A332A), height: 1.4),
+              ),
+            ],
+            if (controller.isStarting) ...[
+              const SizedBox(height: 10),
+              const LinearProgressIndicator(
+                key: Key('preparation-launch-progress'),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _launchStageLabel(controller.stage),
+                key: const Key('preparation-launch-stage'),
+                style: const TextStyle(color: Color(0xFF5F6168)),
+              ),
+            ],
+            const SizedBox(height: 12),
+            FilledButton(
+              key: const Key('preparation-start-practice'),
+              onPressed: controller.isStarting ? null : onStart,
+              child: Text(controller.isStarting ? '正在创建练习' : '开始语音练习'),
+            ),
+            if (controller.canRetry && !controller.isStarting)
+              TextButton(
+                key: const Key('preparation-retry-launch'),
+                onPressed: onRetry,
+                child: const Text('重试上次启动'),
+              ),
           ],
         ),
       ),
     );
   }
+}
+
+class _LaunchUnavailableNotice extends StatelessWidget {
+  const _LaunchUnavailableNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Material(
+      key: Key('preparation-launch-unavailable'),
+      color: Color(0xFFEDEDEA),
+      borderRadius: BorderRadius.all(Radius.circular(18)),
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Text('正式练习启动服务未注入，当前选择不会写入业务数据。'),
+      ),
+    );
+  }
+}
+
+String _launchStageLabel(PreparationLaunchStage? stage) {
+  return switch (stage) {
+    PreparationLaunchStage.context => '正在确认 Agent 对话与事项',
+    PreparationLaunchStage.matter => '正在创建或激活本次求职事项',
+    PreparationLaunchStage.profile => '正在保存本次背景',
+    PreparationLaunchStage.snapshot => '正在冻结练习背景',
+    PreparationLaunchStage.plan => '正在创建练习计划',
+    PreparationLaunchStage.session => '正在创建练习会话',
+    PreparationLaunchStage.voice => '正在连接第一道语音题目',
+    null => '正在准备练习',
+  };
 }
 
 class _InlineFailure extends StatelessWidget {

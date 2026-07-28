@@ -9,6 +9,13 @@ import 'package:speakup/practice/practice_audio_player.dart';
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUp(() {
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  });
+  tearDown(() {
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  });
+
   test(
     'managed WAV is deleted on stop and caller bytes are untouched',
     () async {
@@ -140,6 +147,9 @@ void main() {
         await _eventually(() async => !await File(native.path!).exists());
 
         expect(completionCount, 1);
+        expect(native.stopCount, 1);
+        expect(native.releaseCount, 1);
+        expect(native.disposeCount, 1);
         expect(await File(native.path!).exists(), isFalse);
       } finally {
         binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);

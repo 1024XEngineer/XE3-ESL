@@ -105,20 +105,22 @@ final class LegacyAgentPracticeClient implements PracticeClient {
       return null;
     }
     if (legacy.completedTurns < 0 ||
-        legacy.completedTurns > 3 ||
-        (legacy.review != null && legacy.completedTurns != 3) ||
+        legacy.turnLimit < 1 ||
+        legacy.turnLimit > 6 ||
+        legacy.completedTurns > legacy.turnLimit ||
+        (legacy.review != null && !legacy.sessionCompleted) ||
         (legacy.pendingReviewClientId != null &&
             (legacy.pendingReviewClientId!.trim().isEmpty ||
-                legacy.completedTurns != 3 ||
+                !legacy.sessionCompleted ||
                 legacy.review != null)) ||
-        (legacy.completedTurns == 3 &&
+        (legacy.sessionCompleted &&
             legacy.review == null &&
             legacy.pendingReviewClientId == null)) {
       throw StateError('Invalid legacy Practice snapshot.');
     }
     var review = legacy.review;
     _pendingReviewClientId = legacy.pendingReviewClientId;
-    final completed = legacy.completedTurns == 3;
+    final completed = legacy.sessionCompleted;
     final question = completed
         ? null
         : PracticeQuestion(
@@ -137,7 +139,7 @@ final class LegacyAgentPracticeClient implements PracticeClient {
       sessionId: 'legacy-session-${matter.id}',
       matter: matter,
       completedTurns: legacy.completedTurns,
-      turnLimit: 3,
+      turnLimit: legacy.turnLimit,
       sessionCompleted: completed,
       currentQuestion: question,
       review: review,

@@ -171,12 +171,20 @@ final class AgentMatter {
 final class AgentPracticeSnapshot {
   const AgentPracticeSnapshot({
     required this.completedTurns,
+    this.turnLimit = 3,
+    bool? sessionCompleted,
     this.review,
     this.pendingReviewClientId,
-  }) : assert(completedTurns >= 0 && completedTurns <= 3),
-       assert(review == null || completedTurns == 3);
+  }) : sessionCompleted = sessionCompleted ?? completedTurns == turnLimit,
+       assert(turnLimit >= 1 && turnLimit <= 6),
+       assert(completedTurns >= 0 && completedTurns <= turnLimit),
+       assert(
+         review == null || (sessionCompleted ?? completedTurns == turnLimit),
+       );
 
   final int completedTurns;
+  final int turnLimit;
+  final bool sessionCompleted;
   final AgentReview? review;
   final String? pendingReviewClientId;
 }

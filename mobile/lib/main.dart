@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/wire_preparation_client.dart';
+import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
@@ -32,6 +36,7 @@ void main() {
       authController: dependencies.authController,
       agentController: dependencies.agentController,
       preparationController: dependencies.preparationController,
+      preparationLaunchController: dependencies.preparationLaunchController,
       reviewHistoryController: dependencies.reviewHistoryController,
     ),
   );
@@ -42,12 +47,14 @@ final class ProductionAppDependencies {
     required this.authController,
     required this.agentController,
     required this.preparationController,
+    required this.preparationLaunchController,
     required this.reviewHistoryController,
   });
 
   final AuthController authController;
   final AgentController agentController;
   final PreparationController preparationController;
+  final PreparationLaunchController preparationLaunchController;
   final ReviewHistoryController reviewHistoryController;
 }
 
@@ -58,6 +65,7 @@ ProductionAppDependencies createProductionAppDependencies({
   AgentVoiceWireTransport? agentVoiceTransport,
   AgentVoiceWireTransport? signedAgentVoiceTransport,
   IdentityHttpTransport? preparationTransport,
+  IdentityHttpTransport? preparationLaunchTransport,
   IdentityHttpTransport? reviewHistoryTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
@@ -151,6 +159,55 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: preparationTransport,
     ),
   );
+  final preparationLaunchController = PreparationLaunchController(
+    client: WirePreparationLaunchClient(
+      baseUri: baseUri,
+      credentialProvider: () => authController.currentCredential,
+      invalidateSession:
+          ({required expectedSessionToken, required expectedGeneration}) {
+            return authController.invalidateSession(
+              expectedSessionToken: expectedSessionToken,
+              expectedGeneration: expectedGeneration,
+            );
+          },
+      transport: preparationLaunchTransport,
+    ),
+    contextProvider: () {
+      final threadId = agentController.threadId;
+      final matterId = agentController.activeMatter?.id;
+      if (threadId == null || matterId == null) {
+        return null;
+      }
+      return AgentPracticeContext(threadId: threadId, matterId: matterId);
+    },
+    threadIdProvider: () => agentController.threadId,
+    matterActivator:
+        ({
+          required threadId,
+          required selection,
+          required clientOperationId,
+        }) async {
+          final matter = await agentController.activateMatterForScenario(
+            threadId: threadId,
+            scene: AgentScene(
+              id: selection.scenarioDefinitionId,
+              title: selection.scenarioDisplayName,
+              description: selection.scenarioDescription,
+            ),
+            clientOperationId: clientOperationId,
+          );
+          return AgentPracticeContext(threadId: threadId, matterId: matter.id);
+        },
+    voiceActivator:
+        ({required context, required bootstrap, required clientOperationId}) =>
+            agentController.activateCreatedPractice(
+              threadId: context.threadId,
+              matterId: context.matterId,
+              sessionId: bootstrap.session.id,
+              turnLimit: bootstrap.maxEffectiveTurns,
+              clientOperationId: clientOperationId,
+            ),
+  );
   authController = AuthController(
     identityClient: WireIdentityClient(
       baseUri: baseUri,
@@ -161,6 +218,7 @@ ProductionAppDependencies createProductionAppDependencies({
       await Future.wait<void>([
         agentController.clearPrivateState(),
         preparationController.clearPrivateState(),
+        preparationLaunchController.clearPrivateState(),
         reviewHistoryController.clearPrivateState(),
       ]);
     },
@@ -169,6 +227,7 @@ ProductionAppDependencies createProductionAppDependencies({
     authController: authController,
     agentController: agentController,
     preparationController: preparationController,
+    preparationLaunchController: preparationLaunchController,
     reviewHistoryController: reviewHistoryController,
   );
 }

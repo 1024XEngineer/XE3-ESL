@@ -6,6 +6,7 @@ import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/practice/practice.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_gate.dart';
@@ -17,6 +18,7 @@ class SpeakUpApp extends StatelessWidget {
     required AuthController authController,
     required this.agentController,
     required this.preparationController,
+    this.preparationLaunchController,
     this.reviewHistoryController,
     super.key,
   }) : _authentication = (controller: authController),
@@ -25,6 +27,7 @@ class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp.preview({
     this.agentController,
     this.preparationController,
+    this.preparationLaunchController,
     this.reviewHistoryController,
     super.key,
   }) : _authentication = null,
@@ -33,6 +36,7 @@ class SpeakUpApp extends StatelessWidget {
   final ({AuthController controller})? _authentication;
   final AgentController? agentController;
   final PreparationController? preparationController;
+  final PreparationLaunchController? preparationLaunchController;
   final ReviewHistoryController? reviewHistoryController;
   final bool _allowFakePreview;
 
@@ -58,6 +62,7 @@ class SpeakUpApp extends StatelessWidget {
           ? _AuthenticatedNavigator(
               agentController: agentController,
               preparationController: preparationController,
+              preparationLaunchController: preparationLaunchController,
               reviewHistoryController: reviewHistoryController,
               allowFakePreview: _allowFakePreview,
             )
@@ -68,6 +73,7 @@ class SpeakUpApp extends StatelessWidget {
                 authController: controller,
                 agentController: agentController,
                 preparationController: preparationController,
+                preparationLaunchController: preparationLaunchController,
                 reviewHistoryController: reviewHistoryController,
                 allowFakePreview: _allowFakePreview,
               ),
@@ -82,6 +88,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.authController,
     this.agentController,
     this.preparationController,
+    this.preparationLaunchController,
     this.reviewHistoryController,
     required this.allowFakePreview,
   });
@@ -90,6 +97,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final AuthController? authController;
   final AgentController? agentController;
   final PreparationController? preparationController;
+  final PreparationLaunchController? preparationLaunchController;
   final ReviewHistoryController? reviewHistoryController;
   final bool allowFakePreview;
 
@@ -99,6 +107,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
 }
 
 class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
   late final AgentController _agentController;
   late final bool _ownsAgentController;
 
@@ -128,6 +137,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   @override
   Widget build(BuildContext context) {
     return Navigator(
+      key: _navigatorKey,
       initialRoute: AppRoutes.home,
       onGenerateRoute: (settings) {
         final page = switch (settings.name) {
@@ -137,6 +147,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             authController: widget.authController,
             agentController: _agentController,
             preparationController: widget.preparationController,
+            preparationLaunchController: widget.preparationLaunchController,
             reviewHistoryController: widget.reviewHistoryController,
           ),
           AppRoutes.preparation => PreparationPage(
@@ -144,6 +155,9 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             previewMode: widget.allowFakePreview,
             agentController: _agentController,
             preparationController: widget.preparationController,
+            launchController: widget.preparationLaunchController,
+            onPracticeStarted: () => _navigatorKey.currentState
+                ?.pushReplacementNamed(AppRoutes.practice),
           ),
           AppRoutes.practice => PracticePage(
             previewMode: widget.allowFakePreview,
@@ -156,6 +170,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             authController: widget.authController,
             agentController: _agentController,
             preparationController: widget.preparationController,
+            preparationLaunchController: widget.preparationLaunchController,
             reviewHistoryController: widget.reviewHistoryController,
           ),
           AppRoutes.review => ReviewPage(

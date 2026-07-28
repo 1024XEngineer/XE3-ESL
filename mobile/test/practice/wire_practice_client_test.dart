@@ -12,6 +12,48 @@ import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/practice/wire_practice_client.dart';
 
 void main() {
+  test(
+    'accepts server-authoritative completion before the frozen max turns',
+    () async {
+      final transport = _Transport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/voice-practice-session',
+          response: _json(HttpStatus.ok, {
+            'practice_session_id': _sessionId,
+            'practice_plan_id': 'plan-1',
+            'thread_id': _threadId,
+            'matter': _matterJson(),
+            'session_version': 5,
+            'effective_turns': 4,
+            'turn_limit': 6,
+            'session_completed': true,
+            'current_turn': {
+              'turn_id': _turnId,
+              'practice_session_id': _sessionId,
+              'question_id': _questionId,
+              'respondent_participant_id': 'participant-user',
+              'candidate_id': _candidateId,
+              'answer_text': 'I explained the trade-off.',
+              'evidence_version': 1,
+              'effective_turns': 4,
+              'session_completed': true,
+            },
+          }),
+        ),
+      ]);
+
+      final snapshot = await _client(
+        transport,
+      ).restorePractice(threadId: _threadId);
+
+      expect(snapshot?.completedTurns, 4);
+      expect(snapshot?.turnLimit, 6);
+      expect(snapshot?.sessionCompleted, isTrue);
+      transport.expectDone();
+    },
+  );
+
   test('encodes every opaque resource ID as one path segment', () {
     const endpoints = PracticeWireEndpoints();
     const opaque = 'resource/part?query#fragment%value';
