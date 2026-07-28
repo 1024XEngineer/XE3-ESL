@@ -94,6 +94,11 @@ components:
         - retry_request_not_found
         - retry_request_conflict
         - transcript_unavailable
+        - evaluation_not_found
+        - evaluation_strategy_not_available
+        - evaluation_version_conflict
+        - evaluation_policy_violation
+        - evaluation_retryable_failure
         - unsupported_message
         - internal_error
       x-http-status-map:
@@ -138,6 +143,11 @@ components:
         turn_analysis_conflict: 409
         retry_request_conflict: 409
         transcript_unavailable: 422
+        evaluation_not_found: 404
+        evaluation_strategy_not_available: 422
+        evaluation_version_conflict: 409
+        evaluation_policy_violation: 422
+        evaluation_retryable_failure: 503
         rate_limited: 429
         provider_unavailable: 503
         quota_exhausted: 503
