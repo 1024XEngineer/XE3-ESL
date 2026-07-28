@@ -205,13 +205,7 @@ Future<void> _registerOrSignIn(
   await tester.enterText(find.byType(TextFormField).at(0), email);
   await tester.enterText(find.byType(TextFormField).at(1), password);
   await _tapAuthSubmit(tester, '登录');
-  await _waitUntil(
-    tester,
-    () =>
-        find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
-        _composerIsReady(tester),
-    const Duration(seconds: 20),
-  );
+  await _ensureFocusedConversation(tester);
 }
 
 Future<void> _signIn(
@@ -624,13 +618,7 @@ Future<bool> _signedInAccountMatches(
     return false;
   }
   await tester.tap(find.byKey(const Key('primary-tab-agent')));
-  await _waitUntil(
-    tester,
-    () =>
-        find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
-        _composerIsReady(tester),
-    const Duration(seconds: 20),
-  );
+  await _ensureFocusedConversation(tester);
   return true;
 }
 
@@ -656,6 +644,30 @@ bool _composerIsReady(WidgetTester tester) {
     return false;
   }
   return tester.widget<TextField>(composer).enabled == true;
+}
+
+Future<void> _ensureFocusedConversation(WidgetTester tester) async {
+  final createConversation = find.byKey(
+    const Key('no-focused-create-conversation'),
+  );
+  await _waitUntil(
+    tester,
+    () =>
+        find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
+        (_composerIsReady(tester) ||
+            createConversation.hitTestable().evaluate().length == 1),
+    const Duration(seconds: 20),
+  );
+  if (_composerIsReady(tester)) {
+    return;
+  }
+
+  await tester.tap(createConversation);
+  await _waitUntil(
+    tester,
+    () => _composerIsReady(tester),
+    const Duration(seconds: 20),
+  );
 }
 
 bool _sendButtonIsEnabled(WidgetTester tester) {
