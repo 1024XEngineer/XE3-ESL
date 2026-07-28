@@ -596,6 +596,12 @@ SET
 		return mapPostgresError(err)
 	}
 	if _, err := tx.Exec(ctx, `
+DELETE FROM agent_memory_extraction_jobs WHERE owner_user_id = $1`,
+		command.UserID,
+	); err != nil {
+		return mapPostgresError(err)
+	}
+	if _, err := tx.Exec(ctx, `
 DELETE FROM agent_memories WHERE owner_user_id = $1`,
 		command.UserID,
 	); err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
@@ -32,6 +33,7 @@ type IdentityAgentPracticeComposition struct {
 	identityModule         *identity.Module
 	agentModule            RouteRegistrar
 	agentVoiceReclaimer    AgentVoiceObjectReclaimer
+	memoryExtraction       memory.ExtractionProcessor
 	identityHTTP           *identity.HTTPHandler
 	preparationApplication *preparation.PersistenceService
 	preparationHTTP        *preparation.ProfileHTTPHandler
@@ -143,6 +145,7 @@ func NewIdentityAgentAndPracticeComposition(
 		identityModule:         base.identity.module,
 		agentModule:            base.agentModule,
 		agentVoiceReclaimer:    base.agentVoiceReclaimer,
+		memoryExtraction:       base.memoryExtraction,
 		identityHTTP:           base.identity.handler,
 		preparationApplication: preparationApplication,
 		preparationHTTP:        preparationHTTP,
@@ -174,6 +177,15 @@ func (c *IdentityAgentPracticeComposition) AgentVoiceReclaimer() AgentVoiceObjec
 		return nil
 	}
 	return c.agentVoiceReclaimer
+}
+
+// MemoryExtractionProcessor exposes only the bounded batch operation required
+// by the server scheduler. Memory keeps job, provider, and persistence details.
+func (c *IdentityAgentPracticeComposition) MemoryExtractionProcessor() memory.ExtractionProcessor {
+	if c == nil {
+		return nil
+	}
+	return c.memoryExtraction
 }
 
 func (c *IdentityAgentPracticeComposition) PreparationApplication() *preparation.PersistenceService {

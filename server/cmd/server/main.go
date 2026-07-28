@@ -198,6 +198,17 @@ func run() int {
 		)
 		return 1
 	}
+	memoryExtraction, err := buildMemoryExtractionWorker(
+		applicationComposition.MemoryExtractionProcessor(),
+		logger,
+	)
+	if err != nil {
+		logger.Error(
+			"memory extraction startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
 
 	cleanupWorker, err := buildAudioCleanupWorker(
 		ctx,
@@ -229,6 +240,11 @@ func run() int {
 			agentVoiceCleanup.Run(ctx)
 		}()
 	}
+	memoryExtractionDone := make(chan struct{})
+	go func() {
+		defer close(memoryExtractionDone)
+		memoryExtraction.Run(ctx)
+	}()
 
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
 		logger,
@@ -296,6 +312,15 @@ func run() int {
 			)
 			exitCode = 1
 		}
+	}
+	select {
+	case <-memoryExtractionDone:
+	case <-shutdownCtx.Done():
+		logger.Error(
+			"memory extraction shutdown failed",
+			slog.String("error_kind", "timeout"),
+		)
+		exitCode = 1
 	}
 
 	return exitCode
