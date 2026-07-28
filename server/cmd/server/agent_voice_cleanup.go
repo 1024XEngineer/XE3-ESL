@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
+	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 )

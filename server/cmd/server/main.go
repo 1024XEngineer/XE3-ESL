@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
+	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"

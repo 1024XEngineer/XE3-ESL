@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
+	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/qianwen"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
@@ -30,7 +30,7 @@ type ProtectedRouteRegistrar interface {
 // Matter, and ID-generation dependencies.
 type IdentityAgentPracticeComposition struct {
 	identityModule         *identity.Module
-	agentModule            *agent.Module
+	agentModule            RouteRegistrar
 	agentVoiceReclaimer    AgentVoiceObjectReclaimer
 	identityHTTP           *identity.HTTPHandler
 	preparationApplication *preparation.PersistenceService
@@ -50,7 +50,7 @@ func NewIdentityAgentAndPracticeComposition(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration agent.RunConfiguration,
+	runConfiguration core.RunConfiguration,
 	catalog preparation.CatalogReader,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
@@ -160,7 +160,7 @@ func (c *IdentityAgentPracticeComposition) IdentityModule() *identity.Module {
 	return c.identityModule
 }
 
-func (c *IdentityAgentPracticeComposition) AgentModule() *agent.Module {
+func (c *IdentityAgentPracticeComposition) AgentModule() RouteRegistrar {
 	if c == nil {
 		return nil
 	}
@@ -263,7 +263,7 @@ type agentThreadReader interface {
 		context.Context,
 		requestcontext.Actor,
 		string,
-	) (agent.Thread, error)
+	) (core.Thread, error)
 }
 
 type agentPracticeContextReader struct {
@@ -325,11 +325,11 @@ func (r *agentPracticeContextReader) ValidatePracticeAnchor(
 
 func mapAgentPracticeContextError(err error) error {
 	switch {
-	case errors.Is(err, agent.ErrInvalidRequest):
+	case errors.Is(err, core.ErrInvalidRequest):
 		return practicepersistence.ErrInvalidArgument
-	case errors.Is(err, agent.ErrNotFound):
+	case errors.Is(err, core.ErrNotFound):
 		return practicepersistence.ErrNotFound
-	case errors.Is(err, agent.ErrConflict):
+	case errors.Is(err, core.ErrConflict):
 		return practicepersistence.ErrConflict
 	default:
 		return fmt.Errorf("bootstrap: read Agent practice context: %w", err)
