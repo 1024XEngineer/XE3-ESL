@@ -37,55 +37,56 @@ class _RegisterPageState extends State<RegisterPage> {
   Widget build(BuildContext context) {
     return AuthFormScaffold(
       title: '创建账号',
-      subtitle: '使用邮箱和安全密码开始使用 SpeakUp。',
+      subtitle: '从一次更自在的开口开始。',
+      switchPrompt: '已经有账号？',
+      switchActionLabel: '返回登录',
+      onSwitch: widget.state.isSubmitting ? null : widget.controller.showLogin,
       errorMessage: widget.state.errorMessage,
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextFormField(
-              key: const Key('register-display-name'),
-              controller: _displayNameController,
-              textInputAction: TextInputAction.next,
-              autofillHints: const [AutofillHints.name],
-              decoration: const InputDecoration(
-                labelText: '昵称',
-                hintText: '希望 SpeakUp 如何称呼你',
-                border: OutlineInputBorder(),
+      child: AutofillGroup(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                key: const Key('register-display-name'),
+                controller: _displayNameController,
+                textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.name],
+                textCapitalization: TextCapitalization.words,
+                onTapOutside: (_) =>
+                    FocusManager.instance.primaryFocus?.unfocus(),
+                decoration: authFieldDecoration(label: '昵称'),
+                validator: validateDisplayNameInput,
               ),
-              validator: validateDisplayNameInput,
-            ),
-            const SizedBox(height: 16),
-            AuthEmailField(controller: _emailController),
-            const SizedBox(height: 16),
-            AuthPasswordField(
-              controller: _passwordController,
-              obscureText: _obscurePassword,
-              onToggleVisibility: () =>
-                  setState(() => _obscurePassword = !_obscurePassword),
-            ),
-            const SizedBox(height: 24),
-            FilledButton(
-              onPressed: widget.state.isSubmitting ? null : _submit,
-              child: widget.state.isSubmitting
-                  ? const AuthButtonProgress()
-                  : const Text('创建账号'),
-            ),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: widget.state.isSubmitting
-                  ? null
-                  : widget.controller.showLogin,
-              child: const Text('返回登录'),
-            ),
-          ],
+              const SizedBox(height: 14),
+              AuthEmailField(controller: _emailController),
+              const SizedBox(height: 14),
+              AuthPasswordField(
+                controller: _passwordController,
+                obscureText: _obscurePassword,
+                minimumLength: 15,
+                autofillHint: AutofillHints.newPassword,
+                helperText: '15–128 个字符',
+                onToggleVisibility: () =>
+                    setState(() => _obscurePassword = !_obscurePassword),
+                onSubmitted: (_) => _submit(),
+              ),
+              const SizedBox(height: 28),
+              AuthPrimaryButton(
+                label: '创建账号',
+                isSubmitting: widget.state.isSubmitting,
+                onPressed: widget.state.isSubmitting ? null : _submit,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   void _submit() {
+    FocusManager.instance.primaryFocus?.unfocus();
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
