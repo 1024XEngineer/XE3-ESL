@@ -12,6 +12,11 @@ import (
 )
 
 func main() {
+	if err := config.LoadDotEnvUpwards(); err != nil {
+		logger := logging.New("info")
+		logger.Error("load .env failed", slog.Any("error", err))
+		os.Exit(1)
+	}
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
 	toolConfig, err := config.LoadAgentTool()

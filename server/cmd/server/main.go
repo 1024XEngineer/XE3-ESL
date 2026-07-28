@@ -30,6 +30,10 @@ func main() {
 }
 
 func run() int {
+	if err := config.LoadDotEnvUpwards(); err != nil {
+		_, _ = os.Stderr.WriteString("load .env failed: " + err.Error() + "\n")
+		return 1
+	}
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
 	toolConfig, err := config.LoadAgentTool()
