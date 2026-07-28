@@ -19,6 +19,7 @@ func (executor *Executor) Execute(
 	ctx context.Context,
 	call CallContext,
 	invocation Invocation,
+	policy Policy,
 ) (Result, error) {
 	if executor == nil || executor.registry == nil {
 		return Result{}, ErrUnknownTool
@@ -27,13 +28,17 @@ func (executor *Executor) Execute(
 	if !ok {
 		return Result{}, ErrUnknownTool
 	}
-	if err := ValidateJSONObject(invocation.Input); err != nil {
-		return Result{}, err
+	definition := tool.Definition()
+	if !policy.Allows(definition) {
+		return Result{}, ErrToolRejected
 	}
 	if !call.Actor.Valid() || call.ThreadID == "" ||
 		call.RunID == "" || call.ToolCallID == "" ||
 		call.RequestID == "" {
 		return Result{}, ErrToolRejected
+	}
+	if err := ValidateInput(definition.InputSchema, invocation.Input); err != nil {
+		return Result{}, err
 	}
 	result, err := tool.Execute(ctx, call, invocation.Input)
 	if err != nil {

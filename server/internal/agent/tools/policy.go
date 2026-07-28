@@ -5,6 +5,22 @@ type Policy struct {
 	AllowWrites  bool
 }
 
+// Allows 判断某个工具定义在当前策略下是否允许执行。
+func (policy Policy) Allows(definition Definition) bool {
+	if !policy.AllowWrites && !definition.ReadOnly {
+		return false
+	}
+	if len(policy.AllowedNames) == 0 {
+		return true
+	}
+	for _, name := range policy.AllowedNames {
+		if name == definition.Name {
+			return true
+		}
+	}
+	return false
+}
+
 // Select 返回当前 Agent Run 允许暴露的工具定义。
 func (policy Policy) Select(registry *Registry) ([]Definition, error) {
 	if registry == nil {

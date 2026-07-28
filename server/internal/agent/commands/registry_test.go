@@ -74,6 +74,19 @@ func TestRouterParsesBuiltinCommand(t *testing.T) {
 	}
 }
 
+func TestBuiltinsOnlyReferenceImplementedTools(t *testing.T) {
+	implemented := map[string]struct{}{
+		ToolScenarioCreate: {},
+		ToolScenarioSearch: {},
+		ToolReviewSearch:   {},
+	}
+	for _, definition := range Builtins() {
+		if _, ok := implemented[definition.ToolName]; !ok {
+			t.Fatalf("builtin %q references unimplemented tool %q", definition.Name, definition.ToolName)
+		}
+	}
+}
+
 func TestRouterIgnoresNonCommand(t *testing.T) {
 	registry, err := NewRegistry(Builtins()...)
 	if err != nil {

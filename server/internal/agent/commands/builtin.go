@@ -6,8 +6,6 @@ const (
 	ToolScenarioCreate = "scenario.create.v1"
 	ToolScenarioSearch = "scenario.search.v1"
 	ToolReviewSearch   = "review.search.v1"
-	ToolMistakeSearch  = "mistake.search.v1"
-	ToolMaterialSearch = "material.search.v1"
 )
 
 // Builtins 返回 Agent 首批支持的用户可见斜杠命令。
@@ -51,24 +49,6 @@ func Builtins() []Definition {
 			Aliases:     []string{"评价", "查上次评价"},
 			Description: "查询历史 Review 或面试评价",
 			ToolName:    ToolReviewSearch,
-			BuildInput: func(args string) (json.RawMessage, error) {
-				return JSONObjectInput(map[string]any{"query": args})
-			},
-		},
-		{
-			Name:        "查错题",
-			Aliases:     []string{"错题"},
-			Description: "查询历史错题或学习问题",
-			ToolName:    ToolMistakeSearch,
-			BuildInput: func(args string) (json.RawMessage, error) {
-				return JSONObjectInput(map[string]any{"query": args})
-			},
-		},
-		{
-			Name:        "解析简历",
-			Aliases:     []string{"简历"},
-			Description: "检索或解析简历和材料",
-			ToolName:    ToolMaterialSearch,
 			BuildInput: func(args string) (json.RawMessage, error) {
 				return JSONObjectInput(map[string]any{"query": args})
 			},

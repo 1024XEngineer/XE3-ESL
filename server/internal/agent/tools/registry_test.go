@@ -14,6 +14,7 @@ type stubTool struct {
 	result     Result
 	err        error
 	input      json.RawMessage
+	calls      int
 }
 
 func (tool *stubTool) Definition() Definition {
@@ -25,6 +26,7 @@ func (tool *stubTool) Execute(
 	call CallContext,
 	input json.RawMessage,
 ) (Result, error) {
+	tool.calls++
 	tool.input = append(json.RawMessage{}, input...)
 	return tool.result, tool.err
 }
@@ -93,6 +95,7 @@ func TestExecutorValidatesAndRunsTool(t *testing.T) {
 		context.Background(),
 		validCallContext(),
 		Invocation{Name: "review.search.v1", Input: input},
+		Policy{AllowedNames: []string{"review.search.v1"}},
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -105,6 +108,26 @@ func TestExecutorValidatesAndRunsTool(t *testing.T) {
 	}
 }
 
+func TestExecutorRejectsToolOutsidePolicy(t *testing.T) {
+	tool := &stubTool{definition: writeToolDefinition("scenario.create.v1")}
+	registry, err := NewRegistry(tool)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	_, err = NewExecutor(registry).Execute(
+		context.Background(),
+		validCallContext(),
+		Invocation{Name: "scenario.create.v1", Input: json.RawMessage(`{"title":"PM interview"}`)},
+		Policy{},
+	)
+	if !errors.Is(err, ErrToolRejected) {
+		t.Fatalf("Execute() error = %v, want %v", err, ErrToolRejected)
+	}
+	if tool.calls != 0 {
+		t.Fatalf("tool calls = %d, want 0", tool.calls)
+	}
+}
+
 func TestExecutorRejectsInvalidCallContext(t *testing.T) {
 	registry, err := NewRegistry(&stubTool{definition: readToolDefinition("review.search.v1")})
 	if err != nil {
@@ -114,9 +137,43 @@ func TestExecutorRejectsInvalidCallContext(t *testing.T) {
 		context.Background(),
 		CallContext{},
 		Invocation{Name: "review.search.v1", Input: json.RawMessage(`{}`)},
+		Policy{AllowedNames: []string{"review.search.v1"}},
 	)
 	if !errors.Is(err, ErrToolRejected) {
 		t.Fatalf("Execute() error = %v, want %v", err, ErrToolRejected)
+	}
+}
+
+func TestExecutorValidatesInputSchema(t *testing.T) {
+	tests := []struct {
+		name  string
+		input json.RawMessage
+	}{
+		{name: "missing required", input: json.RawMessage(`{}`)},
+		{name: "wrong type", input: json.RawMessage(`{"query":123}`)},
+		{name: "extra field", input: json.RawMessage(`{"query":"x","unexpected":true}`)},
+		{name: "null field", input: json.RawMessage(`{"query":null}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := &stubTool{definition: readToolDefinition("review.search.v1")}
+			registry, err := NewRegistry(tool)
+			if err != nil {
+				t.Fatalf("NewRegistry() error = %v", err)
+			}
+			_, err = NewExecutor(registry).Execute(
+				context.Background(),
+				validCallContext(),
+				Invocation{Name: "review.search.v1", Input: tt.input},
+				Policy{AllowedNames: []string{"review.search.v1"}},
+			)
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("Execute() error = %v, want %v", err, ErrInvalidInput)
+			}
+			if tool.calls != 0 {
+				t.Fatalf("tool calls = %d, want 0", tool.calls)
+			}
+		})
 	}
 }
 
