@@ -169,7 +169,7 @@ func (assembler *ContextAssembler) Assemble(
 	}
 	hits, err := assembler.memories.Search(ctx, MemorySearchRequest{
 		Actor:    actor,
-		Query:    input.Content,
+		Query:    strings.TrimSpace(input.Content),
 		MatterID: manifest.ActiveMatterID,
 		Limit:    memoryContextLimit,
 	})

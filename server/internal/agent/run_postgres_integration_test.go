@@ -1775,6 +1775,73 @@ func TestPostgresContextAssemblerIncludesRecentCommittedConversation(t *testing.
 	}
 }
 
+func TestPostgresContextAssemblerNormalizesOnlyMemorySearchQuery(
+	t *testing.T,
+) {
+	database := newAgentTestDatabase(t)
+	generator := &recordingTextGenerator{result: successfulTextResult()}
+	searcher := &recordingMemorySearcher{}
+	ids := identity.NewUUIDv4Generator(nil)
+	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	if err != nil {
+		t.Fatalf("new Matter repository: %v", err)
+	}
+	matterService, err := matter.NewService(matterRepository)
+	if err != nil {
+		t.Fatalf("new Matter service: %v", err)
+	}
+	repository, err := NewPostgresRepository(database.pool, ids)
+	if err != nil {
+		t.Fatalf("new Agent repository: %v", err)
+	}
+	dataService, err := NewService(repository, matterService)
+	if err != nil {
+		t.Fatalf("new Agent service: %v", err)
+	}
+	runService := newRunServiceWithMemory(
+		t,
+		repository,
+		matterService,
+		generator,
+		testRunConfiguration,
+		searcher,
+	)
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	const input = "  Help me introduce myself.  "
+	submission, err := runService.SubmitText(
+		context.Background(),
+		actor,
+		thread.ID,
+		"memory-query-normalization-0001",
+		input,
+	)
+	if err != nil {
+		t.Fatalf("submit text: %v", err)
+	}
+	requests := searcher.Requests()
+	if len(requests) != 1 ||
+		requests[0].Query != strings.TrimSpace(input) {
+		t.Fatalf("Memory search requests = %#v", requests)
+	}
+	providerRequests := generator.Requests()
+	if len(providerRequests) != 1 ||
+		len(providerRequests[0].Messages) != 2 ||
+		providerRequests[0].Messages[1].Content != input {
+		t.Fatalf("provider requests = %#v", providerRequests)
+	}
+	if submission.UserMessage.Content != input {
+		t.Fatalf(
+			"persisted input = %q, want %q",
+			submission.UserMessage.Content,
+			input,
+		)
+	}
+}
+
 func TestPostgresContextAssemblerInjectsAuditedMemoryAsUntrustedData(
 	t *testing.T,
 ) {
