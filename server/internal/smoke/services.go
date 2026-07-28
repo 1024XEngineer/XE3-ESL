@@ -80,7 +80,7 @@ func (b practiceBackend) CreatePracticePlan(
 		catalogSnapshot.ScenarioConfig.Version != command.ScenarioConfigVersion {
 		return practice.PracticePlan{}, ErrInvalidSelection
 	}
-	return b.runtime.createPlan()
+	return b.runtime.createPlan(command)
 }
 
 func (b practiceBackend) PracticePlanExists(query practice.PracticePlanExistsQuery) bool {

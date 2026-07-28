@@ -136,7 +136,7 @@ func (r *Runtime) createSnapshot() (map[string]any, error) {
 	}, nil
 }
 
-func (r *Runtime) createPlan() (practice.PracticePlan, error) {
+func (r *Runtime) createPlan(command practice.CreatePracticePlanCommand) (practice.PracticePlan, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.planCreated = true
@@ -144,6 +144,8 @@ func (r *Runtime) createPlan() (practice.PracticePlan, error) {
 	return practice.PracticePlan{
 		ID:                        demoPracticePlan,
 		UserID:                    DemoUserID,
+		AgentThreadID:             command.AgentThreadID,
+		MatterID:                  command.MatterID,
 		ScenarioDefinitionID:      DemoScenarioDefinition,
 		ScenarioDefinitionVersion: 1,
 		ScenarioType:              practice.ScenarioTypeInterview,

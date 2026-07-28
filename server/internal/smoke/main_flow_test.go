@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/gorilla/websocket"
 )
@@ -70,14 +71,24 @@ func runMainFlow(t *testing.T) flowTrace {
 	client.expect(t, http.MethodPost, "/v1/preparation-profiles/"+demoPreparationProfile+"/snapshots", map[string]any{
 		"source_version": 1,
 	}, map[string]string{"Idempotency-Key": "snapshot-key-1"}, http.StatusCreated, nil)
+	var createdPlan practice.PracticePlan
 	client.expect(t, http.MethodPost, "/v1/practice-plans", map[string]any{
+		"agent_thread_id":             "agent_thread_demo_001",
+		"matter_id":                   "matter_demo_001",
+		"preparation_snapshot_id":     demoPreparationSnapshot,
 		"scenario_definition_id":      DemoScenarioDefinition,
 		"scenario_definition_version": 1,
 		"scenario_config_id":          preparation.BackendEngineerConfigID,
 		"scenario_config_version":     1,
 		"preparation_profile_id":      demoPreparationProfile,
 		"selected_role_ids":           []string{DemoRoleDefinition},
-	}, map[string]string{"Idempotency-Key": "plan-key-1"}, http.StatusCreated, nil)
+	}, map[string]string{"Idempotency-Key": "plan-key-1"}, http.StatusCreated, &createdPlan)
+	if createdPlan.AgentThreadID != "agent_thread_demo_001" {
+		t.Fatalf("created plan agent thread = %q", createdPlan.AgentThreadID)
+	}
+	if createdPlan.MatterID != "matter_demo_001" {
+		t.Fatalf("created plan matter = %q", createdPlan.MatterID)
+	}
 	var sessionBootstrap struct {
 		Session map[string]any `json:"practice_session"`
 	}

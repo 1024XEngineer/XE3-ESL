@@ -3,6 +3,7 @@ package practice
 type CreatePracticePlanCommand struct {
 	AgentThreadID             string   `json:"agent_thread_id"`
 	MatterID                  string   `json:"matter_id"`
+	PreparationSnapshotID     string   `json:"preparation_snapshot_id,omitempty"`
 	ScenarioDefinitionID      string   `json:"scenario_definition_id"`
 	ScenarioDefinitionVersion int      `json:"scenario_definition_version"`
 	ScenarioConfigID          string   `json:"scenario_config_id"`
