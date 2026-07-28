@@ -19,19 +19,52 @@ import (
 )
 
 type applicationStub struct {
-	register    func(context.Context, string, string) (User, error)
-	login       func(context.Context, string, string) (LoginResult, error)
-	logout      func(context.Context, requestcontext.Actor) error
-	currentUser func(context.Context, requestcontext.Actor) (User, error)
-	revokeAll   func(context.Context, string, string) error
+	register       func(context.Context, string, string) (User, error)
+	onRegisterName func(*string)
+	login          func(context.Context, string, string) (LoginResult, error)
+	logout         func(context.Context, requestcontext.Actor) error
+	currentUser    func(context.Context, requestcontext.Actor) (User, error)
+	currentProfile func(
+		context.Context,
+		requestcontext.Actor,
+	) (UserProfile, error)
+	updateProfile func(
+		context.Context,
+		requestcontext.Actor,
+		UpdateProfileCommand,
+	) (UserProfile, error)
+	revokeAll func(context.Context, string, string) error
 }
 
 func (a applicationStub) Register(
 	ctx context.Context,
 	email string,
 	password string,
+	displayNames ...*string,
 ) (User, error) {
+	if a.onRegisterName != nil {
+		var displayName *string
+		if len(displayNames) == 1 {
+			displayName = displayNames[0]
+		}
+		a.onRegisterName(displayName)
+	}
 	return a.register(ctx, email, password)
+}
+
+func (a applicationStub) CurrentProfile(
+	ctx context.Context,
+	actor requestcontext.Actor,
+) (UserProfile, error) {
+	return a.currentProfile(ctx, actor)
+}
+
+func (a applicationStub) UpdateProfile(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command UpdateProfileCommand,
+) (UserProfile, error) {
+	return a.updateProfile(ctx, actor, command)
 }
 
 func (a applicationStub) Login(
@@ -140,6 +173,11 @@ func TestIdentityHTTPContract(t *testing.T) {
 		}
 		return User{ID: "user-1", Email: "learner@example.com"}, nil
 	}
+	app.onRegisterName = func(displayName *string) {
+		if displayName == nil || *displayName != "小林" {
+			t.Fatalf("unexpected display name: %#v", displayName)
+		}
+	}
 	app.login = func(context.Context, string, string) (LoginResult, error) {
 		return LoginResult{
 			User:      User{ID: "user-1", Email: "learner@example.com"},
@@ -155,6 +193,41 @@ func TestIdentityHTTPContract(t *testing.T) {
 			t.Fatalf("unexpected actor: %#v", got)
 		}
 		return User{ID: actor.UserID, Email: "learner@example.com"}, nil
+	}
+	app.currentProfile = func(
+		_ context.Context,
+		got requestcontext.Actor,
+	) (UserProfile, error) {
+		if got != actor {
+			t.Fatalf("unexpected profile actor: %#v", got)
+		}
+		return UserProfile{
+			UserID:         actor.UserID,
+			DisplayName:    "小林",
+			ProfileVersion: 1,
+			CreatedAt:      expiresAt.Add(-time.Hour),
+			UpdatedAt:      expiresAt.Add(-time.Hour),
+		}, nil
+	}
+	app.updateProfile = func(
+		_ context.Context,
+		got requestcontext.Actor,
+		command UpdateProfileCommand,
+	) (UserProfile, error) {
+		if got != actor ||
+			command.DisplayName != "林同学" ||
+			command.ExpectedProfileVersion == nil ||
+			*command.ExpectedProfileVersion != 1 ||
+			command.IdempotencyKey != "profile-request-0001" {
+			t.Fatalf("unexpected profile update: %#v / %#v", got, command)
+		}
+		return UserProfile{
+			UserID:         actor.UserID,
+			DisplayName:    command.DisplayName,
+			ProfileVersion: 2,
+			CreatedAt:      expiresAt.Add(-time.Hour),
+			UpdatedAt:      expiresAt,
+		}, nil
 	}
 	app.logout = func(
 		_ context.Context,
@@ -179,7 +252,7 @@ func TestIdentityHTTPContract(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/v1/auth/register",
-		`{"email":"Learner@Example.com","password":"correct horse battery staple"}`,
+		`{"email":"Learner@Example.com","password":"correct horse battery staple","display_name":"小林"}`,
 		"",
 	)
 	assertStatusAndJSON(
@@ -213,6 +286,37 @@ func TestIdentityHTTPContract(t *testing.T) {
 		"/v1/me",
 		"",
 		"Bearer sess_secret",
+	)
+	profile := performRequest(
+		router,
+		http.MethodGet,
+		"/v1/me/profile",
+		"",
+		"Bearer sess_secret",
+	)
+	assertStatusAndJSON(
+		t,
+		profile,
+		http.StatusOK,
+		`{"user_id":"user-1","display_name":"小林","profile_version":1,"created_at":"2026-08-23T11:00:00.123456Z","updated_at":"2026-08-23T11:00:00.123456Z"}`,
+	)
+	updateRequest := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/me/profile",
+		strings.NewReader(
+			`{"display_name":"林同学","expected_profile_version":1}`,
+		),
+	)
+	updateRequest.Header.Set("Content-Type", "application/json")
+	updateRequest.Header.Set("Authorization", "Bearer sess_secret")
+	updateRequest.Header.Set("Idempotency-Key", "profile-request-0001")
+	updateResponse := httptest.NewRecorder()
+	router.ServeHTTP(updateResponse, updateRequest)
+	assertStatusAndJSON(
+		t,
+		updateResponse,
+		http.StatusOK,
+		`{"user_id":"user-1","display_name":"林同学","profile_version":2,"created_at":"2026-08-23T11:00:00.123456Z","updated_at":"2026-08-23T12:00:00.123456Z"}`,
 	)
 	assertStatusAndJSON(
 		t,
@@ -788,6 +892,56 @@ func TestRateLimitIncludesDeterministicRetryAfter(t *testing.T) {
 	assertErrorCode(t, response, "rate_limited")
 }
 
+func TestProfileUpdateRateLimitUsesAuthenticatedUserScope(t *testing.T) {
+	limits := defaultTestRateLimits()
+	limits.ProfileUser = denyLimiter{retryAfter: 1500 * time.Millisecond}
+	app := completeApplicationStub()
+	app.updateProfile = func(
+		context.Context,
+		requestcontext.Actor,
+		UpdateProfileCommand,
+	) (UserProfile, error) {
+		t.Fatal("limited profile update reached application")
+		return UserProfile{}, nil
+	}
+	router := newTestRouter(
+		t,
+		app,
+		authenticatorStub(func(
+			context.Context,
+			string,
+		) (requestcontext.Actor, error) {
+			return requestcontext.Actor{
+				UserID:    "user-1",
+				SessionID: "session-1",
+			}, nil
+		}),
+		limits,
+	)
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/me/profile",
+		strings.NewReader(
+			`{"display_name":"林同学","expected_profile_version":1}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer sess_secret")
+	request.Header.Set("Idempotency-Key", "profile-rate-limit-0001")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusTooManyRequests ||
+		response.Header().Get("Retry-After") != "2" {
+		t.Fatalf(
+			"unexpected limited response: %d %#v",
+			response.Code,
+			response.Header(),
+		)
+	}
+	assertErrorCode(t, response, "rate_limited")
+}
+
 func TestAuthenticationInternalErrorIsSanitized(t *testing.T) {
 	const sensitive = "postgres://user:password@internal/database"
 	router := newTestRouter(
@@ -853,6 +1007,7 @@ func defaultTestRateLimits() RateLimiters {
 		RegistrationIP: allowLimiter{},
 		LoginIP:        allowLimiter{},
 		LoginAccount:   allowLimiter{},
+		ProfileUser:    allowLimiter{},
 	}
 }
 
@@ -935,6 +1090,19 @@ func completeApplicationStub() applicationStub {
 			requestcontext.Actor,
 		) (User, error) {
 			return User{}, nil
+		},
+		currentProfile: func(
+			context.Context,
+			requestcontext.Actor,
+		) (UserProfile, error) {
+			return UserProfile{}, nil
+		},
+		updateProfile: func(
+			context.Context,
+			requestcontext.Actor,
+			UpdateProfileCommand,
+		) (UserProfile, error) {
+			return UserProfile{}, nil
 		},
 		revokeAll: func(context.Context, string, string) error {
 			return nil

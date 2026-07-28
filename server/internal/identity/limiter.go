@@ -14,6 +14,7 @@ const (
 	registrationAttemptsPerIP = 5
 	loginAttemptsPerIP        = 30
 	loginAttemptsPerAccount   = 10
+	profileUpdatesPerUser     = 20
 	defaultRateLimitCapacity  = 10_000
 )
 
@@ -154,6 +155,7 @@ type RateLimiters struct {
 	RegistrationIP RateLimiter
 	LoginIP        RateLimiter
 	LoginAccount   RateLimiter
+	ProfileUser    RateLimiter
 }
 
 func NewDefaultRateLimiters(clock Clock) (RateLimiters, error) {
@@ -181,10 +183,19 @@ func NewDefaultRateLimiters(clock Clock) (RateLimiters, error) {
 	if err != nil {
 		return RateLimiters{}, err
 	}
+	profileUser, err := NewFixedWindowLimiter(
+		profileUpdatesPerUser,
+		identityRateLimitWindow,
+		clock,
+	)
+	if err != nil {
+		return RateLimiters{}, err
+	}
 	return RateLimiters{
 		RegistrationIP: registration,
 		LoginIP:        loginIP,
 		LoginAccount:   loginAccount,
+		ProfileUser:    profileUser,
 	}, nil
 }
 

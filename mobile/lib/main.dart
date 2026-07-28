@@ -259,11 +259,13 @@ ProductionAppDependencies createProductionAppDependencies({
               clientOperationId: clientOperationId,
             ),
   );
+  final identityClient = WireIdentityClient(
+    baseUri: baseUri,
+    transport: identityTransport,
+  );
   authController = AuthController(
-    identityClient: WireIdentityClient(
-      baseUri: baseUri,
-      transport: identityTransport,
-    ),
+    identityClient: identityClient,
+    profileClient: identityClient,
     sessionStore: sessionStore ?? const IosKeychainSessionStore(),
     clearPrivateState: () async {
       await Future.wait<void>([

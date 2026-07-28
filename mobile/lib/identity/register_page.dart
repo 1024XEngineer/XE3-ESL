@@ -21,12 +21,14 @@ class RegisterPage extends StatefulWidget {
 class _RegisterPageState extends State<RegisterPage> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
+  final _displayNameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
 
   @override
   void dispose() {
     _emailController.dispose();
+    _displayNameController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -42,6 +44,19 @@ class _RegisterPageState extends State<RegisterPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            TextFormField(
+              key: const Key('register-display-name'),
+              controller: _displayNameController,
+              textInputAction: TextInputAction.next,
+              autofillHints: const [AutofillHints.name],
+              decoration: const InputDecoration(
+                labelText: '昵称',
+                hintText: '希望 SpeakUp 如何称呼你',
+                border: OutlineInputBorder(),
+              ),
+              validator: validateDisplayNameInput,
+            ),
+            const SizedBox(height: 16),
             AuthEmailField(controller: _emailController),
             const SizedBox(height: 16),
             AuthPasswordField(
@@ -77,6 +92,7 @@ class _RegisterPageState extends State<RegisterPage> {
     widget.controller.register(
       email: normalizeIdentityEmailInput(_emailController.text),
       password: _passwordController.text,
+      displayName: _displayNameController.text.trim(),
     );
   }
 }

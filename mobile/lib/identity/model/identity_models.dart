@@ -44,6 +44,63 @@ final class User {
   }
 }
 
+final class UserProfile {
+  const UserProfile({
+    required this.userId,
+    required this.displayName,
+    required this.profileVersion,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory UserProfile.fromJson(Map<String, Object?> json) {
+    if (!_hasExactKeys(json, const {
+      'user_id',
+      'display_name',
+      'profile_version',
+      'created_at',
+      'updated_at',
+    })) {
+      throw const FormatException('Invalid user profile response.');
+    }
+    final userId = User._requiredString(json, 'user_id');
+    final displayName = User._requiredString(json, 'display_name');
+    final profileVersion = json['profile_version'];
+    final createdAt = json['created_at'];
+    final updatedAt = json['updated_at'];
+    if (userId.length > 128 ||
+        !_userIdPattern.hasMatch(userId) ||
+        displayName.trim() != displayName ||
+        validateDisplayNameInput(displayName) != null ||
+        profileVersion is! int ||
+        profileVersion < 1 ||
+        createdAt is! String ||
+        updatedAt is! String) {
+      throw const FormatException('Invalid user profile response.');
+    }
+    final parsedCreatedAt = _tryParseStrictRfc3339(createdAt);
+    final parsedUpdatedAt = _tryParseStrictRfc3339(updatedAt);
+    if (parsedCreatedAt == null ||
+        parsedUpdatedAt == null ||
+        parsedUpdatedAt.isBefore(parsedCreatedAt)) {
+      throw const FormatException('Invalid user profile response.');
+    }
+    return UserProfile(
+      userId: userId,
+      displayName: displayName,
+      profileVersion: profileVersion,
+      createdAt: parsedCreatedAt,
+      updatedAt: parsedUpdatedAt,
+    );
+  }
+
+  final String userId;
+  final String displayName;
+  final int profileVersion;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
 final class LoginResult {
   const LoginResult({
     required this.user,

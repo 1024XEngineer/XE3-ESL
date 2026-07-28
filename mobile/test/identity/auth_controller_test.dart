@@ -566,6 +566,86 @@ void main() {
       },
     );
   });
+
+  group('UserProfile lifecycle', () {
+    test(
+      'historical account may skip then create a persisted profile',
+      () async {
+        final profileClient = FakeProfileClient(
+          currentError: const IdentityClientException(
+            kind: IdentityFailureKind.profileNotFound,
+            statusCode: 404,
+          ),
+          updateResult: UserProfile(
+            userId: user.id,
+            displayName: '小林',
+            profileVersion: 1,
+            createdAt: DateTime.utc(2026, 7, 28),
+            updatedAt: DateTime.utc(2026, 7, 28),
+          ),
+        );
+        final controller = AuthController(
+          identityClient: FakeIdentityClient(loginResult: loginResult),
+          profileClient: profileClient,
+          sessionStore: FakeSessionStore(),
+        );
+        await controller.initialize();
+        controller.showLogin();
+        await controller.login(
+          email: user.email,
+          password: 'a sufficiently long password',
+        );
+
+        expect(controller.shouldPromptForProfile, isTrue);
+        controller.dismissProfilePrompt();
+        expect(controller.shouldPromptForProfile, isFalse);
+
+        final error = await controller.updateDisplayName('小林');
+        expect(error, isNull);
+        expect(controller.profile?.displayName, '小林');
+        expect(profileClient.expectedVersion, isNull);
+        expect(profileClient.idempotencyKey, startsWith('profile_'));
+      },
+    );
+
+    test('retry reuses the pending profile idempotency key', () async {
+      final profileClient = FakeProfileClient(
+        currentError: const IdentityClientException(
+          kind: IdentityFailureKind.profileNotFound,
+          statusCode: 404,
+        ),
+        updateError: const IdentityClientException(
+          kind: IdentityFailureKind.network,
+          retryable: true,
+        ),
+        updateResult: UserProfile(
+          userId: user.id,
+          displayName: '小林',
+          profileVersion: 1,
+          createdAt: DateTime.utc(2026, 7, 28),
+          updatedAt: DateTime.utc(2026, 7, 28),
+        ),
+      );
+      final controller = AuthController(
+        identityClient: FakeIdentityClient(loginResult: loginResult),
+        profileClient: profileClient,
+        sessionStore: FakeSessionStore(),
+      );
+      await controller.initialize();
+      controller.showLogin();
+      await controller.login(
+        email: user.email,
+        password: 'a sufficiently long password',
+      );
+
+      expect(await controller.updateDisplayName('小林'), isNotNull);
+      final firstKey = profileClient.idempotencyKeys.single;
+
+      profileClient.updateError = null;
+      expect(await controller.updateDisplayName('小林'), isNull);
+      expect(profileClient.idempotencyKeys, [firstKey, firstKey]);
+    });
+  });
 }
 
 final class FakeSessionStore implements SessionStore {
@@ -685,6 +765,49 @@ final class FakeIdentityClient implements IdentityClient {
     if (error != null) {
       throw error;
     }
+  }
+}
+
+final class FakeProfileClient implements UserProfileClient {
+  FakeProfileClient({
+    this.currentResult,
+    this.currentError,
+    this.updateError,
+    required this.updateResult,
+  });
+
+  final UserProfile? currentResult;
+  final IdentityClientException? currentError;
+  IdentityClientException? updateError;
+  final UserProfile updateResult;
+  int? expectedVersion;
+  String? idempotencyKey;
+  final List<String> idempotencyKeys = [];
+
+  @override
+  Future<UserProfile> currentProfile({required String sessionToken}) async {
+    final error = currentError;
+    if (error != null) {
+      throw error;
+    }
+    return currentResult!;
+  }
+
+  @override
+  Future<UserProfile> updateProfile({
+    required String sessionToken,
+    required String displayName,
+    required int? expectedProfileVersion,
+    required String idempotencyKey,
+  }) async {
+    expectedVersion = expectedProfileVersion;
+    this.idempotencyKey = idempotencyKey;
+    idempotencyKeys.add(idempotencyKey);
+    final error = updateError;
+    if (error != null) {
+      throw error;
+    }
+    return updateResult;
   }
 }
 

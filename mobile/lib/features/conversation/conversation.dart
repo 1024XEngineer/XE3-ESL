@@ -17,6 +17,7 @@ class ConversationPage extends StatefulWidget {
     this.practiceAvailable = true,
     this.restingComposerBottom = 16,
     this.threadId,
+    this.displayName,
     this.onOpenMenu,
     this.onNavigateBack,
     this.onCreatePlan,
@@ -43,6 +44,7 @@ class ConversationPage extends StatefulWidget {
   final bool practiceAvailable;
   final double restingComposerBottom;
   final String? threadId;
+  final String? displayName;
   final VoidCallback? onOpenMenu;
   final VoidCallback? onNavigateBack;
   final VoidCallback? onCreatePlan;
@@ -133,18 +135,20 @@ class ConversationPage extends StatefulWidget {
                                 isBusy: isBusy,
                               ),
                             ] else if (messages.isEmpty) ...[
-                              const _Greeting(),
-                              const SizedBox(height: 5),
-                              Text(
-                                '我能为你做什么？',
-                                style: TextStyle(
-                                  color: const Color(0xFF0B0B0D),
-                                  fontSize: titleSize,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.12,
-                                  letterSpacing: -0.8,
+                              _Greeting(displayName: displayName),
+                              if (displayName != null) ...[
+                                const SizedBox(height: 5),
+                                Text(
+                                  '今天想练什么？',
+                                  style: TextStyle(
+                                    color: const Color(0xFF0B0B0D),
+                                    fontSize: titleSize,
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.12,
+                                    letterSpacing: -0.8,
+                                  ),
                                 ),
-                              ),
+                              ],
                               SizedBox(height: width < 350 ? 16 : 20),
                               if (practiceAvailable)
                                 _QuickActions(
@@ -556,13 +560,15 @@ class _RoundGlassButton extends StatelessWidget {
 }
 
 class _Greeting extends StatelessWidget {
-  const _Greeting();
+  const _Greeting({required this.displayName});
+
+  final String? displayName;
 
   @override
   Widget build(BuildContext context) {
-    return const Text(
-      '你好',
-      style: TextStyle(
+    return Text(
+      displayName == null ? '你好，今天想练什么？' : '你好，$displayName',
+      style: const TextStyle(
         color: Color(0xFF5F6064),
         fontSize: 22,
         fontWeight: FontWeight.w500,
