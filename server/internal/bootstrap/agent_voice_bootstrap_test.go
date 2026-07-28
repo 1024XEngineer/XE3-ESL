@@ -184,7 +184,7 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		pool,
 		[]RouteRegistrar{
-			composition.identityModule,
+			composition.identity.module,
 			composition.agentModule,
 		},
 	)
