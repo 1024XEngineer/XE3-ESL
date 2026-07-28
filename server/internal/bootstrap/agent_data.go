@@ -5,7 +5,12 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
+	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
+	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
+	agenttransport "github.com/1024XEngineer/XE3-ESL/server/internal/agent/transport"
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -23,9 +28,9 @@ func NewIdentityAndAgentModules(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration agent.RunConfiguration,
+	runConfiguration core.RunConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
-) (*identity.Module, *agent.Module, error) {
+) (*identity.Module, RouteRegistrar, error) {
 	if len(voiceConfigurations) == 1 &&
 		voiceConfigurations[0].AgentVoiceMessagesEnabled {
 		return nil, nil, errors.New(
@@ -49,8 +54,8 @@ func NewIdentityAndAgentModules(
 
 type identityAgentComposition struct {
 	identity            *identityComposition
-	agentModule         *agent.Module
-	agentService        *agent.Service
+	agentModule         RouteRegistrar
+	agentService        *agentapp.Service
 	agentVoiceReclaimer AgentVoiceObjectReclaimer
 	matterService       *matter.Service
 	ids                 *identity.UUIDv4Generator
@@ -63,7 +68,7 @@ type AgentVoiceObjectReclaimer interface {
 	ReclaimVoiceObjects(
 		context.Context,
 		int,
-	) (agent.VoiceCleanupResult, error)
+	) (core.VoiceCleanupResult, error)
 }
 
 func buildIdentityAgentComposition(
@@ -72,7 +77,7 @@ func buildIdentityAgentComposition(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration agent.RunConfiguration,
+	runConfiguration core.RunConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || generator == nil ||
@@ -98,22 +103,22 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	agentRepository, err := agent.NewPostgresRepository(database, ids)
+	agentRepository, err := agentpersistence.NewPostgresRepository(database, ids)
 	if err != nil {
 		return nil, err
 	}
-	agentService, err := agent.NewService(agentRepository, matterService)
+	agentService, err := agentapp.NewService(agentRepository, matterService)
 	if err != nil {
 		return nil, err
 	}
-	contextAssembler, err := agent.NewContextAssembler(
+	contextAssembler, err := agentruntime.NewContextAssembler(
 		agentRepository,
 		matterService,
 	)
 	if err != nil {
 		return nil, err
 	}
-	runService, err := agent.NewRunService(
+	runService, err := agentruntime.NewRunService(
 		agentRepository,
 		contextAssembler,
 		generator,
@@ -135,7 +140,7 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	var voiceApplication *agent.VoiceSessionApplication
+	var voiceApplication *agentvoice.VoiceSessionApplication
 	var audioAssets *conversation.AudioAssetService
 	if len(voiceConfigurations) == 1 {
 		voiceApplication, audioAssets, err = buildProductionVoiceApplication(
@@ -148,9 +153,9 @@ func buildIdentityAgentComposition(
 			return nil, err
 		}
 	}
-	var voiceHTTPOptions []agent.VoiceHTTPOptions
+	var voiceHTTPOptions []agenttransport.VoiceHTTPOptions
 	if len(voiceConfigurations) == 1 {
-		voiceHTTPOption := agent.VoiceHTTPOptions{
+		voiceHTTPOption := agenttransport.VoiceHTTPOptions{
 			AudioReadTimeout: voiceConfigurations[0].AudioReadTimeout,
 			ReviewHistoryCursorKey: append(
 				[]byte(nil),
@@ -165,7 +170,7 @@ func buildIdentityAgentComposition(
 			voiceHTTPOption,
 		)
 	}
-	handler, err := agent.NewHTTPHandlerWithRunsVoiceAndAudio(
+	handler, err := agenttransport.NewHTTPHandlerWithRunsVoiceAndAudio(
 		agentService,
 		runService,
 		voiceApplication,
@@ -178,17 +183,13 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	agentModule, err := agent.NewModule(handler)
-	if err != nil {
-		return nil, err
-	}
 	var agentVoiceReclaimer AgentVoiceObjectReclaimer
 	if agentVoiceMessages != nil {
 		agentVoiceReclaimer = agentVoiceMessages
 	}
 	return &identityAgentComposition{
 		identity:            identityContext,
-		agentModule:         agentModule,
+		agentModule:         handler,
 		agentService:        agentService,
 		agentVoiceReclaimer: agentVoiceReclaimer,
 		matterService:       matterService,
@@ -204,11 +205,11 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration agent.RunConfiguration,
+	runConfiguration core.RunConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (
 	*identity.Module,
-	*agent.Module,
+	RouteRegistrar,
 	AgentVoiceObjectReclaimer,
 	error,
 ) {
@@ -232,11 +233,11 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 
 func buildAgentVoiceMessageApplication(
 	voiceConfigurations []VoiceConfiguration,
-	repository agent.VoiceMessageRepository,
-	runs agent.VoicePendingRunProcessor,
-	ids agent.IDGenerator,
-	runConfiguration agent.RunConfiguration,
-) (*agent.VoiceMessageService, error) {
+	repository agentvoice.VoiceMessageRepository,
+	runs agentvoice.VoicePendingRunProcessor,
+	ids core.IDGenerator,
+	runConfiguration core.RunConfiguration,
+) (*agentvoice.VoiceMessageService, error) {
 	if len(voiceConfigurations) == 0 ||
 		!voiceConfigurations[0].AgentVoiceMessagesEnabled {
 		return nil, nil
@@ -259,7 +260,7 @@ func buildAgentVoiceMessageApplication(
 			},
 		}
 	}
-	sources, err := agent.NewSignedVoiceAudioLoader(
+	sources, err := agentvoice.NewSignedVoiceAudioLoader(
 		configuration.ObjectStore,
 		client,
 		configuration.ScratchDirectory,
@@ -268,7 +269,7 @@ func buildAgentVoiceMessageApplication(
 	if err != nil {
 		return nil, err
 	}
-	return agent.NewVoiceMessageService(
+	return agentvoice.NewVoiceMessageService(
 		repository,
 		configuration.ObjectStore,
 		sources,
@@ -276,7 +277,7 @@ func buildAgentVoiceMessageApplication(
 		configuration.Synthesizer,
 		runs,
 		ids,
-		agent.VoiceMessageConfig{
+		agentvoice.VoiceMessageConfig{
 			RunConfiguration: runConfiguration,
 			ScratchDirectory: configuration.ScratchDirectory,
 			CandidateTTL:     configuration.AudioStagedTTL,

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
+	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
