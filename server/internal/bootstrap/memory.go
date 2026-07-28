@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 )
@@ -20,18 +20,18 @@ const (
 )
 
 type completedAgentRunRepository interface {
-	FindRun(context.Context, string, string) (agent.Run, error)
+	FindRun(context.Context, string, string) (core.Run, error)
 	FindMessage(
 		context.Context,
 		string,
 		string,
 		string,
-	) (agent.Message, error)
+	) (core.Message, error)
 	FindContextManifest(
 		context.Context,
 		string,
 		string,
-	) (agent.ContextManifest, error)
+	) (core.ContextManifest, error)
 }
 
 type agentCompletedRunReader struct {
@@ -63,7 +63,7 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 	}
 	if run.OwnerID != ownerID ||
 		run.ID != runID ||
-		run.Status != agent.RunStatusCompleted {
+		run.Status != core.RunStatusCompleted {
 		return memory.CompletedRunSource{}, memory.ErrNotFound
 	}
 	input, err := reader.runs.FindMessage(
@@ -113,7 +113,7 @@ func buildMemoryExtractionProcessor(
 	ids memory.IDGenerator,
 	runs completedAgentRunRepository,
 	generator ai.TextGenerator,
-	runConfiguration agent.RunConfiguration,
+	runConfiguration core.RunConfiguration,
 ) (memory.ExtractionProcessor, error) {
 	configuration := memory.ExtractionConfig{
 		Provider:      runConfiguration.Provider,
@@ -155,11 +155,11 @@ func buildMemoryExtractionProcessor(
 
 func mapAgentMemorySourceError(err error) error {
 	switch {
-	case errors.Is(err, agent.ErrNotFound):
+	case errors.Is(err, core.ErrNotFound):
 		return memory.ErrNotFound
-	case errors.Is(err, agent.ErrInvalidRequest):
+	case errors.Is(err, core.ErrInvalidRequest):
 		return memory.ErrInvalidArgument
-	case errors.Is(err, agent.ErrConflict):
+	case errors.Is(err, core.ErrConflict):
 		return memory.ErrConflict
 	default:
 		return fmt.Errorf(

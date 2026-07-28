@@ -6,7 +6,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent"
+	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
+	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -32,11 +35,11 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("new Matter service: %v", err)
 	}
-	agentRepository, err := agent.NewPostgresRepository(database, ids)
+	agentRepository, err := agentpersistence.NewPostgresRepository(database, ids)
 	if err != nil {
 		t.Fatalf("new Agent repository: %v", err)
 	}
-	agentService, err := agent.NewService(agentRepository, matterService)
+	agentService, err := agentapp.NewService(agentRepository, matterService)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
@@ -48,14 +51,14 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
-	assembler, err := agent.NewContextAssembler(
+	assembler, err := agentruntime.NewContextAssembler(
 		agentRepository,
 		matterService,
 	)
 	if err != nil {
 		t.Fatalf("NewContextAssembler: %v", err)
 	}
-	runConfiguration := agent.RunConfiguration{
+	runConfiguration := core.RunConfiguration{
 		Provider:           "qianwen",
 		Model:              "qwen-plus",
 		MaxOutputTokens:    128,
@@ -73,7 +76,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 			TotalTokens:  18,
 		},
 	})
-	runService, err := agent.NewRunService(
+	runService, err := agentruntime.NewRunService(
 		agentRepository,
 		assembler,
 		generator,
@@ -92,7 +95,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("SubmitText: %v", err)
 	}
-	if submission.Run.Status != agent.RunStatusCompleted {
+	if submission.Run.Status != core.RunStatusCompleted {
 		t.Fatalf("completed Run = %#v", submission.Run)
 	}
 
