@@ -44,50 +44,75 @@ SELECT EXISTS (
 		}
 	}
 	rows, err := repository.database.Query(ctx, `
-SELECT
-    memories.id::text,
-    memories.owner_user_id::text,
-    memories.memory_type,
-    memories.canonical_key,
-    memories.content,
-    memories.scope_type,
-    coalesce(memories.matter_id::text, ''),
-    memories.status,
-    memories.version,
-    memories.policy_version,
-    memories.expires_at,
-    memories.created_at,
-    memories.updated_at,
-    memories.inactivated_at,
-    1 - (
-        vectors.embedding OPERATOR(public.<=>) $2::public.vector
-    ) AS similarity
-FROM agent_memory_vectors AS vectors
-JOIN agent_memories AS memories
-  ON memories.id = vectors.memory_id
- AND memories.owner_user_id = vectors.owner_user_id
- AND memories.version = vectors.memory_version
-JOIN identity_users AS users
-  ON users.id = memories.owner_user_id
- AND users.account_status = 'active'
-WHERE memories.owner_user_id = $1
-  AND memories.status = 'active'
-  AND (memories.expires_at IS NULL OR memories.expires_at > clock_timestamp())
-  AND vectors.provider = $3
-  AND vectors.model = $4
-  AND vectors.dimension = $5
-  AND vectors.embedding_policy_version = $6
-  AND (
-      (memories.scope_type = 'user' AND memories.matter_id IS NULL)
-      OR (
-          $7::uuid IS NOT NULL
-          AND memories.scope_type = 'matter'
-          AND memories.matter_id = $7::uuid
+WITH eligible AS MATERIALIZED (
+    SELECT
+        memories.id,
+        memories.owner_user_id,
+        memories.memory_type,
+        memories.canonical_key,
+        memories.content,
+        memories.scope_type,
+        memories.matter_id,
+        memories.status,
+        memories.version,
+        memories.policy_version,
+        memories.expires_at,
+        memories.created_at,
+        memories.updated_at,
+        memories.inactivated_at,
+        vectors.embedding
+    FROM agent_memory_vectors AS vectors
+    JOIN agent_memories AS memories
+      ON memories.id = vectors.memory_id
+     AND memories.owner_user_id = vectors.owner_user_id
+     AND memories.version = vectors.memory_version
+    JOIN identity_users AS users
+      ON users.id = memories.owner_user_id
+     AND users.account_status = 'active'
+    WHERE memories.owner_user_id = $1
+      AND memories.status = 'active'
+      AND (
+          memories.expires_at IS NULL
+          OR memories.expires_at > clock_timestamp()
       )
-  )
+      AND vectors.provider = $3
+      AND vectors.model = $4
+      AND vectors.dimension = $5
+      AND vectors.embedding_policy_version = $6
+      AND (
+          (
+              memories.scope_type = 'user'
+              AND memories.matter_id IS NULL
+          )
+          OR (
+              $7::uuid IS NOT NULL
+              AND memories.scope_type = 'matter'
+              AND memories.matter_id = $7::uuid
+          )
+      )
+)
+SELECT
+    eligible.id::text,
+    eligible.owner_user_id::text,
+    eligible.memory_type,
+    eligible.canonical_key,
+    eligible.content,
+    eligible.scope_type,
+    coalesce(eligible.matter_id::text, ''),
+    eligible.status,
+    eligible.version,
+    eligible.policy_version,
+    eligible.expires_at,
+    eligible.created_at,
+    eligible.updated_at,
+    eligible.inactivated_at,
+    1 - (
+        eligible.embedding OPERATOR(public.<=>) $2::public.vector
+    ) AS similarity
+FROM eligible
 ORDER BY
-    vectors.embedding OPERATOR(public.<=>) $2::public.vector,
-    memories.id
+    eligible.embedding OPERATOR(public.<=>) $2::public.vector,
+    eligible.id
 LIMIT $8`,
 		actor.UserID,
 		vector,

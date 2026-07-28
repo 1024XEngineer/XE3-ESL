@@ -56,6 +56,50 @@ WHERE status = 'running'
 	); err != nil {
 		return IndexClaim{}, false, ErrRepository
 	}
+	// An embedding rollout does not change the Memory content version. Requeue
+	// non-running jobs whose recorded embedding identity differs so unchanged
+	// active memories cannot silently disappear behind the new search filters.
+	if _, err := tx.Exec(ctx, `
+UPDATE agent_memory_index_jobs AS jobs
+SET
+    status = 'pending',
+    attempt_count = 0,
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    next_attempt_at = transaction_timestamp(),
+    embedding_policy_version = NULL,
+    provider = NULL,
+    model = NULL,
+    dimension = NULL,
+    failure_kind = NULL,
+    input_tokens = NULL,
+    total_tokens = NULL,
+    updated_at = transaction_timestamp(),
+    completed_at = NULL
+FROM agent_memories AS memories
+JOIN identity_users AS users
+  ON users.id = memories.owner_user_id
+ AND users.account_status = 'active'
+WHERE jobs.memory_id = memories.id
+  AND jobs.owner_user_id = memories.owner_user_id
+  AND jobs.memory_version = memories.version
+  AND jobs.status <> 'running'
+  AND memories.status = 'active'
+  AND (memories.expires_at IS NULL OR memories.expires_at > clock_timestamp())
+  AND jobs.embedding_policy_version IS NOT NULL
+  AND (
+      jobs.embedding_policy_version IS DISTINCT FROM $1
+      OR jobs.provider IS DISTINCT FROM $2
+      OR jobs.model IS DISTINCT FROM $3
+      OR jobs.dimension IS DISTINCT FROM $4
+  )`,
+		configuration.PolicyVersion,
+		configuration.Provider,
+		configuration.Model,
+		configuration.Dimensions,
+	); err != nil {
+		return IndexClaim{}, false, ErrRepository
+	}
 	job, err := scanIndexJob(tx.QueryRow(ctx, `
 WITH candidate AS (
     SELECT memory_id, memory_version
