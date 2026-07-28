@@ -26,6 +26,12 @@ func NewIdentityAndAgentModules(
 	runConfiguration agent.RunConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identity.Module, *agent.Module, error) {
+	if len(voiceConfigurations) == 1 &&
+		voiceConfigurations[0].AgentVoiceMessagesEnabled {
+		return nil, nil, errors.New(
+			"bootstrap: Agent voice messages require the cleanup-aware composition",
+		)
+	}
 	composition, err := buildIdentityAgentComposition(
 		ctx,
 		database,
@@ -176,11 +182,15 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	var agentVoiceReclaimer AgentVoiceObjectReclaimer
+	if agentVoiceMessages != nil {
+		agentVoiceReclaimer = agentVoiceMessages
+	}
 	return &identityAgentComposition{
 		identity:            identityContext,
 		agentModule:         agentModule,
 		agentService:        agentService,
-		agentVoiceReclaimer: agentVoiceMessages,
+		agentVoiceReclaimer: agentVoiceReclaimer,
 		matterService:       matterService,
 		ids:                 ids,
 	}, nil

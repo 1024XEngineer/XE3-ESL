@@ -69,6 +69,41 @@ func TestBuildAgentVoiceMessageApplicationRequiresExplicitEnablementAndStore(
 	}
 }
 
+func TestAgentVoiceCompositionRequiresCleanupAwareConstructor(t *testing.T) {
+	if _, _, err := NewIdentityAndAgentModules(
+		context.Background(),
+		nil,
+		nil,
+		"",
+		nil,
+		agent.RunConfiguration{},
+		VoiceConfiguration{AgentVoiceMessagesEnabled: true},
+	); err == nil {
+		t.Fatal("legacy composition accepted Agent voice without cleanup")
+	}
+
+	pool := voiceIntegrationDatabase(t)
+	composition, err := buildIdentityAgentComposition(
+		context.Background(),
+		pool,
+		nil,
+		"",
+		&voiceTextGenerator{},
+		agent.RunConfiguration{
+			Provider:           "fake",
+			Model:              "fake-text-v1",
+			MaxOutputTokens:    256,
+			MaxInputCharacters: 12000,
+		},
+	)
+	if err != nil {
+		t.Fatalf("build composition without Agent voice: %v", err)
+	}
+	if composition.agentVoiceReclaimer != nil {
+		t.Fatal("disabled Agent voice retained a typed-nil reclaimer")
+	}
+}
+
 func TestAgentVoiceObjectReadAllowedHostsComeFromTrustedStorageConfig(
 	t *testing.T,
 ) {

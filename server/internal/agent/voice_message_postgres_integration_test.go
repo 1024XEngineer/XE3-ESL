@@ -117,6 +117,62 @@ func TestPostgresAgentVoiceMessageConfirmationHistoryAndDeletion(
 		replayed.Run.ID != confirmation.Run.ID {
 		t.Fatalf("confirmation replay = %#v, error = %v", replayed, err)
 	}
+	if _, err := dataService.AppendUserMessage(
+		context.Background(),
+		actor,
+		thread.ID,
+		command.ClientMessageID,
+		command.ConfirmedText,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf(
+			"text Message replay of voice client ID error = %v, want idempotency conflict",
+			err,
+		)
+	}
+	if _, err := runService.SubmitText(
+		context.Background(),
+		actor,
+		thread.ID,
+		command.ClientMessageID,
+		command.ConfirmedText,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf(
+			"text Run replay of voice client ID error = %v, want idempotency conflict",
+			err,
+		)
+	}
+	otherCandidate, err := service.Upload(
+		context.Background(),
+		actor,
+		UploadVoiceCandidateRequest{
+			ThreadID:       thread.ID,
+			IdempotencyKey: "postgres-voice-upload-0002",
+			ContentType:    "audio/wav",
+			Audio:          bytes.NewReader(voiceTestWAV(0x52)),
+		},
+	)
+	if err != nil {
+		t.Fatalf("upload second voice candidate: %v", err)
+	}
+	assertPostgresConstraint(
+		t,
+		database.pool,
+		`UPDATE agent_voice_candidates
+SET status = 'confirmed',
+    confirmed_message_id = $2,
+    confirmed_run_id = $3,
+    message_audio_id = $4,
+    confirmed_at = CURRENT_TIMESTAMP
+WHERE candidate_id = $1`,
+		[]any{
+			otherCandidate.ID,
+			confirmation.Message.ID,
+			confirmation.Run.ID,
+			confirmation.Audio.ID,
+		},
+		"23503",
+		"agent_voice_candidates_message_audio_fkey",
+	)
 	var messageCount, runCount, audioCount, evidenceCount int
 	if err := database.pool.QueryRow(context.Background(), `
 SELECT

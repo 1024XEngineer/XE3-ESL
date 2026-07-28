@@ -80,7 +80,9 @@ FOR UPDATE`,
 		return RunSubmission{}, err
 	}
 	if found {
-		if message.Content != content || message.Role != MessageRoleUser {
+		if message.Content != content ||
+			message.Role != MessageRoleUser ||
+			message.Modality != MessageModalityText {
 			return RunSubmission{}, ErrIdempotencyConflict
 		}
 		if existing, exists, findErr := findInitialRunByInput(

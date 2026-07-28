@@ -558,7 +558,9 @@ FOR UPDATE`,
 		return Message{}, err
 	}
 	if found {
-		if existing.Content != content || existing.Role != MessageRoleUser {
+		if existing.Content != content ||
+			existing.Role != MessageRoleUser ||
+			existing.Modality != MessageModalityText {
 			return Message{}, ErrIdempotencyConflict
 		}
 		if err := tx.Commit(ctx); err != nil {

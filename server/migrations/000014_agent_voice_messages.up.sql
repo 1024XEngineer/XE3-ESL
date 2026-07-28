@@ -242,8 +242,14 @@ CREATE TABLE agent_message_audios (
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at timestamptz,
-    CONSTRAINT agent_message_audios_id_owner_thread_message_key
-        UNIQUE (audio_id, owner_user_id, thread_id, message_id),
+    CONSTRAINT agent_message_audios_identity_key
+        UNIQUE (
+            audio_id,
+            owner_user_id,
+            thread_id,
+            message_id,
+            candidate_id
+        ),
     CONSTRAINT agent_message_audios_message_key UNIQUE (message_id),
     CONSTRAINT agent_message_audios_candidate_key UNIQUE (candidate_id),
     CONSTRAINT agent_message_audios_object_key_key UNIQUE (object_key),
@@ -372,13 +378,15 @@ ALTER TABLE agent_voice_candidates
             message_audio_id,
             owner_user_id,
             thread_id,
-            confirmed_message_id
+            confirmed_message_id,
+            candidate_id
         )
         REFERENCES agent_message_audios (
             audio_id,
             owner_user_id,
             thread_id,
-            message_id
+            message_id,
+            candidate_id
         )
         ON DELETE RESTRICT;
 
