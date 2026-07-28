@@ -106,8 +106,7 @@ func (policy *ExtractionPolicy) decideCandidate(
 	if sensitiveCandidate(candidate) {
 		return MemoryDecision{}, RejectionSensitiveCandidate
 	}
-	if candidate.Type == TypeIdentity &&
-		candidate.CanonicalKey == "identity.gender" &&
+	if genderCandidate(candidate) &&
 		!candidate.InteractionUse {
 		return MemoryDecision{}, RejectionGenderInteractionUseRequired
 	}
@@ -143,6 +142,13 @@ func (policy *ExtractionPolicy) decideCandidate(
 		return MemoryDecision{}, RejectionInvalidDecision
 	}
 	return decision, ""
+}
+
+func genderCandidate(candidate ExtractedCandidate) bool {
+	return (candidate.Type == TypeIdentity &&
+		candidate.CanonicalKey == "identity.gender") ||
+		(candidate.Type == TypeProfile &&
+			candidate.CanonicalKey == "profile.gender")
 }
 
 func compatibleKey(memoryType Type, key string) bool {

@@ -80,6 +80,9 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 	if _, exists := rawPayload["max_completion_tokens"]; exists {
 		t.Fatal("request used max_completion_tokens, which the compatibility endpoint ignores")
 	}
+	if _, exists := rawPayload["response_format"]; exists {
+		t.Fatal("default request unexpectedly selected a response format")
+	}
 	rawThinking, exists := rawPayload["enable_thinking"]
 	if !exists || string(rawThinking) != "false" {
 		t.Fatalf(
@@ -107,6 +110,38 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 	}
 	if result != expected {
 		t.Fatalf("result = %#v, want %#v", result, expected)
+	}
+}
+
+func TestGenerateRequestsJSONObjectResponse(t *testing.T) {
+	t.Parallel()
+
+	var received chatCompletionRequest
+	doer := doerFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-json-1",
+			"model":"qwen3.5-flash",
+			"choices":[{
+				"finish_reason":"stop",
+				"index":0,
+				"message":{"role":"assistant","content":"{\"items\":[]}"}
+			}],
+			"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}
+		}`), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+	request := validRequest()
+	request.ResponseFormat = ai.TextResponseFormatJSON
+
+	if _, err := generator.Generate(context.Background(), request); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if received.ResponseFormat == nil ||
+		received.ResponseFormat.Type != "json_object" {
+		t.Fatalf("response format = %#v", received.ResponseFormat)
 	}
 }
 
