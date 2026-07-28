@@ -82,6 +82,33 @@ void main() {
     expect(find.text('欢迎回来'), findsOneWidget);
   });
 
+  testWidgets('signed-out pages expose only supported authentication actions', (
+    tester,
+  ) async {
+    final controller = AuthController(
+      identityClient: GateIdentityClient(user: user),
+      sessionStore: MemorySessionStore(),
+    );
+
+    await tester.pumpWidget(testApp(controller));
+    await tester.pumpAndSettle();
+
+    expect(find.bySemanticsLabel('SpeakUp'), findsOneWidget);
+    expect(find.text('Google'), findsNothing);
+    expect(find.text('Facebook'), findsNothing);
+    expect(find.text('Apple'), findsNothing);
+    expect(find.text('忘记密码'), findsNothing);
+    expect(find.text('SSO'), findsNothing);
+    expect(find.widgetWithText(TextButton, '创建账号'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '创建账号'));
+    await tester.pump();
+
+    expect(find.bySemanticsLabel('SpeakUp'), findsOneWidget);
+    expect(find.byKey(const Key('register-display-name')), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '返回登录'), findsOneWidget);
+  });
+
   testWidgets('registration returns to login and does not authenticate', (
     tester,
   ) async {
@@ -216,6 +243,40 @@ void main() {
     await tester.ensureVisible(createAccount);
     await tester.pumpAndSettle();
     expect(createAccount.hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('registration remains usable at 320pt with 3x text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final controller = AuthController(
+      identityClient: GateIdentityClient(user: user),
+      sessionStore: MemorySessionStore(),
+    );
+    await tester.pumpWidget(testApp(controller));
+    await tester.pumpAndSettle();
+    final createAccount = find.widgetWithText(TextButton, '创建账号');
+    await tester.ensureVisible(createAccount);
+    await tester.pumpAndSettle();
+    await tester.tap(createAccount);
+    await tester.pumpAndSettle();
+
+    final displayName = find.byKey(const Key('register-display-name'));
+    await tester.ensureVisible(displayName);
+    await tester.pumpAndSettle();
+    expect(displayName.hitTestable(), findsOneWidget);
+
+    final submit = find.widgetWithText(FilledButton, '创建账号');
+    await tester.ensureVisible(submit);
+    await tester.pumpAndSettle();
+    expect(submit.hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
