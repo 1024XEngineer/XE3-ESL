@@ -140,6 +140,11 @@ func (generator *Generator) Generate(
 		EnableThinking: false,
 		MaxTokens:      generator.maxOutputTokens,
 	}
+	if request.ResponseFormat == ai.TextResponseFormatJSON {
+		payload.ResponseFormat = &chatResponseFormat{
+			Type: string(ai.TextResponseFormatJSON),
+		}
+	}
 	for _, message := range request.Messages {
 		payload.Messages = append(payload.Messages, chatMessage{
 			Role:    string(message.Role),
@@ -261,14 +266,19 @@ func (generator *Generator) Generate(
 }
 
 type chatCompletionRequest struct {
-	Model          string        `json:"model"`
-	Messages       []chatMessage `json:"messages"`
-	Stream         bool          `json:"stream"`
-	EnableThinking bool          `json:"enable_thinking"`
+	Model          string              `json:"model"`
+	Messages       []chatMessage       `json:"messages"`
+	Stream         bool                `json:"stream"`
+	EnableThinking bool                `json:"enable_thinking"`
+	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
 	// The current compatibility overview lists max_completion_tokens as
 	// silently ignored. The endpoint-specific Chat API still honors the
 	// deprecated max_tokens field, so it remains the enforceable budget.
 	MaxTokens int `json:"max_tokens"`
+}
+
+type chatResponseFormat struct {
+	Type string `json:"type"`
 }
 
 type chatMessage struct {

@@ -13,7 +13,7 @@ import (
 
 const (
 	memoryPolicyVersion     = "memory-policy-v1"
-	memoryPromptVersion     = "memory-extraction-v1"
+	memoryPromptVersion     = "memory-extraction-v2"
 	memoryExtractionLease   = 2 * time.Minute
 	memoryTopicTTL          = 30 * 24 * time.Hour
 	memoryExtractionRetries = 3
