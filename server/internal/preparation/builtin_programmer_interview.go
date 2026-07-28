@@ -24,6 +24,10 @@ func NewBuiltinCatalog() (*Catalog, error) {
 		workplaceProgressRiskCatalogDefinition(),
 		dailyHotelCheckinCatalogDefinition(),
 	}
+	scenarios = append(scenarios, basicInterviewCatalogDefinitions()...)
+	scenarios = append(scenarios, basicExamCatalogDefinitions()...)
+	scenarios = append(scenarios, basicWorkplaceCatalogDefinitions()...)
+	scenarios = append(scenarios, basicDailyCatalogDefinitions()...)
 	return newCatalog(scenarios)
 }
 
