@@ -33,21 +33,48 @@ type memoryIndexWorker struct {
 	interval     time.Duration
 	sweepTimeout time.Duration
 	claimLimit   int
+	wakeup       <-chan struct{}
 }
 
 func buildMemoryIndexWorker(
 	processor memoryIndexProcessor,
 	logger *slog.Logger,
+	wakeup <-chan struct{},
 ) (*memoryIndexWorker, error) {
-	if nilMemoryIndexDependency(processor) || logger == nil {
+	return newMemoryIndexWorker(
+		processor,
+		logger,
+		memoryIndexInterval,
+		memoryIndexSweepTimeout,
+		memoryIndexClaimLimit,
+		wakeup,
+	)
+}
+
+func newMemoryIndexWorker(
+	processor memoryIndexProcessor,
+	logger *slog.Logger,
+	interval time.Duration,
+	sweepTimeout time.Duration,
+	claimLimit int,
+	wakeup <-chan struct{},
+) (*memoryIndexWorker, error) {
+	if nilMemoryIndexDependency(processor) ||
+		logger == nil ||
+		interval <= 0 ||
+		sweepTimeout <= 0 ||
+		sweepTimeout > 5*time.Minute ||
+		claimLimit < 1 ||
+		claimLimit > 20 {
 		return nil, errMemoryIndexDependency
 	}
 	return &memoryIndexWorker{
 		processor:    processor,
 		logger:       logger,
-		interval:     memoryIndexInterval,
-		sweepTimeout: memoryIndexSweepTimeout,
-		claimLimit:   memoryIndexClaimLimit,
+		interval:     interval,
+		sweepTimeout: sweepTimeout,
+		claimLimit:   claimLimit,
+		wakeup:       wakeup,
 	}, nil
 }
 
@@ -59,14 +86,16 @@ func (worker *memoryIndexWorker) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		worker.sweep(ctx)
-		if !waitForMemoryExtraction(ctx, worker.interval) {
+		if worker.sweep(ctx) {
+			continue
+		}
+		if !waitForMemoryWork(ctx, worker.interval, worker.wakeup) {
 			return
 		}
 	}
 }
 
-func (worker *memoryIndexWorker) sweep(parent context.Context) {
+func (worker *memoryIndexWorker) sweep(parent context.Context) bool {
 	startedAt := time.Now()
 	ctx, cancel := context.WithTimeout(parent, worker.sweepTimeout)
 	defer cancel()
@@ -92,7 +121,7 @@ func (worker *memoryIndexWorker) sweep(parent context.Context) {
 			"memory index sweep failed",
 			attributes...,
 		)
-		return
+		return false
 	}
 	if result.Failed > 0 || result.Discarded > 0 {
 		worker.logger.WarnContext(
@@ -100,13 +129,14 @@ func (worker *memoryIndexWorker) sweep(parent context.Context) {
 			"memory index sweep completed with terminal jobs",
 			attributes...,
 		)
-		return
+		return result.Claimed == worker.claimLimit
 	}
 	worker.logger.InfoContext(
 		parent,
 		"memory index sweep completed",
 		attributes...,
 	)
+	return result.Claimed == worker.claimLimit
 }
 
 func memoryIndexErrorKind(err error) string {

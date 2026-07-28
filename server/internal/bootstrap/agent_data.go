@@ -47,6 +47,7 @@ func NewIdentityAndAgentModules(
 		generator,
 		runConfiguration,
 		memorySearcher,
+		nil,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -83,6 +84,7 @@ func buildIdentityAgentComposition(
 	generator ai.TextGenerator,
 	runConfiguration core.RunConfiguration,
 	memorySearcher memory.Searcher,
+	memoryExtractionNotifier interface{ Notify() },
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || generator == nil ||
@@ -128,8 +130,15 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	runRepository := core.RunRepository(agentRepository)
+	if memoryExtractionNotifier != nil {
+		runRepository = &runCompletionNotifyingRepository{
+			RunRepository: agentRepository,
+			notifier:      memoryExtractionNotifier,
+		}
+	}
 	runService, err := agentruntime.NewRunService(
-		agentRepository,
+		runRepository,
 		contextAssembler,
 		generator,
 		runConfiguration,
@@ -243,6 +252,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 		generator,
 		runConfiguration,
 		memorySearcher,
+		nil,
 		voiceConfigurations...,
 	)
 	if err != nil {
