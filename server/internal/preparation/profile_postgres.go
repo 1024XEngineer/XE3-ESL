@@ -498,6 +498,20 @@ func (r *PostgresProfileRepository) DeleteProfileData(
 	}
 
 	if _, err := tx.Exec(ctx, `
+		DELETE FROM preparation_job_target_idempotency_records
+		WHERE owner_user_id = $1
+	`, command.UserID); err != nil {
+		return profileDatabaseFailure(
+			"delete job target idempotency records",
+		)
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM preparation_job_targets
+		WHERE owner_user_id = $1
+	`, command.UserID); err != nil {
+		return profileDatabaseFailure("delete job targets")
+	}
+	if _, err := tx.Exec(ctx, `
 		DELETE FROM preparation_idempotency_records
 		WHERE owner_user_id = $1
 	`, command.UserID); err != nil {

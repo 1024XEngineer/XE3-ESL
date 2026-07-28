@@ -260,6 +260,211 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/job-targets:
+    post:
+      tags:
+        - Preparation
+      summary: Create a JobTarget draft
+      description: |
+        Creates actor-owned, versioned untrusted input. `job_description`
+        requires inline job_description. `quick_start` requires job_title and
+        omits job_description. This operation does not create a Snapshot, Plan,
+        or Session.
+      operationId: createJobTarget
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJobTargetRequest'
+      responses:
+        '201':
+          description: Created draft or the original idempotent result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobTarget'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/job-targets/{job_target_id}:
+    get:
+      tags:
+        - Preparation
+      summary: Restore a JobTarget stage
+      description: |
+        Returns only the authenticated actor's current server-authoritative
+        input, analysis, and confirmation stage. Cross-account and discarded
+        targets return 404.
+      operationId: getJobTarget
+      parameters:
+        - $ref: '#/components/parameters/JobTargetId'
+      responses:
+        '200':
+          description: Current JobTarget recovery projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobTarget'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    put:
+      tags:
+        - Preparation
+      summary: Replace JobTarget input
+      description: |
+        Replaces the editable input at the expected version. A material change
+        increments input_version and immediately makes prior analysis and
+        confirmation inapplicable to the current projection.
+      operationId: updateJobTarget
+      parameters:
+        - $ref: '#/components/parameters/JobTargetId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateJobTargetRequest'
+      responses:
+        '200':
+          description: Updated draft or the original idempotent result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobTarget'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/job-targets/{job_target_id}/analyses:
+    post:
+      tags:
+        - Preparation
+      summary: Start or recover JobTarget parsing
+      description: |
+        Claims at most one live parser attempt for the expected input version.
+        A live attempt returns 202; a completed candidate returns 200. Parser
+        output remains unconfirmed and cannot itself become user fact.
+      operationId: analyzeJobTarget
+      parameters:
+        - $ref: '#/components/parameters/JobTargetId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeJobTargetRequest'
+      responses:
+        '200':
+          description: Parsed candidate or recovered terminal parse stage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobTarget'
+        '202':
+          description: Another worker holds the current live parse lease.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobTarget'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        '503':
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/job-targets/{job_target_id}/confirmations:
+    post:
+      tags:
+        - Preparation
+      summary: Confirm an edited JobTarget candidate
+      description: |
+        Persists an explicit user-edited confirmation for the exact input and
+        analysis versions. No Snapshot, Plan, or Session is created.
+      operationId: confirmJobTarget
+      parameters:
+        - $ref: '#/components/parameters/JobTargetId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmJobTargetRequest'
+      responses:
+        '200':
+          description: Confirmed JobTarget or original idempotent result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobTarget'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/job-targets/{job_target_id}/discard:
+    post:
+      tags:
+        - Preparation
+      summary: Discard an unconfirmed JobTarget draft
+      operationId: discardJobTarget
+      parameters:
+        - $ref: '#/components/parameters/JobTargetId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscardJobTargetRequest'
+      responses:
+        '200':
+          description: Discarded target tombstone or original idempotent result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobTarget'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
   parameters:
     ScenarioDefinitionId:
@@ -270,6 +475,12 @@ components:
         $ref: '#/components/schemas/ResourceId'
     PreparationProfileId:
       name: preparation_profile_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResourceId'
+    JobTargetId:
+      name: job_target_id
       in: path
       required: true
       schema:
@@ -549,3 +760,314 @@ components:
         created_at:
           type: string
           format: date-time
+    JobTargetSource:
+      type: string
+      enum:
+        - job_description
+        - quick_start
+    JobTargetInput:
+      type: object
+      additionalProperties: false
+      required:
+        - source
+      properties:
+        source:
+          $ref: '#/components/schemas/JobTargetSource'
+        job_title:
+          type: string
+          minLength: 1
+          maxLength: 512
+        job_description:
+          type: string
+          minLength: 1
+          maxLength: 65536
+        company:
+          type: string
+          minLength: 1
+          maxLength: 512
+        seniority:
+          type: string
+          minLength: 1
+          maxLength: 256
+        candidate_background:
+          type: string
+          minLength: 1
+          maxLength: 16384
+        resume_ref:
+          type: string
+          minLength: 1
+          maxLength: 16384
+        practice_focus:
+          type: string
+          minLength: 1
+          maxLength: 8192
+      oneOf:
+        - required:
+            - source
+            - job_description
+          properties:
+            source:
+              const: job_description
+        - required:
+            - source
+            - job_title
+          properties:
+            source:
+              const: quick_start
+            job_description: false
+    CreateJobTargetRequest:
+      $ref: '#/components/schemas/JobTargetInput'
+    UpdateJobTargetRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_input_version
+        - source
+      properties:
+        expected_input_version:
+          $ref: '#/components/schemas/Version'
+        source:
+          $ref: '#/components/schemas/JobTargetSource'
+        job_title:
+          type: string
+          minLength: 1
+          maxLength: 512
+        job_description:
+          type: string
+          minLength: 1
+          maxLength: 65536
+        company:
+          type: string
+          minLength: 1
+          maxLength: 512
+        seniority:
+          type: string
+          minLength: 1
+          maxLength: 256
+        candidate_background:
+          type: string
+          minLength: 1
+          maxLength: 16384
+        resume_ref:
+          type: string
+          minLength: 1
+          maxLength: 16384
+        practice_focus:
+          type: string
+          minLength: 1
+          maxLength: 8192
+      oneOf:
+        - required:
+            - source
+            - job_description
+          properties:
+            source:
+              const: job_description
+        - required:
+            - source
+            - job_title
+          properties:
+            source:
+              const: quick_start
+            job_description: false
+    JobTargetCatalogRecommendation:
+      type: object
+      additionalProperties: false
+      required:
+        - scenario_definition_id
+        - scenario_definition_version
+        - selected_role_ids
+        - practice_option_id
+        - practice_option_version
+      properties:
+        scenario_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        scenario_definition_version:
+          $ref: '#/components/schemas/Version'
+        selected_role_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ResourceId'
+        practice_option_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_option_version:
+          $ref: '#/components/schemas/Version'
+    JobTargetCandidate:
+      type: object
+      description: |
+        Unconfirmed or user-confirmed structured candidate. Its compact UTF-8
+        JSON encoding is limited to 65536 bytes by every server boundary.
+      x-max-utf8-json-bytes: 65536
+      additionalProperties: false
+      required:
+        - source
+        - general_advice_only
+        - job_title
+        - seniority
+        - responsibilities
+        - core_skills
+        - communication_focus
+        - practice_goals
+        - scope_notice
+        - catalog_recommendation
+      properties:
+        source:
+          $ref: '#/components/schemas/JobTargetSource'
+        general_advice_only:
+          type: boolean
+        job_title:
+          type: string
+          minLength: 1
+          maxLength: 512
+        seniority:
+          type: string
+          minLength: 1
+          maxLength: 256
+        responsibilities:
+          $ref: '#/components/schemas/JobTargetCandidateItems'
+        core_skills:
+          $ref: '#/components/schemas/JobTargetCandidateItems'
+        communication_focus:
+          $ref: '#/components/schemas/JobTargetCandidateItems'
+        practice_goals:
+          $ref: '#/components/schemas/JobTargetCandidateItems'
+        scope_notice:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        catalog_recommendation:
+          $ref: '#/components/schemas/JobTargetCatalogRecommendation'
+    JobTargetCandidateItems:
+      type: array
+      minItems: 1
+      maxItems: 20
+      uniqueItems: true
+      items:
+        type: string
+        minLength: 1
+        maxLength: 2048
+    JobTargetAnalysis:
+      type: object
+      additionalProperties: false
+      required:
+        - input_version
+        - analysis_version
+        - attempt
+        - status
+        - started_at
+      properties:
+        input_version:
+          $ref: '#/components/schemas/Version'
+        analysis_version:
+          $ref: '#/components/schemas/Version'
+        attempt:
+          $ref: '#/components/schemas/Version'
+        status:
+          type: string
+          enum:
+            - running
+            - succeeded
+            - failed
+        candidate:
+          $ref: '#/components/schemas/JobTargetCandidate'
+        stable_error_category:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,63}$'
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+    JobTargetConfirmation:
+      type: object
+      additionalProperties: false
+      required:
+        - input_version
+        - analysis_version
+        - confirmation_version
+        - candidate
+        - confirmed_at
+      properties:
+        input_version:
+          $ref: '#/components/schemas/Version'
+        analysis_version:
+          $ref: '#/components/schemas/Version'
+        confirmation_version:
+          $ref: '#/components/schemas/Version'
+        candidate:
+          $ref: '#/components/schemas/JobTargetCandidate'
+        confirmed_at:
+          type: string
+          format: date-time
+    JobTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - job_target_id
+        - user_id
+        - input
+        - input_version
+        - stage
+        - created_at
+        - updated_at
+      properties:
+        job_target_id:
+          $ref: '#/components/schemas/ResourceId'
+        user_id:
+          $ref: '#/components/schemas/ResourceId'
+        input:
+          $ref: '#/components/schemas/JobTargetInput'
+        input_version:
+          $ref: '#/components/schemas/Version'
+        stage:
+          type: string
+          enum:
+            - draft
+            - parsing
+            - analysis_failed
+            - awaiting_confirmation
+            - confirmed
+            - discarded
+        analysis:
+          $ref: '#/components/schemas/JobTargetAnalysis'
+        confirmation:
+          $ref: '#/components/schemas/JobTargetConfirmation'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AnalyzeJobTargetRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_input_version
+      properties:
+        expected_input_version:
+          $ref: '#/components/schemas/Version'
+    ConfirmJobTargetRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_input_version
+        - expected_analysis_version
+        - candidate
+      properties:
+        expected_input_version:
+          $ref: '#/components/schemas/Version'
+        expected_analysis_version:
+          $ref: '#/components/schemas/Version'
+        candidate:
+          $ref: '#/components/schemas/JobTargetCandidate'
+    DiscardJobTargetRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_input_version
+      properties:
+        expected_input_version:
+          $ref: '#/components/schemas/Version'

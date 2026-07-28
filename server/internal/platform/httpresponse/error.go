@@ -181,6 +181,7 @@ var canonicalHTTPStatusByCode = map[string]int{
 	"scenario_definition_not_found":           http.StatusNotFound,
 	"role_definition_not_found":               http.StatusNotFound,
 	"preparation_profile_not_found":           http.StatusNotFound,
+	"job_target_not_found":                    http.StatusNotFound,
 	"practice_plan_not_found":                 http.StatusNotFound,
 	"practice_session_not_found":              http.StatusNotFound,
 	"question_not_found":                      http.StatusNotFound,
@@ -194,6 +195,8 @@ var canonicalHTTPStatusByCode = map[string]int{
 	"resource_conflict":                       http.StatusConflict,
 	"resource_processing":                     http.StatusConflict,
 	"preparation_version_conflict":            http.StatusConflict,
+	"job_target_version_conflict":             http.StatusConflict,
+	"job_target_analysis_claim_lost":          http.StatusConflict,
 	"practice_plan_not_ready":                 http.StatusConflict,
 	"practice_plan_archived":                  http.StatusConflict,
 	"practice_plan_has_active_session":        http.StatusConflict,
@@ -212,6 +215,7 @@ var canonicalHTTPStatusByCode = map[string]int{
 	"provider_unavailable":                    http.StatusServiceUnavailable,
 	"quota_exhausted":                         http.StatusServiceUnavailable,
 	"voice_capacity_exhausted":                http.StatusServiceUnavailable,
+	"job_target_analysis_failed":              http.StatusServiceUnavailable,
 	internalErrorCode:                         http.StatusInternalServerError,
 }
 

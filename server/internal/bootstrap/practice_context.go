@@ -35,6 +35,8 @@ type IdentityAgentPracticeComposition struct {
 	identityHTTP           *identity.HTTPHandler
 	preparationApplication *preparation.PersistenceService
 	preparationHTTP        *preparation.ProfileHTTPHandler
+	jobTargetApplication   *preparation.JobTargetService
+	jobTargetHTTP          *preparation.JobTargetHTTPHandler
 	practiceApplication    *practice.ContextApplication
 	practiceHTTP           *practice.ContextHTTPHandler
 }
@@ -82,6 +84,28 @@ func NewIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
+	jobTargetParser, err := preparation.NewAIJobTargetParser(
+		generator,
+		catalog,
+	)
+	if err != nil {
+		return nil, err
+	}
+	jobTargetApplication, err := preparation.NewJobTargetService(
+		preparation.NewPostgresJobTargetRepository(database),
+		base.ids,
+		jobTargetParser,
+		catalog,
+	)
+	if err != nil {
+		return nil, err
+	}
+	jobTargetHTTP, err := preparation.NewJobTargetHTTPHandler(
+		jobTargetApplication,
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	agentContext, err := newAgentPracticeContextReader(
 		base.agentService,
@@ -122,6 +146,8 @@ func NewIdentityAgentAndPracticeComposition(
 		identityHTTP:           base.identity.handler,
 		preparationApplication: preparationApplication,
 		preparationHTTP:        preparationHTTP,
+		jobTargetApplication:   jobTargetApplication,
+		jobTargetHTTP:          jobTargetHTTP,
 		practiceApplication:    practiceApplication,
 		practiceHTTP:           practiceHTTP,
 	}, nil
@@ -157,6 +183,13 @@ func (c *IdentityAgentPracticeComposition) PreparationApplication() *preparation
 	return c.preparationApplication
 }
 
+func (c *IdentityAgentPracticeComposition) JobTargetApplication() *preparation.JobTargetService {
+	if c == nil {
+		return nil
+	}
+	return c.jobTargetApplication
+}
+
 func (c *IdentityAgentPracticeComposition) PracticeApplication() *practice.ContextApplication {
 	if c == nil {
 		return nil
@@ -185,13 +218,19 @@ func (c *IdentityAgentPracticeComposition) ProtectedRoutes(
 	additional ...ProtectedRouteRegistrar,
 ) (RouteRegistrar, error) {
 	if c == nil || c.identityHTTP == nil || c.preparationHTTP == nil ||
+		c.jobTargetHTTP == nil ||
 		c.practiceHTTP == nil {
 		return nil, errors.New(
 			"bootstrap: authenticated context routes are unavailable",
 		)
 	}
-	registrars := make([]ProtectedRouteRegistrar, 0, len(additional)+2)
-	registrars = append(registrars, c.preparationHTTP, c.practiceHTTP)
+	registrars := make([]ProtectedRouteRegistrar, 0, len(additional)+3)
+	registrars = append(
+		registrars,
+		c.preparationHTTP,
+		c.jobTargetHTTP,
+		c.practiceHTTP,
+	)
 	for _, registrar := range additional {
 		if registrar == nil {
 			return nil, errors.New(
