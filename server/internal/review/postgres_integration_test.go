@@ -26,6 +26,147 @@ const (
 	userC = "10000000-0000-4000-8000-000000000003"
 )
 
+func TestPostgresScenarioReviewPersistsContextScoresAndPreciseEvidence(
+	t *testing.T,
+) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA)
+	repository := review.NewPostgresRepository(pool)
+	command := ensureCommand(userA, "scenario-review-session")
+	command.ImplementationVersion = "qianwen-scenario-review-v2"
+	command.SourceTurnVersion = "conversation-turn:evidence-v1"
+	command.EvaluationContext = review.EvaluationContext{
+		SchemaVersion:             review.EvaluationContextSchemaVersion,
+		ContextType:               review.ContextInterviewProjectDeepDive,
+		SceneKey:                  "interview",
+		ScenarioDefinitionID:      "programmer-interview",
+		ScenarioDefinitionVersion: 1,
+		PracticeOptionType:        "project_deep_dive",
+		DifficultyRef:             "difficulty.intermediate.v1",
+		AssistanceRef:             "assistance.standard.v1",
+		TurnPolicyRef:             "interview.project_deep_dive.turn.v1",
+		SessionPolicyRef:          "interview.project_deep_dive.session.v1",
+		SceneSpecificContext: review.SceneSpecificContext{
+			Type: review.ContextInterviewProjectDeepDive,
+			Interview: &review.InterviewProjectDeepDiveV1{
+				Version:       "interview.project_deep_dive.v1",
+				ProjectBrief:  "A resilient checkout service.",
+				CandidateRole: "Backend engineer",
+				FocusPoints:   []string{"trade-offs", "impact"},
+			},
+		},
+	}
+	pending, err := repository.EnsurePending(context.Background(), command)
+	if err != nil {
+		t.Fatalf("ensure scenario Review: %v", err)
+	}
+	if pending.EvaluationContext.ContextType !=
+		review.ContextInterviewProjectDeepDive {
+		t.Fatalf("pending evaluation context = %+v", pending.EvaluationContext)
+	}
+	_, claim, claimed, err := repository.ClaimGeneration(
+		context.Background(),
+		command.Actor,
+		pending.ID,
+		time.Minute,
+	)
+	if err != nil || !claimed {
+		t.Fatalf("claim scenario Review: claimed=%v err=%v", claimed, err)
+	}
+
+	dimensions := []struct {
+		key   string
+		score int
+	}{
+		{"relevance_structure", 80},
+		{"technical_depth", 70},
+		{"ownership_decisions", 90},
+		{"evidence_impact", 60},
+		{"language_clarity", 80},
+	}
+	result := review.ReviewResult{
+		SummaryEligibility: review.SummaryEligible,
+		Summary:            "The answer is structured and evidence-based.",
+		FeedbackItems: []review.ReviewFeedbackItem{{
+			Key:     "feedback-impact",
+			Kind:    review.FeedbackImprovement,
+			Message: "Quantify the impact.",
+		}},
+		RepracticeSuggestionRefs: []string{"feedback-impact"},
+	}
+	evidence := make([]review.ReviewEvidence, 0, len(dimensions)+1)
+	start, end := 2, 13
+	for _, dimension := range dimensions {
+		key := "conclusion-" + dimension.key
+		result.Conclusions = append(result.Conclusions, review.ReviewConclusion{
+			Key:      key,
+			Category: dimension.key,
+			Score:    dimension.score,
+			Message:  "Grounded conclusion.",
+		})
+		evidence = append(evidence, review.ReviewEvidence{
+			TargetKind:    review.EvidenceTargetConclusion,
+			TargetKey:     key,
+			SourceType:    review.SourceTypeConversationTurn,
+			SourceID:      "turn-3",
+			SourceVersion: command.SourceTurnVersion,
+			Field:         "answer_text",
+			AnchorKind:    review.EvidenceAnchorExactQuote,
+			Quote:         "chose café",
+			StartUTF8Byte: &start,
+			EndUTF8Byte:   &end,
+		})
+	}
+	evidence = append(evidence, review.ReviewEvidence{
+		TargetKind:    review.EvidenceTargetFeedback,
+		TargetKey:     "feedback-impact",
+		SourceType:    review.SourceTypeConversationTurn,
+		SourceID:      "turn-3",
+		SourceVersion: command.SourceTurnVersion,
+		Field:         "answer_text",
+		AnchorKind:    review.EvidenceAnchorExactQuote,
+		Quote:         "chose café",
+		StartUTF8Byte: &start,
+		EndUTF8Byte:   &end,
+	})
+	completed, err := repository.CompleteGeneration(
+		context.Background(),
+		claim,
+		result,
+		evidence,
+	)
+	if err != nil {
+		t.Fatalf("complete scenario Review: %v", err)
+	}
+	recovered, err := repository.Get(
+		context.Background(),
+		command.Actor,
+		completed.ID,
+	)
+	if err != nil {
+		t.Fatalf("get scenario Review: %v", err)
+	}
+	if recovered.Result == nil ||
+		recovered.Result.OverallScorePresent ||
+		recovered.Result.OverallScore != 0 ||
+		recovered.EvaluationContext.SessionPolicyRef !=
+			command.EvaluationContext.SessionPolicyRef ||
+		len(recovered.Evidence) != len(evidence) ||
+		recovered.Evidence[len(recovered.Evidence)-1].TargetKind !=
+			review.EvidenceTargetFeedback {
+		t.Fatalf("recovered scenario Review = %+v", recovered)
+	}
+	if _, err := pool.Exec(
+		context.Background(),
+		`UPDATE reviews
+		    SET result = jsonb_set(result, '{overall_score}', '76'::jsonb)
+		  WHERE id = $1`,
+		completed.ID,
+	); err == nil {
+		t.Fatal("PostgreSQL accepted a non-IELTS overall score")
+	}
+}
+
 func TestPostgresEnsureReviewConcurrentAndRestartRecovery(t *testing.T) {
 	pool := reviewDatabase(t)
 	insertUsers(t, pool, userA)
@@ -1898,12 +2039,15 @@ func TestPostgresCompletedReviewAndEvidenceOwnershipConstraints(t *testing.T) {
 		INSERT INTO review_evidence (
 			review_id,
 			owner_user_id,
-			conclusion_key,
+			target_kind,
+			target_key,
 			source_type,
 			source_id,
 			source_version
 		)
-		VALUES ($1, $2, 'summary', 'turn', 'turn-1', 'v1')
+		VALUES (
+			$1, $2, 'conclusion', 'summary', 'turn', 'turn-1', 'v1'
+		)
 	`, pending.ID, userB); err == nil {
 		t.Fatal("cross-owner evidence unexpectedly passed composite foreign key")
 	}
@@ -1959,12 +2103,16 @@ func TestPostgresCompletedReviewRejectsInvalidResultShapes(t *testing.T) {
 				INSERT INTO review_evidence (
 					review_id,
 					owner_user_id,
-					conclusion_key,
+					target_kind,
+					target_key,
 					source_type,
 					source_id,
 					source_version
 				)
-				VALUES ($1, $2, 'summary', 'conversation_turn', 'turn-3', 'v1')
+				VALUES (
+					$1, $2, 'conclusion', 'summary',
+					'conversation_turn', 'turn-3', 'v1'
+				)
 			`, pending.ID, userA); err != nil {
 				t.Fatalf("insert evidence: %v", err)
 			}
@@ -2373,6 +2521,15 @@ func reviewDatabase(t *testing.T) *pgxpool.Pool {
 	}
 	if _, err := pool.Exec(ctx, string(up)); err != nil {
 		t.Fatalf("apply Review migration: %v", err)
+	}
+	scenarioUp, err := migrations.Files.ReadFile(
+		"000025_review_scenario_policies.up.sql",
+	)
+	if err != nil {
+		t.Fatalf("read scenario Review migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(scenarioUp)); err != nil {
+		t.Fatalf("apply scenario Review migration: %v", err)
 	}
 	return pool
 }

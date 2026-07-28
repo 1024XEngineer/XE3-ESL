@@ -220,6 +220,13 @@ func validateCatalogScenario(
 	if definition.Version < 1 || !nonBlank(definition.Name) || definition.DisplayOrder < 0 {
 		return invalidDefinition("scenario %q has invalid public fields", definition.ID)
 	}
+	if !validPolicyRef(definition.TurnPolicyRef, ".turn.v1") ||
+		!validPolicyRef(definition.SessionPolicyRef, ".session.v1") {
+		return invalidDefinition(
+			"scenario %q has invalid evaluation policy refs",
+			definition.ID,
+		)
+	}
 
 	config := scenario.config
 	if !validResourceID(config.ID) ||
@@ -316,6 +323,12 @@ func validResourceID(value string) bool {
 
 func nonBlank(value string) bool {
 	return value != "" && strings.TrimSpace(value) == value
+}
+
+func validPolicyRef(value string, suffix string) bool {
+	return len(value) <= 128 &&
+		nonBlank(value) &&
+		strings.HasSuffix(value, suffix)
 }
 
 func validStringSet(values []string) bool {

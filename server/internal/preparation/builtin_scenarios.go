@@ -24,13 +24,15 @@ const (
 func ieltsSpeakingPart2CatalogDefinition() catalogScenario {
 	return singleRoleScenario(
 		ScenarioDefinition{
-			ID:           IELTSSpeakingPart2ScenarioID,
-			Type:         ScenarioFamilyExam,
-			Model:        ScenarioModelIELTSSpeakingPart2,
-			Name:         "IELTS Speaking Part 2",
-			Version:      1,
-			Status:       ScenarioStatusActive,
-			DisplayOrder: 20,
+			ID:               IELTSSpeakingPart2ScenarioID,
+			Type:             ScenarioFamilyExam,
+			Model:            ScenarioModelIELTSSpeakingPart2,
+			Name:             "IELTS Speaking Part 2",
+			Version:          1,
+			Status:           ScenarioStatusActive,
+			TurnPolicyRef:    "ielts.speaking_part2.turn.v1",
+			SessionPolicyRef: "ielts.speaking_part2.session.v1",
+			DisplayOrder:     20,
 		},
 		ScenarioConfig{
 			ID:                   IELTSSpeakingPart2ConfigID,
@@ -78,13 +80,15 @@ func ieltsSpeakingPart2CatalogDefinition() catalogScenario {
 func workplaceProgressRiskCatalogDefinition() catalogScenario {
 	return singleRoleScenario(
 		ScenarioDefinition{
-			ID:           WorkplaceProgressRiskScenarioID,
-			Type:         ScenarioFamilyWorkplace,
-			Model:        ScenarioModelProgressAndRiskUpdate,
-			Name:         "进度与风险汇报",
-			Version:      1,
-			Status:       ScenarioStatusActive,
-			DisplayOrder: 10,
+			ID:               WorkplaceProgressRiskScenarioID,
+			Type:             ScenarioFamilyWorkplace,
+			Model:            ScenarioModelProgressAndRiskUpdate,
+			Name:             "进度与风险汇报",
+			Version:          1,
+			Status:           ScenarioStatusActive,
+			TurnPolicyRef:    "workplace.progress_risk_update.turn.v1",
+			SessionPolicyRef: "workplace.progress_risk_update.session.v1",
+			DisplayOrder:     10,
 		},
 		ScenarioConfig{
 			ID:                   WorkplaceProgressRiskConfigID,
@@ -132,13 +136,15 @@ func workplaceProgressRiskCatalogDefinition() catalogScenario {
 func dailyHotelCheckinCatalogDefinition() catalogScenario {
 	return singleRoleScenario(
 		ScenarioDefinition{
-			ID:           DailyHotelCheckinScenarioID,
-			Type:         ScenarioFamilyDaily,
-			Model:        ScenarioModelHotelCheckinAndIssueHandling,
-			Name:         "酒店入住与问题处理",
-			Version:      1,
-			Status:       ScenarioStatusActive,
-			DisplayOrder: 50,
+			ID:               DailyHotelCheckinScenarioID,
+			Type:             ScenarioFamilyDaily,
+			Model:            ScenarioModelHotelCheckinAndIssueHandling,
+			Name:             "酒店入住与问题处理",
+			Version:          1,
+			Status:           ScenarioStatusActive,
+			TurnPolicyRef:    "daily.hotel_checkin_issue.turn.v1",
+			SessionPolicyRef: "daily.hotel_checkin_issue.session.v1",
+			DisplayOrder:     50,
 		},
 		ScenarioConfig{
 			ID:                   DailyHotelCheckinConfigID,
@@ -922,13 +928,15 @@ func basicCatalogDefinitions(
 		roleID := "role_" + spec.slug + "_counterpart"
 		result = append(result, singleRoleScenario(
 			ScenarioDefinition{
-				ID:           scenarioID,
-				Type:         family,
-				Model:        model,
-				Name:         spec.name,
-				Version:      1,
-				Status:       ScenarioStatusActive,
-				DisplayOrder: spec.displayOrder,
+				ID:               scenarioID,
+				Type:             family,
+				Model:            model,
+				Name:             spec.name,
+				Version:          1,
+				Status:           ScenarioStatusActive,
+				TurnPolicyRef:    "generic.practice.turn.v1",
+				SessionPolicyRef: "generic.practice.session.v1",
+				DisplayOrder:     spec.displayOrder,
 			},
 			ScenarioConfig{
 				ID:                   "scfg_" + spec.slug,

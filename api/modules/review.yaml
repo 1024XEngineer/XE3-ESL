@@ -45,6 +45,7 @@ paths:
                     source_turn_id: turn_demo_006
                     source_turn_version: conversation-turn:evidence-v1
                     result:
+                      summary_eligibility: eligible
                       overall_score: 91
                       summary: The answer is clear and outcome-focused.
                       conclusions:

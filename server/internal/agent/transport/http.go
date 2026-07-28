@@ -1641,6 +1641,12 @@ func formalReviewResponse(item VoiceSessionReview) gin.H {
 		"created_at":             item.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at":             item.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if item.EvaluationContextType != "" {
+		result["evaluation_context_type"] = item.EvaluationContextType
+	}
+	if len(item.EvaluationContext) > 0 {
+		result["evaluation_context"] = item.EvaluationContext
+	}
 	if item.Result != nil {
 		result["result"] = item.Result
 	}

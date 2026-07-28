@@ -122,6 +122,8 @@ type VoiceSessionReview struct {
 	ImplementationVersion string
 	SourceTurnID          string
 	SourceTurnVersion     string
+	EvaluationContextType string
+	EvaluationContext     json.RawMessage
 	Result                *VoiceReviewResult
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
@@ -129,16 +131,55 @@ type VoiceSessionReview struct {
 }
 
 type VoiceReviewResult struct {
-	OverallScore int                     `json:"overall_score"`
-	Summary      string                  `json:"summary"`
-	Conclusions  []VoiceReviewConclusion `json:"conclusions"`
+	SummaryEligibility          string                    `json:"summary_eligibility,omitempty"`
+	OverallScore                int                       `json:"overall_score"`
+	OverallScorePresent         bool                      `json:"-"`
+	Summary                     string                    `json:"summary"`
+	Conclusions                 []VoiceReviewConclusion   `json:"conclusions"`
+	FeedbackItems               []VoiceReviewFeedbackItem `json:"feedback_items,omitempty"`
+	RepracticeSuggestionRefs    []string                  `json:"repractice_suggestion_refs,omitempty"`
+	InsufficientEvidenceReasons []string                  `json:"insufficient_evidence_reasons,omitempty"`
 }
 
 type VoiceReviewConclusion struct {
 	Key        string `json:"key"`
 	Category   string `json:"category"`
+	Score      int    `json:"score,omitempty"`
 	Message    string `json:"message"`
 	Suggestion string `json:"suggestion,omitempty"`
+}
+
+type VoiceReviewFeedbackItem struct {
+	Key        string `json:"key"`
+	Kind       string `json:"kind"`
+	Message    string `json:"message"`
+	Suggestion string `json:"suggestion,omitempty"`
+}
+
+func (r VoiceReviewResult) MarshalJSON() ([]byte, error) {
+	type wireResult struct {
+		SummaryEligibility          string                    `json:"summary_eligibility,omitempty"`
+		OverallScore                *int                      `json:"overall_score,omitempty"`
+		Summary                     string                    `json:"summary"`
+		Conclusions                 []VoiceReviewConclusion   `json:"conclusions"`
+		FeedbackItems               []VoiceReviewFeedbackItem `json:"feedback_items,omitempty"`
+		RepracticeSuggestionRefs    []string                  `json:"repractice_suggestion_refs,omitempty"`
+		InsufficientEvidenceReasons []string                  `json:"insufficient_evidence_reasons,omitempty"`
+	}
+	var score *int
+	if r.OverallScorePresent || r.OverallScore != 0 {
+		value := r.OverallScore
+		score = &value
+	}
+	return json.Marshal(wireResult{
+		SummaryEligibility:          r.SummaryEligibility,
+		OverallScore:                score,
+		Summary:                     r.Summary,
+		Conclusions:                 r.Conclusions,
+		FeedbackItems:               r.FeedbackItems,
+		RepracticeSuggestionRefs:    r.RepracticeSuggestionRefs,
+		InsufficientEvidenceReasons: r.InsufficientEvidenceReasons,
+	})
 }
 
 type VoiceReviewHistoryCursor struct {
@@ -616,6 +657,14 @@ func validVoiceSessionReviewWithResult(
 		!validVoiceReviewMetadata(item.SourceTurnID) ||
 		!validVoiceReviewMetadata(item.SourceTurnVersion) ||
 		!validVoiceSourceTurnVersion(item.SourceTurnVersion) ||
+		(item.ImplementationVersion == "qianwen-scenario-review-v2" &&
+			(!validEvaluationContextType(item.EvaluationContextType) ||
+				!validVoiceEvaluationContext(item.EvaluationContext))) ||
+		(item.ImplementationVersion != "qianwen-scenario-review-v2" &&
+			((item.EvaluationContextType != "" &&
+				!validEvaluationContextType(item.EvaluationContextType)) ||
+				(len(item.EvaluationContext) > 0 &&
+					!validVoiceEvaluationContext(item.EvaluationContext)))) ||
 		item.CreatedAt.IsZero() ||
 		item.UpdatedAt.Before(item.CreatedAt) {
 		return false
@@ -636,8 +685,23 @@ func validVoiceSessionReviewWithResult(
 }
 
 func validPersistedVoiceReviewResult(result *VoiceReviewResult) bool {
-	if result == nil ||
-		result.OverallScore < 0 ||
+	if result == nil {
+		return false
+	}
+	if result.SummaryEligibility == "insufficient_evidence" {
+		return !result.OverallScorePresent &&
+			result.OverallScore == 0 &&
+			strings.TrimSpace(result.Summary) != "" &&
+			len(result.Conclusions) == 0 &&
+			len(result.FeedbackItems) == 0 &&
+			len(result.InsufficientEvidenceReasons) > 0
+	}
+	if result.SummaryEligibility != "" &&
+		result.SummaryEligibility != "eligible" &&
+		result.SummaryEligibility != "provisional" {
+		return false
+	}
+	if result.OverallScore < 0 ||
 		result.OverallScore > 100 ||
 		strings.TrimSpace(result.Summary) == "" ||
 		len(result.Conclusions) == 0 {
@@ -661,8 +725,26 @@ func validPersistedVoiceReviewResult(result *VoiceReviewResult) bool {
 }
 
 func validVoiceReviewResult(result *VoiceReviewResult) bool {
-	if result == nil ||
-		result.OverallScore < 0 ||
+	if result == nil {
+		return false
+	}
+	if result.SummaryEligibility == "insufficient_evidence" {
+		return !result.OverallScorePresent &&
+			result.OverallScore == 0 &&
+			validVoiceReviewText(
+				result.Summary,
+				maxVoiceReviewSummaryUTF8Bytes,
+			) &&
+			len(result.Conclusions) == 0 &&
+			len(result.FeedbackItems) == 0 &&
+			len(result.InsufficientEvidenceReasons) > 0
+	}
+	if result.SummaryEligibility != "" &&
+		result.SummaryEligibility != "eligible" &&
+		result.SummaryEligibility != "provisional" {
+		return false
+	}
+	if result.OverallScore < 0 ||
 		result.OverallScore > 100 ||
 		!validVoiceReviewText(
 			result.Summary,
@@ -702,6 +784,25 @@ func validVoiceReviewResult(result *VoiceReviewResult) bool {
 	}
 	encoded, err := json.Marshal(result)
 	return err == nil && len(encoded) <= maxVoiceReviewResultJSONBytes
+}
+
+func validEvaluationContextType(value string) bool {
+	switch value {
+	case "interview.project_deep_dive",
+		"ielts.speaking_part2",
+		"workplace.progress_risk_update",
+		"daily.hotel_checkin_issue",
+		"generic.practice":
+		return true
+	default:
+		return false
+	}
+}
+
+func validVoiceEvaluationContext(value json.RawMessage) bool {
+	return len(value) > 0 &&
+		len(value) <= maxVoiceReviewResultJSONBytes &&
+		json.Valid(value)
 }
 
 func validVoiceReviewMetadata(value string) bool {

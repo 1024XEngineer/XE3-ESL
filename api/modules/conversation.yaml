@@ -874,6 +874,16 @@ components:
         source_turn_version:
           type: string
           pattern: '^conversation-turn:evidence-v[1-9][0-9]*$'
+        evaluation_context_type:
+          type: string
+          enum:
+            - interview.project_deep_dive
+            - ielts.speaking_part2
+            - workplace.progress_risk_update
+            - daily.hotel_checkin_issue
+            - generic.practice
+        evaluation_context:
+          $ref: '#/components/schemas/EvaluationContext'
         result:
           $ref: '#/components/schemas/FormalReviewResult'
         created_at:
@@ -885,14 +895,239 @@ components:
         completed_at:
           type: string
           format: date-time
+    EvaluationContext:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - context_type
+        - scene_key
+        - scenario_definition_id
+        - scenario_definition_version
+        - practice_option_type
+        - difficulty_ref
+        - assistance_ref
+        - turn_policy_ref
+        - session_policy_ref
+        - scene_specific_context
+      properties:
+        schema_version:
+          type: string
+          const: evaluation-context.v1
+        context_type:
+          $ref: '#/components/schemas/EvaluationContextType'
+        scene_key:
+          $ref: '#/components/schemas/ResourceId'
+        scenario_definition_id:
+          $ref: '#/components/schemas/ResourceId'
+        scenario_definition_version:
+          type: integer
+          minimum: 1
+        practice_option_type:
+          type: string
+          minLength: 1
+          maxLength: 64
+        difficulty_ref:
+          $ref: '#/components/schemas/ResourceId'
+        assistance_ref:
+          $ref: '#/components/schemas/ResourceId'
+        turn_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        session_policy_ref:
+          $ref: '#/components/schemas/ResourceId'
+        scene_specific_context:
+          $ref: '#/components/schemas/SceneSpecificEvaluationContext'
+    EvaluationContextType:
+      type: string
+      enum:
+        - interview.project_deep_dive
+        - ielts.speaking_part2
+        - workplace.progress_risk_update
+        - daily.hotel_checkin_issue
+        - generic.practice
+    SceneSpecificEvaluationContext:
+      oneOf:
+        - $ref: '#/components/schemas/InterviewProjectDeepDiveContext'
+        - $ref: '#/components/schemas/IELTSSpeakingPart2Context'
+        - $ref: '#/components/schemas/WorkplaceProgressRiskContext'
+        - $ref: '#/components/schemas/DailyHotelCheckinContext'
+        - $ref: '#/components/schemas/GenericPracticeContext'
+      discriminator:
+        propertyName: type
+        mapping:
+          interview.project_deep_dive: '#/components/schemas/InterviewProjectDeepDiveContext'
+          ielts.speaking_part2: '#/components/schemas/IELTSSpeakingPart2Context'
+          workplace.progress_risk_update: '#/components/schemas/WorkplaceProgressRiskContext'
+          daily.hotel_checkin_issue: '#/components/schemas/DailyHotelCheckinContext'
+          generic.practice: '#/components/schemas/GenericPracticeContext'
+    InterviewProjectDeepDiveContext:
+      type: object
+      additionalProperties: false
+      required: [type, interview_project_deep_dive]
+      properties:
+        type:
+          type: string
+          const: interview.project_deep_dive
+        interview_project_deep_dive:
+          type: object
+          additionalProperties: false
+          required: [version, project_brief, candidate_role, focus_points]
+          properties:
+            version:
+              type: string
+              const: interview.project_deep_dive.v1
+            project_brief:
+              type: string
+              minLength: 1
+              maxLength: 4096
+            candidate_role:
+              type: string
+              minLength: 1
+              maxLength: 256
+            focus_points:
+              type: array
+              minItems: 1
+              maxItems: 12
+              items:
+                type: string
+                minLength: 1
+                maxLength: 256
+    IELTSSpeakingPart2Context:
+      type: object
+      additionalProperties: false
+      required: [type, ielts_speaking_part2]
+      properties:
+        type:
+          type: string
+          const: ielts.speaking_part2
+        ielts_speaking_part2:
+          type: object
+          additionalProperties: false
+          required: [version, cue_card_topic, cue_card_points, strict_simulation]
+          properties:
+            version:
+              type: string
+              const: ielts.speaking_part2.v1
+            cue_card_topic:
+              type: string
+              minLength: 1
+              maxLength: 2048
+            cue_card_points:
+              type: array
+              minItems: 1
+              maxItems: 12
+              items:
+                type: string
+                minLength: 1
+                maxLength: 512
+            strict_simulation:
+              type: boolean
+    WorkplaceProgressRiskContext:
+      type: object
+      additionalProperties: false
+      required: [type, workplace_progress_risk_update]
+      properties:
+        type:
+          type: string
+          const: workplace.progress_risk_update
+        workplace_progress_risk_update:
+          type: object
+          additionalProperties: false
+          required: [version, initiative_brief, audience, expected_sections]
+          properties:
+            version:
+              type: string
+              const: workplace.progress_risk_update.v1
+            initiative_brief:
+              type: string
+              minLength: 1
+              maxLength: 4096
+            audience:
+              type: string
+              minLength: 1
+              maxLength: 256
+            expected_sections:
+              type: array
+              minItems: 1
+              maxItems: 12
+              items:
+                type: string
+                minLength: 1
+                maxLength: 256
+    DailyHotelCheckinContext:
+      type: object
+      additionalProperties: false
+      required: [type, daily_hotel_checkin_issue]
+      properties:
+        type:
+          type: string
+          const: daily.hotel_checkin_issue
+        daily_hotel_checkin_issue:
+          type: object
+          additionalProperties: false
+          required: [version, reservation_brief, issue, desired_outcome]
+          properties:
+            version:
+              type: string
+              const: daily.hotel_checkin_issue.v1
+            reservation_brief:
+              type: string
+              minLength: 1
+              maxLength: 2048
+            issue:
+              type: string
+              minLength: 1
+              maxLength: 2048
+            desired_outcome:
+              type: string
+              minLength: 1
+              maxLength: 2048
+    GenericPracticeContext:
+      type: object
+      additionalProperties: false
+      required: [type, generic_practice]
+      properties:
+        type:
+          type: string
+          const: generic.practice
+        generic_practice:
+          type: object
+          additionalProperties: false
+          required: [version, practice_goal]
+          properties:
+            version:
+              type: string
+              const: generic.practice.v1
+            practice_goal:
+              type: string
+              minLength: 1
+              maxLength: 2048
     FormalReviewResult:
       type: object
       additionalProperties: false
       required:
-        - overall_score
+        - summary_eligibility
         - summary
         - conclusions
+      description: |
+        `overall_score` is optional and is only published for an IELTS result
+        whose four criteria are final and reliable. Eligible interview,
+        workplace, daily, and generic results contain independent dimension
+        scores without weights or an overall score.
+        `provisional` results contain dimension feedback but omit
+        `overall_score`; transcript-only IELTS uses this shape while reliable
+        pronunciation/audio evidence is unavailable.
+        `insufficient_evidence` results omit `overall_score`, return no
+        conclusions or feedback items, and include one or more
+        `insufficient_evidence_reasons`. The server and PostgreSQL constraints
+        enforce these mutually exclusive shapes.
       properties:
+        summary_eligibility:
+          type: string
+          enum:
+            - eligible
+            - provisional
+            - insufficient_evidence
         overall_score:
           type: integer
           minimum: 0
@@ -902,9 +1137,27 @@ components:
           minLength: 1
         conclusions:
           type: array
-          minItems: 1
+          maxItems: 8
           items:
             $ref: '#/components/schemas/FormalReviewConclusion'
+        feedback_items:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/FormalReviewFeedbackItem'
+        repractice_suggestion_refs:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        insufficient_evidence_reasons:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
     FormalReviewConclusion:
       type: object
       additionalProperties: false
@@ -919,6 +1172,34 @@ components:
         category:
           type: string
           minLength: 1
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        message:
+          type: string
+          minLength: 1
+        suggestion:
+          type: string
+          minLength: 1
+    FormalReviewFeedbackItem:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - kind
+        - message
+      properties:
+        key:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          enum:
+            - correction
+            - strength
+            - improvement
+            - recommended_expression
         message:
           type: string
           minLength: 1
