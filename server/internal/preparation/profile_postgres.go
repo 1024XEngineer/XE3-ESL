@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -27,6 +28,40 @@ func NewPostgresProfileRepository(
 	pool *pgxpool.Pool,
 ) *PostgresProfileRepository {
 	return &PostgresProfileRepository{pool: pool}
+}
+
+func (r *PostgresProfileRepository) ReplayProfile(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	intent IdempotencyIntent,
+) (Profile, bool, error) {
+	if r == nil || r.pool == nil || ctx == nil ||
+		!validPreparationActor(actor) ||
+		intent.Method != "POST" ||
+		intent.CanonicalPath != "/v1/preparation-profiles" ||
+		!validIdempotencyKey(intent.Key) {
+		return Profile{}, false, ErrProfileInvalid
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Profile{}, false, profileDatabaseFailure(
+			"begin profile replay",
+		)
+	}
+	defer rollbackPreparationTransaction(ctx, tx)
+	if err := lockActivePreparationActor(ctx, tx, actor.UserID); err != nil {
+		return Profile{}, false, err
+	}
+	profile, found, err := replayProfile(ctx, tx, actor.UserID, intent)
+	if err != nil {
+		return Profile{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Profile{}, false, profileDatabaseFailure(
+			"commit profile replay",
+		)
+	}
+	return profile, found, nil
 }
 
 func (r *PostgresProfileRepository) CreateProfile(
@@ -131,6 +166,48 @@ func (r *PostgresProfileRepository) CreateProfile(
 		)
 	}
 	return profile, false, nil
+}
+
+func (r *PostgresProfileRepository) ReplaySnapshot(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	intent IdempotencyIntent,
+) (Snapshot, bool, error) {
+	const prefix = "/v1/preparation-profiles/"
+	const suffix = "/snapshots"
+	profileID := strings.TrimSuffix(
+		strings.TrimPrefix(intent.CanonicalPath, prefix),
+		suffix,
+	)
+	if r == nil || r.pool == nil || ctx == nil ||
+		!validPreparationActor(actor) ||
+		intent.Method != "POST" ||
+		!strings.HasPrefix(intent.CanonicalPath, prefix) ||
+		!strings.HasSuffix(intent.CanonicalPath, suffix) ||
+		!validResourceIdentifier(profileID) ||
+		!validIdempotencyKey(intent.Key) {
+		return Snapshot{}, false, ErrProfileInvalid
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Snapshot{}, false, profileDatabaseFailure(
+			"begin snapshot replay",
+		)
+	}
+	defer rollbackPreparationTransaction(ctx, tx)
+	if err := lockActivePreparationActor(ctx, tx, actor.UserID); err != nil {
+		return Snapshot{}, false, err
+	}
+	snapshot, found, err := replaySnapshot(ctx, tx, actor.UserID, intent)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Snapshot{}, false, profileDatabaseFailure(
+			"commit snapshot replay",
+		)
+	}
+	return snapshot, found, nil
 }
 
 func (r *PostgresProfileRepository) CreateSnapshot(
@@ -448,6 +525,10 @@ type preparationRowScanner interface {
 	Scan(...any) error
 }
 
+type preparationQueryRow interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 func scanPreparationProfile(row preparationRowScanner) (Profile, error) {
 	var profile Profile
 	err := row.Scan(
@@ -480,13 +561,13 @@ func scanPreparationSnapshot(row preparationRowScanner) (Snapshot, error) {
 
 func replayProfile(
 	ctx context.Context,
-	tx pgx.Tx,
+	query preparationQueryRow,
 	userID string,
 	intent IdempotencyIntent,
 ) (Profile, bool, error) {
 	body, resourceID, found, err := readPreparationReplay(
 		ctx,
-		tx,
+		query,
 		userID,
 		intent,
 		"profile",
@@ -509,13 +590,13 @@ func replayProfile(
 
 func replaySnapshot(
 	ctx context.Context,
-	tx pgx.Tx,
+	query preparationQueryRow,
 	userID string,
 	intent IdempotencyIntent,
 ) (Snapshot, bool, error) {
 	body, resourceID, found, err := readPreparationReplay(
 		ctx,
-		tx,
+		query,
 		userID,
 		intent,
 		"snapshot",
@@ -539,7 +620,7 @@ func replaySnapshot(
 
 func readPreparationReplay(
 	ctx context.Context,
-	tx pgx.Tx,
+	query preparationQueryRow,
 	userID string,
 	intent IdempotencyIntent,
 	expectedKind string,
@@ -551,7 +632,7 @@ func readPreparationReplay(
 		status       int
 		body         []byte
 	)
-	err := tx.QueryRow(ctx, `
+	err := query.QueryRow(ctx, `
 		SELECT
 			payload_fingerprint,
 			resource_kind,

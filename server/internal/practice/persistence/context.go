@@ -245,8 +245,9 @@ type ContextRepository interface {
 }
 
 // ContextVoiceRepository is the narrow formal Context authority consumed by
-// the production Agent voice composition. It never creates a legacy Session
-// and resolves only an exact Actor + Thread + Matter binding.
+// the production Agent voice composition. It never creates a legacy Session:
+// Start resolves the exact Actor + Thread + Matter binding, while later
+// recovery uses the immutable Plan anchor for the Actor + Thread.
 type ContextVoiceRepository interface {
 	GetPlan(context.Context, Actor, string) (Plan, error)
 	GetContextSession(context.Context, Actor, string) (ContextSession, error)
@@ -255,6 +256,16 @@ type ContextVoiceRepository interface {
 		Actor,
 		string,
 	) (ContextSessionSnapshot, error)
+	ReplayContextVoiceStart(
+		context.Context,
+		Actor,
+		ContextIdempotencyIntent,
+	) (ContextSessionBootstrap, bool, error)
+	ResolveContextSessionByThread(
+		context.Context,
+		Actor,
+		string,
+	) (ContextSessionBootstrap, error)
 	ResolveContextSession(
 		context.Context,
 		Actor,
@@ -267,6 +278,7 @@ type ContextVoiceRepository interface {
 		string,
 		string,
 		string,
+		ContextIdempotencyIntent,
 	) (ContextSessionBootstrap, error)
 	AdvanceContextVoiceTurn(
 		context.Context,

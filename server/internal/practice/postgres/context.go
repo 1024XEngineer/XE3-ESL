@@ -604,12 +604,24 @@ func (r *Repository) ResolveContextSessionByThread(
 		  ON fence.owner_user_id = session.owner_user_id
 		WHERE session.owner_user_id = $1
 		  AND session.agent_thread_id = $2
-		  AND session.status IN ('starting', 'in_progress', 'paused')
+		  AND session.status IN (
+		      'starting',
+		      'in_progress',
+		      'paused',
+		      'completed'
+		  )
 		  AND plan.status = 'ready'
 		  AND matter.status = 'active'
 		  AND owner.account_status = 'active'
 		  AND fence.owner_user_id IS NULL
-		ORDER BY session.created_at, session.session_id
+		ORDER BY
+		  CASE
+		    WHEN session.status IN ('starting', 'in_progress', 'paused')
+		      THEN 0
+		    ELSE 1
+		  END,
+		  session.created_at,
+		  session.session_id
 		LIMIT 2
 	`, actor.UserID, threadID)
 	if err != nil {
@@ -640,14 +652,22 @@ func (r *Repository) ResolveContextSessionByThread(
 		return persistence.ContextSessionBootstrap{},
 			fmt.Errorf("iterate resolved context Sessions: %w", err)
 	}
-	switch len(results) {
-	case 0:
+	if len(results) == 0 {
 		return persistence.ContextSessionBootstrap{}, persistence.ErrNotFound
-	case 1:
+	}
+	if isEffectiveContextSessionStatus(results[0].Session.Status) {
+		if len(results) == 2 &&
+			isEffectiveContextSessionStatus(results[1].Session.Status) {
+			return persistence.ContextSessionBootstrap{},
+				persistence.ErrConflict
+		}
 		return results[0], nil
-	default:
+	}
+	if len(results) != 1 ||
+		results[0].Session.Status != persistence.ContextSessionCompleted {
 		return persistence.ContextSessionBootstrap{}, persistence.ErrConflict
 	}
+	return results[0], nil
 }
 
 // ResolveContextSession resolves the formal Session bound to the exact Actor +
@@ -784,6 +804,55 @@ func isEffectiveContextSessionStatus(
 	}
 }
 
+func (r *Repository) ReplayContextVoiceStart(
+	ctx context.Context,
+	actor persistence.Actor,
+	intent persistence.ContextIdempotencyIntent,
+) (persistence.ContextSessionBootstrap, bool, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
+		!validContextIntent(intent) {
+		return persistence.ContextSessionBootstrap{}, false,
+			persistence.ErrInvalidArgument
+	}
+	record, found, err := loadContextIdempotency(
+		ctx,
+		r.pool,
+		actor.UserID,
+		intent,
+		true,
+	)
+	if err != nil || !found {
+		return persistence.ContextSessionBootstrap{}, false, err
+	}
+	if record.ResourceKind != "session" {
+		return persistence.ContextSessionBootstrap{}, false,
+			persistence.ErrIdempotencyConflict
+	}
+	var original persistence.ContextSessionBootstrap
+	if err := json.Unmarshal(record.ResponseBody, &original); err != nil ||
+		original.Session.ID != record.ResourceID ||
+		!validStoredContextBootstrap(original) {
+		return persistence.ContextSessionBootstrap{}, false,
+			persistence.ErrConflict
+	}
+	session, err := r.GetContextSession(ctx, actor, record.ResourceID)
+	if err != nil {
+		return persistence.ContextSessionBootstrap{}, false, err
+	}
+	snapshot, err := r.GetContextSessionSnapshot(
+		ctx,
+		actor,
+		record.ResourceID,
+	)
+	if err != nil {
+		return persistence.ContextSessionBootstrap{}, false, err
+	}
+	return persistence.ContextSessionBootstrap{
+		Session:  session,
+		Snapshot: snapshot,
+	}, true, nil
+}
+
 // ActivateContextSession atomically changes a formal starting Session to
 // in_progress after re-validating its exact immutable Thread + Matter binding.
 // Replaying an already in_progress Session is idempotent; paused Sessions must
@@ -794,11 +863,13 @@ func (r *Repository) ActivateContextSession(
 	sessionID string,
 	threadID string,
 	matterID string,
+	intent persistence.ContextIdempotencyIntent,
 ) (persistence.ContextSessionBootstrap, error) {
 	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
 		!validContextResourceID(sessionID) ||
 		!validContextResourceID(threadID) ||
-		!validContextResourceID(matterID) {
+		!validContextResourceID(matterID) ||
+		!validContextIntent(intent) {
 		return persistence.ContextSessionBootstrap{},
 			persistence.ErrInvalidArgument
 	}
@@ -810,6 +881,42 @@ func (r *Repository) ActivateContextSession(
 	defer rollback(ctx, tx)
 	if err := lockActiveActor(ctx, tx, actor.UserID); err != nil {
 		return persistence.ContextSessionBootstrap{}, err
+	}
+	if err := lockContextIdempotency(
+		ctx,
+		tx,
+		actor.UserID,
+		intent,
+	); err != nil {
+		return persistence.ContextSessionBootstrap{}, err
+	}
+	record, found, err := loadContextIdempotency(
+		ctx,
+		tx,
+		actor.UserID,
+		intent,
+		false,
+	)
+	if err != nil {
+		return persistence.ContextSessionBootstrap{}, err
+	}
+	if found {
+		if record.ResourceKind != "session" {
+			return persistence.ContextSessionBootstrap{},
+				persistence.ErrIdempotencyConflict
+		}
+		var replayed persistence.ContextSessionBootstrap
+		if err := json.Unmarshal(record.ResponseBody, &replayed); err != nil ||
+			replayed.Session.ID != record.ResourceID ||
+			!validStoredContextBootstrap(replayed) {
+			return persistence.ContextSessionBootstrap{},
+				persistence.ErrConflict
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return persistence.ContextSessionBootstrap{},
+				fmt.Errorf("commit replayed voice Start: %w", err)
+		}
+		return replayed, nil
 	}
 
 	session, err := scanContextSession(tx.QueryRow(ctx, contextSessionSelect+`
@@ -931,6 +1038,18 @@ func (r *Repository) ActivateContextSession(
 	if !validStoredContextBootstrap(bootstrap) {
 		return persistence.ContextSessionBootstrap{},
 			persistence.ErrConflict
+	}
+	if err := saveContextIdempotency(
+		ctx,
+		tx,
+		actor.UserID,
+		intent,
+		"session",
+		session.ID,
+		201,
+		bootstrap,
+	); err != nil {
+		return persistence.ContextSessionBootstrap{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return persistence.ContextSessionBootstrap{},

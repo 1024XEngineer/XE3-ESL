@@ -297,11 +297,38 @@ func (adapter *voicePracticeAdapter) Start(
 	if adapter == nil || adapter.repository == nil ||
 		!actor.Valid() ||
 		strings.TrimSpace(threadID) == "" ||
-		strings.TrimSpace(matterID) == "" ||
 		strings.TrimSpace(idempotencyKey) == "" {
 		return agent.VoicePracticeSession{}, agent.ErrInvalidRequest
 	}
 	practiceActor := practiceActor(actor)
+	intent := practicepersistence.ContextIdempotencyIntent{
+		Method: "POST",
+		CanonicalPath: "/v1/agent-threads/" + threadID +
+			"/voice-practice-sessions",
+		Key:                idempotencyKey,
+		PayloadFingerprint: sha256.Sum256(nil),
+	}
+	replayed, found, err := adapter.repository.ReplayContextVoiceStart(
+		ctx,
+		practiceActor,
+		intent,
+	)
+	if err != nil {
+		return agent.VoicePracticeSession{}, mapPracticeError(err)
+	}
+	if found {
+		return adapter.mapContextPracticeSession(
+			ctx,
+			practiceActor,
+			replayed,
+			actor.UserID,
+			threadID,
+			"",
+		)
+	}
+	if strings.TrimSpace(matterID) == "" {
+		return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+	}
 	resolved, err := adapter.repository.ResolveContextSession(
 		ctx,
 		practiceActor,
@@ -317,6 +344,7 @@ func (adapter *voicePracticeAdapter) Start(
 		resolved.Session.ID,
 		threadID,
 		matterID,
+		intent,
 	)
 	if err != nil {
 		return agent.VoicePracticeSession{}, mapPracticeError(err)
@@ -338,16 +366,14 @@ func (adapter *voicePracticeAdapter) GetByThread(
 	matterID string,
 ) (agent.VoicePracticeSession, error) {
 	if adapter == nil || adapter.repository == nil || !actor.Valid() ||
-		strings.TrimSpace(threadID) == "" ||
-		strings.TrimSpace(matterID) == "" {
+		strings.TrimSpace(threadID) == "" {
 		return agent.VoicePracticeSession{}, agent.ErrInvalidRequest
 	}
 	practiceActor := practiceActor(actor)
-	resolved, err := adapter.repository.ResolveContextSession(
+	resolved, err := adapter.repository.ResolveContextSessionByThread(
 		ctx,
 		practiceActor,
 		threadID,
-		matterID,
 	)
 	if err != nil {
 		return agent.VoicePracticeSession{}, mapPracticeError(err)
@@ -358,7 +384,7 @@ func (adapter *voicePracticeAdapter) GetByThread(
 		resolved,
 		actor.UserID,
 		threadID,
-		matterID,
+		"",
 	)
 }
 

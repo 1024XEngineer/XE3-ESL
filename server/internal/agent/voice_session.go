@@ -188,7 +188,6 @@ func (application *VoiceSessionApplication) Start(
 ) (VoiceSessionState, error) {
 	if err := validateVoiceActor(ctx, actor); err != nil ||
 		strings.TrimSpace(threadID) == "" ||
-		strings.TrimSpace(matterID) == "" ||
 		strings.TrimSpace(idempotencyKey) == "" {
 		return VoiceSessionState{}, ErrInvalidRequest
 	}

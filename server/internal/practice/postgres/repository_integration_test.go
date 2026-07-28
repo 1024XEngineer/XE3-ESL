@@ -70,6 +70,11 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 		created.Session.ID,
 		owner.ThreadID,
 		owner.MatterID,
+		contextIntent(
+			"/v1/agent-threads/"+owner.ThreadID+"/voice-practice-sessions",
+			"voice-application-start-key",
+			"",
+		),
 	)
 	if err != nil {
 		t.Fatalf("ActivateContextSession: %v", err)

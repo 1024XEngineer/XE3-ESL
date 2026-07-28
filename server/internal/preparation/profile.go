@@ -22,8 +22,8 @@ var (
 )
 
 const (
-	maxPreparationReferenceBytes = 16 * 1024
-	maxPreparationSummaryBytes   = 64 * 1024
+	maxPreparationReferenceLength = 16 * 1024
+	maxPreparationSummaryLength   = 64 * 1024
 )
 
 // Profile is Preparation's production, actor-owned profile record.
@@ -82,11 +82,21 @@ type DeleteProfileDataCommand struct {
 type ProfileRepository interface {
 	// Create methods return replayed=true only when an existing, matching
 	// idempotency result is returned. A newly persisted resource returns false.
+	ReplayProfile(
+		context.Context,
+		requestcontext.Actor,
+		IdempotencyIntent,
+	) (profile Profile, found bool, err error)
 	CreateProfile(
 		context.Context,
 		requestcontext.Actor,
 		CreateProfileCommand,
 	) (profile Profile, replayed bool, err error)
+	ReplaySnapshot(
+		context.Context,
+		requestcontext.Actor,
+		IdempotencyIntent,
+	) (snapshot Snapshot, found bool, err error)
 	CreateSnapshot(
 		context.Context,
 		requestcontext.Actor,
@@ -159,6 +169,17 @@ func (s *PersistenceService) CreateProfile(
 	if err != nil {
 		return Profile{}, false, err
 	}
+	replayedProfile, found, err := s.repository.ReplayProfile(
+		ctx,
+		actor,
+		intent,
+	)
+	if err != nil {
+		return Profile{}, false, err
+	}
+	if found {
+		return replayedProfile, true, nil
+	}
 	profileID, err := s.ids.NewID()
 	if err != nil {
 		return Profile{}, false, ErrProfileRepository
@@ -189,6 +210,17 @@ func (s *PersistenceService) CreateSnapshot(
 	)
 	if err != nil {
 		return Snapshot{}, false, err
+	}
+	replayedSnapshot, found, err := s.repository.ReplaySnapshot(
+		ctx,
+		actor,
+		intent,
+	)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+	if found {
+		return replayedSnapshot, true, nil
 	}
 	snapshotID, err := s.ids.NewID()
 	if err != nil {
@@ -260,26 +292,26 @@ func newPreparationIntent(
 func validCreateProfileRequest(request CreateProfileRequest) bool {
 	return validOptionalPreparationText(
 		request.ResumeRef,
-		maxPreparationReferenceBytes,
+		maxPreparationReferenceLength,
 	) &&
 		validOptionalPreparationText(
 			request.JobDescriptionRef,
-			maxPreparationReferenceBytes,
+			maxPreparationReferenceLength,
 		) &&
 		validRequiredPreparationText(
 			request.BackgroundSummary,
-			maxPreparationSummaryBytes,
+			maxPreparationSummaryLength,
 		)
 }
 
-func validOptionalPreparationText(value string, maxBytes int) bool {
-	return value == "" || validRequiredPreparationText(value, maxBytes)
+func validOptionalPreparationText(value string, maxLength int) bool {
+	return value == "" || validRequiredPreparationText(value, maxLength)
 }
 
-func validRequiredPreparationText(value string, maxBytes int) bool {
+func validRequiredPreparationText(value string, maxLength int) bool {
 	return utf8.ValidString(value) &&
 		value != "" &&
-		len(value) <= maxBytes &&
+		utf8.RuneCountInString(value) <= maxLength &&
 		!strings.ContainsRune(value, '\x00') &&
 		strings.TrimSpace(value) == value
 }

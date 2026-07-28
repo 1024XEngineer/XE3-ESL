@@ -220,23 +220,20 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"",
 		http.StatusOK,
 	)
-	replayedAfterArchive, err := voiceRawRequest(
+	replayedAfterArchive := voiceJSONRequest(
+		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		replayPath,
-		nil,
-		"start-replay-after-archive",
 		"",
+		"start-replay-after-archive",
+		http.StatusCreated,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = replayedAfterArchive.Body.Close()
-	if replayedAfterArchive.StatusCode != http.StatusNotFound {
+	if replayedAfterArchive["practice_session_id"] != replayContext.SessionID {
 		t.Fatalf(
-			"archived Matter Start replay status = %d",
-			replayedAfterArchive.StatusCode,
+			"archived Matter replay lost original Session: %#v",
+			replayedAfterArchive,
 		)
 	}
 	state := voiceJSONRequest(
@@ -290,23 +287,40 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"",
 		http.StatusOK,
 	)
-	replayedAfterMatterSwitch, err := voiceRawRequest(
+	replayedAfterMatterSwitch := voiceJSONRequest(
+		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		startPath,
-		nil,
-		"start-voice-session-0001",
 		"",
+		"start-voice-session-0001",
+		http.StatusCreated,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = replayedAfterMatterSwitch.Body.Close()
-	if replayedAfterMatterSwitch.StatusCode != http.StatusNotFound {
+	if replayedAfterMatterSwitch["practice_session_id"] != sessionID ||
+		replayedAfterMatterSwitch["matter"].(map[string]any)["matter_id"] !=
+			matterID {
 		t.Fatalf(
-			"Start replay after active Matter switch status = %d",
-			replayedAfterMatterSwitch.StatusCode,
+			"Start replay after active Matter switch = %#v",
+			replayedAfterMatterSwitch,
+		)
+	}
+	resumedAfterMatterSwitch := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodGet,
+		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"",
+		"",
+		http.StatusOK,
+	)
+	if resumedAfterMatterSwitch["practice_session_id"] != sessionID ||
+		resumedAfterMatterSwitch["matter"].(map[string]any)["matter_id"] !=
+			matterID {
+		t.Fatalf(
+			"GET recovery reinterpreted active Matter: %#v",
+			resumedAfterMatterSwitch,
 		)
 	}
 	conflictingStart, err := voiceRawRequest(
@@ -568,6 +582,23 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	}
 	if text.ReviewCalls() != 1 {
 		t.Fatalf("Review generator calls = %d, want 1", text.ReviewCalls())
+	}
+	replayedAfterCompletion := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		startPath,
+		"",
+		"start-voice-session-0001",
+		http.StatusCreated,
+	)
+	if replayedAfterCompletion["practice_session_id"] != sessionID ||
+		replayedAfterCompletion["session_completed"] != true {
+		t.Fatalf(
+			"completed Start replay did not return original Session: %#v",
+			replayedAfterCompletion,
+		)
 	}
 
 	reviewResult := voiceJSONRequest(

@@ -771,7 +771,7 @@ func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 	}
 }
 
-func TestVoiceHTTPResumeUsesExactActiveMatter(t *testing.T) {
+func TestVoiceHTTPResumeUsesFrozenSessionMatter(t *testing.T) {
 	for _, test := range []struct {
 		name             string
 		activeMatterID   string
@@ -780,16 +780,15 @@ func TestVoiceHTTPResumeUsesExactActiveMatter(t *testing.T) {
 		wantResumeMatter string
 	}{
 		{
-			name:             "exact active Matter",
-			activeMatterID:   "matter-1",
-			wantStatus:       http.StatusOK,
-			wantResumeCalls:  1,
-			wantResumeMatter: "matter-1",
+			name:            "current active Matter matches",
+			activeMatterID:  "matter-1",
+			wantStatus:      http.StatusOK,
+			wantResumeCalls: 1,
 		},
 		{
-			name:            "no active Matter",
-			wantStatus:      http.StatusConflict,
-			wantResumeCalls: 0,
+			name:            "active Matter was cleared",
+			wantStatus:      http.StatusOK,
+			wantResumeCalls: 1,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

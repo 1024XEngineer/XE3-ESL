@@ -739,10 +739,6 @@ func (h *HTTPHandler) startVoiceSession(c *gin.Context) {
 		h.writeAgentError(c, err)
 		return
 	}
-	if thread.ActiveMatterID == "" {
-		h.writeError(c, http.StatusConflict, "resource_conflict", false)
-		return
-	}
 	state, err := h.voice.Start(
 		c.Request.Context(),
 		actor,
@@ -772,15 +768,11 @@ func (h *HTTPHandler) resumeVoiceSession(c *gin.Context) {
 		h.writeAgentError(c, err)
 		return
 	}
-	if thread.ActiveMatterID == "" {
-		h.writeError(c, http.StatusConflict, "resource_conflict", false)
-		return
-	}
 	state, err := h.voice.Resume(
 		c.Request.Context(),
 		actor,
 		thread.ID,
-		thread.ActiveMatterID,
+		"",
 	)
 	if err != nil {
 		h.writeVoiceError(c, err)

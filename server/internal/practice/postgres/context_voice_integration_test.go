@@ -11,6 +11,80 @@ import (
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
 )
 
+func TestContextVoiceStartReplayReturnsPausedSession(t *testing.T) {
+	repository, pool := newContextRepository(t)
+	ctx := context.Background()
+	owner := contextOwnerA()
+	seedContextOwner(t, pool, &owner)
+	plan, _, err := repository.CreatePlan(
+		ctx,
+		owner.Actor,
+		contextPlanCommand(owner, "plan-voice-pause", "plan-voice-pause-key"),
+	)
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	created, _, err := repository.CreateContextSession(
+		ctx,
+		owner.Actor,
+		contextSessionCommand(
+			owner,
+			plan,
+			"session-voice-pause",
+			"snapshot-voice-pause",
+			"session-voice-pause-key",
+		),
+	)
+	if err != nil {
+		t.Fatalf("CreateContextSession: %v", err)
+	}
+	startIntent := contextIntent(
+		"/v1/agent-threads/"+owner.ThreadID+"/voice-practice-sessions",
+		"voice-start-pause-key",
+		"",
+	)
+	activated, err := repository.ActivateContextSession(
+		ctx,
+		owner.Actor,
+		created.Session.ID,
+		owner.ThreadID,
+		owner.MatterID,
+		startIntent,
+	)
+	if err != nil {
+		t.Fatalf("ActivateContextSession: %v", err)
+	}
+	paused, _, err := repository.TransitionContextSession(
+		ctx,
+		owner.Actor,
+		contextTransitionCommand(
+			created.Session.ID,
+			activated.Session.Version,
+			persistence.ContextSessionPause,
+			"pause-voice-start-replay-key",
+		),
+	)
+	if err != nil {
+		t.Fatalf("TransitionContextSession pause: %v", err)
+	}
+	replayed, found, err := repository.ReplayContextVoiceStart(
+		ctx,
+		owner.Actor,
+		startIntent,
+	)
+	if err != nil || !found ||
+		replayed.Session.ID != created.Session.ID ||
+		replayed.Session.Status != persistence.ContextSessionPaused ||
+		replayed.Session.Version != paused.Version {
+		t.Fatalf(
+			"ReplayContextVoiceStart after pause = (%+v, %v, %v)",
+			replayed,
+			found,
+			err,
+		)
+	}
+}
+
 func TestContextVoiceExactActivationRestartAndConcurrentSixthTurn(
 	t *testing.T,
 ) {
@@ -75,6 +149,11 @@ func TestContextVoiceExactActivationRestartAndConcurrentSixthTurn(
 		created.Session.ID,
 		owner.ThreadID,
 		owner.MatterID,
+		contextIntent(
+			"/v1/agent-threads/"+owner.ThreadID+"/voice-practice-sessions",
+			"voice-start-six-key",
+			"",
+		),
 	)
 	if err != nil ||
 		activated.Session.Status != persistence.ContextSessionProgress ||
@@ -88,6 +167,11 @@ func TestContextVoiceExactActivationRestartAndConcurrentSixthTurn(
 		created.Session.ID,
 		owner.ThreadID,
 		owner.MatterID,
+		contextIntent(
+			"/v1/agent-threads/"+owner.ThreadID+"/voice-practice-sessions",
+			"voice-start-six-key",
+			"",
+		),
 	)
 	if err != nil ||
 		replayedActivation.Session.Version != activated.Session.Version ||

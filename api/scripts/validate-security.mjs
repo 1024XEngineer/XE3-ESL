@@ -98,6 +98,33 @@ const bundleOpenApi = async () => {
 
 const openApi = await bundleOpenApi();
 const schemas = openApi.components?.schemas ?? {};
+const preparationProfileRequest =
+  schemas.CreatePreparationProfileRequest?.properties ?? {};
+const preparationTextPattern =
+  preparationProfileRequest.background_summary?.pattern;
+assert.equal(preparationProfileRequest.resume_ref?.maxLength, 16 * 1024);
+assert.equal(
+  preparationProfileRequest.job_description_ref?.maxLength,
+  16 * 1024,
+);
+assert.equal(
+  preparationProfileRequest.background_summary?.maxLength,
+  64 * 1024,
+);
+assert.equal(
+  preparationProfileRequest.resume_ref?.pattern,
+  preparationTextPattern,
+);
+assert.equal(
+  preparationProfileRequest.job_description_ref?.pattern,
+  preparationTextPattern,
+);
+const preparationTextExpression = new RegExp(preparationTextPattern, 'u');
+assert.match('a', preparationTextExpression);
+assert.match('internal whitespace is allowed', preparationTextExpression);
+assert.doesNotMatch(' leading', preparationTextExpression);
+assert.doesNotMatch('trailing ', preparationTextExpression);
+assert.doesNotMatch('contains\u0000nul', preparationTextExpression);
 const responses = openApi.components?.responses ?? {};
 
 const resolveLocalReference = (value) => {
