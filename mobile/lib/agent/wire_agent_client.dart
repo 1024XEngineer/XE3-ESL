@@ -10,7 +10,11 @@ import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 
-final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
+final class WireAgentClient
+    implements
+        AgentClient,
+        AgentThreadHistoryClient,
+        AgentPracticeAvailability {
   factory WireAgentClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -70,6 +74,7 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
   final Set<Future<void>> _inFlightOperations = <Future<void>>{};
   final Map<String, _FailedRun> _failedRuns = <String, _FailedRun>{};
   final Set<String> _ambiguousSubmissions = <String>{};
+  _AmbiguousThreadCreation? _ambiguousThreadCreation;
   Future<void>? _cleanupFuture;
 
   @override
@@ -94,6 +99,7 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
     _accountGeneration++;
     _failedRuns.clear();
     _ambiguousSubmissions.clear();
+    _ambiguousThreadCreation = null;
     final staleOperations = List<Future<void>>.of(_inFlightOperations);
     if (_ownsTransport) {
       (_transport as _IoAgentHttpTransport).close(force: true);
@@ -107,44 +113,165 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
   @override
   Future<AgentThreadSnapshot> restoreThread() {
     return _runAccountOperation((generation) async {
-      final listResponse = await _send(
+      final page = await _fetchThreadPage(generation: generation);
+      _requireCurrentGeneration(generation);
+      final thread = _ambiguousThreadCreation != null
+          ? await _recoverAmbiguousThreadCreation(generation, page: page)
+          : page.threads.isEmpty
+          ? await _createWireThreadSafely(generation, baseline: page)
+          : page.threads.first;
+      return _hydrateThread(generation: generation, thread: thread);
+    });
+  }
+
+  @override
+  Future<AgentThreadPage> listThreads({int pageSize = 20, String? cursor}) {
+    return _runAccountOperation((generation) async {
+      _requirePageArguments(pageSize: pageSize, cursor: cursor);
+      final page = await _fetchThreadPage(
+        generation: generation,
+        pageSize: pageSize,
+        cursor: cursor,
+      );
+      return page.presentation;
+    });
+  }
+
+  @override
+  Future<AgentThreadSnapshot?> getFocusedThread() {
+    return _runAccountOperation((generation) async {
+      final response = await _send(
         generation: generation,
         method: 'GET',
-        path: '/v1/agent-threads',
+        path: '/v1/agent-threads/focused',
       );
-      _requireStatus(listResponse, const <int>{HttpStatus.ok});
-      final threads = _decodeThreadList(listResponse.body);
-      _requireCurrentGeneration(generation);
-
-      final thread = threads.isEmpty
-          ? await _createThread(generation)
-          : threads.first;
-      final activeMatter = thread.activeMatterId == null
-          ? null
-          : await _loadMatter(
-              generation: generation,
-              matterId: thread.activeMatterId!,
-            );
-      final messages = await _listMessages(
+      _requireStatus(response, const <int>{
+        HttpStatus.ok,
+        HttpStatus.noContent,
+      });
+      if (response.statusCode == HttpStatus.noContent) {
+        _requireEmptyBody(response);
+        return null;
+      }
+      return _hydrateThread(
         generation: generation,
-        threadId: thread.id,
-      );
-      _requireCurrentGeneration(generation);
-      final recovery = await _restoreLastTextRun(
-        generation: generation,
-        threadId: thread.id,
-        messages: messages,
-      );
-      return AgentThreadSnapshot(
-        threadId: thread.id,
-        activeMatter: activeMatter,
-        textRecovery: recovery.failure,
-        messages: [
-          for (final message in messages) message.presentation,
-          ?recovery.completedAssistant,
-        ],
+        thread: _decodeThread(response.body),
       );
     });
+  }
+
+  @override
+  Future<AgentThreadSummary> createThread() {
+    return _runAccountOperation((generation) async {
+      final thread = await _createWireThreadSafely(generation);
+      return thread.presentation;
+    });
+  }
+
+  @override
+  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) {
+    return _runAccountOperation((generation) async {
+      _requireUuid(threadId);
+      final response = await _send(
+        generation: generation,
+        method: 'PUT',
+        path: '/v1/agent-threads/focused',
+        body: <String, Object?>{'thread_id': threadId},
+      );
+      _requireStatus(response, const <int>{HttpStatus.ok});
+      final thread = _decodeThread(response.body);
+      if (thread.id != threadId) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidResponse,
+          retryable: true,
+        );
+      }
+      return _hydrateThread(generation: generation, thread: thread);
+    });
+  }
+
+  @override
+  Future<void> clearFocusedThread() {
+    return _runAccountOperation((generation) async {
+      final response = await _send(
+        generation: generation,
+        method: 'DELETE',
+        path: '/v1/agent-threads/focused',
+      );
+      _requireStatus(response, const <int>{HttpStatus.noContent});
+      _requireEmptyBody(response);
+    });
+  }
+
+  @override
+  Future<AgentMessagePage> listMessages({
+    required String threadId,
+    int pageSize = 50,
+    String? cursor,
+  }) {
+    return _runAccountOperation((generation) async {
+      _requireUuid(threadId);
+      _requirePageArguments(pageSize: pageSize, cursor: cursor);
+      final page = await _fetchMessagePage(
+        generation: generation,
+        threadId: threadId,
+        pageSize: pageSize,
+        cursor: cursor,
+      );
+      return page.presentation;
+    });
+  }
+
+  Future<_WireThreadPage> _fetchThreadPage({
+    required int generation,
+    int? pageSize,
+    String? cursor,
+  }) async {
+    final response = await _send(
+      generation: generation,
+      method: 'GET',
+      path: '/v1/agent-threads',
+      queryParameters: <String, String>{
+        'page_size': ?pageSize?.toString(),
+        'cursor': ?cursor,
+      },
+    );
+    _requireStatus(response, const <int>{HttpStatus.ok});
+    return _decodeThreadPage(response.body);
+  }
+
+  Future<AgentThreadSnapshot> _hydrateThread({
+    required int generation,
+    required _WireThread thread,
+  }) async {
+    final activeMatter = thread.activeMatterId == null
+        ? null
+        : await _loadMatter(
+            generation: generation,
+            matterId: thread.activeMatterId!,
+          );
+    final messagePage = await _fetchMessagePage(
+      generation: generation,
+      threadId: thread.id,
+    );
+    _requireCurrentGeneration(generation);
+    final recovery = await _restoreLastTextRun(
+      generation: generation,
+      threadId: thread.id,
+      messages: messagePage.messages,
+    );
+    return AgentThreadSnapshot(
+      threadId: thread.id,
+      activeMatter: activeMatter,
+      textRecovery: recovery.failure,
+      messages: <AgentMessage>[
+        for (final message in messagePage.messages) message.presentation,
+        ?recovery.completedAssistant,
+      ],
+      createdAt: thread.createdAt,
+      updatedAt: thread.updatedAt,
+      nextMessageCursor: messagePage.nextCursor,
+    );
   }
 
   Future<_RestoredTextRun> _restoreLastTextRun({
@@ -225,7 +352,7 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
     );
   }
 
-  Future<_WireThread> _createThread(int generation) async {
+  Future<_WireThread> _createWireThread(int generation) async {
     final response = await _send(
       generation: generation,
       method: 'POST',
@@ -234,6 +361,70 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
     );
     _requireStatus(response, const <int>{HttpStatus.created});
     return _decodeThread(response.body);
+  }
+
+  Future<_WireThread> _createWireThreadSafely(
+    int generation, {
+    _WireThreadPage? baseline,
+  }) async {
+    if (_ambiguousThreadCreation != null) {
+      return _recoverAmbiguousThreadCreation(generation);
+    }
+    final authoritativeBaseline =
+        baseline ??
+        await _fetchThreadPage(generation: generation, pageSize: 100);
+    _requireCurrentGeneration(generation);
+    final ambiguity = _AmbiguousThreadCreation(
+      knownThreadIds: <String>{
+        for (final thread in authoritativeBaseline.threads) thread.id,
+      },
+    );
+    try {
+      return await _createWireThread(generation);
+    } on AgentClientException catch (error) {
+      if (!_isAmbiguousThreadCreateFailure(error)) {
+        rethrow;
+      }
+      _requireCurrentGeneration(generation);
+      _ambiguousThreadCreation = ambiguity;
+      return _recoverAmbiguousThreadCreation(generation);
+    }
+  }
+
+  Future<_WireThread> _recoverAmbiguousThreadCreation(
+    int generation, {
+    _WireThreadPage? page,
+  }) async {
+    final ambiguity = _ambiguousThreadCreation;
+    if (ambiguity == null) {
+      throw const AgentClientException(kind: AgentClientFailureKind.unexpected);
+    }
+    try {
+      final authoritativePage =
+          page ?? await _fetchThreadPage(generation: generation, pageSize: 100);
+      _requireCurrentGeneration(generation);
+      final candidates = <_WireThread>[
+        for (final thread in authoritativePage.threads)
+          if (!ambiguity.knownThreadIds.contains(thread.id)) thread,
+      ];
+      if (candidates.length != 1) {
+        throw const _UnresolvedThreadCreation();
+      }
+      _ambiguousThreadCreation = null;
+      return candidates.single;
+    } on AgentClientOperationCancelled {
+      rethrow;
+    } catch (_) {
+      _requireCurrentGeneration(generation);
+      throw _ambiguousThreadCreationFailure;
+    }
+  }
+
+  bool _isAmbiguousThreadCreateFailure(AgentClientException error) {
+    return error.kind == AgentClientFailureKind.network ||
+        error.kind == AgentClientFailureKind.server ||
+        error.kind == AgentClientFailureKind.invalidResponse ||
+        error.kind == AgentClientFailureKind.unexpected;
   }
 
   Future<AgentMatter> _loadMatter({
@@ -497,13 +688,13 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
       );
     }
     for (var attempt = 0; attempt < _maxMessagePollAttempts; attempt++) {
-      final messages = await _listMessages(
+      final messagePage = await _fetchMessagePage(
         generation: generation,
         threadId: run.threadId,
       );
       _WireMessage? userMessage;
       _WireMessage? assistantMessage;
-      for (final message in messages) {
+      for (final message in messagePage.messages) {
         if (message.id == run.inputMessageId) {
           userMessage = message;
         }
@@ -534,17 +725,23 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
     );
   }
 
-  Future<List<_WireMessage>> _listMessages({
+  Future<_WireMessagePage> _fetchMessagePage({
     required int generation,
     required String threadId,
+    int? pageSize,
+    String? cursor,
   }) async {
     final response = await _send(
       generation: generation,
       method: 'GET',
       path: '/v1/agent-threads/$threadId/messages',
+      queryParameters: <String, String>{
+        'page_size': ?pageSize?.toString(),
+        'cursor': ?cursor,
+      },
     );
     _requireStatus(response, const <int>{HttpStatus.ok});
-    return _decodeMessageList(response.body, expectedThreadId: threadId);
+    return _decodeMessagePage(response.body, expectedThreadId: threadId);
   }
 
   Future<void> _waitForPoll(int generation) async {
@@ -647,6 +844,7 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
     required int generation,
     required String method,
     required String path,
+    Map<String, String>? queryParameters,
     Map<String, Object?>? body,
   }) async {
     _requireCurrentGeneration(generation);
@@ -658,7 +856,10 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
         errorCode: 'authentication_required',
       );
     }
-    final uri = _baseUri.resolve(path);
+    final resolvedUri = _baseUri.resolve(path);
+    final uri = queryParameters == null || queryParameters.isEmpty
+        ? resolvedUri
+        : resolvedUri.replace(queryParameters: queryParameters);
     _trustedOrigin.validateResourceUri(uri);
     validateNoSessionCredentialInUri(
       uri,
@@ -742,6 +943,15 @@ final class WireAgentClient implements AgentClient, AgentPracticeAvailability {
   ) {
     if (!expectedStatuses.contains(response.statusCode)) {
       throw _exceptionFor(response);
+    }
+  }
+
+  void _requireEmptyBody(IdentityHttpResponse response) {
+    if (response.body.isNotEmpty) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
     }
   }
 
@@ -873,6 +1083,23 @@ const AgentClientException _practiceUnavailable = AgentClientException(
   kind: AgentClientFailureKind.unavailable,
 );
 
+const AgentClientException _ambiguousThreadCreationFailure =
+    AgentClientException(
+      kind: AgentClientFailureKind.network,
+      errorCode: 'thread_creation_ambiguous',
+      retryable: true,
+    );
+
+final class _AmbiguousThreadCreation {
+  const _AmbiguousThreadCreation({required this.knownThreadIds});
+
+  final Set<String> knownThreadIds;
+}
+
+final class _UnresolvedThreadCreation implements Exception {
+  const _UnresolvedThreadCreation();
+}
+
 final class _FailedRun {
   const _FailedRun({
     required this.runId,
@@ -906,10 +1133,44 @@ final class _WireMatter {
 }
 
 final class _WireThread {
-  const _WireThread({required this.id, this.activeMatterId});
+  const _WireThread({
+    required this.id,
+    required this.createdAt,
+    required this.updatedAt,
+    this.activeMatterId,
+  });
 
   final String id;
   final String? activeMatterId;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  AgentThreadSummary get presentation => AgentThreadSummary(
+    id: id,
+    activeMatterId: activeMatterId,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  );
+}
+
+final class _WireThreadPage {
+  const _WireThreadPage({
+    required this.threads,
+    this.focusedThreadId,
+    this.nextCursor,
+  });
+
+  final List<_WireThread> threads;
+  final String? focusedThreadId;
+  final String? nextCursor;
+
+  AgentThreadPage get presentation => AgentThreadPage(
+    threads: List<AgentThreadSummary>.unmodifiable(
+      threads.map((thread) => thread.presentation),
+    ),
+    focusedThreadId: focusedThreadId,
+    nextCursor: nextCursor,
+  );
 }
 
 final class _WireMessage {
@@ -918,19 +1179,46 @@ final class _WireMessage {
     required this.role,
     required this.content,
     required this.sequence,
+    required this.createdAt,
+    required this.modality,
     this.clientMessageId,
     this.producedByRunId,
+    this.audio,
   });
 
   final String id;
   final AgentMessageRole role;
   final String content;
   final int sequence;
+  final DateTime createdAt;
+  final AgentMessageModality modality;
   final String? clientMessageId;
   final String? producedByRunId;
+  final AgentMessageAudio? audio;
 
-  AgentMessage get presentation =>
-      AgentMessage(id: id, role: role, text: content);
+  AgentMessage get presentation => AgentMessage(
+    id: id,
+    role: role,
+    text: content,
+    sequence: sequence,
+    createdAt: createdAt,
+    modality: modality,
+    audio: audio,
+  );
+}
+
+final class _WireMessagePage {
+  const _WireMessagePage({required this.messages, this.nextCursor});
+
+  final List<_WireMessage> messages;
+  final String? nextCursor;
+
+  AgentMessagePage get presentation => AgentMessagePage(
+    messages: List<AgentMessage>.unmodifiable(
+      messages.map((message) => message.presentation),
+    ),
+    nextCursor: nextCursor,
+  );
 }
 
 final class _RestoredTextRun {
@@ -1057,15 +1345,42 @@ void _decodeMatterLink(
   });
 }
 
-List<_WireThread> _decodeThreadList(String body) {
+_WireThreadPage _decodeThreadPage(String body) {
   return _decodeBody(body, (value) {
     final root = _strictObject(
       value,
-      allowed: const <String>{'threads'},
+      allowed: const <String>{'threads', 'focused_thread_id', 'next_cursor'},
       required: const <String>{'threads'},
     );
-    final values = _strictList(root['threads'], maxLength: 1000);
-    return [for (final item in values) _decodeThreadObject(item)];
+    final values = _strictList(root['threads'], maxLength: 100);
+    final threads = <_WireThread>[];
+    final threadIds = <String>{};
+    _WireThread? previous;
+    for (final value in values) {
+      final thread = _decodeThreadObject(value);
+      if (!threadIds.add(thread.id) ||
+          (previous != null &&
+              (thread.updatedAt.isAfter(previous.updatedAt) ||
+                  (thread.updatedAt == previous.updatedAt &&
+                      previous.id.compareTo(thread.id) <= 0)))) {
+        throw const _InvalidAgentResponse();
+      }
+      threads.add(thread);
+      previous = thread;
+    }
+    return _WireThreadPage(
+      threads: threads,
+      focusedThreadId: _absentOnlyOptional(
+        root,
+        'focused_thread_id',
+        _strictUuid,
+      ),
+      nextCursor: _absentOnlyOptional(
+        root,
+        'next_cursor',
+        (value) => _strictString(value, minLength: 1, maxLength: 1024),
+      ),
+    );
   });
 }
 
@@ -1085,28 +1400,35 @@ _WireThread _decodeThreadObject(Object? value) {
     required: const <String>{'thread_id', 'created_at', 'updated_at'},
   );
   final id = _strictUuid(object['thread_id']);
-  final activeMatterId = object['active_matter_id'] == null
-      ? null
-      : _strictUuid(object['active_matter_id']);
+  final activeMatterId = _absentOnlyOptional(
+    object,
+    'active_matter_id',
+    _strictUuid,
+  );
   final createdAt = _strictDateTime(object['created_at']);
   final updatedAt = _strictDateTime(object['updated_at']);
   if (updatedAt.isBefore(createdAt)) {
     throw const _InvalidAgentResponse();
   }
-  return _WireThread(id: id, activeMatterId: activeMatterId);
+  return _WireThread(
+    id: id,
+    activeMatterId: activeMatterId,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  );
 }
 
-List<_WireMessage> _decodeMessageList(
+_WireMessagePage _decodeMessagePage(
   String body, {
   required String expectedThreadId,
 }) {
   return _decodeBody(body, (value) {
     final root = _strictObject(
       value,
-      allowed: const <String>{'messages'},
+      allowed: const <String>{'messages', 'next_cursor'},
       required: const <String>{'messages'},
     );
-    final values = _strictList(root['messages'], maxLength: 10000);
+    final values = _strictList(root['messages'], maxLength: 100);
     final result = <_WireMessage>[];
     final messageIds = <String>{};
     var previousSequence = 0;
@@ -1121,7 +1443,14 @@ List<_WireMessage> _decodeMessageList(
       previousSequence = message.sequence;
       result.add(message);
     }
-    return result;
+    return _WireMessagePage(
+      messages: result,
+      nextCursor: _absentOnlyOptional(
+        root,
+        'next_cursor',
+        (value) => _strictString(value, minLength: 1, maxLength: 1024),
+      ),
+    );
   });
 }
 
@@ -1138,7 +1467,9 @@ _WireMessage _decodeMessageObject(
       'role',
       'client_message_id',
       'produced_by_run_id',
+      'modality',
       'content',
+      'audio',
       'created_at',
     },
     required: const <String>{
@@ -1169,17 +1500,35 @@ _WireMessage _decodeMessageObject(
   if (content.trim().isEmpty || utf8.encode(content).length > 16384) {
     throw const _InvalidAgentResponse();
   }
-  _strictDateTime(object['created_at']);
-  final clientMessageId = object['client_message_id'] == null
-      ? null
-      : _strictClientIdentity(object['client_message_id']);
-  final producedByRunId = object['produced_by_run_id'] == null
-      ? null
-      : _strictUuid(object['produced_by_run_id']);
+  final createdAt = _strictDateTime(object['created_at']);
+  final modality = _absentOnlyOptional(
+    object,
+    'modality',
+    (value) => switch (_strictString(value, minLength: 1, maxLength: 16)) {
+      'voice' => AgentMessageModality.voice,
+      _ => throw const _InvalidAgentResponse(),
+    },
+  );
+  final audio = _absentOnlyOptional(object, 'audio', _decodeMessageAudio);
+  final effectiveModality = modality ?? AgentMessageModality.text;
+  final clientMessageId = _absentOnlyOptional(
+    object,
+    'client_message_id',
+    _strictClientIdentity,
+  );
+  final producedByRunId = _absentOnlyOptional(
+    object,
+    'produced_by_run_id',
+    _strictUuid,
+  );
   if ((role == AgentMessageRole.user &&
           (clientMessageId == null || producedByRunId != null)) ||
       (role == AgentMessageRole.assistant &&
-          (clientMessageId != null || producedByRunId == null))) {
+          (clientMessageId != null || producedByRunId == null)) ||
+      (effectiveModality == AgentMessageModality.voice && audio == null) ||
+      (effectiveModality == AgentMessageModality.text && audio != null) ||
+      (effectiveModality == AgentMessageModality.voice &&
+          role != AgentMessageRole.user)) {
     throw const _InvalidAgentResponse();
   }
   return _WireMessage(
@@ -1187,8 +1536,84 @@ _WireMessage _decodeMessageObject(
     role: role,
     content: content,
     sequence: sequence,
+    createdAt: createdAt,
+    modality: effectiveModality,
     clientMessageId: clientMessageId,
     producedByRunId: producedByRunId,
+    audio: audio,
+  );
+}
+
+AgentMessageAudio _decodeMessageAudio(Object? value) {
+  final object = _strictObject(
+    value,
+    allowed: const <String>{
+      'audio_id',
+      'status',
+      'content_type',
+      'size_bytes',
+      'duration_ms',
+      'playback_path',
+      'deleted_at',
+    },
+    required: const <String>{
+      'audio_id',
+      'status',
+      'content_type',
+      'size_bytes',
+      'duration_ms',
+    },
+  );
+  final id = _strictUuid(object['audio_id']);
+  final status = switch (_strictString(
+    object['status'],
+    minLength: 1,
+    maxLength: 16,
+  )) {
+    'readable' => AgentMessageAudioStatus.readable,
+    'deleting' => AgentMessageAudioStatus.deleting,
+    'deleted' => AgentMessageAudioStatus.deleted,
+    _ => throw const _InvalidAgentResponse(),
+  };
+  if (_strictString(object['content_type'], minLength: 1, maxLength: 32) !=
+      'audio/wav') {
+    throw const _InvalidAgentResponse();
+  }
+  final sizeBytes = _strictInt(
+    object['size_bytes'],
+    minimum: 1,
+    maximum: 7400000,
+  );
+  final durationMs = _strictInt(
+    object['duration_ms'],
+    minimum: 1,
+    maximum: 60000,
+  );
+  final playbackPath = _absentOnlyOptional(
+    object,
+    'playback_path',
+    (value) => _strictPatternString(
+      value,
+      pattern: _agentMessageAudioPlaybackPathPattern,
+      maxLength: 256,
+    ),
+  );
+  final deletedAt = _absentOnlyOptional(object, 'deleted_at', _strictDateTime);
+  if ((status == AgentMessageAudioStatus.readable &&
+          (playbackPath == null || deletedAt != null)) ||
+      (status == AgentMessageAudioStatus.deleting && playbackPath != null) ||
+      (status == AgentMessageAudioStatus.deleted &&
+          (playbackPath != null || deletedAt == null))) {
+    throw const _InvalidAgentResponse();
+  }
+  return AgentMessageAudio(
+    id: id,
+    status: status,
+    contentType: 'audio/wav',
+    sizeBytes: sizeBytes,
+    duration: Duration(milliseconds: durationMs),
+    playbackPath: playbackPath,
+    deletedAt: deletedAt,
   );
 }
 
@@ -1423,6 +1848,21 @@ Map<String, Object?> _strictObject(
   return result;
 }
 
+T? _absentOnlyOptional<T>(
+  Map<String, Object?> object,
+  String key,
+  T Function(Object? value) decode,
+) {
+  if (!object.containsKey(key)) {
+    return null;
+  }
+  final value = object[key];
+  if (value == null) {
+    throw const _InvalidAgentResponse();
+  }
+  return decode(value);
+}
+
 List<Object?> _strictList(Object? value, {required int maxLength}) {
   if (value is! List || value.length > maxLength) {
     throw const _InvalidAgentResponse();
@@ -1469,8 +1909,10 @@ String _strictClientIdentity(Object? value) {
   );
 }
 
-int _strictInt(Object? value, {required int minimum}) {
-  if (value is! int || value < minimum) {
+int _strictInt(Object? value, {required int minimum, int? maximum}) {
+  if (value is! int ||
+      value < minimum ||
+      (maximum != null && value > maximum)) {
     throw const _InvalidAgentResponse();
   }
   return value;
@@ -1494,6 +1936,17 @@ DateTime _strictDateTime(Object? value) {
 
 void _requireUuid(String value) {
   if (!_uuidPattern.hasMatch(value)) {
+    throw const AgentClientException(
+      kind: AgentClientFailureKind.invalidRequest,
+    );
+  }
+}
+
+void _requirePageArguments({required int pageSize, required String? cursor}) {
+  if (pageSize < 1 ||
+      pageSize > 100 ||
+      (cursor != null &&
+          (cursor.runes.isEmpty || cursor.runes.length > 1024))) {
     throw const AgentClientException(
       kind: AgentClientFailureKind.invalidRequest,
     );
@@ -1526,6 +1979,9 @@ final RegExp _clientIdentityPattern = RegExp(
 );
 final RegExp _providerPattern = RegExp(r'^[a-z][a-z0-9_-]{0,63}$');
 final RegExp _failureKindPattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');
+final RegExp _agentMessageAudioPlaybackPathPattern = RegExp(
+  r'^/v1/agent-message-audios/[0-9a-f-]+/playback$',
+);
 const Set<String> _knownRunFailureKinds = <String>{
   'interrupted',
   'invalid_context',

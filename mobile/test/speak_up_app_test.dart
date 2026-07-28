@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
@@ -164,6 +166,173 @@ void main() {
     );
   });
 
+  testWidgets(
+    'no focused Thread shows CTAs and disables text and voice input',
+    (tester) async {
+      var createCalls = 0;
+      var openCalls = 0;
+      var voiceCalls = 0;
+      var submitCalls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ConversationPage(
+            hasFocusedThread: false,
+            onCreateConversation: () => createCalls++,
+            onOpenMenu: () => openCalls++,
+            onVoicePlaceholder: () => voiceCalls++,
+            onSubmitText: (_) async {
+              submitCalls++;
+              return true;
+            },
+          ),
+        ),
+      );
+
+      expect(
+        find.byKey(const Key('no-focused-conversation-home')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
+            .enabled,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(const Key('agent-send-button')))
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<IconButton>(
+              find.descendant(
+                of: find.byKey(const Key('agent-mic-placeholder')),
+                matching: find.byType(IconButton),
+              ),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      await tester.tap(find.byKey(const Key('no-focused-create-conversation')));
+      await tester.tap(find.byKey(const Key('no-focused-open-conversations')));
+
+      expect(createCalls, 1);
+      expect(openCalls, 1);
+      expect(voiceCalls, 0);
+      expect(submitCalls, 0);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ConversationPage(
+            hasFocusedThread: false,
+            isBusy: true,
+            onCreateConversation: () => createCalls++,
+            onOpenMenu: () => openCalls++,
+          ),
+        ),
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const Key('no-focused-create-conversation')),
+            )
+            .onPressed,
+        isNull,
+      );
+    },
+  );
+
+  testWidgets('older Message pagination is visible and accessible', (
+    tester,
+  ) async {
+    var loadCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationPage(
+          messages: const <AgentMessage>[
+            AgentMessage(
+              id: 'current-message',
+              role: AgentMessageRole.assistant,
+              text: 'Current message',
+              sequence: 2,
+            ),
+          ],
+          hasEarlierMessages: true,
+          onLoadEarlierMessages: () => loadCalls++,
+        ),
+      ),
+    );
+    final semantics = tester.ensureSemantics();
+    final loadButton = find.byKey(const Key('load-earlier-agent-messages'));
+
+    expect(loadButton, findsOneWidget);
+    expect(
+      tester.getSemantics(loadButton),
+      isSemantics(label: '加载更早消息', isButton: true, hasTapAction: true),
+    );
+    await tester.tap(loadButton);
+    expect(loadCalls, 1);
+    semantics.dispose();
+  });
+
+  testWidgets(
+    'keeps conversation controls fixed and omits the generic thread heading',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final messages = List<AgentMessage>.generate(
+        28,
+        (index) => AgentMessage(
+          id: 'scroll-message-$index',
+          role: index.isEven
+              ? AgentMessageRole.user
+              : AgentMessageRole.assistant,
+          text: 'Conversation message $index with enough text to scroll.',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ConversationPage(
+            messages: messages,
+            onOpenMenu: () {},
+            onCreateConversation: () {},
+            onSubmitText: (_) async => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Agent 对话'), findsNothing);
+      expect(find.byKey(const Key('agent-thread-title')), findsNothing);
+      final menu = find.byKey(const Key('conversation-menu-button'));
+      final create = find.byKey(const Key('conversation-create-button'));
+      final fixedTitle = find.byKey(const Key('conversation-fixed-title'));
+      final menuBefore = tester.getRect(menu);
+      final createBefore = tester.getRect(create);
+      final titleBefore = tester.getRect(fixedTitle);
+      final scroll = find.byType(SingleChildScrollView);
+      final scrollController = tester
+          .widget<SingleChildScrollView>(scroll)
+          .controller!;
+      final pixelsBefore = scrollController.position.pixels;
+      expect(pixelsBefore, greaterThan(0));
+
+      await tester.drag(scroll, const Offset(0, 360));
+      await tester.pumpAndSettle();
+
+      expect(scrollController.position.pixels, lessThan(pixelsBefore));
+      expect(tester.getRect(menu), menuBefore);
+      expect(tester.getRect(create), createBefore);
+      expect(tester.getRect(fixedTitle), titleBefore);
+    },
+  );
+
   testWidgets('keeps all four Agent actions above the composer on iPhone', (
     tester,
   ) async {
@@ -196,10 +365,11 @@ void main() {
     expect(composerRect.top - lastActionRect.bottom, greaterThanOrEqualTo(16));
   });
 
-  testWidgets('conversation drawer contains no duplicate primary navigation', (
+  testWidgets('conversation drawer exposes bounded Thread actions only', (
     tester,
   ) async {
     await tester.pumpWidget(const SpeakUpApp.preview());
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('conversation-menu-button')));
     await tester.pumpAndSettle();
@@ -211,11 +381,11 @@ void main() {
         of: drawer,
         matching: find.byKey(const Key('new-conversation-button')),
       ),
-      findsNothing,
+      findsOneWidget,
     );
     expect(
-      find.descendant(of: drawer, matching: find.text('开始新对话')),
-      findsNothing,
+      find.descendant(of: drawer, matching: find.text('新对话')),
+      findsOneWidget,
     );
     expect(
       find.descendant(of: drawer, matching: find.text('当前对话')),
@@ -223,6 +393,17 @@ void main() {
     );
     expect(
       find.descendant(of: drawer, matching: find.text('本地 Fake 预览，未连接正式账号')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.byKey(const Key('focused-conversation-indicator')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: drawer, matching: find.text('近期对话')),
       findsOneWidget,
     );
     expect(
@@ -238,6 +419,42 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets(
+    'new conversation becomes selected and the old one stays recent',
+    (tester) async {
+      final controller = AgentController(client: FakeAgentClient());
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
+      await tester.pumpAndSettle();
+      final originalThreadId = controller.threadId;
+
+      await tester.tap(find.byKey(const Key('conversation-menu-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-conversation-button')));
+      await tester.pumpAndSettle();
+
+      expect(controller.threadId, isNot(originalThreadId));
+      expect(find.byType(Drawer), findsNothing);
+
+      await tester.tap(find.byKey(const Key('conversation-menu-button')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(Key('conversation-thread-${controller.threadId}')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(Key('conversation-thread-$originalThreadId')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(Key('conversation-thread-$originalThreadId')),
+      );
+      await tester.pumpAndSettle();
+      expect(controller.threadId, originalThreadId);
+    },
+  );
 
   testWidgets('Agent actions reuse the existing feature entry points', (
     tester,
@@ -417,7 +634,10 @@ void main() {
       expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
       expect(tester.takeException(), isNull);
       final selectedLabel = tester.renderObject<RenderParagraph>(
-        find.text('SpeakUp'),
+        find.descendant(
+          of: find.byKey(const Key('primary-navigation')),
+          matching: find.text('SpeakUp'),
+        ),
       );
       expect(selectedLabel.didExceedMaxLines, isFalse);
 
@@ -447,6 +667,14 @@ void main() {
       expect(find.byType(Drawer), findsOneWidget);
 
       await tester.drag(find.byType(ListView), const Offset(0, -1000));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('no-recent-conversations')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.drag(find.byType(ListView), const Offset(0, 1000));
       await tester.pumpAndSettle();
       final accountLabel = find.text('本地 Fake 预览，未连接正式账号');
       expect(accountLabel.hitTestable(), findsOneWidget);

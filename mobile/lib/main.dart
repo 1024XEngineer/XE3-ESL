@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
+import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/features/preparation/wire_preparation_client.dart';
@@ -53,30 +55,52 @@ ProductionAppDependencies createProductionAppDependencies({
   required Uri baseUri,
   IdentityHttpTransport? identityTransport,
   IdentityHttpTransport? agentTransport,
+  AgentVoiceWireTransport? agentVoiceTransport,
+  AgentVoiceWireTransport? signedAgentVoiceTransport,
   IdentityHttpTransport? preparationTransport,
   IdentityHttpTransport? reviewHistoryTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
   PracticeMediaWireTransport? signedAudioTransport,
   PracticeRecorder? practiceRecorder,
+  AgentVoiceRecorder? agentVoiceRecorder,
+  AgentVoiceAudioPlayer? agentVoiceAudioPlayer,
   PracticeMediaClient? practiceMediaClient,
   PracticeAudioPlayer? practiceAudioPlayer,
   SessionStore? sessionStore,
 }) {
   late final AuthController authController;
+  final agentClient = WireAgentClient(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    transport: agentTransport,
+  );
+  final agentVoiceClient = WireAgentVoiceClient(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    apiTransport: agentVoiceTransport,
+    signedAudioTransport: signedAgentVoiceTransport,
+  );
   final agentController = AgentController(
-    client: WireAgentClient(
-      baseUri: baseUri,
-      credentialProvider: () => authController.currentCredential,
-      invalidateSession:
-          ({required expectedSessionToken, required expectedGeneration}) {
-            return authController.invalidateSession(
-              expectedSessionToken: expectedSessionToken,
-              expectedGeneration: expectedGeneration,
-            );
-          },
-      transport: agentTransport,
-    ),
+    client: agentClient,
+    voiceClient: agentVoiceClient,
+    voiceRecorder: agentVoiceRecorder ?? IosAgentVoiceRecorder(),
+    voiceAudioPlayer:
+        agentVoiceAudioPlayer ?? AudioplayersAgentVoiceAudioPlayer(),
     practiceClient: WirePracticeClient(
       baseUri: baseUri,
       credentialProvider: () => authController.currentCredential,

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/features/conversation/conversation.dart';
@@ -126,23 +127,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     Navigator.of(context).pushNamed(AppRoutes.practice);
   }
 
-  void _openVoicePractice() {
-    if (!widget.agentController.supportsPracticeFlow) {
-      _showMockNotice('语音练习尚未开放，当前可以使用 Agent 文本对话');
-      return;
-    }
-    if (widget.agentController.review != null) {
-      _selectDestination(2);
-      return;
-    }
-    if (!widget.agentController.hasActivePractice) {
-      _selectDestination(1);
-      _showMockNotice('请先选择一个练习场景');
-      return;
-    }
-    _openPractice();
-  }
-
   void _handleAgentState() {
     if (!mounted) {
       return;
@@ -183,6 +167,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         restingComposerBottom: composerBottomInset,
+        threadId: widget.agentController.threadId,
         onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
@@ -190,14 +175,36 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onCreatePlan: () => _selectDestination(1),
         onContinuePractice: _openPractice,
         onOpenReview: () => _selectDestination(2),
-        onVoicePlaceholder: practiceAvailable ? _openVoicePractice : null,
+        onStartVoice: widget.agentController.supportsAgentVoice
+            ? () => unawaited(widget.agentController.startAgentVoiceRecording())
+            : null,
+        voiceController: widget.agentController.voiceController,
+        onCreateConversation: widget.agentController.supportsThreadHistory
+            ? () => unawaited(widget.agentController.createThread())
+            : null,
         messages: widget.agentController.messages,
         activeScene: widget.agentController.scene,
+        hasFocusedThread:
+            !widget.agentController.isInitialized ||
+            widget.agentController.threadId != null,
+        hasEarlierMessages: widget.agentController.hasEarlierMessages,
+        isLoadingEarlierMessages:
+            widget.agentController.isLoadingEarlierMessages,
         isBusy: widget.agentController.isBusy,
-        errorMessage: widget.agentController.errorMessage,
+        errorMessage:
+            widget.agentController.errorMessage ??
+            (widget.agentController.canRetryThreadHistory
+                ? widget.agentController.threadHistoryErrorMessage
+                : null),
         onSubmitText: widget.agentController.sendText,
         onRetryOperation: widget.agentController.canRetry
             ? widget.agentController.retryLastOperation
+            : widget.agentController.canRetryThreadHistory &&
+                  !widget.agentController.isBusy
+            ? widget.agentController.retryThreadHistory
+            : null,
+        onLoadEarlierMessages: widget.agentController.hasEarlierMessages
+            ? widget.agentController.loadEarlierMessages
             : null,
       ),
       PreparationPage(
@@ -227,7 +234,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       extendBody: true,
       resizeToAvoidBottomInset: false,
       backgroundColor: Colors.transparent,
-      drawer: _ConversationDrawer(previewMode: widget.previewMode),
+      drawer: _ConversationDrawer(
+        previewMode: widget.previewMode,
+        controller: widget.agentController,
+      ),
       drawerScrimColor: const Color(0x330E1120),
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: keyboardVisible
@@ -242,12 +252,22 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 }
 
 class _ConversationDrawer extends StatelessWidget {
-  const _ConversationDrawer({required this.previewMode});
+  const _ConversationDrawer({
+    required this.previewMode,
+    required this.controller,
+  });
 
   final bool previewMode;
+  final AgentController controller;
 
   @override
   Widget build(BuildContext context) {
+    final current = controller.currentThreadSummary;
+    final currentThreadId = controller.threadId;
+    final recentThreads = <AgentThreadSummary>[
+      for (final thread in controller.threads)
+        if (thread.id != currentThreadId) thread,
+    ];
     return Drawer(
       width: 300,
       backgroundColor: const Color(0xFFF5F5F2),
@@ -270,6 +290,38 @@ class _ConversationDrawer extends StatelessWidget {
                 ),
               ],
             ),
+            Text(
+              previewMode ? '本地 Fake 预览，未连接正式账号' : '已连接当前账号',
+              style: const TextStyle(color: Color(0xFF6B6D74), fontSize: 13),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.tonalIcon(
+              key: const Key('new-conversation-button'),
+              onPressed: controller.isBusy || !controller.supportsThreadHistory
+                  ? null
+                  : () async {
+                      final created = await controller.createThread();
+                      if (!context.mounted || !created) {
+                        return;
+                      }
+                      Navigator.of(context).pop();
+                    },
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('新对话'),
+              style: FilledButton.styleFrom(
+                alignment: Alignment.centerLeft,
+                minimumSize: const Size.fromHeight(48),
+                backgroundColor: const Color(0xFFE8E8E4),
+                foregroundColor: const Color(0xFF202124),
+              ),
+            ),
+            if (controller.isBusy) ...[
+              const SizedBox(height: 12),
+              const LinearProgressIndicator(
+                key: Key('conversation-drawer-progress'),
+                minHeight: 2,
+              ),
+            ],
             const SizedBox(height: 28),
             const Text(
               '当前对话',
@@ -280,17 +332,137 @@ class _ConversationDrawer extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-              leading: const Icon(Icons.chat_bubble_outline_rounded),
-              title: const Text('Agent 对话'),
-              subtitle: Text(previewMode ? '本地 Fake 预览，未连接正式账号' : '已连接当前账号'),
+            if (currentThreadId == null)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                child: Text(
+                  '尚未选择对话',
+                  key: Key('no-focused-conversation'),
+                  style: TextStyle(color: Color(0xFF777983)),
+                ),
+              )
+            else
+              _ConversationThreadTile(
+                threadId: currentThreadId,
+                updatedAt: current?.updatedAt,
+                selected: true,
+                enabled: !controller.isBusy,
+                onTap: () => Navigator.of(context).pop(),
+              ),
+            const SizedBox(height: 24),
+            const Text(
+              '近期对话',
+              style: TextStyle(
+                color: Color(0xFF777983),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
             ),
+            const SizedBox(height: 8),
+            if (recentThreads.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                child: Text(
+                  '暂无其他对话',
+                  key: Key('no-recent-conversations'),
+                  style: TextStyle(color: Color(0xFF777983)),
+                ),
+              )
+            else
+              for (final thread in recentThreads)
+                _ConversationThreadTile(
+                  threadId: thread.id,
+                  updatedAt: thread.updatedAt,
+                  selected: false,
+                  enabled: !controller.isBusy,
+                  onTap: () async {
+                    final selected = await controller.selectThread(thread.id);
+                    if (!context.mounted || !selected) {
+                      return;
+                    }
+                    Navigator.of(context).pop();
+                  },
+                ),
+            if (controller.threadHistoryErrorMessage case final message?) ...[
+              const SizedBox(height: 10),
+              Text(
+                message,
+                key: const Key('conversation-history-error'),
+                style: const TextStyle(
+                  color: Color(0xFF9B2C24),
+                  fontSize: 13,
+                  height: 1.35,
+                ),
+              ),
+            ],
+            if (controller.hasMoreThreads) ...[
+              const SizedBox(height: 10),
+              TextButton(
+                key: const Key('load-more-conversations'),
+                onPressed: controller.isLoadingMoreThreads || controller.isBusy
+                    ? null
+                    : controller.loadMoreThreads,
+                child: Text(controller.isLoadingMoreThreads ? '正在加载…' : '加载更早'),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
+}
+
+class _ConversationThreadTile extends StatelessWidget {
+  const _ConversationThreadTile({
+    required this.threadId,
+    required this.updatedAt,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final String threadId;
+  final DateTime? updatedAt;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final lastUpdatedAt = updatedAt;
+    return Semantics(
+      selected: selected,
+      button: true,
+      label: selected ? '当前 Agent 对话' : 'Agent 对话',
+      child: ListTile(
+        key: Key('conversation-thread-$threadId'),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        selected: selected,
+        selectedTileColor: const Color(0xFFE8E8E4),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        leading: const Icon(Icons.chat_bubble_outline_rounded),
+        title: const Text('Agent 对话'),
+        subtitle: lastUpdatedAt == null
+            ? null
+            : Text('更新于 ${_formatThreadUpdatedAt(lastUpdatedAt)}'),
+        trailing: selected
+            ? const Icon(
+                Icons.check_rounded,
+                key: Key('focused-conversation-indicator'),
+                size: 20,
+              )
+            : null,
+        onTap: enabled ? onTap : null,
+      ),
+    );
+  }
+}
+
+String _formatThreadUpdatedAt(DateTime value) {
+  final local = value.toLocal();
+  String twoDigits(int part) => part.toString().padLeft(2, '0');
+  return '${twoDigits(local.month)}月${twoDigits(local.day)}日 '
+      '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
 }
 
 class _ProfilePage extends StatelessWidget {

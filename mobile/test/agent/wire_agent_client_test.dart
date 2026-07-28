@@ -267,6 +267,308 @@ void main() {
     });
   });
 
+  group('WireAgentClient bounded Thread history', () {
+    test(
+      'encodes Thread keyset pagination and preserves focused metadata',
+      () async {
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            verify: (call) {
+              expect(call.queryParameters, {
+                'page_size': '20',
+                'cursor': 'older_threads',
+              });
+            },
+            response: _jsonResponse(HttpStatus.ok, {
+              'threads': [
+                _threadJson(),
+                _threadJson(id: _threadBId, updatedAt: _olderUpdatedAt),
+              ],
+              'focused_thread_id': _threadBId,
+              'next_cursor': 'oldest_threads',
+            }),
+          ),
+        ]);
+        final harness = _Harness(transport);
+
+        final page = await harness.client.listThreads(cursor: 'older_threads');
+
+        expect(page.threads.map((thread) => thread.id), [
+          _threadId,
+          _threadBId,
+        ]);
+        expect(page.focusedThreadId, _threadBId);
+        expect(page.nextCursor, 'oldest_threads');
+        transport.expectDone();
+      },
+    );
+
+    test('gets, selects, clears focus and pages one Thread messages', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/focused',
+          response: _jsonResponse(HttpStatus.ok, _threadJson()),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          response: _jsonResponse(HttpStatus.ok, {'messages': <Object?>[]}),
+        ),
+        _Step(
+          method: 'PUT',
+          path: '/v1/agent-threads/focused',
+          verify: (call) {
+            expect(jsonDecode(call.body!), {'thread_id': _threadBId});
+          },
+          response: _jsonResponse(HttpStatus.ok, _threadJson(id: _threadBId)),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadBId/messages',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': <Object?>[],
+            'next_cursor': 'older_b_messages',
+          }),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          verify: (call) {
+            expect(call.queryParameters, {
+              'page_size': '50',
+              'cursor': 'older_messages',
+            });
+          },
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': [
+              _messageJson(
+                id: _assistantMessageId,
+                sequence: 1,
+                role: 'assistant',
+                content: 'An older answer.',
+                producedByRunId: _runId,
+              ),
+            ],
+          }),
+        ),
+        const _Step(
+          method: 'DELETE',
+          path: '/v1/agent-threads/focused',
+          response: IdentityHttpResponse(
+            statusCode: HttpStatus.noContent,
+            body: '',
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final restored = await harness.client.getFocusedThread();
+      final selected = await harness.client.setFocusedThread(
+        threadId: _threadBId,
+      );
+      final messages = await harness.client.listMessages(
+        threadId: _threadId,
+        cursor: 'older_messages',
+      );
+      await harness.client.clearFocusedThread();
+
+      expect(restored?.threadId, _threadId);
+      expect(selected.threadId, _threadBId);
+      expect(selected.nextMessageCursor, 'older_b_messages');
+      expect(messages.messages.single.sequence, 1);
+      transport.expectDone();
+    });
+
+    test('maps an empty focused selection from 204 only', () async {
+      final transport = _ScriptedTransport([
+        const _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/focused',
+          response: IdentityHttpResponse(
+            statusCode: HttpStatus.noContent,
+            body: '',
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      expect(await harness.client.getFocusedThread(), isNull);
+      transport.expectDone();
+    });
+
+    test(
+      'recovers an ambiguous create with GET only and never repeats POST',
+      () async {
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            verify: (call) {
+              expect(call.queryParameters, {'page_size': '100'});
+            },
+            response: _jsonResponse(HttpStatus.ok, {'threads': <Object?>[]}),
+          ),
+          _Step(
+            method: 'POST',
+            path: '/v1/agent-threads',
+            verify: (call) {
+              expect(jsonDecode(call.body!), <String, Object?>{});
+              expect(
+                call.headers.keys.map((key) => key.toLowerCase()),
+                isNot(contains('idempotency-key')),
+              );
+            },
+            error: const SocketException('response was lost'),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            response: _jsonResponse(HttpStatus.ok, {'threads': <Object?>[]}),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            response: _jsonResponse(HttpStatus.ok, {'threads': <Object?>[]}),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            response: _jsonResponse(HttpStatus.ok, {
+              'threads': [_threadJson()],
+            }),
+          ),
+        ]);
+        final harness = _Harness(transport);
+        final ambiguousCreation = isA<AgentClientException>()
+            .having(
+              (error) => error.errorCode,
+              'errorCode',
+              'thread_creation_ambiguous',
+            )
+            .having((error) => error.retryable, 'retryable', isTrue);
+
+        await expectLater(
+          harness.client.createThread(),
+          throwsA(ambiguousCreation),
+        );
+        await expectLater(
+          harness.client.createThread(),
+          throwsA(ambiguousCreation),
+        );
+        final recovered = await harness.client.createThread();
+
+        expect(recovered.id, _threadId);
+        expect(
+          transport.calls
+              .where(
+                (call) =>
+                    call.method == 'POST' && call.path == '/v1/agent-threads',
+              )
+              .length,
+          1,
+        );
+        transport.expectDone();
+      },
+    );
+
+    test(
+      'does not guess between multiple ambiguous create candidates',
+      () async {
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            response: _jsonResponse(HttpStatus.ok, {'threads': <Object?>[]}),
+          ),
+          const _Step(
+            method: 'POST',
+            path: '/v1/agent-threads',
+            error: SocketException('response was lost'),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            response: _jsonResponse(HttpStatus.ok, {
+              'threads': [
+                _threadJson(),
+                _threadJson(id: _threadBId, updatedAt: _olderUpdatedAt),
+              ],
+            }),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            response: _jsonResponse(HttpStatus.ok, {
+              'threads': [
+                _threadJson(),
+                _threadJson(id: _threadBId, updatedAt: _olderUpdatedAt),
+              ],
+            }),
+          ),
+        ]);
+        final harness = _Harness(transport);
+
+        await expectLater(
+          harness.client.createThread(),
+          throwsA(
+            isA<AgentClientException>().having(
+              (error) => error.errorCode,
+              'errorCode',
+              'thread_creation_ambiguous',
+            ),
+          ),
+        );
+        await expectLater(
+          harness.client.createThread(),
+          throwsA(isA<AgentClientException>()),
+        );
+
+        expect(
+          transport.calls.where((call) => call.method == 'POST').length,
+          1,
+        );
+        transport.expectDone();
+      },
+    );
+
+    test('rejects explicit null for absent-only optional fields', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads',
+          response: _jsonResponse(HttpStatus.ok, {
+            'threads': <Object?>[],
+            'focused_thread_id': null,
+          }),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': <Object?>[],
+            'next_cursor': null,
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+      final invalidResponse = isA<AgentClientException>().having(
+        (error) => error.kind,
+        'kind',
+        AgentClientFailureKind.invalidResponse,
+      );
+
+      await expectLater(harness.client.listThreads(), throwsA(invalidResponse));
+      await expectLater(
+        harness.client.listMessages(threadId: _threadId),
+        throwsA(invalidResponse),
+      );
+      transport.expectDone();
+    });
+  });
+
   group('WireAgentClient text Run', () {
     test(
       'accepts 3000 astral Unicode scalars within the API byte cap',
@@ -1239,12 +1541,14 @@ final class _Call {
   const _Call({
     required this.method,
     required this.path,
+    required this.queryParameters,
     required this.headers,
     required this.body,
   });
 
   final String method;
   final String path;
+  final Map<String, String> queryParameters;
   final Map<String, String> headers;
   final String? body;
 }
@@ -1283,6 +1587,7 @@ final class _ScriptedTransport implements IdentityHttpTransport {
     final call = _Call(
       method: method,
       path: uri.path,
+      queryParameters: Map<String, String>.of(uri.queryParameters),
       headers: Map<String, String>.of(headers),
       body: body,
     );
@@ -1332,6 +1637,7 @@ final class _ControlledTransport implements IdentityHttpTransport {
       _Call(
         method: method,
         path: uri.path,
+        queryParameters: Map<String, String>.of(uri.queryParameters),
         headers: Map<String, String>.of(headers),
         body: body,
       ),
@@ -1369,8 +1675,18 @@ _Step _messagesStep({
   );
 }
 
-Map<String, Object?> _threadJson({String id = _threadId}) {
-  return {'thread_id': id, 'created_at': _createdAt, 'updated_at': _updatedAt};
+Map<String, Object?> _threadJson({
+  String id = _threadId,
+  String createdAt = _createdAt,
+  String updatedAt = _updatedAt,
+  String? activeMatterId,
+}) {
+  return {
+    'thread_id': id,
+    'active_matter_id': ?activeMatterId,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+  };
 }
 
 Map<String, Object?> _messageJson({
@@ -1460,3 +1776,4 @@ const _createdAt = '2026-07-25T09:00:00Z';
 const _startedAt = '2026-07-25T09:00:01Z';
 const _completedAt = '2026-07-25T09:00:02Z';
 const _updatedAt = '2026-07-25T09:00:03Z';
+const _olderUpdatedAt = '2026-07-25T09:00:02Z';

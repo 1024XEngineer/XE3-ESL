@@ -16,10 +16,11 @@ import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/identity/session_store.dart';
 
 void main() {
-  testWidgets('uses one Agent Thread for text, 3 voice turns, and Review', (
+  testWidgets('uses one Agent Thread for text, 3 Practice turns, and Review', (
     tester,
   ) async {
     final agentController = AgentController(client: FakeAgentClient());
+    addTearDown(agentController.dispose);
     await tester.pumpWidget(
       SpeakUpApp.preview(agentController: agentController),
     );
@@ -59,7 +60,8 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+    final shellContext = tester.element(find.byType(SpeakUpShell));
+    Navigator.of(shellContext).pushNamed(AppRoutes.practice);
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('practice-page')), findsOneWidget);
 
@@ -105,6 +107,7 @@ void main() {
     'global AuthGate shows the real email and logout clears Agent data',
     (tester) async {
       final agentController = AgentController(client: FakeAgentClient());
+      addTearDown(agentController.dispose);
       final preparationController = PreparationController(
         client: _EmptyPreparationCatalogClient(),
       );
@@ -157,6 +160,7 @@ void main() {
     tester,
   ) async {
     final agentController = AgentController(client: FakeAgentClient());
+    addTearDown(agentController.dispose);
     final preparationController = PreparationController(
       client: _EmptyPreparationCatalogClient(),
     );
@@ -199,6 +203,7 @@ void main() {
     (tester) async {
       final client = _FailOnceSceneClient();
       final agentController = AgentController(client: client);
+      addTearDown(agentController.dispose);
       await tester.pumpWidget(
         SpeakUpApp.preview(agentController: agentController),
       );
@@ -226,6 +231,7 @@ void main() {
     tester,
   ) async {
     final agentController = AgentController(client: FakeAgentClient());
+    addTearDown(agentController.dispose);
     await agentController.initialize();
     await agentController.selectScene(agentScenes.first);
     for (var turn = 0; turn < 3; turn++) {
@@ -256,6 +262,7 @@ void main() {
     'late Review retries a blocked Practice exit before exposing the shell',
     (tester) async {
       final agentController = AgentController(client: FakeAgentClient());
+      addTearDown(agentController.dispose);
       await agentController.initialize();
       await agentController.selectScene(agentScenes.first);
       final rejectedPops = ValueNotifier<int>(0);
@@ -309,6 +316,7 @@ void main() {
     tester,
   ) async {
     final agentController = AgentController(client: FakeAgentClient());
+    addTearDown(agentController.dispose);
     await agentController.initialize();
     await agentController.selectScene(agentScenes.first);
     for (var turn = 0; turn < 3; turn++) {
@@ -333,6 +341,7 @@ void main() {
     tester,
   ) async {
     final agentController = AgentController(client: FakeAgentClient());
+    addTearDown(agentController.dispose);
     await agentController.initialize();
     await agentController.selectScene(agentScenes.first);
 

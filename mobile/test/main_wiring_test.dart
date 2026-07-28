@@ -7,7 +7,10 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/agent/agent_voice_models.dart';
+import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
+import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/preparation/wire_preparation_client.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -70,6 +73,17 @@ void main() {
                 'updated_at': _timestamp,
               },
             ],
+            'focused_thread_id': _threadId,
+          },
+        ),
+        _Response(
+          method: 'GET',
+          path: '/v1/agent-threads/focused',
+          statusCode: HttpStatus.ok,
+          body: {
+            'thread_id': _threadId,
+            'created_at': _timestamp,
+            'updated_at': _timestamp,
           },
         ),
         const _Response(
@@ -102,6 +116,8 @@ void main() {
       final practiceRecorder = _TrackingPracticeRecorder();
       final practiceMediaClient = _TrackingPracticeMediaClient();
       final practiceAudioPlayer = _TrackingPracticeAudioPlayer();
+      final agentVoiceRecorder = _TrackingAgentVoiceRecorder();
+      final agentVoiceAudioPlayer = _TrackingAgentVoiceAudioPlayer();
       final dependencies = production.createProductionAppDependencies(
         baseUri: Uri.parse('https://api.speak-up.test'),
         identityTransport: identityTransport,
@@ -110,6 +126,8 @@ void main() {
         reviewHistoryTransport: reviewHistoryTransport,
         practiceTransport: _PracticeTransport(),
         practiceRecorder: practiceRecorder,
+        agentVoiceRecorder: agentVoiceRecorder,
+        agentVoiceAudioPlayer: agentVoiceAudioPlayer,
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
         sessionStore: _MemorySessionStore('sess_main-wiring'),
@@ -130,6 +148,18 @@ void main() {
       expect(
         dependencies.agentController.audioPlayer,
         same(practiceAudioPlayer),
+      );
+      expect(
+        dependencies.agentController.voiceController?.client,
+        isA<WireAgentVoiceClient>(),
+      );
+      expect(
+        dependencies.agentController.voiceController?.recorder,
+        same(agentVoiceRecorder),
+      );
+      expect(
+        dependencies.agentController.voiceController?.audioPlayer,
+        same(agentVoiceAudioPlayer),
       );
       expect(
         dependencies.reviewHistoryController.client,
@@ -177,6 +207,8 @@ void main() {
         ),
         isTrue,
       );
+      expect(agentVoiceRecorder.clearCount, 2);
+      expect(agentVoiceAudioPlayer.clearCount, 2);
 
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
@@ -207,6 +239,8 @@ void main() {
       expect(practiceRecorder.clearCount, 1);
       expect(practiceMediaClient.clearCount, 1);
       expect(practiceAudioPlayer.clearCount, 2);
+      expect(agentVoiceRecorder.clearCount, 4);
+      expect(agentVoiceAudioPlayer.clearCount, 4);
 
       reviewHistoryTransport.completeWithReview();
       await tester.pump();
@@ -278,6 +312,60 @@ final class _TrackingPracticeRecorder implements PracticeRecorder {
   Future<void> clearAccountState() async {
     clearCount++;
   }
+}
+
+final class _TrackingAgentVoiceRecorder implements AgentVoiceRecorder {
+  int clearCount = 0;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<AgentVoiceLocalRecording> stop() {
+    throw StateError('Unexpected Agent recording stop in production wiring.');
+  }
+
+  @override
+  Future<void> discardCurrent() async {}
+
+  @override
+  Future<void> discard(AgentVoiceLocalRecording recording) async {}
+
+  @override
+  Future<void> clearAccountState() async {
+    clearCount++;
+  }
+}
+
+final class _TrackingAgentVoiceAudioPlayer implements AgentVoiceAudioPlayer {
+  int clearCount = 0;
+
+  @override
+  Stream<Duration> get onPosition => const Stream<Duration>.empty();
+
+  @override
+  Stream<void> get onComplete => const Stream<void>.empty();
+
+  @override
+  Future<void> playFile(String path, {required double speed}) {
+    throw StateError('Unexpected Agent draft playback in production wiring.');
+  }
+
+  @override
+  Future<void> playWav(Uint8List bytes, {required double speed}) {
+    throw StateError('Unexpected Agent speech playback in production wiring.');
+  }
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> clearAccountState() async {
+    clearCount++;
+  }
+
+  @override
+  Future<void> dispose() async {}
 }
 
 final class _TrackingPracticeMediaClient implements PracticeMediaClient {

@@ -1,5 +1,51 @@
 enum AgentMessageRole { user, assistant }
 
+enum AgentMessageModality { text, voice }
+
+enum AgentMessageAudioStatus { readable, deleting, deleted }
+
+final class AgentMessageAudio {
+  const AgentMessageAudio({
+    required this.id,
+    required this.status,
+    required this.contentType,
+    required this.sizeBytes,
+    required this.duration,
+    this.playbackPath,
+    this.deletedAt,
+  });
+
+  final String id;
+  final AgentMessageAudioStatus status;
+  final String contentType;
+  final int sizeBytes;
+  final Duration duration;
+  final String? playbackPath;
+  final DateTime? deletedAt;
+
+  bool get isReadable =>
+      status == AgentMessageAudioStatus.readable && playbackPath != null;
+
+  AgentMessageAudio copyWith({
+    AgentMessageAudioStatus? status,
+    String? playbackPath,
+    bool clearPlaybackPath = false,
+    DateTime? deletedAt,
+  }) {
+    return AgentMessageAudio(
+      id: id,
+      status: status ?? this.status,
+      contentType: contentType,
+      sizeBytes: sizeBytes,
+      duration: duration,
+      playbackPath: clearPlaybackPath
+          ? null
+          : playbackPath ?? this.playbackPath,
+      deletedAt: deletedAt ?? this.deletedAt,
+    );
+  }
+}
+
 enum PracticeRecordingState {
   idle,
   starting,
@@ -28,11 +74,71 @@ final class AgentMessage {
     required this.id,
     required this.role,
     required this.text,
-  });
+    this.sequence,
+    this.createdAt,
+    this.modality = AgentMessageModality.text,
+    this.audio,
+  }) : assert(
+         (modality == AgentMessageModality.voice && audio != null) ||
+             (modality == AgentMessageModality.text && audio == null),
+       );
 
   final String id;
   final AgentMessageRole role;
   final String text;
+  final int? sequence;
+  final DateTime? createdAt;
+  final AgentMessageModality modality;
+  final AgentMessageAudio? audio;
+
+  AgentMessage copyWith({AgentMessageAudio? audio, bool clearAudio = false}) {
+    return AgentMessage(
+      id: id,
+      role: role,
+      text: text,
+      sequence: sequence,
+      createdAt: createdAt,
+      modality: clearAudio ? AgentMessageModality.text : modality,
+      audio: clearAudio ? null : audio ?? this.audio,
+    );
+  }
+}
+
+/// One durable Agent Thread as returned by the bounded history endpoint.
+///
+/// Threads deliberately have no client-invented title, summary, archive, or
+/// unread state. The Drawer presents the server-owned update time instead.
+final class AgentThreadSummary {
+  const AgentThreadSummary({
+    required this.id,
+    required this.createdAt,
+    required this.updatedAt,
+    this.activeMatterId,
+  });
+
+  final String id;
+  final String? activeMatterId;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
+final class AgentThreadPage {
+  const AgentThreadPage({
+    required this.threads,
+    this.focusedThreadId,
+    this.nextCursor,
+  });
+
+  final List<AgentThreadSummary> threads;
+  final String? focusedThreadId;
+  final String? nextCursor;
+}
+
+final class AgentMessagePage {
+  const AgentMessagePage({required this.messages, this.nextCursor});
+
+  final List<AgentMessage> messages;
+  final String? nextCursor;
 }
 
 /// The user-owned Matter currently selected for one durable Agent Thread.
@@ -82,6 +188,9 @@ final class AgentThreadSnapshot {
     this.practice,
     this.textRecovery,
     this.messages = const <AgentMessage>[],
+    this.createdAt,
+    this.updatedAt,
+    this.nextMessageCursor,
   }) : assert(practice == null || activeMatter != null);
 
   final String threadId;
@@ -89,6 +198,9 @@ final class AgentThreadSnapshot {
   final AgentPracticeSnapshot? practice;
   final AgentTextRecovery? textRecovery;
   final List<AgentMessage> messages;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final String? nextMessageCursor;
 }
 
 /// A server-restored failed text operation that keeps its idempotency identity.
