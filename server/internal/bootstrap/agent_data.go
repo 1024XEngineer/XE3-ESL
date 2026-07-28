@@ -30,6 +30,7 @@ func NewIdentityAndAgentModules(
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
 	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identity.Module, RouteRegistrar, error) {
 	if len(voiceConfigurations) == 1 &&
@@ -45,6 +46,7 @@ func NewIdentityAndAgentModules(
 		trustedProxyHeader,
 		generator,
 		runConfiguration,
+		memorySearcher,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -80,10 +82,11 @@ func buildIdentityAgentComposition(
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
 	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || generator == nil ||
-		len(voiceConfigurations) > 1 {
+		memorySearcher == nil || len(voiceConfigurations) > 1 {
 		return nil, errors.New(
 			"bootstrap: Agent Run dependencies are required",
 		)
@@ -113,9 +116,14 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	contextMemorySearcher, err := newAgentMemoryContextSearcher(memorySearcher)
+	if err != nil {
+		return nil, err
+	}
 	contextAssembler, err := agentruntime.NewContextAssembler(
 		agentRepository,
 		matterService,
+		contextMemorySearcher,
 	)
 	if err != nil {
 		return nil, err
@@ -219,6 +227,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
 	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
 	voiceConfigurations ...VoiceConfiguration,
 ) (
 	*identity.Module,
@@ -233,6 +242,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 		trustedProxyHeader,
 		generator,
 		runConfiguration,
+		memorySearcher,
 		voiceConfigurations...,
 	)
 	if err != nil {

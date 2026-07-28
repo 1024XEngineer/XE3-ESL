@@ -12,6 +12,7 @@ import (
 	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 
@@ -77,6 +78,7 @@ func TestAgentVoiceCompositionRequiresCleanupAwareConstructor(t *testing.T) {
 		"",
 		nil,
 		agent.RunConfiguration{},
+		emptyBootstrapMemorySearcher{},
 		VoiceConfiguration{AgentVoiceMessagesEnabled: true},
 	); err == nil {
 		t.Fatal("legacy composition accepted Agent voice without cleanup")
@@ -95,6 +97,7 @@ func TestAgentVoiceCompositionRequiresCleanupAwareConstructor(t *testing.T) {
 			MaxOutputTokens:    256,
 			MaxInputCharacters: 12000,
 		},
+		emptyBootstrapMemorySearcher{},
 	)
 	if err != nil {
 		t.Fatalf("build composition without Agent voice: %v", err)
@@ -172,6 +175,7 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 			MaxOutputTokens:    256,
 			MaxInputCharacters: 12000,
 		},
+		emptyBootstrapMemorySearcher{},
 		configuration,
 	)
 	if err != nil {
@@ -243,4 +247,13 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 			)
 		}
 	}
+}
+
+type emptyBootstrapMemorySearcher struct{}
+
+func (emptyBootstrapMemorySearcher) Search(
+	context.Context,
+	memory.SearchRequest,
+) ([]memory.SearchHit, error) {
+	return []memory.SearchHit{}, nil
 }

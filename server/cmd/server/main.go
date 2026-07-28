@@ -179,6 +179,7 @@ func run() int {
 				MaxOutputTokens:    textConfig.MaxOutputTokens,
 				MaxInputCharacters: textConfig.MaxContextChars,
 			},
+			memoryIndexComposition.Searcher(),
 			preparationCatalog,
 			bootstrap.VoiceConfiguration{
 				Recognizer:                recognizer,

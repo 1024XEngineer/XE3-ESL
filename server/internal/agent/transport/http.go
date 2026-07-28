@@ -1951,20 +1951,42 @@ func contextManifestResponse(manifest ContextManifest) gin.H {
 			"role":       message.Role,
 		})
 	}
+	memories := make([]gin.H, 0, len(manifest.SelectedMemories))
+	for _, item := range manifest.SelectedMemories {
+		memory := gin.H{
+			"memory_id":                item.MemoryID,
+			"memory_version":           item.MemoryVersion,
+			"type":                     item.Type,
+			"scope":                    item.Scope,
+			"similarity":               item.Similarity,
+			"score":                    item.Score,
+			"embedding_provider":       item.EmbeddingProvider,
+			"embedding_model":          item.EmbeddingModel,
+			"embedding_dimensions":     item.EmbeddingDimensions,
+			"embedding_policy_version": item.EmbeddingPolicyVersion,
+			"retrieval_policy_version": item.RetrievalPolicyVersion,
+		}
+		if item.MatterID != "" {
+			memory["matter_id"] = item.MatterID
+		}
+		memories = append(memories, memory)
+	}
 	result := gin.H{
-		"run_id":                manifest.RunID,
-		"thread_id":             manifest.ThreadID,
-		"input_message_id":      manifest.InputMessageID,
-		"instruction_version":   manifest.InstructionVersion,
-		"selected_messages":     messages,
-		"omitted_message_count": manifest.OmittedMessageCount,
-		"trim_reason":           manifest.TrimReason,
-		"max_input_characters":  manifest.MaxInputCharacters,
-		"used_input_characters": manifest.UsedInputCharacters,
-		"requested_provider":    manifest.RequestedProvider,
-		"requested_model":       manifest.RequestedModel,
-		"max_output_tokens":     manifest.MaxOutputTokens,
-		"created_at":            manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"run_id":                        manifest.RunID,
+		"thread_id":                     manifest.ThreadID,
+		"input_message_id":              manifest.InputMessageID,
+		"instruction_version":           manifest.InstructionVersion,
+		"memory_context_policy_version": manifest.MemoryContextPolicyVersion,
+		"selected_memories":             memories,
+		"selected_messages":             messages,
+		"omitted_message_count":         manifest.OmittedMessageCount,
+		"trim_reason":                   manifest.TrimReason,
+		"max_input_characters":          manifest.MaxInputCharacters,
+		"used_input_characters":         manifest.UsedInputCharacters,
+		"requested_provider":            manifest.RequestedProvider,
+		"requested_model":               manifest.RequestedModel,
+		"max_output_tokens":             manifest.MaxOutputTokens,
+		"created_at":                    manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if manifest.ActiveMatterID != "" {
 		result["active_matter"] = gin.H{

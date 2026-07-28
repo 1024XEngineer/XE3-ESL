@@ -1609,6 +1609,7 @@ func newVoiceProductionIntegrationServer(
 			MaxOutputTokens:    256,
 			MaxInputCharacters: 12000,
 		},
+		emptyBootstrapMemorySearcher{},
 		catalog,
 		configuration,
 	)

@@ -133,23 +133,40 @@ type ContextMessageSource struct {
 	Role      MessageRole `json:"role"`
 }
 
+type ContextMemorySource struct {
+	MemoryID               string  `json:"memory_id"`
+	MemoryVersion          int64   `json:"memory_version"`
+	Type                   string  `json:"type"`
+	Scope                  string  `json:"scope"`
+	MatterID               string  `json:"matter_id,omitempty"`
+	Similarity             float64 `json:"similarity"`
+	Score                  float64 `json:"score"`
+	EmbeddingProvider      string  `json:"embedding_provider"`
+	EmbeddingModel         string  `json:"embedding_model"`
+	EmbeddingDimensions    int     `json:"embedding_dimensions"`
+	EmbeddingPolicyVersion string  `json:"embedding_policy_version"`
+	RetrievalPolicyVersion string  `json:"retrieval_policy_version"`
+}
+
 type ContextManifest struct {
-	RunID               string
-	OwnerID             string
-	ThreadID            string
-	InputMessageID      string
-	ActiveMatterID      string
-	ActiveMatterVersion int64
-	InstructionVersion  string
-	SelectedMessages    []ContextMessageSource
-	OmittedMessageCount int
-	TrimReason          string
-	MaxInputCharacters  int
-	UsedInputCharacters int
-	RequestedProvider   string
-	RequestedModel      string
-	MaxOutputTokens     int
-	CreatedAt           time.Time
+	RunID                      string
+	OwnerID                    string
+	ThreadID                   string
+	InputMessageID             string
+	ActiveMatterID             string
+	ActiveMatterVersion        int64
+	InstructionVersion         string
+	MemoryContextPolicyVersion string
+	SelectedMemories           []ContextMemorySource
+	SelectedMessages           []ContextMessageSource
+	OmittedMessageCount        int
+	TrimReason                 string
+	MaxInputCharacters         int
+	UsedInputCharacters        int
+	RequestedProvider          string
+	RequestedModel             string
+	MaxOutputTokens            int
+	CreatedAt                  time.Time
 }
 
 type RunConfiguration struct {
