@@ -9,12 +9,16 @@ import (
 )
 
 var (
-	ErrInvalidArgument    = errors.New("memory: invalid argument")
-	ErrNotFound           = errors.New("memory: not found")
-	ErrConflict           = errors.New("memory: conflict")
-	ErrAccountDeleted     = errors.New("memory: account is not active")
-	ErrDeletionGeneration = errors.New("memory: stale deletion generation")
-	ErrRepository         = errors.New("memory repository: operation failed")
+	ErrInvalidArgument     = errors.New("memory: invalid argument")
+	ErrNotFound            = errors.New("memory: not found")
+	ErrConflict            = errors.New("memory: conflict")
+	ErrAccountDeleted      = errors.New("memory: account is not active")
+	ErrDeletionGeneration  = errors.New("memory: stale deletion generation")
+	ErrRepository          = errors.New("memory repository: operation failed")
+	ErrExtractionResponse  = errors.New("memory: invalid extraction response")
+	ErrExtractionExhausted = errors.New(
+		"memory: extraction attempts exhausted during recovery",
+	)
 )
 
 type CreateCommand struct {

@@ -15,6 +15,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -58,6 +59,7 @@ type identityAgentComposition struct {
 	agentService        *agentapp.Service
 	agentVoiceReclaimer AgentVoiceObjectReclaimer
 	matterService       *matter.Service
+	memoryExtraction    memory.ExtractionProcessor
 	ids                 *identity.UUIDv4Generator
 }
 
@@ -130,6 +132,16 @@ func buildIdentityAgentComposition(
 	if _, err := runService.RecoverInterruptedRuns(ctx); err != nil {
 		return nil, err
 	}
+	memoryExtraction, err := buildMemoryExtractionProcessor(
+		database,
+		ids,
+		agentRepository,
+		generator,
+		runConfiguration,
+	)
+	if err != nil {
+		return nil, err
+	}
 	agentVoiceMessages, err := buildAgentVoiceMessageApplication(
 		voiceConfigurations,
 		agentRepository,
@@ -193,6 +205,7 @@ func buildIdentityAgentComposition(
 		agentService:        agentService,
 		agentVoiceReclaimer: agentVoiceReclaimer,
 		matterService:       matterService,
+		memoryExtraction:    memoryExtraction,
 		ids:                 ids,
 	}, nil
 }
