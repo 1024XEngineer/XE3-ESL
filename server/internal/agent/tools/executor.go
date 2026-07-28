@@ -9,12 +9,12 @@ type Executor struct {
 	registry *Registry
 }
 
-// NewExecutor creates a tool executor backed by the provided registry.
+// NewExecutor 基于工具注册表创建统一工具执行器。
 func NewExecutor(registry *Registry) *Executor {
 	return &Executor{registry: registry}
 }
 
-// Execute validates a tool invocation, resolves its tool, and runs it with trusted context.
+// Execute 校验工具调用，查找对应工具，并带着可信上下文执行它。
 func (executor *Executor) Execute(
 	ctx context.Context,
 	call CallContext,
@@ -45,7 +45,7 @@ func (executor *Executor) Execute(
 	return result, nil
 }
 
-// MarshalInput encodes a typed value into the raw JSON payload used by tool invocations.
+// MarshalInput 把结构化值编码成工具调用使用的原始 JSON 入参。
 func MarshalInput(value any) (json.RawMessage, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {

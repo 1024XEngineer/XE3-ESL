@@ -6,12 +6,12 @@ type Router struct {
 	registry *Registry
 }
 
-// NewRouter creates a router that parses slash commands with the given registry.
+// NewRouter 创建使用指定注册表的斜杠命令路由器。
 func NewRouter(registry *Registry) *Router {
 	return &Router{registry: registry}
 }
 
-// Parse converts a slash command into a tool invocation and ignores non-command input.
+// Parse 把斜杠命令转换成工具调用，并忽略普通自然语言输入。
 func (router *Router) Parse(input string) (Parsed, bool, error) {
 	text := strings.TrimSpace(input)
 	if !strings.HasPrefix(text, "/") {
@@ -37,7 +37,7 @@ func (router *Router) Parse(input string) (Parsed, bool, error) {
 	}, true, nil
 }
 
-// splitCommand separates a slash-command body into command name and raw arguments.
+// splitCommand 把命令正文拆成命令名和原始参数。
 func splitCommand(body string) (string, string) {
 	parts := strings.Fields(body)
 	if len(parts) == 0 {

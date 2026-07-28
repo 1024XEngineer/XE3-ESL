@@ -37,12 +37,12 @@ type ReviewSearchTool struct {
 	port ReviewPort
 }
 
-// NewReviewSearchTool creates the adapter for the review search tool.
+// NewReviewSearchTool 创建 Review 搜索工具的适配器。
 func NewReviewSearchTool(port ReviewPort) ReviewSearchTool {
 	return ReviewSearchTool{port: port}
 }
 
-// Definition describes review.search.v1 for model and command exposure.
+// Definition 描述 review.search.v1，供模型和命令入口识别。
 func (tool ReviewSearchTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewSearchToolName,
@@ -60,7 +60,7 @@ func (tool ReviewSearchTool) Definition() Definition {
 	}
 }
 
-// Execute validates search input and delegates review lookup to the ReviewPort.
+// Execute 校验 Review 搜索入参，并委托 ReviewPort 查询 Review。
 func (tool ReviewSearchTool) Execute(
 	ctx context.Context,
 	call CallContext,
@@ -93,12 +93,12 @@ type ReviewGetTool struct {
 	port ReviewPort
 }
 
-// NewReviewGetTool creates the adapter for reading one review.
+// NewReviewGetTool 创建读取单个 Review 的工具适配器。
 func NewReviewGetTool(port ReviewPort) ReviewGetTool {
 	return ReviewGetTool{port: port}
 }
 
-// Definition describes review.get.v1 for model exposure.
+// Definition 描述 review.get.v1，供模型识别。
 func (tool ReviewGetTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewGetToolName,
@@ -111,7 +111,7 @@ func (tool ReviewGetTool) Definition() Definition {
 	}
 }
 
-// Execute validates get input and delegates review detail loading to the ReviewPort.
+// Execute 校验 Review 读取入参，并委托 ReviewPort 加载详情。
 func (tool ReviewGetTool) Execute(
 	ctx context.Context,
 	call CallContext,
@@ -134,7 +134,7 @@ func (tool ReviewGetTool) Execute(
 	}, nil
 }
 
-// reviewMap returns the compact JSON object exposed back to the model for a review.
+// reviewMap 返回暴露给模型的精简 Review JSON 对象。
 func reviewMap(review ReviewSummary) map[string]any {
 	return map[string]any{
 		"id":          review.ID,

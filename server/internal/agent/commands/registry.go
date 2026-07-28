@@ -6,7 +6,7 @@ type Registry struct {
 	commands map[string]Definition
 }
 
-// NewRegistry builds a command registry and registers the provided definitions.
+// NewRegistry 创建命令注册表，并注册传入的命令定义。
 func NewRegistry(definitions ...Definition) (*Registry, error) {
 	registry := &Registry{commands: make(map[string]Definition)}
 	for _, definition := range definitions {
@@ -17,7 +17,7 @@ func NewRegistry(definitions ...Definition) (*Registry, error) {
 	return registry, nil
 }
 
-// Register adds one command definition and all of its aliases to the registry.
+// Register 把一个命令定义及其别名加入注册表。
 func (registry *Registry) Register(definition Definition) error {
 	if registry == nil {
 		return ErrInvalidDefinition
@@ -40,7 +40,7 @@ func (registry *Registry) Register(definition Definition) error {
 	return nil
 }
 
-// Get finds a command definition by canonical name or alias.
+// Get 按命令名或别名查找命令定义。
 func (registry *Registry) Get(name string) (Definition, bool) {
 	if registry == nil {
 		return Definition{}, false
@@ -49,7 +49,7 @@ func (registry *Registry) Get(name string) (Definition, bool) {
 	return definition, ok
 }
 
-// Definitions returns unique canonical command definitions in stable name order.
+// Definitions 按稳定顺序返回去重后的主命令定义。
 func (registry *Registry) Definitions() []Definition {
 	if registry == nil {
 		return nil

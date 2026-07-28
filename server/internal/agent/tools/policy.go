@@ -5,7 +5,7 @@ type Policy struct {
 	AllowWrites  bool
 }
 
-// Select returns the tool definitions allowed for the current Agent run.
+// Select 返回当前 Agent Run 允许暴露的工具定义。
 func (policy Policy) Select(registry *Registry) ([]Definition, error) {
 	if registry == nil {
 		return nil, nil
@@ -28,7 +28,7 @@ func (policy Policy) Select(registry *Registry) ([]Definition, error) {
 	return definitions, nil
 }
 
-// selectFromDefinitions filters definitions by write permission while preserving order.
+// selectFromDefinitions 按写权限过滤工具定义，并保持原有顺序。
 func selectFromDefinitions(definitions []Definition, allowWrites bool) []Definition {
 	selected := make([]Definition, 0, len(definitions))
 	for _, definition := range definitions {

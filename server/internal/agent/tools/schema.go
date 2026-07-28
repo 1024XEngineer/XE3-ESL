@@ -1,5 +1,4 @@
-// Package tools contains the Agent tool contract and small adapters that expose
-// domain services to the Agent runtime.
+// Package tools 定义 Agent 工具契约，并把领域服务适配成 Agent 可调用工具。
 package tools
 
 import (
@@ -62,7 +61,7 @@ type Tool interface {
 	Execute(ctx context.Context, call CallContext, input json.RawMessage) (Result, error)
 }
 
-// ValidateDefinition checks whether a tool definition is safe to expose to the model.
+// ValidateDefinition 检查工具定义是否完整，能否安全暴露给模型。
 func ValidateDefinition(definition Definition) error {
 	if strings.TrimSpace(definition.Name) == "" ||
 		strings.TrimSpace(definition.Description) == "" ||
@@ -76,7 +75,7 @@ func ValidateDefinition(definition Definition) error {
 	return nil
 }
 
-// ValidateJSONObject ensures a tool input payload is a non-empty JSON object.
+// ValidateJSONObject 检查工具入参是否为非空 JSON 对象。
 func ValidateJSONObject(input json.RawMessage) error {
 	var value map[string]any
 	if len(input) == 0 || json.Unmarshal(input, &value) != nil {
@@ -85,12 +84,12 @@ func ValidateJSONObject(input json.RawMessage) error {
 	return nil
 }
 
-// readOnlyRisk reports whether the risk level represents a read-only tool.
+// readOnlyRisk 判断风险等级是否代表只读工具。
 func readOnlyRisk(risk Risk) bool {
 	return risk == RiskReadOnly
 }
 
-// validRisk reports whether the risk value is one of the supported tool risk levels.
+// validRisk 判断风险等级是否为当前支持的取值。
 func validRisk(risk Risk) bool {
 	return risk == RiskReadOnly ||
 		risk == RiskLowRiskWrite ||

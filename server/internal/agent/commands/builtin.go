@@ -10,7 +10,7 @@ const (
 	ToolMaterialSearch = "material.search.v1"
 )
 
-// Builtins returns the first set of user-facing slash commands supported by Agent.
+// Builtins 返回 Agent 首批支持的用户可见斜杠命令。
 func Builtins() []Definition {
 	return []Definition{
 		{

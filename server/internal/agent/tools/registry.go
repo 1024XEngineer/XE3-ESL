@@ -11,7 +11,7 @@ type Registry struct {
 	tools map[string]Tool
 }
 
-// NewRegistry builds a tool registry and registers the provided tools.
+// NewRegistry 创建工具注册表，并注册传入的工具。
 func NewRegistry(items ...Tool) (*Registry, error) {
 	registry := &Registry{tools: make(map[string]Tool, len(items))}
 	for _, item := range items {
@@ -22,7 +22,7 @@ func NewRegistry(items ...Tool) (*Registry, error) {
 	return registry, nil
 }
 
-// Register adds one tool implementation to the registry after validating its definition.
+// Register 校验工具定义后，把一个工具实现加入注册表。
 func (registry *Registry) Register(tool Tool) error {
 	if registry == nil || tool == nil {
 		return ErrInvalidDefinition
@@ -41,7 +41,7 @@ func (registry *Registry) Register(tool Tool) error {
 	return nil
 }
 
-// Get finds a registered tool by its stable tool name.
+// Get 按稳定工具名查找已注册工具。
 func (registry *Registry) Get(name string) (Tool, bool) {
 	if registry == nil {
 		return nil, false
@@ -50,7 +50,7 @@ func (registry *Registry) Get(name string) (Tool, bool) {
 	return tool, ok
 }
 
-// Definitions returns all tool definitions in stable name order for model exposure.
+// Definitions 按稳定顺序返回所有工具定义，供模型侧暴露使用。
 func (registry *Registry) Definitions() []Definition {
 	if registry == nil {
 		return nil

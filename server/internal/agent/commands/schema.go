@@ -1,4 +1,4 @@
-// Package commands maps explicit slash commands to Agent tool invocations.
+// Package commands 把显式斜杠命令映射成 Agent 工具调用。
 package commands
 
 import (
@@ -32,7 +32,7 @@ type Parsed struct {
 	Invocation  agenttools.Invocation
 }
 
-// ValidateDefinition checks whether a command definition is complete enough to register.
+// ValidateDefinition 检查命令定义是否完整，能否注册。
 func ValidateDefinition(definition Definition) error {
 	if strings.TrimSpace(definition.Name) == "" ||
 		strings.TrimSpace(definition.Description) == "" ||
@@ -48,7 +48,7 @@ func ValidateDefinition(definition Definition) error {
 	return nil
 }
 
-// JSONObjectInput encodes command arguments as the JSON object expected by a tool invocation.
+// JSONObjectInput 把命令参数编码成工具调用需要的 JSON 对象。
 func JSONObjectInput(fields map[string]any) (json.RawMessage, error) {
 	if fields == nil {
 		fields = map[string]any{}
