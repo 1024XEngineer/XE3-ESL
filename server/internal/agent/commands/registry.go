@@ -6,6 +6,7 @@ type Registry struct {
 	commands map[string]Definition
 }
 
+// NewRegistry builds a command registry and registers the provided definitions.
 func NewRegistry(definitions ...Definition) (*Registry, error) {
 	registry := &Registry{commands: make(map[string]Definition)}
 	for _, definition := range definitions {
@@ -16,6 +17,7 @@ func NewRegistry(definitions ...Definition) (*Registry, error) {
 	return registry, nil
 }
 
+// Register adds one command definition and all of its aliases to the registry.
 func (registry *Registry) Register(definition Definition) error {
 	if registry == nil {
 		return ErrInvalidDefinition
@@ -38,6 +40,7 @@ func (registry *Registry) Register(definition Definition) error {
 	return nil
 }
 
+// Get finds a command definition by canonical name or alias.
 func (registry *Registry) Get(name string) (Definition, bool) {
 	if registry == nil {
 		return Definition{}, false
@@ -46,6 +49,7 @@ func (registry *Registry) Get(name string) (Definition, bool) {
 	return definition, ok
 }
 
+// Definitions returns unique canonical command definitions in stable name order.
 func (registry *Registry) Definitions() []Definition {
 	if registry == nil {
 		return nil

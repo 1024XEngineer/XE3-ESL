@@ -32,6 +32,7 @@ type Parsed struct {
 	Invocation  agenttools.Invocation
 }
 
+// ValidateDefinition checks whether a command definition is complete enough to register.
 func ValidateDefinition(definition Definition) error {
 	if strings.TrimSpace(definition.Name) == "" ||
 		strings.TrimSpace(definition.Description) == "" ||
@@ -47,6 +48,7 @@ func ValidateDefinition(definition Definition) error {
 	return nil
 }
 
+// JSONObjectInput encodes command arguments as the JSON object expected by a tool invocation.
 func JSONObjectInput(fields map[string]any) (json.RawMessage, error) {
 	if fields == nil {
 		fields = map[string]any{}

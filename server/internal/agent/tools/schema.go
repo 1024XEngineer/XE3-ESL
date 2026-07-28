@@ -62,6 +62,7 @@ type Tool interface {
 	Execute(ctx context.Context, call CallContext, input json.RawMessage) (Result, error)
 }
 
+// ValidateDefinition checks whether a tool definition is safe to expose to the model.
 func ValidateDefinition(definition Definition) error {
 	if strings.TrimSpace(definition.Name) == "" ||
 		strings.TrimSpace(definition.Description) == "" ||
@@ -75,6 +76,7 @@ func ValidateDefinition(definition Definition) error {
 	return nil
 }
 
+// ValidateJSONObject ensures a tool input payload is a non-empty JSON object.
 func ValidateJSONObject(input json.RawMessage) error {
 	var value map[string]any
 	if len(input) == 0 || json.Unmarshal(input, &value) != nil {
@@ -83,10 +85,12 @@ func ValidateJSONObject(input json.RawMessage) error {
 	return nil
 }
 
+// readOnlyRisk reports whether the risk level represents a read-only tool.
 func readOnlyRisk(risk Risk) bool {
 	return risk == RiskReadOnly
 }
 
+// validRisk reports whether the risk value is one of the supported tool risk levels.
 func validRisk(risk Risk) bool {
 	return risk == RiskReadOnly ||
 		risk == RiskLowRiskWrite ||

@@ -11,6 +11,7 @@ type Registry struct {
 	tools map[string]Tool
 }
 
+// NewRegistry builds a tool registry and registers the provided tools.
 func NewRegistry(items ...Tool) (*Registry, error) {
 	registry := &Registry{tools: make(map[string]Tool, len(items))}
 	for _, item := range items {
@@ -21,6 +22,7 @@ func NewRegistry(items ...Tool) (*Registry, error) {
 	return registry, nil
 }
 
+// Register adds one tool implementation to the registry after validating its definition.
 func (registry *Registry) Register(tool Tool) error {
 	if registry == nil || tool == nil {
 		return ErrInvalidDefinition
@@ -39,6 +41,7 @@ func (registry *Registry) Register(tool Tool) error {
 	return nil
 }
 
+// Get finds a registered tool by its stable tool name.
 func (registry *Registry) Get(name string) (Tool, bool) {
 	if registry == nil {
 		return nil, false
@@ -47,6 +50,7 @@ func (registry *Registry) Get(name string) (Tool, bool) {
 	return tool, ok
 }
 
+// Definitions returns all tool definitions in stable name order for model exposure.
 func (registry *Registry) Definitions() []Definition {
 	if registry == nil {
 		return nil

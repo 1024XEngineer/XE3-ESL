@@ -37,10 +37,12 @@ type ReviewSearchTool struct {
 	port ReviewPort
 }
 
+// NewReviewSearchTool creates the adapter for the review search tool.
 func NewReviewSearchTool(port ReviewPort) ReviewSearchTool {
 	return ReviewSearchTool{port: port}
 }
 
+// Definition describes review.search.v1 for model and command exposure.
 func (tool ReviewSearchTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewSearchToolName,
@@ -58,6 +60,7 @@ func (tool ReviewSearchTool) Definition() Definition {
 	}
 }
 
+// Execute validates search input and delegates review lookup to the ReviewPort.
 func (tool ReviewSearchTool) Execute(
 	ctx context.Context,
 	call CallContext,
@@ -90,10 +93,12 @@ type ReviewGetTool struct {
 	port ReviewPort
 }
 
+// NewReviewGetTool creates the adapter for reading one review.
 func NewReviewGetTool(port ReviewPort) ReviewGetTool {
 	return ReviewGetTool{port: port}
 }
 
+// Definition describes review.get.v1 for model exposure.
 func (tool ReviewGetTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewGetToolName,
@@ -106,6 +111,7 @@ func (tool ReviewGetTool) Definition() Definition {
 	}
 }
 
+// Execute validates get input and delegates review detail loading to the ReviewPort.
 func (tool ReviewGetTool) Execute(
 	ctx context.Context,
 	call CallContext,
@@ -128,6 +134,7 @@ func (tool ReviewGetTool) Execute(
 	}, nil
 }
 
+// reviewMap returns the compact JSON object exposed back to the model for a review.
 func reviewMap(review ReviewSummary) map[string]any {
 	return map[string]any{
 		"id":          review.ID,

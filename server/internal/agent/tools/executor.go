@@ -9,10 +9,12 @@ type Executor struct {
 	registry *Registry
 }
 
+// NewExecutor creates a tool executor backed by the provided registry.
 func NewExecutor(registry *Registry) *Executor {
 	return &Executor{registry: registry}
 }
 
+// Execute validates a tool invocation, resolves its tool, and runs it with trusted context.
 func (executor *Executor) Execute(
 	ctx context.Context,
 	call CallContext,
@@ -43,6 +45,7 @@ func (executor *Executor) Execute(
 	return result, nil
 }
 
+// MarshalInput encodes a typed value into the raw JSON payload used by tool invocations.
 func MarshalInput(value any) (json.RawMessage, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {

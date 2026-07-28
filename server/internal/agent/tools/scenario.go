@@ -39,10 +39,12 @@ type ScenarioCreateTool struct {
 	port ScenarioPort
 }
 
+// NewScenarioCreateTool creates the adapter for the scenario creation tool.
 func NewScenarioCreateTool(port ScenarioPort) ScenarioCreateTool {
 	return ScenarioCreateTool{port: port}
 }
 
+// Definition describes scenario.create.v1 for model and command exposure.
 func (tool ScenarioCreateTool) Definition() Definition {
 	return Definition{
 		Name:        ScenarioCreateToolName,
@@ -57,6 +59,7 @@ func (tool ScenarioCreateTool) Definition() Definition {
 	}
 }
 
+// Execute validates create input and delegates scenario creation to the ScenarioPort.
 func (tool ScenarioCreateTool) Execute(
 	ctx context.Context,
 	call CallContext,
@@ -80,10 +83,12 @@ type ScenarioSearchTool struct {
 	port ScenarioPort
 }
 
+// NewScenarioSearchTool creates the adapter for the scenario search tool.
 func NewScenarioSearchTool(port ScenarioPort) ScenarioSearchTool {
 	return ScenarioSearchTool{port: port}
 }
 
+// Definition describes scenario.search.v1 for model and command exposure.
 func (tool ScenarioSearchTool) Definition() Definition {
 	return Definition{
 		Name:        ScenarioSearchToolName,
@@ -100,6 +105,7 @@ func (tool ScenarioSearchTool) Definition() Definition {
 	}
 }
 
+// Execute validates search input and delegates scenario lookup to the ScenarioPort.
 func (tool ScenarioSearchTool) Execute(
 	ctx context.Context,
 	call CallContext,
@@ -128,6 +134,7 @@ func (tool ScenarioSearchTool) Execute(
 	}, nil
 }
 
+// scenarioToolResult converts a single scenario domain result into a tool result.
 func scenarioToolResult(result ScenarioResult) Result {
 	return Result{
 		Content:    map[string]any{"scenario": scenarioMap(result)},
@@ -135,6 +142,7 @@ func scenarioToolResult(result ScenarioResult) Result {
 	}
 }
 
+// scenarioMap returns the compact JSON object exposed back to the model for a scenario.
 func scenarioMap(result ScenarioResult) map[string]any {
 	return map[string]any{
 		"id":      result.ID,
