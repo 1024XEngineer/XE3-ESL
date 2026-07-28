@@ -27,7 +27,11 @@ type memoryExtractionProcessor interface {
 	) (memory.ExtractionSweepResult, error)
 }
 
-type memoryExtractionWaiter func(context.Context, time.Duration) bool
+type memoryExtractionWaiter func(
+	context.Context,
+	time.Duration,
+	<-chan struct{},
+) bool
 
 type memoryExtractionWorker struct {
 	processor    memoryExtractionProcessor
@@ -35,12 +39,16 @@ type memoryExtractionWorker struct {
 	interval     time.Duration
 	sweepTimeout time.Duration
 	claimLimit   int
+	wakeup       <-chan struct{}
+	indexWakeup  interface{ Notify() }
 	wait         memoryExtractionWaiter
 }
 
 func buildMemoryExtractionWorker(
 	processor memoryExtractionProcessor,
 	logger *slog.Logger,
+	wakeup <-chan struct{},
+	indexWakeup interface{ Notify() },
 ) (*memoryExtractionWorker, error) {
 	return newMemoryExtractionWorker(
 		processor,
@@ -48,7 +56,9 @@ func buildMemoryExtractionWorker(
 		memoryExtractionInterval,
 		memoryExtractionSweepTimeout,
 		memoryExtractionClaimLimit,
-		waitForMemoryExtraction,
+		wakeup,
+		indexWakeup,
+		waitForMemoryWork,
 	)
 }
 
@@ -58,6 +68,8 @@ func newMemoryExtractionWorker(
 	interval time.Duration,
 	sweepTimeout time.Duration,
 	claimLimit int,
+	wakeup <-chan struct{},
+	indexWakeup interface{ Notify() },
 	wait memoryExtractionWaiter,
 ) (*memoryExtractionWorker, error) {
 	if nilMemoryExtractionDependency(processor) ||
@@ -76,6 +88,8 @@ func newMemoryExtractionWorker(
 		interval:     interval,
 		sweepTimeout: sweepTimeout,
 		claimLimit:   claimLimit,
+		wakeup:       wakeup,
+		indexWakeup:  indexWakeup,
 		wait:         wait,
 	}, nil
 }
@@ -88,14 +102,16 @@ func (worker *memoryExtractionWorker) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		worker.sweep(ctx)
-		if !worker.wait(ctx, worker.interval) {
+		if worker.sweep(ctx) {
+			continue
+		}
+		if !worker.wait(ctx, worker.interval, worker.wakeup) {
 			return
 		}
 	}
 }
 
-func (worker *memoryExtractionWorker) sweep(parent context.Context) {
+func (worker *memoryExtractionWorker) sweep(parent context.Context) bool {
 	startedAt := time.Now()
 	ctx, cancel := context.WithTimeout(parent, worker.sweepTimeout)
 	defer cancel()
@@ -103,6 +119,9 @@ func (worker *memoryExtractionWorker) sweep(parent context.Context) {
 		ctx,
 		worker.claimLimit,
 	)
+	if result.Completed > 0 && worker.indexWakeup != nil {
+		worker.indexWakeup.Notify()
+	}
 	for _, rejection := range result.Rejections {
 		worker.logger.DebugContext(
 			parent,
@@ -133,7 +152,7 @@ func (worker *memoryExtractionWorker) sweep(parent context.Context) {
 			"memory extraction sweep failed",
 			attributes...,
 		)
-		return
+		return false
 	}
 	if result.Failed > 0 || result.Discarded > 0 {
 		worker.logger.WarnContext(
@@ -141,27 +160,14 @@ func (worker *memoryExtractionWorker) sweep(parent context.Context) {
 			"memory extraction sweep completed with terminal jobs",
 			attributes...,
 		)
-		return
+		return result.Claimed == worker.claimLimit
 	}
 	worker.logger.InfoContext(
 		parent,
 		"memory extraction sweep completed",
 		attributes...,
 	)
-}
-
-func waitForMemoryExtraction(
-	ctx context.Context,
-	interval time.Duration,
-) bool {
-	timer := time.NewTimer(interval)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
+	return result.Claimed == worker.claimLimit
 }
 
 func memoryExtractionErrorKind(err error) string {

@@ -10,12 +10,13 @@ import (
 )
 
 var (
-	ErrInvalidArgument     = errors.New("practice: invalid argument")
-	ErrNotFound            = errors.New("practice: not found")
-	ErrConflict            = errors.New("practice: conflict")
-	ErrIdempotencyConflict = errors.New("practice: idempotency conflict")
-	ErrSessionCompleted    = errors.New("practice: session completed")
-	ErrDeletionGeneration  = errors.New("practice: stale deletion generation")
+	ErrInvalidArgument      = errors.New("practice: invalid argument")
+	ErrNotFound             = errors.New("practice: not found")
+	ErrConflict             = errors.New("practice: conflict")
+	ErrIdempotencyConflict  = errors.New("practice: idempotency conflict")
+	ErrConfirmationRequired = errors.New("practice: confirmation required")
+	ErrSessionCompleted     = errors.New("practice: session completed")
+	ErrDeletionGeneration   = errors.New("practice: stale deletion generation")
 )
 
 // Actor is produced by the trusted authentication boundary. Repository

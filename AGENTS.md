@@ -10,13 +10,13 @@
 
 ## 仓库与资源边界
 
-- 正式开发工作区为 `/Users/mac/Projects/XE3-ESL`，前端、后端、API 契约、CI 和正式用户文档只在该仓库修改。
-- 本地仓库的 `origin` 为个人 Fork `https://github.com/Lq0412/XE3-ESL.git`，用于推送个人任务分支。
+- 正式开发工作区为本文件所在的 `XE3-ESL` 仓库；前端、后端、API 契约、CI 和正式用户文档只在该仓库修改。
+- 每位贡献者应将本地仓库的 `origin` 配置为自己的 Fork，用于推送个人任务分支；不得依赖文档中固定的个人账号或 Fork 地址。
 - `upstream` 为官方主仓 `https://github.com/1024XEngineer/XE3-ESL.git`；`dev` 是日常开发与联调集成分支，`main` 只接收经过验证的正式发布。
 - 常规任务从最新 `upstream/dev` 创建短期分支，推送到 `origin` 后向 `upstream/dev` 发起 Pull Request。
 - 正式发布通过 `upstream/dev` 向 `upstream/main` 的发布 Pull Request 完成；禁止把常规功能分支直接合入 `main`。
 - 禁止直接推送官方主仓的 `dev` 或 `main`，也不在官方主仓创建个人开发分支。
-- `/Users/mac/Projects/ai-en-coach` 是前期共享开发与验证仓，包含 App 原型、已上线门户源码、Agent Demo 后端、资源文件和历史文档，仅允许读取和选择性迁移。
+- `ai-en-coach` 是前期共享开发与验证仓，包含 App 原型、已上线门户源码、Agent Demo 后端、资源文件和历史文档；其本地位置因成员环境而异，仅允许读取和选择性迁移。
 - 不在 `ai-en-coach` 中继续同步维护正式代码，也不把 `XE3-ESL` 的正式实现反向复制回共享仓。
 - 从 `ai-en-coach` 迁移内容前，必须先检查正式仓的目录结构、已接受 Issue、接口契约和其他成员的在审分支或 Pull Request，避免覆盖或重复实现。
 - `https://speak-up.top` 是已经上线、独立运行的 Web 门户。门户不迁入 Flutter App；其源码、品牌、文案和视觉资源可以作为迁移参考。

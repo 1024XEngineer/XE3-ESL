@@ -194,6 +194,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		"/v1/practice-plans/"+planID+"/practice-sessions",
 		fmt.Sprintf(`{
 			"expected_plan_revision":1,
+			"user_confirmed":true,
 			"preparation_snapshot_id":%q,
 			"practice_option_id":%q,
 			"role_definition_ids":[%q]
@@ -347,6 +348,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		"/v1/practice-plans/"+planID+"/practice-sessions",
 		fmt.Sprintf(`{
 			"expected_plan_revision":1,
+			"user_confirmed":true,
 			"preparation_snapshot_id":%q,
 			"practice_option_id":"option_forged",
 			"role_definition_ids":[%q]

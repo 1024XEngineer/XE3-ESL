@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
@@ -10,6 +11,88 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
+
+func TestVoiceQuestionRequestUsesFrozenScenarioPrompt(t *testing.T) {
+	tests := []struct {
+		name          string
+		scenarioType  string
+		scenarioModel string
+		aiRole        string
+		blueprint     string
+	}{
+		{
+			name:          "interview",
+			scenarioType:  "INTERVIEW",
+			scenarioModel: "PROJECT_EXPERIENCE_DEEP_DIVE",
+			aiRole:        "Technical interviewer",
+			blueprint:     "Ask for a concise project overview.",
+		},
+		{
+			name:          "exam",
+			scenarioType:  "EXAM",
+			scenarioModel: "IELTS_SPEAKING_PART_2",
+			aiRole:        "IELTS examiner",
+			blueprint:     "Present the cue card topic.",
+		},
+		{
+			name:          "workplace",
+			scenarioType:  "WORKPLACE",
+			scenarioModel: "PROGRESS_AND_RISK_UPDATE",
+			aiRole:        "Project stakeholder",
+			blueprint:     "Ask for the current progress.",
+		},
+		{
+			name:          "daily",
+			scenarioType:  "DAILY",
+			scenarioModel: "HOTEL_CHECKIN_AND_ISSUE_HANDLING",
+			aiRole:        "Hotel front desk agent",
+			blueprint:     "Ask for the reservation details.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session := agent.VoicePracticeSession{
+				ScenarioType:         test.scenarioType,
+				ScenarioModel:        test.scenarioModel,
+				TurnLimit:            4,
+				PreviousUserResponse: "I completed the first milestone.",
+				PromptModel: agent.VoiceScenarioPrompt{
+					PublicSceneBrief: "A realistic spoken English scene.",
+					PracticeGoal:     "Complete the exchange clearly.",
+					UserRole:         "Learner",
+					AIRole:           test.aiRole,
+					PersonaSummary:   "Professional and concise",
+					FocusAreas:       []string{"clarity", "follow-up"},
+					TurnBlueprints:   []string{test.blueprint},
+				},
+			}
+			request, err := voiceQuestionRequest(session, 2)
+			if err != nil {
+				t.Fatalf("voiceQuestionRequest: %v", err)
+			}
+			if len(request.Messages) != 2 {
+				t.Fatalf("messages = %d", len(request.Messages))
+			}
+			system := request.Messages[0].Content
+			user := request.Messages[1].Content
+			for _, want := range []string{
+				test.aiRole,
+				test.scenarioType,
+				test.scenarioModel,
+				test.blueprint,
+				session.PreviousUserResponse,
+			} {
+				if !strings.Contains(system+"\n"+user, want) {
+					t.Errorf("prompt does not contain %q: %+v", want, request)
+				}
+			}
+			if test.scenarioType != "INTERVIEW" &&
+				strings.Contains(strings.ToLower(system), "interview coach") {
+				t.Errorf("non-interview prompt leaked interview framing: %q", system)
+			}
+		})
+	}
+}
 
 func TestMapRecordingConfirmationError(t *testing.T) {
 	terminalConflicts := []error{

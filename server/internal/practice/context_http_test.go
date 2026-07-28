@@ -260,6 +260,7 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		"scenario_definition_id",
 		"scenario_definition_version",
 		"scenario_type",
+		"scenario_model",
 		"scenario_config_id",
 		"scenario_config_version",
 		"preparation_profile_id",
@@ -331,6 +332,7 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		"practice_session_id",
 		"practice_plan_id",
 		"scenario_type",
+		"scenario_model",
 		"snapshot_id",
 		"practice_session_status",
 		"session_version",
@@ -371,6 +373,7 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		"practice_session_id",
 		"practice_plan_id",
 		"scenario_type",
+		"scenario_model",
 		"snapshot_id",
 		"practice_session_status",
 		"session_version",
@@ -397,6 +400,7 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		"practice_session_id",
 		"plan_revision",
 		"scenario_type",
+		"scenario_model",
 		"scenario_definition_snapshot",
 		"scenario_config_snapshot",
 		"preparation_snapshot",
@@ -423,6 +427,7 @@ func TestContextHTTPAllowsPlanOwnedExplicitStart(t *testing.T) {
 				key != "targeted-start-intent" ||
 				!reflect.DeepEqual(request, CreateSessionRequest{
 					ExpectedPlanRevision: 2,
+					UserConfirmed:        true,
 				}) {
 				t.Fatalf("targeted start request = %+v", request)
 			}
@@ -435,7 +440,7 @@ func TestContextHTTPAllowsPlanOwnedExplicitStart(t *testing.T) {
 			method: http.MethodPost,
 			path: "/v1/practice-plans/plan-targeted/" +
 				"practice-sessions",
-			body:        `{"expected_plan_revision":2}`,
+			body:        `{"expected_plan_revision":2,"user_confirmed":true}`,
 			contentType: "application/json",
 			keyValues:   []string{"targeted-start-intent"},
 			actor:       &actor,
@@ -1277,6 +1282,7 @@ func contextHTTPPlanRequest() CreatePlanRequest {
 func contextHTTPSessionRequest() CreateSessionRequest {
 	return CreateSessionRequest{
 		ExpectedPlanRevision:  1,
+		UserConfirmed:         true,
 		PreparationSnapshotID: "preparation-snapshot-1",
 		PracticeOptionID:      "option-1",
 		RoleDefinitionIDs:     []string{"role-1"},
@@ -1304,6 +1310,7 @@ func contextHTTPPlan(userID string) persistence.Plan {
 		ScenarioDefinitionID:      request.ScenarioDefinitionID,
 		ScenarioDefinitionVersion: request.ScenarioDefinitionVersion,
 		ScenarioType:              "INTERVIEW",
+		ScenarioModel:             persistence.ScenarioModelProjectExperienceDeepDive,
 		ScenarioConfigID:          request.ScenarioConfigID,
 		ScenarioConfigVersion:     request.ScenarioConfigVersion,
 		PreparationProfileID:      request.PreparationProfileID,
@@ -1328,13 +1335,15 @@ func contextHTTPBootstrap() persistence.ContextSessionBootstrap {
 		Version:              1,
 	}
 	snapshot := persistence.ContextSessionSnapshot{
-		ID:           "snapshot-1",
-		SessionID:    "session-1",
-		PlanRevision: 1,
-		ScenarioType: "INTERVIEW",
+		ID:            "snapshot-1",
+		SessionID:     "session-1",
+		PlanRevision:  1,
+		ScenarioType:  "INTERVIEW",
+		ScenarioModel: persistence.ScenarioModelProjectExperienceDeepDive,
 		ScenarioDefinition: persistence.ScenarioDefinitionSnapshot{
 			ID:      "scenario-1",
 			Type:    "INTERVIEW",
+			Model:   persistence.ScenarioModelProjectExperienceDeepDive,
 			Name:    "English interview",
 			Version: 1,
 			Status:  "active",
@@ -1343,10 +1352,20 @@ func contextHTTPBootstrap() persistence.ContextSessionBootstrap {
 			ID:                   "config-1",
 			ScenarioDefinitionID: "scenario-1",
 			Type:                 "INTERVIEW",
+			Model:                persistence.ScenarioModelProjectExperienceDeepDive,
 			Version:              1,
 			JobTitle:             "Backend engineer",
 			JobDescription:       "Build reliable services.",
-			FocusAreas:           []string{"system_design"},
+			PromptModel: persistence.ScenarioPromptModel{
+				PublicSceneBrief:         "Discuss one backend project.",
+				PracticeGoal:             "Explain decisions with evidence.",
+				UserRole:                 "Candidate",
+				AIRole:                   "Technical interviewer",
+				PersonaSummary:           "A precise interviewer.",
+				FocusAreas:               []string{"system_design"},
+				TurnBlueprints:           []string{"Clarify the project"},
+				SuggestedDurationSeconds: 900,
+			},
 		},
 		Preparation: persistence.PreparationSnapshot{
 			ID:                 "preparation-snapshot-1",
@@ -1407,13 +1426,14 @@ func contextHTTPBootstrap() persistence.ContextSessionBootstrap {
 	}
 	return persistence.ContextSessionBootstrap{
 		Session: persistence.ContextSession{
-			ID:           snapshot.SessionID,
-			PlanID:       "plan-1",
-			ScenarioType: snapshot.ScenarioType,
-			SnapshotID:   snapshot.ID,
-			Status:       persistence.ContextSessionStarting,
-			Version:      1,
-			CreatedAt:    createdAt,
+			ID:            snapshot.SessionID,
+			PlanID:        "plan-1",
+			ScenarioType:  snapshot.ScenarioType,
+			ScenarioModel: snapshot.ScenarioModel,
+			SnapshotID:    snapshot.ID,
+			Status:        persistence.ContextSessionStarting,
+			Version:       1,
+			CreatedAt:     createdAt,
 		},
 		Snapshot: snapshot,
 	}

@@ -25,10 +25,12 @@ class PracticePage extends StatefulWidget {
 class _PracticePageState extends State<PracticePage> {
   static const _maxReviewExitFrameAttempts = 60;
 
+  final TextEditingController _textAnswerController = TextEditingController();
   bool _scheduledReviewExit = false;
   int _reviewExitAttempts = 0;
   Animation<double>? _observedSecondaryAnimation;
   AnimationStatusListener? _reviewRouteStatusListener;
+  String? _expandedHintQuestionId;
 
   @override
   void initState() {
@@ -53,6 +55,7 @@ class _PracticePageState extends State<PracticePage> {
   void dispose() {
     widget.agentController?.removeListener(_handleState);
     _clearReviewRouteWait();
+    _textAnswerController.dispose();
     unawaited(widget.agentController?.stopPracticeAudio(notify: false));
     super.dispose();
   }
@@ -184,6 +187,27 @@ class _PracticePageState extends State<PracticePage> {
     _reviewExitAttempts = 0;
   }
 
+  void _toggleHint(String questionId) {
+    setState(() {
+      _expandedHintQuestionId = _expandedHintQuestionId == questionId
+          ? null
+          : questionId;
+    });
+  }
+
+  Future<void> _submitTextAnswer() async {
+    final controller = widget.agentController;
+    if (controller == null) {
+      return;
+    }
+    final submitted = await controller.submitPracticeText(
+      _textAnswerController.text,
+    );
+    if (submitted && mounted) {
+      _textAnswerController.clear();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.agentController;
@@ -220,13 +244,13 @@ class _PracticePageState extends State<PracticePage> {
                     turnLimit: controller.turnLimit,
                   ),
                   const SizedBox(height: 22),
-                  _CurrentQuestion(controller: controller),
-                  const SizedBox(height: 18),
-                  _RecordingPanel(controller: controller),
-                  if (controller.recordings.isNotEmpty) ...[
-                    const SizedBox(height: 18),
-                    PracticeRecordingsCard(controller: controller),
-                  ],
+                  _CurrentQuestion(
+                    controller: controller,
+                    expandedHintQuestionId: _expandedHintQuestionId,
+                    onToggleHint: _toggleHint,
+                  ),
+                  const SizedBox(height: 12),
+                  const _CorrectionIntegrationStatus(),
                   if (controller.errorMessage case final message?) ...[
                     const SizedBox(height: 14),
                     Text(
@@ -241,6 +265,38 @@ class _PracticePageState extends State<PracticePage> {
                       message,
                       key: const Key('practice-media-error-message'),
                       style: const TextStyle(color: Color(0xFF8B2E26)),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  _RecordingPanel(
+                    controller: controller,
+                    textController: _textAnswerController,
+                    onSubmitText: _submitTextAnswer,
+                  ),
+                  if (controller.recordings.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    PracticeRecordingsCard(controller: controller),
+                  ],
+                  if (controller.messages.any(
+                    (message) => message.id != controller.questionId,
+                  )) ...[
+                    const SizedBox(height: 22),
+                    const Text(
+                      '本次对话记录',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _ConversationHistory(
+                      messages: controller.messages
+                          .where(
+                            (message) => message.id != controller.questionId,
+                          )
+                          .toList(growable: false),
+                      expandedHintQuestionId: _expandedHintQuestionId,
+                      onToggleHint: _toggleHint,
                     ),
                   ],
                   const SizedBox(height: 18),
@@ -308,17 +364,91 @@ class _TurnProgress extends StatelessWidget {
   }
 }
 
+class _ConversationHistory extends StatelessWidget {
+  const _ConversationHistory({
+    required this.messages,
+    required this.expandedHintQuestionId,
+    required this.onToggleHint,
+  });
+
+  final List<AgentMessage> messages;
+  final String? expandedHintQuestionId;
+  final ValueChanged<String> onToggleHint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('practice-conversation-history'),
+      children: [
+        for (final message in messages) ...[
+          Align(
+            alignment: message.role == AgentMessageRole.user
+                ? Alignment.centerRight
+                : Alignment.centerLeft,
+            child: Container(
+              key: Key('practice-history-message-${message.id}'),
+              constraints: const BoxConstraints(maxWidth: 560),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: message.role == AgentMessageRole.user
+                    ? const Color(0xFF303136)
+                    : Colors.white,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message.text,
+                    style: TextStyle(
+                      color: message.role == AgentMessageRole.user
+                          ? Colors.white
+                          : const Color(0xFF303136),
+                      height: 1.45,
+                    ),
+                  ),
+                  if (message.role == AgentMessageRole.assistant) ...[
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      key: Key('practice-history-hint-${message.id}'),
+                      onPressed: () => onToggleHint(message.id),
+                      icon: const Icon(Icons.lightbulb_outline_rounded),
+                      label: Text(
+                        expandedHintQuestionId == message.id ? '收起提示' : '提示',
+                      ),
+                    ),
+                    if (expandedHintQuestionId == message.id)
+                      const _AnswerHint(),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+}
+
 class _CurrentQuestion extends StatelessWidget {
-  const _CurrentQuestion({required this.controller});
+  const _CurrentQuestion({
+    required this.controller,
+    required this.expandedHintQuestionId,
+    required this.onToggleHint,
+  });
 
   final AgentController controller;
+  final String? expandedHintQuestionId;
+  final ValueChanged<String> onToggleHint;
 
   @override
   Widget build(BuildContext context) {
     final question = controller.messages.reversed
         .where((message) => message.role == AgentMessageRole.assistant)
-        .map((message) => message.text)
         .firstOrNull;
+    final hintExpanded =
+        question != null && expandedHintQuestionId == question.id;
     return Card(
       elevation: 0,
       color: Colors.white,
@@ -340,6 +470,18 @@ class _CurrentQuestion extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (question != null)
+                  TextButton.icon(
+                    key: Key('practice-hint-${question.id}'),
+                    onPressed: () => onToggleHint(question.id),
+                    icon: Icon(
+                      hintExpanded
+                          ? Icons.lightbulb_rounded
+                          : Icons.lightbulb_outline_rounded,
+                      size: 19,
+                    ),
+                    label: Text(hintExpanded ? '收起提示' : '提示'),
+                  ),
                 if (controller.canPlayQuestionAudio)
                   IconButton(
                     key: const Key('practice-question-audio'),
@@ -365,12 +507,75 @@ class _CurrentQuestion extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              question ?? '准备好后开始第一轮。',
+              question?.text ?? '准备好后开始第一轮。',
               key: const Key('practice-current-question'),
               style: const TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w600,
                 height: 1.45,
+              ),
+            ),
+            if (hintExpanded) ...[
+              const SizedBox(height: 16),
+              const _AnswerHint(),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AnswerHint extends StatelessWidget {
+  const _AnswerHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return const DecoratedBox(
+      key: Key('practice-answer-hint'),
+      decoration: BoxDecoration(
+        color: Color(0xFFF3F3F0),
+        borderRadius: BorderRadius.all(Radius.circular(16)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('参考回答', style: TextStyle(fontWeight: FontWeight.w800)),
+            SizedBox(height: 6),
+            Text(
+              'From my perspective, the core responsibility of this role is '
+              'to understand the goal, work closely with the team, and '
+              'deliver reliable results.',
+              style: TextStyle(color: Color(0xFF5F6168), height: 1.45),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CorrectionIntegrationStatus extends StatelessWidget {
+  const _CorrectionIntegrationStatus();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Material(
+      key: Key('practice-correction-status'),
+      color: Color(0xFFE9E9E5),
+      borderRadius: BorderRadius.all(Radius.circular(14)),
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: Row(
+          children: [
+            Icon(Icons.fact_check_outlined, size: 19),
+            SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                '逐轮纠错：当前暂无结果（已预留正式接口）',
+                style: TextStyle(fontSize: 13, color: Color(0xFF5F6168)),
               ),
             ),
           ],
@@ -381,9 +586,15 @@ class _CurrentQuestion extends StatelessWidget {
 }
 
 class _RecordingPanel extends StatelessWidget {
-  const _RecordingPanel({required this.controller});
+  const _RecordingPanel({
+    required this.controller,
+    required this.textController,
+    required this.onSubmitText,
+  });
 
   final AgentController controller;
+  final TextEditingController textController;
+  final VoidCallback onSubmitText;
 
   @override
   Widget build(BuildContext context) {
@@ -394,10 +605,10 @@ class _RecordingPanel extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: switch (controller.recordingState) {
-          PracticeRecordingState.idle => _RecordAction(
-            label: '开始录音',
-            icon: Icons.mic_none_rounded,
-            onPressed: controller.startRecording,
+          PracticeRecordingState.idle => _IdleAnswerPanel(
+            textController: textController,
+            onSubmitText: onSubmitText,
+            onStartRecording: controller.startRecording,
           ),
           PracticeRecordingState.starting => const _WorkingState(
             label: '正在请求麦克风权限',
@@ -424,6 +635,78 @@ class _RecordingPanel extends StatelessWidget {
           ),
         },
       ),
+    );
+  }
+}
+
+class _IdleAnswerPanel extends StatelessWidget {
+  const _IdleAnswerPanel({
+    required this.textController,
+    required this.onSubmitText,
+    required this.onStartRecording,
+  });
+
+  final TextEditingController textController;
+  final VoidCallback onSubmitText;
+  final VoidCallback onStartRecording;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        OutlinedButton.icon(
+          key: const Key('practice-record'),
+          onPressed: onStartRecording,
+          icon: const Icon(Icons.mic_none_rounded),
+          label: const Text('使用语音回答'),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            children: [
+              Expanded(child: Divider()),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  '或输入文字',
+                  style: TextStyle(color: Color(0xFF777981)),
+                ),
+              ),
+              Expanded(child: Divider()),
+            ],
+          ),
+        ),
+        const Text(
+          '用英文回答',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          key: const Key('practice-text-answer'),
+          controller: textController,
+          minLines: 2,
+          maxLines: 4,
+          maxLength: 8000,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(
+            hintText: 'Type your answer in English…',
+            border: OutlineInputBorder(),
+            counterText: '',
+          ),
+        ),
+        const SizedBox(height: 10),
+        FilledButton.icon(
+          key: const Key('practice-submit-text'),
+          onPressed: onSubmitText,
+          icon: const Icon(Icons.send_rounded),
+          label: const Text('发送文字回答'),
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        ),
+      ],
     );
   }
 }

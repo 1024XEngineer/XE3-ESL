@@ -98,7 +98,7 @@ func (a *VoiceApplication) ResolveActorParticipant(
 	}
 
 	participantID := ""
-	interviewers := 0
+	facilitators := 0
 	participantIDs := make(map[string]struct{}, len(snapshot.Participants))
 	participantOrders := make(map[int]struct{}, len(snapshot.Participants))
 	for _, participant := range snapshot.Participants {
@@ -116,7 +116,7 @@ func (a *VoiceApplication) ResolveActorParticipant(
 		participantIDs[participant.ID] = struct{}{}
 		participantOrders[participant.Order] = struct{}{}
 		switch participant.Role {
-		case "INTERVIEWER":
+		case "FACILITATOR", "INTERVIEWER":
 			if participant.SubjectRef.Namespace != "speakup.role" ||
 				participant.SubjectRef.SubjectID !=
 					participant.RoleDefinitionID ||
@@ -126,8 +126,8 @@ func (a *VoiceApplication) ResolveActorParticipant(
 					participant.RoleDefinitionID {
 				return "", persistence.ErrConflict
 			}
-			interviewers++
-		case "CANDIDATE":
+			facilitators++
+		case "LEARNER", "CANDIDATE":
 			if participantID != "" {
 				return "", persistence.ErrConflict
 			}
@@ -143,7 +143,7 @@ func (a *VoiceApplication) ResolveActorParticipant(
 			return "", persistence.ErrConflict
 		}
 	}
-	if participantID == "" || interviewers == 0 {
+	if participantID == "" || facilitators == 0 {
 		return "", persistence.ErrNotFound
 	}
 	return participantID, nil

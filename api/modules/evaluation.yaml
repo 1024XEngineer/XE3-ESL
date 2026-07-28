@@ -1,0 +1,1255 @@
+paths:
+  /v1/evaluations:
+    post:
+      tags:
+        - Evaluation
+      summary: Create or return one logical Evaluation
+      description: |
+        Accepts trusted Practice and EvidenceSnapshot references for one Scene,
+        Core 4D, or dual-channel evaluation. The authenticated Actor is derived
+        by the server. Callers cannot submit an owner, tenant, revision number,
+        or server idempotency key.
+
+        The server derives root and per-channel idempotency keys from the
+        canonical request. `client_request_id` is trace-only and has no
+        authority over deduplication.
+      operationId: createEvaluation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEvaluationRequest'
+            examples:
+              dualChannel:
+                value:
+                  practice_session_id: session_demo_001
+                  input_snapshot_id: snapshot_demo_001
+                  input_revision: 1
+                  scope: SESSION
+                  scene_type: INTERVIEW
+                  channels:
+                    - SCENE
+                    - CORE_4D
+                  scene_strategy_ref: interview/project-deep-dive/1.0.0
+                  core_4d_strategy_ref: speaking-core4d/1.0.0
+                  pipeline_version: evaluation-pipeline/1.0.0
+                  client_request_id: trace_demo_001
+      responses:
+        '202':
+          description: The logical Evaluation exists and is queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationAccepted'
+              example:
+                evaluation_id: evaluation_demo_001
+                evaluation_revision_id: evaluation_revision_demo_001
+                revision: 1
+                evaluation_status: QUEUED
+                status_url: /v1/evaluations/evaluation_demo_001
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: '#/components/responses/EvaluationConflict'
+        '422':
+          $ref: '#/components/responses/EvaluationPolicyRejected'
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/evaluations/{evaluation_id}:
+    get:
+      tags:
+        - Evaluation
+      summary: Get the current publishable Evaluation revision
+      description: |
+        Returns the current publishable immutable revision for one logical
+        Evaluation. Audit and governance readers use a future revision-specific
+        contract; callers must not treat `evaluation_id` as a physical result
+        identifier.
+      operationId: getEvaluation
+      parameters:
+        - $ref: '#/components/parameters/EvaluationId'
+      responses:
+        '200':
+          description: Current Actor-owned Evaluation state and frozen results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Evaluation'
+              example:
+                evaluation_id: evaluation_demo_001
+                evaluation_revision_id: evaluation_revision_demo_001
+                revision: 1
+                practice_session_id: session_demo_001
+                input_snapshot_id: snapshot_demo_001
+                input_revision: 1
+                scope: SESSION
+                scene_type: INTERVIEW
+                channels:
+                  - SCENE
+                  - CORE_4D
+                scene_strategy_ref: interview/project-deep-dive/1.0.0
+                core_4d_strategy_ref: speaking-core4d/1.0.0
+                pipeline_version: evaluation-pipeline/1.0.0
+                schema_version: evaluation-schema/1.0.0
+                evaluation_status: RUNNING
+                module_statuses:
+                  scene: RUNNING
+                  core_4d: PENDING
+                is_final: false
+                created_at: '2026-07-28T12:00:00Z'
+                updated_at: '2026-07-28T12:00:01Z'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: '#/components/responses/EvaluationNotFound'
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/evaluations/{evaluation_id}/re-evaluate:
+    post:
+      tags:
+        - Evaluation
+      summary: Create an immutable replacement Evaluation revision
+      description: |
+        Creates a new revision for the same logical Evaluation. The server
+        assigns the next revision and `supersedes_revision_id`; callers cannot
+        overwrite or select a revision number.
+      operationId: reevaluateEvaluation
+      parameters:
+        - $ref: '#/components/parameters/EvaluationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReevaluateEvaluationRequest'
+            example:
+              channels:
+                - SCENE
+                - CORE_4D
+              scene_strategy_ref: interview/project-deep-dive/1.1.0
+              core_4d_strategy_ref: speaking-core4d/1.0.0
+              pipeline_version: evaluation-pipeline/1.1.0
+              client_request_id: trace_demo_reevaluate_001
+      responses:
+        '202':
+          description: A replacement immutable revision has been queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationAccepted'
+              example:
+                evaluation_id: evaluation_demo_001
+                evaluation_revision_id: evaluation_revision_demo_002
+                revision: 2
+                supersedes_revision_id: evaluation_revision_demo_001
+                evaluation_status: QUEUED
+                status_url: /v1/evaluations/evaluation_demo_001
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: '#/components/responses/EvaluationNotFound'
+        '409':
+          $ref: '#/components/responses/EvaluationConflict'
+        '422':
+          $ref: '#/components/responses/EvaluationPolicyRejected'
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+
+components:
+  responses:
+    EvaluationNotFound:
+      description: The logical Evaluation does not exist for the current Actor.
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+          example:
+            error:
+              code: evaluation_not_found
+              message: Evaluation was not found.
+              retryable: false
+              correlation_id: corr_evaluation_not_found
+    EvaluationConflict:
+      description: The requested Evaluation revision or operation conflicts with current state.
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+          example:
+            error:
+              code: evaluation_version_conflict
+              message: Evaluation state changed before the operation completed.
+              retryable: false
+              correlation_id: corr_evaluation_version_conflict
+    EvaluationPolicyRejected:
+      description: The requested strategy or policy is unavailable or incompatible.
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+          example:
+            error:
+              code: evaluation_strategy_not_available
+              message: The requested Evaluation strategy is not available.
+              retryable: false
+              correlation_id: corr_evaluation_strategy_not_available
+  parameters:
+    EvaluationId:
+      name: evaluation_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/StableIdentifier'
+  schemas:
+    StableIdentifier:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z][A-Za-z0-9_-]*$'
+    VersionReference:
+      type: string
+      minLength: 3
+      maxLength: 160
+      pattern: '^[A-Za-z][A-Za-z0-9._:/-]*$'
+    ConfigHash:
+      type: string
+      pattern: '^sha256:[a-f0-9]{64}$'
+    ArtifactDigest:
+      type: string
+      pattern: '^sha256:[a-f0-9]{64}$'
+    EvaluationChannel:
+      type: string
+      enum:
+        - SCENE
+        - CORE_4D
+    EvaluationScope:
+      type: string
+      enum:
+        - TURN
+        - SESSION
+    EvaluationSceneType:
+      type: string
+      enum:
+        - IELTS_SPEAKING
+        - INTERVIEW
+        - OVERSEAS_DAILY_LIFE
+        - OVERSEAS_WORKPLACE
+    EvaluationStatus:
+      type: string
+      enum:
+        - RECEIVED
+        - VALIDATING
+        - QUEUED
+        - RUNNING
+        - PARTIAL_READY
+        - READY
+        - FAILED
+        - SUPERSEDED
+    ScoreabilityStatus:
+      type: string
+      enum:
+        - RELIABLE
+        - PROVISIONAL
+        - INSUFFICIENT
+    GateStatus:
+      type: string
+      enum:
+        - PASS
+        - FEEDBACK_ONLY
+        - BLOCKED
+    ModuleStatus:
+      type: string
+      enum:
+        - PENDING
+        - RUNNING
+        - READY
+        - FAILED
+        - SKIPPED
+    EvaluationReasonCode:
+      type: string
+      enum:
+        - STRATEGY_NOT_AVAILABLE
+        - AUDIO_UNUSABLE
+        - SPEAKER_ATTRIBUTION_FAILED
+        - INSUFFICIENT_EVIDENCE
+        - ASR_LOW_CONFIDENCE
+        - REQUIRED_DIMENSION_MISSING
+        - SCORE_INCONSISTENT
+        - EVIDENCE_REF_INVALID
+        - VERSION_CONFLICT
+        - DUPLICATE_REQUEST
+        - POLICY_VIOLATION
+        - INTERNAL_RETRYABLE
+        - OPPORTUNITY_NOT_PROVIDED
+    RoundingRule:
+      type: string
+      enum:
+        - HALF_UP_TO_INTEGER
+        - HALF_UP_TO_0_5
+    CalibrationVersion:
+      anyOf:
+        - $ref: '#/components/schemas/VersionReference'
+        - type: string
+          const: NOT_CONFIGURED
+    CreateEvaluationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_session_id
+        - input_snapshot_id
+        - input_revision
+        - scope
+        - scene_type
+        - channels
+        - pipeline_version
+      properties:
+        practice_session_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        input_snapshot_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        input_revision:
+          type: integer
+          minimum: 1
+        scope:
+          $ref: '#/components/schemas/EvaluationScope'
+        scene_type:
+          $ref: '#/components/schemas/EvaluationSceneType'
+        channels:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvaluationChannel'
+        scene_strategy_ref:
+          $ref: '#/components/schemas/VersionReference'
+        core_4d_strategy_ref:
+          $ref: '#/components/schemas/VersionReference'
+        pipeline_version:
+          $ref: '#/components/schemas/VersionReference'
+        client_request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._:-]+$'
+      allOf:
+        - if:
+            properties:
+              channels:
+                type: array
+                contains:
+                  const: SCENE
+            required:
+              - channels
+          then:
+            required:
+              - scene_strategy_ref
+        - if:
+            properties:
+              channels:
+                type: array
+                contains:
+                  const: CORE_4D
+            required:
+              - channels
+          then:
+            required:
+              - core_4d_strategy_ref
+    ReevaluateEvaluationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - channels
+        - pipeline_version
+      properties:
+        channels:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvaluationChannel'
+        scene_strategy_ref:
+          $ref: '#/components/schemas/VersionReference'
+        core_4d_strategy_ref:
+          $ref: '#/components/schemas/VersionReference'
+        pipeline_version:
+          $ref: '#/components/schemas/VersionReference'
+        client_request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._:-]+$'
+      allOf:
+        - if:
+            properties:
+              channels:
+                type: array
+                contains:
+                  const: SCENE
+            required:
+              - channels
+          then:
+            required:
+              - scene_strategy_ref
+        - if:
+            properties:
+              channels:
+                type: array
+                contains:
+                  const: CORE_4D
+            required:
+              - channels
+          then:
+            required:
+              - core_4d_strategy_ref
+    EvaluationAccepted:
+      type: object
+      additionalProperties: false
+      required:
+        - evaluation_id
+        - evaluation_revision_id
+        - revision
+        - evaluation_status
+        - status_url
+      properties:
+        evaluation_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evaluation_revision_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        revision:
+          type: integer
+          minimum: 1
+        supersedes_revision_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evaluation_status:
+          type: string
+          const: QUEUED
+        status_url:
+          type: string
+          pattern: '^/v1/evaluations/[A-Za-z][A-Za-z0-9_-]*$'
+    Evaluation:
+      $ref: '#/components/schemas/EvaluationCommonProperties'
+    EvaluationCommonProperties:
+      type: object
+      additionalProperties: false
+      required:
+        - evaluation_id
+        - evaluation_revision_id
+        - revision
+        - practice_session_id
+        - input_snapshot_id
+        - input_revision
+        - scope
+        - scene_type
+        - channels
+        - pipeline_version
+        - schema_version
+        - evaluation_status
+        - module_statuses
+        - is_final
+        - created_at
+        - updated_at
+      properties:
+        evaluation_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evaluation_revision_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        revision:
+          type: integer
+          minimum: 1
+        supersedes_revision_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        superseded_by_revision_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        practice_session_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        input_snapshot_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        input_revision:
+          type: integer
+          minimum: 1
+        scope:
+          $ref: '#/components/schemas/EvaluationScope'
+        scene_type:
+          $ref: '#/components/schemas/EvaluationSceneType'
+        channels:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvaluationChannel'
+        scene_strategy_ref:
+          $ref: '#/components/schemas/VersionReference'
+        core_4d_strategy_ref:
+          $ref: '#/components/schemas/VersionReference'
+        pipeline_version:
+          $ref: '#/components/schemas/VersionReference'
+        schema_version:
+          $ref: '#/components/schemas/VersionReference'
+        evaluation_status:
+          $ref: '#/components/schemas/EvaluationStatus'
+        scoreability_status:
+          $ref: '#/components/schemas/ScoreabilityStatus'
+        gate_status:
+          $ref: '#/components/schemas/GateStatus'
+        module_statuses:
+          type: object
+          minProperties: 1
+          maxProperties: 32
+          propertyNames:
+            pattern: '^[a-z][a-z0-9_]{0,63}$'
+          additionalProperties:
+            $ref: '#/components/schemas/ModuleStatus'
+        scene_result:
+          $ref: '#/components/schemas/SceneEvaluationResult'
+        core_4d_observations:
+          type: array
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/CoreAbilityObservation'
+        stable_failure:
+          $ref: '#/components/schemas/EvaluationFailure'
+        is_final:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+      allOf:
+        - if:
+            properties:
+              evaluation_status:
+                type: string
+                const: READY
+            required:
+              - evaluation_status
+          then:
+            required:
+              - scoreability_status
+              - gate_status
+              - completed_at
+            anyOf:
+              - required:
+                  - scene_result
+              - required:
+                  - core_4d_observations
+        - if:
+            properties:
+              evaluation_status:
+                type: string
+                const: FAILED
+            required:
+              - evaluation_status
+          then:
+            required:
+              - stable_failure
+              - completed_at
+            not:
+              anyOf:
+                - required:
+                    - scoreability_status
+                - required:
+                    - gate_status
+                - required:
+                    - scene_result
+                - required:
+                    - core_4d_observations
+        - if:
+            properties:
+              evaluation_status:
+                type: string
+                const: SUPERSEDED
+            required:
+              - evaluation_status
+          then:
+            required:
+              - superseded_by_revision_id
+    EvaluationFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - reason_code
+        - retryable
+      properties:
+        reason_code:
+          $ref: '#/components/schemas/EvaluationReasonCode'
+        retryable:
+          type: boolean
+    SceneEvaluationResult:
+      $ref: '#/components/schemas/SceneResultCommonProperties'
+    SceneResultCommonProperties:
+      type: object
+      additionalProperties: false
+      required:
+        - scene_type
+        - dimensions
+        - task_results
+        - question_results
+        - core4_observation_refs
+        - evaluation_status
+        - scoreability_status
+        - gate_status
+        - module_statuses
+        - strategy_ref
+        - aggregation_version
+        - calibration_version
+        - full_config_hash
+        - is_final
+      properties:
+        scene_type:
+          $ref: '#/components/schemas/EvaluationSceneType'
+        dimensions:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/SceneDimension'
+        task_results:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/SceneTaskResult'
+        question_results:
+          type: array
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/QuestionEvaluationResult'
+        core4_observation_refs:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+        evaluation_status:
+          type: string
+          enum:
+            - PARTIAL_READY
+            - READY
+        scoreability_status:
+          $ref: '#/components/schemas/ScoreabilityStatus'
+        gate_status:
+          $ref: '#/components/schemas/GateStatus'
+        module_statuses:
+          type: object
+          minProperties: 1
+          maxProperties: 32
+          propertyNames:
+            pattern: '^[a-z][a-z0-9_]{0,63}$'
+          additionalProperties:
+            $ref: '#/components/schemas/ModuleStatus'
+        strategy_ref:
+          $ref: '#/components/schemas/VersionReference'
+        aggregation_version:
+          $ref: '#/components/schemas/VersionReference'
+        calibration_version:
+          $ref: '#/components/schemas/CalibrationVersion'
+        full_config_hash:
+          $ref: '#/components/schemas/ConfigHash'
+        is_final:
+          type: boolean
+        overall_raw:
+          type: number
+          minimum: 0
+          maximum: 9
+        overall_display:
+          type: number
+          minimum: 0
+          maximum: 9
+          multipleOf: 0.5
+        overall_rounding_rule:
+          type: string
+          const: HALF_UP_TO_0_5
+        readiness_level:
+          type: string
+          enum:
+            - HIGH
+            - MEDIUM
+            - LOW
+            - NOT_ASSESSED
+      allOf:
+        - if:
+            properties:
+              scene_type:
+                type: string
+                const: IELTS_SPEAKING
+            required:
+              - scene_type
+          then:
+            not:
+              required:
+                - readiness_level
+            allOf:
+              - if:
+                  properties:
+                    gate_status:
+                      type: string
+                      const: PASS
+                  required:
+                    - gate_status
+                then:
+                  required:
+                    - overall_raw
+                    - overall_display
+                    - overall_rounding_rule
+                else:
+                  not:
+                    anyOf:
+                      - required:
+                          - overall_raw
+                      - required:
+                          - overall_display
+                      - required:
+                          - overall_rounding_rule
+          else:
+            not:
+              anyOf:
+                - required:
+                    - overall_raw
+                - required:
+                    - overall_display
+                - required:
+                    - overall_rounding_rule
+        - if:
+            properties:
+              scene_type:
+                type: string
+                const: INTERVIEW
+            required:
+              - scene_type
+          then:
+            required:
+              - readiness_level
+          else:
+            not:
+              required:
+                - readiness_level
+    SceneTaskResult:
+      type: object
+      additionalProperties: false
+      required:
+        - task_blueprint_ref
+        - opportunity_status
+        - outcome_status
+        - reason_codes
+        - evidence_refs
+      properties:
+        task_blueprint_ref:
+          $ref: '#/components/schemas/VersionReference'
+        opportunity_status:
+          type: string
+          enum:
+            - PROVIDED
+            - NOT_PROVIDED
+        outcome_status:
+          type: string
+          enum:
+            - ACHIEVED
+            - PARTIAL
+            - NOT_ACHIEVED
+            - NOT_ASSESSED
+        reason_codes:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvaluationReasonCode'
+        evidence_refs:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
+      allOf:
+        - if:
+            properties:
+              opportunity_status:
+                type: string
+                const: NOT_PROVIDED
+            required:
+              - opportunity_status
+          then:
+            properties:
+              outcome_status:
+                type: string
+                const: NOT_ASSESSED
+              reason_codes:
+                type: array
+                minItems: 1
+    QuestionEvaluationResult:
+      type: object
+      additionalProperties: false
+      required:
+        - question_id
+        - opportunity_status
+        - response_turn_ids
+        - dimension_evidence
+        - evidence_refs
+        - confidence
+        - module_status
+      properties:
+        question_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        opportunity_status:
+          type: string
+          enum:
+            - PROVIDED
+            - NOT_PROVIDED
+        response_turn_ids:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+        dimension_evidence:
+          type: array
+          maxItems: 17
+          items:
+            $ref: '#/components/schemas/QuestionDimensionEvidence'
+        evidence_refs:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        module_status:
+          $ref: '#/components/schemas/ModuleStatus'
+    QuestionDimensionEvidence:
+      type: object
+      additionalProperties: false
+      required:
+        - dimension_id
+        - coverage
+        - probe_weight
+        - gate_status
+        - reason_codes
+        - evidence_refs
+      properties:
+        dimension_id:
+          type: string
+          enum:
+            - IELTS_FC
+            - IELTS_LR
+            - IELTS_GRA
+            - IELTS_PR
+            - INTERVIEW_RELEVANCE
+            - INTERVIEW_STRUCTURE
+            - INTERVIEW_EVIDENCE
+            - INTERVIEW_PROFESSIONAL
+            - INTERVIEW_INTERACTION
+            - DAILY_GOAL_ACHIEVEMENT
+            - DAILY_CLARITY_ACCURACY
+            - DAILY_INTERACTION
+            - DAILY_APPROPRIATENESS
+            - WORKPLACE_TASK_PROGRESS
+            - WORKPLACE_CLARITY
+            - WORKPLACE_COLLABORATION
+            - WORKPLACE_PROFESSIONALISM
+        question_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+        probe_weight:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1
+        gate_status:
+          $ref: '#/components/schemas/GateStatus'
+        reason_codes:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvaluationReasonCode'
+        evidence_refs:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
+      allOf:
+        - if:
+            properties:
+              gate_status:
+                type: string
+                const: PASS
+            required:
+              - gate_status
+          then:
+            required:
+              - question_score
+            properties:
+              evidence_refs:
+                type: array
+                minItems: 1
+          else:
+            properties:
+              reason_codes:
+                type: array
+                minItems: 1
+            not:
+              required:
+                - question_score
+    SceneDimension:
+      $ref: '#/components/schemas/SceneDimensionCommonProperties'
+    SceneDimensionCommonProperties:
+      type: object
+      additionalProperties: false
+      required:
+        - dimension_id
+        - rounding_rule
+        - scoreability_status
+        - gate_status
+        - confidence
+        - coverage
+        - reason_codes
+        - evidence_refs
+      properties:
+        dimension_id:
+          type: string
+          enum:
+            - IELTS_FC
+            - IELTS_LR
+            - IELTS_GRA
+            - IELTS_PR
+            - INTERVIEW_RELEVANCE
+            - INTERVIEW_STRUCTURE
+            - INTERVIEW_EVIDENCE
+            - INTERVIEW_PROFESSIONAL
+            - INTERVIEW_INTERACTION
+            - DAILY_GOAL_ACHIEVEMENT
+            - DAILY_CLARITY_ACCURACY
+            - DAILY_INTERACTION
+            - DAILY_APPROPRIATENESS
+            - WORKPLACE_TASK_PROGRESS
+            - WORKPLACE_CLARITY
+            - WORKPLACE_COLLABORATION
+            - WORKPLACE_PROFESSIONALISM
+        rounding_rule:
+          $ref: '#/components/schemas/RoundingRule'
+        scoreability_status:
+          $ref: '#/components/schemas/ScoreabilityStatus'
+        gate_status:
+          $ref: '#/components/schemas/GateStatus'
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+        reason_codes:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvaluationReasonCode'
+        evidence_refs:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
+        raw:
+          type: number
+          minimum: 0
+          maximum: 100
+        display:
+          type: number
+          minimum: 0
+          maximum: 100
+        interval:
+          $ref: '#/components/schemas/ScoreInterval'
+      allOf:
+        - if:
+            properties:
+              gate_status:
+                type: string
+                const: PASS
+            required:
+              - gate_status
+          then:
+            required:
+              - raw
+              - display
+            properties:
+              evidence_refs:
+                type: array
+                minItems: 1
+          else:
+            required:
+              - reason_codes
+            properties:
+              reason_codes:
+                type: array
+                minItems: 1
+            not:
+              anyOf:
+                - required:
+                    - raw
+                - required:
+                    - display
+                - required:
+                    - interval
+    ScoreInterval:
+      type: array
+      minItems: 2
+      maxItems: 2
+      prefixItems:
+        - type: number
+          minimum: 0
+          maximum: 100
+        - type: number
+          minimum: 0
+          maximum: 100
+      items: false
+    CoreAbilityObservation:
+      $ref: '#/components/schemas/CoreAbilityCommonProperties'
+    CoreAbilityCommonProperties:
+      type: object
+      additionalProperties: false
+      required:
+        - observation_id
+        - dimension
+        - weights
+        - rounding_rule
+        - confidence
+        - coverage
+        - gate_status
+        - reason_codes
+        - evidence_refs
+        - profile_update_eligible
+        - strategy_ref
+        - aggregation_version
+        - calibration_version
+        - full_config_hash
+      properties:
+        observation_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        dimension:
+          type: string
+          enum:
+            - PRONUNCIATION
+            - FLUENCY
+            - VOCABULARY
+            - GRAMMAR
+        weights:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/NamedWeight'
+        rounding_rule:
+          type: string
+          const: HALF_UP_TO_INTEGER
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+        gate_status:
+          $ref: '#/components/schemas/GateStatus'
+        reason_codes:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvaluationReasonCode'
+        evidence_refs:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
+        profile_update_eligible:
+          type: boolean
+        strategy_ref:
+          $ref: '#/components/schemas/VersionReference'
+        aggregation_version:
+          $ref: '#/components/schemas/VersionReference'
+        calibration_version:
+          $ref: '#/components/schemas/CalibrationVersion'
+        full_config_hash:
+          $ref: '#/components/schemas/ConfigHash'
+        raw_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        display_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        interval:
+          $ref: '#/components/schemas/ScoreInterval'
+      allOf:
+        - if:
+            properties:
+              gate_status:
+                type: string
+                const: PASS
+            required:
+              - gate_status
+          then:
+            required:
+              - raw_score
+              - display_score
+            properties:
+              evidence_refs:
+                type: array
+                minItems: 1
+          else:
+            required:
+              - reason_codes
+              - profile_update_eligible
+            properties:
+              reason_codes:
+                type: array
+                minItems: 1
+              profile_update_eligible:
+                type: boolean
+                const: false
+            not:
+              anyOf:
+                - required:
+                    - raw_score
+                - required:
+                    - display_score
+                - required:
+                    - interval
+    NamedWeight:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - value
+      properties:
+        key:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_]*$'
+        value:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1
+    EvidenceRef:
+      type: object
+      additionalProperties: false
+      required:
+        - evidence_ref_id
+        - snapshot_id
+        - turn_id
+        - speaker
+        - quality
+        - lineage
+      properties:
+        evidence_ref_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        snapshot_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        turn_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        speaker:
+          type: string
+          enum:
+            - USER
+            - FACILITATOR
+        transcript_span:
+          $ref: '#/components/schemas/TranscriptSpan'
+        audio_span:
+          $ref: '#/components/schemas/AudioSpan'
+        quality:
+          $ref: '#/components/schemas/EvidenceQuality'
+        lineage:
+          $ref: '#/components/schemas/EvidenceLineage'
+      anyOf:
+        - required:
+            - transcript_span
+        - required:
+            - audio_span
+    TranscriptSpan:
+      type: object
+      additionalProperties: false
+      required:
+        - start_utf8_byte
+        - end_utf8_byte
+      properties:
+        start_utf8_byte:
+          type: integer
+          minimum: 0
+        end_utf8_byte:
+          type: integer
+          minimum: 1
+        token_ids:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+    AudioSpan:
+      type: object
+      additionalProperties: false
+      required:
+        - audio_asset_id
+        - start_ms
+        - end_ms
+      properties:
+        audio_asset_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        start_ms:
+          type: integer
+          minimum: 0
+        end_ms:
+          type: integer
+          minimum: 1
+    EvidenceQuality:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        audio:
+          type: number
+          minimum: 0
+          maximum: 1
+        asr:
+          type: number
+          minimum: 0
+          maximum: 1
+        alignment:
+          type: number
+          minimum: 0
+          maximum: 1
+    EvidenceLineage:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        asr_artifact:
+          $ref: '#/components/schemas/ArtifactDigest'
+        feature_artifact:
+          $ref: '#/components/schemas/ArtifactDigest'

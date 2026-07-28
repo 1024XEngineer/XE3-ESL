@@ -57,10 +57,23 @@ type TextMessage struct {
 	ToolCalls  []ToolCall
 }
 
+type TextResponseFormat string
+
+const (
+	TextResponseFormatDefault TextResponseFormat = ""
+	TextResponseFormatJSON    TextResponseFormat = "json_object"
+)
+
+func (format TextResponseFormat) Valid() bool {
+	return format == TextResponseFormatDefault ||
+		format == TextResponseFormatJSON
+}
+
 type TextRequest struct {
-	Messages   []TextMessage
-	Tools      []ToolDefinition
-	ToolChoice ToolChoice
+	Messages       []TextMessage
+	Tools          []ToolDefinition
+	ToolChoice     ToolChoice
+	ResponseFormat TextResponseFormat
 }
 
 type TokenUsage struct {
@@ -84,6 +97,9 @@ type TextResult struct {
 func ValidateTextRequest(request TextRequest) error {
 	if len(request.Messages) == 0 {
 		return errors.New("text generation requires at least one message")
+	}
+	if !request.ResponseFormat.Valid() {
+		return errors.New("text generation response format is unsupported")
 	}
 	toolNames := make(map[string]struct{}, len(request.Tools))
 	for index, definition := range request.Tools {

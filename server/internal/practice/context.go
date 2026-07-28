@@ -253,6 +253,7 @@ func (a *ContextApplication) CreatePlan(
 		ScenarioDefinitionID:      catalog.ScenarioDefinition.ID,
 		ScenarioDefinitionVersion: catalog.ScenarioDefinition.Version,
 		ScenarioType:              catalog.ScenarioDefinition.Type,
+		ScenarioModel:             catalog.ScenarioDefinition.Model,
 		ScenarioConfigID:          catalog.ScenarioConfig.ID,
 		ScenarioConfigVersion:     catalog.ScenarioConfig.Version,
 		PreparationProfileID:      profileID,
@@ -377,6 +378,10 @@ func (a *ContextApplication) CreateSession(
 		return persistence.ContextSessionBootstrap{}, false,
 			persistence.ErrInvalidArgument
 	}
+	if !request.UserConfirmed {
+		return persistence.ContextSessionBootstrap{}, false,
+			persistence.ErrConfirmationRequired
+	}
 	intent, err := newContextIntent(
 		"POST",
 		"/v1/practice-plans/"+planID+"/practice-sessions",
@@ -471,6 +476,7 @@ func (a *ContextApplication) CreateSession(
 		SessionID:          sessionID,
 		PlanRevision:       plan.Revision,
 		ScenarioType:       plan.ScenarioType,
+		ScenarioModel:      plan.ScenarioModel,
 		ScenarioDefinition: catalog.ScenarioDefinition,
 		ScenarioConfig:     catalog.ScenarioConfig,
 		Preparation:        preparationSnapshot,
@@ -526,6 +532,7 @@ func (a *ContextApplication) createTargetedContextSession(
 		SessionID:          sessionID,
 		PlanRevision:       plan.Revision,
 		ScenarioType:       plan.ScenarioType,
+		ScenarioModel:      plan.ScenarioModel,
 		ScenarioDefinition: catalog.ScenarioDefinition,
 		ScenarioConfig:     cloneScenarioConfigSnapshot(catalog.ScenarioConfig),
 		Preparation: clonePreparationSnapshot(
@@ -654,7 +661,7 @@ func (a *ContextApplication) newSessionIdentities(
 		participants = append(participants, persistence.ContextParticipant{
 			ID:        participantID,
 			SessionID: sessionID,
-			Role:      "INTERVIEWER",
+			Role:      "FACILITATOR",
 			SubjectRef: persistence.SubjectRef{
 				Namespace: "speakup.role",
 				SubjectID: role.ID,
@@ -671,7 +678,7 @@ func (a *ContextApplication) newSessionIdentities(
 	participants = append(participants, persistence.ContextParticipant{
 		ID:        candidateID,
 		SessionID: sessionID,
-		Role:      "CANDIDATE",
+		Role:      "LEARNER",
 		SubjectRef: persistence.SubjectRef{
 			Namespace: "speakup.user",
 			SubjectID: actor.UserID,
@@ -708,7 +715,8 @@ func newContextIntent(
 
 func validCreatePlanRequest(request CreatePlanRequest) bool {
 	if !validContextResourceID(request.AgentThreadID) ||
-		!validContextResourceID(request.MatterID) {
+		(request.MatterID != "" &&
+			!validContextResourceID(request.MatterID)) {
 		return false
 	}
 	if request.PreparationSnapshotID == "" {
@@ -766,6 +774,11 @@ func validPlanCatalogSelection(
 		selection.ScenarioConfig.ScenarioDefinitionID !=
 			request.ScenarioDefinitionID ||
 		selection.ScenarioConfig.Type != selection.ScenarioDefinition.Type ||
+		selection.ScenarioConfig.Model != selection.ScenarioDefinition.Model ||
+		!validScenarioFamilyModel(
+			selection.ScenarioDefinition.Type,
+			selection.ScenarioDefinition.Model,
+		) ||
 		len(selection.SelectedRoles) != len(request.SelectedRoleIDs) {
 		return false
 	}
@@ -918,8 +931,12 @@ func completeTargetedPlanPreview(plan persistence.Plan) bool {
 		catalog.ScenarioDefinition.ID == plan.ScenarioDefinitionID &&
 		catalog.ScenarioDefinition.Version ==
 			plan.ScenarioDefinitionVersion &&
+		catalog.ScenarioDefinition.Type == plan.ScenarioType &&
+		catalog.ScenarioDefinition.Model == plan.ScenarioModel &&
 		catalog.ScenarioConfig.ID == plan.ScenarioConfigID &&
 		catalog.ScenarioConfig.Version == plan.ScenarioConfigVersion &&
+		catalog.ScenarioConfig.Type == plan.ScenarioType &&
+		catalog.ScenarioConfig.Model == plan.ScenarioModel &&
 		equalContextStrings(
 			roleSnapshotIDs(catalog.SelectedRoles),
 			plan.SelectedRoleIDs,
@@ -1013,6 +1030,10 @@ func cloneScenarioConfigSnapshot(
 	source persistence.ScenarioConfigSnapshot,
 ) persistence.ScenarioConfigSnapshot {
 	result := source
+	result.PromptModel.FocusAreas = cloneStrings(source.PromptModel.FocusAreas)
+	result.PromptModel.TurnBlueprints = cloneStrings(
+		source.PromptModel.TurnBlueprints,
+	)
 	result.FocusAreas = cloneStrings(source.FocusAreas)
 	return result
 }
@@ -1070,21 +1091,29 @@ func defaultContextSessionPolicy(
 	config persistence.ScenarioConfigSnapshot,
 	option persistence.PracticeOptionSnapshot,
 ) persistence.ContextSessionPolicy {
-	objectives := make([]persistence.PracticeObjective, 0, len(config.FocusAreas))
-	for _, focus := range config.FocusAreas {
+	focusAreas := scenarioFocusAreas(config)
+	objectives := make(
+		[]persistence.PracticeObjective,
+		0,
+		len(focusAreas),
+	)
+	for _, focus := range focusAreas {
 		objectives = append(objectives, persistence.PracticeObjective{
 			ID:          focus,
 			Description: objectiveDescription(focus),
 		})
 	}
 	policy := persistence.ContextSessionPolicy{
-		SuggestedDurationSeconds: 900,
+		SuggestedDurationSeconds: config.PromptModel.SuggestedDurationSeconds,
 		MinEffectiveTurns:        4,
 		MaxEffectiveTurns:        6,
 		CoverageCheckpointTurn:   4,
 		MaxFollowUpsPerQuestion:  1,
 		TargetObjectives:         objectives,
 		EarlyCompletionRule:      "COVERAGE_SATISFIED_AFTER_CHECKPOINT",
+	}
+	if policy.SuggestedDurationSeconds == 0 {
+		policy.SuggestedDurationSeconds = 900
 	}
 	if option.Type == "FOCUS" {
 		policy.SuggestedDurationSeconds = 600
@@ -1093,6 +1122,38 @@ func defaultContextSessionPolicy(
 		policy.CoverageCheckpointTurn = 1
 	}
 	return policy
+}
+
+func scenarioFocusAreas(
+	config persistence.ScenarioConfigSnapshot,
+) []string {
+	if len(config.PromptModel.FocusAreas) > 0 {
+		return config.PromptModel.FocusAreas
+	}
+	return config.FocusAreas
+}
+
+func validScenarioFamilyModel(
+	family persistence.ScenarioFamily,
+	model persistence.ScenarioModel,
+) bool {
+	switch family {
+	case persistence.ScenarioFamilyInterview:
+		return model == persistence.ScenarioModelProjectExperienceDeepDive ||
+			model == persistence.ScenarioModelInterviewBasicDialogue
+	case persistence.ScenarioFamilyExam:
+		return model == persistence.ScenarioModelIELTSSpeakingPart2 ||
+			model == persistence.ScenarioModelExamBasicDialogue
+	case persistence.ScenarioFamilyWorkplace:
+		return model == persistence.ScenarioModelProgressAndRiskUpdate ||
+			model == persistence.ScenarioModelWorkplaceBasicDialogue
+	case persistence.ScenarioFamilyDaily:
+		return model ==
+			persistence.ScenarioModelHotelCheckinAndIssueHandling ||
+			model == persistence.ScenarioModelDailyBasicDialogue
+	default:
+		return false
+	}
 }
 
 func contextPracticeFocuses(

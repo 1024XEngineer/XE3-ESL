@@ -330,15 +330,21 @@ func (adapter *voicePracticeAdapter) Start(
 			"",
 		)
 	}
+	var resolved practicepersistence.ContextSessionBootstrap
 	if strings.TrimSpace(matterID) == "" {
-		return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+		resolved, err = adapter.repository.ResolveContextSessionByThread(
+			ctx,
+			practiceActor,
+			threadID,
+		)
+	} else {
+		resolved, err = adapter.repository.ResolveContextSession(
+			ctx,
+			practiceActor,
+			threadID,
+			matterID,
+		)
 	}
-	resolved, err := adapter.repository.ResolveContextSession(
-		ctx,
-		practiceActor,
-		threadID,
-		matterID,
-	)
 	if err != nil {
 		return agent.VoicePracticeSession{}, mapPracticeError(err)
 	}
@@ -482,6 +488,7 @@ func mapContextPracticeSession(
 		snapshot.ID != session.SnapshotID ||
 		snapshot.SessionID != session.ID ||
 		snapshot.ScenarioType != session.ScenarioType ||
+		snapshot.ScenarioModel != session.ScenarioModel ||
 		snapshot.PlanRevision != plan.Revision ||
 		snapshot.ScenarioDefinition.ID != plan.ScenarioDefinitionID ||
 		snapshot.ScenarioDefinition.Version !=
@@ -495,10 +502,25 @@ func mapContextPracticeSession(
 		return agent.VoicePracticeSession{}, agent.ErrInvalidContext
 	}
 	result := agent.VoicePracticeSession{
-		ID:             session.ID,
-		PlanID:         session.PlanID,
-		ThreadID:       plan.AgentThreadID,
-		MatterID:       plan.MatterID,
+		ID:            session.ID,
+		PlanID:        session.PlanID,
+		ThreadID:      plan.AgentThreadID,
+		MatterID:      plan.MatterID,
+		ScenarioType:  string(snapshot.ScenarioType),
+		ScenarioModel: string(snapshot.ScenarioModel),
+		PromptModel: agent.VoiceScenarioPrompt{
+			PublicSceneBrief: snapshot.ScenarioConfig.PromptModel.PublicSceneBrief,
+			PracticeGoal:     snapshot.ScenarioConfig.PromptModel.PracticeGoal,
+			UserRole:         snapshot.ScenarioConfig.PromptModel.UserRole,
+			AIRole:           snapshot.ScenarioConfig.PromptModel.AIRole,
+			PersonaSummary:   snapshot.ScenarioConfig.PromptModel.PersonaSummary,
+			FocusAreas: slices.Clone(
+				snapshot.ScenarioConfig.PromptModel.FocusAreas,
+			),
+			TurnBlueprints: slices.Clone(
+				snapshot.ScenarioConfig.PromptModel.TurnBlueprints,
+			),
+		},
 		SessionVersion: session.Version,
 		EffectiveTurns: session.EffectiveTurns,
 		TurnLimit:      snapshot.SessionPolicy.MaxEffectiveTurns,
@@ -529,7 +551,7 @@ func mapContextPracticeSession(
 		participantIDs[participant.ID] = struct{}{}
 		participantOrders[participant.Order] = struct{}{}
 		switch participant.Role {
-		case "INTERVIEWER":
+		case "FACILITATOR", "INTERVIEWER":
 			if participant.SubjectRef.Namespace != "speakup.role" ||
 				participant.SubjectRef.SubjectID !=
 					participant.RoleDefinitionID ||
@@ -551,7 +573,7 @@ func mapContextPracticeSession(
 				result.InterviewerParticipantID = participant.ID
 				interviewerOrder = participant.Order
 			}
-		case "CANDIDATE":
+		case "LEARNER", "CANDIDATE":
 			if result.CandidateParticipantID != "" ||
 				participant.SubjectRef.Namespace != "speakup.user" ||
 				participant.SubjectRef.SubjectID != actorUserID ||
@@ -1121,29 +1143,14 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 	if err == nil {
 		return mapVoiceQuestion(existing), nil
 	}
-	if strings.TrimSpace(session.MatterTitle) == "" {
-		return conversation.VoiceQuestion{}, agent.ErrInvalidContext
-	}
 	if !errors.Is(err, conversationpersistence.ErrPersistenceNotFound) {
 		return conversation.VoiceQuestion{}, mapConversationError(err)
 	}
-	generated, err := adapter.generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{
-				Role:    ai.TextRoleSystem,
-				Content: "You are an English interview coach. Return exactly one concise English interview question, with no numbering or explanation.",
-			},
-			{
-				Role: ai.TextRoleUser,
-				Content: fmt.Sprintf(
-					"Create question %d of %d for a targeted professional English practice session about this real-world Matter: %q. Focus on the scenario goal and avoid generic greetings.",
-					sequence,
-					session.TurnLimit,
-					session.MatterTitle,
-				),
-			},
-		},
-	})
+	request, err := voiceQuestionRequest(session, sequence)
+	if err != nil {
+		return conversation.VoiceQuestion{}, err
+	}
+	generated, err := adapter.generator.Generate(ctx, request)
 	if err != nil {
 		return conversation.VoiceQuestion{}, err
 	}
@@ -1181,6 +1188,75 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		return conversation.VoiceQuestion{}, mapConversationError(err)
 	}
 	return mapVoiceQuestion(saved), nil
+}
+
+func voiceQuestionRequest(
+	session agent.VoicePracticeSession,
+	sequence int,
+) (ai.TextRequest, error) {
+	prompt := session.PromptModel
+	if sequence < 1 || sequence > session.TurnLimit ||
+		strings.TrimSpace(session.ScenarioType) == "" ||
+		strings.TrimSpace(session.ScenarioModel) == "" ||
+		strings.TrimSpace(prompt.PublicSceneBrief) == "" ||
+		strings.TrimSpace(prompt.PracticeGoal) == "" ||
+		strings.TrimSpace(prompt.UserRole) == "" ||
+		strings.TrimSpace(prompt.AIRole) == "" ||
+		strings.TrimSpace(prompt.PersonaSummary) == "" ||
+		len(prompt.FocusAreas) == 0 ||
+		len(prompt.TurnBlueprints) == 0 {
+		return ai.TextRequest{}, agent.ErrInvalidContext
+	}
+	blueprintIndex := sequence - 1
+	if blueprintIndex >= len(prompt.TurnBlueprints) {
+		blueprintIndex = len(prompt.TurnBlueprints) - 1
+	}
+	contextParts := []string{
+		fmt.Sprintf("Scenario family: %s.", session.ScenarioType),
+		fmt.Sprintf("Scenario model: %s.", session.ScenarioModel),
+		fmt.Sprintf("Scene: %s", prompt.PublicSceneBrief),
+		fmt.Sprintf("Practice goal: %s", prompt.PracticeGoal),
+		fmt.Sprintf("Learner role: %s", prompt.UserRole),
+		fmt.Sprintf("Your role: %s", prompt.AIRole),
+		fmt.Sprintf("Your persona: %s", prompt.PersonaSummary),
+		fmt.Sprintf("Focus areas: %s", strings.Join(prompt.FocusAreas, "; ")),
+		fmt.Sprintf(
+			"Current turn blueprint: %s",
+			prompt.TurnBlueprints[blueprintIndex],
+		),
+	}
+	if title := strings.TrimSpace(session.MatterTitle); title != "" {
+		contextParts = append(
+			contextParts,
+			fmt.Sprintf("Optional learner context: %s", title),
+		)
+	}
+	if answer := strings.TrimSpace(session.PreviousUserResponse); answer != "" {
+		contextParts = append(
+			contextParts,
+			fmt.Sprintf("Previous learner response: %s", answer),
+		)
+	}
+	contextParts = append(
+		contextParts,
+		fmt.Sprintf("This is turn %d of at most %d.", sequence, session.TurnLimit),
+	)
+	return ai.TextRequest{
+		Messages: []ai.TextMessage{
+			{
+				Role: ai.TextRoleSystem,
+				Content: fmt.Sprintf(
+					"You are %s. Stay in character as %s. Conduct a natural English conversation with the learner. Return exactly one concise question or conversational action, with no numbering, coaching notes, scoring, or explanation.",
+					prompt.AIRole,
+					prompt.PersonaSummary,
+				),
+			},
+			{
+				Role:    ai.TextRoleUser,
+				Content: strings.Join(contextParts, "\n"),
+			},
+		},
+	}, nil
 }
 
 func (adapter *voiceQuestionAdapter) GetQuestion(

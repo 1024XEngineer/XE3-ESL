@@ -132,6 +132,7 @@ func (r *Repository) CreatePlan(
 		ScenarioDefinitionID:      command.ScenarioDefinitionID,
 		ScenarioDefinitionVersion: command.ScenarioDefinitionVersion,
 		ScenarioType:              command.ScenarioType,
+		ScenarioModel:             command.ScenarioModel,
 		ScenarioConfigID:          command.ScenarioConfigID,
 		ScenarioConfigVersion:     command.ScenarioConfigVersion,
 		PreparationProfileID:      command.PreparationProfileID,
@@ -147,14 +148,15 @@ func (r *Repository) CreatePlan(
 		INSERT INTO practice_plans (
 			owner_user_id, plan_id, agent_thread_id, matter_id,
 			scenario_definition_id, scenario_definition_version,
-			scenario_type, scenario_config_id, scenario_config_version,
+			scenario_type, scenario_model,
+			scenario_config_id, scenario_config_version,
 			preparation_profile_id, selected_role_ids,
 			preparation_snapshot_id, catalog_snapshot,
 			session_policy, practice_focuses,
 			plan_revision, status
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-			$12, $13, $14, $15,
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+			$13, $14, $15, $16,
 			1, 'ready'
 		)
 		RETURNING created_at, updated_at
@@ -162,10 +164,11 @@ func (r *Repository) CreatePlan(
 		actor.UserID,
 		command.PlanID,
 		command.AgentThreadID,
-		command.MatterID,
+		nullableContextText(command.MatterID),
 		command.ScenarioDefinitionID,
 		command.ScenarioDefinitionVersion,
 		command.ScenarioType,
+		command.ScenarioModel,
 		command.ScenarioConfigID,
 		command.ScenarioConfigVersion,
 		command.PreparationProfileID,
@@ -551,20 +554,22 @@ func (r *Repository) CreateContextSession(
 	}
 
 	session := persistence.ContextSession{
-		ID:           command.SessionID,
-		PlanID:       plan.ID,
-		ScenarioType: plan.ScenarioType,
-		SnapshotID:   command.SnapshotID,
-		Status:       persistence.ContextSessionStarting,
-		Version:      1,
+		ID:            command.SessionID,
+		PlanID:        plan.ID,
+		ScenarioType:  plan.ScenarioType,
+		ScenarioModel: plan.ScenarioModel,
+		SnapshotID:    command.SnapshotID,
+		Status:        persistence.ContextSessionStarting,
+		Version:       1,
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, context_plan_id,
 			agent_thread_id, matter_id, snapshot_id, scenario_type,
+			scenario_model,
 			status, version, effective_turns, started_at
 		) VALUES (
-			$1, $2, $3, $3, $4, $5, $6, $7,
+			$1, $2, $3, $3, $4, $5, $6, $7, $8,
 			'starting', 1, 0, NULL
 		)
 		RETURNING created_at
@@ -573,9 +578,10 @@ func (r *Repository) CreateContextSession(
 		command.SessionID,
 		plan.ID,
 		plan.AgentThreadID,
-		plan.MatterID,
+		nullableContextText(plan.MatterID),
 		command.SnapshotID,
 		plan.ScenarioType,
+		plan.ScenarioModel,
 	).Scan(&session.CreatedAt)
 	if err != nil {
 		return persistence.ContextSessionBootstrap{}, false,
@@ -592,7 +598,11 @@ func (r *Repository) CreateContextSession(
 		return persistence.ContextSessionBootstrap{}, false,
 			persistence.ErrInvalidArgument
 	}
-	targets, err := json.Marshal([]string{plan.MatterID})
+	targetIDs := []string{}
+	if plan.MatterID != "" {
+		targetIDs = append(targetIDs, plan.MatterID)
+	}
+	targets, err := json.Marshal(targetIDs)
 	if err != nil {
 		return persistence.ContextSessionBootstrap{}, false,
 			persistence.ErrInvalidArgument
@@ -826,6 +836,7 @@ func (r *Repository) ResolveContextSessionByThread(
 			session.session_id,
 			session.context_plan_id,
 			session.scenario_type,
+			session.scenario_model,
 			session.snapshot_id,
 			session.status,
 			session.version,
@@ -840,17 +851,17 @@ func (r *Repository) ResolveContextSessionByThread(
 		  ON plan.owner_user_id = session.owner_user_id
 		 AND plan.plan_id = session.context_plan_id
 		 AND plan.agent_thread_id = session.agent_thread_id
-		 AND plan.matter_id = session.matter_id
+		 AND plan.matter_id IS NOT DISTINCT FROM session.matter_id
 		JOIN practice_session_snapshots AS snapshot
 		  ON snapshot.owner_user_id = session.owner_user_id
 		 AND snapshot.session_id = session.session_id
 		 AND snapshot.context_plan_id = session.context_plan_id
 		 AND snapshot.snapshot_id = session.snapshot_id
-		JOIN agent_thread_matter_links AS link
+		LEFT JOIN agent_thread_matter_links AS link
 		  ON link.owner_user_id = plan.owner_user_id
 		 AND link.thread_id = plan.agent_thread_id
 		 AND link.matter_id = plan.matter_id
-		JOIN matters AS matter
+		LEFT JOIN matters AS matter
 		  ON matter.owner_user_id = plan.owner_user_id
 		 AND matter.id = plan.matter_id
 		JOIN identity_users AS owner
@@ -866,7 +877,10 @@ func (r *Repository) ResolveContextSessionByThread(
 		      'completed'
 		  )
 		  AND plan.status = 'ready'
-		  AND matter.status = 'active'
+		  AND (
+		      plan.matter_id IS NULL
+		      OR matter.status = 'active'
+		  )
 		  AND owner.account_status = 'active'
 		  AND fence.owner_user_id IS NULL
 		ORDER BY
@@ -946,6 +960,7 @@ func (r *Repository) ResolveContextSession(
 			session.session_id,
 			session.context_plan_id,
 			session.scenario_type,
+			session.scenario_model,
 			session.snapshot_id,
 			session.status,
 			session.version,
@@ -1109,7 +1124,7 @@ func (r *Repository) ReplayContextVoiceStart(
 }
 
 // ActivateContextSession atomically changes a formal starting Session to
-// in_progress after re-validating its exact immutable Thread + Matter binding.
+// in_progress after re-validating its immutable Thread and optional Matter.
 // Replaying an already in_progress Session is idempotent; paused Sessions must
 // use the formal lifecycle resume command.
 func (r *Repository) ActivateContextSession(
@@ -1123,7 +1138,7 @@ func (r *Repository) ActivateContextSession(
 	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
 		!validContextResourceID(sessionID) ||
 		!validContextResourceID(threadID) ||
-		!validContextResourceID(matterID) ||
+		(matterID != "" && !validContextResourceID(matterID)) ||
 		!validContextIntent(intent) {
 		return persistence.ContextSessionBootstrap{},
 			persistence.ErrInvalidArgument
@@ -1179,25 +1194,33 @@ func (r *Repository) ActivateContextSession(
 		  ON plan.owner_user_id = session.owner_user_id
 		 AND plan.plan_id = session.context_plan_id
 		 AND plan.agent_thread_id = session.agent_thread_id
-		 AND plan.matter_id = session.matter_id
-		JOIN agent_thread_matter_links AS link
+		 AND plan.matter_id IS NOT DISTINCT FROM session.matter_id
+		LEFT JOIN agent_thread_matter_links AS link
 		  ON link.owner_user_id = plan.owner_user_id
 		 AND link.thread_id = plan.agent_thread_id
 		 AND link.matter_id = plan.matter_id
-		JOIN matters AS matter
+		LEFT JOIN matters AS matter
 		  ON matter.owner_user_id = plan.owner_user_id
 		 AND matter.id = plan.matter_id
 		WHERE session.owner_user_id = $1
 		  AND session.session_id = $2
 		  AND session.agent_thread_id = $3
-		  AND session.matter_id = $4
+		  AND session.matter_id IS NOT DISTINCT FROM $4::uuid
 		  AND session.context_plan_id IS NOT NULL
 		  AND plan.status = 'ready'
-		  AND matter.status = 'active'
+		  AND (
+		      plan.matter_id IS NULL
+		      OR matter.status = 'active'
+		  )
 		  AND owner.account_status = 'active'
 		  AND fence.owner_user_id IS NULL
 		FOR UPDATE OF session
-	`, actor.UserID, sessionID, threadID, matterID))
+	`,
+		actor.UserID,
+		sessionID,
+		threadID,
+		nullableContextText(matterID),
+	))
 	if err != nil {
 		return persistence.ContextSessionBootstrap{}, err
 	}
@@ -1471,10 +1494,11 @@ const contextPlanSelect = `
 		plan.plan_id,
 		plan.owner_user_id::text,
 		plan.agent_thread_id::text,
-		plan.matter_id::text,
+		COALESCE(plan.matter_id::text, ''),
 		plan.scenario_definition_id,
 		plan.scenario_definition_version,
 		plan.scenario_type,
+		plan.scenario_model,
 		plan.scenario_config_id,
 		plan.scenario_config_version,
 		plan.preparation_profile_id,
@@ -1515,6 +1539,7 @@ const contextSessionSelect = `
 		session.session_id,
 		session.context_plan_id,
 		session.scenario_type,
+		session.scenario_model,
 		session.snapshot_id,
 		session.status,
 		session.version,
@@ -1560,6 +1585,7 @@ func scanContextPlan(row contextRowScanner) (persistence.Plan, error) {
 		&plan.ScenarioDefinitionID,
 		&plan.ScenarioDefinitionVersion,
 		&plan.ScenarioType,
+		&plan.ScenarioModel,
 		&plan.ScenarioConfigID,
 		&plan.ScenarioConfigVersion,
 		&plan.PreparationProfileID,
@@ -1661,6 +1687,7 @@ func scanContextSession(row contextRowScanner) (persistence.ContextSession, erro
 		&session.ID,
 		&session.PlanID,
 		&session.ScenarioType,
+		&session.ScenarioModel,
 		&session.SnapshotID,
 		&session.Status,
 		&session.Version,
@@ -1706,6 +1733,7 @@ func scanResolvedContextSession(
 		&session.ID,
 		&session.PlanID,
 		&session.ScenarioType,
+		&session.ScenarioModel,
 		&session.SnapshotID,
 		&session.Status,
 		&session.Version,
@@ -1748,6 +1776,37 @@ func lockPlanDependencies(
 	preparationSnapshotID string,
 ) error {
 	var valid bool
+	if matterID == "" {
+		err := tx.QueryRow(ctx, `
+			SELECT true
+			FROM agent_threads AS thread
+			JOIN preparation_profiles AS profile
+			  ON profile.owner_user_id = thread.owner_user_id
+			LEFT JOIN preparation_deletion_fences AS preparation_fence
+			  ON preparation_fence.owner_user_id = profile.owner_user_id
+			WHERE thread.owner_user_id = $1
+			  AND thread.id = $2
+			  AND profile.profile_id = $3
+			  AND preparation_fence.owner_user_id IS NULL
+			FOR SHARE OF thread, profile
+		`, ownerUserID, threadID, profileID).Scan(&valid)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return persistence.ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf(
+				"lock Matter-free practice plan dependencies: %w",
+				err,
+			)
+		}
+		return lockPreparationSnapshotDependency(
+			ctx,
+			tx,
+			ownerUserID,
+			profileID,
+			preparationSnapshotID,
+		)
+	}
 	err := tx.QueryRow(ctx, `
 		SELECT true
 		FROM agent_threads AS thread
@@ -1776,10 +1835,27 @@ func lockPlanDependencies(
 	if err != nil {
 		return fmt.Errorf("lock practice plan dependencies: %w", err)
 	}
+	return lockPreparationSnapshotDependency(
+		ctx,
+		tx,
+		ownerUserID,
+		profileID,
+		preparationSnapshotID,
+	)
+}
+
+func lockPreparationSnapshotDependency(
+	ctx context.Context,
+	tx pgx.Tx,
+	ownerUserID string,
+	profileID string,
+	preparationSnapshotID string,
+) error {
 	if preparationSnapshotID == "" {
 		return nil
 	}
-	err = tx.QueryRow(ctx, `
+	var valid bool
+	err := tx.QueryRow(ctx, `
 		SELECT true
 		FROM preparation_snapshots AS snapshot
 		WHERE snapshot.owner_user_id = $1
@@ -1921,6 +1997,7 @@ func decodeContextSnapshot(
 	if err := json.Unmarshal(document, &snapshot); err != nil {
 		return persistence.ContextSessionSnapshot{}, err
 	}
+	normalizeLegacyScenarioModel(&snapshot)
 	return snapshot, nil
 }
 
@@ -1933,10 +2010,12 @@ func contextSnapshotMatchesPlan(
 		snapshot.PracticeOption.Type == "FOCUS"
 	if snapshot.PlanRevision != plan.Revision ||
 		snapshot.ScenarioType != plan.ScenarioType ||
+		snapshot.ScenarioModel != plan.ScenarioModel ||
 		snapshot.ScenarioDefinition.ID != plan.ScenarioDefinitionID ||
 		snapshot.ScenarioDefinition.Version !=
 			plan.ScenarioDefinitionVersion ||
 		snapshot.ScenarioDefinition.Type != plan.ScenarioType ||
+		snapshot.ScenarioDefinition.Model != plan.ScenarioModel ||
 		snapshot.ScenarioDefinition.Status != "active" ||
 		strings.TrimSpace(snapshot.ScenarioDefinition.Name) == "" ||
 		snapshot.ScenarioConfig.ID != plan.ScenarioConfigID ||
@@ -1944,9 +2023,9 @@ func contextSnapshotMatchesPlan(
 		snapshot.ScenarioConfig.ScenarioDefinitionID !=
 			plan.ScenarioDefinitionID ||
 		snapshot.ScenarioConfig.Type != plan.ScenarioType ||
-		strings.TrimSpace(snapshot.ScenarioConfig.JobTitle) == "" ||
-		strings.TrimSpace(snapshot.ScenarioConfig.JobDescription) == "" ||
-		!validUniqueContextIDs(snapshot.ScenarioConfig.FocusAreas) ||
+		snapshot.ScenarioConfig.Model != plan.ScenarioModel ||
+		!validScenarioCompatibilityFields(snapshot.ScenarioConfig) ||
+		!validScenarioPromptModel(snapshot.ScenarioConfig.PromptModel) ||
 		snapshot.Preparation.ID == "" ||
 		snapshot.Preparation.SourceProfileID !=
 			plan.PreparationProfileID ||
@@ -1992,12 +2071,12 @@ func contextSnapshotMatchesPlan(
 	for _, roleID := range plan.SelectedRoleIDs {
 		selectedRoles[roleID] = struct{}{}
 	}
-	interviewers := 0
-	candidates := 0
+	facilitators := 0
+	learners := 0
 	participantIDs := make(map[string]struct{}, len(snapshot.Participants))
 	participantOrders := make(map[int]struct{}, len(snapshot.Participants))
-	selectedInterviewerRole := ""
-	var selectedInterviewerSnapshot *persistence.RoleSnapshot
+	selectedFacilitatorRole := ""
+	var selectedFacilitatorSnapshot *persistence.RoleSnapshot
 	for _, participant := range snapshot.Participants {
 		if !validContextResourceID(participant.ID) ||
 			participant.SessionID != snapshot.SessionID ||
@@ -2013,8 +2092,8 @@ func contextSnapshotMatchesPlan(
 		}
 		participantOrders[participant.Order] = struct{}{}
 		switch participant.Role {
-		case "INTERVIEWER":
-			interviewers++
+		case "FACILITATOR", "INTERVIEWER":
+			facilitators++
 			if participant.RoleSnapshot == nil ||
 				participant.RoleDefinitionID == "" ||
 				participant.RoleSnapshot.ID !=
@@ -2034,10 +2113,10 @@ func contextSnapshotMatchesPlan(
 				) {
 				return false
 			}
-			selectedInterviewerRole = participant.RoleDefinitionID
-			selectedInterviewerSnapshot = participant.RoleSnapshot
-		case "CANDIDATE":
-			candidates++
+			selectedFacilitatorRole = participant.RoleDefinitionID
+			selectedFacilitatorSnapshot = participant.RoleSnapshot
+		case "LEARNER", "CANDIDATE":
+			learners++
 			if participant.SubjectRef.Namespace != "speakup.user" ||
 				participant.SubjectRef.SubjectID != actor.UserID ||
 				participant.RoleSnapshot != nil ||
@@ -2048,22 +2127,22 @@ func contextSnapshotMatchesPlan(
 			return false
 		}
 	}
-	if interviewers != 1 || candidates != 1 {
+	if facilitators != 1 || learners != 1 {
 		return false
 	}
 	if plan.CatalogSnapshot != nil {
 		if len(plan.CatalogSnapshot.SelectedRoles) != 1 ||
-			selectedInterviewerSnapshot == nil ||
+			selectedFacilitatorSnapshot == nil ||
 			!reflect.DeepEqual(
 				plan.CatalogSnapshot.SelectedRoles[0],
-				*selectedInterviewerSnapshot,
+				*selectedFacilitatorSnapshot,
 			) {
 			return false
 		}
 	}
 	if snapshot.PracticeOption.Type == "FOCUS" {
 		return snapshot.PracticeOption.RoleDefinitionID ==
-			selectedInterviewerRole
+			selectedFacilitatorRole
 	}
 	return snapshot.PracticeOption.RoleDefinitionID == ""
 }
@@ -2088,6 +2167,8 @@ func completeStoredPlanPreview(plan persistence.Plan) bool {
 			plan.ScenarioDefinitionVersion ||
 		plan.CatalogSnapshot.ScenarioDefinition.Type !=
 			plan.ScenarioType ||
+		plan.CatalogSnapshot.ScenarioDefinition.Model !=
+			plan.ScenarioModel ||
 		plan.CatalogSnapshot.ScenarioConfig.ID !=
 			plan.ScenarioConfigID ||
 		plan.CatalogSnapshot.ScenarioConfig.Version !=
@@ -2152,17 +2233,19 @@ func validStoredPlanCatalog(
 	config := catalog.ScenarioConfig
 	option := catalog.PracticeOption
 	if !validContextResourceID(definition.ID) ||
-		!validContextResourceID(definition.Type) ||
+		!validContextResourceID(string(definition.Type)) ||
+		!validContextResourceID(string(definition.Model)) ||
+		!validScenarioFamilyModel(definition.Type, definition.Model) ||
 		strings.TrimSpace(definition.Name) == "" ||
 		definition.Version < 1 ||
 		definition.Status != "active" ||
 		!validContextResourceID(config.ID) ||
 		config.ScenarioDefinitionID != definition.ID ||
 		config.Type != definition.Type ||
+		config.Model != definition.Model ||
 		config.Version < 1 ||
-		strings.TrimSpace(config.JobTitle) == "" ||
-		strings.TrimSpace(config.JobDescription) == "" ||
-		!validUniqueContextIDs(config.FocusAreas) ||
+		!validScenarioCompatibilityFields(config) ||
+		!validScenarioPromptModel(config.PromptModel) ||
 		!validUniqueContextIDs(selectedRoleIDs) ||
 		len(catalog.SelectedRoles) != len(selectedRoleIDs) ||
 		(definition.Type == "INTERVIEW" &&
@@ -2196,6 +2279,122 @@ func validStoredPlanCatalog(
 	}
 }
 
+func validScenarioFamilyModel(
+	family persistence.ScenarioFamily,
+	model persistence.ScenarioModel,
+) bool {
+	switch family {
+	case persistence.ScenarioFamilyInterview:
+		return model == persistence.ScenarioModelProjectExperienceDeepDive ||
+			model == persistence.ScenarioModelInterviewBasicDialogue
+	case persistence.ScenarioFamilyExam:
+		return model == persistence.ScenarioModelIELTSSpeakingPart2 ||
+			model == persistence.ScenarioModelExamBasicDialogue
+	case persistence.ScenarioFamilyWorkplace:
+		return model == persistence.ScenarioModelProgressAndRiskUpdate ||
+			model == persistence.ScenarioModelWorkplaceBasicDialogue
+	case persistence.ScenarioFamilyDaily:
+		return model ==
+			persistence.ScenarioModelHotelCheckinAndIssueHandling ||
+			model == persistence.ScenarioModelDailyBasicDialogue
+	default:
+		return false
+	}
+}
+
+func validScenarioCompatibilityFields(
+	config persistence.ScenarioConfigSnapshot,
+) bool {
+	if config.Model ==
+		persistence.ScenarioModelProjectExperienceDeepDive {
+		return strings.TrimSpace(config.JobTitle) != "" &&
+			strings.TrimSpace(config.JobTitle) == config.JobTitle &&
+			strings.TrimSpace(config.JobDescription) != "" &&
+			strings.TrimSpace(config.JobDescription) ==
+				config.JobDescription
+	}
+	return config.JobTitle == "" && config.JobDescription == ""
+}
+
+func validScenarioPromptModel(
+	model persistence.ScenarioPromptModel,
+) bool {
+	return strings.TrimSpace(model.PublicSceneBrief) != "" &&
+		strings.TrimSpace(model.PublicSceneBrief) ==
+			model.PublicSceneBrief &&
+		strings.TrimSpace(model.PracticeGoal) != "" &&
+		strings.TrimSpace(model.PracticeGoal) == model.PracticeGoal &&
+		strings.TrimSpace(model.UserRole) != "" &&
+		strings.TrimSpace(model.UserRole) == model.UserRole &&
+		strings.TrimSpace(model.AIRole) != "" &&
+		strings.TrimSpace(model.AIRole) == model.AIRole &&
+		strings.TrimSpace(model.PersonaSummary) != "" &&
+		strings.TrimSpace(model.PersonaSummary) == model.PersonaSummary &&
+		validUniqueNonBlankContextTexts(model.FocusAreas) &&
+		validUniqueNonBlankContextTexts(model.TurnBlueprints) &&
+		model.SuggestedDurationSeconds > 0
+}
+
+func validUniqueNonBlankContextTexts(values []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" ||
+			strings.TrimSpace(value) != value {
+			return false
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	return true
+}
+
+func normalizeLegacyScenarioModel(
+	snapshot *persistence.ContextSessionSnapshot,
+) {
+	if snapshot == nil ||
+		snapshot.ScenarioType != persistence.ScenarioFamilyInterview {
+		return
+	}
+	if snapshot.ScenarioModel == "" {
+		snapshot.ScenarioModel =
+			persistence.ScenarioModelProjectExperienceDeepDive
+	}
+	if snapshot.ScenarioDefinition.Model == "" {
+		snapshot.ScenarioDefinition.Model =
+			persistence.ScenarioModelProjectExperienceDeepDive
+	}
+	if snapshot.ScenarioConfig.Model == "" {
+		snapshot.ScenarioConfig.Model =
+			persistence.ScenarioModelProjectExperienceDeepDive
+	}
+	if snapshot.ScenarioConfig.PromptModel.PublicSceneBrief == "" &&
+		len(snapshot.ScenarioConfig.FocusAreas) > 0 {
+		snapshot.ScenarioConfig.PromptModel =
+			persistence.ScenarioPromptModel{
+				PublicSceneBrief: "Legacy interview practice session.",
+				PracticeGoal:     "Practice clear, evidence-based interview answers.",
+				UserRole:         "Candidate",
+				AIRole:           "Interviewer",
+				PersonaSummary:   "An English interviewer using the frozen legacy interview context.",
+				FocusAreas: cloneContextStrings(
+					snapshot.ScenarioConfig.FocusAreas,
+				),
+				TurnBlueprints: []string{
+					"Clarify the candidate background and responsibility",
+					"Probe one important challenge",
+					"Discuss a decision and trade-off",
+					"Confirm the result and reflection",
+				},
+				SuggestedDurationSeconds: 900,
+			}
+	}
+}
+
 func validNonBlankContextTexts(values []string) bool {
 	if len(values) == 0 {
 		return false
@@ -2212,10 +2411,13 @@ func validNonBlankContextTexts(values []string) bool {
 func validCreatePlanCommand(command persistence.CreatePlanCommand) bool {
 	baseValid := validContextResourceID(command.PlanID) &&
 		validContextResourceID(command.AgentThreadID) &&
-		validContextResourceID(command.MatterID) &&
+		(command.MatterID == "" ||
+			validContextResourceID(command.MatterID)) &&
 		validContextResourceID(command.ScenarioDefinitionID) &&
 		command.ScenarioDefinitionVersion > 0 &&
-		validContextResourceID(command.ScenarioType) &&
+		validContextResourceID(string(command.ScenarioType)) &&
+		validContextResourceID(string(command.ScenarioModel)) &&
+		validScenarioFamilyModel(command.ScenarioType, command.ScenarioModel) &&
 		validContextResourceID(command.ScenarioConfigID) &&
 		command.ScenarioConfigVersion > 0 &&
 		validContextResourceID(command.PreparationProfileID) &&
@@ -2242,6 +2444,7 @@ func validCreatePlanCommand(command persistence.CreatePlanCommand) bool {
 		ScenarioDefinitionID:      command.ScenarioDefinitionID,
 		ScenarioDefinitionVersion: command.ScenarioDefinitionVersion,
 		ScenarioType:              command.ScenarioType,
+		ScenarioModel:             command.ScenarioModel,
 		ScenarioConfigID:          command.ScenarioConfigID,
 		ScenarioConfigVersion:     command.ScenarioConfigVersion,
 		PreparationProfileID:      command.PreparationProfileID,
@@ -2296,7 +2499,12 @@ func contextSnapshotMatchesBasicActor(
 	actor persistence.Actor,
 	snapshot persistence.ContextSessionSnapshot,
 ) bool {
-	if !validContextResourceID(snapshot.ScenarioType) ||
+	if !validContextResourceID(string(snapshot.ScenarioType)) ||
+		!validContextResourceID(string(snapshot.ScenarioModel)) ||
+		!validScenarioFamilyModel(
+			snapshot.ScenarioType,
+			snapshot.ScenarioModel,
+		) ||
 		!validContextResourceID(snapshot.ScenarioDefinition.ID) ||
 		snapshot.ScenarioDefinition.Version < 1 ||
 		!validContextResourceID(snapshot.ScenarioConfig.ID) ||
@@ -2309,7 +2517,8 @@ func contextSnapshotMatchesBasicActor(
 	}
 	candidateFound := false
 	for _, participant := range snapshot.Participants {
-		if participant.Role == "CANDIDATE" &&
+		if (participant.Role == "CANDIDATE" ||
+			participant.Role == "LEARNER") &&
 			participant.SubjectRef.Namespace == "speakup.user" &&
 			participant.SubjectRef.SubjectID == actor.UserID {
 			candidateFound = true
@@ -2407,7 +2616,12 @@ func validUniqueContextIDs(values []string) bool {
 func validStoredContextSession(session persistence.ContextSession) bool {
 	if !validContextResourceID(session.ID) ||
 		!validContextResourceID(session.PlanID) ||
-		!validContextResourceID(session.ScenarioType) ||
+		!validContextResourceID(string(session.ScenarioType)) ||
+		!validContextResourceID(string(session.ScenarioModel)) ||
+		!validScenarioFamilyModel(
+			session.ScenarioType,
+			session.ScenarioModel,
+		) ||
 		!validContextResourceID(session.SnapshotID) ||
 		session.Version < 1 ||
 		session.EffectiveTurns < 0 ||
@@ -2537,6 +2751,12 @@ func cloneOptionalPlanCatalogSnapshot(
 		return nil
 	}
 	result := *source
+	result.ScenarioConfig.PromptModel.FocusAreas = cloneContextStrings(
+		source.ScenarioConfig.PromptModel.FocusAreas,
+	)
+	result.ScenarioConfig.PromptModel.TurnBlueprints = cloneContextStrings(
+		source.ScenarioConfig.PromptModel.TurnBlueprints,
+	)
 	result.ScenarioConfig.FocusAreas = cloneContextStrings(
 		source.ScenarioConfig.FocusAreas,
 	)
@@ -2594,9 +2814,16 @@ func legacyContextParticipantProjection(
 		len(participants),
 	)
 	for index, participant := range participants {
+		legacyRole := participant.Role
+		switch legacyRole {
+		case "FACILITATOR":
+			legacyRole = "INTERVIEWER"
+		case "LEARNER":
+			legacyRole = "CANDIDATE"
+		}
 		projected[index] = persistence.ParticipantSnapshot{
 			ParticipantID:   participant.ID,
-			ParticipantRole: participant.Role,
+			ParticipantRole: legacyRole,
 			SubjectRef:      participant.SubjectRef,
 			Order:           participant.Order,
 		}

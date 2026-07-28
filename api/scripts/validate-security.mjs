@@ -614,7 +614,6 @@ assert.ok(
 const createPracticePlanRequestSchema = schemas.CreatePracticePlanRequest;
 assert.deepEqual(sorted(createPracticePlanRequestSchema?.required ?? []), [
   'agent_thread_id',
-  'matter_id',
 ]);
 assert.deepEqual(
   sorted(Object.keys(createPracticePlanRequestSchema?.properties ?? {})),
@@ -641,11 +640,9 @@ for (const anchorField of ['agent_thread_id', 'matter_id']) {
 }
 
 const practicePlanSchema = schemas.PracticePlan;
+assert.ok(practicePlanSchema?.required?.includes('agent_thread_id'));
+assert.ok(!practicePlanSchema?.required?.includes('matter_id'));
 for (const anchorField of ['agent_thread_id', 'matter_id']) {
-  assert.ok(
-    practicePlanSchema?.required?.includes(anchorField),
-    `PracticePlan must require ${anchorField}.`,
-  );
   assert.equal(
     practicePlanSchema?.properties?.[anchorField]?.$ref,
     '#/components/schemas/ResourceId',

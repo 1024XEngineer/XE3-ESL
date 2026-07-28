@@ -206,8 +206,13 @@ func validateCatalogScenario(
 	if _, duplicate := scenarioIDs[definition.ID]; duplicate {
 		return invalidDefinition("scenario_definition_id %q is duplicated", definition.ID)
 	}
-	if definition.Type != ScenarioTypeInterview {
-		return invalidDefinition("scenario %q has unsupported type %q", definition.ID, definition.Type)
+	if !validScenarioFamilyModel(definition.Type, definition.Model) {
+		return invalidDefinition(
+			"scenario %q has invalid family/model %q/%q",
+			definition.ID,
+			definition.Type,
+			definition.Model,
+		)
 	}
 	if definition.Status != ScenarioStatusActive && definition.Status != ScenarioStatusInactive {
 		return invalidDefinition("scenario %q has invalid status %q", definition.ID, definition.Status)
@@ -220,10 +225,10 @@ func validateCatalogScenario(
 	if !validResourceID(config.ID) ||
 		config.ScenarioDefinitionID != definition.ID ||
 		config.Type != definition.Type ||
+		config.Model != definition.Model ||
 		config.Version < 1 ||
-		!nonBlank(config.JobTitle) ||
-		!nonBlank(config.JobDescription) ||
-		!validStringSet(config.FocusAreas) {
+		!validScenarioPromptModel(config.PromptModel) ||
+		!validScenarioCompatibilityFields(config) {
 		return invalidDefinition("scenario %q has invalid config", definition.ID)
 	}
 	if _, duplicate := globalConfigIDs[config.ID]; duplicate {
@@ -292,8 +297,8 @@ func validateCatalogScenario(
 			return invalidDefinition("practice option %q has unsupported type %q", option.ID, option.Type)
 		}
 	}
-	if fullSimulationCount == 0 {
-		return invalidDefinition("scenario %q must contain a FULL_SIMULATION option", definition.ID)
+	if fullSimulationCount != 1 {
+		return invalidDefinition("scenario %q must contain one FULL_SIMULATION option", definition.ID)
 	}
 	for roleID := range localRoles {
 		if focusCount[roleID] != 1 {
@@ -328,6 +333,43 @@ func validStringSet(values []string) bool {
 		seen[value] = struct{}{}
 	}
 	return true
+}
+
+func validScenarioFamilyModel(family ScenarioFamily, model ScenarioModel) bool {
+	switch family {
+	case ScenarioFamilyInterview:
+		return model == ScenarioModelProjectExperienceDeepDive ||
+			model == ScenarioModelInterviewBasicDialogue
+	case ScenarioFamilyExam:
+		return model == ScenarioModelIELTSSpeakingPart2 ||
+			model == ScenarioModelExamBasicDialogue
+	case ScenarioFamilyWorkplace:
+		return model == ScenarioModelProgressAndRiskUpdate ||
+			model == ScenarioModelWorkplaceBasicDialogue
+	case ScenarioFamilyDaily:
+		return model == ScenarioModelHotelCheckinAndIssueHandling ||
+			model == ScenarioModelDailyBasicDialogue
+	default:
+		return false
+	}
+}
+
+func validScenarioPromptModel(model ScenarioPromptModel) bool {
+	return nonBlank(model.PublicSceneBrief) &&
+		nonBlank(model.PracticeGoal) &&
+		nonBlank(model.UserRole) &&
+		nonBlank(model.AIRole) &&
+		nonBlank(model.PersonaSummary) &&
+		validStringSet(model.FocusAreas) &&
+		validStringSet(model.TurnBlueprints) &&
+		model.SuggestedDurationSeconds > 0
+}
+
+func validScenarioCompatibilityFields(config ScenarioConfig) bool {
+	if config.Model == ScenarioModelProjectExperienceDeepDive {
+		return nonBlank(config.JobTitle) && nonBlank(config.JobDescription)
+	}
+	return config.JobTitle == "" && config.JobDescription == ""
 }
 
 func invalidDefinition(format string, args ...any) error {
@@ -384,7 +426,14 @@ func cloneCatalogScenario(source catalogScenario) catalogScenario {
 
 func cloneScenarioConfig(source ScenarioConfig) ScenarioConfig {
 	result := source
-	result.FocusAreas = append([]string(nil), source.FocusAreas...)
+	result.PromptModel.FocusAreas = append(
+		[]string(nil),
+		source.PromptModel.FocusAreas...,
+	)
+	result.PromptModel.TurnBlueprints = append(
+		[]string(nil),
+		source.PromptModel.TurnBlueprints...,
+	)
 	return result
 }
 

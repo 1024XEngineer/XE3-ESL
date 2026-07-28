@@ -228,7 +228,10 @@ func TestTargetedSingleRoleFullSimulationCanStart(t *testing.T) {
 		contextActorFixture(),
 		plan.ID,
 		"single-role-full-start",
-		CreateSessionRequest{ExpectedPlanRevision: plan.Revision},
+		CreateSessionRequest{
+			ExpectedPlanRevision: plan.Revision,
+			UserConfirmed:        true,
+		},
 	); err != nil {
 		t.Fatalf("single-role FULL_SIMULATION start: %v", err)
 	}
@@ -335,7 +338,10 @@ func TestTargetedPlanRevisionAndStartUseFrozenPlan(t *testing.T) {
 		contextActorFixture(),
 		plan.ID,
 		"targeted-start-key",
-		CreateSessionRequest{ExpectedPlanRevision: plan.Revision},
+		CreateSessionRequest{
+			ExpectedPlanRevision: plan.Revision,
+			UserConfirmed:        true,
+		},
 	)
 	if err != nil || replayed ||
 		bootstrap.Session.ID != "session-targeted" ||
@@ -405,6 +411,7 @@ func targetedCatalogFixture() PlanCatalogSelection {
 		ScenarioDefinition: persistence.ScenarioDefinitionSnapshot{
 			ID:      "scenario-1",
 			Type:    "INTERVIEW",
+			Model:   persistence.ScenarioModelProjectExperienceDeepDive,
 			Name:    "Technical interview",
 			Version: 1,
 			Status:  "active",
@@ -413,10 +420,11 @@ func targetedCatalogFixture() PlanCatalogSelection {
 			ID:                   "config-1",
 			ScenarioDefinitionID: "scenario-1",
 			Type:                 "INTERVIEW",
+			Model:                persistence.ScenarioModelProjectExperienceDeepDive,
 			Version:              1,
 			JobTitle:             "Backend engineer",
 			JobDescription:       "Build reliable APIs.",
-			FocusAreas:           []string{"system_design"},
+			PromptModel:          targetedPromptModelFixture(),
 		},
 		SelectedRoles: []persistence.RoleSnapshot{{
 			ID:                   "role-1",
@@ -477,6 +485,7 @@ func targetedPlanFixture() persistence.Plan {
 		ScenarioDefinitionID:      selection.ScenarioDefinition.ID,
 		ScenarioDefinitionVersion: selection.ScenarioDefinition.Version,
 		ScenarioType:              selection.ScenarioDefinition.Type,
+		ScenarioModel:             selection.ScenarioDefinition.Model,
 		ScenarioConfigID:          selection.ScenarioConfig.ID,
 		ScenarioConfigVersion:     selection.ScenarioConfig.Version,
 		PreparationProfileID:      preparation.SourceProfileID,
@@ -504,6 +513,7 @@ func targetedPlanFromCommand(
 		ScenarioDefinitionID:      command.ScenarioDefinitionID,
 		ScenarioDefinitionVersion: command.ScenarioDefinitionVersion,
 		ScenarioType:              command.ScenarioType,
+		ScenarioModel:             command.ScenarioModel,
 		ScenarioConfigID:          command.ScenarioConfigID,
 		ScenarioConfigVersion:     command.ScenarioConfigVersion,
 		PreparationProfileID:      command.PreparationProfileID,
@@ -514,6 +524,19 @@ func targetedPlanFromCommand(
 		PracticeFocuses:           append([]persistence.PracticeObjective(nil), command.PracticeFocuses...),
 		Revision:                  1,
 		Status:                    persistence.PlanStatusReady,
+	}
+}
+
+func targetedPromptModelFixture() persistence.ScenarioPromptModel {
+	return persistence.ScenarioPromptModel{
+		PublicSceneBrief:         "Discuss one backend project.",
+		PracticeGoal:             "Explain decisions with evidence.",
+		UserRole:                 "Candidate",
+		AIRole:                   "Technical interviewer",
+		PersonaSummary:           "A precise interviewer.",
+		FocusAreas:               []string{"system_design"},
+		TurnBlueprints:           []string{"Clarify the project"},
+		SuggestedDurationSeconds: 600,
 	}
 }
 

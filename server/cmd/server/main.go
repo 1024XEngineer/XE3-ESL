@@ -164,6 +164,8 @@ func run() int {
 		)
 		return 1
 	}
+	memoryExtractionWakeup := newMemoryWorkerWakeup()
+	memoryIndexWakeup := newMemoryWorkerWakeup()
 
 	var recordingStore objectstore.Store
 	if storageConfig.Enabled {
@@ -181,7 +183,7 @@ func run() int {
 	}
 
 	applicationComposition, err :=
-		bootstrap.NewIdentityAgentAndPracticeComposition(
+		bootstrap.NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 			ctx,
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
@@ -195,6 +197,7 @@ func run() int {
 			},
 			memoryIndexComposition.Searcher(),
 			preparationCatalog,
+			memoryExtractionWakeup,
 			bootstrap.VoiceConfiguration{
 				Recognizer:                recognizer,
 				Synthesizer:               synthesizer,
@@ -239,6 +242,8 @@ func run() int {
 	memoryExtraction, err := buildMemoryExtractionWorker(
 		applicationComposition.MemoryExtractionProcessor(),
 		logger,
+		memoryExtractionWakeup.Events(),
+		memoryIndexWakeup,
 	)
 	if err != nil {
 		logger.Error(
@@ -250,6 +255,7 @@ func run() int {
 	memoryIndex, err := buildMemoryIndexWorker(
 		memoryIndexComposition.Processor(),
 		logger,
+		memoryIndexWakeup.Events(),
 	)
 	if err != nil {
 		logger.Error(

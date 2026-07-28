@@ -32,6 +32,10 @@ type VoicePracticeSession struct {
 	ThreadID                 string
 	MatterID                 string
 	MatterTitle              string
+	ScenarioType             string
+	ScenarioModel            string
+	PromptModel              VoiceScenarioPrompt
+	PreviousUserResponse     string
 	SessionVersion           int
 	EffectiveTurns           int
 	TurnLimit                int
@@ -39,6 +43,18 @@ type VoicePracticeSession struct {
 	Status                   string
 	InterviewerParticipantID string
 	CandidateParticipantID   string
+}
+
+// VoiceScenarioPrompt is copied from the immutable Practice Session snapshot.
+// Voice uses this contract instead of inferring a dialogue from a Matter title.
+type VoiceScenarioPrompt struct {
+	PublicSceneBrief string
+	PracticeGoal     string
+	UserRole         string
+	AIRole           string
+	PersonaSummary   string
+	FocusAreas       []string
+	TurnBlueprints   []string
 }
 
 type VoiceSessionPort interface {
@@ -201,12 +217,9 @@ func (application *VoiceSessionApplication) Start(
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
-	// Start is idempotent: an existing Session keeps its immutable Matter
-	// snapshot even if the Thread selected another Matter after the first
-	// successful request. The Practice-owned Port validates the requested
-	// Matter when creating; state() re-authorizes the frozen Matter on replay.
-	if session.ThreadID != threadID ||
-		strings.TrimSpace(session.MatterID) == "" {
+	// Start is idempotent: an existing Session keeps its immutable optional
+	// Matter binding even if the Thread selection changes after creation.
+	if session.ThreadID != threadID {
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return application.state(ctx, actor, session)
@@ -252,6 +265,27 @@ func (application *VoiceSessionApplication) Confirm(
 	command conversation.ConfirmVoiceTurnCommand,
 ) (VoiceSessionState, error) {
 	turn, err := application.orchestrator.Confirm(ctx, actor, command)
+	if err != nil {
+		return VoiceSessionState{}, err
+	}
+	session, err := application.sessions.GetByID(ctx, actor, turn.SessionID)
+	if err != nil {
+		return VoiceSessionState{}, err
+	}
+	state, err := application.state(ctx, actor, session)
+	if err != nil {
+		return VoiceSessionState{}, err
+	}
+	state.Turn = &turn
+	return state, nil
+}
+
+func (application *VoiceSessionApplication) SubmitText(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command conversation.SubmitTextAnswerCommand,
+) (VoiceSessionState, error) {
+	turn, err := application.orchestrator.SubmitText(ctx, actor, command)
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
@@ -384,7 +418,7 @@ func (application *VoiceSessionApplication) state(
 	if session.ID == "" ||
 		session.PlanID == "" ||
 		session.ThreadID == "" ||
-		session.MatterID == "" ||
+		!validVoiceScenarioPrompt(session) ||
 		session.SessionVersion < 1 ||
 		session.TurnLimit < 1 ||
 		session.TurnLimit > 6 ||
@@ -397,16 +431,18 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	state := VoiceSessionState{Session: session}
-	currentMatter, err := application.matters.ReadOwned(
-		ctx,
-		actor,
-		session.MatterID,
-	)
-	if err != nil || currentMatter.ID != session.MatterID {
-		return VoiceSessionState{}, ErrNotFound
+	if session.MatterID != "" {
+		currentMatter, err := application.matters.ReadOwned(
+			ctx,
+			actor,
+			session.MatterID,
+		)
+		if err != nil || currentMatter.ID != session.MatterID {
+			return VoiceSessionState{}, ErrNotFound
+		}
+		state.Matter = currentMatter
+		state.Session.MatterTitle = currentMatter.Title
 	}
-	state.Matter = currentMatter
-	state.Session.MatterTitle = currentMatter.Title
 	if session.Status == "paused" || session.Status == "ended_early" {
 		return state, nil
 	}
@@ -440,7 +476,7 @@ func (application *VoiceSessionApplication) state(
 			return VoiceSessionState{}, err
 		}
 		state.Session = session
-		state.Session.MatterTitle = currentMatter.Title
+		state.Session.MatterTitle = state.Matter.Title
 		latest, found, err = application.checkpoints.LatestTurn(
 			ctx,
 			actor,
@@ -487,6 +523,9 @@ func (application *VoiceSessionApplication) state(
 		}
 		return state, nil
 	}
+	if state.Turn != nil {
+		state.Session.PreviousUserResponse = state.Turn.AnswerText
+	}
 	question, err := application.questions.EnsureQuestion(
 		ctx,
 		actor,
@@ -508,6 +547,19 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return state, nil
+}
+
+func validVoiceScenarioPrompt(session VoicePracticeSession) bool {
+	prompt := session.PromptModel
+	return strings.TrimSpace(session.ScenarioType) != "" &&
+		strings.TrimSpace(session.ScenarioModel) != "" &&
+		strings.TrimSpace(prompt.PublicSceneBrief) != "" &&
+		strings.TrimSpace(prompt.PracticeGoal) != "" &&
+		strings.TrimSpace(prompt.UserRole) != "" &&
+		strings.TrimSpace(prompt.AIRole) != "" &&
+		strings.TrimSpace(prompt.PersonaSummary) != "" &&
+		len(prompt.FocusAreas) > 0 &&
+		len(prompt.TurnBlueprints) > 0
 }
 
 func validVoiceSessionLifecycle(session VoicePracticeSession) bool {

@@ -90,11 +90,13 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 			`INSERT INTO practice_plans (
 			     owner_user_id, plan_id, agent_thread_id, matter_id,
 			     scenario_definition_id, scenario_definition_version,
-			     scenario_type, scenario_config_id, scenario_config_version,
+			     scenario_type, scenario_model,
+			     scenario_config_id, scenario_config_version,
 			     preparation_profile_id, selected_role_ids, status
 			 ) VALUES (
 			     $1, 'plan-1', $2, $3,
 			     'scn_programmer_interview', 1, 'INTERVIEW',
+			     'PROJECT_EXPERIENCE_DEEP_DIVE',
 			     'scfg_backend_engineer', 1, 'profile-1',
 			     '["role_technical_interviewer"]'::jsonb, 'ready'
 			 )`,
@@ -123,10 +125,11 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, context_plan_id,
 			agent_thread_id, matter_id, snapshot_id, scenario_type,
-			status, version, effective_turns
+			scenario_model, status, version, effective_turns
 		) VALUES (
 			$1, 'session-1', 'plan-1', 'plan-1',
-			$2, $3, 'session-snapshot-1', 'INTERVIEW', 'starting', 1, 0
+			$2, $3, 'session-snapshot-1', 'INTERVIEW',
+			'PROJECT_EXPERIENCE_DEEP_DIVE', 'starting', 1, 0
 		)
 	`, userID, threadID, matterID); err != nil {
 		_ = tx.Rollback(context.Background())
@@ -155,11 +158,13 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 		INSERT INTO practice_plans (
 			owner_user_id, plan_id, agent_thread_id, matter_id,
 			scenario_definition_id, scenario_definition_version,
-			scenario_type, scenario_config_id, scenario_config_version,
+			scenario_type, scenario_model,
+			scenario_config_id, scenario_config_version,
 			preparation_profile_id, selected_role_ids, status
 		) VALUES (
 			$1, 'plan-2', $2, $3,
 			'scn_programmer_interview', 1, 'INTERVIEW',
+			'PROJECT_EXPERIENCE_DEEP_DIVE',
 			'scfg_backend_engineer', 1, 'profile-1',
 			'["role_hr_interviewer"]'::jsonb, 'ready'
 		)
@@ -170,11 +175,11 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, context_plan_id,
 			agent_thread_id, matter_id, snapshot_id, scenario_type,
-			status, version, effective_turns
+			scenario_model, status, version, effective_turns
 		) VALUES (
 			$1, 'session-thread-conflict', 'plan-2', 'plan-2',
 			$2, $3, 'session-thread-conflict-snapshot',
-			'INTERVIEW', 'starting', 1, 0
+			'INTERVIEW', 'PROJECT_EXPERIENCE_DEEP_DIVE', 'starting', 1, 0
 		)
 	`, userID, threadID, matterID)
 	var constraintError *pgconn.PgError
@@ -196,11 +201,12 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, context_plan_id,
 			agent_thread_id, matter_id, snapshot_id, scenario_type,
-			status, version, effective_turns, started_at, completed_at,
-			end_reason
+			scenario_model, status, version, effective_turns, started_at,
+			completed_at, end_reason
 		) VALUES (
 			$1, 'session-2', 'plan-1', 'plan-1',
-			$2, $3, 'session-snapshot-2', 'INTERVIEW', 'completed', 2, 1,
+			$2, $3, 'session-snapshot-2', 'INTERVIEW',
+			'PROJECT_EXPERIENCE_DEEP_DIVE', 'completed', 2, 1,
 			transaction_timestamp(), transaction_timestamp(), 'TEST_COMPLETED'
 		)
 	`, userID, threadID, matterID); err != nil {

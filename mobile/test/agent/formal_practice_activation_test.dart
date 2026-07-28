@@ -430,6 +430,16 @@ final class _ActivationPracticeClient implements PracticeClient {
   }) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
+  }
 }
 
 final class _ActivationAgentClient implements AgentClient {

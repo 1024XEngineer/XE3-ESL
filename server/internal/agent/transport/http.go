@@ -234,6 +234,10 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 			h.transcribeVoiceCandidate,
 		)
 		protected.POST(
+			"/v1/voice-practice-sessions/:practice_session_id/questions/:question_id/text-answers",
+			h.submitPracticeText,
+		)
+		protected.POST(
 			"/v1/transcription-candidates/:candidate_id/confirmations",
 			h.confirmVoiceCandidate,
 		)
@@ -909,6 +913,48 @@ func (h *HTTPHandler) confirmVoiceCandidate(c *gin.Context) {
 		conversation.ConfirmVoiceTurnCommand{
 			CandidateID:    c.Param("candidate_id"),
 			IdempotencyKey: key,
+		},
+	)
+	if err != nil {
+		h.writeVoiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, voiceSessionStateResponse(state))
+}
+
+func (h *HTTPHandler) submitPracticeText(c *gin.Context) {
+	key, ok := voiceIdempotencyKey(c)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	values, ok := decodeObject(
+		c,
+		[]string{"answer_text"},
+		[]string{"answer_text"},
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	answerText, ok := decodeString(values["answer_text"])
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	state, err := h.voice.SubmitText(
+		c.Request.Context(),
+		actor,
+		conversation.SubmitTextAnswerCommand{
+			SessionID:      c.Param("practice_session_id"),
+			QuestionID:     c.Param("question_id"),
+			IdempotencyKey: key,
+			AnswerText:     answerText,
 		},
 	)
 	if err != nil {

@@ -4,7 +4,25 @@ import "time"
 
 type ScenarioType string
 
-const ScenarioTypeInterview ScenarioType = "INTERVIEW"
+const (
+	ScenarioTypeInterview ScenarioType = "INTERVIEW"
+	ScenarioTypeExam      ScenarioType = "EXAM"
+	ScenarioTypeWorkplace ScenarioType = "WORKPLACE"
+	ScenarioTypeDaily     ScenarioType = "DAILY"
+)
+
+type ScenarioModel string
+
+const (
+	ScenarioModelProjectExperienceDeepDive    ScenarioModel = "PROJECT_EXPERIENCE_DEEP_DIVE"
+	ScenarioModelInterviewBasicDialogue       ScenarioModel = "INTERVIEW_BASIC_DIALOGUE"
+	ScenarioModelIELTSSpeakingPart2           ScenarioModel = "IELTS_SPEAKING_PART_2"
+	ScenarioModelExamBasicDialogue            ScenarioModel = "EXAM_BASIC_DIALOGUE"
+	ScenarioModelProgressAndRiskUpdate        ScenarioModel = "PROGRESS_AND_RISK_UPDATE"
+	ScenarioModelWorkplaceBasicDialogue       ScenarioModel = "WORKPLACE_BASIC_DIALOGUE"
+	ScenarioModelHotelCheckinAndIssueHandling ScenarioModel = "HOTEL_CHECKIN_AND_ISSUE_HANDLING"
+	ScenarioModelDailyBasicDialogue           ScenarioModel = "DAILY_BASIC_DIALOGUE"
+)
 
 type PracticePlanStatus string
 
@@ -37,6 +55,7 @@ type PracticePlan struct {
 	ScenarioDefinitionID      string             `json:"scenario_definition_id"`
 	ScenarioDefinitionVersion int                `json:"scenario_definition_version"`
 	ScenarioType              ScenarioType       `json:"scenario_type"`
+	ScenarioModel             ScenarioModel      `json:"scenario_model"`
 	ScenarioConfigID          string             `json:"scenario_config_id"`
 	ScenarioConfigVersion     int                `json:"scenario_config_version"`
 	PreparationProfileID      string             `json:"preparation_profile_id"`
@@ -48,16 +67,17 @@ type PracticePlan struct {
 }
 
 type PracticeSession struct {
-	ID           string                   `json:"practice_session_id"`
-	PlanID       string                   `json:"practice_plan_id"`
-	ScenarioType ScenarioType             `json:"scenario_type"`
-	SnapshotID   string                   `json:"snapshot_id"`
-	Status       PracticeSessionStatus    `json:"practice_session_status"`
-	Version      int                      `json:"session_version"`
-	CreatedAt    time.Time                `json:"created_at"`
-	StartedAt    *time.Time               `json:"started_at,omitempty"`
-	EndedAt      *time.Time               `json:"ended_at,omitempty"`
-	EndReason    PracticeSessionEndReason `json:"end_reason,omitempty"`
+	ID            string                   `json:"practice_session_id"`
+	PlanID        string                   `json:"practice_plan_id"`
+	ScenarioType  ScenarioType             `json:"scenario_type"`
+	ScenarioModel ScenarioModel            `json:"scenario_model"`
+	SnapshotID    string                   `json:"snapshot_id"`
+	Status        PracticeSessionStatus    `json:"practice_session_status"`
+	Version       int                      `json:"session_version"`
+	CreatedAt     time.Time                `json:"created_at"`
+	StartedAt     *time.Time               `json:"started_at,omitempty"`
+	EndedAt       *time.Time               `json:"ended_at,omitempty"`
+	EndReason     PracticeSessionEndReason `json:"end_reason,omitempty"`
 }
 
 type SubjectRef struct {
@@ -68,21 +88,34 @@ type SubjectRef struct {
 type ParticipantRole string
 
 type ScenarioDefinitionSnapshot struct {
-	ID      string       `json:"scenario_definition_id"`
-	Type    ScenarioType `json:"scenario_type"`
-	Name    string       `json:"name"`
-	Version int          `json:"version"`
-	Status  string       `json:"status"`
+	ID      string        `json:"scenario_definition_id"`
+	Type    ScenarioType  `json:"scenario_type"`
+	Model   ScenarioModel `json:"scenario_model"`
+	Name    string        `json:"name"`
+	Version int           `json:"version"`
+	Status  string        `json:"status"`
 }
 
 type ScenarioConfigSnapshot struct {
-	ID                   string       `json:"scenario_config_id"`
-	ScenarioDefinitionID string       `json:"scenario_definition_id"`
-	Type                 ScenarioType `json:"config_type"`
-	Version              int          `json:"version"`
-	JobTitle             string       `json:"job_title"`
-	JobDescription       string       `json:"job_description"`
-	FocusAreas           []string     `json:"focus_areas"`
+	ID                   string              `json:"scenario_config_id"`
+	ScenarioDefinitionID string              `json:"scenario_definition_id"`
+	Type                 ScenarioType        `json:"config_type"`
+	Model                ScenarioModel       `json:"scenario_model"`
+	Version              int                 `json:"version"`
+	JobTitle             string              `json:"job_title,omitempty"`
+	JobDescription       string              `json:"job_description,omitempty"`
+	PromptModel          ScenarioPromptModel `json:"prompt_model"`
+}
+
+type ScenarioPromptModel struct {
+	PublicSceneBrief         string   `json:"public_scene_brief"`
+	PracticeGoal             string   `json:"practice_goal"`
+	UserRole                 string   `json:"user_role"`
+	AIRole                   string   `json:"ai_role"`
+	PersonaSummary           string   `json:"persona_summary"`
+	FocusAreas               []string `json:"focus_areas"`
+	TurnBlueprints           []string `json:"turn_blueprints"`
+	SuggestedDurationSeconds int      `json:"suggested_duration_seconds"`
 }
 
 type PreparationSnapshot struct {
@@ -136,6 +169,7 @@ type PracticeSessionSnapshot struct {
 	SessionID          string                     `json:"practice_session_id"`
 	PlanRevision       int                        `json:"plan_revision"`
 	ScenarioType       ScenarioType               `json:"scenario_type"`
+	ScenarioModel      ScenarioModel              `json:"scenario_model"`
 	ScenarioDefinition ScenarioDefinitionSnapshot `json:"scenario_definition_snapshot"`
 	ScenarioConfig     ScenarioConfigSnapshot     `json:"scenario_config_snapshot"`
 	Preparation        PreparationSnapshot        `json:"preparation_snapshot"`

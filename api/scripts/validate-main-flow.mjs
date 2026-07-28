@@ -337,13 +337,13 @@ const participantById = new Map(
 assert.equal(participantById.size, fixture.participants.length);
 assert.equal(
   fixture.participants.filter(
-    (participant) => participant.participant_role === 'INTERVIEWER',
+    (participant) => participant.participant_role === 'FACILITATOR',
   ).length,
   1,
 );
 assert.equal(
   fixture.participants.filter(
-    (participant) => participant.participant_role === 'CANDIDATE',
+    (participant) => participant.participant_role === 'LEARNER',
   ).length,
   1,
 );
@@ -370,7 +370,7 @@ for (const question of fixture.questions) {
   assert.equal(question.practice_session_id, sessionId);
   assert.equal(
     participantById.get(question.speaker_participant_id)?.participant_role,
-    'INTERVIEWER',
+    'FACILITATOR',
   );
   assert.ok(question.addressee_participant_ids.length > 0);
   assert.ok(

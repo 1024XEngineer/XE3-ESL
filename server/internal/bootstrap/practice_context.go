@@ -57,6 +57,60 @@ func NewIdentityAgentAndPracticeComposition(
 	catalog preparation.CatalogReader,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		nil,
+		voiceConfigurations...,
+	)
+}
+
+// NewIdentityAgentAndPracticeCompositionWithMemoryWakeup wires a payload-free
+// notification emitted only after a completed Agent Run has been committed.
+func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	catalog preparation.CatalogReader,
+	memoryExtractionNotifier interface{ Notify() },
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		memoryExtractionNotifier,
+		voiceConfigurations...,
+	)
+}
+
+func newIdentityAgentAndPracticeComposition(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	catalog preparation.CatalogReader,
+	memoryExtractionNotifier interface{ Notify() },
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
 	if catalog == nil {
 		return nil, errors.New("bootstrap: Preparation catalog is required")
 	}
@@ -68,6 +122,7 @@ func NewIdentityAgentAndPracticeComposition(
 		generator,
 		runConfiguration,
 		memorySearcher,
+		memoryExtractionNotifier,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -317,6 +372,9 @@ func (r *agentPracticeContextReader) ValidatePracticeAnchor(
 	}
 	if thread.ID != threadID || thread.OwnerID != actor.UserID {
 		return practice.PracticeAnchor{}, practicepersistence.ErrNotFound
+	}
+	if matterID == "" {
+		return practice.PracticeAnchor{ThreadID: thread.ID}, nil
 	}
 	if thread.ActiveMatterID == "" || thread.ActiveMatterID != matterID {
 		return practice.PracticeAnchor{}, practicepersistence.ErrConflict
@@ -660,7 +718,8 @@ func mapPlanCatalogSelection(
 	return practice.PlanCatalogSelection{
 		ScenarioDefinition: practicepersistence.ScenarioDefinitionSnapshot{
 			ID:      snapshot.ScenarioDefinition.ID,
-			Type:    string(snapshot.ScenarioDefinition.Type),
+			Type:    practicepersistence.ScenarioFamily(snapshot.ScenarioDefinition.Type),
+			Model:   practicepersistence.ScenarioModel(snapshot.ScenarioDefinition.Model),
 			Name:    snapshot.ScenarioDefinition.Name,
 			Version: snapshot.ScenarioDefinition.Version,
 			Status:  string(snapshot.ScenarioDefinition.Status),
@@ -669,14 +728,27 @@ func mapPlanCatalogSelection(
 			ID: snapshot.ScenarioConfig.ID,
 			ScenarioDefinitionID: snapshot.ScenarioConfig.
 				ScenarioDefinitionID,
-			Type:           string(snapshot.ScenarioConfig.Type),
+			Type:           practicepersistence.ScenarioFamily(snapshot.ScenarioConfig.Type),
+			Model:          practicepersistence.ScenarioModel(snapshot.ScenarioConfig.Model),
 			Version:        snapshot.ScenarioConfig.Version,
 			JobTitle:       snapshot.ScenarioConfig.JobTitle,
 			JobDescription: snapshot.ScenarioConfig.JobDescription,
-			FocusAreas: append(
-				[]string(nil),
-				snapshot.ScenarioConfig.FocusAreas...,
-			),
+			PromptModel: practicepersistence.ScenarioPromptModel{
+				PublicSceneBrief: snapshot.ScenarioConfig.PromptModel.PublicSceneBrief,
+				PracticeGoal:     snapshot.ScenarioConfig.PromptModel.PracticeGoal,
+				UserRole:         snapshot.ScenarioConfig.PromptModel.UserRole,
+				AIRole:           snapshot.ScenarioConfig.PromptModel.AIRole,
+				PersonaSummary:   snapshot.ScenarioConfig.PromptModel.PersonaSummary,
+				FocusAreas: append(
+					[]string(nil),
+					snapshot.ScenarioConfig.PromptModel.FocusAreas...,
+				),
+				TurnBlueprints: append(
+					[]string(nil),
+					snapshot.ScenarioConfig.PromptModel.TurnBlueprints...,
+				),
+				SuggestedDurationSeconds: snapshot.ScenarioConfig.PromptModel.SuggestedDurationSeconds,
+			},
 		},
 		SelectedRoles:  roles,
 		PracticeOption: mapPracticeOption(snapshot.PracticeOption),

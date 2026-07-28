@@ -130,6 +130,45 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/text-answers:
+    post:
+      tags:
+        - Conversation
+      summary: Submit one English text answer and advance the durable Practice Saga
+      description: |
+        Creates an immutable text-backed Conversation candidate and confirmed
+        Turn in one idempotent request. It applies the effective Turn exactly
+        once, returns the next Question when the Session remains active, and
+        ensures the formal Review on completion. No recording or ASR asset is
+        created for a text answer.
+      operationId: submitPracticeTextAnswer
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - $ref: '#/components/parameters/QuestionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TextAnswerRequest'
+      responses:
+        '200':
+          description: Recovered Saga state after accepting the text answer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceSessionState'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/voice-questions/{question_id}/speech:
     get:
       tags:
@@ -638,6 +677,16 @@ components:
       type: string
       minLength: 1
       maxLength: 128
+    TextAnswerRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - answer_text
+      properties:
+        answer_text:
+          type: string
+          minLength: 1
+          maxLength: 8000
     VoiceSessionState:
       type: object
       additionalProperties: false

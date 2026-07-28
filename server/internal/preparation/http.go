@@ -31,8 +31,21 @@ func (h *CatalogHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 }
 
 func (h *CatalogHTTPHandler) listScenarios(c *gin.Context) {
+	definitions := h.catalog.ListActiveScenarios()
+	scenarios := make([]ScenarioDefinitionListItem, 0, len(definitions))
+	for _, definition := range definitions {
+		detail, err := h.catalog.GetScenarioDetail(definition.ID)
+		if err != nil {
+			writeCatalogError(c, err)
+			return
+		}
+		scenarios = append(scenarios, ScenarioDefinitionListItem{
+			ScenarioDefinition: definition,
+			Summary:            detail.ScenarioConfig.PromptModel.PublicSceneBrief,
+		})
+	}
 	c.JSON(http.StatusOK, ScenarioDefinitionList{
-		Scenarios: h.catalog.ListActiveScenarios(),
+		Scenarios: scenarios,
 	})
 }
 

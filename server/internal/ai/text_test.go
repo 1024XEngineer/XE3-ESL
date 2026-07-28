@@ -32,6 +32,13 @@ func TestValidateTextRequest(t *testing.T) {
 			{Role: TextRoleUser, Content: "hello"},
 			{Role: TextRoleAssistant, Content: "hi"},
 		}},
+		"unknown response format": {
+			Messages: []TextMessage{{
+				Role:    TextRoleUser,
+				Content: "hello",
+			}},
+			ResponseFormat: "xml",
+		},
 	}
 	for name, request := range tests {
 		t.Run(name, func(t *testing.T) {

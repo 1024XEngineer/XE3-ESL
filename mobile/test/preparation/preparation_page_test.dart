@@ -14,9 +14,17 @@ import 'package:speakup/features/preparation/preparation_launch_controller.dart'
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
+Future<void> _openFamily(WidgetTester tester, String family) async {
+  final familyCard = find.byKey(Key('preparation-family-$family'));
+  await tester.ensureVisible(familyCard);
+  await tester.pumpAndSettle();
+  await tester.tap(familyCard);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets(
-    'product training center shows server topic before opening JD-first',
+    'product training center previews a topic and keeps JD-first optional',
     (tester) async {
       final controller = PreparationController(client: _FixtureClient());
       addTearDown(controller.dispose);
@@ -35,17 +43,27 @@ void main() {
       expect(find.byKey(const Key('training-center-title')), findsOneWidget);
       expect(find.text('练习中心'), findsOneWidget);
       expect(find.byKey(const Key('training-catalog-status')), findsOneWidget);
-      expect(find.text('可用'), findsOneWidget);
+      expect(find.text('求职面试'), findsOneWidget);
       expect(
         find.text('English interview for technical roles'),
         findsOneWidget,
       );
 
-      await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
+      await tester.tap(find.byKey(const Key('open-job-preparation')));
       await tester.pump();
 
       expect(opens, 1);
       expect(controller.selectedScenario, isNull);
+
+      await _openFamily(tester, 'INTERVIEW');
+      await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
+      await tester.pumpAndSettle();
+
+      expect(controller.selectedScenario?.id, _scenarioId);
+      expect(
+        find.byKey(const Key('preparation-scenario-config')),
+        findsOneWidget,
+      );
     },
   );
 
@@ -66,6 +84,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await _openFamily(tester, 'WORKPLACE');
     await tester.tap(
       find.byKey(const Key('catalog-scenario-scn_general_speaking')),
     );
@@ -73,7 +92,71 @@ void main() {
 
     expect(opens, 0);
     expect(controller.selectedScenario?.id, 'scn_general_speaking');
-    expect(find.text('General speaking practice'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('preparation-scenario-title')))
+          .data,
+      'General speaking practice',
+    );
+  });
+
+  testWidgets('subscenes show their own server summaries', (tester) async {
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = PreparationController(client: _InterviewSummaryClient());
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+        child: MaterialApp(
+          home: PreparationPage(preparationController: controller),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openFamily(tester, 'INTERVIEW');
+
+    expect(find.text('Discuss one backend project.'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(
+        const Key('catalog-scenario-scn_interview_recruiter_screening'),
+      ),
+      160,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Discuss motivation, role fit, and basic expectations.'),
+      findsOneWidget,
+    );
+    expect(find.text('围绕真实项目经历，练习结构化表达与追问应对'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('groups the four MVP scenarios by speaking context', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _FourFamilyClient());
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: PreparationPage(preparationController: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    for (final family in const ['INTERVIEW', 'EXAM', 'WORKPLACE', 'DAILY']) {
+      final heading = find.byKey(Key('preparation-family-$family'));
+      await tester.scrollUntilVisible(
+        heading,
+        160,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      expect(heading, findsOneWidget);
+    }
   });
 
   testWidgets(
@@ -88,7 +171,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('练习中心'), findsOneWidget);
-      expect(find.textContaining('当前先把英文面试做深'), findsOneWidget);
+      expect(find.textContaining('先选择一个使用场景'), findsOneWidget);
+      await _openFamily(tester, 'INTERVIEW');
       await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
       await tester.pumpAndSettle();
 
@@ -96,19 +180,16 @@ void main() {
         find.text('English interview for technical roles'),
         findsOneWidget,
       );
-      expect(find.text('每个视角都可以独立练习，排列顺序不代表固定招聘阶段。'), findsOneWidget);
+      expect(find.text('AI 会按所选角色和场景目标推进对话。'), findsOneWidget);
       final technical = find.byKey(
         const Key('preparation-role-role_technical_interviewer'),
       );
-      final recruiter = find.byKey(
-        const Key('preparation-role-role_hr_interviewer'),
-      );
-      expect(
-        tester.getTopLeft(technical).dy,
-        lessThan(tester.getTopLeft(recruiter).dy),
-      );
+      expect(controller.roles.take(2).map((role) => role.id), [
+        'role_technical_interviewer',
+        'role_hr_interviewer',
+      ]);
 
-      await tester.ensureVisible(technical);
+      await tester.scrollUntilVisible(technical, 200);
       await tester.pumpAndSettle();
       await tester.tap(technical);
       await tester.pump();
@@ -161,7 +242,8 @@ void main() {
         MaterialApp(home: PreparationPage(preparationController: controller)),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
+      await _openFamily(tester, 'INTERVIEW');
+      await controller.selectScenario(_scenario);
       await tester.pumpAndSettle();
 
       const roleLabel =
@@ -171,7 +253,11 @@ void main() {
       final role = find.byKey(
         const Key('preparation-role-role_technical_interviewer'),
       );
-      await tester.ensureVisible(role);
+      await tester.scrollUntilVisible(
+        role,
+        160,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.pumpAndSettle();
       expect(
         tester.getSemantics(role),
@@ -283,10 +369,8 @@ void main() {
       MaterialApp(home: PreparationPage(preparationController: controller)),
     );
     await tester.pumpAndSettle();
-    final scenario = find.byKey(const Key('catalog-scenario-$_scenarioId'));
-    await tester.ensureVisible(scenario);
-    await tester.pumpAndSettle();
-    await tester.tap(scenario);
+    await _openFamily(tester, 'INTERVIEW');
+    await controller.selectScenario(_scenario);
     await tester.pumpAndSettle();
 
     final leadership = find.byKey(
@@ -327,6 +411,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
+      await _openFamily(tester, 'INTERVIEW');
       await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('primary-tab-agent')));
@@ -391,12 +476,14 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _openFamily(tester, 'INTERVIEW');
     await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
     await tester.pumpAndSettle();
     final role = find.byKey(
       const Key('preparation-role-role_technical_interviewer'),
     );
-    await tester.ensureVisible(role);
+    await tester.scrollUntilVisible(role, 200);
+    await tester.pumpAndSettle();
     await tester.tap(role);
     await tester.pump();
     final option = find.byKey(
@@ -405,16 +492,24 @@ void main() {
     await tester.scrollUntilVisible(option, 200);
     await tester.tap(option);
     await tester.pump();
-    final background = find
-        .byKey(const Key('preparation-background-summary'))
-        .first;
-    await tester.ensureVisible(background);
+    final background = find.byKey(const Key('preparation-background-summary'));
+    await tester.scrollUntilVisible(
+      background,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.enterText(
       background,
       'Backend engineer preparing a technical interview.',
     );
     final start = find.byKey(const Key('preparation-start-practice'));
-    await tester.ensureVisible(start);
+    await tester.scrollUntilVisible(
+      start,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(start);
     await tester.pumpAndSettle();
 
@@ -464,12 +559,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await _openFamily(tester, 'INTERVIEW');
       await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
       await tester.pumpAndSettle();
       final role = find.byKey(
         const Key('preparation-role-role_technical_interviewer'),
       );
-      await tester.ensureVisible(role);
+      await tester.scrollUntilVisible(role, 200);
+      await tester.pumpAndSettle();
       await tester.tap(role);
       await tester.pump();
       final option = find.byKey(
@@ -480,7 +577,12 @@ void main() {
       await tester.pump();
 
       final startFinder = find.byKey(const Key('preparation-start-practice'));
-      await tester.ensureVisible(startFinder);
+      await tester.scrollUntilVisible(
+        startFinder,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       expect(tester.widget<FilledButton>(startFinder).onPressed, isNotNull);
       expect(
         find.byKey(const Key('preparation-agent-context-missing')),
@@ -494,7 +596,12 @@ void main() {
       final background = find.byKey(
         const Key('preparation-background-summary'),
       );
-      await tester.ensureVisible(background);
+      await tester.scrollUntilVisible(
+        background,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       await tester.enterText(
         background,
         'Backend engineer preparing a technical interview.',
@@ -557,13 +664,15 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await _openFamily(tester, 'INTERVIEW');
       await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
       await tester.pumpAndSettle();
 
       final role = find.byKey(
         const Key('preparation-role-role_technical_interviewer'),
       );
-      await tester.ensureVisible(role);
+      await tester.scrollUntilVisible(role, 200);
+      await tester.pumpAndSettle();
       await tester.tap(role);
       await tester.pump();
       final option = find.byKey(
@@ -575,13 +684,23 @@ void main() {
       final background = find.byKey(
         const Key('preparation-background-summary'),
       );
-      await tester.ensureVisible(background);
+      await tester.scrollUntilVisible(
+        background,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       await tester.enterText(
         background,
         'Backend engineer preparing a technical interview.',
       );
       final start = find.byKey(const Key('preparation-start-practice'));
-      await tester.ensureVisible(start);
+      await tester.scrollUntilVisible(
+        start,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       await tester.tap(start);
       await tester.pump();
 
@@ -644,6 +763,7 @@ void main() {
             id: 'session-1',
             planId: 'plan-1',
             scenarioType: 'INTERVIEW',
+            scenarioModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
             snapshotId: 'session-snapshot-1',
             status: 'starting',
             version: 1,
@@ -718,6 +838,7 @@ void main() {
         200,
         scrollable: find.byType(Scrollable).first,
       );
+      await tester.pumpAndSettle();
       await tester.tap(retry);
       await tester.pumpAndSettle();
 
@@ -770,6 +891,50 @@ final class _MultiScenarioClient implements PreparationCatalogClient {
   @override
   Future<List<PreparationRole>> listRoles(String scenarioId) async =>
       scenarioId == _scenarioId ? _roles : const [_otherRole];
+}
+
+final class _InterviewSummaryClient implements PreparationCatalogClient {
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<PreparationScenarioDetail> getScenario(String scenarioId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<List<PreparationScenario>> listScenarios() async => const [
+    _scenario,
+    _secondInterviewScenario,
+  ];
+
+  @override
+  Future<List<PreparationRole>> listRoles(String scenarioId) {
+    throw UnimplementedError();
+  }
+}
+
+final class _FourFamilyClient implements PreparationCatalogClient {
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<PreparationScenarioDetail> getScenario(String scenarioId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<List<PreparationScenario>> listScenarios() async => const [
+    _scenario,
+    _examScenario,
+    _otherScenario,
+    _dailyScenario,
+  ];
+
+  @override
+  Future<List<PreparationRole>> listRoles(String scenarioId) {
+    throw UnimplementedError();
+  }
 }
 
 final class _ControlledListClient implements PreparationCatalogClient {
@@ -868,6 +1033,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
         id: 'session-1',
         planId: planId,
         scenarioType: 'INTERVIEW',
+        scenarioModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
         snapshotId: 'session-snapshot-1',
         status: 'starting',
         version: 1,
@@ -890,15 +1056,49 @@ const _scenarioId = 'scn_programmer_interview';
 const _scenario = PreparationScenario(
   id: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   name: 'English interview for technical roles',
+  summary: 'Discuss one backend project.',
+  version: 1,
+  status: 'active',
+);
+
+const _secondInterviewScenario = PreparationScenario(
+  id: 'scn_interview_recruiter_screening',
+  type: 'INTERVIEW',
+  model: 'INTERVIEW_BASIC_DIALOGUE',
+  name: 'Recruiter screening',
+  summary: 'Discuss motivation, role fit, and basic expectations.',
   version: 1,
   status: 'active',
 );
 
 const _otherScenario = PreparationScenario(
   id: 'scn_general_speaking',
-  type: 'GENERAL',
+  type: 'WORKPLACE',
+  model: 'PROGRESS_AND_RISK_UPDATE',
   name: 'General speaking practice',
+  summary: 'Give a workplace progress update.',
+  version: 1,
+  status: 'active',
+);
+
+const _examScenario = PreparationScenario(
+  id: 'scn_ielts_speaking_part_2',
+  type: 'EXAM',
+  model: 'IELTS_SPEAKING_PART_2',
+  name: 'IELTS Speaking Part 2',
+  summary: 'Develop a clear answer from one cue card.',
+  version: 1,
+  status: 'active',
+);
+
+const _dailyScenario = PreparationScenario(
+  id: 'scn_daily_hotel_checkin_issue',
+  type: 'DAILY',
+  model: 'HOTEL_CHECKIN_AND_ISSUE_HANDLING',
+  name: 'Hotel check-in and issue handling',
+  summary: 'Check in and resolve one room issue.',
   version: 1,
   status: 'active',
 );
@@ -919,11 +1119,12 @@ const _otherDetail = PreparationScenarioDetail(
   config: PreparationScenarioConfig(
     id: 'scfg_general_speaking',
     scenarioId: 'scn_general_speaking',
-    type: 'GENERAL',
+    type: 'WORKPLACE',
+    model: 'PROGRESS_AND_RISK_UPDATE',
     version: 1,
     jobTitle: 'General speaking',
     jobDescription: 'Practice everyday spoken English.',
-    focusAreas: ['fluency'],
+    prompt: _workplacePrompt,
   ),
   options: [
     PreparationOption(
@@ -948,10 +1149,33 @@ const _config = PreparationScenarioConfig(
   id: 'scfg_backend_engineer',
   scenarioId: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   version: 1,
   jobTitle: 'Backend engineer',
   jobDescription: 'Build reliable APIs and explain engineering trade-offs.',
+  prompt: _interviewPrompt,
+);
+
+const _interviewPrompt = PreparationScenarioPrompt(
+  publicSceneBrief: 'Discuss one backend project.',
+  practiceGoal: 'Explain decisions with evidence.',
+  userRole: 'Candidate',
+  aiRole: 'Technical interviewer',
+  personaSummary: 'Precise and evidence seeking.',
   focusAreas: ['introduction', 'system_design'],
+  turnBlueprints: ['Ask for a project overview.'],
+  suggestedDurationSeconds: 900,
+);
+
+const _workplacePrompt = PreparationScenarioPrompt(
+  publicSceneBrief: 'Give a workplace progress update.',
+  practiceGoal: 'Explain progress and risk clearly.',
+  userRole: 'Project owner',
+  aiRole: 'Stakeholder',
+  personaSummary: 'Direct and supportive.',
+  focusAreas: ['fluency'],
+  turnBlueprints: ['Ask for current progress.'],
+  suggestedDurationSeconds: 600,
 );
 
 const _technicalRole = PreparationRole(

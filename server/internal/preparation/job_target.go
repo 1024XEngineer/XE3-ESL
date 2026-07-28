@@ -663,7 +663,7 @@ func validateJobTargetCandidate(
 	if err != nil {
 		return errors.Join(ErrJobTargetInvalid, err)
 	}
-	if snapshot.ScenarioDefinition.Type == ScenarioTypeInterview &&
+	if snapshot.ScenarioDefinition.Type == ScenarioFamilyInterview &&
 		len(snapshot.SelectedRoles) != 1 {
 		return ErrJobTargetInvalid
 	}

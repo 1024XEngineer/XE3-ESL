@@ -508,6 +508,12 @@ func writePracticeContextServiceError(
 			http.StatusConflict,
 			"idempotency_key_conflict",
 		)
+	case errors.Is(err, persistence.ErrConfirmationRequired):
+		writePracticeContextHTTPError(
+			c,
+			http.StatusConflict,
+			"confirmation_required",
+		)
 	case errors.Is(err, persistence.ErrSessionCompleted):
 		writePracticeContextHTTPError(
 			c,
@@ -558,6 +564,7 @@ func writePracticeContextHTTPError(
 		"practice_session_not_found":        "Practice session was not found.",
 		"practice_session_already_terminal": "Practice session is already terminal.",
 		"idempotency_key_conflict":          "Idempotency key conflicts with the original request.",
+		"confirmation_required":             "Explicit user confirmation is required.",
 		"resource_conflict":                 "Resource state conflicts with this operation.",
 		"internal_error":                    "An internal error occurred.",
 	}

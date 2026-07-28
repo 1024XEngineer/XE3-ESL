@@ -204,6 +204,83 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 	}
 }
 
+func TestVoiceHTTPTextAnswerAdvancesWithoutAudioCandidateEndpoint(t *testing.T) {
+	conversations := newAgentVoiceConversation(3)
+	practice := newAgentVoicePractice(0)
+	reviews := newAgentVoiceReview()
+	orchestrator := newAgentVoiceOrchestrator(
+		t,
+		conversations,
+		practice,
+		reviews,
+	)
+	voice := newVoiceSessionTestApplication(
+		t,
+		conversations,
+		practice,
+		reviews,
+		orchestrator,
+	)
+	handler, err := NewHTTPHandlerWithRunsAndVoice(
+		voiceHTTPApplication{},
+		nil,
+		voice,
+		voiceHTTPMatters{},
+		voiceHTTPAuthenticator{},
+		func() string { return "corr_text" },
+		testVoiceHTTPOptions(),
+	)
+	if err != nil {
+		t.Fatalf("new voice HTTP handler: %v", err)
+	}
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	handler.RegisterRoutes(router)
+
+	start := voiceHTTPRequest(
+		t,
+		router,
+		http.MethodPost,
+		"/v1/agent-threads/thread-1/voice-practice-sessions",
+		nil,
+		map[string]string{"Idempotency-Key": "session-start-text"},
+	)
+	if start.Code != http.StatusCreated {
+		t.Fatalf("start status = %d, body = %s", start.Code, start.Body)
+	}
+	answer := voiceHTTPRequest(
+		t,
+		router,
+		http.MethodPost,
+		"/v1/voice-practice-sessions/session-1/questions/question-1/text-answers",
+		[]byte(`{"answer_text":"I led the rollout and communicated the risk."}`),
+		map[string]string{
+			"Content-Type":    "application/json",
+			"Idempotency-Key": "text-answer-1",
+		},
+	)
+	if answer.Code != http.StatusOK {
+		t.Fatalf("text answer status = %d, body = %s", answer.Code, answer.Body)
+	}
+	state := decodeVoiceJSONObject(t, answer)
+	turn := state["current_turn"].(map[string]any)
+	if turn["answer_text"] !=
+		"I led the rollout and communicated the risk." {
+		t.Fatalf("text turn = %#v", turn)
+	}
+	if _, found := turn["audio_asset_id"]; found {
+		t.Fatalf("text turn exposed audio asset: %#v", turn)
+	}
+	if conversations.textSubmitCalls != 1 ||
+		conversations.transcribeCalls != 0 {
+		t.Fatalf(
+			"text calls = %d, ASR calls = %d",
+			conversations.textSubmitCalls,
+			conversations.transcribeCalls,
+		)
+	}
+}
+
 func TestVoiceHTTPListsAuthenticatedReviewHistoryWithOpaqueCursor(
 	t *testing.T,
 ) {
@@ -809,10 +886,21 @@ func TestVoiceHTTPResumeUsesFrozenSessionMatter(t *testing.T) {
 			)
 			sessions := &voiceHTTPRecordingSessionPort{
 				session: VoicePracticeSession{
-					ID:                       "session-1",
-					PlanID:                   "plan-1",
-					ThreadID:                 "thread-1",
-					MatterID:                 "matter-1",
+					ID:            "session-1",
+					PlanID:        "plan-1",
+					ThreadID:      "thread-1",
+					MatterID:      "matter-1",
+					ScenarioType:  "INTERVIEW",
+					ScenarioModel: "PROJECT_EXPERIENCE_DEEP_DIVE",
+					PromptModel: VoiceScenarioPrompt{
+						PublicSceneBrief: "Discuss one project.",
+						PracticeGoal:     "Explain decisions clearly.",
+						UserRole:         "Candidate",
+						AIRole:           "Technical interviewer",
+						PersonaSummary:   "Professional and concise",
+						FocusAreas:       []string{"clarity"},
+						TurnBlueprints:   []string{"Ask about the project"},
+					},
 					SessionVersion:           1,
 					TurnLimit:                3,
 					Status:                   "in_progress",
