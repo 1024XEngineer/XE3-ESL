@@ -157,7 +157,9 @@ const _scenarioId = 'scn_programmer_interview';
 const _scenario = PreparationScenario(
   id: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   name: 'English interview for technical roles',
+  summary: 'Discuss one backend project.',
   version: 1,
   status: 'active',
 );
@@ -166,10 +168,22 @@ const _config = PreparationScenarioConfig(
   id: 'scfg_backend_engineer',
   scenarioId: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   version: 1,
   jobTitle: 'Backend engineer',
   jobDescription: 'Build reliable APIs.',
+  prompt: _prompt,
+);
+
+const _prompt = PreparationScenarioPrompt(
+  publicSceneBrief: 'Discuss one backend project.',
+  practiceGoal: 'Explain decisions with evidence.',
+  userRole: 'Candidate',
+  aiRole: 'Technical interviewer',
+  personaSummary: 'Precise and evidence seeking.',
   focusAreas: ['system_design'],
+  turnBlueprints: ['Ask for a project overview.'],
+  suggestedDurationSeconds: 900,
 );
 
 const _technicalRole = PreparationRole(

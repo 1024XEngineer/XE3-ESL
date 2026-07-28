@@ -30,6 +30,13 @@ abstract interface class PracticeClient {
     required String candidateId,
     required String idempotencyKey,
   });
+
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  });
 }
 
 /// Compatibility adapter for explicit Fake previews and pre-#87 test doubles.
@@ -267,6 +274,32 @@ final class LegacyAgentPracticeClient implements PracticeClient {
       review: review,
     );
   }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) {
+    final text = answerText.trim();
+    if (text.isEmpty) {
+      throw ArgumentError.value(answerText, 'answerText');
+    }
+    _clientTurnId = idempotencyKey;
+    _candidate = TranscriptionCandidate(
+      id: 'legacy-text-$idempotencyKey',
+      sessionId: sessionId,
+      questionId: questionId,
+      text: text,
+    );
+    return confirm(
+      sessionId: sessionId,
+      questionId: questionId,
+      candidateId: _candidate!.id,
+      idempotencyKey: idempotencyKey,
+    );
+  }
 }
 
 final class FakePracticeClient implements PracticeClient {
@@ -419,6 +452,32 @@ final class FakePracticeClient implements PracticeClient {
       review: review,
     );
     return confirmation;
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) async {
+    final text = answerText.trim();
+    if (text.isEmpty) {
+      throw ArgumentError.value(answerText, 'answerText');
+    }
+    final candidate = TranscriptionCandidate(
+      id: 'text-candidate-$idempotencyKey',
+      sessionId: sessionId,
+      questionId: questionId,
+      text: text,
+    );
+    _candidates['$sessionId\u0000$idempotencyKey'] = candidate;
+    return confirm(
+      sessionId: sessionId,
+      questionId: questionId,
+      candidateId: candidate.id,
+      idempotencyKey: idempotencyKey,
+    );
   }
 
   Future<void> _wait(int generation) async {
