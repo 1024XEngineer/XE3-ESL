@@ -57,6 +57,60 @@ func NewIdentityAgentAndPracticeComposition(
 	catalog preparation.CatalogReader,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		nil,
+		voiceConfigurations...,
+	)
+}
+
+// NewIdentityAgentAndPracticeCompositionWithMemoryWakeup wires a payload-free
+// notification emitted only after a completed Agent Run has been committed.
+func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	catalog preparation.CatalogReader,
+	memoryExtractionNotifier interface{ Notify() },
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		memoryExtractionNotifier,
+		voiceConfigurations...,
+	)
+}
+
+func newIdentityAgentAndPracticeComposition(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	catalog preparation.CatalogReader,
+	memoryExtractionNotifier interface{ Notify() },
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
 	if catalog == nil {
 		return nil, errors.New("bootstrap: Preparation catalog is required")
 	}
@@ -68,6 +122,7 @@ func NewIdentityAgentAndPracticeComposition(
 		generator,
 		runConfiguration,
 		memorySearcher,
+		memoryExtractionNotifier,
 		voiceConfigurations...,
 	)
 	if err != nil {

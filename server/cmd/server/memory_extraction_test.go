@@ -33,8 +33,12 @@ func TestMemoryExtractionWorkerRunsImmediatelyAndSanitizesErrors(
 		logger,
 		time.Second,
 		time.Second,
-		1,
-		func(context.Context, time.Duration) bool { return false },
+		2,
+		nil,
+		nil,
+		func(context.Context, time.Duration, <-chan struct{}) bool {
+			return false
+		},
 	)
 	if err != nil {
 		t.Fatalf("newMemoryExtractionWorker: %v", err)
@@ -68,7 +72,9 @@ func TestMemoryExtractionWorkerStopsWithContext(t *testing.T) {
 		time.Second,
 		time.Second,
 		1,
-		waitForMemoryExtraction,
+		nil,
+		nil,
+		waitForMemoryWork,
 	)
 	if err != nil {
 		t.Fatalf("newMemoryExtractionWorker: %v", err)
@@ -113,8 +119,12 @@ func TestMemoryExtractionWorkerLogsSafeCandidateRejection(t *testing.T) {
 		logger,
 		time.Second,
 		time.Second,
-		1,
-		func(context.Context, time.Duration) bool { return false },
+		2,
+		nil,
+		nil,
+		func(context.Context, time.Duration, <-chan struct{}) bool {
+			return false
+		},
 	)
 	if err != nil {
 		t.Fatalf("newMemoryExtractionWorker: %v", err)
@@ -152,6 +162,8 @@ func TestBuildMemoryExtractionWorkerRequiresDependency(t *testing.T) {
 	if _, err := buildMemoryExtractionWorker(
 		nil,
 		slog.Default(),
+		nil,
+		nil,
 	); !errors.Is(err, errMemoryExtractionDependency) {
 		t.Fatalf("build error = %v", err)
 	}
