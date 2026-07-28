@@ -397,6 +397,61 @@ func TestClientCredentialValidationHonorsContext(t *testing.T) {
 	}
 }
 
+func TestNewCredentialsProviderUsesEnvironmentOnlyWhenExplicit(t *testing.T) {
+	t.Setenv("OSS_ACCESS_KEY_ID", "local-access-key")
+	t.Setenv("OSS_ACCESS_KEY_SECRET", "local-secret")
+	t.Setenv("OSS_SESSION_TOKEN", "local-session-token")
+
+	provider, err := NewCredentialsProvider(config.ObjectStorageConfig{
+		CredentialsProvider: config.ObjectStorageCredentialsEnvironment,
+	})
+	if err != nil {
+		t.Fatalf("NewCredentialsProvider() error = %v", err)
+	}
+	credential, err := provider.GetCredentials(context.Background())
+	if err != nil {
+		t.Fatalf("environment provider GetCredentials() error = %v", err)
+	}
+	if credential.AccessKeyID != "local-access-key" ||
+		credential.AccessKeySecret != "local-secret" ||
+		credential.SecurityToken != "local-session-token" {
+		t.Fatal("environment provider returned unexpected credentials")
+	}
+}
+
+func TestNewCredentialsProviderDefaultsToECSRoleWithoutEnvironmentFallback(
+	t *testing.T,
+) {
+	t.Setenv("OSS_ACCESS_KEY_ID", "must-not-be-used")
+	t.Setenv("OSS_ACCESS_KEY_SECRET", "must-not-be-used")
+
+	provider, err := NewCredentialsProvider(config.ObjectStorageConfig{})
+	if err != nil {
+		t.Fatalf("NewCredentialsProvider() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	credential, err := provider.GetCredentials(ctx)
+	if err == nil ||
+		credential.AccessKeyID != "" ||
+		credential.AccessKeySecret != "" {
+		t.Fatalf("default provider used environment credentials: %#v, %v", credential, err)
+	}
+}
+
+func TestNewCredentialsProviderRejectsUnknownSource(t *testing.T) {
+	provider, err := NewCredentialsProvider(config.ObjectStorageConfig{
+		CredentialsProvider: "unknown",
+	})
+	if provider != nil || !errors.Is(err, objectstore.ErrCredentials) {
+		t.Fatalf(
+			"NewCredentialsProvider() = %#v, %v, want nil ErrCredentials",
+			provider,
+			err,
+		)
+	}
+}
+
 func TestClientRejectsCrossPrefixKeyWithoutProviderCall(t *testing.T) {
 	called := false
 	client := newTestClient(t, &http.Client{

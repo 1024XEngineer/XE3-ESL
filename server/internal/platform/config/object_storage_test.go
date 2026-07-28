@@ -13,6 +13,8 @@ func TestLoadObjectStorageUsesSafeDefaultsWhenDisabled(t *testing.T) {
 	t.Setenv("OSS_BUCKET", "")
 	t.Setenv("OSS_AUDIO_PREFIX", "")
 	t.Setenv("OSS_SIGNED_URL_TTL", "")
+	t.Setenv("OSS_CREDENTIALS_PROVIDER", "")
+	t.Setenv("OSS_RAM_ROLE_NAME", "")
 
 	config, err := LoadObjectStorage()
 	if err != nil {
@@ -20,7 +22,9 @@ func TestLoadObjectStorageUsesSafeDefaultsWhenDisabled(t *testing.T) {
 	}
 	if config.Enabled ||
 		config.AudioPrefix != "audio/v1" ||
-		config.SignedURLTTL != 2*time.Minute {
+		config.SignedURLTTL != 2*time.Minute ||
+		config.CredentialsProvider != ObjectStorageCredentialsECSRole ||
+		config.RAMRoleName != "" {
 		t.Fatalf("unexpected disabled config: %#v", config)
 	}
 }
@@ -32,6 +36,8 @@ func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) 
 	t.Setenv("OSS_BUCKET", "example-private-audio-bucket")
 	t.Setenv("OSS_AUDIO_PREFIX", "audio/v1/")
 	t.Setenv("OSS_SIGNED_URL_TTL", "90s")
+	t.Setenv("OSS_CREDENTIALS_PROVIDER", "environment")
+	t.Setenv("OSS_RAM_ROLE_NAME", "")
 	t.Setenv("OSS_ACCESS_KEY_ID", "must-not-be-copied")
 	t.Setenv("OSS_ACCESS_KEY_SECRET", "must-not-be-copied")
 
@@ -44,8 +50,27 @@ func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) 
 		config.Endpoint != "https://oss-cn-shanghai.aliyuncs.com" ||
 		config.Bucket != "example-private-audio-bucket" ||
 		config.AudioPrefix != "audio/v1" ||
-		config.SignedURLTTL != 90*time.Second {
+		config.SignedURLTTL != 90*time.Second ||
+		config.CredentialsProvider != ObjectStorageCredentialsEnvironment {
 		t.Fatalf("unexpected enabled config: %#v", config)
+	}
+}
+
+func TestLoadObjectStorageReadsECSRoleConfiguration(t *testing.T) {
+	t.Setenv("OSS_ENABLED", "1")
+	t.Setenv("OSS_REGION", "cn-shanghai")
+	t.Setenv("OSS_ENDPOINT", "https://oss-cn-shanghai.aliyuncs.com")
+	t.Setenv("OSS_BUCKET", "example-private-audio-bucket")
+	t.Setenv("OSS_CREDENTIALS_PROVIDER", "ecs_role")
+	t.Setenv("OSS_RAM_ROLE_NAME", "SpeakUp.Audio_Role-1")
+
+	config, err := LoadObjectStorage()
+	if err != nil {
+		t.Fatalf("LoadObjectStorage() error = %v", err)
+	}
+	if config.CredentialsProvider != ObjectStorageCredentialsECSRole ||
+		config.RAMRoleName != "SpeakUp.Audio_Role-1" {
+		t.Fatalf("unexpected ECS role config: %#v", config)
 	}
 }
 
@@ -92,6 +117,18 @@ func TestLoadObjectStorageRejectsUnsafeValues(t *testing.T) {
 			value:    "3m",
 			expected: ErrObjectStorageSignedURLTTL,
 		},
+		{
+			name:     "credentials provider",
+			key:      "OSS_CREDENTIALS_PROVIDER",
+			value:    "automatic",
+			expected: ErrObjectStorageCredentials,
+		},
+		{
+			name:     "RAM role name",
+			key:      "OSS_RAM_ROLE_NAME",
+			value:    "invalid role name",
+			expected: ErrObjectStorageRAMRoleName,
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -102,6 +139,8 @@ func TestLoadObjectStorageRejectsUnsafeValues(t *testing.T) {
 			t.Setenv("OSS_BUCKET", "example-bucket")
 			t.Setenv("OSS_AUDIO_PREFIX", "audio/v1")
 			t.Setenv("OSS_SIGNED_URL_TTL", "2m")
+			t.Setenv("OSS_CREDENTIALS_PROVIDER", "ecs_role")
+			t.Setenv("OSS_RAM_ROLE_NAME", "")
 			t.Setenv(testCase.key, testCase.value)
 
 			_, err := LoadObjectStorage()
@@ -112,11 +151,41 @@ func TestLoadObjectStorageRejectsUnsafeValues(t *testing.T) {
 	}
 }
 
+func TestLoadObjectStorageRejectsRAMRoleWithEnvironmentCredentials(t *testing.T) {
+	t.Setenv("OSS_ENABLED", "1")
+	t.Setenv("OSS_REGION", "cn-shanghai")
+	t.Setenv("OSS_ENDPOINT", "https://oss-cn-shanghai.aliyuncs.com")
+	t.Setenv("OSS_BUCKET", "example-private-audio-bucket")
+	t.Setenv("OSS_CREDENTIALS_PROVIDER", "environment")
+	t.Setenv("OSS_RAM_ROLE_NAME", "unexpected-role")
+
+	_, err := LoadObjectStorage()
+	if !errors.Is(err, ErrObjectStorageRAMRoleName) {
+		t.Fatalf("LoadObjectStorage() error = %v, want %v", err, ErrObjectStorageRAMRoleName)
+	}
+}
+
+func TestLoadObjectStorageDisabledIgnoresUnusedCredentialSettings(t *testing.T) {
+	t.Setenv("OSS_ENABLED", "false")
+	t.Setenv("OSS_CREDENTIALS_PROVIDER", "unused-provider")
+	t.Setenv("OSS_RAM_ROLE_NAME", "invalid role name")
+
+	config, err := LoadObjectStorage()
+	if err != nil {
+		t.Fatalf("LoadObjectStorage() error = %v", err)
+	}
+	if config.Enabled {
+		t.Fatal("LoadObjectStorage() enabled = true, want false")
+	}
+}
+
 func TestLoadObjectStorageRequiresRemoteSettingsWhenEnabled(t *testing.T) {
 	t.Setenv("OSS_ENABLED", "1")
 	t.Setenv("OSS_REGION", "")
 	t.Setenv("OSS_ENDPOINT", "")
 	t.Setenv("OSS_BUCKET", "")
+	t.Setenv("OSS_CREDENTIALS_PROVIDER", "")
+	t.Setenv("OSS_RAM_ROLE_NAME", "")
 
 	_, err := LoadObjectStorage()
 	if !errors.Is(err, ErrObjectStorageRegionRequired) {

@@ -55,6 +55,27 @@ func NewFromEnvironment(
 	)
 }
 
+// NewCredentialsProvider selects the explicitly configured server credential
+// source. ECS RAM role credentials are temporary and refreshed by the SDK.
+// Environment credentials are reserved for explicit local and CI use.
+func NewCredentialsProvider(
+	storageConfig config.ObjectStorageConfig,
+) (credentials.CredentialsProvider, error) {
+	switch storageConfig.CredentialsProvider {
+	case "", config.ObjectStorageCredentialsECSRole:
+		if storageConfig.RAMRoleName == "" {
+			return credentials.NewEcsRoleCredentialsProvider(), nil
+		}
+		return credentials.NewEcsRoleCredentialsProvider(
+			credentials.EcsRamRole(storageConfig.RAMRoleName),
+		), nil
+	case config.ObjectStorageCredentialsEnvironment:
+		return credentials.NewEnvironmentVariableCredentialsProvider(), nil
+	default:
+		return nil, objectstore.ErrCredentials
+	}
+}
+
 // New creates a client with an explicitly selected credentials provider. This
 // is the production boundary for workload RAM role and refreshing providers.
 func New(
