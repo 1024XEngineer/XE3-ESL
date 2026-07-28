@@ -57,7 +57,7 @@ func (tool ScenarioCreateTool) Definition() Definition {
 			"goal":  StringSchema("What the user wants to prepare or improve."),
 		}, []string{"type"}),
 		ReadOnly: false,
-		Risk:     RiskLowRiskWrite,
+		Risk:     RiskRequiresConfirm,
 	}
 }
 

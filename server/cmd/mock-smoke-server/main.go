@@ -14,6 +14,11 @@ import (
 func main() {
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
+	toolConfig, err := config.LoadAgentTool()
+	if err != nil || toolConfig.Mode != config.AgentToolModeMock {
+		logger.Error("mock smoke server requires AGENT_TOOL_MODE=mock")
+		os.Exit(1)
+	}
 	server := &http.Server{
 		Addr:    "127.0.0.1:" + cfg.Port,
 		Handler: smoke.NewServer(logger).Handler(),

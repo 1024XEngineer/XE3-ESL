@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
@@ -37,6 +38,7 @@ type Server struct {
 	review       *review.Service
 	application  *Application
 	idempotency  *idempotencyStore
+	tools        []mocktool.CapabilitySummary
 }
 
 func NewServer(logger *slog.Logger) *Server {
@@ -52,6 +54,10 @@ func NewServer(logger *slog.Logger) *Server {
 		provider,
 	)
 	reviewService := review.NewService(reviewBackend{runtime: runtime}, provider)
+	toolRegistry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		panic("build mock tool registry: " + err.Error())
+	}
 	router := bootstrap.NewRouter(logger,
 		preparation.New(),
 		practice.New(),
@@ -72,8 +78,10 @@ func NewServer(logger *slog.Logger) *Server {
 			provider,
 		),
 		idempotency: newIdempotencyStore(),
+		tools:       mocktool.CapabilitySummaries(toolRegistry),
 	}
 	bootstrap.RegisterPreparationCatalog(router, preparationService)
+	logger.Info("agent.tools.registered", slog.Any("tools", server.tools))
 	server.registerRoutes()
 	return server
 }
@@ -99,7 +107,12 @@ func (s *Server) registerRoutes() {
 	s.router.POST("/v1/feedback-items/:feedback_item_id/retry-requests", s.createRetry)
 	s.router.GET("/v1/retry-requests/:retry_request_id", s.getRetry)
 	s.router.GET("/v1/history-records", s.listHistory)
+	s.router.GET("/v1/agent-tools", s.listAgentTools)
 	s.router.GET("/v1/practice-sessions/:practice_session_id/events", s.streamEvents)
+}
+
+func (s *Server) listAgentTools(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"tools": s.tools})
 }
 
 func (s *Server) createProfile(c *gin.Context) {

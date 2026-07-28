@@ -103,6 +103,39 @@ func TestStrictRequestAndIdempotencyKeyValidation(t *testing.T) {
 	}
 }
 
+func TestAgentToolCapabilityDisplay(t *testing.T) {
+	client := newContractClient(t)
+	body := client.must(
+		t,
+		http.MethodGet,
+		"/v1/agent-tools",
+		"",
+		nil,
+		http.StatusOK,
+	)
+	var response struct {
+		Tools []struct {
+			Name          string   `json:"name"`
+			Risk          string   `json:"risk"`
+			ReadOnly      bool     `json:"read_only"`
+			SchemaFields  []string `json:"schema_fields"`
+			RequiredNames []string `json:"required_names"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode agent tools: %v", err)
+	}
+	if got, want := len(response.Tools), 6; got != want {
+		t.Fatalf("tool count = %d, want %d", got, want)
+	}
+	if response.Tools[0].Name != "material.search.v1" ||
+		response.Tools[4].Name != "scenario.create.v1" ||
+		response.Tools[4].Risk != "requires_confirm" ||
+		response.Tools[4].ReadOnly {
+		t.Fatalf("unexpected tool summaries: %#v", response.Tools)
+	}
+}
+
 func TestIdempotencyReplayScopeAndNoRepeatedSideEffects(t *testing.T) {
 	client := newContractClient(t)
 
