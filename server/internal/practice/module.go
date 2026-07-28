@@ -34,33 +34,17 @@ type CreateSessionRequest struct {
 	RoleDefinitionIDs     []string `json:"role_definition_ids,omitempty"`
 }
 
-type TurnOutcome struct {
-	SessionID string
-	TurnID    string
-	IsRetry   bool
-}
-
-type TurnDecision struct {
-	EffectiveTurns     int
-	Completed          bool
-	NextQuestionNumber int
-	SessionVersion     int
-	EndReason          string
-}
-
-// Backend is the storage-facing boundary owned by Practice.
 type Backend interface {
-	CreatePlan(CreatePlanRequest) (map[string]any, error)
-	PlanExists(string) bool
-	CreateSession(string, CreateSessionRequest) (map[string]any, error)
-	GetSession(string) (map[string]any, bool)
-	GetSnapshot(string) (map[string]any, bool)
-	StartSession(string) (int, bool, error)
-	AuthorizeTurn(string, bool) error
-	RecordTurnOutcome(TurnOutcome) (TurnDecision, error)
+	CreatePracticePlan(CreatePracticePlanCommand) (PracticePlan, error)
+	PracticePlanExists(PracticePlanExistsQuery) bool
+	CreatePracticeSession(CreatePracticeSessionCommand) (CreatePracticeSessionResult, error)
+	GetPracticeSession(GetPracticeSessionQuery) (PracticeSession, bool)
+	GetPracticeSessionSnapshot(GetPracticeSessionSnapshotQuery) (PracticeSessionSnapshot, bool)
+	StartPracticeSession(StartPracticeSessionCommand) (StartPracticeSessionResult, error)
+	AuthorizePracticeTurn(AuthorizePracticeTurnCommand) error
+	ApplyTurnOutcome(ApplyTurnOutcomeCommand) (ApplyTurnOutcomeResult, error)
 }
 
-// Service is Practice's formal application-service entry point.
 type Service struct {
 	backend Backend
 }
@@ -69,37 +53,44 @@ func NewService(backend Backend) *Service {
 	return &Service{backend: backend}
 }
 
-func (s *Service) CreatePlan(request CreatePlanRequest) (map[string]any, error) {
-	return s.backend.CreatePlan(request)
+func (s *Service) CreatePracticePlan(command CreatePracticePlanCommand) (PracticePlan, error) {
+	return s.backend.CreatePracticePlan(command)
 }
 
-func (s *Service) PlanExists(id string) bool {
-	return s.backend.PlanExists(id)
+func (s *Service) PracticePlanExists(query PracticePlanExistsQuery) bool {
+	return s.backend.PracticePlanExists(query)
 }
 
-func (s *Service) CreateSession(
-	planID string,
-	request CreateSessionRequest,
-) (map[string]any, error) {
-	return s.backend.CreateSession(planID, request)
+func (s *Service) CreatePracticeSession(
+	command CreatePracticeSessionCommand,
+) (CreatePracticeSessionResult, error) {
+	return s.backend.CreatePracticeSession(command)
 }
 
-func (s *Service) GetSession(id string) (map[string]any, bool) {
-	return s.backend.GetSession(id)
+func (s *Service) GetPracticeSession(
+	query GetPracticeSessionQuery,
+) (PracticeSession, bool) {
+	return s.backend.GetPracticeSession(query)
 }
 
-func (s *Service) GetSnapshot(sessionID string) (map[string]any, bool) {
-	return s.backend.GetSnapshot(sessionID)
+func (s *Service) GetPracticeSessionSnapshot(
+	query GetPracticeSessionSnapshotQuery,
+) (PracticeSessionSnapshot, bool) {
+	return s.backend.GetPracticeSessionSnapshot(query)
 }
 
-func (s *Service) StartSession(sessionID string) (int, bool, error) {
-	return s.backend.StartSession(sessionID)
+func (s *Service) StartPracticeSession(
+	command StartPracticeSessionCommand,
+) (StartPracticeSessionResult, error) {
+	return s.backend.StartPracticeSession(command)
 }
 
-func (s *Service) AuthorizeTurn(sessionID string, retry bool) error {
-	return s.backend.AuthorizeTurn(sessionID, retry)
+func (s *Service) AuthorizePracticeTurn(command AuthorizePracticeTurnCommand) error {
+	return s.backend.AuthorizePracticeTurn(command)
 }
 
-func (s *Service) RecordTurnOutcome(outcome TurnOutcome) (TurnDecision, error) {
-	return s.backend.RecordTurnOutcome(outcome)
+func (s *Service) ApplyTurnOutcome(
+	command ApplyTurnOutcomeCommand,
+) (ApplyTurnOutcomeResult, error) {
+	return s.backend.ApplyTurnOutcome(command)
 }
