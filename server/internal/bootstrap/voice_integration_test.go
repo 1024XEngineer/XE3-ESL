@@ -1765,6 +1765,7 @@ func createVoiceFormalContextSession(
 		"/v1/practice-plans/"+formalContext.PlanID+"/practice-sessions",
 		fmt.Sprintf(`{
 			"expected_plan_revision":1,
+			"user_confirmed":true,
 			"preparation_snapshot_id":%q,
 			"practice_option_id":%q,
 			"role_definition_ids":[%q]

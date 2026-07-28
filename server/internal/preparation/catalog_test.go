@@ -6,18 +6,56 @@ import (
 	"testing"
 )
 
-func TestBuiltinCatalogExposesCanonicalProgrammerInterview(t *testing.T) {
+func TestBuiltinCatalogExposesAllMVPScenariosAcrossFourFamilies(t *testing.T) {
 	catalog := mustBuiltinCatalog(t)
 
 	scenarios := catalog.ListActiveScenarios()
-	if len(scenarios) != 1 {
-		t.Fatalf("ListActiveScenarios length=%d, want 1", len(scenarios))
+	if len(scenarios) != 4 {
+		t.Fatalf("ListActiveScenarios length=%d, want 4", len(scenarios))
 	}
-	if scenarios[0].ID != ProgrammerInterviewScenarioID ||
-		scenarios[0].Type != ScenarioTypeInterview ||
-		scenarios[0].Version != 1 ||
-		scenarios[0].Status != ScenarioStatusActive {
-		t.Fatalf("unexpected scenario: %#v", scenarios[0])
+	familyCounts := map[ScenarioFamily]int{}
+	byID := make(map[string]ScenarioDefinition, len(scenarios))
+	for _, scenario := range scenarios {
+		familyCounts[scenario.Type]++
+		byID[scenario.ID] = scenario
+	}
+	wantFamilyCounts := map[ScenarioFamily]int{
+		ScenarioFamilyInterview: 1,
+		ScenarioFamilyExam:      1,
+		ScenarioFamilyWorkplace: 1,
+		ScenarioFamilyDaily:     1,
+	}
+	if !reflect.DeepEqual(familyCounts, wantFamilyCounts) {
+		t.Fatalf("family counts=%v, want %v", familyCounts, wantFamilyCounts)
+	}
+	for id, want := range map[string]struct {
+		family ScenarioFamily
+		model  ScenarioModel
+	}{
+		ProgrammerInterviewScenarioID: {
+			ScenarioFamilyInterview,
+			ScenarioModelProjectExperienceDeepDive,
+		},
+		IELTSSpeakingPart2ScenarioID: {
+			ScenarioFamilyExam,
+			ScenarioModelIELTSSpeakingPart2,
+		},
+		WorkplaceProgressRiskScenarioID: {
+			ScenarioFamilyWorkplace,
+			ScenarioModelProgressAndRiskUpdate,
+		},
+		DailyHotelCheckinScenarioID: {
+			ScenarioFamilyDaily,
+			ScenarioModelHotelCheckinAndIssueHandling,
+		},
+	} {
+		scenario, ok := byID[id]
+		if !ok || scenario.Type != want.family ||
+			scenario.Model != want.model ||
+			scenario.Version != 1 ||
+			scenario.Status != ScenarioStatusActive {
+			t.Fatalf("scenario %q=%#v, want %#v", id, scenario, want)
+		}
 	}
 
 	detail, err := catalog.GetScenarioDetail(ProgrammerInterviewScenarioID)
@@ -25,7 +63,9 @@ func TestBuiltinCatalogExposesCanonicalProgrammerInterview(t *testing.T) {
 		t.Fatalf("GetScenarioDetail: %v", err)
 	}
 	if detail.ScenarioConfig.ID != BackendEngineerConfigID ||
-		detail.ScenarioConfig.Type != ScenarioTypeInterview ||
+		detail.ScenarioConfig.Type != ScenarioFamilyInterview ||
+		detail.ScenarioConfig.Model !=
+			ScenarioModelProjectExperienceDeepDive ||
 		detail.ScenarioConfig.Version != 1 {
 		t.Fatalf("unexpected scenario config: %#v", detail.ScenarioConfig)
 	}
@@ -65,6 +105,51 @@ func TestBuiltinCatalogExposesCanonicalProgrammerInterview(t *testing.T) {
 			t.Fatalf("role %q has invalid FOCUS option %#v", role.ID, option)
 		}
 	}
+
+	for _, scenario := range scenarios {
+		detail, err := catalog.GetScenarioDetail(scenario.ID)
+		if err != nil {
+			t.Fatalf("GetScenarioDetail(%q): %v", scenario.ID, err)
+		}
+		config := detail.ScenarioConfig
+		if config.Type != scenario.Type ||
+			config.Model != scenario.Model ||
+			config.PromptModel.PublicSceneBrief == "" ||
+			config.PromptModel.PracticeGoal == "" ||
+			config.PromptModel.UserRole == "" ||
+			config.PromptModel.AIRole == "" ||
+			config.PromptModel.PersonaSummary == "" ||
+			len(config.PromptModel.FocusAreas) == 0 ||
+			len(config.PromptModel.TurnBlueprints) != 4 ||
+			config.PromptModel.SuggestedDurationSeconds < 1 {
+			t.Fatalf("scenario %q has incomplete prompt model: %#v", scenario.ID, config)
+		}
+		if scenario.Model == ScenarioModelProjectExperienceDeepDive {
+			if config.JobTitle == "" || config.JobDescription == "" {
+				t.Fatalf("JD compatibility fields missing: %#v", config)
+			}
+		} else if config.JobTitle != "" || config.JobDescription != "" {
+			t.Fatalf("basic scenario faked job fields: %#v", config)
+		}
+
+		roles, err := catalog.ListRoles(scenario.ID)
+		if err != nil {
+			t.Fatalf("ListRoles(%q): %v", scenario.ID, err)
+		}
+		if len(roles) == 0 {
+			t.Fatalf("scenario %q has no AI role", scenario.ID)
+		}
+		var fullSimulation bool
+		var focus bool
+		for _, option := range detail.PracticeOptions {
+			fullSimulation = fullSimulation ||
+				option.Type == PracticeOptionFullSimulation
+			focus = focus || option.Type == PracticeOptionFocus
+		}
+		if !fullSimulation || !focus {
+			t.Fatalf("scenario %q options=%#v", scenario.ID, detail.PracticeOptions)
+		}
+	}
 }
 
 func TestBuiltinCatalogTreatsRolesAsIndependentPerspectives(t *testing.T) {
@@ -87,25 +172,25 @@ func TestBuiltinCatalogTreatsRolesAsIndependentPerspectives(t *testing.T) {
 		{
 			TechnicalInterviewerRoleID,
 			"TECHNICAL_INTERVIEWER",
-			"Technical depth perspective",
+			"技术面试官",
 			TechnicalFocusOptionID,
 		},
 		{
 			HRInterviewerRoleID,
 			"HR_INTERVIEWER",
-			"Recruiter and motivation perspective",
+			"招聘专员",
 			HRFocusOptionID,
 		},
 		{
 			ProjectManagerRoleID,
 			"PROJECT_MANAGER",
-			"Delivery and collaboration perspective",
+			"项目经理",
 			ProjectFocusOptionID,
 		},
 		{
 			ExecutiveInterviewerRoleID,
 			"EXECUTIVE_INTERVIEWER",
-			"Leadership and impact perspective",
+			"用人经理",
 			ExecutiveFocusOptionID,
 		},
 	}
@@ -190,7 +275,7 @@ func TestCatalogSnapshotUsesExactVersionsAndReturnsCopies(t *testing.T) {
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 
-	snapshot.ScenarioConfig.FocusAreas[0] = "mutated"
+	snapshot.ScenarioConfig.PromptModel.FocusAreas[0] = "mutated"
 	snapshot.SelectedRoles[0].FocusAreas[0] = "mutated"
 	snapshot.SelectedRoles[0].DisplayName = "mutated"
 	snapshot.PracticeOption.DisplayName = "mutated"
@@ -205,7 +290,7 @@ func TestCatalogSnapshotUsesExactVersionsAndReturnsCopies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload snapshot: %v", err)
 	}
-	if reloaded.ScenarioConfig.FocusAreas[0] == "mutated" ||
+	if reloaded.ScenarioConfig.PromptModel.FocusAreas[0] == "mutated" ||
 		reloaded.SelectedRoles[0].FocusAreas[0] == "mutated" ||
 		reloaded.SelectedRoles[0].DisplayName == "mutated" ||
 		reloaded.PracticeOption.DisplayName == "mutated" {
@@ -257,7 +342,7 @@ func TestCatalogReadMethodsDoNotExposeMutableSlices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRoles: %v", err)
 	}
-	firstDetail.ScenarioConfig.FocusAreas[0] = "mutated"
+	firstDetail.ScenarioConfig.PromptModel.FocusAreas[0] = "mutated"
 	firstDetail.PracticeOptions[0].DisplayName = "mutated"
 	firstRoles[0].FocusAreas[0] = "mutated"
 
@@ -269,7 +354,7 @@ func TestCatalogReadMethodsDoNotExposeMutableSlices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second ListRoles: %v", err)
 	}
-	if secondDetail.ScenarioConfig.FocusAreas[0] == "mutated" ||
+	if secondDetail.ScenarioConfig.PromptModel.FocusAreas[0] == "mutated" ||
 		secondDetail.PracticeOptions[0].DisplayName == "mutated" ||
 		secondRoles[0].FocusAreas[0] == "mutated" {
 		t.Fatal("catalog returned shared mutable data")
@@ -328,11 +413,24 @@ func TestCatalogConstructionRejectsInvalidDefinitions(t *testing.T) {
 		{"zero scenario version", func(value *catalogScenario) {
 			value.definition.Version = 0
 		}},
+		{"invalid family model pair", func(value *catalogScenario) {
+			value.definition.Model = ScenarioModelIELTSSpeakingPart2
+			value.config.Model = ScenarioModelIELTSSpeakingPart2
+		}},
 		{"config belongs to another scenario", func(value *catalogScenario) {
 			value.config.ScenarioDefinitionID = "scn_other"
 		}},
+		{"config model differs from definition", func(value *catalogScenario) {
+			value.config.Model = ScenarioModelIELTSSpeakingPart2
+		}},
+		{"missing public scene brief", func(value *catalogScenario) {
+			value.config.PromptModel.PublicSceneBrief = ""
+		}},
+		{"missing turn blueprints", func(value *catalogScenario) {
+			value.config.PromptModel.TurnBlueprints = nil
+		}},
 		{"duplicate config focus area", func(value *catalogScenario) {
-			value.config.FocusAreas = []string{"one", "one"}
+			value.config.PromptModel.FocusAreas = []string{"one", "one"}
 		}},
 		{"invalid role type", func(value *catalogScenario) {
 			value.roles[0].Type = "hr-interviewer"
@@ -428,7 +526,7 @@ func TestCatalogCopiesConstructorInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newCatalog: %v", err)
 	}
-	definition.config.FocusAreas[0] = "mutated"
+	definition.config.PromptModel.FocusAreas[0] = "mutated"
 	definition.roles[0].FocusAreas[0] = "mutated"
 	definition.practiceOptions[0].DisplayName = "mutated"
 
@@ -440,7 +538,7 @@ func TestCatalogCopiesConstructorInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRoles: %v", err)
 	}
-	if detail.ScenarioConfig.FocusAreas[0] == "mutated" ||
+	if detail.ScenarioConfig.PromptModel.FocusAreas[0] == "mutated" ||
 		detail.PracticeOptions[0].DisplayName == "mutated" ||
 		roles[0].FocusAreas[0] == "mutated" {
 		t.Fatal("constructor retained mutable input")

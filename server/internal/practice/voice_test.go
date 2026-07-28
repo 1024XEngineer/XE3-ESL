@@ -25,7 +25,7 @@ func TestVoiceApplicationResolvesActorFromFrozenSnapshot(t *testing.T) {
 				{
 					ID:               "agent-participant",
 					SessionID:        "practice-session",
-					Role:             "INTERVIEWER",
+					Role:             "FACILITATOR",
 					RoleDefinitionID: "role-interviewer",
 					RoleSnapshot: &persistence.RoleSnapshot{
 						ID: "role-interviewer",
@@ -39,7 +39,7 @@ func TestVoiceApplicationResolvesActorFromFrozenSnapshot(t *testing.T) {
 				{
 					ID:        "actor-participant",
 					SessionID: "practice-session",
-					Role:      "CANDIDATE",
+					Role:      "LEARNER",
 					Order:     2,
 					SubjectRef: persistence.SubjectRef{
 						Namespace: "speakup.user",

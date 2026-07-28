@@ -60,6 +60,7 @@ func TestCreateSessionReplaysBeforeMutableContextValidation(t *testing.T) {
 		"intent-session-0001",
 		CreateSessionRequest{
 			ExpectedPlanRevision:  1,
+			UserConfirmed:         true,
 			PreparationSnapshotID: "preparation-snapshot-1",
 			PracticeOptionID:      "option_full_simulation",
 			RoleDefinitionIDs:     []string{"role_technical_interviewer"},
@@ -97,6 +98,7 @@ func TestInterviewSessionRequiresExactlyOneInterviewerRole(t *testing.T) {
 		"intent-session-0002",
 		CreateSessionRequest{
 			ExpectedPlanRevision:  1,
+			UserConfirmed:         true,
 			PreparationSnapshotID: "preparation-snapshot-1",
 			PracticeOptionID:      "option_full_simulation",
 			RoleDefinitionIDs: []string{

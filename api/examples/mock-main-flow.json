@@ -4,6 +4,7 @@
     "practice_session_id": "session_demo_001",
     "practice_plan_id": "plan_demo_backend",
     "scenario_type": "INTERVIEW",
+    "scenario_model": "PROJECT_EXPERIENCE_DEEP_DIVE",
     "snapshot_id": "snapshot_session_demo_001",
     "practice_session_status": "completed",
     "session_version": 6,
@@ -42,7 +43,7 @@
     {
       "practice_participant_id": "participant_interviewer_001",
       "practice_session_id": "session_demo_001",
-      "participant_role": "INTERVIEWER",
+      "participant_role": "FACILITATOR",
       "subject_ref": {
         "namespace": "mock.actor",
         "subject_id": "interviewer_technical"
@@ -52,7 +53,7 @@
     {
       "practice_participant_id": "participant_candidate_001",
       "practice_session_id": "session_demo_001",
-      "participant_role": "CANDIDATE",
+      "participant_role": "LEARNER",
       "subject_ref": {
         "namespace": "speakup.user",
         "subject_id": "user_demo"

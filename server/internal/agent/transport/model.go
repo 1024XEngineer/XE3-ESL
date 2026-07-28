@@ -54,6 +54,7 @@ type VoiceCandidateStatus = agentvoice.VoiceCandidateStatus
 type ConfirmVoiceCandidateCommand = agentvoice.ConfirmVoiceCandidateCommand
 type UploadVoiceCandidateRequest = agentvoice.UploadVoiceCandidateRequest
 type VoicePracticeSession = agentvoice.VoicePracticeSession
+type VoiceScenarioPrompt = agentvoice.VoiceScenarioPrompt
 type VoiceSessionState = agentvoice.VoiceSessionState
 type VoiceSessionReview = agentvoice.VoiceSessionReview
 type VoiceReviewResult = agentvoice.VoiceReviewResult

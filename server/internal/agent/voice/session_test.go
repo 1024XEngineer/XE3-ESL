@@ -412,12 +412,63 @@ func maximumVoiceReviewResult(t *testing.T) *VoiceReviewResult {
 	return result
 }
 
+func TestVoiceSessionStartsWithoutMatterFromFrozenScenario(t *testing.T) {
+	session := VoicePracticeSession{
+		ID:                       "session-1",
+		PlanID:                   "plan-1",
+		ThreadID:                 "thread-1",
+		ScenarioType:             "DAILY",
+		ScenarioModel:            "HOTEL_CHECKIN_AND_ISSUE_HANDLING",
+		PromptModel:              voiceSessionTestPrompt(),
+		SessionVersion:           1,
+		TurnLimit:                3,
+		Status:                   "in_progress",
+		InterviewerParticipantID: "participant-facilitator",
+		CandidateParticipantID:   "participant-learner",
+	}
+	conversations := newAgentVoiceConversation(3)
+	reviews := newAgentVoiceReview()
+	application, err := NewVoiceSessionApplication(
+		fixedVoiceSessionPort{session: session},
+		voiceSessionTestQuestions{},
+		voiceSessionTestCheckpoints{conversations: conversations},
+		newAgentVoiceOrchestrator(
+			t,
+			conversations,
+			newAgentVoicePractice(0),
+			reviews,
+		),
+		voiceSessionTestReviews{reviews: reviews},
+		voiceSessionTestMatters{},
+	)
+	if err != nil {
+		t.Fatalf("NewVoiceSessionApplication: %v", err)
+	}
+
+	state, err := application.Start(
+		context.Background(),
+		agentVoiceActor("a"),
+		session.ThreadID,
+		"",
+		"start-without-matter",
+	)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if state.Matter.ID != "" || state.Question == nil {
+		t.Fatalf("matter-free state = %+v", state)
+	}
+}
+
 func TestVoiceSessionRestoresFormalEarlyCompletionBeforeMaximum(t *testing.T) {
 	session := VoicePracticeSession{
 		ID:                       "session-early",
 		PlanID:                   "plan-early",
 		ThreadID:                 "thread-1",
 		MatterID:                 "matter-1",
+		ScenarioType:             "INTERVIEW",
+		ScenarioModel:            "PROJECT_EXPERIENCE_DEEP_DIVE",
+		PromptModel:              voiceSessionTestPrompt(),
 		SessionVersion:           4,
 		EffectiveTurns:           2,
 		TurnLimit:                3,
@@ -582,6 +633,9 @@ func (sessions *voiceSessionTestSessions) current() VoicePracticeSession {
 		PlanID:         "plan-1",
 		ThreadID:       "thread-1",
 		MatterID:       "matter-1",
+		ScenarioType:   "INTERVIEW",
+		ScenarioModel:  "PROJECT_EXPERIENCE_DEEP_DIVE",
+		PromptModel:    voiceSessionTestPrompt(),
 		SessionVersion: effective + 1,
 		EffectiveTurns: effective,
 		TurnLimit:      3,
@@ -594,6 +648,18 @@ func (sessions *voiceSessionTestSessions) current() VoicePracticeSession {
 		}(),
 		InterviewerParticipantID: "participant-interviewer",
 		CandidateParticipantID:   "participant-a",
+	}
+}
+
+func voiceSessionTestPrompt() VoiceScenarioPrompt {
+	return VoiceScenarioPrompt{
+		PublicSceneBrief: "Discuss one project in a realistic conversation.",
+		PracticeGoal:     "Explain decisions with clear evidence.",
+		UserRole:         "Candidate",
+		AIRole:           "Technical interviewer",
+		PersonaSummary:   "Professional and concise",
+		FocusAreas:       []string{"clarity"},
+		TurnBlueprints:   []string{"Ask about the project"},
 	}
 }
 

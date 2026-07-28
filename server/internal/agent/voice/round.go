@@ -47,6 +47,20 @@ type VoiceConversationPort interface {
 	) (conversation.QuestionSpeech, error)
 }
 
+type VoiceTextConversationPort interface {
+	SubmitTextAnswer(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		conversation.SubmitTextAnswerCommand,
+	) (conversation.TranscriptionCandidate, error)
+	ConfirmText(
+		context.Context,
+		requestcontext.Actor,
+		conversation.ConfirmVoiceTurnCommand,
+	) (conversation.ConfirmedVoiceTurn, error)
+}
+
 // VoicePracticePort is the Agent-owned application view of Practice.
 // Implementations remain authoritative for Actor-participant resolution and
 // the frozen per-Session effective-turn state machine.
@@ -163,11 +177,66 @@ func (orchestrator *VoiceRoundOrchestrator) Confirm(
 	if err != nil {
 		return conversation.ConfirmedVoiceTurn{}, err
 	}
-	if candidate.ID != command.CandidateID ||
-		!candidateMatchesTurn(candidate, turn) ||
+	return orchestrator.finishTurn(ctx, actor, candidate, turn)
+}
+
+func (orchestrator *VoiceRoundOrchestrator) SubmitText(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command conversation.SubmitTextAnswerCommand,
+) (conversation.ConfirmedVoiceTurn, error) {
+	if err := validateVoiceActor(ctx, actor); err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	textConversations, ok := orchestrator.conversations.(VoiceTextConversationPort)
+	if !ok {
+		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+	}
+	participantID, err := orchestrator.practice.ResolveActorParticipant(
+		ctx,
+		actor,
+		command.SessionID,
+	)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	if strings.TrimSpace(participantID) == "" {
+		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+	}
+	candidate, err := textConversations.SubmitTextAnswer(
+		ctx,
+		actor,
+		participantID,
+		command,
+	)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	turn, err := textConversations.ConfirmText(
+		ctx,
+		actor,
+		conversation.ConfirmVoiceTurnCommand{
+			CandidateID:    candidate.ID,
+			IdempotencyKey: command.IdempotencyKey,
+		},
+	)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	return orchestrator.finishTurn(ctx, actor, candidate, turn)
+}
+
+func (orchestrator *VoiceRoundOrchestrator) finishTurn(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	candidate conversation.TranscriptionCandidate,
+	turn conversation.ConfirmedVoiceTurn,
+) (conversation.ConfirmedVoiceTurn, error) {
+	if !candidateMatchesTurn(candidate, turn) ||
 		!validVoiceTurnCheckpoint(turn) {
 		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
 	}
+	var err error
 	if turn.EffectiveTurns == 0 {
 		progress, applyErr := orchestrator.practice.ApplyEffectiveTurn(
 			ctx,
