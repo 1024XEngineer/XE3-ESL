@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/practice/practice.dart';
+import 'package:speakup/features/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/preparation/job_preparation_wizard.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/features/preparation/preparation_launch_controller.dart';
@@ -18,6 +22,7 @@ class SpeakUpApp extends StatelessWidget {
     required AuthController authController,
     required this.agentController,
     required this.preparationController,
+    this.jobPreparationController,
     this.preparationLaunchController,
     this.reviewHistoryController,
     super.key,
@@ -27,6 +32,7 @@ class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp.preview({
     this.agentController,
     this.preparationController,
+    this.jobPreparationController,
     this.preparationLaunchController,
     this.reviewHistoryController,
     super.key,
@@ -36,6 +42,7 @@ class SpeakUpApp extends StatelessWidget {
   final ({AuthController controller})? _authentication;
   final AgentController? agentController;
   final PreparationController? preparationController;
+  final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
   final ReviewHistoryController? reviewHistoryController;
   final bool _allowFakePreview;
@@ -62,6 +69,7 @@ class SpeakUpApp extends StatelessWidget {
           ? _AuthenticatedNavigator(
               agentController: agentController,
               preparationController: preparationController,
+              jobPreparationController: jobPreparationController,
               preparationLaunchController: preparationLaunchController,
               reviewHistoryController: reviewHistoryController,
               allowFakePreview: _allowFakePreview,
@@ -73,6 +81,7 @@ class SpeakUpApp extends StatelessWidget {
                 authController: controller,
                 agentController: agentController,
                 preparationController: preparationController,
+                jobPreparationController: jobPreparationController,
                 preparationLaunchController: preparationLaunchController,
                 reviewHistoryController: reviewHistoryController,
                 allowFakePreview: _allowFakePreview,
@@ -88,6 +97,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.authController,
     this.agentController,
     this.preparationController,
+    this.jobPreparationController,
     this.preparationLaunchController,
     this.reviewHistoryController,
     required this.allowFakePreview,
@@ -97,6 +107,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final AuthController? authController;
   final AgentController? agentController;
   final PreparationController? preparationController;
+  final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
   final ReviewHistoryController? reviewHistoryController;
   final bool allowFakePreview;
@@ -124,6 +135,22 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     _agentController =
         injectedController ?? AgentController(client: FakeAgentClient());
     _agentController.initialize();
+    final user = widget.user;
+    if (user != null) {
+      unawaited(widget.jobPreparationController?.activateAccount(user.id));
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _AuthenticatedNavigator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user?.id != widget.user?.id ||
+        oldWidget.jobPreparationController != widget.jobPreparationController) {
+      final user = widget.user;
+      if (user != null) {
+        unawaited(widget.jobPreparationController?.activateAccount(user.id));
+      }
+    }
   }
 
   @override
@@ -147,6 +174,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             authController: widget.authController,
             agentController: _agentController,
             preparationController: widget.preparationController,
+            jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
             reviewHistoryController: widget.reviewHistoryController,
           ),
@@ -159,6 +187,14 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             onPracticeStarted: () => _navigatorKey.currentState
                 ?.pushReplacementNamed(AppRoutes.practice),
           ),
+          AppRoutes.jobPreparation
+              when widget.jobPreparationController != null =>
+            JobPreparationWizard(
+              controller: widget.jobPreparationController!,
+              catalogController: widget.preparationController,
+              onPracticeStarted: () => _navigatorKey.currentState
+                  ?.pushReplacementNamed(AppRoutes.practice),
+            ),
           AppRoutes.practice => PracticePage(
             previewMode: widget.allowFakePreview,
             agentController: _agentController,
@@ -170,6 +206,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             authController: widget.authController,
             agentController: _agentController,
             preparationController: widget.preparationController,
+            jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
             reviewHistoryController: widget.reviewHistoryController,
           ),

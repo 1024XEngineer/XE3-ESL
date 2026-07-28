@@ -5,6 +5,7 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
+import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/conversation/conversation.dart';
@@ -45,6 +46,7 @@ void main() {
       find.byKey(const Key('agent-composer-surface')),
     );
     final navigationRect = tester.getRect(navigation);
+    expect(navigationRect.height, closeTo(GlassNavigationBar.height, 0.1));
     expect(navigationRect.top - composerRect.bottom, closeTo(10, 1));
     expect(navigationRect.left, closeTo(composerRect.left, 1));
     expect(navigationRect.right, closeTo(composerRect.right, 1));
@@ -463,7 +465,7 @@ void main() {
 
     await _tapVisible(tester, 'quick-action-create-plan');
     expect(find.byKey(const Key('scenes-page')), findsOneWidget);
-    expect(find.text('本地 UI Mock；练习结果不会写入正式服务。'), findsOneWidget);
+    expect(find.text('预览练习专题与进入流程。'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();

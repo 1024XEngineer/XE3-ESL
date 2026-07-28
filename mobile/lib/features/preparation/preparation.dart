@@ -11,6 +11,8 @@ import 'package:speakup/features/preparation/preparation_launch_controller.dart'
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
+const _jobInterviewScenarioId = 'scn_programmer_interview';
+
 class PreparationPage extends StatefulWidget {
   const PreparationPage({
     this.showBackButton = false,
@@ -18,6 +20,7 @@ class PreparationPage extends StatefulWidget {
     this.agentController,
     this.preparationController,
     this.launchController,
+    this.onOpenJobPreparation,
     this.onSceneSelected,
     this.onPracticeStarted,
     super.key,
@@ -28,6 +31,7 @@ class PreparationPage extends StatefulWidget {
   final AgentController? agentController;
   final PreparationController? preparationController;
   final PreparationLaunchController? launchController;
+  final VoidCallback? onOpenJobPreparation;
   final VoidCallback? onSceneSelected;
   final VoidCallback? onPracticeStarted;
 
@@ -220,22 +224,30 @@ class _PreparationPageState extends State<PreparationPage> {
     }
     return ListView(
       key: const Key('preparation-catalog-list'),
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 140),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
       children: [
-        const Text(
-          '场景',
-          style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
+        const Row(
+          children: [
+            Expanded(
+              child: Text(
+                '练习中心',
+                key: Key('training-center-title'),
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
+              ),
+            ),
+            _TrainingCatalogStatus(),
+          ],
         ),
         const SizedBox(height: 8),
         const Text(
-          'SpeakUp 是你的通用职业英语 Agent。首发内容包聚焦技术岗位英文面试。',
+          '按目标选择训练专题。当前先把英文面试做深，后续专题会沿用同一套练习与复盘能力。',
           style: TextStyle(
             color: Color(0xFF696B73),
-            fontSize: 15,
+            fontSize: 14,
             height: 1.45,
           ),
         ),
-        const SizedBox(height: 28),
+        const SizedBox(height: 22),
         if (controller.isLoadingScenarios)
           const _CatalogLoading(key: Key('preparation-catalog-loading'))
         else if (controller.errorMessage case final message?)
@@ -250,7 +262,14 @@ class _PreparationPageState extends State<PreparationPage> {
           for (final scenario in controller.scenarios) ...[
             _CatalogScenarioCard(
               scenario: scenario,
-              onPressed: () => controller.selectScenario(scenario),
+              jdFirstAvailable:
+                  widget.onOpenJobPreparation != null &&
+                  scenario.id == _jobInterviewScenarioId,
+              onPressed:
+                  widget.onOpenJobPreparation == null ||
+                      scenario.id != _jobInterviewScenarioId
+                  ? () => controller.selectScenario(scenario)
+                  : widget.onOpenJobPreparation!,
             ),
             const SizedBox(height: 12),
           ],
@@ -265,16 +284,16 @@ class _PreparationPageState extends State<PreparationPage> {
       padding: const EdgeInsets.fromLTRB(20, 28, 20, 140),
       children: [
         const Text(
-          '场景',
-          style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
+          '练习中心',
+          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 8),
         Text(
           practiceAvailable
               ? widget.previewMode
-                    ? '本地 UI Mock；练习结果不会写入正式服务。'
-                    : '练习目录未注入，当前页面不可用于正式运行。'
-              : '服务端场景与语音契约尚未开放，当前仅提供 Agent 文本对话。',
+                    ? '预览练习专题与进入流程。'
+                    : '练习内容暂时无法加载，请稍后重试。'
+              : '练习功能正在准备中，目前可以先使用文字陪练。',
           key: const Key('practice-availability-message'),
           style: const TextStyle(color: Color(0xFF696B73), fontSize: 15),
         ),
@@ -454,8 +473,35 @@ class _CatalogLoading extends StatelessWidget {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 14),
-            Text('正在读取服务端练习目录'),
+            Text('正在加载练习专题'),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TrainingCatalogStatus extends StatelessWidget {
+  const _TrainingCatalogStatus();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: '练习专题目录',
+      child: Container(
+        key: const Key('training-catalog-status'),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE7E7E3),
+          borderRadius: BorderRadius.circular(99),
+        ),
+        child: const Text(
+          '持续更新',
+          style: TextStyle(
+            color: Color(0xFF55575E),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );
@@ -512,35 +558,40 @@ class _CatalogEmpty extends StatelessWidget {
 }
 
 class _CatalogScenarioCard extends StatelessWidget {
-  const _CatalogScenarioCard({required this.scenario, required this.onPressed});
+  const _CatalogScenarioCard({
+    required this.scenario,
+    required this.jdFirstAvailable,
+    required this.onPressed,
+  });
 
   final PreparationScenario scenario;
+  final bool jdFirstAvailable;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: const Color(0xFFFAFAF8),
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: const BorderSide(color: Color(0xFFE8E8E4)),
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: Color(0xFFDEDEDA)),
       ),
       child: InkWell(
         key: Key('catalog-scenario-${scenario.id}'),
         onTap: onPressed,
         child: Padding(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(16),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8E8E5),
-                  borderRadius: BorderRadius.circular(15),
+                  color: const Color(0xFFE9E9E5),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
                   Icons.work_outline_rounded,
@@ -560,15 +611,54 @@ class _CatalogScenarioCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 5),
-                    const Text(
-                      '查看可选面试官视角与练习方式',
-                      style: TextStyle(color: Color(0xFF696B73), height: 1.4),
+                    Text(
+                      jdFirstAvailable ? '从岗位与 JD 开始，生成专属练习计划' : '查看练习方式与训练重点',
+                      style: const TextStyle(
+                        color: Color(0xFF696B73),
+                        height: 1.4,
+                      ),
                     ),
+                    if (jdFirstAvailable) ...[
+                      const SizedBox(height: 9),
+                      const _AvailableTopicLabel(),
+                    ],
                   ],
                 ),
               ),
-              const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+              const Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 15,
+                color: Color(0xFF777980),
+              ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AvailableTopicLabel extends StatelessWidget {
+  const _AvailableTopicLabel();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Align(
+      alignment: Alignment.centerLeft,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Color(0xFFE7ECE6),
+          borderRadius: BorderRadius.all(Radius.circular(99)),
+        ),
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          child: Text(
+            '可用',
+            style: TextStyle(
+              color: Color(0xFF405846),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ),
