@@ -79,7 +79,7 @@ type Runtime struct {
 
 	retryTurnByRequest     map[string]string
 	retryOriginalByRequest map[string]string
-	turnDecisions          map[string]practice.TurnDecision
+	turnDecisions          map[string]practice.ApplyTurnOutcomeResult
 	subscribers            map[chan Event]struct{}
 }
 
@@ -93,7 +93,7 @@ func NewRuntime() *Runtime {
 		catalog:                catalog,
 		retryTurnByRequest:     make(map[string]string),
 		retryOriginalByRequest: make(map[string]string),
-		turnDecisions:          make(map[string]practice.TurnDecision),
+		turnDecisions:          make(map[string]practice.ApplyTurnOutcomeResult),
 		subscribers:            make(map[chan Event]struct{}),
 		sessionStatus:          "not_started",
 	}
@@ -136,61 +136,66 @@ func (r *Runtime) createSnapshot() (map[string]any, error) {
 	}, nil
 }
 
-func (r *Runtime) createPlan() (map[string]any, error) {
+func (r *Runtime) createPlan(command practice.CreatePracticePlanCommand) (practice.PracticePlan, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.planCreated = true
-	return map[string]any{
-		"practice_plan_id":            demoPracticePlan,
-		"user_id":                     DemoUserID,
-		"scenario_definition_id":      DemoScenarioDefinition,
-		"scenario_definition_version": 1,
-		"scenario_type":               "INTERVIEW",
-		"scenario_config_id":          preparation.BackendEngineerConfigID,
-		"scenario_config_version":     1,
-		"preparation_profile_id":      demoPreparationProfile,
-		"selected_role_ids":           []string{DemoRoleDefinition},
-		"plan_revision":               1,
-		"practice_plan_status":        "ready",
-		"created_at":                  r.timestamp(3),
-		"updated_at":                  r.timestamp(3),
+	createdAt := r.now.Add(3 * time.Second)
+	return practice.PracticePlan{
+		ID:                        demoPracticePlan,
+		UserID:                    DemoUserID,
+		AgentThreadID:             command.AgentThreadID,
+		MatterID:                  command.MatterID,
+		ScenarioDefinitionID:      DemoScenarioDefinition,
+		ScenarioDefinitionVersion: 1,
+		ScenarioType:              practice.ScenarioTypeInterview,
+		ScenarioConfigID:          preparation.BackendEngineerConfigID,
+		ScenarioConfigVersion:     1,
+		PreparationProfileID:      demoPreparationProfile,
+		SelectedRoleIDs:           []string{DemoRoleDefinition},
+		Revision:                  1,
+		Status:                    practice.PracticePlanReady,
+		CreatedAt:                 createdAt,
+		UpdatedAt:                 createdAt,
 	}, nil
 }
 
-func (r *Runtime) createSession() (map[string]any, error) {
+func (r *Runtime) createSession() (practice.CreatePracticeSessionResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.planCreated {
-		return nil, ErrResourceConflict
+		return practice.CreatePracticeSessionResult{}, ErrResourceConflict
 	}
 	if r.sessionCreated {
-		return nil, ErrResourceConflict
+		return practice.CreatePracticeSessionResult{}, ErrResourceConflict
 	}
 	r.sessionCreated = true
-	r.sessionStatus = "starting"
+	r.sessionStatus = string(practice.PracticeSessionStarting)
 	r.sessionVersion = 1
-	return map[string]any{
-		"practice_session": r.sessionLocked(),
-		"snapshot":         r.snapshotLocked(),
+	return practice.CreatePracticeSessionResult{
+		Session:  r.sessionLocked(),
+		Snapshot: r.snapshotLocked(),
 	}, nil
 }
 
-func (r *Runtime) sessionLocked() map[string]any {
-	session := map[string]any{
-		"practice_session_id":     demoPracticeSession,
-		"practice_plan_id":        demoPracticePlan,
-		"scenario_type":           "INTERVIEW",
-		"snapshot_id":             "snapshot_session_demo_001",
-		"practice_session_status": r.sessionStatus,
-		"session_version":         r.sessionVersion,
-		"created_at":              r.timestamp(4),
+func (r *Runtime) sessionLocked() practice.PracticeSession {
+	session := practice.PracticeSession{
+		ID:           demoPracticeSession,
+		PlanID:       demoPracticePlan,
+		ScenarioType: practice.ScenarioTypeInterview,
+		SnapshotID:   "snapshot_session_demo_001",
+		Status:       practice.PracticeSessionStatus(r.sessionStatus),
+		Version:      r.sessionVersion,
+		CreatedAt:    r.now.Add(4 * time.Second),
 	}
-	if r.sessionStatus != "starting" {
-		session["started_at"] = r.timestamp(5)
+	if r.sessionStatus != string(practice.PracticeSessionStarting) {
+		startedAt := r.now.Add(5 * time.Second)
+		session.StartedAt = &startedAt
 	}
-	if r.sessionStatus == "completed" {
-		session["ended_at"] = r.timestamp(80)
-		session["end_reason"] = "COVERAGE_SATISFIED_AT_CHECKPOINT"
+	if r.sessionStatus == string(practice.PracticeSessionCompleted) {
+		endedAt := r.now.Add(80 * time.Second)
+		session.EndedAt = &endedAt
+		session.EndReason = practice.PracticeSessionEndCoverageSatisfiedAtCheckpoint
 	}
 	return session
 }
@@ -468,7 +473,7 @@ func (r *Runtime) lastEventSequenceLocked() int {
 	return last
 }
 
-func (r *Runtime) snapshotLocked() map[string]any {
+func (r *Runtime) snapshotLocked() practice.PracticeSessionSnapshot {
 	catalogSnapshot, err := r.catalog.GetCatalogSnapshot(
 		DemoScenarioDefinition,
 		1,
@@ -479,58 +484,90 @@ func (r *Runtime) snapshotLocked() map[string]any {
 	if err != nil {
 		panic(fmt.Sprintf("resolve deterministic catalog snapshot: %v", err))
 	}
-	objectives := []map[string]any{
-		{"objective_id": "introduction", "description": "Explain current experience clearly."},
-		{"objective_id": "system_design", "description": "Explain a technical design and its trade-offs."},
-		{"objective_id": "project_depth", "description": "Provide evidence of individual contribution."},
-		{"objective_id": "collaboration", "description": "Explain cross-team communication and outcomes."},
+	objectives := []practice.PracticeObjective{
+		{ID: "introduction", Description: "Explain current experience clearly."},
+		{ID: "system_design", Description: "Explain a technical design and its trade-offs."},
+		{ID: "project_depth", Description: "Provide evidence of individual contribution."},
+		{ID: "collaboration", Description: "Explain cross-team communication and outcomes."},
 	}
-	return map[string]any{
-		"snapshot_id":                  "snapshot_session_demo_001",
-		"practice_session_id":          demoPracticeSession,
-		"plan_revision":                1,
-		"scenario_type":                "INTERVIEW",
-		"scenario_definition_snapshot": mustJSONMap(catalogSnapshot.ScenarioDefinition),
-		"scenario_config_snapshot":     mustJSONMap(catalogSnapshot.ScenarioConfig),
-		"preparation_snapshot": map[string]any{
-			"preparation_snapshot_id":  demoPreparationSnapshot,
-			"source_profile_id":        demoPreparationProfile,
-			"source_version":           1,
-			"resume_snapshot":          "Go backend engineer; API reliability project.",
-			"job_description_snapshot": "Build reliable APIs and explain engineering trade-offs.",
-			"background_snapshot":      "Backend engineer preparing for an English technical interview.",
-			"created_at":               r.timestamp(2),
+	roleSnapshot := practice.RoleSnapshot{
+		ID:                   catalogSnapshot.SelectedRoles[0].ID,
+		ScenarioDefinitionID: catalogSnapshot.SelectedRoles[0].ScenarioDefinitionID,
+		Type:                 catalogSnapshot.SelectedRoles[0].Type,
+		DisplayName:          catalogSnapshot.SelectedRoles[0].DisplayName,
+		Responsibilities:     catalogSnapshot.SelectedRoles[0].Responsibilities,
+		Style:                catalogSnapshot.SelectedRoles[0].Style,
+		FocusAreas:           catalogSnapshot.SelectedRoles[0].FocusAreas,
+		VoiceConfigRef:       catalogSnapshot.SelectedRoles[0].VoiceConfigRef,
+		Version:              catalogSnapshot.SelectedRoles[0].Version,
+	}
+	return practice.PracticeSessionSnapshot{
+		ID:           "snapshot_session_demo_001",
+		SessionID:    demoPracticeSession,
+		PlanRevision: 1,
+		ScenarioType: practice.ScenarioTypeInterview,
+		ScenarioDefinition: practice.ScenarioDefinitionSnapshot{
+			ID:      catalogSnapshot.ScenarioDefinition.ID,
+			Type:    practice.ScenarioType(catalogSnapshot.ScenarioDefinition.Type),
+			Name:    catalogSnapshot.ScenarioDefinition.Name,
+			Version: catalogSnapshot.ScenarioDefinition.Version,
+			Status:  string(catalogSnapshot.ScenarioDefinition.Status),
 		},
-		"participants": []map[string]any{
+		ScenarioConfig: practice.ScenarioConfigSnapshot{
+			ID:                   catalogSnapshot.ScenarioConfig.ID,
+			ScenarioDefinitionID: catalogSnapshot.ScenarioConfig.ScenarioDefinitionID,
+			Type:                 practice.ScenarioType(catalogSnapshot.ScenarioConfig.Type),
+			Version:              catalogSnapshot.ScenarioConfig.Version,
+			JobTitle:             catalogSnapshot.ScenarioConfig.JobTitle,
+			JobDescription:       catalogSnapshot.ScenarioConfig.JobDescription,
+			FocusAreas:           catalogSnapshot.ScenarioConfig.FocusAreas,
+		},
+		Preparation: practice.PreparationSnapshot{
+			ID:                     demoPreparationSnapshot,
+			SourceProfileID:        demoPreparationProfile,
+			SourceVersion:          1,
+			ResumeSnapshot:         "Go backend engineer; API reliability project.",
+			JobDescriptionSnapshot: "Build reliable APIs and explain engineering trade-offs.",
+			BackgroundSnapshot:     "Backend engineer preparing for an English technical interview.",
+			CreatedAt:              r.now.Add(2 * time.Second),
+		},
+		Participants: []practice.PracticeParticipant{
 			{
-				"practice_participant_id": demoInterviewerID,
-				"practice_session_id":     demoPracticeSession,
-				"participant_role":        "INTERVIEWER",
-				"subject_ref":             map[string]any{"namespace": "mock.actor", "subject_id": "interviewer_technical"},
-				"role_definition_id":      DemoRoleDefinition,
-				"role_snapshot":           mustJSONMap(catalogSnapshot.SelectedRoles[0]),
-				"participant_order":       1,
+				ID:               demoInterviewerID,
+				SessionID:        demoPracticeSession,
+				ParticipantRole:  "INTERVIEWER",
+				SubjectRef:       practice.SubjectRef{Namespace: "mock.actor", SubjectID: "interviewer_technical"},
+				RoleDefinitionID: DemoRoleDefinition,
+				RoleSnapshot:     &roleSnapshot,
+				ParticipantOrder: 1,
 			},
 			{
-				"practice_participant_id": demoCandidateID,
-				"practice_session_id":     demoPracticeSession,
-				"participant_role":        "CANDIDATE",
-				"subject_ref":             map[string]any{"namespace": "speakup.user", "subject_id": DemoUserID},
-				"participant_order":       2,
+				ID:               demoCandidateID,
+				SessionID:        demoPracticeSession,
+				ParticipantRole:  "CANDIDATE",
+				SubjectRef:       practice.SubjectRef{Namespace: "speakup.user", SubjectID: DemoUserID},
+				ParticipantOrder: 2,
 			},
 		},
-		"practice_option": mustJSONMap(catalogSnapshot.PracticeOption),
-		"session_policy": map[string]any{
-			"suggested_duration_seconds":  900,
-			"min_effective_turns":         4,
-			"max_effective_turns":         6,
-			"coverage_checkpoint_turn":    4,
-			"max_follow_ups_per_question": 1,
-			"target_objectives":           objectives,
-			"early_completion_rule":       "COVERAGE_SATISFIED_AFTER_CHECKPOINT",
+		PracticeOption: practice.PracticeOptionSnapshot{
+			ID:                   catalogSnapshot.PracticeOption.ID,
+			ScenarioDefinitionID: catalogSnapshot.PracticeOption.ScenarioDefinitionID,
+			RoleDefinitionID:     catalogSnapshot.PracticeOption.RoleDefinitionID,
+			Type:                 string(catalogSnapshot.PracticeOption.Type),
+			DisplayName:          catalogSnapshot.PracticeOption.DisplayName,
+			Version:              catalogSnapshot.PracticeOption.Version,
 		},
-		"practice_focuses": objectives,
-		"created_at":       r.timestamp(4),
+		SessionPolicy: practice.PracticeSessionPolicy{
+			SuggestedDurationSeconds: 900,
+			MinEffectiveTurns:        4,
+			MaxEffectiveTurns:        6,
+			CoverageCheckpointTurn:   4,
+			MaxFollowUpsPerQuestion:  1,
+			TargetObjectives:         objectives,
+			EarlyCompletionRule:      practice.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+		},
+		PracticeFocuses: objectives,
+		CreatedAt:       r.now.Add(4 * time.Second),
 	}
 }
 

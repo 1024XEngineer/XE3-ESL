@@ -160,17 +160,17 @@ func (s *Server) createPlan(c *gin.Context) {
 		return
 	}
 	s.executeIdempotent(c, raw, func() apiResponse {
-		var request practice.CreatePlanRequest
-		if err := decodeStrict(raw, &request); err != nil ||
-			!validID(request.ScenarioDefinitionID) ||
-			request.ScenarioDefinitionVersion < 1 ||
-			!validID(request.ScenarioConfigID) ||
-			request.ScenarioConfigVersion < 1 ||
-			!validID(request.PreparationProfileID) ||
-			!validUniqueIDs(request.SelectedRoleIDs) {
+		var command practice.CreatePracticePlanCommand
+		if err := decodeStrict(raw, &command); err != nil ||
+			!validID(command.ScenarioDefinitionID) ||
+			command.ScenarioDefinitionVersion < 1 ||
+			!validID(command.ScenarioConfigID) ||
+			command.ScenarioConfigVersion < 1 ||
+			!validID(command.PreparationProfileID) ||
+			!validUniqueIDs(command.SelectedRoleIDs) {
 			return invalidRequest()
 		}
-		result, err := s.application.CreatePlan(request)
+		result, err := s.application.CreatePlan(command)
 		if err != nil {
 			return serviceError(err)
 		}
@@ -184,15 +184,16 @@ func (s *Server) createSession(c *gin.Context) {
 		return
 	}
 	s.executeIdempotent(c, raw, func() apiResponse {
-		var request practice.CreateSessionRequest
-		if err := decodeStrict(raw, &request); err != nil ||
-			request.ExpectedPlanRevision < 1 ||
-			!validID(request.PreparationSnapshotID) ||
-			!validID(request.PracticeOptionID) ||
-			!validUniqueIDs(request.RoleDefinitionIDs) {
+		var command practice.CreatePracticeSessionCommand
+		if err := decodeStrict(raw, &command); err != nil ||
+			command.ExpectedPlanRevision < 1 ||
+			!validID(command.PreparationSnapshotID) ||
+			!validID(command.PracticeOptionID) ||
+			!validUniqueIDs(command.RoleDefinitionIDs) {
 			return invalidRequest()
 		}
-		result, err := s.application.CreateSession(c.Param("practice_plan_id"), request)
+		command.PracticePlanID = c.Param("practice_plan_id")
+		result, err := s.application.CreateSession(command)
 		if err != nil {
 			return serviceError(err)
 		}
@@ -201,7 +202,9 @@ func (s *Server) createSession(c *gin.Context) {
 }
 
 func (s *Server) getSession(c *gin.Context) {
-	result, ok := s.practice.GetSession(c.Param("practice_session_id"))
+	result, ok := s.practice.GetPracticeSession(practice.GetPracticeSessionQuery{
+		PracticeSessionID: c.Param("practice_session_id"),
+	})
 	if !ok {
 		writeError(c, http.StatusNotFound, "practice_session_not_found", "Practice session was not found.", false)
 		return
@@ -210,7 +213,11 @@ func (s *Server) getSession(c *gin.Context) {
 }
 
 func (s *Server) getSessionSnapshot(c *gin.Context) {
-	result, ok := s.practice.GetSnapshot(c.Param("practice_session_id"))
+	result, ok := s.practice.GetPracticeSessionSnapshot(
+		practice.GetPracticeSessionSnapshotQuery{
+			PracticeSessionID: c.Param("practice_session_id"),
+		},
+	)
 	if !ok {
 		writeError(c, http.StatusNotFound, "practice_session_not_found", "Practice session was not found.", false)
 		return
@@ -380,7 +387,9 @@ func (s *Server) listHistory(c *gin.Context) {
 
 func (s *Server) streamEvents(c *gin.Context) {
 	sessionID := c.Param("practice_session_id")
-	if _, ok := s.practice.GetSession(sessionID); !ok {
+	if _, ok := s.practice.GetPracticeSession(practice.GetPracticeSessionQuery{
+		PracticeSessionID: sessionID,
+	}); !ok {
 		writeError(c, http.StatusNotFound, "practice_session_not_found", "Practice session was not found.", false)
 		return
 	}

@@ -34,36 +34,41 @@ func NewApplication(
 }
 
 func (a *Application) CreatePlan(
-	request practice.CreatePlanRequest,
-) (map[string]any, error) {
-	if _, err := a.preparation.GetScenarioDetail(request.ScenarioDefinitionID); err != nil {
-		return nil, ErrScenarioNotFound
+	command practice.CreatePracticePlanCommand,
+) (practice.PracticePlan, error) {
+	if _, err := a.preparation.GetScenarioDetail(command.ScenarioDefinitionID); err != nil {
+		return practice.PracticePlan{}, ErrScenarioNotFound
 	}
-	if !a.preparation.ProfileExists(request.PreparationProfileID) {
-		return nil, ErrProfileNotFound
+	if !a.preparation.ProfileExists(command.PreparationProfileID) {
+		return practice.PracticePlan{}, ErrProfileNotFound
 	}
-	return a.practice.CreatePlan(request)
+	return a.practice.CreatePracticePlan(command)
 }
 
 func (a *Application) CreateSession(
-	planID string,
-	request practice.CreateSessionRequest,
-) (map[string]any, error) {
-	if !a.practice.PlanExists(planID) {
-		return nil, ErrPlanNotFound
+	command practice.CreatePracticeSessionCommand,
+) (practice.CreatePracticeSessionResult, error) {
+	if !a.practice.PracticePlanExists(practice.PracticePlanExistsQuery{
+		PracticePlanID: command.PracticePlanID,
+	}) {
+		return practice.CreatePracticeSessionResult{}, ErrPlanNotFound
 	}
-	if !a.preparation.SnapshotExists(request.PreparationSnapshotID) {
-		return nil, ErrSnapshotNotFound
+	if !a.preparation.SnapshotExists(command.PreparationSnapshotID) {
+		return practice.CreatePracticeSessionResult{}, ErrSnapshotNotFound
 	}
-	return a.practice.CreateSession(planID, request)
+	return a.practice.CreatePracticeSession(command)
 }
 
 func (a *Application) Bootstrap(sessionID string) (map[string]any, error) {
-	session, ok := a.practice.GetSession(sessionID)
+	session, ok := a.practice.GetPracticeSession(practice.GetPracticeSessionQuery{
+		PracticeSessionID: sessionID,
+	})
 	if !ok {
 		return nil, ErrSessionNotFound
 	}
-	snapshot, ok := a.practice.GetSnapshot(sessionID)
+	snapshot, ok := a.practice.GetPracticeSessionSnapshot(
+		practice.GetPracticeSessionSnapshotQuery{PracticeSessionID: sessionID},
+	)
 	if !ok {
 		return nil, ErrSessionNotFound
 	}
@@ -77,12 +82,14 @@ func (a *Application) Bootstrap(sessionID string) (map[string]any, error) {
 }
 
 func (a *Application) EnsureCurrentQuestion(sessionID string) (Question, error) {
-	version, started, err := a.practice.StartSession(sessionID)
+	startedSession, err := a.practice.StartPracticeSession(
+		practice.StartPracticeSessionCommand{PracticeSessionID: sessionID},
+	)
 	if err != nil {
 		return Question{}, err
 	}
-	if started {
-		a.conversation.PublishSessionStarted(version)
+	if startedSession.Started {
+		a.conversation.PublishSessionStarted(startedSession.SessionVersion)
 	}
 	return a.conversation.EnsureCurrentQuestion(sessionID)
 }
@@ -96,10 +103,10 @@ func (a *Application) SubmitTurn(
 	if !ok {
 		return Turn{}, ErrQuestionNotFound
 	}
-	if err := a.practice.AuthorizeTurn(
-		question.SessionID,
-		request.RetryRequestID != "",
-	); err != nil {
+	if err := a.practice.AuthorizePracticeTurn(practice.AuthorizePracticeTurnCommand{
+		PracticeSessionID: question.SessionID,
+		IsRetry:           request.RetryRequestID != "",
+	}); err != nil {
 		return Turn{}, err
 	}
 	turn, err := a.conversation.PrepareTurn(questionID, request)
@@ -117,10 +124,12 @@ func (a *Application) SubmitTurn(
 	if err != nil {
 		return Turn{}, err
 	}
-	decision, err := a.practice.RecordTurnOutcome(practice.TurnOutcome{
-		SessionID: turn.SessionID,
-		TurnID:    turn.ID,
-		IsRetry:   turn.IsRetry,
+	decision, err := a.practice.ApplyTurnOutcome(practice.ApplyTurnOutcomeCommand{
+		Outcome: practice.TurnOutcome{
+			SessionID: turn.SessionID,
+			TurnID:    turn.ID,
+			IsRetry:   turn.IsRetry,
+		},
 	})
 	if err != nil {
 		return Turn{}, err
@@ -129,7 +138,7 @@ func (a *Application) SubmitTurn(
 		if decision.Completed {
 			a.conversation.PublishSessionCompleted(
 				decision.SessionVersion,
-				decision.EndReason,
+				string(decision.EndReason),
 			)
 		} else {
 			if _, err := a.conversation.CreateNextQuestion(
@@ -193,7 +202,9 @@ func (a *Application) CreateRetry(feedbackID string) (RetryRequest, error) {
 }
 
 func (a *Application) ListHistory(sessionID string) ([]HistoryRecord, error) {
-	if _, ok := a.practice.GetSession(sessionID); !ok {
+	if _, ok := a.practice.GetPracticeSession(practice.GetPracticeSessionQuery{
+		PracticeSessionID: sessionID,
+	}); !ok {
 		return nil, ErrSessionNotFound
 	}
 	return a.review.ListHistory(sessionID), nil
