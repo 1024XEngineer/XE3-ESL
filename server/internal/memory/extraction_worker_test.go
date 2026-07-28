@@ -50,6 +50,60 @@ func TestWorkerCompletesAndClassifiesFailures(t *testing.T) {
 	}
 }
 
+func TestWorkerReportsOnlySafePolicyRejectionMetadata(t *testing.T) {
+	t.Parallel()
+
+	source := validCompletedRunSource()
+	source.UserText = "Call me Private Name."
+	claim := validExtractionClaim(source)
+	repository := &fakeExtractionRepository{
+		claims: []ExtractionClaim{claim},
+	}
+	extractor := &fakeCandidateExtractor{
+		output: ExtractionOutput{Candidates: []ExtractedCandidate{{
+			Action:       CandidateUpsert,
+			Type:         TypeIdentity,
+			CanonicalKey: "Private Name",
+			Content:      "Private Name",
+			Scope:        ScopeUser,
+			Evidence:     "Call me Private Name",
+		}}},
+	}
+	policy, _ := NewExtractionPolicy(
+		"memory-policy-v1",
+		testExtractionConfig().TopicTTL,
+		func() time.Time { return source.CompletedAt },
+	)
+	worker, err := NewWorker(
+		repository,
+		fakeCompletedRunReader{source: source},
+		extractor,
+		policy,
+		testExtractionConfig(),
+	)
+	if err != nil {
+		t.Fatalf("NewWorker: %v", err)
+	}
+	result, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ProcessPending: %v", err)
+	}
+	want := CandidateRejectionEvent{
+		RunID:          claim.RunID,
+		CandidateIndex: 0,
+		Reason:         RejectionInvalidCanonicalKey,
+	}
+	if len(result.Rejections) != 1 ||
+		result.Rejections[0] != want {
+		t.Fatalf("rejections = %#v, want %#v", result.Rejections, want)
+	}
+	if len(repository.completed) != 1 ||
+		repository.completed[0].CandidateCount != 1 ||
+		len(repository.completed[0].Decisions) != 0 {
+		t.Fatalf("completed batches = %#v", repository.completed)
+	}
+}
+
 func TestWorkerRetriesProviderFailureAndDiscardsMissingSource(t *testing.T) {
 	t.Parallel()
 

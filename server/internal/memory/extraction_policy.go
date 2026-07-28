@@ -48,15 +48,24 @@ func (policy *ExtractionPolicy) Decide(
 		return ExtractionBatch{}, ErrInvalidArgument
 	}
 	decisions := make([]MemoryDecision, 0, len(output.Candidates))
+	rejections := make([]CandidateRejection, 0, len(output.Candidates))
 	seen := make(map[string]struct{})
-	for _, candidate := range output.Candidates {
-		decision, accepted := policy.decideCandidate(source, candidate)
-		if !accepted {
+	for index, candidate := range output.Candidates {
+		decision, rejectionReason := policy.decideCandidate(source, candidate)
+		if rejectionReason != "" {
+			rejections = append(rejections, CandidateRejection{
+				CandidateIndex: index,
+				Reason:         rejectionReason,
+			})
 			continue
 		}
 		key := string(decision.Scope) + ":" + decision.MatterID + ":" +
 			string(decision.Type) + ":" + decision.CanonicalKey
 		if _, duplicate := seen[key]; duplicate {
+			rejections = append(rejections, CandidateRejection{
+				CandidateIndex: index,
+				Reason:         RejectionDuplicateCandidate,
+			})
 			continue
 		}
 		seen[key] = struct{}{}
@@ -65,6 +74,7 @@ func (policy *ExtractionPolicy) Decide(
 	return ExtractionBatch{
 		CandidateCount: len(output.Candidates),
 		Decisions:      decisions,
+		Rejections:     rejections,
 		Source: SourceInput{
 			Type:     SourceAgentRun,
 			SourceID: source.RunID,
@@ -77,32 +87,38 @@ func (policy *ExtractionPolicy) Decide(
 func (policy *ExtractionPolicy) decideCandidate(
 	source CompletedRunSource,
 	candidate ExtractedCandidate,
-) (MemoryDecision, bool) {
+) (MemoryDecision, CandidateRejectionReason) {
 	if !candidate.Action.Valid() {
-		return MemoryDecision{}, false
+		return MemoryDecision{}, RejectionInvalidAction
 	}
 	if _, allowed := conversationalTypes[candidate.Type]; !allowed {
-		return MemoryDecision{}, false
+		return MemoryDecision{}, RejectionUnsupportedType
 	}
-	if !validCanonicalKey(candidate.CanonicalKey) ||
-		!compatibleKey(candidate.Type, candidate.CanonicalKey) ||
-		!strings.Contains(source.UserText, candidate.Evidence) ||
-		sensitiveCandidate(candidate) {
-		return MemoryDecision{}, false
+	if !validCanonicalKey(candidate.CanonicalKey) {
+		return MemoryDecision{}, RejectionInvalidCanonicalKey
+	}
+	if !compatibleKey(candidate.Type, candidate.CanonicalKey) {
+		return MemoryDecision{}, RejectionIncompatibleKey
+	}
+	if !strings.Contains(source.UserText, candidate.Evidence) {
+		return MemoryDecision{}, RejectionEvidenceMismatch
+	}
+	if sensitiveCandidate(candidate) {
+		return MemoryDecision{}, RejectionSensitiveCandidate
 	}
 	if candidate.Type == TypeIdentity &&
 		candidate.CanonicalKey == "identity.gender" &&
 		!candidate.InteractionUse {
-		return MemoryDecision{}, false
+		return MemoryDecision{}, RejectionGenderInteractionUseRequired
 	}
 	matterID := ""
 	if candidate.Scope == ScopeMatter {
 		if source.MatterID == "" {
-			return MemoryDecision{}, false
+			return MemoryDecision{}, RejectionMissingMatter
 		}
 		matterID = source.MatterID
 	} else if candidate.Scope != ScopeUser {
-		return MemoryDecision{}, false
+		return MemoryDecision{}, RejectionInvalidScope
 	}
 	decision := MemoryDecision{
 		Action:       candidate.Action,
@@ -113,7 +129,7 @@ func (policy *ExtractionPolicy) decideCandidate(
 	}
 	if candidate.Action == CandidateUpsert {
 		if !validContent(candidate.Content) {
-			return MemoryDecision{}, false
+			return MemoryDecision{}, RejectionInvalidContent
 		}
 		decision.Content = candidate.Content
 		if candidate.Type == TypeTopic {
@@ -121,9 +137,12 @@ func (policy *ExtractionPolicy) decideCandidate(
 			decision.ExpiresAt = &expiresAt
 		}
 	} else if strings.TrimSpace(candidate.Content) != "" {
-		return MemoryDecision{}, false
+		return MemoryDecision{}, RejectionInactivateContentNotEmpty
 	}
-	return decision, decision.Valid()
+	if !decision.Valid() {
+		return MemoryDecision{}, RejectionInvalidDecision
+	}
+	return decision, ""
 }
 
 func compatibleKey(memoryType Type, key string) bool {

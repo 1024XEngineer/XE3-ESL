@@ -68,6 +68,17 @@ func TestExtractionPolicyAcceptsOnlyExplicitSupportedFacts(t *testing.T) {
 	if batch.CandidateCount != 5 || len(batch.Decisions) != 3 {
 		t.Fatalf("batch = %#v", batch)
 	}
+	wantRejections := []CandidateRejection{
+		{CandidateIndex: 3, Reason: RejectionUnsupportedType},
+		{CandidateIndex: 4, Reason: RejectionEvidenceMismatch},
+	}
+	if !equalCandidateRejections(batch.Rejections, wantRejections) {
+		t.Fatalf(
+			"rejections = %#v, want %#v",
+			batch.Rejections,
+			wantRejections,
+		)
+	}
 	topic := batch.Decisions[2]
 	if topic.Type != TypeTopic ||
 		topic.ExpiresAt == nil ||
@@ -129,6 +140,20 @@ func TestExtractionPolicyRequiresMatterAndGenderUse(t *testing.T) {
 		batch.Decisions[0].CanonicalKey != "identity.gender" {
 		t.Fatalf("decisions = %#v", batch.Decisions)
 	}
+	wantRejections := []CandidateRejection{
+		{
+			CandidateIndex: 0,
+			Reason:         RejectionGenderInteractionUseRequired,
+		},
+		{CandidateIndex: 2, Reason: RejectionMissingMatter},
+	}
+	if !equalCandidateRejections(batch.Rejections, wantRejections) {
+		t.Fatalf(
+			"rejections = %#v, want %#v",
+			batch.Rejections,
+			wantRejections,
+		)
+	}
 }
 
 func TestExtractionPolicyRejectsSensitiveEvidence(t *testing.T) {
@@ -160,6 +185,189 @@ func TestExtractionPolicyRejectsSensitiveEvidence(t *testing.T) {
 	if len(batch.Decisions) != 0 {
 		t.Fatalf("sensitive evidence decisions = %#v", batch.Decisions)
 	}
+	if !equalCandidateRejections(
+		batch.Rejections,
+		[]CandidateRejection{{
+			CandidateIndex: 0,
+			Reason:         RejectionSensitiveCandidate,
+		}},
+	) {
+		t.Fatalf("sensitive evidence rejections = %#v", batch.Rejections)
+	}
+}
+
+func TestExtractionPolicyClassifiesEveryCandidateRejection(t *testing.T) {
+	t.Parallel()
+
+	policy, err := NewExtractionPolicy(
+		"memory-policy-v1",
+		30*24*time.Hour,
+		time.Now,
+	)
+	if err != nil {
+		t.Fatalf("NewExtractionPolicy: %v", err)
+	}
+	baseSource := validCompletedRunSource()
+	baseSource.MatterID = ""
+	baseSource.UserText = "Call me Alex."
+	baseCandidate := ExtractedCandidate{
+		Action:       CandidateUpsert,
+		Type:         TypeIdentity,
+		CanonicalKey: "identity.preferred_name",
+		Content:      "Alex",
+		Scope:        ScopeUser,
+		Evidence:     "Call me Alex",
+	}
+	tests := map[string]struct {
+		candidate ExtractedCandidate
+		want      CandidateRejectionReason
+	}{
+		"invalid action": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.Action = CandidateAction("replace")
+				return item
+			}(),
+			want: RejectionInvalidAction,
+		},
+		"unsupported type": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.Type = TypeWeakness
+				item.CanonicalKey = "weakness.name"
+				return item
+			}(),
+			want: RejectionUnsupportedType,
+		},
+		"invalid canonical key": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.CanonicalKey = "Identity.Name"
+				return item
+			}(),
+			want: RejectionInvalidCanonicalKey,
+		},
+		"incompatible key": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.Type = TypeProfile
+				return item
+			}(),
+			want: RejectionIncompatibleKey,
+		},
+		"evidence mismatch": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.Evidence = "My name is Alex"
+				return item
+			}(),
+			want: RejectionEvidenceMismatch,
+		},
+		"sensitive candidate": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.Content = "secret"
+				return item
+			}(),
+			want: RejectionSensitiveCandidate,
+		},
+		"gender requires interaction use": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.CanonicalKey = "identity.gender"
+				return item
+			}(),
+			want: RejectionGenderInteractionUseRequired,
+		},
+		"missing Matter": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.Scope = ScopeMatter
+				return item
+			}(),
+			want: RejectionMissingMatter,
+		},
+		"invalid scope": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.Scope = ScopeType("thread")
+				return item
+			}(),
+			want: RejectionInvalidScope,
+		},
+		"invalid content": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.Content = " Alex "
+				return item
+			}(),
+			want: RejectionInvalidContent,
+		},
+		"inactivate content not empty": {
+			candidate: func() ExtractedCandidate {
+				item := baseCandidate
+				item.Action = CandidateInactivate
+				return item
+			}(),
+			want: RejectionInactivateContentNotEmpty,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			batch, decideErr := policy.Decide(
+				baseSource,
+				ExtractionOutput{
+					Candidates: []ExtractedCandidate{test.candidate},
+				},
+			)
+			if decideErr != nil {
+				t.Fatalf("Decide: %v", decideErr)
+			}
+			want := []CandidateRejection{{
+				CandidateIndex: 0,
+				Reason:         test.want,
+			}}
+			if !equalCandidateRejections(batch.Rejections, want) {
+				t.Fatalf(
+					"rejections = %#v, want %#v",
+					batch.Rejections,
+					want,
+				)
+			}
+		})
+	}
+
+	duplicates, err := policy.Decide(baseSource, ExtractionOutput{
+		Candidates: []ExtractedCandidate{baseCandidate, baseCandidate},
+	})
+	if err != nil {
+		t.Fatalf("Decide duplicates: %v", err)
+	}
+	if len(duplicates.Decisions) != 1 ||
+		!equalCandidateRejections(
+			duplicates.Rejections,
+			[]CandidateRejection{{
+				CandidateIndex: 1,
+				Reason:         RejectionDuplicateCandidate,
+			}},
+		) {
+		t.Fatalf("duplicate batch = %#v", duplicates)
+	}
+}
+
+func equalCandidateRejections(
+	got []CandidateRejection,
+	want []CandidateRejection,
+) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func validCompletedRunSource() CompletedRunSource {

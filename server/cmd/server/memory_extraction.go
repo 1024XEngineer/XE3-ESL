@@ -103,6 +103,15 @@ func (worker *memoryExtractionWorker) sweep(parent context.Context) {
 		ctx,
 		worker.claimLimit,
 	)
+	for _, rejection := range result.Rejections {
+		worker.logger.DebugContext(
+			parent,
+			"memory extraction candidate rejected",
+			slog.String("run_id", rejection.RunID),
+			slog.Int("candidate_index", rejection.CandidateIndex),
+			slog.String("reason", string(rejection.Reason)),
+		)
+	}
 	attributes := []any{
 		slog.Int("claimed", result.Claimed),
 		slog.Int("completed", result.Completed),
