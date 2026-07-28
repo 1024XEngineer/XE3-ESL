@@ -32,18 +32,20 @@ final class PracticeWireEndpoints {
   final String confirm;
 
   String restorePath(String threadId) =>
-      restoreByThread.replaceAll('{thread_id}', threadId);
+      restoreByThread.replaceAll('{thread_id}', _pathSegment(threadId));
 
   String startPath(String threadId) =>
-      startByThread.replaceAll('{thread_id}', threadId);
+      startByThread.replaceAll('{thread_id}', _pathSegment(threadId));
 
   String transcribePath(String sessionId, String questionId) => transcribe
-      .replaceAll('{practice_session_id}', sessionId)
-      .replaceAll('{question_id}', questionId);
+      .replaceAll('{practice_session_id}', _pathSegment(sessionId))
+      .replaceAll('{question_id}', _pathSegment(questionId));
 
   String confirmPath(String candidateId) =>
-      confirm.replaceAll('{candidate_id}', candidateId);
+      confirm.replaceAll('{candidate_id}', _pathSegment(candidateId));
 }
+
+String _pathSegment(String value) => Uri.encodeComponent(value);
 
 final class PracticeWireRequest {
   const PracticeWireRequest({
