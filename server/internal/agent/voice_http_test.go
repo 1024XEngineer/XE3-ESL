@@ -835,6 +835,7 @@ func TestVoiceHTTPResumeUsesExactActiveMatter(t *testing.T) {
 				voiceHTTPMatters{},
 				voiceHTTPAuthenticator{},
 				func() string { return "corr_voice_resume" },
+				testVoiceHTTPOptions(),
 			)
 			if err != nil {
 				t.Fatalf("new voice HTTP handler: %v", err)
