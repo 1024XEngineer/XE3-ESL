@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -35,6 +36,7 @@ type PolicyDecision struct {
 	BlockedTools  []BlockedTool
 	PolicyVersion string
 	ReasonCode    string
+	ToolChoice    ai.ToolChoice
 }
 
 type BlockedTool struct {
@@ -76,6 +78,7 @@ func (builder ToolPolicyBuilder) Build(
 	if context.Intent.Mode == IntentDirectOnly && context.ExplicitToolName == "" {
 		decision.AllowedTools = nil
 		decision.BlockedTools = builder.blockAll(ReasonDirectLanguageHelp)
+		decision.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceNone}
 		builder.logDecision(runID, decision)
 		return decision
 	}
@@ -91,6 +94,10 @@ func (builder ToolPolicyBuilder) Build(
 	decision.AllowedTools, decision.BlockedTools = builder.selectNames(
 		decision.Policy,
 		context.AvailableFeatures,
+	)
+	decision.ToolChoice = toolChoiceForRoute(
+		context.Intent.Route,
+		decision.AllowedTools,
 	)
 	builder.logDecision(runID, decision)
 	return decision
@@ -155,6 +162,8 @@ func (builder ToolPolicyBuilder) logDecision(
 		"blocked_tools", decision.BlockedTools,
 		"policy_version", decision.PolicyVersion,
 		"reason_code", decision.ReasonCode,
+		"tool_choice_mode", string(decision.ToolChoice.Mode),
+		"tool_choice_name", decision.ToolChoice.Name,
 	)
 }
 
@@ -165,7 +174,10 @@ func candidateToolNames(
 	if registry == nil {
 		return nil
 	}
-	candidates := reasonCandidateToolNames(context.Intent.ReasonCode)
+	candidates := context.Intent.Route.PreferredTools
+	if len(candidates) == 0 {
+		candidates = reasonCandidateToolNames(context.Intent.ReasonCode)
+	}
 	if len(candidates) == 0 && len(context.AvailableFeatures) == 0 {
 		return nil
 	}
@@ -194,6 +206,48 @@ func candidateToolNames(
 		}
 	}
 	return names
+}
+
+func toolChoiceForRoute(
+	route RouteDecision,
+	allowedTools []string,
+) ai.ToolChoice {
+	switch route.ToolUseMode {
+	case RouteToolUseNone:
+		return ai.ToolChoice{Mode: ai.ToolChoiceNone}
+	case RouteToolUseRequired:
+		if len(allowedTools) == 0 {
+			return ai.ToolChoice{Mode: ai.ToolChoiceAuto}
+		}
+		return ai.ToolChoice{Mode: ai.ToolChoiceRequired}
+	case RouteToolUseSpecific:
+		for _, preferred := range route.PreferredTools {
+			if containsToolName(allowedTools, preferred) {
+				return ai.ToolChoice{
+					Mode: ai.ToolChoiceSpecific,
+					Name: preferred,
+				}
+			}
+		}
+		if len(allowedTools) == 1 {
+			return ai.ToolChoice{
+				Mode: ai.ToolChoiceSpecific,
+				Name: allowedTools[0],
+			}
+		}
+	case RouteToolUseConfirmRequired:
+		return ai.ToolChoice{Mode: ai.ToolChoiceNone}
+	}
+	return ai.ToolChoice{Mode: ai.ToolChoiceAuto}
+}
+
+func containsToolName(names []string, expected string) bool {
+	for _, name := range names {
+		if name == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func reasonCandidateToolNames(reason string) []string {

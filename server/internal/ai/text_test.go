@@ -75,6 +75,45 @@ func TestValidateTextRequestSupportsToolRoundTrip(t *testing.T) {
 	}
 }
 
+func TestValidateTextRequestSupportsToolChoice(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]TextRequest{
+		"default": {Messages: []TextMessage{
+			{Role: TextRoleUser, Content: "hello"},
+		}},
+		"none": {
+			Messages: []TextMessage{{Role: TextRoleUser, Content: "hello"}},
+			ToolChoice: ToolChoice{
+				Mode: ToolChoiceNone,
+			},
+		},
+		"required": {
+			Messages: []TextMessage{{Role: TextRoleUser, Content: "find review"}},
+			Tools:    []ToolDefinition{validToolDefinition()},
+			ToolChoice: ToolChoice{
+				Mode: ToolChoiceRequired,
+			},
+		},
+		"specific": {
+			Messages: []TextMessage{{Role: TextRoleUser, Content: "find review"}},
+			Tools:    []ToolDefinition{validToolDefinition()},
+			ToolChoice: ToolChoice{
+				Mode: ToolChoiceSpecific,
+				Name: "review.search.v1",
+			},
+		},
+	}
+	for name, request := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := ValidateTextRequest(request); err != nil {
+				t.Fatalf("valid request rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateTextRequestRejectsInvalidToolData(t *testing.T) {
 	t.Parallel()
 
@@ -147,6 +186,28 @@ func TestValidateTextRequestRejectsInvalidToolData(t *testing.T) {
 				},
 				{Role: TextRoleTool, Content: `{}`, ToolCallID: "call-1"},
 				{Role: TextRoleTool, Content: `{}`, ToolCallID: "call-1"},
+			},
+		},
+		"specific tool choice without tool": {
+			Messages: []TextMessage{{Role: TextRoleUser, Content: "find review"}},
+			Tools:    []ToolDefinition{validToolDefinition()},
+			ToolChoice: ToolChoice{
+				Mode: ToolChoiceSpecific,
+				Name: "missing.search.v1",
+			},
+		},
+		"required tool choice without tools": {
+			Messages: []TextMessage{{Role: TextRoleUser, Content: "find review"}},
+			ToolChoice: ToolChoice{
+				Mode: ToolChoiceRequired,
+			},
+		},
+		"named auto tool choice": {
+			Messages: []TextMessage{{Role: TextRoleUser, Content: "find review"}},
+			Tools:    []ToolDefinition{validToolDefinition()},
+			ToolChoice: ToolChoice{
+				Mode: ToolChoiceAuto,
+				Name: "review.search.v1",
 			},
 		},
 	}

@@ -39,6 +39,9 @@ func TestRunLoopDirectResponseDoesNotExposeTools(t *testing.T) {
 	if got := len(requests[0].Tools); got != 0 {
 		t.Fatalf("len(Tools) = %d, want 0", got)
 	}
+	if requests[0].ToolChoice.Mode != ai.ToolChoiceNone {
+		t.Fatalf("ToolChoice = %#v, want none", requests[0].ToolChoice)
+	}
 }
 
 func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
@@ -68,7 +71,14 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 	if got := len(requests[0].Tools); got == 0 {
 		t.Fatal("first request exposed no tools")
 	}
+	if requests[0].ToolChoice.Mode != ai.ToolChoiceSpecific ||
+		requests[0].ToolChoice.Name != reviewtool.ReviewSearchToolName {
+		t.Fatalf("first ToolChoice = %#v, want review.search specific", requests[0].ToolChoice)
+	}
 	second := requests[1]
+	if second.ToolChoice.Mode != ai.ToolChoiceAuto {
+		t.Fatalf("second ToolChoice = %#v, want auto", second.ToolChoice)
+	}
 	if got, want := len(second.Messages), 4; got != want {
 		t.Fatalf("second request messages = %d, want %d", got, want)
 	}
@@ -77,6 +87,25 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 		toolMessage.ToolCallID != "call-review-1" ||
 		!strings.Contains(toolMessage.Content, `"reviews"`) {
 		t.Fatalf("tool message = %#v", toolMessage)
+	}
+}
+
+func TestRunLoopReturnsFallbackWhenSpecificToolChoiceIsIgnored(t *testing.T) {
+	generator := newScriptedGenerator(finalLoopResult("made-up review"))
+	service := newLoopTestService(t, generator)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		ContextManifest{},
+		loopRequest("帮我找一下上次 PM interview 的 review"),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if !strings.Contains(result.Content, "需要先查询") {
+		t.Fatalf("fallback content = %q", result.Content)
 	}
 }
 
@@ -187,7 +216,7 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 		loopActor(),
 		loopRun(),
 		ContextManifest{},
-		loopRequest("我下周有英文 PM 面试"),
+		loopRequest("帮我创建一个英文 PM 面试练习场景"),
 	)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
@@ -301,6 +330,16 @@ func TestRunLoopLogOptionsAndPayloadSummariesDoNotLeakSensitiveContent(t *testin
 	}
 	if strings.Contains(output, "input_preview") {
 		t.Fatalf("input preview logged while disabled: %s", output)
+	}
+}
+
+func TestToolSourceRefsKeepsEmptySliceForPersistence(t *testing.T) {
+	refs := toolSourceRefs(nil)
+	if refs == nil {
+		t.Fatal("toolSourceRefs(nil) = nil, want empty slice")
+	}
+	if len(refs) != 0 {
+		t.Fatalf("len(refs) = %d, want 0", len(refs))
 	}
 }
 

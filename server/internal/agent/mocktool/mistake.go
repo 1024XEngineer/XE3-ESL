@@ -24,7 +24,7 @@ func NewMistakeSearchTool(store *Store) MistakeSearchTool {
 func (t MistakeSearchTool) Definition() tool.Definition {
 	return tool.Definition{
 		Name:        MistakeSearchToolName,
-		Description: "Search recurring speaking mistakes and coaching suggestions.",
+		Description: "Search recurring speaking mistakes and coaching suggestions. Use when the user asks for 历史错题, 以前的错误, recurring mistakes, pronunciation issues, grammar patterns, or repeated expression problems. Do not use for correcting only the current sentence.",
 		InputSchema: tool.ObjectSchema(map[string]any{
 			"query":       tool.StringSchema("Mistake category or phrasing to find."),
 			"scenario_id": tool.StringSchema("Optional scenario id to restrict the search."),

@@ -24,7 +24,7 @@ func NewMaterialSearchTool(store *Store) MaterialSearchTool {
 func (t MaterialSearchTool) Definition() tool.Definition {
 	return tool.Definition{
 		Name:        MaterialSearchToolName,
-		Description: "Search resume and job description materials for relevant facts.",
+		Description: "Search resume and job description materials for relevant facts. Use when the user asks to combine 简历, 履历, JD, 岗位要求, resume, or job description context with English practice. Do not use for generic wording help without material context.",
 		InputSchema: tool.ObjectSchema(map[string]any{
 			"query": tool.StringSchema("Resume or JD facts to find."),
 			"kind":  tool.StringSchema("Optional material kind: resume or jd."),

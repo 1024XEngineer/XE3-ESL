@@ -488,6 +488,7 @@ func (service *RunService) generate(
 		policyContext,
 	)
 	request.Tools = service.toolDefinitions(policyDecision.AllowedTools)
+	request.ToolChoice = policyDecision.ToolChoice
 	manifest.ExposedTools = exposedToolNameList(request.Tools)
 	manifest.BlockedTools = contextBlockedTools(policyDecision.BlockedTools)
 	manifest.IntentMode = string(intent.Mode)
@@ -515,6 +516,29 @@ func (service *RunService) generate(
 			return result, nil
 		}
 		if len(result.ToolCalls) == 0 {
+			if requiresToolCall(request.ToolChoice) {
+				service.logRoutingDecision(
+					run,
+					"tool_call_required_missing",
+					nil,
+					policyDecision.ReasonCode,
+					reasonSummary(policyDecision.ReasonCode, "tool_call_required_missing"),
+					iteration+1,
+				)
+				result := fallbackResult(
+					service.configuration,
+					"我需要先查询你的历史数据，才能给出可靠回复。请稍后重试，或把要查询的范围说得更具体一点。",
+				)
+				service.logRunCompleted(
+					run,
+					"tool_call_required_missing",
+					iteration+1,
+					toolCalls,
+					startedAt,
+					result.Content,
+				)
+				return result, nil
+			}
 			service.logRoutingDecision(
 				run,
 				finalDecision,
@@ -664,6 +688,7 @@ func (service *RunService) generate(
 			request.Messages = append(request.Messages, toolMessage)
 			toolCalls++
 		}
+		request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
 		finalDecision = "tool_call_then_response"
 	}
 	service.logRoutingDecision(
@@ -703,6 +728,7 @@ func (service *RunService) executeCommand(
 		policyContext,
 	)
 	request.Tools = service.toolDefinitions(policyDecision.AllowedTools)
+	request.ToolChoice = policyDecision.ToolChoice
 	manifest.ExposedTools = exposedToolNameList(request.Tools)
 	manifest.BlockedTools = contextBlockedTools(policyDecision.BlockedTools)
 	manifest.IntentMode = string(policyContext.Intent.Mode)
@@ -867,9 +893,6 @@ func (service *RunService) saveContextToolSnapshot(
 }
 
 func toolSourceRefs(refs []tool.SourceRef) []core.ToolSourceRef {
-	if len(refs) == 0 {
-		return nil
-	}
 	result := make([]core.ToolSourceRef, 0, len(refs))
 	for _, ref := range refs {
 		result = append(result, core.ToolSourceRef{
@@ -878,6 +901,11 @@ func toolSourceRefs(refs []tool.SourceRef) []core.ToolSourceRef {
 		})
 	}
 	return result
+}
+
+func requiresToolCall(choice ai.ToolChoice) bool {
+	return choice.Mode == ai.ToolChoiceRequired ||
+		choice.Mode == ai.ToolChoiceSpecific
 }
 
 func contextBlockedTools(blocked []BlockedTool) []core.ContextBlockedTool {

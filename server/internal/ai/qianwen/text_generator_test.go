@@ -118,9 +118,17 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 	t.Parallel()
 
 	var received chatCompletionRequest
+	var rawPayload map[string]json.RawMessage
 	doer := doerFunc(func(request *http.Request) (*http.Response, error) {
-		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if err := json.Unmarshal(body, &received); err != nil {
 			t.Fatalf("decode request: %v", err)
+		}
+		if err := json.Unmarshal(body, &rawPayload); err != nil {
+			t.Fatalf("decode raw request: %v", err)
 		}
 		return jsonResponse(http.StatusOK, `{
 			"id":"chatcmpl-tools-1",
@@ -173,6 +181,10 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 				InputSchema: map[string]any{"type": "object"},
 			},
 		},
+		ToolChoice: ai.ToolChoice{
+			Mode: ai.ToolChoiceSpecific,
+			Name: "material.search.v1",
+		},
 	}
 
 	result, err := generator.Generate(context.Background(), request)
@@ -184,6 +196,10 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 		received.Tools[0].Function.Name != "scenario_create_v1" ||
 		received.Tools[1].Function.Name != "material_search_v1" {
 		t.Fatalf("unexpected provider tools: %#v", received.Tools)
+	}
+	if got := string(rawPayload["tool_choice"]); got !=
+		`{"type":"function","function":{"name":"material_search_v1"}}` {
+		t.Fatalf("tool_choice = %s", got)
 	}
 	expectedCalls := []ai.ToolCall{
 		{
@@ -241,6 +257,44 @@ func TestGenerateParsesSingleToolCall(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(result.ToolCalls, expected) {
 		t.Fatalf("tool calls = %#v, want %#v", result.ToolCalls, expected)
+	}
+}
+
+func TestGenerateNormalizesStopFinishReasonWithToolCalls(t *testing.T) {
+	t.Parallel()
+
+	doer := doerFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-tools-stop",
+			"model":"qwen3.5-flash",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{
+					"role":"assistant",
+					"content":"",
+					"tool_calls":[{
+						"id":"call-review-stop",
+						"type":"function",
+						"function":{
+							"name":"review_search_v1",
+							"arguments":"{\"query\":\"PM interview\"}"
+						}
+					}]
+				}
+			}],
+			"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}
+		}`), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+
+	result, err := generator.Generate(context.Background(), toolRequest())
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if result.FinishReason != "tool_calls" ||
+		len(result.ToolCalls) != 1 ||
+		result.ToolCalls[0].Name != "review.search.v1" {
+		t.Fatalf("result = %#v", result)
 	}
 }
 

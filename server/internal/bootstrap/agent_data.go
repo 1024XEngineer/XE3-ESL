@@ -128,11 +128,16 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	runOptions, err := agentRunServiceOptions()
+	if err != nil {
+		return nil, err
+	}
 	runService, err := agentruntime.NewRunService(
 		agentRepository,
 		contextAssembler,
 		generator,
 		runConfiguration,
+		runOptions...,
 	)
 	if err != nil {
 		return nil, err

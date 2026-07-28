@@ -36,6 +36,20 @@ type ToolCall struct {
 	Arguments json.RawMessage
 }
 
+type ToolChoiceMode string
+
+const (
+	ToolChoiceAuto     ToolChoiceMode = "auto"
+	ToolChoiceNone     ToolChoiceMode = "none"
+	ToolChoiceRequired ToolChoiceMode = "required"
+	ToolChoiceSpecific ToolChoiceMode = "specific"
+)
+
+type ToolChoice struct {
+	Mode ToolChoiceMode
+	Name string
+}
+
 type TextMessage struct {
 	Role       TextRole
 	Content    string
@@ -44,8 +58,9 @@ type TextMessage struct {
 }
 
 type TextRequest struct {
-	Messages []TextMessage
-	Tools    []ToolDefinition
+	Messages   []TextMessage
+	Tools      []ToolDefinition
+	ToolChoice ToolChoice
 }
 
 type TokenUsage struct {
@@ -79,6 +94,9 @@ func ValidateTextRequest(request TextRequest) error {
 			return fmt.Errorf("text generation tool %d duplicates name %q", index, definition.Name)
 		}
 		toolNames[definition.Name] = struct{}{}
+	}
+	if err := validateToolChoice(request.ToolChoice, toolNames); err != nil {
+		return err
 	}
 
 	knownCalls := make(map[string]struct{})
@@ -146,6 +164,36 @@ func ValidateTextRequest(request TextRequest) error {
 	finalRole := request.Messages[len(request.Messages)-1].Role
 	if finalRole != TextRoleUser && finalRole != TextRoleTool {
 		return errors.New("text generation requires the final message to have the user or tool role")
+	}
+	return nil
+}
+
+func validateToolChoice(
+	choice ToolChoice,
+	toolNames map[string]struct{},
+) error {
+	switch choice.Mode {
+	case "":
+		if choice.Name != "" {
+			return errors.New("text generation default tool choice must not name a tool")
+		}
+	case ToolChoiceAuto, ToolChoiceNone:
+		if choice.Name != "" {
+			return errors.New("text generation tool choice must not name a tool")
+		}
+	case ToolChoiceRequired:
+		if choice.Name != "" || len(toolNames) == 0 {
+			return errors.New("text generation required tool choice needs available tools only")
+		}
+	case ToolChoiceSpecific:
+		if !validToolName(choice.Name) {
+			return errors.New("text generation specific tool choice requires a valid tool name")
+		}
+		if _, exists := toolNames[choice.Name]; !exists {
+			return errors.New("text generation specific tool choice references an unavailable tool")
+		}
+	default:
+		return errors.New("text generation tool choice mode is unsupported")
 	}
 	return nil
 }

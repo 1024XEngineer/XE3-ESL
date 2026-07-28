@@ -10,6 +10,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
@@ -77,6 +78,9 @@ func TestToolPolicyBuilderFiltersByFeaturesAndDirectIntent(t *testing.T) {
 	) {
 		t.Fatalf("material.search blocked tools = %#v", decision.BlockedTools)
 	}
+	if decision.ToolChoice.Mode != ai.ToolChoiceNone {
+		t.Fatalf("ToolChoice = %#v, want none", decision.ToolChoice)
+	}
 }
 
 func TestToolPolicyBuilderRequiresConfirmationForScenarioCreate(t *testing.T) {
@@ -87,20 +91,70 @@ func TestToolPolicyBuilderRequiresConfirmationForScenarioCreate(t *testing.T) {
 	base := PolicyContext{
 		Actor:    validPolicyActor(),
 		ThreadID: "thread-1",
-		Intent: IntentDecision{
-			Mode:       IntentToolEligible,
-			ReasonCode: ReasonNewRealWorldScenario,
-		},
+		Intent: NewIntentGuard(nil).Guard(
+			"run-1",
+			"帮我创建一个英文后端面试练习场景",
+		),
 	}
 	decision := NewToolPolicyBuilder(registry, nil).Build("run-1", base)
 	if containsString(decision.AllowedTools, mattertool.ScenarioCreateToolName) {
 		t.Fatalf("unconfirmed AllowedTools = %#v, should not include scenario.create", decision.AllowedTools)
+	}
+	if decision.ToolChoice.Mode != ai.ToolChoiceNone {
+		t.Fatalf("unconfirmed ToolChoice = %#v, want none", decision.ToolChoice)
 	}
 
 	base.ConfirmedActions = []string{mattertool.ScenarioCreateToolName}
 	decision = NewToolPolicyBuilder(registry, nil).Build("run-1", base)
 	if !containsString(decision.AllowedTools, mattertool.ScenarioCreateToolName) {
 		t.Fatalf("confirmed AllowedTools = %#v, should include scenario.create", decision.AllowedTools)
+	}
+}
+
+func TestToolPolicyBuilderUsesPreferredToolsForStrongBusinessIntent(t *testing.T) {
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	tests := []struct {
+		name string
+		text string
+		tool string
+	}{
+		{
+			name: "review",
+			text: "帮我找一下上次 PM interview 的 review",
+			tool: reviewtool.ReviewSearchToolName,
+		},
+		{
+			name: "material",
+			text: "结合我的简历和后端岗位 JD，帮我准备英文自我介绍",
+			tool: mocktool.MaterialSearchToolName,
+		},
+		{
+			name: "mistake",
+			text: "看一下我以前的错题，找 recurring mistakes",
+			tool: mocktool.MistakeSearchToolName,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision := NewToolPolicyBuilder(registry, nil).Build(
+				"run-1",
+				PolicyContext{
+					Actor:    validPolicyActor(),
+					ThreadID: "thread-1",
+					Intent:   NewIntentGuard(nil).Guard("run-1", tt.text),
+				},
+			)
+			if got, want := decision.AllowedTools, []string{tt.tool}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("AllowedTools = %#v, want %#v", got, want)
+			}
+			if decision.ToolChoice.Mode != ai.ToolChoiceSpecific ||
+				decision.ToolChoice.Name != tt.tool {
+				t.Fatalf("ToolChoice = %#v, want specific %s", decision.ToolChoice, tt.tool)
+			}
+		})
 	}
 }
 

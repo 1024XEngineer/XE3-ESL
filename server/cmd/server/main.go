@@ -36,6 +36,7 @@ func run() int {
 	}
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
+	slog.SetDefault(logger)
 	toolConfig, err := config.LoadAgentTool()
 	if err != nil {
 		logger.Error("agent tool configuration failed")

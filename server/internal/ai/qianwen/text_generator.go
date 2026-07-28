@@ -152,6 +152,17 @@ func (generator *Generator) Generate(
 		EnableThinking: false,
 		MaxTokens:      generator.maxOutputTokens,
 	}
+	toolChoice, err := providerToolChoice(request.ToolChoice, internalToProvider)
+	if err != nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			err,
+		)
+	}
+	payload.ToolChoice = toolChoice
 	for _, message := range request.Messages {
 		providerMessage := chatMessage{
 			Role:       string(message.Role),
@@ -300,6 +311,7 @@ type chatCompletionRequest struct {
 	Model          string        `json:"model"`
 	Messages       []chatMessage `json:"messages"`
 	Tools          []chatTool    `json:"tools,omitempty"`
+	ToolChoice     any           `json:"tool_choice,omitempty"`
 	Stream         bool          `json:"stream"`
 	EnableThinking bool          `json:"enable_thinking"`
 	// The current compatibility overview lists max_completion_tokens as
@@ -331,6 +343,15 @@ type chatToolCall struct {
 	Type     string           `json:"type"`
 	Index    int              `json:"index"`
 	Function chatFunctionCall `json:"function"`
+}
+
+type chatSpecificToolChoice struct {
+	Type     string                         `json:"type"`
+	Function chatSpecificToolChoiceFunction `json:"function"`
+}
+
+type chatSpecificToolChoiceFunction struct {
+	Name string `json:"name"`
 }
 
 type chatFunctionCall struct {
@@ -375,7 +396,11 @@ func (response chatCompletionResponse) result(
 		return ai.TextResult{}, errors.New("Qianwen response choice has an invalid role")
 	}
 	content := strings.TrimSpace(choice.Message.Content)
-	switch choice.FinishReason {
+	finishReason := choice.FinishReason
+	if len(choice.Message.ToolCalls) > 0 && finishReason == "stop" {
+		finishReason = "tool_calls"
+	}
+	switch finishReason {
 	case "stop", "length":
 		if content == "" {
 			return ai.TextResult{}, errors.New("Qianwen response choice has no visible content")
@@ -437,7 +462,7 @@ func (response chatCompletionResponse) result(
 		Model:        model,
 		Content:      content,
 		ToolCalls:    toolCalls,
-		FinishReason: choice.FinishReason,
+		FinishReason: finishReason,
 		Usage: ai.TokenUsage{
 			InputTokens:  *response.Usage.PromptTokens,
 			OutputTokens: *response.Usage.CompletionTokens,
@@ -485,6 +510,35 @@ func toolNameMappings(request ai.TextRequest) (map[string]string, map[string]str
 		}
 	}
 	return internalToProvider, providerToInternal, nil
+}
+
+func providerToolChoice(
+	choice ai.ToolChoice,
+	internalToProvider map[string]string,
+) (any, error) {
+	switch choice.Mode {
+	case "":
+		return nil, nil
+	case ai.ToolChoiceAuto:
+		return "auto", nil
+	case ai.ToolChoiceNone:
+		return "none", nil
+	case ai.ToolChoiceRequired:
+		return "required", nil
+	case ai.ToolChoiceSpecific:
+		providerName, exists := internalToProvider[choice.Name]
+		if !exists {
+			return nil, errors.New("Qianwen specific tool choice is unavailable")
+		}
+		return chatSpecificToolChoice{
+			Type: "function",
+			Function: chatSpecificToolChoiceFunction{
+				Name: providerName,
+			},
+		}, nil
+	default:
+		return nil, errors.New("Qianwen tool choice mode is unsupported")
+	}
 }
 
 type errorEnvelope struct {
