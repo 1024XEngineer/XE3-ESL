@@ -20,6 +20,7 @@ func TestEveryPublicCategoryIsValid(t *testing.T) {
 		apperror.AlreadyExists,
 		apperror.Conflict,
 		apperror.FailedPrecondition,
+		apperror.UnprocessableEntity,
 		apperror.ResourceExhausted,
 		apperror.DeadlineExceeded,
 		apperror.Unimplemented,
