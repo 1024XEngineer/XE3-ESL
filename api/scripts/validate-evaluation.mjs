@@ -182,7 +182,17 @@ assertValid(
   fixture.create_dual_channel,
 );
 assertValid('queued create response', 'EvaluationAccepted', fixture.queued);
+assert.match(
+  fixture.queued.evaluation_id,
+  /^[0-9]/,
+  'queued fixture must cover a digit-leading Evaluation UUID',
+);
 assertValid('Core 4D ready', 'Evaluation', fixture.core_4d_ready);
+assert.match(
+  fixture.core_4d_ready.evaluation_id,
+  /^[A-Fa-f]/,
+  'ready fixture must cover a letter-leading Evaluation UUID',
+);
 assertValid(
   'short sample blocked',
   'Evaluation',
@@ -460,6 +470,14 @@ assertSchemaRejected(
   'caller-supplied owner',
   'CreateEvaluationRequest',
   invalidCreateWithOwner,
+);
+
+const invalidAcceptedEvaluationId = structuredClone(fixture.queued);
+invalidAcceptedEvaluationId.evaluation_id = 'evaluation_not_a_uuid';
+assertSchemaRejected(
+  'non-UUID Evaluation ID',
+  'EvaluationAccepted',
+  invalidAcceptedEvaluationId,
 );
 
 const invalidCreateWithoutSceneStrategy = structuredClone(

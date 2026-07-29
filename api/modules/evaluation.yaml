@@ -43,11 +43,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/EvaluationAccepted'
               example:
-                evaluation_id: evaluation_demo_001
-                evaluation_revision_id: evaluation_revision_demo_001
+                evaluation_id: 7b000001-0000-4000-8000-000000000001
+                evaluation_revision_id: a1000001-0000-4000-8000-000000000001
                 revision: 1
                 evaluation_status: QUEUED
-                status_url: /v1/evaluations/evaluation_demo_001
+                status_url: /v1/evaluations/7b000001-0000-4000-8000-000000000001
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
@@ -81,8 +81,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/Evaluation'
               example:
-                evaluation_id: evaluation_demo_001
-                evaluation_revision_id: evaluation_revision_demo_001
+                evaluation_id: 7b000001-0000-4000-8000-000000000001
+                evaluation_revision_id: a1000001-0000-4000-8000-000000000001
                 revision: 1
                 practice_session_id: session_demo_001
                 input_snapshot_id: snapshot_demo_001
@@ -143,12 +143,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/EvaluationAccepted'
               example:
-                evaluation_id: evaluation_demo_001
-                evaluation_revision_id: evaluation_revision_demo_002
+                evaluation_id: 7b000001-0000-4000-8000-000000000001
+                evaluation_revision_id: a1000002-0000-4000-8000-000000000002
                 revision: 2
-                supersedes_revision_id: evaluation_revision_demo_001
+                supersedes_revision_id: a1000001-0000-4000-8000-000000000001
                 evaluation_status: QUEUED
-                status_url: /v1/evaluations/evaluation_demo_001
+                status_url: /v1/evaluations/7b000001-0000-4000-8000-000000000001
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
@@ -206,8 +206,12 @@ components:
       in: path
       required: true
       schema:
-        $ref: '#/components/schemas/StableIdentifier'
+        $ref: '#/components/schemas/EvaluationUUID'
   schemas:
+    EvaluationUUID:
+      type: string
+      format: uuid
+      pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
     StableIdentifier:
       type: string
       minLength: 1
@@ -421,20 +425,20 @@ components:
         - status_url
       properties:
         evaluation_id:
-          $ref: '#/components/schemas/StableIdentifier'
+          $ref: '#/components/schemas/EvaluationUUID'
         evaluation_revision_id:
-          $ref: '#/components/schemas/StableIdentifier'
+          $ref: '#/components/schemas/EvaluationUUID'
         revision:
           type: integer
           minimum: 1
         supersedes_revision_id:
-          $ref: '#/components/schemas/StableIdentifier'
+          $ref: '#/components/schemas/EvaluationUUID'
         evaluation_status:
           type: string
           const: QUEUED
         status_url:
           type: string
-          pattern: '^/v1/evaluations/[A-Za-z][A-Za-z0-9_-]*$'
+          pattern: '^/v1/evaluations/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
     Evaluation:
       $ref: '#/components/schemas/EvaluationCommonProperties'
     EvaluationCommonProperties:
@@ -459,16 +463,16 @@ components:
         - updated_at
       properties:
         evaluation_id:
-          $ref: '#/components/schemas/StableIdentifier'
+          $ref: '#/components/schemas/EvaluationUUID'
         evaluation_revision_id:
-          $ref: '#/components/schemas/StableIdentifier'
+          $ref: '#/components/schemas/EvaluationUUID'
         revision:
           type: integer
           minimum: 1
         supersedes_revision_id:
-          $ref: '#/components/schemas/StableIdentifier'
+          $ref: '#/components/schemas/EvaluationUUID'
         superseded_by_revision_id:
-          $ref: '#/components/schemas/StableIdentifier'
+          $ref: '#/components/schemas/EvaluationUUID'
         practice_session_id:
           $ref: '#/components/schemas/StableIdentifier'
         input_snapshot_id:
