@@ -185,7 +185,7 @@ func (a *VoiceApplication) ApplyEffectiveTurn(
 		result.EffectiveTurns < 1 ||
 		result.SessionVersion <= 1 ||
 		result.TurnLimit < 1 ||
-		result.TurnLimit > 6 ||
+		result.TurnLimit > 14 ||
 		result.TurnLimit < result.EffectiveTurns ||
 		result.Completed != (result.EffectiveTurns == result.TurnLimit) {
 		return VoiceTurnProgress{}, persistence.ErrConflict

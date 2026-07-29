@@ -17,6 +17,7 @@ const (
 	ScenarioModelProjectExperienceDeepDive    ScenarioModel = "PROJECT_EXPERIENCE_DEEP_DIVE"
 	ScenarioModelInterviewBasicDialogue       ScenarioModel = "INTERVIEW_BASIC_DIALOGUE"
 	ScenarioModelIELTSSpeakingPart2           ScenarioModel = "IELTS_SPEAKING_PART_2"
+	ScenarioModelIELTSSpeakingFullMock        ScenarioModel = "IELTS_SPEAKING_FULL_MOCK"
 	ScenarioModelExamBasicDialogue            ScenarioModel = "EXAM_BASIC_DIALOGUE"
 	ScenarioModelProgressAndRiskUpdate        ScenarioModel = "PROGRESS_AND_RISK_UPDATE"
 	ScenarioModelWorkplaceBasicDialogue       ScenarioModel = "WORKPLACE_BASIC_DIALOGUE"

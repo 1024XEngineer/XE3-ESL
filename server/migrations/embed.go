@@ -16,6 +16,7 @@ import "embed"
 //go:embed 000028_review_scenario_policies.*.sql
 //go:embed 000029_agent_stable_profile_context_manifest.*.sql
 //go:embed 000030_agent_tool_routing_cleanup.*.sql
-//go:embed 000031_matter_agent_tools.*.sql
-//go:embed 000032_practice_optional_preview_snapshot.*.sql
+//go:embed 000031_agent_memory_extraction_barrier.*.sql
+//go:embed 000033_matter_agent_tools.*.sql
+//go:embed 000034_practice_optional_preview_snapshot.*.sql
 var Files embed.FS

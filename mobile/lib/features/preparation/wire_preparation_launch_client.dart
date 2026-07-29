@@ -14,6 +14,7 @@ const _scenarioModels = <String>{
   'PROJECT_EXPERIENCE_DEEP_DIVE',
   'INTERVIEW_BASIC_DIALOGUE',
   'IELTS_SPEAKING_PART_2',
+  'IELTS_SPEAKING_FULL_MOCK',
   'EXAM_BASIC_DIALOGUE',
   'PROGRESS_AND_RISK_UPDATE',
   'WORKPLACE_BASIC_DIALOGUE',
@@ -567,6 +568,7 @@ PreparationPracticeBootstrap _bootstrap(
   final maxEffectiveTurns = _validateSessionPolicy(
     snapshotObject['session_policy'],
     optionType: expected.selection.practiceOptionType,
+    scenarioModel: expected.selection.scenarioModel,
   );
   _validateObjectives(snapshotObject['practice_focuses'], allowEmpty: true);
   _dateTime(snapshotObject['created_at']);
@@ -599,6 +601,8 @@ void _validateScenarioSnapshot(
       'name',
       'version',
       'status',
+      'turn_policy_ref',
+      'session_policy_ref',
     },
   );
   if (_resourceId(object['scenario_definition_id']) !=
@@ -612,6 +616,8 @@ void _validateScenarioSnapshot(
     throw _invalidResponse();
   }
   _text(object['name']);
+  _resourceId(object['turn_policy_ref']);
+  _resourceId(object['session_policy_ref']);
 }
 
 void _validateConfigSnapshot(
@@ -824,6 +830,7 @@ void _validatePracticeOption(
 int _validateSessionPolicy(
   Object? value, {
   required PreparationOptionType optionType,
+  required String scenarioModel,
 }) {
   final object = _object(
     value,
@@ -840,14 +847,23 @@ int _validateSessionPolicy(
   final minimum = _version(object['min_effective_turns']);
   final maximum = _version(object['max_effective_turns']);
   final checkpoint = _version(object['coverage_checkpoint_turn']);
-  final expectedMaximum = switch (optionType) {
-    PreparationOptionType.fullSimulation => 6,
-    PreparationOptionType.focus => 3,
-  };
+  final isIeltsFullMock =
+      scenarioModel == 'IELTS_SPEAKING_FULL_MOCK' &&
+      optionType == PreparationOptionType.fullSimulation;
+  final expectedMaximum = isIeltsFullMock
+      ? 14
+      : switch (optionType) {
+          PreparationOptionType.fullSimulation => 6,
+          PreparationOptionType.focus => 3,
+        };
   if (_version(object['suggested_duration_seconds']) < 1 ||
       minimum > checkpoint ||
       checkpoint > maximum ||
       maximum != expectedMaximum ||
+      (isIeltsFullMock &&
+          (minimum != 14 ||
+              checkpoint != 14 ||
+              object['max_follow_ups_per_question'] != 0)) ||
       object['max_follow_ups_per_question'] is! int ||
       (object['max_follow_ups_per_question'] as int) < 0) {
     throw _invalidResponse();
@@ -1039,6 +1055,7 @@ bool _validScenarioFamilyModel(String family, String model) {
     ('INTERVIEW', 'PROJECT_EXPERIENCE_DEEP_DIVE') ||
     ('INTERVIEW', 'INTERVIEW_BASIC_DIALOGUE') ||
     ('EXAM', 'IELTS_SPEAKING_PART_2') ||
+    ('EXAM', 'IELTS_SPEAKING_FULL_MOCK') ||
     ('EXAM', 'EXAM_BASIC_DIALOGUE') ||
     ('WORKPLACE', 'PROGRESS_AND_RISK_UPDATE') ||
     ('WORKPLACE', 'WORKPLACE_BASIC_DIALOGUE') ||

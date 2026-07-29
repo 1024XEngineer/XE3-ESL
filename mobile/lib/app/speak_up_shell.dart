@@ -9,6 +9,7 @@ import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/conversation/conversation.dart';
+import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
@@ -220,7 +221,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     final review = widget.agentController.review;
-    if (review == null) {
+    final suppressReview = isIeltsSpeakingFullMockSession(
+      widget.agentController,
+    );
+    if (review == null || suppressReview) {
       _reviewPresented = false;
     } else if (!_reviewPresented) {
       _reviewPresented = true;
@@ -231,7 +235,8 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _restorePresentedReview() {
-    if (widget.agentController.review == null) {
+    if (widget.agentController.review == null ||
+        isIeltsSpeakingFullMockSession(widget.agentController)) {
       _reviewPresented = false;
       return;
     }
@@ -449,6 +454,7 @@ class _ConversationDrawer extends StatelessWidget {
             else
               _ConversationThreadTile(
                 threadId: currentThreadId,
+                title: current?.title,
                 updatedAt: current?.updatedAt,
                 selected: true,
                 enabled: !controller.isBusy,
@@ -470,6 +476,7 @@ class _ConversationDrawer extends StatelessWidget {
               for (final thread in recentThreads)
                 _ConversationThreadTile(
                   threadId: thread.id,
+                  title: thread.title,
                   updatedAt: thread.updatedAt,
                   selected: false,
                   enabled: !controller.isBusy,
@@ -509,6 +516,7 @@ class _ConversationDrawer extends StatelessWidget {
 class _ConversationThreadTile extends StatelessWidget {
   const _ConversationThreadTile({
     required this.threadId,
+    required this.title,
     required this.updatedAt,
     required this.selected,
     required this.enabled,
@@ -516,6 +524,7 @@ class _ConversationThreadTile extends StatelessWidget {
   });
 
   final String threadId;
+  final String? title;
   final DateTime? updatedAt;
   final bool selected;
   final bool enabled;
@@ -524,10 +533,11 @@ class _ConversationThreadTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lastUpdatedAt = updatedAt;
+    final displayTitle = title ?? '新对话';
     return Semantics(
       selected: selected,
       button: true,
-      label: selected ? '当前 Agent 对话' : 'Agent 对话',
+      label: selected ? '当前对话：$displayTitle' : displayTitle,
       child: ListTile(
         key: Key('conversation-thread-$threadId'),
         contentPadding: const EdgeInsets.symmetric(horizontal: 8),
@@ -537,7 +547,7 @@ class _ConversationThreadTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
         ),
         leading: const Icon(Icons.chat_bubble_outline_rounded),
-        title: const Text('Agent 对话'),
+        title: Text(displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: lastUpdatedAt == null
             ? null
             : Text('更新于 ${_formatThreadUpdatedAt(lastUpdatedAt)}'),

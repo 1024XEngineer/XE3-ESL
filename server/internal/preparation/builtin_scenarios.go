@@ -2,10 +2,12 @@ package preparation
 
 const (
 	IELTSSpeakingPart2ScenarioID    = "scn_ielts_speaking_part_2"
+	IELTSSpeakingFullMockScenarioID = "scn_ielts_speaking_full"
 	WorkplaceProgressRiskScenarioID = "scn_workplace_progress_risk_update"
 	DailyHotelCheckinScenarioID     = "scn_daily_hotel_checkin_issue"
 
 	IELTSSpeakingPart2ConfigID    = "scfg_ielts_speaking_part_2"
+	IELTSSpeakingFullMockConfigID = "scfg_ielts_speaking_full"
 	WorkplaceProgressRiskConfigID = "scfg_workplace_progress_risk_update"
 	DailyHotelCheckinConfigID     = "scfg_daily_hotel_checkin_issue"
 
@@ -20,6 +22,77 @@ const (
 	HotelFullSimulationOptionID     = "option_hotel_full_simulation"
 	HotelFrontDeskFocusOptionID     = "option_hotel_front_desk_focus"
 )
+
+func ieltsSpeakingFullMockCatalogDefinition() catalogScenario {
+	const roleID = "role_ielts_speaking_full_counterpart"
+	return singleRoleScenario(
+		ScenarioDefinition{
+			ID:               IELTSSpeakingFullMockScenarioID,
+			Type:             ScenarioFamilyExam,
+			Model:            ScenarioModelIELTSSpeakingFullMock,
+			Name:             "IELTS 口语完整模拟",
+			Version:          2,
+			Status:           ScenarioStatusActive,
+			TurnPolicyRef:    "generic.practice.turn.v1",
+			SessionPolicyRef: "generic.practice.session.v1",
+			DisplayOrder:     40,
+		},
+		ScenarioConfig{
+			ID:                   IELTSSpeakingFullMockConfigID,
+			ScenarioDefinitionID: IELTSSpeakingFullMockScenarioID,
+			Type:                 ScenarioFamilyExam,
+			Model:                ScenarioModelIELTSSpeakingFullMock,
+			Version:              2,
+			PromptModel: ScenarioPromptModel{
+				PublicSceneBrief: "按 Part 1、Part 2、Part 3 连续完成一轮 IELTS 口语完整模考。",
+				PracticeGoal:     "适应真实三段式流程，并在不同题型中保持连贯自然的表达。",
+				UserRole:         "考生",
+				AIRole:           "IELTS 口语考官",
+				PersonaSummary:   "A neutral IELTS speaking examiner who follows the frozen three-part mock-test sequence, asks exactly one item at a time, and never teaches or scores during the simulation.",
+				FocusAreas: []string{
+					"part_1_familiar_topics",
+					"part_2_long_turn",
+					"part_3_discussion",
+					"section_transition",
+				},
+				TurnBlueprints: []string{
+					"Part 1 question: Where is your hometown?",
+					"Part 1 question: Is there anything you do not like about your hometown?",
+					"Part 1 question: Would you say it is a good place for young people?",
+					"Part 1 question: Do you use artificial intelligence in your daily life?",
+					"Part 1 question: Has technology changed the way you learn things?",
+					"Part 1 question: Is there any technology you find difficult to use?",
+					"Part 1 question: What do you usually do in your free time?",
+					"Part 1 question: Do you prefer spending your free time alone or with other people?",
+					"Part 2 cue card: Describe a skill you would like to learn.\nYou should say:\n• What the skill is\n• Why you want to learn it\n• How you would learn it\n• And explain how learning this skill would benefit you",
+					"Part 3 question: What kinds of skills are most valuable in today's society?",
+					"Part 3 question: Some people say it is never too late to learn a new skill. Do you agree?",
+					"Part 3 question: Do you think schools should focus more on practical skills?",
+					"Part 3 question: How has technology changed the way people learn skills?",
+					"Part 3 question: Do you think some skills will become obsolete in the future?",
+				},
+				SuggestedDurationSeconds: 900,
+			},
+		},
+		RoleDefinition{
+			ID:                   roleID,
+			ScenarioDefinitionID: IELTSSpeakingFullMockScenarioID,
+			Type:                 "IELTS_EXAMINER",
+			DisplayName:          "IELTS 口语考官",
+			Responsibilities:     "Run the frozen Part 1, Part 2, and Part 3 sequence without coaching or scoring.",
+			Style:                "Neutral, concise, and exam appropriate.",
+			FocusAreas: []string{
+				"part_1_familiar_topics",
+				"part_2_long_turn",
+				"part_3_discussion",
+			},
+			Version:      2,
+			DisplayOrder: 10,
+		},
+		"option_ielts_speaking_full_full",
+		"option_ielts_speaking_full_focus",
+	)
+}
 
 func ieltsSpeakingPart2CatalogDefinition() catalogScenario {
 	return singleRoleScenario(
@@ -440,30 +513,6 @@ func basicExamCatalogDefinitions() []catalogScenario {
 				},
 				duration:     600,
 				displayOrder: 30,
-			},
-			{
-				slug:     "ielts_speaking_full",
-				name:     "IELTS 口语完整模拟",
-				scene:    "按 Part 1、Part 2、Part 3 的基本顺序完成一轮口语练习。",
-				goal:     "适应不同题型的阶段切换，并保持连贯自然的表达。",
-				userRole: "考生",
-				aiRole:   "IELTS 口语考官",
-				roleType: "IELTS_EXAMINER",
-				persona:  "A neutral IELTS speaking examiner who clearly signals section changes and never presents the practice as an official score.",
-				focusAreas: []string{
-					"part_1",
-					"part_2",
-					"part_3",
-					"section_transition",
-				},
-				blueprints: []string{
-					"以 Part 1 的简短个人问题开场",
-					"清楚切换并给出 Part 2 Cue Card",
-					"切换到 Part 3 的抽象讨论",
-					"完成一轮简短收尾",
-				},
-				duration:     900,
-				displayOrder: 40,
 			},
 			{
 				slug:     "speaking_exam_custom",

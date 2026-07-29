@@ -376,6 +376,47 @@ func TestVoiceQuestionRequestUsesFrozenScenarioPrompt(t *testing.T) {
 	}
 }
 
+func TestFrozenIELTSFullMockQuestionUsesExactBlueprintSequence(t *testing.T) {
+	t.Parallel()
+	session := agent.VoicePracticeSession{
+		ScenarioModel: "IELTS_SPEAKING_FULL_MOCK",
+		PromptModel: agent.VoiceScenarioPrompt{
+			TurnBlueprints: []string{
+				"Part 1 question: Where is your hometown?",
+				"Part 2 cue card: Describe a skill you would like to learn.\nYou should say:\n• What the skill is",
+				"Part 3 question: Which skills matter most?",
+			},
+		},
+	}
+
+	for sequence, want := range []string{
+		"Where is your hometown?",
+		"Describe a skill you would like to learn.\nYou should say:\n• What the skill is",
+		"Which skills matter most?",
+	} {
+		got, err := frozenIELTSFullMockQuestion(session, sequence+1)
+		if err != nil {
+			t.Fatalf("sequence %d: %v", sequence+1, err)
+		}
+		if got != want {
+			t.Fatalf("sequence %d=%q, want %q", sequence+1, got, want)
+		}
+	}
+
+	if _, err := frozenIELTSFullMockQuestion(session, 0); !errors.Is(
+		err,
+		agent.ErrInvalidContext,
+	) {
+		t.Fatalf("sequence 0 error=%v, want invalid context", err)
+	}
+	if _, err := frozenIELTSFullMockQuestion(session, 4); !errors.Is(
+		err,
+		agent.ErrInvalidContext,
+	) {
+		t.Fatalf("sequence 4 error=%v, want invalid context", err)
+	}
+}
+
 func TestMapRecordingConfirmationError(t *testing.T) {
 	terminalConflicts := []error{
 		conversation.ErrAudioAssetNotFound,

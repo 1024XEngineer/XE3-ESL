@@ -29,30 +29,40 @@ func TestBuiltinCatalogExposesAllMVPScenariosAcrossFourFamilies(t *testing.T) {
 		t.Fatalf("family counts=%v, want %v", familyCounts, wantFamilyCounts)
 	}
 	for id, want := range map[string]struct {
-		family ScenarioFamily
-		model  ScenarioModel
+		family  ScenarioFamily
+		model   ScenarioModel
+		version int
 	}{
 		ProgrammerInterviewScenarioID: {
 			ScenarioFamilyInterview,
 			ScenarioModelProjectExperienceDeepDive,
+			1,
 		},
 		IELTSSpeakingPart2ScenarioID: {
 			ScenarioFamilyExam,
 			ScenarioModelIELTSSpeakingPart2,
+			1,
+		},
+		IELTSSpeakingFullMockScenarioID: {
+			ScenarioFamilyExam,
+			ScenarioModelIELTSSpeakingFullMock,
+			2,
 		},
 		WorkplaceProgressRiskScenarioID: {
 			ScenarioFamilyWorkplace,
 			ScenarioModelProgressAndRiskUpdate,
+			1,
 		},
 		DailyHotelCheckinScenarioID: {
 			ScenarioFamilyDaily,
 			ScenarioModelHotelCheckinAndIssueHandling,
+			1,
 		},
 	} {
 		scenario, ok := byID[id]
 		if !ok || scenario.Type != want.family ||
 			scenario.Model != want.model ||
-			scenario.Version != 1 ||
+			scenario.Version != want.version ||
 			scenario.Status != ScenarioStatusActive {
 			t.Fatalf("scenario %q=%#v, want %#v", id, scenario, want)
 		}
@@ -112,6 +122,10 @@ func TestBuiltinCatalogExposesAllMVPScenariosAcrossFourFamilies(t *testing.T) {
 			t.Fatalf("GetScenarioDetail(%q): %v", scenario.ID, err)
 		}
 		config := detail.ScenarioConfig
+		wantBlueprints := 4
+		if scenario.Model == ScenarioModelIELTSSpeakingFullMock {
+			wantBlueprints = 14
+		}
 		if config.Type != scenario.Type ||
 			config.Model != scenario.Model ||
 			config.PromptModel.PublicSceneBrief == "" ||
@@ -120,7 +134,7 @@ func TestBuiltinCatalogExposesAllMVPScenariosAcrossFourFamilies(t *testing.T) {
 			config.PromptModel.AIRole == "" ||
 			config.PromptModel.PersonaSummary == "" ||
 			len(config.PromptModel.FocusAreas) == 0 ||
-			len(config.PromptModel.TurnBlueprints) != 4 ||
+			len(config.PromptModel.TurnBlueprints) != wantBlueprints ||
 			config.PromptModel.SuggestedDurationSeconds < 1 {
 			t.Fatalf("scenario %q has incomplete prompt model: %#v", scenario.ID, config)
 		}

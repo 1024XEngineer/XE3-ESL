@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:speakup/design/speak_up_design.dart';
 
 import 'agent_models.dart';
@@ -110,11 +111,19 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   Widget _buildTextMessage(BuildContext context, Color foreground) {
     final message = widget.message;
     final voice = widget.voiceController;
-    if (message.role == AgentMessageRole.user || voice == null) {
+    if (message.role == AgentMessageRole.user) {
       return Text(
         message.text,
         style: TextStyle(color: foreground, fontSize: 15, height: 1.45),
       );
+    }
+    final markdown = _AssistantMarkdown(
+      key: Key('agent-assistant-text-${message.id}'),
+      data: message.text,
+      foreground: foreground,
+    );
+    if (voice == null) {
+      return markdown;
     }
     final loading = voice.loadingMessageId == message.id;
     final playing = voice.playingMessageId == message.id;
@@ -124,11 +133,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          message.text,
-          key: Key('agent-assistant-text-${message.id}'),
-          style: TextStyle(color: foreground, fontSize: 15, height: 1.48),
-        ),
+        markdown,
         const SizedBox(height: 6),
         Wrap(
           spacing: 4,
@@ -367,6 +372,65 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _AssistantMarkdown extends StatelessWidget {
+  const _AssistantMarkdown({
+    required this.data,
+    required this.foreground,
+    super.key,
+  });
+
+  final String data;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    final body = TextStyle(color: foreground, fontSize: 15, height: 1.48);
+    return MarkdownBody(
+      data: data,
+      selectable: true,
+      fitContent: true,
+      styleSheet: MarkdownStyleSheet(
+        a: body,
+        p: body,
+        pPadding: EdgeInsets.zero,
+        em: body.copyWith(fontStyle: FontStyle.italic),
+        strong: body.copyWith(fontWeight: FontWeight.w700),
+        code: body.copyWith(
+          fontFamily: 'monospace',
+          fontSize: 13.5,
+          backgroundColor: SpeakUpDesign.surfaceMuted,
+        ),
+        h1: body.copyWith(fontSize: 20, fontWeight: FontWeight.w700),
+        h2: body.copyWith(fontSize: 18, fontWeight: FontWeight.w700),
+        h3: body.copyWith(fontSize: 16, fontWeight: FontWeight.w700),
+        h4: body.copyWith(fontWeight: FontWeight.w700),
+        h5: body.copyWith(fontWeight: FontWeight.w700),
+        h6: body.copyWith(fontWeight: FontWeight.w700),
+        blockquote: body.copyWith(color: SpeakUpDesign.secondary),
+        listBullet: body,
+        listIndent: 20,
+        blockSpacing: 8,
+        blockquotePadding: const EdgeInsets.fromLTRB(10, 5, 8, 5),
+        blockquoteDecoration: const BoxDecoration(
+          color: SpeakUpDesign.surfaceMuted,
+          border: Border(
+            left: BorderSide(color: SpeakUpDesign.primary, width: 3),
+          ),
+        ),
+        codeblockPadding: const EdgeInsets.all(10),
+        codeblockDecoration: BoxDecoration(
+          color: SpeakUpDesign.surfaceMuted,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+      imageBuilder: (uri, title, alt) => Text(
+        alt == null || alt.trim().isEmpty ? '[图片已隐藏]' : '[图片：$alt]',
+        style: body.copyWith(color: SpeakUpDesign.secondary),
+      ),
     );
   }
 }

@@ -70,7 +70,27 @@ void main() {
     expect(find.byKey(const Key('practice-page')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('practice-record')));
-    await tester.pump(const Duration(milliseconds: 220));
+    await tester.pumpAndSettle();
+    expect(agentController.recordingState, PracticeRecordingState.recording);
+    expect(find.text('再次点击结束'), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-cancel-tap-recording')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('practice-cancel-tap-recording')));
+    await tester.pumpAndSettle();
+    expect(agentController.recordingState, PracticeRecordingState.idle);
+    expect(find.byKey(const Key('practice-transcript')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('practice-record')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('practice-stop-recording')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('practice-rerecord')));
+    await tester.pumpAndSettle();
     expect(agentController.recordingState, PracticeRecordingState.idle);
 
     final cancelledGesture = await tester.startGesture(

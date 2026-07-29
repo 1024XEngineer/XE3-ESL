@@ -106,17 +106,19 @@ final class AgentMessage {
 
 /// One durable Agent Thread as returned by the bounded history endpoint.
 ///
-/// Threads deliberately have no client-invented title, summary, archive, or
-/// unread state. The Drawer presents the server-owned update time instead.
+/// Thread titles are server-owned and may be absent until the first committed
+/// user Message. Clients never infer a title from local Message content.
 final class AgentThreadSummary {
   const AgentThreadSummary({
     required this.id,
     required this.createdAt,
     required this.updatedAt,
+    this.title,
     this.activeMatterId,
   });
 
   final String id;
+  final String? title;
   final String? activeMatterId;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -176,7 +178,7 @@ final class AgentPracticeSnapshot {
     this.review,
     this.pendingReviewClientId,
   }) : sessionCompleted = sessionCompleted ?? completedTurns == turnLimit,
-       assert(turnLimit >= 1 && turnLimit <= 6),
+       assert(turnLimit >= 1 && turnLimit <= 14),
        assert(completedTurns >= 0 && completedTurns <= turnLimit),
        assert(
          review == null || (sessionCompleted ?? completedTurns == turnLimit),
@@ -192,6 +194,7 @@ final class AgentPracticeSnapshot {
 final class AgentThreadSnapshot {
   const AgentThreadSnapshot({
     required this.threadId,
+    this.title,
     this.activeMatter,
     this.practice,
     this.textRecovery,
@@ -202,6 +205,7 @@ final class AgentThreadSnapshot {
   }) : assert(practice == null || activeMatter != null);
 
   final String threadId;
+  final String? title;
   final AgentMatter? activeMatter;
   final AgentPracticeSnapshot? practice;
   final AgentTextRecovery? textRecovery;

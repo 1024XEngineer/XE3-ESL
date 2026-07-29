@@ -576,7 +576,7 @@ void main() {
     );
     expect(
       find.descendant(of: drawer, matching: find.text('新对话')),
-      findsOneWidget,
+      findsNWidgets(2),
     );
     expect(
       find.descendant(of: drawer, matching: find.text('当前对话')),

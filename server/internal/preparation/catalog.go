@@ -355,6 +355,7 @@ func validScenarioFamilyModel(family ScenarioFamily, model ScenarioModel) bool {
 			model == ScenarioModelInterviewBasicDialogue
 	case ScenarioFamilyExam:
 		return model == ScenarioModelIELTSSpeakingPart2 ||
+			model == ScenarioModelIELTSSpeakingFullMock ||
 			model == ScenarioModelExamBasicDialogue
 	case ScenarioFamilyWorkplace:
 		return model == ScenarioModelProgressAndRiskUpdate ||
