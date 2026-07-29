@@ -832,12 +832,20 @@ components:
       additionalProperties: false
       required:
         - thread_id
+        - title
         - created_at
         - updated_at
       properties:
         thread_id:
           type: string
           format: uuid
+          readOnly: true
+        title:
+          type:
+            - string
+            - "null"
+          minLength: 1
+          maxLength: 25
           readOnly: true
         active_matter_id:
           type: string

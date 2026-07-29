@@ -34,6 +34,7 @@ const (
 type Thread struct {
 	ID             string
 	OwnerID        string
+	Title          string
 	ActiveMatterID string
 	NextMessageSeq int64
 	CreatedAt      time.Time

@@ -1812,8 +1812,12 @@ func matterResponse(item matter.Matter) gin.H {
 func threadResponse(thread Thread) gin.H {
 	result := gin.H{
 		"thread_id":  thread.ID,
+		"title":      nil,
 		"created_at": thread.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at": thread.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if thread.Title != "" {
+		result["title"] = thread.Title
 	}
 	if thread.ActiveMatterID != "" {
 		result["active_matter_id"] = thread.ActiveMatterID

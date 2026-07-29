@@ -2016,6 +2016,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
     return AgentThreadSummary(
       id: snapshot.threadId,
+      title: snapshot.title,
       activeMatterId: snapshot.activeMatter?.id,
       createdAt: createdAt,
       updatedAt: updatedAt,
@@ -2122,6 +2123,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       final now = DateTime.now().toUtc();
       final updated = AgentThreadSummary(
         id: current.id,
+        title: current.title,
         activeMatterId: current.activeMatterId,
         createdAt: current.createdAt,
         updatedAt: now.isBefore(current.updatedAt) ? current.updatedAt : now,
@@ -2130,6 +2132,19 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _mergeThreadSummary(updated, placeFirst: true);
     }
     notifyListeners();
+    if (client case final AgentThreadHistoryClient historyClient) {
+      final threadId = _threadId;
+      if (threadId != null) {
+        final fence = _captureOperationFence(threadId: threadId);
+        unawaited(
+          _refreshAuthoritativeThreadPage(
+            historyClient,
+            fence: fence,
+            failureMessage: '语音消息已发送，但对话标题暂时无法刷新。请重试。',
+          ),
+        );
+      }
+    }
   }
 
   void _markVoiceMessageAudioDeleted(

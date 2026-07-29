@@ -454,6 +454,7 @@ class _ConversationDrawer extends StatelessWidget {
             else
               _ConversationThreadTile(
                 threadId: currentThreadId,
+                title: current?.title,
                 updatedAt: current?.updatedAt,
                 selected: true,
                 enabled: !controller.isBusy,
@@ -475,6 +476,7 @@ class _ConversationDrawer extends StatelessWidget {
               for (final thread in recentThreads)
                 _ConversationThreadTile(
                   threadId: thread.id,
+                  title: thread.title,
                   updatedAt: thread.updatedAt,
                   selected: false,
                   enabled: !controller.isBusy,
@@ -514,6 +516,7 @@ class _ConversationDrawer extends StatelessWidget {
 class _ConversationThreadTile extends StatelessWidget {
   const _ConversationThreadTile({
     required this.threadId,
+    required this.title,
     required this.updatedAt,
     required this.selected,
     required this.enabled,
@@ -521,6 +524,7 @@ class _ConversationThreadTile extends StatelessWidget {
   });
 
   final String threadId;
+  final String? title;
   final DateTime? updatedAt;
   final bool selected;
   final bool enabled;
@@ -529,10 +533,11 @@ class _ConversationThreadTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lastUpdatedAt = updatedAt;
+    final displayTitle = title ?? '新对话';
     return Semantics(
       selected: selected,
       button: true,
-      label: selected ? '当前 Agent 对话' : 'Agent 对话',
+      label: selected ? '当前对话：$displayTitle' : displayTitle,
       child: ListTile(
         key: Key('conversation-thread-$threadId'),
         contentPadding: const EdgeInsets.symmetric(horizontal: 8),
@@ -542,7 +547,7 @@ class _ConversationThreadTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
         ),
         leading: const Icon(Icons.chat_bubble_outline_rounded),
-        title: const Text('Agent 对话'),
+        title: Text(displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: lastUpdatedAt == null
             ? null
             : Text('更新于 ${_formatThreadUpdatedAt(lastUpdatedAt)}'),
