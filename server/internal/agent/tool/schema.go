@@ -45,12 +45,22 @@ type SourceRef struct {
 	ID   string `json:"id"`
 }
 
+// TrustedConfirmation is injected by an authenticated delivery boundary.
+// Model-generated tool arguments can describe the same resource, but cannot
+// create or replace this confirmation fact.
+type TrustedConfirmation struct {
+	Kind       string
+	ResourceID string
+	Revision   int
+}
+
 type CallContext struct {
-	Actor      requestcontext.Actor
-	ThreadID   string
-	RunID      string
-	ToolCallID string
-	RequestID  string
+	Actor        requestcontext.Actor
+	ThreadID     string
+	RunID        string
+	ToolCallID   string
+	RequestID    string
+	Confirmation *TrustedConfirmation
 }
 
 type Invocation struct {

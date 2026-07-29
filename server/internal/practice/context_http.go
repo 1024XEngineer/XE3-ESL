@@ -49,6 +49,12 @@ type ContextHTTPApplication interface {
 		string,
 		CreateSessionRequest,
 	) (persistence.ContextSessionBootstrap, bool, error)
+	ConfirmAndStartPractice(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		StartConfirmation,
+	) (ConfirmAndStartResult, error)
 	GetSession(
 		context.Context,
 		requestcontext.Actor,
@@ -91,6 +97,10 @@ func (h *ContextHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 		"/v1/practice-plans/:practice_plan_id/practice-sessions",
 		h.createSession,
 	)
+	routes.POST(
+		"/v1/agent-threads/:thread_id/practice-start-confirmations",
+		h.confirmAndStartPractice,
+	)
 	routes.GET(
 		"/v1/practice-sessions/:practice_session_id",
 		h.getSession,
@@ -111,6 +121,80 @@ func (h *ContextHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 		"/v1/practice-sessions/:practice_session_id/snapshot",
 		h.getSessionSnapshot,
 	)
+}
+
+func (h *ContextHTTPHandler) confirmAndStartPractice(c *gin.Context) {
+	setPracticeContextPrivateResponseHeaders(c)
+	actor, ok := practiceContextActor(c)
+	if !ok {
+		writePracticeContextAuthenticationRequired(c)
+		return
+	}
+	idempotencyKey, ok := practiceContextIdempotencyKey(c)
+	if !ok {
+		writePracticeContextHTTPError(c, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	threadID := c.Param("thread_id")
+	if !validContextResourceID(threadID) {
+		writePracticeContextHTTPError(c, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	var request struct {
+		PracticePlanID       string `json:"practice_plan_id"`
+		ExpectedPlanRevision int    `json:"expected_plan_revision"`
+		UserConfirmed        bool   `json:"user_confirmed"`
+	}
+	if !decodePracticeContextJSONObject(c, &request) ||
+		!validContextResourceID(request.PracticePlanID) ||
+		request.ExpectedPlanRevision < 1 {
+		writePracticeContextHTTPError(c, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if !request.UserConfirmed {
+		writePracticeContextHTTPError(
+			c,
+			http.StatusConflict,
+			"confirmation_required",
+		)
+		return
+	}
+	result, err := h.application.ConfirmAndStartPractice(
+		c.Request.Context(),
+		actor,
+		idempotencyKey,
+		StartConfirmation{
+			AgentThreadID:        threadID,
+			PracticePlanID:       request.PracticePlanID,
+			ExpectedPlanRevision: request.ExpectedPlanRevision,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, persistence.ErrConflict) {
+			writePracticeContextHTTPError(
+				c,
+				http.StatusConflict,
+				"version_conflict",
+			)
+			return
+		}
+		writePracticeContextServiceError(c, err, "practice_plan_not_found")
+		return
+	}
+	if result.ActiveConflict {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": gin.H{
+				"code":           "active_session_conflict",
+				"message":        "An active Practice Session already exists.",
+				"retryable":      false,
+				"correlation_id": newPracticeContextCorrelationID(),
+			},
+			"practice_session": result.Bootstrap.Session,
+			"snapshot":         result.Bootstrap.Snapshot,
+		})
+		return
+	}
+	c.JSON(http.StatusCreated, result.Bootstrap)
 }
 
 func (h *ContextHTTPHandler) createPlan(c *gin.Context) {
@@ -565,6 +649,8 @@ func writePracticeContextHTTPError(
 		"practice_session_already_terminal": "Practice session is already terminal.",
 		"idempotency_key_conflict":          "Idempotency key conflicts with the original request.",
 		"confirmation_required":             "Explicit user confirmation is required.",
+		"version_conflict":                  "The Practice Plan revision has changed.",
+		"active_session_conflict":           "An active Practice Session already exists.",
 		"resource_conflict":                 "Resource state conflicts with this operation.",
 		"internal_error":                    "An internal error occurred.",
 	}

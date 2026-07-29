@@ -1127,6 +1127,92 @@ func TestPostgresCompletedHistoryUsesOwnerScopedStableKeysetPagination(
 	}
 }
 
+func TestPostgresCompletedHistorySearchIsBoundedAndOwnerScoped(t *testing.T) {
+	pool := reviewDatabase(t)
+	insertUsers(t, pool, userA, userB)
+	repository := review.NewPostgresRepository(pool)
+	ensure := review.NewEnsureService(
+		repository,
+		sourceReader{},
+		&countingGenerator{},
+	)
+	history := review.NewHistoryService(repository)
+
+	matching, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userA, "search-session-metrics"),
+	)
+	if err != nil {
+		t.Fatalf("ensure matching Review: %v", err)
+	}
+	other, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userA, "search-session-structure"),
+	)
+	if err != nil {
+		t.Fatalf("ensure other Review: %v", err)
+	}
+	foreign, err := ensure.EnsureReview(
+		context.Background(),
+		ensureCommand(userB, "search-session-foreign"),
+	)
+	if err != nil {
+		t.Fatalf("ensure foreign Review: %v", err)
+	}
+	summaries := map[string]string{
+		matching.ID: "Strong structure; add one concrete METRIC.",
+		other.ID:    "Good pacing and concise transitions.",
+		foreign.ID:  "Foreign metric must never be visible.",
+	}
+	for reviewID, summary := range summaries {
+		if _, err := pool.Exec(context.Background(), `
+			UPDATE reviews
+			SET result = jsonb_set(result, '{summary}', to_jsonb($2::text), false)
+			WHERE id = $1
+		`, reviewID, summary); err != nil {
+			t.Fatalf("set Review %s summary: %v", reviewID, err)
+		}
+	}
+	if _, err := repository.EnsurePending(
+		context.Background(),
+		ensureCommand(userA, "search-pending-metric"),
+	); err != nil {
+		t.Fatalf("ensure pending search Review: %v", err)
+	}
+
+	found, err := history.SearchCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistorySearchQuery{Query: "metric", Limit: 20},
+	)
+	if err != nil {
+		t.Fatalf("search completed Review history: %v", err)
+	}
+	if len(found) != 1 ||
+		found[0].ID != matching.ID ||
+		found[0].OwnerUserID != userA ||
+		found[0].Result == nil ||
+		found[0].Result.Summary != summaries[matching.ID] {
+		t.Fatalf("completed Review search = %+v", found)
+	}
+
+	filtered, err := history.SearchCompleted(
+		context.Background(),
+		actor(userA),
+		review.HistorySearchQuery{
+			Query:             "search-session",
+			PracticeSessionID: other.PracticeSessionID,
+			Limit:             1,
+		},
+	)
+	if err != nil {
+		t.Fatalf("search Review by practice session: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != other.ID {
+		t.Fatalf("practice-session Review search = %+v", filtered)
+	}
+}
+
 func TestPostgresReviewRejectsNULBeforeJSONBWrite(t *testing.T) {
 	pool := reviewDatabase(t)
 	insertUsers(t, pool, userA)

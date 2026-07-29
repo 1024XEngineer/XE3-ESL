@@ -260,9 +260,7 @@ func (DeterministicRouter) Route(
 				ToolCalls: []ToolCall{{
 					Name: mattertool.ScenarioCreateToolName,
 					Input: mustRaw(map[string]any{
-						"type":  "interview",
 						"title": "英文 PM 面试",
-						"goal":  "prepare for a PM interview in English",
 					}),
 				}},
 			}
@@ -287,7 +285,6 @@ func (DeterministicRouter) Route(
 				ToolCalls: []ToolCall{{
 					Name: mattertool.ScenarioCreateToolName,
 					Input: mustRaw(map[string]any{
-						"type":  "interview",
 						"title": "English PM interview",
 					}),
 				}},

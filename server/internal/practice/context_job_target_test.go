@@ -56,6 +56,7 @@ func TestTargetedPlanPreviewFreezesServerRecommendationWithoutSession(
 			AgentThreadID:         "thread-1",
 			MatterID:              "matter-1",
 			PreparationSnapshotID: preparation.ID,
+			MaxEffectiveTurns:     2,
 		},
 	)
 	if err != nil || replayed {
@@ -67,6 +68,7 @@ func TestTargetedPlanPreviewFreezesServerRecommendationWithoutSession(
 		captured.CatalogSnapshot.PracticeOption.ID !=
 			catalog.PracticeOption.ID ||
 		captured.SessionPolicy == nil ||
+		captured.SessionPolicy.MaxEffectiveTurns != 2 ||
 		len(captured.PracticeFocuses) == 0 ||
 		sessionCreates != 0 {
 		t.Fatalf("frozen targeted command = %+v", captured)

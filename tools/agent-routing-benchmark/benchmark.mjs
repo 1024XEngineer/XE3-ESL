@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -169,7 +170,8 @@ function reportName(date) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
-  const cases = JSON.parse(await readFile(options.casesFile, "utf8"));
+  const casesRaw = await readFile(options.casesFile, "utf8");
+  const cases = JSON.parse(casesRaw);
   if (!Array.isArray(cases) || cases.length === 0) {
     throw new Error("cases file must contain a non-empty JSON array");
   }
@@ -212,10 +214,13 @@ async function main() {
   const results = evaluateCases(cases, executions, parseJsonLog(logContent));
   const metrics = calculateMetrics(results);
   const now = new Date();
+  const currentReportName = reportName(now);
   const firstExecution = executions.find((execution) => execution.model);
   const metadata = {
+    report_id: currentReportName,
     generated_at: now.toISOString(),
     git_revision: gitRevision(),
+    suite_fingerprint: `sha256:${createHash("sha256").update(JSON.stringify(cases)).digest("hex")}`,
     base_url: options.baseUrl,
     cases_file: path.relative(process.cwd(), options.casesFile),
     provider: firstExecution?.provider ?? "",
@@ -224,7 +229,7 @@ async function main() {
   };
   const outputs = await writeReports({
     reportDirectory: options.reportDirectory,
-    reportName: reportName(now),
+    reportName: currentReportName,
     metadata,
     results,
     metrics,

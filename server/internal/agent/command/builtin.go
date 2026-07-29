@@ -18,7 +18,6 @@ func Builtins() []Definition {
 			ToolName:    ToolScenarioCreate,
 			BuildInput: func(args string) (json.RawMessage, error) {
 				return JSONObjectInput(map[string]any{
-					"type":  "interview",
 					"title": args,
 				})
 			},
@@ -30,7 +29,6 @@ func Builtins() []Definition {
 			ToolName:    ToolScenarioCreate,
 			BuildInput: func(args string) (json.RawMessage, error) {
 				return JSONObjectInput(map[string]any{
-					"type":  "speaking",
 					"title": args,
 				})
 			},

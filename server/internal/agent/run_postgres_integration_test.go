@@ -519,7 +519,7 @@ WHERE table_schema = current_schema()
 		integrationToolResult(
 			"call-scenario-create",
 			mattertool.ScenarioCreateToolName,
-			`{"type":"interview","title":"Backend interview practice"}`,
+			`{"title":"Backend interview practice"}`,
 		),
 		integrationFinalResult("scenario-create", "The practice scenario is ready."),
 		integrationToolResult(
