@@ -171,6 +171,29 @@ void main() {
     expect(recorder.discarded, 0);
   });
 
+  test(
+    'retained transcription audio blocks leaving without deleting it',
+    () async {
+      final practice = _TwoTurnPracticeClient()
+        ..transcribeFailure = StateError('transcription failed');
+      final recorder = _Recorder();
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: recorder,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      await controller.startRecording();
+      await controller.stopRecording();
+
+      expect(await controller.prepareToLeavePractice(), isFalse);
+      expect(controller.hasPendingPracticeAudio, isTrue);
+      expect(recorder.discarded, 0);
+    },
+  );
+
   test('account cleanup removes retained transcription audio state', () async {
     final practice = _TwoTurnPracticeClient()
       ..transcribeFailure = StateError('transcription failed');
@@ -213,6 +236,37 @@ void main() {
 
     expect(recorder.discarded, 1);
   });
+
+  test(
+    'dispose retries account cleanup after an in-flight delete fails',
+    () async {
+      final practice = _TwoTurnPracticeClient()
+        ..transcribeFailure = StateError('transcription failed');
+      final discardGate = Completer<void>();
+      final cleanupSignal = Completer<void>();
+      final recorder = _Recorder(
+        discardGate: discardGate,
+        cleanupSignal: cleanupSignal,
+      )..discardFailure = StateError('first delete failed');
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: recorder,
+      );
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      await controller.startRecording();
+      await controller.stopRecording();
+
+      unawaited(controller.discardPendingPracticeAudio());
+      await Future<void>.delayed(Duration.zero);
+      controller.dispose();
+      discardGate.complete();
+      await cleanupSignal.future.timeout(const Duration(seconds: 2));
+
+      expect(recorder.cleanupCount, 1);
+    },
+  );
 
   test(
     'private-state cleanup clears Practice transport and temporary audio',
@@ -1549,9 +1603,11 @@ final class _ControlledStartRecorder implements PracticeRecorder {
 }
 
 final class _Recorder implements PracticeRecorder {
-  _Recorder({this.discardSignal});
+  _Recorder({this.discardSignal, this.discardGate, this.cleanupSignal});
 
   final Completer<void>? discardSignal;
+  final Completer<void>? discardGate;
+  final Completer<void>? cleanupSignal;
   Object? discardFailure;
   int discarded = 0;
   int cleanupCount = 0;
@@ -1574,6 +1630,7 @@ final class _Recorder implements PracticeRecorder {
 
   @override
   Future<void> discard(RecordedPracticeAudio audio) async {
+    await discardGate?.future;
     if (discardFailure case final failure?) {
       throw failure;
     }
@@ -1593,6 +1650,10 @@ final class _Recorder implements PracticeRecorder {
   Future<void> clearAccountState() async {
     cleanupCount++;
     recording = false;
+    final signal = cleanupSignal;
+    if (signal != null && !signal.isCompleted) {
+      signal.complete();
+    }
   }
 }
 

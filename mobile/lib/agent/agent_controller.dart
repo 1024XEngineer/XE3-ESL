@@ -82,6 +82,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   final AgentClientIdFactory _clientIdFactory;
   final Duration _recordingLimit;
   AgentVoiceController? _voiceController;
+  Future<void>? _agentVoiceStartFuture;
+  int _agentVoiceStartGeneration = 0;
+  bool _agentDepartureInFlight = false;
   bool _relayedVoiceWorkflowActive = false;
 
   String? _threadId;
@@ -790,31 +793,62 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   /// If the account has no focused Thread, the existing safe Thread creation
   /// path runs first. This microphone is intentionally independent from the
   /// Practice turn recorder.
-  Future<void> startAgentVoiceRecording() async {
+  Future<void> startAgentVoiceRecording() {
     final voice = _voiceController;
-    if (voice == null || _disposed || voice.hasActiveWorkflow) {
-      return;
+    if (voice == null ||
+        _disposed ||
+        voice.hasActiveWorkflow ||
+        _agentDepartureInFlight ||
+        _agentVoiceStartFuture != null) {
+      return Future<void>.value();
     }
+    final generation = ++_agentVoiceStartGeneration;
+    late final Future<void> operation;
+    operation = _startAgentVoiceRecording(voice, generation).whenComplete(() {
+      if (identical(_agentVoiceStartFuture, operation)) {
+        _agentVoiceStartFuture = null;
+      }
+    });
+    _agentVoiceStartFuture = operation;
+    return operation;
+  }
+
+  Future<void> _startAgentVoiceRecording(
+    AgentVoiceController voice,
+    int generation,
+  ) async {
     await _ensureInitialized();
-    if (_disposed) {
+    if (!_isAgentVoiceStartCurrent(voice, generation)) {
       return;
     }
     if (_threadId == null) {
       final created = await createThread();
-      if (!created || _threadId == null || _disposed) {
+      if (!created ||
+          _threadId == null ||
+          !_isAgentVoiceStartCurrent(voice, generation)) {
         return;
       }
     }
     final threadId = _threadId!;
     await voice.bindThread(threadId, messages: _messages);
-    if (_disposed || _threadId != threadId || voice.threadId != threadId) {
+    if (!_isAgentVoiceStartCurrent(voice, generation) ||
+        _threadId != threadId ||
+        voice.threadId != threadId) {
       return;
     }
     await stopPracticeAudio();
-    if (_disposed || _threadId != threadId || voice.threadId != threadId) {
+    if (!_isAgentVoiceStartCurrent(voice, generation) ||
+        _threadId != threadId ||
+        voice.threadId != threadId) {
       return;
     }
     await voice.startRecording();
+  }
+
+  bool _isAgentVoiceStartCurrent(AgentVoiceController voice, int generation) {
+    return !_disposed &&
+        generation == _agentVoiceStartGeneration &&
+        identical(_voiceController, voice);
   }
 
   Future<void> selectScene(AgentScene scene) async {
@@ -1330,26 +1364,36 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<bool> prepareToLeaveAgent() async {
-    if (_disposed || _threadTransitionInFlight) {
+    if (_disposed || _threadTransitionInFlight || _agentDepartureInFlight) {
       return false;
     }
-    final voice = _voiceController;
-    if (voice != null) {
-      switch (voice.state) {
-        case AgentVoiceComposerState.confirming ||
-            AgentVoiceComposerState.awaitingAssistant:
-          return false;
-        case AgentVoiceComposerState.idle:
-          break;
-        default:
-          await voice.cancel();
-      }
-      if (_disposed || voice.hasActiveWorkflow) {
+    _agentDepartureInFlight = true;
+    try {
+      _agentVoiceStartGeneration++;
+      await _agentVoiceStartFuture;
+      if (_disposed || _threadTransitionInFlight) {
         return false;
       }
+      final voice = _voiceController;
+      if (voice != null) {
+        switch (voice.state) {
+          case AgentVoiceComposerState.confirming ||
+              AgentVoiceComposerState.awaitingAssistant:
+            return false;
+          case AgentVoiceComposerState.idle:
+            break;
+          default:
+            await voice.cancel();
+        }
+        if (_disposed || voice.hasActiveWorkflow) {
+          return false;
+        }
+      }
+      await stopPracticeAudio();
+      return !_disposed && !_threadTransitionInFlight;
+    } finally {
+      _agentDepartureInFlight = false;
     }
-    await stopPracticeAudio();
-    return !_disposed && !_threadTransitionInFlight;
   }
 
   Future<bool> prepareToLeavePractice() async {
@@ -1357,6 +1401,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         _practiceRequestInFlight ||
         _threadTransitionInFlight ||
         (_voiceController?.hasActiveWorkflow ?? false)) {
+      return false;
+    }
+    if (_pendingPracticeAudio != null) {
       return false;
     }
     final state = _recordingState;
@@ -1376,12 +1423,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _recordingState = PracticeRecordingState.idle;
       _errorMessage = null;
       notifyListeners();
-    }
-    if (_pendingPracticeAudio != null) {
-      await discardPendingPracticeAudio();
-      if (_pendingPracticeAudio != null) {
-        return false;
-      }
     }
     await stopPracticeAudio();
     return !_disposed && !_practiceRequestInFlight;
@@ -2216,6 +2257,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _epoch++;
     _practiceGeneration++;
     _mediaGeneration++;
+    _agentVoiceStartGeneration++;
     _threadTransitionGeneration++;
     _threadTransitionInFlight = false;
     _initializationFuture = null;
@@ -2229,10 +2271,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
           try {
             await recorder.discard(pendingPracticeAudio.audio);
           } catch (_) {
-            // The recorder owns its final account-scoped cleanup.
+            // The strict account cleanup below retries all managed recordings.
           }
         }
-        await recorder.discardCurrent();
+        await recorder.clearAccountState();
       }),
     );
     unawaited(_mediaCompletionSubscription?.cancel());

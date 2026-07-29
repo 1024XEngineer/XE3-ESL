@@ -77,6 +77,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   @override
   void dispose() {
     widget.controller.removeListener(_handleControllerState);
+    unawaited(widget.controller.cancelRecording());
     _notesController.removeListener(_saveNotes);
     _notesController.dispose();
     _convertedAnswerController.dispose();

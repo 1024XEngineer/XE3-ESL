@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
@@ -9,6 +12,8 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/conversation/conversation.dart';
+import 'package:speakup/practice/practice_audio_player.dart';
+import 'package:speakup/practice/practice_media.dart';
 
 void main() {
   testWidgets(
@@ -257,6 +262,36 @@ void main() {
     );
   });
 
+  test(
+    'leaving Agent while playback is stopping fences microphone start',
+    () async {
+      final player = _GatedPracticeAudioPlayer();
+      final recorder = _TrackingAgentVoiceRecorder();
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        mediaClient: _NoopPracticeMediaClient(),
+        audioPlayer: player,
+        voiceRecorder: recorder,
+        voiceAudioPlayer: FakeAgentVoiceAudioPlayer(),
+        clientIdFactory: _sequentialIdFactory(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      final stop = player.blockNextStop();
+      final start = controller.startAgentVoiceRecording();
+      await stop.entered.future;
+
+      final leave = controller.prepareToLeaveAgent();
+      stop.release.complete();
+
+      await start;
+      expect(await leave, isTrue);
+      expect(recorder.startCalls, 0);
+      expect(controller.voiceController?.state, AgentVoiceComposerState.idle);
+    },
+  );
+
   testWidgets('composer drafts cannot cross the Thread boundary', (
     tester,
   ) async {
@@ -419,6 +454,81 @@ void main() {
       await tester.pump();
     },
   );
+}
+
+final class _TrackingAgentVoiceRecorder implements AgentVoiceRecorder {
+  int startCalls = 0;
+
+  @override
+  Future<void> start() async {
+    startCalls++;
+  }
+
+  @override
+  Future<AgentVoiceLocalRecording> stop() {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> discardCurrent() async {}
+
+  @override
+  Future<void> discard(AgentVoiceLocalRecording recording) async {}
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _NoopPracticeMediaClient implements PracticeMediaClient {
+  @override
+  Future<Uint8List> loadQuestionSpeech(String speechPath) async => Uint8List(0);
+
+  @override
+  Future<Uint8List> loadRecording(String audioAssetId) async => Uint8List(0);
+
+  @override
+  Future<void> deleteRecording(String audioAssetId) async {}
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() async {}
+}
+
+final class _GatedPracticeAudioPlayer implements PracticeAudioPlayer {
+  Completer<void>? _nextStopEntered;
+  Completer<void>? _nextStopGate;
+
+  ({Completer<void> entered, Completer<void> release}) blockNextStop() {
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    _nextStopEntered = entered;
+    _nextStopGate = release;
+    return (entered: entered, release: release);
+  }
+
+  @override
+  Stream<void> get onComplete => const Stream<void>.empty();
+
+  @override
+  Future<void> playWav(Uint8List bytes) async {}
+
+  @override
+  Future<void> stop() async {
+    final entered = _nextStopEntered;
+    final gate = _nextStopGate;
+    _nextStopEntered = null;
+    _nextStopGate = null;
+    entered?.complete();
+    await gate?.future;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 Future<void> _pumpVoiceOperation(WidgetTester tester) async {

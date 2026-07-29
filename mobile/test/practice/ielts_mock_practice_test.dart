@@ -171,6 +171,44 @@ void main() {
     expect(find.byKey(const Key('ielts-mock-part-2-complete')), findsOneWidget);
   });
 
+  testWidgets('disposing Part 2 cancels recording without an exit callback', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 8);
+    final recorder = _Recorder();
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: recorder,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-continue')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    expect(recorder.recording, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+
+    expect(recorder.recording, isFalse);
+    expect(controller.recordingState, PracticeRecordingState.idle);
+  });
+
   testWidgets(
     'Part 1 right-swipe converts to an editable draft without auto-submit',
     (tester) async {
@@ -451,11 +489,16 @@ final class _IeltsPracticeClient implements PracticeClient {
 }
 
 final class _Recorder implements PracticeRecorder {
+  bool recording = false;
+
   @override
-  Future<void> start() async {}
+  Future<void> start() async {
+    recording = true;
+  }
 
   @override
   Future<RecordedPracticeAudio> stop() async {
+    recording = false;
     return const RecordedPracticeAudio(
       path: 'ielts.wav',
       contentType: 'audio/wav',
@@ -467,10 +510,14 @@ final class _Recorder implements PracticeRecorder {
   Future<void> discard(RecordedPracticeAudio audio) async {}
 
   @override
-  Future<void> discardCurrent() async {}
+  Future<void> discardCurrent() async {
+    recording = false;
+  }
 
   @override
-  Future<void> clearAccountState() async {}
+  Future<void> clearAccountState() async {
+    recording = false;
+  }
 }
 
 PracticeQuestion _question(int turn) {
