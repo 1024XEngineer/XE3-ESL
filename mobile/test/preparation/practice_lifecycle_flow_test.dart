@@ -118,10 +118,6 @@ void main() {
 
       await _tapVisible(tester, find.byKey(const Key('primary-tab-scenes')));
       await _openScenario(tester, _progressScenario.id);
-      await _tapVisible(
-        tester,
-        find.byKey(const Key('preparation-start-practice')),
-      );
 
       expect(find.byKey(const Key('practice-page')), findsOneWidget);
       final firstPracticeThreadId = agentController.threadId!;
@@ -233,19 +229,16 @@ void main() {
 
       expect(find.byKey(const Key('practice-continuation')), findsOneWidget);
       await _openScenario(tester, _hotelScenario.id);
-      await _tapVisible(
-        tester,
-        find.byKey(const Key('preparation-start-practice')),
-      );
 
       expect(find.text('你还有一项练习未完成'), findsOneWidget);
       expect(find.text('结束并开始新的'), findsOneWidget);
       expect(practiceClient.endedSessionIds, isEmpty);
 
-      await _tapVisible(
-        tester,
-        find.byKey(const Key('replace-existing-practice')),
-      );
+      final replace = find.byKey(const Key('replace-existing-practice'));
+      expect(replace, findsOneWidget);
+      await tester.tap(replace);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.byKey(const Key('practice-page')), findsOneWidget);
       expect(practiceClient.endedSessionIds, [firstSessionId]);
@@ -264,8 +257,13 @@ void main() {
 
 Future<void> _openScenario(WidgetTester tester, String scenarioId) async {
   await _tapVisible(tester, find.byKey(const Key('practice-hub-roleplay')));
-  await _tapVisible(tester, find.byKey(Key('catalog-scenario-$scenarioId')));
-  expect(find.byKey(const Key('preparation-launch-selection')), findsOneWidget);
+  final scenario = find.byKey(Key('catalog-scenario-$scenarioId'));
+  expect(scenario, findsOneWidget);
+  await tester.ensureVisible(scenario);
+  await tester.pumpAndSettle();
+  await tester.tap(scenario);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
 Future<void> _leavePractice(WidgetTester tester) async {
