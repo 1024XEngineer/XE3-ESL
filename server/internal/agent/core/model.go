@@ -183,6 +183,14 @@ type ContextMemorySource struct {
 	RetrievalPolicyVersion string  `json:"retrieval_policy_version"`
 }
 
+type ContextStableProfileSource struct {
+	MemoryID      string `json:"memory_id"`
+	MemoryVersion int64  `json:"memory_version"`
+	CanonicalKey  string `json:"canonical_key"`
+	Type          string `json:"type"`
+	Scope         string `json:"scope"`
+}
+
 type ContextSummarySource struct {
 	CheckpointID           string `json:"checkpoint_id"`
 	SourceFromSequence     int64  `json:"source_from_sequence"`
@@ -194,34 +202,36 @@ type ContextSummarySource struct {
 }
 
 type ContextManifest struct {
-	RunID                       string
-	OwnerID                     string
-	ThreadID                    string
-	InputMessageID              string
-	ActiveMatterID              string
-	ActiveMatterVersion         int64
-	InstructionVersion          string
-	MemoryContextPolicyVersion  string
-	SelectedMemories            []ContextMemorySource
-	SummaryContextPolicyVersion string
-	SummaryContextStatus        string
-	SelectedSummary             *ContextSummarySource
-	SelectedMessages            []ContextMessageSource
-	OmittedMessageCount         int
-	TrimReason                  string
-	MaxInputCharacters          int
-	UsedInputCharacters         int
-	RequestedProvider           string
-	RequestedModel              string
-	MaxOutputTokens             int
-	ExposedTools                []string
-	BlockedTools                []ContextBlockedTool
-	IntentMode                  string
-	IntentReasonCode            string
-	IntentGuardVersion          string
-	ToolPolicyVersion           string
-	ToolSchemaHashes            map[string]string
-	CreatedAt                   time.Time
+	RunID                             string
+	OwnerID                           string
+	ThreadID                          string
+	InputMessageID                    string
+	ActiveMatterID                    string
+	ActiveMatterVersion               int64
+	InstructionVersion                string
+	StableProfileContextPolicyVersion string
+	SelectedStableProfile             []ContextStableProfileSource
+	MemoryContextPolicyVersion        string
+	SelectedMemories                  []ContextMemorySource
+	SummaryContextPolicyVersion       string
+	SummaryContextStatus              string
+	SelectedSummary                   *ContextSummarySource
+	SelectedMessages                  []ContextMessageSource
+	OmittedMessageCount               int
+	TrimReason                        string
+	MaxInputCharacters                int
+	UsedInputCharacters               int
+	RequestedProvider                 string
+	RequestedModel                    string
+	MaxOutputTokens                   int
+	ExposedTools                      []string
+	BlockedTools                      []ContextBlockedTool
+	IntentMode                        string
+	IntentReasonCode                  string
+	IntentGuardVersion                string
+	ToolPolicyVersion                 string
+	ToolSchemaHashes                  map[string]string
+	CreatedAt                         time.Time
 }
 
 type ContextBlockedTool struct {

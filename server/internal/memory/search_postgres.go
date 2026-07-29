@@ -12,17 +12,22 @@ func (repository *PostgresRepository) SearchCandidates(
 	actor requestcontext.Actor,
 	queryVector []float32,
 	matterID string,
+	excludedCanonicalKeys []string,
 	configuration SearchConfig,
 ) ([]SearchCandidate, error) {
 	if ctx == nil ||
 		!validActor(actor) ||
 		(matterID != "" && !validUUID(matterID)) ||
+		!ValidStableProfileCanonicalKeys(excludedCanonicalKeys) ||
 		!configuration.Valid() {
 		return nil, ErrInvalidArgument
 	}
 	vector, err := vectorLiteral(queryVector, configuration.Dimensions)
 	if err != nil {
 		return nil, err
+	}
+	if len(excludedCanonicalKeys) == 0 {
+		excludedCanonicalKeys = []string{}
 	}
 	if matterID != "" {
 		var owned bool
@@ -71,6 +76,7 @@ WITH eligible AS MATERIALIZED (
      AND users.account_status = 'active'
     WHERE memories.owner_user_id = $1
       AND memories.status = 'active'
+      AND NOT (memories.canonical_key = ANY($8::text[]))
       AND (
           memories.expires_at IS NULL
           OR memories.expires_at > clock_timestamp()
@@ -113,7 +119,7 @@ FROM eligible
 ORDER BY
     eligible.embedding OPERATOR(public.<=>) $2::public.vector,
     eligible.id
-LIMIT $8`,
+LIMIT $9`,
 		actor.UserID,
 		vector,
 		configuration.Provider,
@@ -121,6 +127,7 @@ LIMIT $8`,
 		configuration.Dimensions,
 		configuration.EmbeddingPolicyVersion,
 		nullableUUID(matterID),
+		excludedCanonicalKeys,
 		configuration.CandidateLimit,
 	)
 	if err != nil {

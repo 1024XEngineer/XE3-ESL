@@ -2023,24 +2023,40 @@ func contextManifestResponse(manifest ContextManifest) gin.H {
 		}
 		memories = append(memories, memory)
 	}
+	stableProfile := make(
+		[]gin.H,
+		0,
+		len(manifest.SelectedStableProfile),
+	)
+	for _, item := range manifest.SelectedStableProfile {
+		stableProfile = append(stableProfile, gin.H{
+			"memory_id":      item.MemoryID,
+			"memory_version": item.MemoryVersion,
+			"canonical_key":  item.CanonicalKey,
+			"type":           item.Type,
+			"scope":          item.Scope,
+		})
+	}
 	result := gin.H{
-		"run_id":                         manifest.RunID,
-		"thread_id":                      manifest.ThreadID,
-		"input_message_id":               manifest.InputMessageID,
-		"instruction_version":            manifest.InstructionVersion,
-		"memory_context_policy_version":  manifest.MemoryContextPolicyVersion,
-		"selected_memories":              memories,
-		"summary_context_policy_version": manifest.SummaryContextPolicyVersion,
-		"summary_context_status":         manifest.SummaryContextStatus,
-		"selected_messages":              messages,
-		"omitted_message_count":          manifest.OmittedMessageCount,
-		"trim_reason":                    manifest.TrimReason,
-		"max_input_characters":           manifest.MaxInputCharacters,
-		"used_input_characters":          manifest.UsedInputCharacters,
-		"requested_provider":             manifest.RequestedProvider,
-		"requested_model":                manifest.RequestedModel,
-		"max_output_tokens":              manifest.MaxOutputTokens,
-		"created_at":                     manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"run_id":                                manifest.RunID,
+		"thread_id":                             manifest.ThreadID,
+		"input_message_id":                      manifest.InputMessageID,
+		"instruction_version":                   manifest.InstructionVersion,
+		"stable_profile_context_policy_version": manifest.StableProfileContextPolicyVersion,
+		"selected_stable_profile":               stableProfile,
+		"memory_context_policy_version":         manifest.MemoryContextPolicyVersion,
+		"selected_memories":                     memories,
+		"summary_context_policy_version":        manifest.SummaryContextPolicyVersion,
+		"summary_context_status":                manifest.SummaryContextStatus,
+		"selected_messages":                     messages,
+		"omitted_message_count":                 manifest.OmittedMessageCount,
+		"trim_reason":                           manifest.TrimReason,
+		"max_input_characters":                  manifest.MaxInputCharacters,
+		"used_input_characters":                 manifest.UsedInputCharacters,
+		"requested_provider":                    manifest.RequestedProvider,
+		"requested_model":                       manifest.RequestedModel,
+		"max_output_tokens":                     manifest.MaxOutputTokens,
+		"created_at":                            manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if manifest.SelectedSummary != nil {
 		result["selected_summary"] = gin.H{

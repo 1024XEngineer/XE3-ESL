@@ -16,6 +16,7 @@ func TestAgentMemoryContextSearcherPreservesSearchAuditFields(t *testing.T) {
 		hits: []memory.SearchHit{{
 			MemoryID:               "10000000-0000-4000-8000-000000000001",
 			MemoryVersion:          3,
+			CanonicalKey:           "goal.current",
 			Type:                   memory.TypeGoal,
 			Content:                "Prepare for a product interview",
 			Scope:                  memory.ScopeMatter,
@@ -40,7 +41,10 @@ func TestAgentMemoryContextSearcherPreservesSearchAuditFields(t *testing.T) {
 		},
 		Query:    "Help me prepare",
 		MatterID: delegate.hits[0].MatterID,
-		Limit:    6,
+		ExcludedCanonicalKeys: []string{
+			memory.CanonicalProfilePreferredName,
+		},
+		Limit: 6,
 	}
 	hits, err := adapter.Search(context.Background(), request)
 	if err != nil {
@@ -49,12 +53,16 @@ func TestAgentMemoryContextSearcherPreservesSearchAuditFields(t *testing.T) {
 	if delegate.request.Actor != request.Actor ||
 		delegate.request.Query != request.Query ||
 		delegate.request.MatterID != request.MatterID ||
+		len(delegate.request.ExcludedCanonicalKeys) != 1 ||
+		delegate.request.ExcludedCanonicalKeys[0] !=
+			request.ExcludedCanonicalKeys[0] ||
 		delegate.request.Limit != request.Limit {
 		t.Fatalf("domain request = %#v", delegate.request)
 	}
 	if len(hits) != 1 ||
 		hits[0].MemoryID != delegate.hits[0].MemoryID ||
 		hits[0].MemoryVersion != delegate.hits[0].MemoryVersion ||
+		hits[0].CanonicalKey != delegate.hits[0].CanonicalKey ||
 		hits[0].Type != string(delegate.hits[0].Type) ||
 		hits[0].Scope != string(delegate.hits[0].Scope) ||
 		hits[0].EmbeddingPolicyVersion !=

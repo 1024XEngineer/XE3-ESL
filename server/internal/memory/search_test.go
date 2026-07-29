@@ -107,18 +107,59 @@ func TestSearchServiceDistinguishesNoMatchFromDependencyFailure(t *testing.T) {
 	}
 }
 
+func TestSearchServiceExcludesStableProfileBeforeCandidateRanking(
+	t *testing.T,
+) {
+	t.Parallel()
+	repository := &fakeSearchRepository{}
+	service, err := NewSearchService(
+		repository,
+		&aifake.Embedder{Result: validEmbeddingResult()},
+		testSearchConfig(),
+		time.Now,
+	)
+	if err != nil {
+		t.Fatalf("NewSearchService: %v", err)
+	}
+	excluded := []string{CanonicalProfilePreferredName}
+	if _, err := service.Search(context.Background(), SearchRequest{
+		Actor: requestcontext.Actor{
+			UserID:    integrationUserA,
+			SessionID: integrationSessionA,
+		},
+		Query:                 "Who am I?",
+		ExcludedCanonicalKeys: excluded,
+		Limit:                 3,
+	}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(repository.excludedCanonicalKeys) != 1 ||
+		repository.excludedCanonicalKeys[0] != excluded[0] {
+		t.Fatalf(
+			"repository exclusions = %#v",
+			repository.excludedCanonicalKeys,
+		)
+	}
+}
+
 type fakeSearchRepository struct {
-	candidates []SearchCandidate
-	err        error
+	candidates            []SearchCandidate
+	excludedCanonicalKeys []string
+	err                   error
 }
 
 func (repository *fakeSearchRepository) SearchCandidates(
-	context.Context,
-	requestcontext.Actor,
-	[]float32,
-	string,
-	SearchConfig,
+	_ context.Context,
+	_ requestcontext.Actor,
+	_ []float32,
+	_ string,
+	excludedCanonicalKeys []string,
+	_ SearchConfig,
 ) ([]SearchCandidate, error) {
+	repository.excludedCanonicalKeys = append(
+		[]string(nil),
+		excludedCanonicalKeys...,
+	)
 	return repository.candidates, repository.err
 }
 

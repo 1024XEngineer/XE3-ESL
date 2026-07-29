@@ -47,6 +47,23 @@ func StableProfileV1Fields() []StableProfileField {
 	return fields
 }
 
+func ValidStableProfileCanonicalKeys(keys []string) bool {
+	if len(keys) > len(stableProfileV1Fields) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		if _, found := stableProfileField(key); !found {
+			return false
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return false
+		}
+		seen[key] = struct{}{}
+	}
+	return true
+}
+
 func stableProfileField(canonicalKey string) (StableProfileField, bool) {
 	for _, field := range stableProfileV1Fields {
 		if field.CanonicalKey == canonicalKey {

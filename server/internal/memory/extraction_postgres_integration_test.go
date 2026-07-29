@@ -54,6 +54,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	assembler, err := agentruntime.NewContextAssembler(
 		agentRepository,
 		matterService,
+		emptyAgentStableProfileReader{},
 		emptyAgentMemorySearcher{},
 	)
 	if err != nil {
@@ -331,6 +332,15 @@ WHERE source_run_id IN ($1, $2)`,
 }
 
 type emptyAgentMemorySearcher struct{}
+
+type emptyAgentStableProfileReader struct{}
+
+func (emptyAgentStableProfileReader) ReadStableProfile(
+	context.Context,
+	agentruntime.StableProfileReadRequest,
+) ([]agentruntime.StableProfileMemory, error) {
+	return []agentruntime.StableProfileMemory{}, nil
+}
 
 func (emptyAgentMemorySearcher) Search(
 	context.Context,

@@ -33,10 +33,11 @@ func (searcher *agentMemoryContextSearcher) Search(
 		)
 	}
 	hits, err := searcher.searcher.Search(ctx, memory.SearchRequest{
-		Actor:    request.Actor,
-		Query:    request.Query,
-		MatterID: request.MatterID,
-		Limit:    request.Limit,
+		Actor:                 request.Actor,
+		Query:                 request.Query,
+		MatterID:              request.MatterID,
+		ExcludedCanonicalKeys: request.ExcludedCanonicalKeys,
+		Limit:                 request.Limit,
 	})
 	if err != nil {
 		return nil, err
@@ -46,6 +47,7 @@ func (searcher *agentMemoryContextSearcher) Search(
 		result = append(result, agentruntime.MemorySearchHit{
 			MemoryID:               hit.MemoryID,
 			MemoryVersion:          hit.MemoryVersion,
+			CanonicalKey:           hit.CanonicalKey,
 			Type:                   string(hit.Type),
 			Content:                hit.Content,
 			Scope:                  string(hit.Scope),

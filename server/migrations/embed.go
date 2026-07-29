@@ -14,4 +14,5 @@ import "embed"
 //go:embed 000026_agent_thread_summary_jobs.*.sql
 //go:embed 000027_agent_summary_context_manifest.*.sql
 //go:embed 000028_review_scenario_policies.*.sql
+//go:embed 000029_agent_stable_profile_context_manifest.*.sql
 var Files embed.FS
