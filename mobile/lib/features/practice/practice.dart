@@ -30,19 +30,24 @@ class PracticePage extends StatefulWidget {
   State<PracticePage> createState() => _PracticePageState();
 }
 
-class _PracticePageState extends State<PracticePage> {
+class _PracticePageState extends State<PracticePage>
+    with WidgetsBindingObserver {
   static const _maxReviewExitFrameAttempts = 60;
 
   final TextEditingController _textAnswerController = TextEditingController();
   final FocusNode _textAnswerFocusNode = FocusNode();
+  final ScrollController _messageScrollController = ScrollController();
   bool _scheduledReviewExit = false;
   int _reviewExitAttempts = 0;
   Animation<double>? _observedSecondaryAnimation;
   AnimationStatusListener? _reviewRouteStatusListener;
-  String? _expandedHintQuestionId;
   bool _exitInFlight = false;
   bool _exitApproved = false;
   bool _textAnswerMode = false;
+  bool _stickToLatestMessage = true;
+  int _messageCount = 0;
+  String? _lastMessageId;
+  PracticeRecordingState? _lastRecordingState;
   Timer? _recordingTicker;
   DateTime? _recordingStartedAt;
   int _recordingSeconds = 0;
@@ -50,9 +55,13 @@ class _PracticePageState extends State<PracticePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _messageScrollController.addListener(_handleMessageScroll);
     widget.agentController?.addListener(_handleState);
+    _captureConversationState();
     _syncRecordingTimer();
     _scheduleReviewExitIfNeeded();
+    _scheduleScrollToLatest(animated: false);
   }
 
   @override
@@ -64,14 +73,20 @@ class _PracticePageState extends State<PracticePage> {
     oldWidget.agentController?.removeListener(_handleState);
     _resetReviewExit();
     widget.agentController?.addListener(_handleState);
+    _captureConversationState();
     _scheduleReviewExitIfNeeded();
+    _scheduleScrollToLatest(animated: false);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.agentController?.removeListener(_handleState);
     _clearReviewRouteWait();
     _recordingTicker?.cancel();
+    _messageScrollController
+      ..removeListener(_handleMessageScroll)
+      ..dispose();
     _textAnswerController.dispose();
     _textAnswerFocusNode.dispose();
     unawaited(widget.agentController?.stopPracticeAudio(notify: false));
@@ -82,8 +97,24 @@ class _PracticePageState extends State<PracticePage> {
     if (!mounted) {
       return;
     }
+    final shouldScroll =
+        _stickToLatestMessage || !_messageScrollController.hasClients;
+    final controller = widget.agentController;
+    final messages = controller?.practiceMessages ?? const <AgentMessage>[];
+    final lastMessageId = messages.lastOrNull?.id;
+    final recordingState = controller?.recordingState;
+    final conversationChanged =
+        messages.length != _messageCount ||
+        lastMessageId != _lastMessageId ||
+        recordingState != _lastRecordingState;
+    _messageCount = messages.length;
+    _lastMessageId = lastMessageId;
+    _lastRecordingState = recordingState;
     _syncRecordingTimer();
     setState(() {});
+    if (conversationChanged && shouldScroll) {
+      _scheduleScrollToLatest();
+    }
     if (_isIeltsSpeakingFullMock) {
       _resetReviewExit();
       return;
@@ -93,6 +124,49 @@ class _PracticePageState extends State<PracticePage> {
       return;
     }
     _scheduleReviewExitIfNeeded();
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (_stickToLatestMessage) {
+      _scheduleScrollToLatest();
+    }
+  }
+
+  void _captureConversationState() {
+    final controller = widget.agentController;
+    final messages = controller?.practiceMessages ?? const <AgentMessage>[];
+    _messageCount = messages.length;
+    _lastMessageId = messages.lastOrNull?.id;
+    _lastRecordingState = controller?.recordingState;
+  }
+
+  void _handleMessageScroll() {
+    if (!_messageScrollController.hasClients) {
+      return;
+    }
+    final position = _messageScrollController.position;
+    _stickToLatestMessage = position.maxScrollExtent - position.pixels <= 72;
+  }
+
+  void _scheduleScrollToLatest({bool animated = true}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_messageScrollController.hasClients) {
+        return;
+      }
+      final target = _messageScrollController.position.maxScrollExtent;
+      if (animated) {
+        unawaited(
+          _messageScrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+          ),
+        );
+      } else {
+        _messageScrollController.jumpTo(target);
+      }
+    });
   }
 
   void _syncRecordingTimer() {
@@ -242,14 +316,6 @@ class _PracticePageState extends State<PracticePage> {
     _reviewExitAttempts = 0;
   }
 
-  void _toggleHint(String questionId) {
-    setState(() {
-      _expandedHintQuestionId = _expandedHintQuestionId == questionId
-          ? null
-          : questionId;
-    });
-  }
-
   Future<void> _submitTextAnswer() async {
     final controller = widget.agentController;
     if (controller == null) {
@@ -279,7 +345,7 @@ class _PracticePageState extends State<PracticePage> {
     });
   }
 
-  void _showPracticeHistory(AgentController controller) {
+  void _showPracticeRecordings(AgentController controller) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -292,23 +358,9 @@ class _PracticePageState extends State<PracticePage> {
           controller: scrollController,
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
           children: [
-            const Text('本轮记录', style: SpeakUpDesign.sectionTitle),
-            if (controller.recordings.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              PracticeRecordingsCard(controller: controller),
-            ],
-            if (controller.messages.any(
-              (message) => message.id != controller.questionId,
-            )) ...[
-              const SizedBox(height: 20),
-              _ConversationHistory(
-                messages: controller.messages
-                    .where((message) => message.id != controller.questionId)
-                    .toList(growable: false),
-                expandedHintQuestionId: null,
-                onToggleHint: (_) {},
-              ),
-            ],
+            const Text('本轮录音', style: SpeakUpDesign.sectionTitle),
+            const SizedBox(height: 16),
+            PracticeRecordingsCard(controller: controller),
           ],
         ),
       ),
@@ -375,107 +427,45 @@ class _PracticePageState extends State<PracticePage> {
         appBar: AppBar(
           title: scene == null || controller == null
               ? const Text('练习')
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(scene.title),
-                    Text(
-                      '第 ${(controller.completedTurns + 1).clamp(1, controller.turnLimit)} 题，共 ${controller.turnLimit} 题',
-                      style: SpeakUpDesign.meta,
-                    ),
-                  ],
-                ),
-          actions:
-              controller == null ||
-                  (controller.recordings.isEmpty &&
-                      !controller.messages.any(
-                        (message) => message.id != controller.questionId,
-                      ))
+              : Text(scene.title),
+          actions: controller == null || controller.recordings.isEmpty
               ? null
               : [
                   IconButton(
                     key: const Key('practice-open-history'),
-                    tooltip: '本轮记录',
+                    tooltip: '本轮录音',
                     onPressed:
                         controller.recordingState == PracticeRecordingState.idle
-                        ? () => _showPracticeHistory(controller)
+                        ? () => _showPracticeRecordings(controller)
                         : null,
                     icon: const Icon(Icons.more_horiz_rounded),
                   ),
                 ],
         ),
         body: SafeArea(
-          bottom: false,
           child: controller == null || scene == null
               ? const _NoScene()
               : Column(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                      child: _TurnProgress(
-                        completedTurns: controller.completedTurns,
-                        turnLimit: controller.turnLimit,
+                    Expanded(
+                      child: _SceneConversationMessageList(
+                        controller: controller,
+                        scrollController: _messageScrollController,
+                        previewMode: widget.previewMode,
                       ),
                     ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _CurrentQuestion(
-                              controller: controller,
-                              expandedHintQuestionId: _expandedHintQuestionId,
-                              onToggleHint: _toggleHint,
-                            ),
-                            if (controller.errorMessage
-                                case final message?) ...[
-                              const SizedBox(height: 16),
-                              Text(
-                                message,
-                                key: const Key('practice-error-message'),
-                                style: const TextStyle(
-                                  color: SpeakUpDesign.error,
-                                ),
-                              ),
-                            ],
-                            if (controller.mediaErrorMessage
-                                case final message?) ...[
-                              const SizedBox(height: 16),
-                              Text(
-                                message,
-                                key: const Key('practice-media-error-message'),
-                                style: const TextStyle(
-                                  color: SpeakUpDesign.error,
-                                ),
-                              ),
-                            ],
-                            if (widget.previewMode) ...[
-                              const SizedBox(height: 20),
-                              const Text(
-                                '当前页面仅供显式 Fake 预览，不代表生产语音服务已经接入。',
-                                textAlign: TextAlign.center,
-                                style: SpeakUpDesign.meta,
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
+                    _RecordingPanel(
+                      controller: controller,
+                      textController: _textAnswerController,
+                      textFocusNode: _textAnswerFocusNode,
+                      onSubmitText: _submitTextAnswer,
+                      textMode: _textAnswerMode,
+                      onToggleTextMode: _toggleTextAnswerMode,
+                      recordingSeconds: _recordingSeconds,
                     ),
                   ],
                 ),
         ),
-        bottomNavigationBar: controller == null || scene == null
-            ? null
-            : _RecordingPanel(
-                controller: controller,
-                textController: _textAnswerController,
-                textFocusNode: _textAnswerFocusNode,
-                onSubmitText: _submitTextAnswer,
-                textMode: _textAnswerMode,
-                onToggleTextMode: _toggleTextAnswerMode,
-                recordingSeconds: _recordingSeconds,
-              ),
       ),
     );
   }
@@ -499,233 +489,265 @@ class _NoScene extends StatelessWidget {
   }
 }
 
-class _TurnProgress extends StatelessWidget {
-  const _TurnProgress({required this.completedTurns, required this.turnLimit});
-
-  final int completedTurns;
-  final int turnLimit;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      key: const Key('practice-turn-progress'),
-      children: [
-        for (var index = 0; index < turnLimit; index++) ...[
-          Expanded(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              height: 7,
-              decoration: BoxDecoration(
-                color: index < completedTurns
-                    ? SpeakUpDesign.primary
-                    : SpeakUpDesign.border,
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          ),
-          if (index + 1 != turnLimit) const SizedBox(width: 8),
-        ],
-        const SizedBox(width: 12),
-        Text(
-          '$completedTurns / $turnLimit',
-          key: const Key('practice-turn-count'),
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-      ],
-    );
-  }
-}
-
-class _ConversationHistory extends StatelessWidget {
-  const _ConversationHistory({
-    required this.messages,
-    required this.expandedHintQuestionId,
-    required this.onToggleHint,
-  });
-
-  final List<AgentMessage> messages;
-  final String? expandedHintQuestionId;
-  final ValueChanged<String> onToggleHint;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      key: const Key('practice-conversation-history'),
-      children: [
-        for (final message in messages) ...[
-          Align(
-            alignment: message.role == AgentMessageRole.user
-                ? Alignment.centerRight
-                : Alignment.centerLeft,
-            child: Container(
-              key: Key('practice-history-message-${message.id}'),
-              constraints: const BoxConstraints(maxWidth: 560),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: message.role == AgentMessageRole.user
-                    ? SpeakUpDesign.primary
-                    : SpeakUpDesign.surface,
-                borderRadius: BorderRadius.circular(
-                  SpeakUpDesign.radiusControl,
-                ),
-                border: Border.all(color: SpeakUpDesign.border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    message.text,
-                    style: TextStyle(
-                      color: message.role == AgentMessageRole.user
-                          ? Colors.white
-                          : SpeakUpDesign.ink,
-                      height: 1.45,
-                    ),
-                  ),
-                  if (message.role == AgentMessageRole.assistant) ...[
-                    const SizedBox(height: 8),
-                    TextButton.icon(
-                      key: Key('practice-history-hint-${message.id}'),
-                      onPressed: () => onToggleHint(message.id),
-                      icon: const Icon(Icons.lightbulb_outline_rounded),
-                      label: Text(
-                        expandedHintQuestionId == message.id ? '收起提示' : '提示',
-                      ),
-                    ),
-                    if (expandedHintQuestionId == message.id)
-                      const _AnswerHint(),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-      ],
-    );
-  }
-}
-
-class _CurrentQuestion extends StatelessWidget {
-  const _CurrentQuestion({
+class _SceneConversationMessageList extends StatelessWidget {
+  const _SceneConversationMessageList({
     required this.controller,
-    required this.expandedHintQuestionId,
-    required this.onToggleHint,
+    required this.scrollController,
+    required this.previewMode,
   });
 
   final AgentController controller;
-  final String? expandedHintQuestionId;
-  final ValueChanged<String> onToggleHint;
+  final ScrollController scrollController;
+  final bool previewMode;
 
   @override
   Widget build(BuildContext context) {
-    final question = controller.messages.reversed
-        .where((message) => message.role == AgentMessageRole.assistant)
-        .firstOrNull;
-    final hintExpanded =
-        question != null && expandedHintQuestionId == question.id;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Row(
-          children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: SpeakUpDesign.primaryMuted,
-              foregroundColor: SpeakUpDesign.primary,
-              child: Icon(Icons.person_outline_rounded),
-            ),
-            SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('AI 面试官', style: SpeakUpDesign.cardTitle),
-                SizedBox(height: 2),
-                Text('请用英文回答', style: SpeakUpDesign.meta),
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        Text(
-          question?.text ?? '准备好后开始第一轮。',
-          key: const Key('practice-current-question'),
-          style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24, height: 1.4),
-        ),
-        const SizedBox(height: 18),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            if (controller.canPlayQuestionAudio)
-              TextButton.icon(
-                key: const Key('practice-question-audio'),
-                onPressed: controller.canUsePracticeAudio
-                    ? controller.toggleQuestionAudio
+    final messages = controller.practiceMessages;
+    final state = controller.recordingState;
+    final terminal =
+        state == PracticeRecordingState.reviewFailed ||
+        state == PracticeRecordingState.completed;
+    final showThinking =
+        state == PracticeRecordingState.submitting ||
+        (messages.isEmpty && !terminal);
+
+    return SingleChildScrollView(
+      key: const Key('practice-message-list'),
+      controller: scrollController,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final message in messages) ...[
+            if (message.role == AgentMessageRole.assistant)
+              _SceneAIMessageBubble(
+                key: ValueKey('practice-ai-${message.id}'),
+                message: message,
+                roleName: 'AI 教练',
+                actions:
+                    message.id == controller.questionId &&
+                        controller.canPlayQuestionAudio
+                    ? _QuestionAudioAction(controller: controller)
                     : null,
-                icon: controller.isQuestionAudioLoading
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(
-                        controller.isQuestionAudioPlaying
-                            ? Icons.stop_circle_outlined
-                            : Icons.volume_up_outlined,
-                        size: 19,
-                      ),
-                label: Text(
-                  controller.isQuestionAudioPlaying ? '停止播放' : '重听问题',
-                ),
+              )
+            else
+              _SceneUserMessageBubble(
+                key: ValueKey('practice-user-${message.id}'),
+                message: message,
               ),
-            if (question != null)
-              TextButton.icon(
-                key: Key('practice-hint-${question.id}'),
-                onPressed: () => onToggleHint(question.id),
-                icon: Icon(
-                  hintExpanded
-                      ? Icons.lightbulb_rounded
-                      : Icons.lightbulb_outline_rounded,
-                  size: 19,
-                ),
-                label: Text(hintExpanded ? '收起思路' : '回答思路'),
-              ),
+            const SizedBox(height: 14),
           ],
-        ),
-        if (hintExpanded) ...[const SizedBox(height: 14), const _AnswerHint()],
-      ],
+          if (showThinking) ...[
+            _SceneAIThinkingBubble(
+              label: messages.isEmpty ? '正在准备第一轮…' : 'AI 正在思考…',
+            ),
+            const SizedBox(height: 14),
+          ],
+          if (controller.errorMessage case final message?) ...[
+            Text(
+              message,
+              key: const Key('practice-error-message'),
+              style: const TextStyle(color: SpeakUpDesign.error),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (controller.mediaErrorMessage case final message?) ...[
+            Text(
+              message,
+              key: const Key('practice-media-error-message'),
+              style: const TextStyle(color: SpeakUpDesign.error),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (previewMode)
+            const Text(
+              '当前页面仅供显式 Fake 预览，不代表生产语音服务已经接入。',
+              textAlign: TextAlign.center,
+              style: SpeakUpDesign.meta,
+            ),
+        ],
+      ),
     );
   }
 }
 
-class _AnswerHint extends StatelessWidget {
-  const _AnswerHint();
+class _SceneAIMessageBubble extends StatelessWidget {
+  const _SceneAIMessageBubble({
+    required this.message,
+    required this.roleName,
+    this.actions,
+    super.key,
+  });
+
+  final AgentMessage message;
+  final String roleName;
+  final Widget? actions;
 
   @override
   Widget build(BuildContext context) {
-    return const DecoratedBox(
-      key: Key('practice-answer-hint'),
-      decoration: BoxDecoration(
-        color: SpeakUpDesign.surfaceMuted,
-        borderRadius: BorderRadius.all(
-          Radius.circular(SpeakUpDesign.radiusControl),
+    return LayoutBuilder(
+      builder: (context, constraints) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const CircleAvatar(
+            radius: 17,
+            backgroundColor: SpeakUpDesign.primaryMuted,
+            foregroundColor: SpeakUpDesign.primary,
+            child: Icon(Icons.person_outline_rounded, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            key: Key('practice-ai-message-${message.id}'),
+            constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.76),
+            padding: const EdgeInsets.fromLTRB(14, 11, 14, 12),
+            decoration: BoxDecoration(
+              color: SpeakUpDesign.surface,
+              borderRadius: const BorderRadius.only(
+                topRight: Radius.circular(SpeakUpDesign.radiusControl),
+                bottomLeft: Radius.circular(SpeakUpDesign.radiusControl),
+                bottomRight: Radius.circular(SpeakUpDesign.radiusControl),
+              ),
+              border: Border.all(color: SpeakUpDesign.border),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  roleName,
+                  style: SpeakUpDesign.meta.copyWith(
+                    color: SpeakUpDesign.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  message.text,
+                  style: SpeakUpDesign.body.copyWith(height: 1.45),
+                ),
+                if (actions != null) ...[const SizedBox(height: 8), actions!],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SceneUserMessageBubble extends StatelessWidget {
+  const _SceneUserMessageBubble({required this.message, super.key});
+
+  final AgentMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) => Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          key: Key('practice-user-message-${message.id}'),
+          constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.78),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: const BoxDecoration(
+            color: SpeakUpDesign.primary,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(SpeakUpDesign.radiusControl),
+              bottomLeft: Radius.circular(SpeakUpDesign.radiusControl),
+              bottomRight: Radius.circular(SpeakUpDesign.radiusControl),
+            ),
+          ),
+          child: Text(
+            message.text,
+            style: SpeakUpDesign.body.copyWith(
+              color: Colors.white,
+              height: 1.45,
+            ),
+          ),
         ),
       ),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('回答框架', style: SpeakUpDesign.cardTitle),
-            SizedBox(height: 10),
-            Text('1. 先直接回答你的核心观点', style: SpeakUpDesign.body),
-            SizedBox(height: 4),
-            Text('2. 用一个具体经历或事实支持', style: SpeakUpDesign.body),
-            SizedBox(height: 4),
-            Text('3. 回到岗位匹配与结果', style: SpeakUpDesign.body),
-          ],
-        ),
+    );
+  }
+}
+
+class _SceneAIThinkingBubble extends StatelessWidget {
+  const _SceneAIThinkingBubble({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Row(
+        key: const Key('practice-ai-thinking'),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircleAvatar(
+            radius: 17,
+            backgroundColor: SpeakUpDesign.primaryMuted,
+            foregroundColor: SpeakUpDesign.primary,
+            child: Icon(Icons.person_outline_rounded, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: SpeakUpDesign.surfaceMuted,
+                borderRadius: BorderRadius.circular(
+                  SpeakUpDesign.radiusControl,
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 10),
+                    Flexible(child: Text(label, style: SpeakUpDesign.meta)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+class _QuestionAudioAction extends StatelessWidget {
+  const _QuestionAudioAction({required this.controller});
+
+  final AgentController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      key: const Key('practice-question-audio'),
+      onPressed: controller.canUsePracticeAudio
+          ? controller.toggleQuestionAudio
+          : null,
+      icon: controller.isQuestionAudioLoading
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(
+              controller.isQuestionAudioPlaying
+                  ? Icons.stop_circle_outlined
+                  : Icons.volume_up_outlined,
+              size: 19,
+            ),
+      label: Text(controller.isQuestionAudioPlaying ? '停止播放' : '重听问题'),
     );
   }
 }
