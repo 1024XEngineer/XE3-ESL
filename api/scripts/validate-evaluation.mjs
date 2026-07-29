@@ -23,6 +23,12 @@ const interviewReportFixture = JSON.parse(
     'utf8',
   ),
 );
+const ieltsSpeakingReportFixture = JSON.parse(
+  await readFile(
+    resolve(apiDirectory, 'examples/ielts-speaking-report-contract.json'),
+    'utf8',
+  ),
+);
 
 const bundleOpenApi = async () => {
   const temporaryDirectory = await mkdtemp(
@@ -152,6 +158,8 @@ const validators = Object.fromEntries(
     'EvaluationReplay',
     'Evaluation',
     'InterviewReportEnvelope',
+    'IeltsSpeakingReportEnvelope',
+    'IeltsSpeakingReportIndexPage',
     'SceneEvaluationResult',
     'CoreAbilityObservation',
     'EvidenceRef',
@@ -1108,4 +1116,527 @@ assertValid(
 assert.throws(
   () => assertInterviewReportSemantics(mismatchedReportStatusUrl),
   /same Practice Session/,
+);
+
+const ieltsCriterionOrder = ['IELTS_FC', 'IELTS_LR', 'IELTS_GRA', 'IELTS_PR'];
+const ieltsPartOrder = ['PART_1', 'PART_2', 'PART_3'];
+const ieltsPartQuestionIndexes = [
+  [1, 2, 3, 4, 5, 6, 7, 8],
+  [9],
+  [10, 11, 12, 13, 14],
+];
+const ieltsFindingKinds = [
+  ['strengths', 'strength_finding_ids'],
+  ['improvements', 'improvement_finding_ids'],
+  ['upgrade_examples', 'upgrade_example_finding_ids'],
+];
+
+const expectedIeltsPart = (index) => {
+  if (index <= 8) {
+    return 'PART_1';
+  }
+  if (index === 9) {
+    return 'PART_2';
+  }
+  return 'PART_3';
+};
+
+const assertIeltsSpeakingReportSemantics = (envelope) => {
+  assert.equal(
+    envelope.status_url,
+    `/v1/practice-sessions/${envelope.practice_session_id}/ielts-speaking-report`,
+    'IELTS report status_url must address the same Practice Session',
+  );
+  if (envelope.evaluation_status !== 'READY') {
+    return;
+  }
+
+  const report = envelope.report;
+  assert.equal(report.schema_version, 'ielts-speaking-report/v1');
+  assert.equal(
+    report.disclaimer_code,
+    'AI_PRACTICE_ESTIMATE_NOT_OFFICIAL_IELTS',
+  );
+  assert.equal(report.speaking_overall.status, 'NOT_AVAILABLE');
+  assert.equal(report.target_plan.status, 'NOT_CONFIGURED');
+  assert.deepEqual(
+    report.criteria.map((criterion) => criterion.criterion_id),
+    ieltsCriterionOrder,
+    'IELTS criteria must use the canonical order',
+  );
+  assert.deepEqual(
+    report.part_reviews.map((part) => part.part_id),
+    ieltsPartOrder,
+    'IELTS Parts must use the canonical order',
+  );
+
+  const questionByIndex = new Map();
+  const questionByTurnId = new Map();
+  const questionByEvidenceRefId = new Map();
+  const questionIds = new Set();
+  for (let offset = 0; offset < report.questions.length; offset += 1) {
+    const question = report.questions[offset];
+    const expectedIndex = offset + 1;
+    assert.equal(
+      question.index,
+      expectedIndex,
+      'IELTS questions must use the frozen sequence 1..14',
+    );
+    assert.equal(
+      question.part_id,
+      expectedIeltsPart(expectedIndex),
+      `Question ${expectedIndex} has the wrong IELTS Part`,
+    );
+    assert.ok(
+      !questionIds.has(question.question_id),
+      `Duplicate question ${question.question_id}`,
+    );
+    questionIds.add(question.question_id);
+    questionByIndex.set(question.index, question);
+    if (question.response_turn_id !== undefined) {
+      assert.ok(
+        !questionByTurnId.has(question.response_turn_id),
+        `Duplicate response Turn ${question.response_turn_id}`,
+      );
+      questionByTurnId.set(question.response_turn_id, question);
+    }
+    for (const evidenceRefId of question.evidence_ref_ids) {
+      assert.ok(
+        !questionByEvidenceRefId.has(evidenceRefId),
+        `Duplicate response EvidenceRef ${evidenceRefId}`,
+      );
+      questionByEvidenceRefId.set(evidenceRefId, question);
+    }
+    assert.deepEqual(
+      question.criterion_findings.map(
+        (criterion) => criterion.criterion_id,
+      ),
+      ieltsCriterionOrder,
+      `Question ${expectedIndex}: criterion finding order changed`,
+    );
+    if (question.assessment_status === 'NOT_ASSESSED') {
+      for (const criterion of question.criterion_findings) {
+        for (const [, referenceField] of ieltsFindingKinds) {
+          assert.deepEqual(
+            criterion[referenceField],
+            [],
+            `Question ${expectedIndex}: unassessed response references findings`,
+          );
+        }
+      }
+    }
+  }
+
+  const findingById = new Map();
+  for (const criterion of report.criteria) {
+    if (criterion.criterion_id === 'IELTS_FC') {
+      assert.equal(criterion.estimated_band, undefined);
+      assert.equal(criterion.band_descriptor, undefined);
+    }
+    if (criterion.criterion_id === 'IELTS_PR') {
+      assert.equal(criterion.scoreability_status, 'INSUFFICIENT');
+      assert.equal(criterion.gate_status, 'BLOCKED');
+      assert.equal(criterion.estimated_band, undefined);
+      assert.equal(criterion.band_descriptor, undefined);
+      assert.deepEqual(criterion.strengths, []);
+      assert.deepEqual(criterion.improvements, []);
+      assert.deepEqual(criterion.upgrade_examples, []);
+    }
+    if (
+      ['IELTS_LR', 'IELTS_GRA'].includes(criterion.criterion_id) &&
+      criterion.scoreability_status === 'PROVISIONAL'
+    ) {
+      assert.ok(
+        Number.isInteger(criterion.estimated_band) &&
+          criterion.estimated_band >= 1 &&
+          criterion.estimated_band <= 9,
+        `${criterion.criterion_id}: provisional Band must be an integer 1..9`,
+      );
+      assert.equal(typeof criterion.band_descriptor, 'string');
+    }
+    if (criterion.scoreability_status === 'INSUFFICIENT') {
+      assert.equal(criterion.estimated_band, undefined);
+      assert.equal(criterion.band_descriptor, undefined);
+    }
+
+    const evidenceRefIds = new Set();
+    for (const [findingField, referenceField] of ieltsFindingKinds) {
+      for (const finding of criterion[findingField]) {
+        assert.ok(
+          !findingById.has(finding.finding_id),
+          `Duplicate IELTS finding ${finding.finding_id}`,
+        );
+        findingById.set(finding.finding_id, {
+          criterionId: criterion.criterion_id,
+          findingField,
+          referenceField,
+          finding,
+        });
+        for (const evidence of finding.evidence) {
+          evidenceRefIds.add(evidence.evidence_ref_id);
+          assert.ok(
+            evidence.start_utf8_byte < evidence.end_utf8_byte,
+            `${finding.finding_id}: evidence span must be non-empty`,
+          );
+          const question = questionByTurnId.get(evidence.turn_id);
+          assert.ok(
+            question,
+            `${finding.finding_id}: evidence Turn is not a confirmed response`,
+          );
+          assert.ok(
+            question.evidence_ref_ids.includes(evidence.evidence_ref_id),
+            `${finding.finding_id}: evidence reference is outside its response`,
+          );
+          const transcriptBytes = Buffer.from(
+            question.confirmed_transcript,
+            'utf8',
+          );
+          assert.ok(
+            evidence.end_utf8_byte <= transcriptBytes.length,
+            `${finding.finding_id}: evidence span exceeds its response`,
+          );
+          assert.equal(
+            transcriptBytes
+              .subarray(evidence.start_utf8_byte, evidence.end_utf8_byte)
+              .toString('utf8'),
+            evidence.original_excerpt,
+            `${finding.finding_id}: evidence excerpt does not match its response`,
+          );
+        }
+      }
+    }
+    assert.deepEqual(
+      sortedStrings(criterion.evidence_ref_ids),
+      sortedStrings(evidenceRefIds),
+      `${criterion.criterion_id}: evidence_ref_ids must equal finding evidence`,
+    );
+  }
+
+  for (const question of report.questions) {
+    for (const criterion of question.criterion_findings) {
+      for (const [, referenceField] of ieltsFindingKinds) {
+        for (const findingId of criterion[referenceField]) {
+          const target = findingById.get(findingId);
+          assert.ok(
+            target,
+            `Question ${question.index}: dangling finding ${findingId}`,
+          );
+          assert.equal(
+            target.criterionId,
+            criterion.criterion_id,
+            `Question ${question.index}: finding criterion mismatch`,
+          );
+          assert.equal(
+            target.referenceField,
+            referenceField,
+            `Question ${question.index}: finding category mismatch`,
+          );
+          assert.ok(
+            target.finding.evidence.some((evidence) =>
+              question.evidence_ref_ids.includes(evidence.evidence_ref_id),
+            ),
+            `Question ${question.index}: finding is unrelated to its response`,
+          );
+        }
+      }
+    }
+  }
+
+  for (let offset = 0; offset < report.part_reviews.length; offset += 1) {
+    const part = report.part_reviews[offset];
+    const expectedIndexes = ieltsPartQuestionIndexes[offset];
+    assert.deepEqual(
+      part.question_indexes,
+      expectedIndexes,
+      `${part.part_id}: question indexes changed`,
+    );
+    const partEvidence = new Set(
+      expectedIndexes.flatMap(
+        (index) => questionByIndex.get(index).evidence_ref_ids,
+      ),
+    );
+    assert.deepEqual(
+      sortedStrings(part.evidence_ref_ids),
+      sortedStrings(partEvidence),
+      `${part.part_id}: evidence refs must equal its question evidence`,
+    );
+    for (const [, referenceField] of ieltsFindingKinds) {
+      for (const findingId of part[referenceField]) {
+        const target = findingById.get(findingId);
+        assert.ok(target, `${part.part_id}: dangling finding ${findingId}`);
+        assert.equal(
+          target.referenceField,
+          referenceField,
+          `${part.part_id}: finding category mismatch`,
+        );
+        assert.ok(
+          target.finding.evidence.some((evidence) =>
+            partEvidence.has(evidence.evidence_ref_id),
+          ),
+          `${part.part_id}: finding is unrelated to the Part`,
+        );
+      }
+    }
+  }
+
+  for (const action of report.priority_actions) {
+    const target = findingById.get(action.finding_id);
+    assert.ok(target, `Priority action ${action.finding_id} is dangling`);
+    assert.equal(
+      target.criterionId,
+      action.criterion_id,
+      `Priority action ${action.finding_id} has the wrong criterion`,
+    );
+    assert.equal(
+      target.findingField,
+      'improvements',
+      `Priority action ${action.finding_id} must reference an improvement`,
+    );
+  }
+
+  if (report.scoreability_status === 'INSUFFICIENT') {
+    assert.ok(
+      report.criteria.every(
+        (criterion) =>
+          criterion.scoreability_status === 'INSUFFICIENT' &&
+          criterion.gate_status === 'BLOCKED',
+      ),
+      'INSUFFICIENT report cannot retain provisional criteria',
+    );
+    assert.deepEqual(report.priority_actions, []);
+  }
+};
+
+const assertIeltsSpeakingIndexSemantics = (page) => {
+  const practiceSessions = new Set();
+  const evaluationIds = new Set();
+  for (const item of page.items) {
+    assert.ok(
+      !practiceSessions.has(item.practice_session_id),
+      `Duplicate IELTS report Practice Session ${item.practice_session_id}`,
+    );
+    practiceSessions.add(item.practice_session_id);
+    assert.ok(
+      !evaluationIds.has(item.evaluation_id),
+      `Duplicate IELTS report Evaluation ${item.evaluation_id}`,
+    );
+    evaluationIds.add(item.evaluation_id);
+    assert.equal(
+      item.status_url,
+      `/v1/practice-sessions/${item.practice_session_id}/ielts-speaking-report`,
+      'IELTS index status_url must address its Practice Session',
+    );
+    assert.ok(
+      Date.parse(item.created_at) <= Date.parse(item.updated_at),
+      'IELTS index updated_at precedes created_at',
+    );
+  }
+};
+
+for (const [name, value] of Object.entries(ieltsSpeakingReportFixture)) {
+  if (name === 'index_page') {
+    continue;
+  }
+  assertValid(
+    `IELTS Speaking report ${name}`,
+    'IeltsSpeakingReportEnvelope',
+    value,
+  );
+  assertIeltsSpeakingReportSemantics(value);
+}
+const ieltsReportWithMissingOpportunity = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+const missingQuestion =
+  ieltsReportWithMissingOpportunity.report.questions[13];
+missingQuestion.opportunity_status = 'NOT_PROVIDED';
+missingQuestion.assessment_status = 'NOT_ASSESSED';
+delete missingQuestion.confirmed_transcript;
+delete missingQuestion.response_turn_id;
+missingQuestion.evidence_ref_ids = [];
+ieltsReportWithMissingOpportunity.report.part_reviews[2]
+  .evidence_ref_ids.pop();
+assertValid(
+  'IELTS Speaking report with a missing opportunity',
+  'IeltsSpeakingReportEnvelope',
+  ieltsReportWithMissingOpportunity,
+);
+assertIeltsSpeakingReportSemantics(ieltsReportWithMissingOpportunity);
+
+assertValid(
+  'IELTS Speaking report index',
+  'IeltsSpeakingReportIndexPage',
+  ieltsSpeakingReportFixture.index_page,
+);
+assertIeltsSpeakingIndexSemantics(ieltsSpeakingReportFixture.index_page);
+
+for (const reasonCode of [
+  'POLICY_VIOLATION',
+  'EVIDENCE_REF_INVALID',
+  'VERSION_CONFLICT',
+]) {
+  const failure = structuredClone(ieltsSpeakingReportFixture.failed);
+  failure.stable_failure = { reason_code: reasonCode, retryable: false };
+  assertValid(
+    `IELTS Speaking ${reasonCode} failure`,
+    'IeltsSpeakingReportEnvelope',
+    failure,
+  );
+}
+
+const ieltsReadyWithoutReport = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+delete ieltsReadyWithoutReport.report;
+assertSchemaRejected(
+  'READY IELTS Speaking report without report',
+  'IeltsSpeakingReportEnvelope',
+  ieltsReadyWithoutReport,
+);
+
+for (const [caseName, mutate] of [
+  [
+    'FC Band',
+    (value) => {
+      value.report.criteria[0].estimated_band = 6;
+      value.report.criteria[0].band_descriptor = 'forbidden';
+    },
+  ],
+  [
+    'PR Band',
+    (value) => {
+      value.report.criteria[3].estimated_band = 6;
+      value.report.criteria[3].band_descriptor = 'forbidden';
+    },
+  ],
+  [
+    'numeric Speaking Overall',
+    (value) => (value.report.speaking_overall.estimated_band = 6),
+  ],
+  [
+    'Part Band',
+    (value) => (value.report.part_reviews[0].estimated_band = 6),
+  ],
+  [
+    'question score',
+    (value) => (value.report.questions[0].score = 6),
+  ],
+  [
+    'invented target Band',
+    (value) => (value.report.target_plan.target_band = 7),
+  ],
+]) {
+  const invalid = structuredClone(ieltsSpeakingReportFixture.ready);
+  mutate(invalid);
+  assertSchemaRejected(
+    `IELTS Speaking report with ${caseName}`,
+    'IeltsSpeakingReportEnvelope',
+    invalid,
+  );
+}
+
+const wrongIeltsQuestionIndex = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+wrongIeltsQuestionIndex.report.questions[0].index = 2;
+assertValid(
+  'schema-valid wrong IELTS question index',
+  'IeltsSpeakingReportEnvelope',
+  wrongIeltsQuestionIndex,
+);
+assert.throws(
+  () => assertIeltsSpeakingReportSemantics(wrongIeltsQuestionIndex),
+  /frozen sequence/,
+);
+
+const wrongIeltsPartIndexes = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+wrongIeltsPartIndexes.report.part_reviews[0].question_indexes = [1, 2, 3];
+assertValid(
+  'schema-valid wrong IELTS Part indexes',
+  'IeltsSpeakingReportEnvelope',
+  wrongIeltsPartIndexes,
+);
+assert.throws(
+  () => assertIeltsSpeakingReportSemantics(wrongIeltsPartIndexes),
+  /question indexes changed/,
+);
+
+const forgedIeltsExcerpt = structuredClone(ieltsSpeakingReportFixture.ready);
+forgedIeltsExcerpt.report.criteria[0].strengths[0].evidence[0]
+  .original_excerpt = 'forged excerpt';
+assertValid(
+  'schema-valid forged IELTS excerpt',
+  'IeltsSpeakingReportEnvelope',
+  forgedIeltsExcerpt,
+);
+assert.throws(
+  () => assertIeltsSpeakingReportSemantics(forgedIeltsExcerpt),
+  /evidence excerpt does not match/,
+);
+
+const danglingIeltsQuestionFinding = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+danglingIeltsQuestionFinding.report.questions[0].criterion_findings[1]
+  .improvement_finding_ids = ['ielts_finding_missing'];
+assertValid(
+  'schema-valid dangling IELTS question finding',
+  'IeltsSpeakingReportEnvelope',
+  danglingIeltsQuestionFinding,
+);
+assert.throws(
+  () => assertIeltsSpeakingReportSemantics(danglingIeltsQuestionFinding),
+  /dangling finding/,
+);
+
+const duplicatedIeltsQuestionEvidence = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+duplicatedIeltsQuestionEvidence.report.questions[2].evidence_ref_ids = [
+  duplicatedIeltsQuestionEvidence.report.questions[1].evidence_ref_ids[0],
+];
+duplicatedIeltsQuestionEvidence.report.part_reviews[0].evidence_ref_ids =
+  duplicatedIeltsQuestionEvidence.report.part_reviews[0].evidence_ref_ids
+    .filter((refID) => refID !== 'ielts_evidence_003');
+assertValid(
+  'schema-valid duplicate IELTS question EvidenceRef',
+  'IeltsSpeakingReportEnvelope',
+  duplicatedIeltsQuestionEvidence,
+);
+assert.throws(
+  () => assertIeltsSpeakingReportSemantics(duplicatedIeltsQuestionEvidence),
+  /Duplicate response EvidenceRef/,
+);
+
+const mismatchedIeltsStatusUrl = structuredClone(
+  ieltsSpeakingReportFixture.running,
+);
+mismatchedIeltsStatusUrl.status_url =
+  '/v1/practice-sessions/session_other/ielts-speaking-report';
+assertValid(
+  'schema-valid mismatched IELTS status URL',
+  'IeltsSpeakingReportEnvelope',
+  mismatchedIeltsStatusUrl,
+);
+assert.throws(
+  () => assertIeltsSpeakingReportSemantics(mismatchedIeltsStatusUrl),
+  /same Practice Session/,
+);
+
+const duplicateIeltsIndexItem = structuredClone(
+  ieltsSpeakingReportFixture.index_page,
+);
+duplicateIeltsIndexItem.items.push(
+  structuredClone(duplicateIeltsIndexItem.items[0]),
+);
+assertValid(
+  'schema-valid duplicate IELTS index item',
+  'IeltsSpeakingReportIndexPage',
+  duplicateIeltsIndexItem,
+);
+assert.throws(
+  () => assertIeltsSpeakingIndexSemantics(duplicateIeltsIndexItem),
+  /Duplicate IELTS report Practice Session/,
 );

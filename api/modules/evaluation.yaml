@@ -234,6 +234,98 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/ielts-speaking-report:
+    get:
+      tags:
+        - Evaluation
+      summary: Get the current IELTS Speaking full-mock Shadow report
+      description: |
+        Returns the current Actor-owned SESSION + IELTS_SPEAKING + SCENE
+        Evaluation revision produced by ielts-speaking-full-mock-shadow/v1.
+        A resource owned by another Actor is indistinguishable from a missing
+        resource. This read never freezes evidence, creates or re-evaluates an
+        Evaluation, or invokes a provider.
+
+        The response is private and must not be persisted by intermediaries.
+        Servers must not log report findings, confirmed transcripts, Cue Card
+        notes, evidence excerpts, audio locators, prompts, or provider output.
+      operationId: getIeltsSpeakingReport
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+      responses:
+        '200':
+          description: |
+            Current report state. QUEUED and RUNNING are pollable, READY
+            contains an honest partial practice report, and FAILED contains
+            only a stable technical failure.
+          headers:
+            Cache-Control:
+              required: true
+              description: Prevents shared or private storage of the report.
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IeltsSpeakingReportEnvelope'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/ielts-speaking-reports:
+    get:
+      tags:
+        - Evaluation
+      summary: List current IELTS Speaking full-mock Shadow reports
+      description: |
+        Lists only the authenticated Actor's current, non-superseded
+        ielts-speaking-full-mock-shadow/v1 Evaluation revisions. Each item
+        identifies its report kind explicitly so clients never probe multiple
+        report endpoints or infer a scenario from a title.
+
+        The response is private. Servers must not log cursors together with
+        Actor credentials or include transcripts, evidence, audio locators,
+        prompts, provider output, or report findings in this index.
+      operationId: listIeltsSpeakingReports
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/IeltsSpeakingReportCursor'
+      responses:
+        '200':
+          description: Current IELTS Speaking report resources for this Actor.
+          headers:
+            Cache-Control:
+              required: true
+              description: Prevents shared or private storage of the index.
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IeltsSpeakingReportIndexPage'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
 
 components:
   responses:
@@ -1175,6 +1267,914 @@ components:
       minLength: 1
       maxLength: 16384
       pattern: '^\S(?:[\s\S]*\S)?$'
+    IeltsSpeakingReportEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_session_id
+        - evaluation_id
+        - evaluation_revision_id
+        - revision
+        - evaluation_status
+        - is_final
+        - status_url
+      properties:
+        practice_session_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evaluation_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        evaluation_revision_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        revision:
+          type: integer
+          minimum: 1
+        evaluation_status:
+          $ref: '#/components/schemas/IeltsSpeakingReportEvaluationStatus'
+        is_final:
+          type: boolean
+          const: false
+        status_url:
+          type: string
+          maxLength: 173
+          pattern: '^/v1/practice-sessions/[A-Za-z][A-Za-z0-9_-]*/ielts-speaking-report$'
+        report:
+          $ref: '#/components/schemas/IeltsSpeakingReport'
+        stable_failure:
+          $ref: '#/components/schemas/IeltsSpeakingReportFailure'
+      allOf:
+        - if:
+            type: object
+            properties:
+              evaluation_status:
+                const: READY
+            required:
+              - evaluation_status
+          then:
+            type: object
+            required:
+              - report
+            not:
+              required:
+                - stable_failure
+        - if:
+            type: object
+            properties:
+              evaluation_status:
+                const: FAILED
+            required:
+              - evaluation_status
+          then:
+            type: object
+            required:
+              - stable_failure
+            not:
+              required:
+                - report
+        - if:
+            type: object
+            properties:
+              evaluation_status:
+                enum:
+                  - QUEUED
+                  - RUNNING
+            required:
+              - evaluation_status
+          then:
+            type: object
+            not:
+              anyOf:
+                - required:
+                    - report
+                - required:
+                    - stable_failure
+    IeltsSpeakingReportEvaluationStatus:
+      type: string
+      enum:
+        - QUEUED
+        - RUNNING
+        - READY
+        - FAILED
+    IeltsSpeakingReport:
+      type: object
+      additionalProperties: false
+      description: |
+        Partial IELTS Speaking practice feedback projected from one frozen
+        Shadow revision. LR and GRA may contain provisional integer rubric
+        Bands. FC never contains a complete Band, PR is blocked, Speaking
+        Overall is unavailable, and no Part or question contains a score.
+      required:
+        - schema_version
+        - disclaimer_code
+        - disclaimer
+        - scoreability_status
+        - gate_status
+        - criteria
+        - speaking_overall
+        - part_reviews
+        - questions
+        - target_plan
+        - priority_actions
+      properties:
+        schema_version:
+          type: string
+          const: ielts-speaking-report/v1
+        disclaimer_code:
+          type: string
+          const: AI_PRACTICE_ESTIMATE_NOT_OFFICIAL_IELTS
+        disclaimer:
+          type: string
+          const: AI 练习估分，非 IELTS 官方成绩。
+        scoreability_status:
+          $ref: '#/components/schemas/IeltsSpeakingReportScoreabilityStatus'
+        gate_status:
+          $ref: '#/components/schemas/IeltsSpeakingReportGateStatus'
+        criteria:
+          $ref: '#/components/schemas/IeltsSpeakingReportCriteria'
+        speaking_overall:
+          $ref: '#/components/schemas/IeltsSpeakingOverallUnavailable'
+        part_reviews:
+          $ref: '#/components/schemas/IeltsSpeakingPartReviews'
+        questions:
+          type: array
+          minItems: 14
+          maxItems: 14
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingQuestionReview'
+        target_plan:
+          $ref: '#/components/schemas/IeltsSpeakingTargetPlan'
+        priority_actions:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingPriorityAction'
+      allOf:
+        - if:
+            type: object
+            properties:
+              scoreability_status:
+                const: PROVISIONAL
+            required:
+              - scoreability_status
+          then:
+            type: object
+            properties:
+              gate_status:
+                const: FEEDBACK_ONLY
+              criteria:
+                type: array
+                contains:
+                  type: object
+                  properties:
+                    scoreability_status:
+                      const: PROVISIONAL
+                  required:
+                    - scoreability_status
+                minContains: 1
+        - if:
+            type: object
+            properties:
+              scoreability_status:
+                const: INSUFFICIENT
+            required:
+              - scoreability_status
+          then:
+            type: object
+            properties:
+              gate_status:
+                const: BLOCKED
+              criteria:
+                type: array
+                not:
+                  contains:
+                    type: object
+                    properties:
+                      scoreability_status:
+                        const: PROVISIONAL
+                    required:
+                      - scoreability_status
+              priority_actions:
+                type: array
+                maxItems: 0
+    IeltsSpeakingReportScoreabilityStatus:
+      type: string
+      enum:
+        - PROVISIONAL
+        - INSUFFICIENT
+    IeltsSpeakingReportGateStatus:
+      type: string
+      enum:
+        - FEEDBACK_ONLY
+        - BLOCKED
+    IeltsSpeakingReportReasonCode:
+      type: string
+      enum:
+        - ASR_CONFIDENCE_UNAVAILABLE
+        - FLUENCY_TIMING_UNAVAILABLE
+        - PRONUNCIATION_ARTIFACT_UNAVAILABLE
+        - INSUFFICIENT_EVIDENCE
+        - OPPORTUNITY_NOT_PROVIDED
+    IeltsSpeakingCriterionId:
+      type: string
+      enum:
+        - IELTS_FC
+        - IELTS_LR
+        - IELTS_GRA
+        - IELTS_PR
+    IeltsSpeakingReportCriteria:
+      type: array
+      minItems: 4
+      maxItems: 4
+      prefixItems:
+        - $ref: '#/components/schemas/IeltsSpeakingFluencyCoherenceCriterion'
+        - $ref: '#/components/schemas/IeltsSpeakingLexicalResourceCriterion'
+        - $ref: '#/components/schemas/IeltsSpeakingGrammarCriterion'
+        - $ref: '#/components/schemas/IeltsSpeakingPronunciationCriterion'
+      items: false
+    IeltsSpeakingFluencyCoherenceCriterion:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingReportCriterion'
+        - type: object
+          required:
+            - criterion_id
+          properties:
+            criterion_id:
+              const: IELTS_FC
+          not:
+            anyOf:
+              - required:
+                  - estimated_band
+              - required:
+                  - band_descriptor
+        - if:
+            type: object
+            properties:
+              scoreability_status:
+                const: PROVISIONAL
+            required:
+              - scoreability_status
+          then:
+            type: object
+            properties:
+              reason_codes:
+                type: array
+                contains:
+                  const: FLUENCY_TIMING_UNAVAILABLE
+    IeltsSpeakingLexicalResourceCriterion:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingReportCriterion'
+        - type: object
+          required:
+            - criterion_id
+          properties:
+            criterion_id:
+              const: IELTS_LR
+        - if:
+            type: object
+            properties:
+              scoreability_status:
+                const: PROVISIONAL
+            required:
+              - scoreability_status
+          then:
+            type: object
+            required:
+              - estimated_band
+              - band_descriptor
+            properties:
+              reason_codes:
+                type: array
+                contains:
+                  const: ASR_CONFIDENCE_UNAVAILABLE
+    IeltsSpeakingGrammarCriterion:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingReportCriterion'
+        - type: object
+          required:
+            - criterion_id
+          properties:
+            criterion_id:
+              const: IELTS_GRA
+        - if:
+            type: object
+            properties:
+              scoreability_status:
+                const: PROVISIONAL
+            required:
+              - scoreability_status
+          then:
+            type: object
+            required:
+              - estimated_band
+              - band_descriptor
+            properties:
+              reason_codes:
+                type: array
+                contains:
+                  const: ASR_CONFIDENCE_UNAVAILABLE
+    IeltsSpeakingPronunciationCriterion:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingReportCriterion'
+        - type: object
+          required:
+            - criterion_id
+          properties:
+            criterion_id:
+              const: IELTS_PR
+            scoreability_status:
+              const: INSUFFICIENT
+            gate_status:
+              const: BLOCKED
+            reason_codes:
+              type: array
+              minItems: 1
+              maxItems: 1
+              prefixItems:
+                - const: PRONUNCIATION_ARTIFACT_UNAVAILABLE
+              items: false
+          not:
+            anyOf:
+              - required:
+                  - estimated_band
+              - required:
+                  - band_descriptor
+    IeltsSpeakingReportCriterion:
+      type: object
+      additionalProperties: false
+      required:
+        - criterion_id
+        - scoreability_status
+        - gate_status
+        - coverage
+        - confidence
+        - reason_codes
+        - evidence_ref_ids
+        - strengths
+        - improvements
+        - upgrade_examples
+      properties:
+        criterion_id:
+          $ref: '#/components/schemas/IeltsSpeakingCriterionId'
+        scoreability_status:
+          $ref: '#/components/schemas/IeltsSpeakingReportScoreabilityStatus'
+        gate_status:
+          $ref: '#/components/schemas/IeltsSpeakingReportGateStatus'
+        estimated_band:
+          type: integer
+          minimum: 1
+          maximum: 9
+          description: |
+            Provisional transcript-rubric estimate; never a final or official
+            IELTS result.
+        band_descriptor:
+          $ref: '#/components/schemas/IeltsSpeakingReportText'
+        coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Evidence opportunity coverage metadata, not a score.
+        confidence:
+          type: number
+          const: 0
+          description: |
+            No calibrated ASR confidence source exists in this revision, so
+            the server must publish zero rather than inventing confidence.
+        reason_codes:
+          type: array
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingReportReasonCode'
+        evidence_ref_ids:
+          type: array
+          maxItems: 128
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+        strengths:
+          $ref: '#/components/schemas/IeltsSpeakingReportFindings'
+        improvements:
+          $ref: '#/components/schemas/IeltsSpeakingReportFindings'
+        upgrade_examples:
+          $ref: '#/components/schemas/IeltsSpeakingReportFindings'
+      allOf:
+        - if:
+            type: object
+            properties:
+              scoreability_status:
+                const: PROVISIONAL
+            required:
+              - scoreability_status
+          then:
+            type: object
+            properties:
+              gate_status:
+                const: FEEDBACK_ONLY
+              evidence_ref_ids:
+                type: array
+                minItems: 1
+            anyOf:
+              - properties:
+                  strengths:
+                    type: array
+                    minItems: 1
+              - properties:
+                  improvements:
+                    type: array
+                    minItems: 1
+        - if:
+            type: object
+            properties:
+              scoreability_status:
+                const: INSUFFICIENT
+            required:
+              - scoreability_status
+          then:
+            type: object
+            properties:
+              gate_status:
+                const: BLOCKED
+              reason_codes:
+                type: array
+                items:
+                  enum:
+                    - INSUFFICIENT_EVIDENCE
+                    - OPPORTUNITY_NOT_PROVIDED
+                    - PRONUNCIATION_ARTIFACT_UNAVAILABLE
+              evidence_ref_ids:
+                type: array
+                maxItems: 0
+              strengths:
+                type: array
+                maxItems: 0
+              improvements:
+                type: array
+                maxItems: 0
+              upgrade_examples:
+                type: array
+                maxItems: 0
+            not:
+              anyOf:
+                - required:
+                    - estimated_band
+                - required:
+                    - band_descriptor
+    IeltsSpeakingReportFindings:
+      type: array
+      maxItems: 3
+      items:
+        $ref: '#/components/schemas/IeltsSpeakingReportFinding'
+    IeltsSpeakingReportFinding:
+      type: object
+      additionalProperties: false
+      required:
+        - finding_id
+        - message
+        - evidence
+      properties:
+        finding_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        message:
+          $ref: '#/components/schemas/IeltsSpeakingReportText'
+        suggestion:
+          $ref: '#/components/schemas/IeltsSpeakingReportText'
+        evidence:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingReportEvidence'
+    IeltsSpeakingReportEvidence:
+      type: object
+      additionalProperties: false
+      required:
+        - evidence_ref_id
+        - turn_id
+        - start_utf8_byte
+        - end_utf8_byte
+        - original_excerpt
+      properties:
+        evidence_ref_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        turn_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        start_utf8_byte:
+          type: integer
+          minimum: 0
+        end_utf8_byte:
+          type: integer
+          minimum: 1
+        original_excerpt:
+          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
+    IeltsSpeakingOverallUnavailable:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: NOT_AVAILABLE
+    IeltsSpeakingPartId:
+      type: string
+      enum:
+        - PART_1
+        - PART_2
+        - PART_3
+    IeltsSpeakingPartReviews:
+      type: array
+      minItems: 3
+      maxItems: 3
+      prefixItems:
+        - $ref: '#/components/schemas/IeltsSpeakingPartOneReview'
+        - $ref: '#/components/schemas/IeltsSpeakingPartTwoReview'
+        - $ref: '#/components/schemas/IeltsSpeakingPartThreeReview'
+      items: false
+    IeltsSpeakingPartOneReview:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingPartReview'
+        - type: object
+          properties:
+            part_id:
+              const: PART_1
+    IeltsSpeakingPartTwoReview:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingPartReview'
+        - type: object
+          properties:
+            part_id:
+              const: PART_2
+    IeltsSpeakingPartThreeReview:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingPartReview'
+        - type: object
+          properties:
+            part_id:
+              const: PART_3
+    IeltsSpeakingPartReview:
+      type: object
+      additionalProperties: false
+      required:
+        - part_id
+        - question_indexes
+        - evidence_ref_ids
+        - strength_finding_ids
+        - improvement_finding_ids
+        - upgrade_example_finding_ids
+      properties:
+        part_id:
+          $ref: '#/components/schemas/IeltsSpeakingPartId'
+        question_indexes:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: integer
+            minimum: 1
+            maximum: 14
+        evidence_ref_ids:
+          type: array
+          maxItems: 128
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+        strength_finding_ids:
+          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
+        improvement_finding_ids:
+          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
+        upgrade_example_finding_ids:
+          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
+    IeltsSpeakingQuestionReview:
+      type: object
+      additionalProperties: false
+      required:
+        - question_id
+        - part_id
+        - index
+        - question_text
+        - opportunity_status
+        - assessment_status
+        - evidence_ref_ids
+        - criterion_findings
+      properties:
+        question_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        part_id:
+          $ref: '#/components/schemas/IeltsSpeakingPartId'
+        index:
+          type: integer
+          minimum: 1
+          maximum: 14
+        question_text:
+          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
+        opportunity_status:
+          type: string
+          enum:
+            - PROVIDED
+            - NOT_PROVIDED
+        assessment_status:
+          type: string
+          enum:
+            - ASSESSED
+            - NOT_ASSESSED
+        confirmed_transcript:
+          $ref: '#/components/schemas/IeltsSpeakingReportSourceText'
+        response_turn_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evidence_ref_ids:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+        criterion_findings:
+          $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFindings'
+      allOf:
+        - if:
+            type: object
+            properties:
+              opportunity_status:
+                const: PROVIDED
+            required:
+              - opportunity_status
+          then:
+            type: object
+            required:
+              - confirmed_transcript
+              - response_turn_id
+            properties:
+              assessment_status:
+                const: ASSESSED
+              evidence_ref_ids:
+                type: array
+                minItems: 1
+        - if:
+            type: object
+            properties:
+              opportunity_status:
+                const: NOT_PROVIDED
+            required:
+              - opportunity_status
+          then:
+            type: object
+            properties:
+              assessment_status:
+                const: NOT_ASSESSED
+              evidence_ref_ids:
+                type: array
+                maxItems: 0
+            not:
+              anyOf:
+                - required:
+                    - confirmed_transcript
+                - required:
+                    - response_turn_id
+        - if:
+            type: object
+            properties:
+              assessment_status:
+                const: ASSESSED
+            required:
+              - assessment_status
+          then:
+            type: object
+            properties:
+              opportunity_status:
+                const: PROVIDED
+        - if:
+            type: object
+            properties:
+              assessment_status:
+                const: NOT_ASSESSED
+            required:
+              - assessment_status
+          then:
+            type: object
+            properties:
+              criterion_findings:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    strength_finding_ids:
+                      type: array
+                      maxItems: 0
+                    improvement_finding_ids:
+                      type: array
+                      maxItems: 0
+                    upgrade_example_finding_ids:
+                      type: array
+                      maxItems: 0
+    IeltsSpeakingQuestionCriterionFindings:
+      type: array
+      minItems: 4
+      maxItems: 4
+      prefixItems:
+        - $ref: '#/components/schemas/IeltsSpeakingQuestionFcFindings'
+        - $ref: '#/components/schemas/IeltsSpeakingQuestionLrFindings'
+        - $ref: '#/components/schemas/IeltsSpeakingQuestionGraFindings'
+        - $ref: '#/components/schemas/IeltsSpeakingQuestionPrFindings'
+      items: false
+    IeltsSpeakingQuestionFcFindings:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFinding'
+        - type: object
+          properties:
+            criterion_id:
+              const: IELTS_FC
+    IeltsSpeakingQuestionLrFindings:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFinding'
+        - type: object
+          properties:
+            criterion_id:
+              const: IELTS_LR
+    IeltsSpeakingQuestionGraFindings:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFinding'
+        - type: object
+          properties:
+            criterion_id:
+              const: IELTS_GRA
+    IeltsSpeakingQuestionPrFindings:
+      allOf:
+        - $ref: '#/components/schemas/IeltsSpeakingQuestionCriterionFinding'
+        - type: object
+          properties:
+            criterion_id:
+              const: IELTS_PR
+            strength_finding_ids:
+              type: array
+              maxItems: 0
+            improvement_finding_ids:
+              type: array
+              maxItems: 0
+            upgrade_example_finding_ids:
+              type: array
+              maxItems: 0
+    IeltsSpeakingQuestionCriterionFinding:
+      type: object
+      additionalProperties: false
+      required:
+        - criterion_id
+        - strength_finding_ids
+        - improvement_finding_ids
+        - upgrade_example_finding_ids
+      properties:
+        criterion_id:
+          $ref: '#/components/schemas/IeltsSpeakingCriterionId'
+        strength_finding_ids:
+          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
+        improvement_finding_ids:
+          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
+        upgrade_example_finding_ids:
+          $ref: '#/components/schemas/IeltsSpeakingFindingIds'
+    IeltsSpeakingFindingIds:
+      type: array
+      maxItems: 3
+      uniqueItems: true
+      items:
+        $ref: '#/components/schemas/StableIdentifier'
+    IeltsSpeakingTargetPlan:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: NOT_CONFIGURED
+    IeltsSpeakingPriorityAction:
+      type: object
+      additionalProperties: false
+      required:
+        - criterion_id
+        - finding_id
+      properties:
+        criterion_id:
+          $ref: '#/components/schemas/IeltsSpeakingCriterionId'
+        finding_id:
+          $ref: '#/components/schemas/StableIdentifier'
+    IeltsSpeakingReportFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - reason_code
+        - retryable
+      properties:
+        reason_code:
+          type: string
+          enum:
+            - POLICY_VIOLATION
+            - EVIDENCE_REF_INVALID
+            - VERSION_CONFLICT
+            - INTERNAL_RETRYABLE
+        retryable:
+          type: boolean
+      allOf:
+        - if:
+            type: object
+            properties:
+              reason_code:
+                const: INTERNAL_RETRYABLE
+            required:
+              - reason_code
+          then:
+            type: object
+            properties:
+              retryable:
+                const: true
+        - if:
+            type: object
+            properties:
+              reason_code:
+                enum:
+                  - POLICY_VIOLATION
+                  - EVIDENCE_REF_INVALID
+                  - VERSION_CONFLICT
+            required:
+              - reason_code
+          then:
+            type: object
+            properties:
+              retryable:
+                const: false
+    IeltsSpeakingReportText:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      pattern: '^\S(?:[\s\S]*\S)?$'
+      description: |
+        Server-controlled rubric descriptor or feedback template text;
+        never unvalidated provider prose.
+    IeltsSpeakingReportSourceText:
+      type: string
+      minLength: 1
+      maxLength: 16384
+      pattern: '^\S(?:[\s\S]*\S)?$'
+    IeltsSpeakingReportCursor:
+      type: string
+      minLength: 16
+      maxLength: 512
+      pattern: '^[A-Za-z0-9_-]+$'
+      description: Opaque, Actor-bound pagination cursor.
+    IeltsSpeakingReportIndexPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/IeltsSpeakingReportIndexItem'
+        next_cursor:
+          $ref: '#/components/schemas/IeltsSpeakingReportCursor'
+    IeltsSpeakingReportIndexItem:
+      type: object
+      additionalProperties: false
+      required:
+        - report_kind
+        - practice_session_id
+        - evaluation_id
+        - evaluation_revision_id
+        - revision
+        - evaluation_status
+        - is_final
+        - status_url
+        - created_at
+        - updated_at
+      properties:
+        report_kind:
+          type: string
+          const: IELTS_SPEAKING_FULL_MOCK
+        practice_session_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evaluation_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        evaluation_revision_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        revision:
+          type: integer
+          minimum: 1
+        evaluation_status:
+          $ref: '#/components/schemas/IeltsSpeakingReportEvaluationStatus'
+        is_final:
+          type: boolean
+          const: false
+        status_url:
+          type: string
+          maxLength: 173
+          pattern: '^/v1/practice-sessions/[A-Za-z][A-Za-z0-9_-]*/ielts-speaking-report$'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     Evaluation:
       $ref: '#/components/schemas/EvaluationCommonProperties'
     EvaluationCommonProperties:

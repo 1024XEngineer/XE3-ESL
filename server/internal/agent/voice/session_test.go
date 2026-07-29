@@ -532,7 +532,7 @@ func TestVoiceSessionRestoresCompletedIELTSFullMockWithoutReview(
 	t *testing.T,
 ) {
 	session := VoicePracticeSession{
-		ID:                       "session-ielts-full",
+		ID:                       "session-1",
 		PlanID:                   "plan-ielts-full",
 		ThreadID:                 "thread-1",
 		MatterID:                 "matter-1",
@@ -547,21 +547,45 @@ func TestVoiceSessionRestoresCompletedIELTSFullMockWithoutReview(
 		InterviewerParticipantID: "participant-interviewer",
 		CandidateParticipantID:   "participant-a",
 	}
+	conversations := newAgentVoiceConversation(14)
+	candidateID := agentVoiceCandidateID(14)
+	candidate := conversations.candidates[candidateID]
+	candidate.SessionID = session.ID
+	conversations.candidates[candidateID] = candidate
 	turn := conversation.ConfirmedVoiceTurn{
-		ID:               "turn-14",
-		SessionID:        session.ID,
-		EffectiveTurns:   session.EffectiveTurns,
+		ID:                      "turn-14",
+		SessionID:               session.ID,
+		QuestionID:              candidate.QuestionID,
+		QuestionSpeakerID:       candidate.QuestionSpeakerID,
+		AddresseeParticipantIDs: candidate.AddresseeParticipantIDs,
+		RespondentParticipantID: candidate.RespondentParticipantID,
+		CandidateID:             candidate.ID,
+		TranscriptID:            candidate.TranscriptID,
+		EvidenceVersion:         candidate.EvidenceVersion,
+		AnswerText:              candidate.Transcript,
+		EffectiveTurns:          session.EffectiveTurns,
+		SessionCompleted:        true,
+	}
+	conversations.turns[turn.ID] = turn
+	practice := newAgentVoicePracticeWithLimit(14, 14)
+	practice.skipReview = true
+	practice.turns[turn.ID] = VoiceTurnProgress{
+		EffectiveTurns:   14,
+		SessionVersion:   15,
+		TurnLimit:        14,
 		SessionCompleted: true,
 	}
+	completions := newAgentVoiceCompletionEvaluation()
 	application, err := NewVoiceSessionApplication(
 		fixedVoiceSessionPort{session: session},
 		voiceSessionTestQuestions{},
 		fixedVoiceCheckpoint{turn: turn},
-		newAgentVoiceOrchestrator(
+		newAgentVoiceOrchestratorWithCompletion(
 			t,
-			newAgentVoiceConversation(14),
-			newAgentVoicePractice(14),
+			conversations,
+			practice,
 			newAgentVoiceReview(),
+			completions,
 		),
 		voiceSessionTestReviews{reviews: newAgentVoiceReview()},
 		voiceSessionTestMatters{},
@@ -584,6 +608,13 @@ func TestVoiceSessionRestoresCompletedIELTSFullMockWithoutReview(
 		state.Question != nil ||
 		state.Review != nil {
 		t.Fatalf("completed IELTS full mock state = %#v", state)
+	}
+	if completions.creations != 1 || completions.calls != 1 {
+		t.Fatalf(
+			"completion recovery = %d creations / %d calls",
+			completions.creations,
+			completions.calls,
+		)
 	}
 }
 

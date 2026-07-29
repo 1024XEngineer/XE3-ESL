@@ -1060,6 +1060,78 @@ assert.ok(
 assert.match(interviewReport.description ?? '', /another Actor/i);
 assert.match(interviewReport.description ?? '', /must not log/i);
 
+const ieltsSpeakingReport = requireOperation(
+  'GET /v1/practice-sessions/{practice_session_id}/ielts-speaking-report',
+);
+assert.equal(
+  ieltsSpeakingReport.operationId,
+  'getIeltsSpeakingReport',
+);
+assert.deepEqual(
+  ieltsSpeakingReport.security ?? openApi.security,
+  bearerSecurity,
+  'IELTS Speaking reports must derive the Actor from BearerSession.',
+);
+for (const status of ['200', '401', '404', '409']) {
+  assert.ok(ieltsSpeakingReport.responses?.[status]);
+}
+const ieltsSpeakingReportResponse = resolveLocalReference(
+  ieltsSpeakingReport.responses['200'],
+);
+assert.equal(
+  ieltsSpeakingReportResponse?.headers?.['Cache-Control']?.schema?.const,
+  'private, no-store',
+  'IELTS Speaking reports must prohibit shared and private caching.',
+);
+assert.equal(
+  getJsonSchema(ieltsSpeakingReportResponse)?.$ref,
+  '#/components/schemas/IeltsSpeakingReportEnvelope',
+);
+assert.ok(
+  schemas.IeltsSpeakingReportEnvelope,
+  'The root contract must export IeltsSpeakingReportEnvelope.',
+);
+assert.ok(
+  schemas.IeltsSpeakingReport,
+  'The root contract must export IeltsSpeakingReport.',
+);
+assert.match(ieltsSpeakingReport.description ?? '', /another Actor/i);
+assert.match(ieltsSpeakingReport.description ?? '', /must not log/i);
+
+const ieltsSpeakingReportIndex = requireOperation(
+  'GET /v1/ielts-speaking-reports',
+);
+assert.equal(
+  ieltsSpeakingReportIndex.operationId,
+  'listIeltsSpeakingReports',
+);
+assert.deepEqual(
+  ieltsSpeakingReportIndex.security ?? openApi.security,
+  bearerSecurity,
+  'IELTS Speaking report history must derive the Actor from BearerSession.',
+);
+for (const status of ['200', '400', '401']) {
+  assert.ok(ieltsSpeakingReportIndex.responses?.[status]);
+}
+const ieltsSpeakingReportIndexResponse = resolveLocalReference(
+  ieltsSpeakingReportIndex.responses['200'],
+);
+assert.equal(
+  ieltsSpeakingReportIndexResponse?.headers?.['Cache-Control']?.schema?.const,
+  'private, no-store',
+  'IELTS Speaking report history must prohibit shared and private caching.',
+);
+assert.equal(
+  getJsonSchema(ieltsSpeakingReportIndexResponse)?.$ref,
+  '#/components/schemas/IeltsSpeakingReportIndexPage',
+);
+assert.ok(
+  schemas.IeltsSpeakingReportIndexPage,
+  'The root contract must export IeltsSpeakingReportIndexPage.',
+);
+assert.match(ieltsSpeakingReportIndex.description ?? '', /non-superseded/i);
+assert.match(ieltsSpeakingReportIndex.description ?? '', /report kind/i);
+
 const formalReviewHistory = requireOperation('GET /v1/formal-reviews');
 const formalReviewHistoryParameters = Object.fromEntries(
   (formalReviewHistory.parameters ?? []).map((parameterValue) => {

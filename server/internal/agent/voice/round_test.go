@@ -97,11 +97,13 @@ func TestVoiceRoundOrchestratorOwnsThreeTurnReviewSaga(t *testing.T) {
 	conversations := newAgentVoiceConversation(3)
 	practice := newAgentVoicePractice(0)
 	reviews := newAgentVoiceReview()
-	orchestrator := newAgentVoiceOrchestrator(
+	completions := newAgentVoiceCompletionEvaluation()
+	orchestrator := newAgentVoiceOrchestratorWithCompletion(
 		t,
 		conversations,
 		practice,
 		reviews,
+		completions,
 	)
 
 	var third conversation.ConfirmedVoiceTurn
@@ -147,12 +149,14 @@ func TestVoiceRoundOrchestratorOwnsThreeTurnReviewSaga(t *testing.T) {
 	}
 	if practice.effectiveTurns != 3 ||
 		reviews.creations != 1 ||
-		conversations.reviewSaves != 1 {
+		conversations.reviewSaves != 1 ||
+		completions.creations != 1 {
 		t.Fatalf(
-			"effective=%d reviews=%d saves=%d",
+			"effective=%d reviews=%d saves=%d evaluations=%d",
 			practice.effectiveTurns,
 			reviews.creations,
 			conversations.reviewSaves,
+			completions.creations,
 		)
 	}
 }
@@ -162,11 +166,13 @@ func TestVoiceRoundOrchestratorCompletesWhenReviewIsDeferred(t *testing.T) {
 	practice := newAgentVoicePractice(2)
 	practice.skipReview = true
 	reviews := newAgentVoiceReview()
-	orchestrator := newAgentVoiceOrchestrator(
+	completions := newAgentVoiceCompletionEvaluation()
+	orchestrator := newAgentVoiceOrchestratorWithCompletion(
 		t,
 		conversations,
 		practice,
 		reviews,
+		completions,
 	)
 
 	result, err := orchestrator.Confirm(
@@ -190,17 +196,25 @@ func TestVoiceRoundOrchestratorCompletesWhenReviewIsDeferred(t *testing.T) {
 			conversations.reviewSaves,
 		)
 	}
+	if completions.creations != 1 {
+		t.Fatalf(
+			"completion Evaluations = %d, want 1",
+			completions.creations,
+		)
+	}
 }
 
 func TestVoiceRoundOrchestratorConcurrentThirdTurnCreatesOneReview(t *testing.T) {
 	conversations := newAgentVoiceConversation(1)
 	practice := newAgentVoicePractice(2)
 	reviews := newAgentVoiceReview()
-	orchestrator := newAgentVoiceOrchestrator(
+	completions := newAgentVoiceCompletionEvaluation()
+	orchestrator := newAgentVoiceOrchestratorWithCompletion(
 		t,
 		conversations,
 		practice,
 		reviews,
+		completions,
 	)
 
 	const callers = 16
@@ -242,12 +256,14 @@ func TestVoiceRoundOrchestratorConcurrentThirdTurnCreatesOneReview(t *testing.T)
 	}
 	if practice.effectiveTurns != 3 ||
 		reviews.creations != 1 ||
-		conversations.turnCreations != 1 {
+		conversations.turnCreations != 1 ||
+		completions.creations != 1 {
 		t.Fatalf(
-			"effective=%d reviews=%d turns=%d",
+			"effective=%d reviews=%d turns=%d evaluations=%d",
 			practice.effectiveTurns,
 			reviews.creations,
 			conversations.turnCreations,
+			completions.creations,
 		)
 	}
 }
@@ -257,11 +273,13 @@ func TestVoiceRoundOrchestratorRecoversReviewAcknowledgementLoss(t *testing.T) {
 	practice := newAgentVoicePractice(2)
 	reviews := newAgentVoiceReview()
 	reviews.failAfterCreate = true
-	orchestrator := newAgentVoiceOrchestrator(
+	completions := newAgentVoiceCompletionEvaluation()
+	orchestrator := newAgentVoiceOrchestratorWithCompletion(
 		t,
 		conversations,
 		practice,
 		reviews,
+		completions,
 	)
 	command := conversation.ConfirmVoiceTurnCommand{
 		CandidateID:    "candidate-1",
@@ -285,12 +303,14 @@ func TestVoiceRoundOrchestratorRecoversReviewAcknowledgementLoss(t *testing.T) {
 	}
 	if reviews.creations != 1 ||
 		practice.effectiveTurns != 3 ||
-		conversations.turnCreations != 1 {
+		conversations.turnCreations != 1 ||
+		completions.creations != 1 {
 		t.Fatalf(
-			"reviews=%d effective=%d turns=%d",
+			"reviews=%d effective=%d turns=%d evaluations=%d",
 			reviews.creations,
 			practice.effectiveTurns,
 			conversations.turnCreations,
+			completions.creations,
 		)
 	}
 }
@@ -311,11 +331,13 @@ func TestVoiceRoundOrchestratorRecoversLocalCheckpointFailures(t *testing.T) {
 			conversations.reviewSaveFailures = test.failReviewSaves
 			practice := newAgentVoicePractice(2)
 			reviews := newAgentVoiceReview()
-			orchestrator := newAgentVoiceOrchestrator(
+			completions := newAgentVoiceCompletionEvaluation()
+			orchestrator := newAgentVoiceOrchestratorWithCompletion(
 				t,
 				conversations,
 				practice,
 				reviews,
+				completions,
 			)
 			command := conversation.ConfirmVoiceTurnCommand{
 				CandidateID:    "candidate-1",
@@ -339,15 +361,107 @@ func TestVoiceRoundOrchestratorRecoversLocalCheckpointFailures(t *testing.T) {
 			}
 			if practice.effectiveTurns != 3 ||
 				reviews.creations != 1 ||
-				conversations.turnCreations != 1 {
+				conversations.turnCreations != 1 ||
+				completions.creations != 1 {
 				t.Fatalf(
-					"effective=%d reviews=%d turns=%d",
+					"effective=%d reviews=%d turns=%d evaluations=%d",
 					practice.effectiveTurns,
 					reviews.creations,
 					conversations.turnCreations,
+					completions.creations,
 				)
 			}
 		})
+	}
+}
+
+func TestVoiceRoundOrchestratorRetriesFailedCompletionEvaluation(
+	t *testing.T,
+) {
+	conversations := newAgentVoiceConversation(1)
+	practice := newAgentVoicePractice(2)
+	practice.skipReview = true
+	completions := newAgentVoiceCompletionEvaluation()
+	completions.failAfterCreate = true
+	orchestrator := newAgentVoiceOrchestratorWithCompletion(
+		t,
+		conversations,
+		practice,
+		newAgentVoiceReview(),
+		completions,
+	)
+	command := conversation.ConfirmVoiceTurnCommand{
+		CandidateID:    "candidate-1",
+		IdempotencyKey: "confirm-candidate-1",
+	}
+
+	if _, err := orchestrator.Confirm(
+		context.Background(),
+		agentVoiceActor("a"),
+		command,
+	); !errors.Is(err, errAgentVoiceCompletionAcknowledgement) {
+		t.Fatalf("first completion error = %v", err)
+	}
+	recovered, err := orchestrator.Confirm(
+		context.Background(),
+		agentVoiceActor("a"),
+		command,
+	)
+	if err != nil || !recovered.SessionCompleted ||
+		recovered.ReviewID != "" {
+		t.Fatalf("recovered = %#v, %v", recovered, err)
+	}
+	if completions.creations != 1 || completions.calls != 2 ||
+		practice.effectiveTurns != 3 ||
+		conversations.turnCreations != 1 {
+		t.Fatalf(
+			"evaluations=%d calls=%d effective=%d turns=%d",
+			completions.creations,
+			completions.calls,
+			practice.effectiveTurns,
+			conversations.turnCreations,
+		)
+	}
+}
+
+func TestVoiceRoundOrchestratorTriggersCompletionOnlyAtFourteenthTurn(
+	t *testing.T,
+) {
+	conversations := newAgentVoiceConversation(2)
+	practice := newAgentVoicePracticeWithLimit(12, 14)
+	practice.skipReview = true
+	completions := newAgentVoiceCompletionEvaluation()
+	orchestrator := newAgentVoiceOrchestratorWithCompletion(
+		t,
+		conversations,
+		practice,
+		newAgentVoiceReview(),
+		completions,
+	)
+
+	for round := 1; round <= 2; round++ {
+		candidateID := agentVoiceCandidateID(round)
+		result, err := orchestrator.Confirm(
+			context.Background(),
+			agentVoiceActor("a"),
+			conversation.ConfirmVoiceTurnCommand{
+				CandidateID:    candidateID,
+				IdempotencyKey: "confirm-" + candidateID,
+			},
+		)
+		if err != nil {
+			t.Fatalf("round %d: %v", round+12, err)
+		}
+		if result.SessionCompleted != (round == 2) {
+			t.Fatalf("round %d result = %#v", round+12, result)
+		}
+		if got := completions.creations; got != max(0, round-1) {
+			t.Fatalf(
+				"round %d completion creations = %d",
+				round+12,
+				got,
+			)
+		}
 	}
 }
 
@@ -383,11 +497,28 @@ func newAgentVoiceOrchestrator(
 	practice VoicePracticePort,
 	reviews VoiceReviewPort,
 ) *VoiceRoundOrchestrator {
+	return newAgentVoiceOrchestratorWithCompletion(
+		t,
+		conversations,
+		practice,
+		reviews,
+		newAgentVoiceCompletionEvaluation(),
+	)
+}
+
+func newAgentVoiceOrchestratorWithCompletion(
+	t *testing.T,
+	conversations VoiceConversationPort,
+	practice VoicePracticePort,
+	reviews VoiceReviewPort,
+	completions VoiceCompletionEvaluationPort,
+) *VoiceRoundOrchestrator {
 	t.Helper()
 	orchestrator, err := NewVoiceRoundOrchestrator(
 		conversations,
 		practice,
 		reviews,
+		completions,
 	)
 	if err != nil {
 		t.Fatalf("new orchestrator: %v", err)
@@ -593,13 +724,22 @@ type agentVoicePractice struct {
 	mu             sync.Mutex
 	turns          map[string]VoiceTurnProgress
 	effectiveTurns int
+	turnLimit      int
 	skipReview     bool
 }
 
 func newAgentVoicePractice(effectiveTurns int) *agentVoicePractice {
+	return newAgentVoicePracticeWithLimit(effectiveTurns, 3)
+}
+
+func newAgentVoicePracticeWithLimit(
+	effectiveTurns int,
+	turnLimit int,
+) *agentVoicePractice {
 	return &agentVoicePractice{
 		turns:          make(map[string]VoiceTurnProgress),
 		effectiveTurns: effectiveTurns,
+		turnLimit:      turnLimit,
 	}
 }
 
@@ -632,8 +772,8 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	result := VoiceTurnProgress{
 		EffectiveTurns:   practice.effectiveTurns,
 		SessionVersion:   practice.effectiveTurns + 1,
-		TurnLimit:        3,
-		SessionCompleted: practice.effectiveTurns == 3,
+		TurnLimit:        practice.turnLimit,
+		SessionCompleted: practice.effectiveTurns == practice.turnLimit,
 	}
 	practice.turns[turnID] = result
 	return result, nil
@@ -654,6 +794,9 @@ var errAgentVoiceLostAcknowledgement = errors.New(
 	"review acknowledgement lost",
 )
 var errAgentVoiceCheckpoint = errors.New("conversation checkpoint failed")
+var errAgentVoiceCompletionAcknowledgement = errors.New(
+	"completion evaluation acknowledgement lost",
+)
 
 type agentVoiceReview struct {
 	mu              sync.Mutex
@@ -695,6 +838,45 @@ func (reviews *agentVoiceReview) EnsureSessionReview(
 		return VoiceReviewCheckpoint{}, errAgentVoiceLostAcknowledgement
 	}
 	return result, nil
+}
+
+type agentVoiceCompletionEvaluation struct {
+	mu              sync.Mutex
+	bySession       map[string]VoiceCompletionEvaluationSource
+	calls           int
+	creations       int
+	failAfterCreate bool
+}
+
+func newAgentVoiceCompletionEvaluation() *agentVoiceCompletionEvaluation {
+	return &agentVoiceCompletionEvaluation{
+		bySession: make(map[string]VoiceCompletionEvaluationSource),
+	}
+}
+
+func (evaluations *agentVoiceCompletionEvaluation) EnsureCompletedSessionEvaluation(
+	_ context.Context,
+	actor requestcontext.Actor,
+	source VoiceCompletionEvaluationSource,
+) error {
+	evaluations.mu.Lock()
+	defer evaluations.mu.Unlock()
+	evaluations.calls++
+	if actor.UserID != "user-a" ||
+		source.TurnID == "" ||
+		source.SessionID == "" {
+		return conversation.ErrVoiceRoundNotFound
+	}
+	if _, found := evaluations.bySession[source.SessionID]; found {
+		return nil
+	}
+	evaluations.bySession[source.SessionID] = source
+	evaluations.creations++
+	if evaluations.failAfterCreate {
+		evaluations.failAfterCreate = false
+		return errAgentVoiceCompletionAcknowledgement
+	}
+	return nil
 }
 
 func agentVoiceCandidateID(round int) string {

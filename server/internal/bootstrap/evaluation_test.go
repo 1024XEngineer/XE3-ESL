@@ -55,6 +55,38 @@ func TestInterviewShadowRuntimeConfigurationIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingShadowRuntimeConfigurationIsDeterministic(
+	t *testing.T,
+) {
+	t.Parallel()
+	configuration := EvaluationConfiguration{
+		Provider:        "qianwen",
+		Model:           "qwen-plus",
+		MaxOutputTokens: 2048,
+		LeaseDuration:   30 * time.Second,
+		MaxAttempts:     3,
+	}
+	first, err := ieltsSpeakingShadowRuntimeConfiguration(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ieltsSpeakingShadowRuntimeConfiguration(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || !first.Valid() {
+		t.Fatalf("runtime configuration is unstable: %#v %#v", first, second)
+	}
+	configuration.Model = "qwen-max"
+	changed, err := ieltsSpeakingShadowRuntimeConfiguration(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.FullConfigHash == first.FullConfigHash {
+		t.Fatal("model change did not alter full config hash")
+	}
+}
+
 func TestInterviewShadowProjectionNeverPublishesNumericScores(
 	t *testing.T,
 ) {
@@ -292,8 +324,8 @@ func TestEvaluationHTTPApplicationGetsOwnerScopedInterviewReport(
 		},
 	}
 	application := &evaluationHTTPApplication{
-		reports:       reader,
-		configuration: evaluationTestRuntimeConfiguration(t),
+		interviewReports: reader,
+		configuration:    evaluationTestRuntimeConfiguration(t),
 	}
 	resource, err := application.GetInterviewReport(
 		requestcontext.WithActor(context.Background(), actor),
@@ -323,7 +355,7 @@ func TestEvaluationHTTPApplicationMapsAmbiguousInterviewReportToConflict(
 		SessionID: "session-authenticated",
 	}
 	application := &evaluationHTTPApplication{
-		reports: &interviewReportReaderStub{
+		interviewReports: &interviewReportReaderStub{
 			err: evaluation.ErrInterviewShadowConfigurationConflict,
 		},
 		configuration: evaluationTestRuntimeConfiguration(t),
@@ -336,6 +368,103 @@ func TestEvaluationHTTPApplicationMapsAmbiguousInterviewReportToConflict(
 	appError, ok := apperror.From(err)
 	if !ok || appError.Code() != "evaluation_version_conflict" {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestEvaluationHTTPApplicationGetsOwnerScopedIELTSSpeakingReport(
+	t *testing.T,
+) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	reader := &ieltsSpeakingReportReaderStub{
+		result: evaluation.IELTSSpeakingReportReadState{
+			Evaluation: evaluationTestIELTSValue(
+				evaluation.StatusQueued,
+			),
+			Runtime: evaluation.IELTSSpeakingShadowReadState{
+				ModuleStatus: evaluation.
+					IELTSSpeakingShadowRuntimePending,
+			},
+		},
+	}
+	application := &evaluationHTTPApplication{
+		ieltsReports:       reader,
+		ieltsConfiguration: evaluationTestIELTSRuntimeConfiguration(t),
+	}
+	resource, err := application.GetIELTSSpeakingReport(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		"session_ielts_001",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader.ownerUserID != actor.UserID ||
+		reader.practiceSessionID != "session_ielts_001" ||
+		resource.PracticeSessionID != "session_ielts_001" ||
+		resource.EvaluationStatus != evaluation.StatusQueued ||
+		resource.Report != nil ||
+		resource.StableFailure != nil ||
+		resource.IsFinal {
+		t.Fatalf("reader=%#v resource=%#v", reader, resource)
+	}
+}
+
+func TestEvaluationHTTPApplicationListsOwnerScopedIELTSSpeakingReports(
+	t *testing.T,
+) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	value := evaluationTestIELTSValue(evaluation.StatusReady)
+	reader := &ieltsSpeakingReportReaderStub{
+		page: evaluation.IELTSSpeakingReportIndexPage{
+			Items: []evaluation.IELTSSpeakingReportIndexEntry{{
+				PracticeSessionID:    value.PracticeSessionID,
+				EvaluationID:         value.ID,
+				EvaluationRevisionID: value.Revision.ID,
+				Revision:             value.Revision.Number,
+				EvaluationStatus:     value.Revision.Status,
+				IsFinal:              value.Revision.IsFinal,
+				CreatedAt:            value.CreatedAt,
+				UpdatedAt:            value.Revision.UpdatedAt,
+			}},
+			HasMore: true,
+		},
+	}
+	application := &evaluationHTTPApplication{
+		ieltsReports:       reader,
+		ieltsConfiguration: evaluationTestIELTSRuntimeConfiguration(t),
+	}
+	boundary := &evaluationtransport.IELTSSpeakingReportIndexBoundary{
+		UpdatedAt:    value.Revision.UpdatedAt.Add(time.Minute),
+		EvaluationID: "30000000-0000-4000-8000-000000000001",
+	}
+	page, err := application.ListIELTSSpeakingReports(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		evaluationtransport.IELTSSpeakingReportIndexQuery{
+			Limit:  1,
+			Before: boundary,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader.ownerUserID != actor.UserID ||
+		reader.limit != 1 ||
+		reader.boundary == nil ||
+		!reader.boundary.UpdatedAt.Equal(boundary.UpdatedAt) ||
+		reader.boundary.EvaluationID != boundary.EvaluationID ||
+		len(page.Items) != 1 ||
+		!page.HasMore ||
+		page.Items[0].PracticeSessionID != value.PracticeSessionID {
+		t.Fatalf("reader=%#v page=%#v", reader, page)
 	}
 }
 
@@ -502,6 +631,25 @@ func evaluationTestRuntimeConfiguration(
 	return value
 }
 
+func evaluationTestIELTSRuntimeConfiguration(
+	t *testing.T,
+) evaluation.IELTSSpeakingShadowRuntimeConfiguration {
+	t.Helper()
+	value, err := ieltsSpeakingShadowRuntimeConfiguration(
+		EvaluationConfiguration{
+			Provider:        "qianwen",
+			Model:           "qwen-plus",
+			MaxOutputTokens: 2048,
+			LeaseDuration:   30 * time.Second,
+			MaxAttempts:     3,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
 func evaluationTestInterviewShadowResult() evaluation.InterviewShadowResult {
 	dimensions := make(
 		[]evaluation.InterviewShadowDimensionResult,
@@ -584,6 +732,19 @@ func evaluationTestValue(status evaluation.Status) evaluation.Evaluation {
 	}
 }
 
+func evaluationTestIELTSValue(
+	status evaluation.Status,
+) evaluation.Evaluation {
+	value := evaluationTestValue(status)
+	value.PracticeSessionID = "session_ielts_001"
+	value.SceneType = evaluation.SceneIELTSSpeaking
+	value.Revision.SceneStrategyRef =
+		evaluation.IELTSSpeakingShadowStrategyRef
+	value.Revision.PipelineVersion =
+		evaluation.IELTSSpeakingShadowPipelineVersion
+	return value
+}
+
 type evaluationServiceStub struct {
 	createResult       evaluation.Evaluation
 	createReplayed     bool
@@ -650,6 +811,38 @@ func (stub *interviewReportReaderStub) GetCurrentInterviewReportState(
 	stub.ownerUserID = ownerUserID
 	stub.practiceSessionID = practiceSessionID
 	return stub.result, stub.err
+}
+
+type ieltsSpeakingReportReaderStub struct {
+	result            evaluation.IELTSSpeakingReportReadState
+	page              evaluation.IELTSSpeakingReportIndexPage
+	err               error
+	ownerUserID       string
+	practiceSessionID string
+	boundary          *evaluation.IELTSSpeakingReportIndexBoundary
+	limit             int
+}
+
+func (stub *ieltsSpeakingReportReaderStub) GetCurrentIELTSSpeakingReportState(
+	_ context.Context,
+	ownerUserID string,
+	practiceSessionID string,
+) (evaluation.IELTSSpeakingReportReadState, error) {
+	stub.ownerUserID = ownerUserID
+	stub.practiceSessionID = practiceSessionID
+	return stub.result, stub.err
+}
+
+func (stub *ieltsSpeakingReportReaderStub) ListCurrentIELTSSpeakingReportIndex(
+	_ context.Context,
+	ownerUserID string,
+	boundary *evaluation.IELTSSpeakingReportIndexBoundary,
+	limit int,
+) (evaluation.IELTSSpeakingReportIndexPage, error) {
+	stub.ownerUserID = ownerUserID
+	stub.boundary = boundary
+	stub.limit = limit
+	return stub.page, stub.err
 }
 
 var _ evaluationtransport.Application = (*evaluationHTTPApplication)(nil)

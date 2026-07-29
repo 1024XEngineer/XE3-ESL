@@ -102,6 +102,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool _threadTransitionInFlight = false;
   int _threadTransitionGeneration = 0;
   String? _practiceSessionId;
+  String? _practiceScenarioType;
+  String? _practiceScenarioModel;
   int? _practiceSessionVersion;
   String? _endPracticeClientId;
   PracticeQuestion? _currentQuestion;
@@ -158,6 +160,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool get hasEarlierMessages => _nextMessageCursor != null;
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get practiceSessionId => _practiceSessionId;
+  String? get practiceScenarioType => _practiceScenarioType;
+  String? get practiceScenarioModel => _practiceScenarioModel;
   int? get practiceSessionVersion => _practiceSessionVersion;
   PracticeQuestion? get currentQuestion => _currentQuestion;
   String? get questionId => _currentQuestion?.id;
@@ -2247,6 +2251,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _applyPracticeConfirmation(PracticeTurnConfirmation confirmation) {
+    _practiceScenarioType = confirmation.scenarioType;
+    _practiceScenarioModel = confirmation.scenarioModel;
     _completedTurns = confirmation.completedTurns;
     _turnLimit = confirmation.turnLimit;
     _sessionCompleted = confirmation.sessionCompleted;
@@ -2281,10 +2287,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       ?confirmation.nextQuestion?.presentation,
     ]);
     if (confirmation.sessionCompleted) {
-      _recordingState = confirmation.review == null
-          ? PracticeRecordingState.reviewFailed
-          : PracticeRecordingState.completed;
-      _errorMessage = confirmation.review == null
+      final usesAsynchronousReport = isIeltsSpeakingFullMockScenario(
+        _practiceScenarioType,
+        _practiceScenarioModel,
+      );
+      _recordingState = confirmation.review != null || usesAsynchronousReport
+          ? PracticeRecordingState.completed
+          : PracticeRecordingState.reviewFailed;
+      _errorMessage = confirmation.review == null && !usesAsynchronousReport
           ? '练习已完成，正在等待服务端恢复同一次复盘。'
           : null;
     } else {
@@ -2363,6 +2373,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _threadTransitionGeneration++;
     _threadTransitionInFlight = false;
     _practiceSessionId = null;
+    _practiceScenarioType = null;
+    _practiceScenarioModel = null;
     _practiceSessionVersion = null;
     _endPracticeClientId = null;
     _currentQuestion = null;
@@ -2550,6 +2562,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(audioPlayer?.stop());
     if (snapshot == null) {
       _practiceSessionId = null;
+      _practiceScenarioType = null;
+      _practiceScenarioModel = null;
       _practiceSessionVersion = null;
       _endPracticeClientId = null;
       _currentQuestion = null;
@@ -2571,6 +2585,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final mayPreserveKnownRecordings =
         preserveKnownRecordings && snapshot.sessionId == _practiceSessionId;
     _practiceSessionId = snapshot.sessionId;
+    _practiceScenarioType = snapshot.scenarioType;
+    _practiceScenarioModel = snapshot.scenarioModel;
     _practiceSessionVersion = snapshot.sessionVersion;
     _endPracticeClientId = null;
     _currentQuestion = snapshot.currentQuestion;
@@ -2595,10 +2611,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final currentQuestion = snapshot.currentQuestion?.presentation;
     _appendMessages([?currentQuestion]);
     _appendPracticeMessages([?currentQuestion]);
+    final usesAsynchronousReport = isIeltsSpeakingFullMockScenario(
+      snapshot.scenarioType,
+      snapshot.scenarioModel,
+    );
     _recordingState = snapshot.sessionCompleted
-        ? snapshot.review == null
-              ? PracticeRecordingState.reviewFailed
-              : PracticeRecordingState.completed
+        ? snapshot.review != null || usesAsynchronousReport
+              ? PracticeRecordingState.completed
+              : PracticeRecordingState.reviewFailed
         : PracticeRecordingState.idle;
   }
 
@@ -2996,6 +3016,11 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
   void _validatePracticeSnapshot(PracticeSessionSnapshot snapshot) {
     if (snapshot.sessionId.trim().isEmpty ||
+        !validPracticeScenarioIdentity(
+          snapshot.scenarioType,
+          snapshot.scenarioModel,
+          allowMissing: true,
+        ) ||
         snapshot.matter.id.trim().isEmpty ||
         snapshot.matter.scene.id.trim().isEmpty ||
         snapshot.completedTurns < 0 ||
@@ -3049,6 +3074,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     required String expectedAnswer,
   }) {
     if (confirmation.turnId.trim().isEmpty ||
+        confirmation.scenarioType != _practiceScenarioType ||
+        confirmation.scenarioModel != _practiceScenarioModel ||
         confirmation.candidateId.trim().isEmpty ||
         confirmation.sessionId != expectedSessionId ||
         confirmation.questionId != expectedQuestionId ||

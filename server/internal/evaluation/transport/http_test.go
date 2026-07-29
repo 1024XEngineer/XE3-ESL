@@ -47,6 +47,16 @@ type applicationStub struct {
 		requestcontext.Actor,
 		string,
 	) (InterviewReportResource, error)
+	getIELTSSpeakingReport func(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (IELTSSpeakingReportResource, error)
+	listIELTSSpeakingReports func(
+		context.Context,
+		requestcontext.Actor,
+		IELTSSpeakingReportIndexQuery,
+	) (IELTSSpeakingReportIndexPageResource, error)
 	reevaluate func(
 		context.Context,
 		requestcontext.Actor,
@@ -89,6 +99,34 @@ func (stub applicationStub) GetInterviewReport(
 	return stub.getInterviewReport(ctx, actor, practiceSessionID)
 }
 
+func (stub applicationStub) GetIELTSSpeakingReport(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	practiceSessionID string,
+) (IELTSSpeakingReportResource, error) {
+	if stub.getIELTSSpeakingReport == nil {
+		return IELTSSpeakingReportResource{},
+			errors.New("unexpected GetIELTSSpeakingReport")
+	}
+	return stub.getIELTSSpeakingReport(
+		ctx,
+		actor,
+		practiceSessionID,
+	)
+}
+
+func (stub applicationStub) ListIELTSSpeakingReports(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	query IELTSSpeakingReportIndexQuery,
+) (IELTSSpeakingReportIndexPageResource, error) {
+	if stub.listIELTSSpeakingReports == nil {
+		return IELTSSpeakingReportIndexPageResource{},
+			errors.New("unexpected ListIELTSSpeakingReports")
+	}
+	return stub.listIELTSSpeakingReports(ctx, actor, query)
+}
+
 func (stub applicationStub) Reevaluate(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -102,9 +140,13 @@ func (stub applicationStub) Reevaluate(
 }
 
 func TestNewHTTPHandlerRequiresApplication(t *testing.T) {
-	handler, err := NewHTTPHandler(nil)
+	handler, err := NewHTTPHandler(nil, testCursorSigningKey())
 	if err == nil || handler != nil {
 		t.Fatal("expected a missing application to be rejected")
+	}
+	handler, err = NewHTTPHandler(applicationStub{}, nil)
+	if err == nil || handler != nil {
+		t.Fatal("expected a missing cursor signing key to be rejected")
 	}
 }
 
@@ -600,6 +642,277 @@ func TestGetInterviewReportRejectsContradictoryFailureRetryability(
 	}
 }
 
+func TestGetIELTSSpeakingReportPublishesPollableEnvelope(t *testing.T) {
+	resource := ieltsSpeakingReportResourceForStatus(
+		evaluation.StatusQueued,
+	)
+	router := newTestRouter(t, applicationStub{
+		getIELTSSpeakingReport: func(
+			ctx context.Context,
+			actor requestcontext.Actor,
+			practiceSessionID string,
+		) (IELTSSpeakingReportResource, error) {
+			if actor != testActor ||
+				practiceSessionID != "session_ielts_001" {
+				t.Fatalf(
+					"report input actor=%#v session=%q",
+					actor,
+					practiceSessionID,
+				)
+			}
+			trusted, ok := requestcontext.ActorFromContext(ctx)
+			if !ok || trusted != testActor {
+				t.Fatal("trusted actor missing from report context")
+			}
+			return resource, nil
+		},
+	}, &testActor)
+	response := performRequest(
+		router,
+		http.MethodGet,
+		"/v1/practice-sessions/session_ielts_001/ielts-speaking-report",
+		"",
+		"",
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+	}
+	assertPrivateResponse(t, response)
+	assertJSONEquals(t, response.Body.String(), map[string]any{
+		"practice_session_id":    "session_ielts_001",
+		"evaluation_id":          testEvaluationID,
+		"evaluation_revision_id": testRevisionID,
+		"revision":               float64(1),
+		"evaluation_status":      "QUEUED",
+		"is_final":               false,
+		"status_url": "/v1/practice-sessions/session_ielts_001/" +
+			"ielts-speaking-report",
+	})
+}
+
+func TestListIELTSSpeakingReportsUsesActorBoundSignedCursor(
+	t *testing.T,
+) {
+	createdAt := time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
+	items := []IELTSSpeakingReportIndexEntryResource{
+		{
+			PracticeSessionID:    "session_ielts_002",
+			EvaluationID:         testNextRevision,
+			EvaluationRevisionID: testRevisionID,
+			Revision:             1,
+			EvaluationStatus:     evaluation.StatusReady,
+			CreatedAt:            createdAt,
+			UpdatedAt:            createdAt.Add(2 * time.Minute),
+		},
+		{
+			PracticeSessionID:    "session_ielts_001",
+			EvaluationID:         testEvaluationID,
+			EvaluationRevisionID: testRevisionID,
+			Revision:             1,
+			EvaluationStatus:     evaluation.StatusRunning,
+			CreatedAt:            createdAt,
+			UpdatedAt:            createdAt.Add(time.Minute),
+		},
+	}
+	calls := 0
+	application := applicationStub{
+		listIELTSSpeakingReports: func(
+			ctx context.Context,
+			actor requestcontext.Actor,
+			query IELTSSpeakingReportIndexQuery,
+		) (IELTSSpeakingReportIndexPageResource, error) {
+			calls++
+			if actor != testActor {
+				t.Fatalf("actor = %#v", actor)
+			}
+			trusted, ok := requestcontext.ActorFromContext(ctx)
+			if !ok || trusted != testActor {
+				t.Fatal("trusted actor missing from index context")
+			}
+			if query.Limit != 2 {
+				t.Fatalf("limit = %d", query.Limit)
+			}
+			if calls == 1 {
+				if query.Before != nil {
+					t.Fatalf("first boundary = %#v", query.Before)
+				}
+				return IELTSSpeakingReportIndexPageResource{
+					Items:   items,
+					HasMore: true,
+				}, nil
+			}
+			if query.Before == nil ||
+				!query.Before.UpdatedAt.Equal(items[1].UpdatedAt) ||
+				query.Before.EvaluationID != items[1].EvaluationID {
+				t.Fatalf("second boundary = %#v", query.Before)
+			}
+			return IELTSSpeakingReportIndexPageResource{
+				Items: []IELTSSpeakingReportIndexEntryResource{},
+			}, nil
+		},
+	}
+	router := newTestRouter(t, application, &testActor)
+	first := performRequest(
+		router,
+		http.MethodGet,
+		"/v1/ielts-speaking-reports?limit=2",
+		"",
+		"",
+	)
+	if first.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", first.Code, first.Body)
+	}
+	assertPrivateResponse(t, first)
+	body := decodeJSONObjectForTest(t, first.Body.String())
+	cursor, ok := body["next_cursor"].(string)
+	if !ok || cursor == "" || strings.Contains(cursor, ".") {
+		t.Fatalf("cursor = %#v", body["next_cursor"])
+	}
+	responseItems, ok := body["items"].([]any)
+	if !ok || len(responseItems) != 2 {
+		t.Fatalf("items = %#v", body["items"])
+	}
+	for index, raw := range responseItems {
+		item := raw.(map[string]any)
+		if item["report_kind"] != "IELTS_SPEAKING_FULL_MOCK" ||
+			item["practice_session_id"] != items[index].PracticeSessionID ||
+			item["is_final"] != false {
+			t.Fatalf("item %d = %#v", index, item)
+		}
+	}
+	second := performRequest(
+		router,
+		http.MethodGet,
+		"/v1/ielts-speaking-reports?limit=2&cursor="+cursor,
+		"",
+		"",
+	)
+	if second.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", second.Code, second.Body)
+	}
+	secondBody := decodeJSONObjectForTest(t, second.Body.String())
+	if _, exists := secondBody["next_cursor"]; exists {
+		t.Fatalf("terminal page exposed cursor: %s", second.Body)
+	}
+}
+
+func TestIELTSSpeakingReportCursorRejectsTamperAndCrossActorReplay(
+	t *testing.T,
+) {
+	createdAt := time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
+	item := IELTSSpeakingReportIndexEntryResource{
+		PracticeSessionID:    "session_ielts_001",
+		EvaluationID:         testEvaluationID,
+		EvaluationRevisionID: testRevisionID,
+		Revision:             1,
+		EvaluationStatus:     evaluation.StatusQueued,
+		CreatedAt:            createdAt,
+		UpdatedAt:            createdAt.Add(time.Minute),
+	}
+	calls := 0
+	application := applicationStub{
+		listIELTSSpeakingReports: func(
+			context.Context,
+			requestcontext.Actor,
+			IELTSSpeakingReportIndexQuery,
+		) (IELTSSpeakingReportIndexPageResource, error) {
+			calls++
+			return IELTSSpeakingReportIndexPageResource{
+				Items:   []IELTSSpeakingReportIndexEntryResource{item},
+				HasMore: true,
+			}, nil
+		},
+	}
+	router := newTestRouter(t, application, &testActor)
+	first := performRequest(
+		router,
+		http.MethodGet,
+		"/v1/ielts-speaking-reports?limit=1",
+		"",
+		"",
+	)
+	body := decodeJSONObjectForTest(t, first.Body.String())
+	cursor := body["next_cursor"].(string)
+	tamperedPrefix := "A"
+	if strings.HasPrefix(cursor, tamperedPrefix) {
+		tamperedPrefix = "B"
+	}
+	tampered := tamperedPrefix + cursor[1:]
+	response := performRequest(
+		router,
+		http.MethodGet,
+		"/v1/ielts-speaking-reports?limit=1&cursor="+tampered,
+		"",
+		"",
+	)
+	assertAPIError(
+		t,
+		response,
+		http.StatusBadRequest,
+		"invalid_request",
+	)
+	otherActor := requestcontext.Actor{
+		UserID:    "52345678-1234-4234-8234-123456789abc",
+		SessionID: "other-session",
+	}
+	otherRouter := newTestRouter(t, application, &otherActor)
+	response = performRequest(
+		otherRouter,
+		http.MethodGet,
+		"/v1/ielts-speaking-reports?limit=1&cursor="+cursor,
+		"",
+		"",
+	)
+	assertAPIError(
+		t,
+		response,
+		http.StatusBadRequest,
+		"invalid_request",
+	)
+	if calls != 1 {
+		t.Fatalf("application was called %d times", calls)
+	}
+}
+
+func TestIELTSSpeakingReportIndexRejectsNonCanonicalQuery(t *testing.T) {
+	calls := 0
+	router := newTestRouter(t, applicationStub{
+		listIELTSSpeakingReports: func(
+			context.Context,
+			requestcontext.Actor,
+			IELTSSpeakingReportIndexQuery,
+		) (IELTSSpeakingReportIndexPageResource, error) {
+			calls++
+			return IELTSSpeakingReportIndexPageResource{}, nil
+		},
+	}, &testActor)
+	for _, query := range []string{
+		"limit=01",
+		"limit=101",
+		"limit=1&limit=2",
+		"cursor=",
+		"unknown=value",
+		"cursor=%zz",
+	} {
+		response := performRequest(
+			router,
+			http.MethodGet,
+			"/v1/ielts-speaking-reports?"+query,
+			"",
+			"",
+		)
+		assertAPIError(
+			t,
+			response,
+			http.StatusBadRequest,
+			"invalid_request",
+		)
+	}
+	if calls != 0 {
+		t.Fatalf("application was called %d times", calls)
+	}
+}
+
 func TestReadyProjectionMatchesEveryRequestedChannelExactly(t *testing.T) {
 	sceneOnly := resourceForStatus(evaluation.StatusReady)
 
@@ -707,6 +1020,26 @@ func TestEndpointsRequireActorFromRequestContext(t *testing.T) {
 				evaluation.StatusQueued,
 			), nil
 		},
+		getIELTSSpeakingReport: func(
+			context.Context,
+			requestcontext.Actor,
+			string,
+		) (IELTSSpeakingReportResource, error) {
+			calls++
+			return ieltsSpeakingReportResourceForStatus(
+				evaluation.StatusQueued,
+			), nil
+		},
+		listIELTSSpeakingReports: func(
+			context.Context,
+			requestcontext.Actor,
+			IELTSSpeakingReportIndexQuery,
+		) (IELTSSpeakingReportIndexPageResource, error) {
+			calls++
+			return IELTSSpeakingReportIndexPageResource{
+				Items: []IELTSSpeakingReportIndexEntryResource{},
+			}, nil
+		},
 		reevaluate: func(
 			context.Context,
 			requestcontext.Actor,
@@ -743,6 +1076,15 @@ func TestEndpointsRequireActorFromRequestContext(t *testing.T) {
 			method: http.MethodGet,
 			path: "/v1/practice-sessions/session_demo_001/" +
 				"interview-report",
+		},
+		{
+			method: http.MethodGet,
+			path: "/v1/practice-sessions/session_ielts_001/" +
+				"ielts-speaking-report",
+		},
+		{
+			method: http.MethodGet,
+			path:   "/v1/ielts-speaking-reports",
 		},
 		{
 			method:      http.MethodPost,
@@ -1586,7 +1928,7 @@ func newTestRouter(
 ) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	handler, err := NewHTTPHandler(application)
+	handler, err := NewHTTPHandler(application, testCursorSigningKey())
 	if err != nil {
 		t.Fatalf("NewHTTPHandler: %v", err)
 	}
@@ -1604,6 +1946,10 @@ func newTestRouter(
 	})
 	handler.RegisterRoutes(router)
 	return router
+}
+
+func testCursorSigningKey() []byte {
+	return []byte("evaluation-http-test-cursor-key-32")
 }
 
 func performRequest(
@@ -1715,6 +2061,26 @@ func interviewReportResourceForStatus(
 		report := insufficientInterviewReport()
 		resource.Report = &report
 	case evaluation.StatusFailed:
+		resource.StableFailure = &EvaluationFailure{
+			ReasonCode: ReasonInternalRetryable,
+			Retryable:  true,
+		}
+	}
+	return resource
+}
+
+func ieltsSpeakingReportResourceForStatus(
+	status evaluation.Status,
+) IELTSSpeakingReportResource {
+	resource := IELTSSpeakingReportResource{
+		PracticeSessionID:    "session_ielts_001",
+		EvaluationID:         testEvaluationID,
+		EvaluationRevisionID: testRevisionID,
+		Revision:             1,
+		EvaluationStatus:     status,
+		IsFinal:              false,
+	}
+	if status == evaluation.StatusFailed {
 		resource.StableFailure = &EvaluationFailure{
 			ReasonCode: ReasonInternalRetryable,
 			Retryable:  true,

@@ -600,6 +600,8 @@ PracticeSessionSnapshot _decodeSessionState(
       'practice_session_id',
       'practice_plan_id',
       'thread_id',
+      'scenario_type',
+      'scenario_model',
       'matter',
       'session_version',
       'effective_turns',
@@ -611,6 +613,8 @@ PracticeSessionSnapshot _decodeSessionState(
   final sessionId = _string(root, 'practice_session_id');
   final planId = _string(root, 'practice_plan_id');
   final threadId = _string(root, 'thread_id');
+  final scenarioType = _string(root, 'scenario_type', maxLength: 32);
+  final scenarioModel = _string(root, 'scenario_model', maxLength: 64);
   final matter = _decodeMatter(_object(root['matter']));
   final sessionVersion = _integer(root, 'session_version');
   final effectiveTurns = _integer(root, 'effective_turns');
@@ -635,6 +639,7 @@ PracticeSessionSnapshot _decodeSessionState(
   if ((expectedSessionId != null && sessionId != expectedSessionId) ||
       (expectedThreadId != null && threadId != expectedThreadId) ||
       (expectedMatterId != null && matter.id != expectedMatterId) ||
+      !validPracticeScenarioIdentity(scenarioType, scenarioModel) ||
       sessionVersion < 1 ||
       effectiveTurns < 0 ||
       turnLimit < 1 ||
@@ -660,6 +665,8 @@ PracticeSessionSnapshot _decodeSessionState(
     sessionId: sessionId,
     planId: planId,
     threadId: threadId,
+    scenarioType: scenarioType,
+    scenarioModel: scenarioModel,
     sessionVersion: sessionVersion,
     matter: matter,
     completedTurns: effectiveTurns,
@@ -795,6 +802,8 @@ PracticeTurnConfirmation _confirmationFromState(
     completedTurns: state.completedTurns,
     turnLimit: state.turnLimit,
     sessionCompleted: state.sessionCompleted,
+    scenarioType: state.scenarioType,
+    scenarioModel: state.scenarioModel,
     sessionVersion: state.sessionVersion,
     nextQuestion: state.currentQuestion,
     review: state.review,

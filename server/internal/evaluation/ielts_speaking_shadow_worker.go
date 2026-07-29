@@ -1,0 +1,328 @@
+package evaluation
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+)
+
+type IELTSSpeakingShadowRuntimeConfiguration struct {
+	MaxAttempts     int
+	LeaseDuration   time.Duration
+	StrategyRef     string
+	PipelineVersion string
+	FullConfigHash  [sha256.Size]byte
+	PromptVersion   string
+	Provider        string
+	Model           string
+}
+
+func (configuration IELTSSpeakingShadowRuntimeConfiguration) Valid() bool {
+	return durableConfigurationFromIELTS(configuration).valid(
+		ieltsDurableSceneJobSpec,
+	)
+}
+
+type IELTSSpeakingShadowClaim struct {
+	OutboxID             string
+	ModuleRunID          string
+	EvaluationID         string
+	EvaluationRevisionID string
+	OwnerUserID          string
+	Revision             int
+	StrategyRef          string
+	PipelineVersion      string
+	AttemptCount         int
+	FencingToken         int64
+	LeaseExpiresAt       time.Time
+	FullConfigHash       [sha256.Size]byte
+	PromptVersion        string
+	Provider             string
+	Model                string
+	Snapshot             EvidenceSnapshot
+}
+
+func (claim IELTSSpeakingShadowClaim) Valid() bool {
+	return durableClaimFromIELTS(claim).valid(
+		ieltsDurableSceneJobSpec,
+	)
+}
+
+type IELTSSpeakingShadowFailure struct {
+	Code      string
+	Retryable bool
+}
+
+func (failure IELTSSpeakingShadowFailure) Valid() bool {
+	return durableSceneJobFailure{
+		Code:      failure.Code,
+		Retryable: failure.Retryable,
+	}.valid()
+}
+
+type IELTSSpeakingShadowRuntimeStatus string
+
+const (
+	IELTSSpeakingShadowRuntimePending IELTSSpeakingShadowRuntimeStatus = "PENDING"
+	IELTSSpeakingShadowRuntimeRunning IELTSSpeakingShadowRuntimeStatus = "RUNNING"
+	IELTSSpeakingShadowRuntimeReady   IELTSSpeakingShadowRuntimeStatus = "READY"
+	IELTSSpeakingShadowRuntimeFailed  IELTSSpeakingShadowRuntimeStatus = "FAILED"
+)
+
+type IELTSSpeakingShadowReadState struct {
+	ModuleStatus   IELTSSpeakingShadowRuntimeStatus
+	FullConfigHash [sha256.Size]byte
+	Result         *IELTSSpeakingShadowResult
+	Failure        *IELTSSpeakingShadowFailure
+}
+
+func (state IELTSSpeakingShadowReadState) Valid(
+	snapshot *EvidenceSnapshot,
+) bool {
+	switch state.ModuleStatus {
+	case IELTSSpeakingShadowRuntimePending,
+		IELTSSpeakingShadowRuntimeRunning:
+		return state.Result == nil && state.Failure == nil
+	case IELTSSpeakingShadowRuntimeReady:
+		return snapshot != nil &&
+			nonZeroDigest(state.FullConfigHash) &&
+			state.Result != nil &&
+			state.Failure == nil &&
+			ValidateIELTSSpeakingShadowResult(
+				*snapshot,
+				*state.Result,
+			) == nil
+	case IELTSSpeakingShadowRuntimeFailed:
+		return state.Result == nil &&
+			nonZeroDigest(state.FullConfigHash) &&
+			state.Failure != nil &&
+			state.Failure.Valid()
+	default:
+		return false
+	}
+}
+
+type IELTSSpeakingShadowRuntimeRepository interface {
+	ClaimIELTSSpeakingShadow(
+		context.Context,
+		IELTSSpeakingShadowRuntimeConfiguration,
+	) (IELTSSpeakingShadowClaim, bool, error)
+	CompleteIELTSSpeakingShadow(
+		context.Context,
+		IELTSSpeakingShadowClaim,
+		IELTSSpeakingShadowResult,
+	) error
+	FailIELTSSpeakingShadow(
+		context.Context,
+		IELTSSpeakingShadowClaim,
+		IELTSSpeakingShadowFailure,
+		IELTSSpeakingShadowRuntimeConfiguration,
+	) (IELTSSpeakingShadowRuntimeStatus, error)
+	GetIELTSSpeakingShadowState(
+		context.Context,
+		string,
+		string,
+		string,
+	) (IELTSSpeakingShadowReadState, error)
+}
+
+type IELTSSpeakingShadowSweepResult struct {
+	Claimed   int
+	Completed int
+	Retried   int
+	Failed    int
+}
+
+type IELTSSpeakingShadowWorker struct {
+	repository    IELTSSpeakingShadowRuntimeRepository
+	engine        *IELTSSpeakingShadowEngine
+	configuration IELTSSpeakingShadowRuntimeConfiguration
+}
+
+func NewIELTSSpeakingShadowWorker(
+	repository IELTSSpeakingShadowRuntimeRepository,
+	engine *IELTSSpeakingShadowEngine,
+	configuration IELTSSpeakingShadowRuntimeConfiguration,
+) (*IELTSSpeakingShadowWorker, error) {
+	if repository == nil || engine == nil || !configuration.Valid() {
+		return nil, ErrInvalidRequest
+	}
+	return &IELTSSpeakingShadowWorker{
+		repository:    repository,
+		engine:        engine,
+		configuration: configuration,
+	}, nil
+}
+
+func (worker *IELTSSpeakingShadowWorker) ProcessPending(
+	ctx context.Context,
+	limit int,
+) (IELTSSpeakingShadowSweepResult, error) {
+	if worker == nil || worker.repository == nil ||
+		worker.engine == nil || ctx == nil {
+		return IELTSSpeakingShadowSweepResult{}, ErrInvalidRequest
+	}
+	sweep, err := processDurableSceneJobs(
+		ctx,
+		limit,
+		func(
+			claimContext context.Context,
+		) (durableSceneJobClaim, bool, error) {
+			claim, acquired, claimErr :=
+				worker.repository.ClaimIELTSSpeakingShadow(
+					claimContext,
+					worker.configuration,
+				)
+			return durableClaimFromIELTS(claim),
+				acquired,
+				claimErr
+		},
+		func(
+			processContext context.Context,
+			claim durableSceneJobClaim,
+		) (durableSceneJobStatus, error) {
+			status, processErr := worker.processClaim(
+				processContext,
+				ieltsClaimFromDurable(claim),
+			)
+			return durableSceneJobStatus(status), processErr
+		},
+	)
+	return IELTSSpeakingShadowSweepResult{
+		Claimed:   sweep.Claimed,
+		Completed: sweep.Completed,
+		Retried:   sweep.Retried,
+		Failed:    sweep.Failed,
+	}, err
+}
+
+func (worker *IELTSSpeakingShadowWorker) processClaim(
+	ctx context.Context,
+	claim IELTSSpeakingShadowClaim,
+) (IELTSSpeakingShadowRuntimeStatus, error) {
+	if !claim.Valid() ||
+		!ieltsClaimMatchesRuntime(
+			claim,
+			worker.configuration,
+		) {
+		return "", ErrInvalidRequest
+	}
+	result, err := worker.engine.Evaluate(ctx, claim.Snapshot)
+	if err != nil {
+		return worker.recordFailure(ctx, claim, err)
+	}
+	if result.Provider != nil &&
+		(result.Provider.Provider != claim.Provider ||
+			result.Provider.Model != claim.Model) {
+		return worker.recordFailure(
+			ctx,
+			claim,
+			ErrInvalidIELTSSpeakingShadow,
+		)
+	}
+	if err := ValidateIELTSSpeakingShadowResult(
+		claim.Snapshot,
+		result,
+	); err != nil {
+		return worker.recordFailure(ctx, claim, err)
+	}
+	if err := worker.repository.CompleteIELTSSpeakingShadow(
+		ctx,
+		claim,
+		result,
+	); err != nil {
+		return "", err
+	}
+	return IELTSSpeakingShadowRuntimeReady, nil
+}
+
+func (worker *IELTSSpeakingShadowWorker) recordFailure(
+	ctx context.Context,
+	claim IELTSSpeakingShadowClaim,
+	cause error,
+) (IELTSSpeakingShadowRuntimeStatus, error) {
+	status, err := worker.repository.FailIELTSSpeakingShadow(
+		ctx,
+		claim,
+		classifyIELTSSpeakingShadowFailure(cause),
+		worker.configuration,
+	)
+	if err != nil {
+		return "", err
+	}
+	if status != IELTSSpeakingShadowRuntimePending &&
+		status != IELTSSpeakingShadowRuntimeFailed {
+		return "", ErrInvalidRequest
+	}
+	return status, nil
+}
+
+func ieltsClaimMatchesRuntime(
+	claim IELTSSpeakingShadowClaim,
+	configuration IELTSSpeakingShadowRuntimeConfiguration,
+) bool {
+	return durableSceneJobConfigurationMatchesClaim(
+		durableClaimFromIELTS(claim),
+		durableConfigurationFromIELTS(configuration),
+		ieltsDurableSceneJobSpec,
+	)
+}
+
+func classifyIELTSSpeakingShadowFailure(
+	cause error,
+) IELTSSpeakingShadowFailure {
+	switch {
+	case errors.Is(cause, ErrInvalidIELTSSpeakingShadow),
+		errors.Is(cause, ErrInvalidRequest):
+		return IELTSSpeakingShadowFailure{
+			Code:      "provider_invalid_response",
+			Retryable: false,
+		}
+	case errors.Is(cause, context.Canceled):
+		return IELTSSpeakingShadowFailure{
+			Code:      "provider_canceled",
+			Retryable: true,
+		}
+	case errors.Is(cause, context.DeadlineExceeded):
+		return IELTSSpeakingShadowFailure{
+			Code:      "provider_timeout",
+			Retryable: true,
+		}
+	}
+	var generationError *ai.GenerationError
+	if errors.As(cause, &generationError) {
+		code := strings.ToLower(generationError.StableCategory())
+		code = strings.NewReplacer("-", "_", " ", "_").Replace(code)
+		if !durableSceneJobFailureCodePattern.MatchString(code) {
+			code = "provider_error"
+		}
+		return IELTSSpeakingShadowFailure{
+			Code:      code,
+			Retryable: generationError.Retryable(),
+		}
+	}
+	return IELTSSpeakingShadowFailure{
+		Code:      "dependency_error",
+		Retryable: true,
+	}
+}
+
+func decodeIELTSSpeakingShadowResult(
+	payload []byte,
+) (IELTSSpeakingShadowResult, error) {
+	var result IELTSSpeakingShadowResult
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&result) != nil ||
+		ensureJSONEOF(decoder) != nil {
+		return IELTSSpeakingShadowResult{},
+			ErrInvalidIELTSSpeakingShadow
+	}
+	return result, nil
+}

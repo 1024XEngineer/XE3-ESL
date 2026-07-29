@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -813,13 +814,22 @@ func installEvidenceAuthorities(
 		)
 	}
 	if practiceContext.PracticeSessionID != command.PracticeSessionID ||
-		len(payload.OpportunityManifest) != 1 ||
-		len(payload.ConfirmedTurns) != 1 ||
-		len(payload.ProviderLineage.ASR) != 1 ||
-		len(payload.EvidenceRefs) != 1 {
+		len(payload.OpportunityManifest) == 0 ||
+		len(payload.ConfirmedTurns) == 0 ||
+		len(payload.ConfirmedTurns) != len(payload.ProviderLineage.ASR) ||
+		len(payload.ConfirmedTurns) != len(payload.EvidenceRefs) {
 		t.Fatalf("unsupported Evidence authority fixture: %#v", payload)
 	}
 	authorityAt := time.Date(2026, time.July, 30, 8, 0, 0, 0, time.UTC)
+	minEffectiveTurns := 1
+	coverageCheckpointTurn := 1
+	maxEffectiveTurns := len(payload.ConfirmedTurns)
+	if practiceContext.ScenarioModel ==
+		string(practice.ScenarioModelIELTSSpeakingFullMock) {
+		minEffectiveTurns = 14
+		coverageCheckpointTurn = 14
+		maxEffectiveTurns = 14
+	}
 	sessionSnapshot := practice.ContextSessionSnapshot{
 		ID:            practiceContext.SessionSnapshotID,
 		SessionID:     command.PracticeSessionID,
@@ -886,9 +896,9 @@ func installEvidenceAuthorities(
 		SessionPolicy: practice.ContextSessionPolicy{
 			SuggestedDurationSeconds: practiceContext.TaskContext.
 				SuggestedDurationSeconds,
-			MinEffectiveTurns:       1,
-			MaxEffectiveTurns:       len(payload.ConfirmedTurns),
-			CoverageCheckpointTurn:  1,
+			MinEffectiveTurns:       minEffectiveTurns,
+			MaxEffectiveTurns:       maxEffectiveTurns,
+			CoverageCheckpointTurn:  coverageCheckpointTurn,
 			MaxFollowUpsPerQuestion: 1,
 			TargetObjectives: evidenceAuthorityObjectives(
 				practiceContext.Objectives.SessionPolicy,
@@ -1096,129 +1106,190 @@ func installEvidenceAuthorities(
 		)
 	`, command.OwnerUserID, command.PracticeSessionID,
 		practiceContext.SceneFamily, participantsDocument,
-		len(payload.ConfirmedTurns), authorityAt,
+		len(payload.OpportunityManifest), authorityAt,
 		practiceContext.SessionSnapshotID, planID,
 		practiceContext.Preparation.SnapshotID,
 		snapshotDocument); err != nil {
 		t.Fatalf("insert Evidence Practice Session Snapshot: %v", err)
 	}
 
-	opportunity := payload.OpportunityManifest[0]
-	turn := payload.ConfirmedTurns[0]
-	lineage := payload.ProviderLineage.ASR[0]
-	ref := payload.EvidenceRefs[0]
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO conversation_questions (
-			owner_user_id,
-			question_id,
-			practice_session_id,
-			speaker_participant_id,
-			addressee_participant_ids,
-			objective_id,
-			question_type,
-			parent_question_id,
-			content,
-			sequence,
-			created_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), $9, $10, $11)
-	`, command.OwnerUserID, opportunity.QuestionID,
-		command.PracticeSessionID, opportunity.SpeakerParticipantID,
-		opportunity.AddresseeParticipantIDs, opportunity.ObjectiveID,
-		opportunity.QuestionType, opportunity.ParentQuestionID,
-		opportunity.QuestionText, opportunity.Sequence,
-		authorityAt); err != nil {
-		t.Fatalf("insert Evidence Conversation Question: %v", err)
+	refsByTurnID := make(map[string]evidenceRef, len(payload.EvidenceRefs))
+	for _, ref := range payload.EvidenceRefs {
+		refsByTurnID[ref.TurnID] = ref
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO conversation_transcription_reservations (
-			owner_user_id,
-			reservation_id,
-			question_id,
-			practice_session_id,
-			idempotency_key,
-			input_fingerprint,
-			respondent_participant_id,
-			status,
-			fencing_token,
-			deletion_generation,
-			lease_expires_at,
-			candidate_id,
-			current_attempt_id,
-			created_at,
-			updated_at
-		)
-		VALUES (
-			$1, 'reservation-1', $2, $3, 'fixture-reservation-key',
-			'fixture-input', $4, 'completed', 1, 0, $5, $6,
-			'attempt-1', $5, $5
-		)
-	`, command.OwnerUserID, opportunity.QuestionID,
-		command.PracticeSessionID, turn.RespondentParticipantID,
-		authorityAt, ref.Lineage.CandidateID); err != nil {
-		t.Fatalf("insert Evidence transcription reservation: %v", err)
+	lineageByTurnID := make(
+		map[string]evidenceASRLineage,
+		len(payload.ProviderLineage.ASR),
+	)
+	for _, lineage := range payload.ProviderLineage.ASR {
+		lineageByTurnID[lineage.TurnID] = lineage
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO conversation_transcript_candidates (
-			owner_user_id,
-			candidate_id,
-			reservation_id,
-			question_id,
-			practice_session_id,
-			respondent_participant_id,
-			transcript_id,
-			evidence_version,
-			provider,
-			model,
-			provider_request_id,
-			transcript_text,
-			status,
-			created_at
-		)
-		VALUES (
-			$1, $2, 'reservation-1', $3, $4, $5, $6, $7,
-			$8, $9, $10, $11, 'confirmed', $12
-		)
-	`, command.OwnerUserID, ref.Lineage.CandidateID,
-		opportunity.QuestionID, command.PracticeSessionID,
-		turn.RespondentParticipantID, turn.Transcript.ID,
-		turn.Transcript.EvidenceVersion, lineage.Provider,
-		lineage.Model, lineage.ProviderRequestID,
-		turn.Transcript.Text, authorityAt); err != nil {
-		t.Fatalf("insert Evidence transcript candidate: %v", err)
+	for _, opportunity := range payload.OpportunityManifest {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_questions (
+				owner_user_id,
+				question_id,
+				practice_session_id,
+				speaker_participant_id,
+				addressee_participant_ids,
+				objective_id,
+				question_type,
+				parent_question_id,
+				content,
+				sequence,
+				created_at
+			)
+			VALUES (
+				$1, $2, $3, $4, $5, $6, $7,
+				nullif($8, ''), $9, $10, $11
+			)
+		`, command.OwnerUserID, opportunity.QuestionID,
+			command.PracticeSessionID,
+			opportunity.SpeakerParticipantID,
+			opportunity.AddresseeParticipantIDs,
+			opportunity.ObjectiveID,
+			opportunity.QuestionType,
+			opportunity.ParentQuestionID,
+			opportunity.QuestionText,
+			opportunity.Sequence,
+			authorityAt); err != nil {
+			t.Fatalf(
+				"insert Evidence Conversation Question %d: %v",
+				opportunity.Sequence,
+				err,
+			)
+		}
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO conversation_confirmed_turns (
-			owner_user_id,
-			turn_id,
-			candidate_id,
-			question_id,
-			practice_session_id,
-			speaker_participant_id,
-			addressee_participant_ids,
-			respondent_participant_id,
-			sequence,
-			interaction_mode,
-			answer_text,
-			evidence_version,
-			effective_turns,
-			session_completed,
-			progress_recorded_at,
-			confirmed_at,
-			created_at
+	for _, turn := range payload.ConfirmedTurns {
+		opportunity := payload.OpportunityManifest[turn.Sequence-1]
+		ref := refsByTurnID[turn.TurnID]
+		lineage := lineageByTurnID[turn.TurnID]
+		reservationID := fmt.Sprintf(
+			"reservation-%d",
+			turn.Sequence,
 		)
-		VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-			$12, $9, true, $13, $13, $13
-		)
-	`, command.OwnerUserID, turn.TurnID, ref.Lineage.CandidateID,
-		opportunity.QuestionID, command.PracticeSessionID,
-		opportunity.SpeakerParticipantID,
-		opportunity.AddresseeParticipantIDs,
-		turn.RespondentParticipantID, turn.Sequence,
-		turn.InteractionMode, turn.Transcript.Text,
-		turn.Transcript.EvidenceVersion, authorityAt); err != nil {
-		t.Fatalf("insert Evidence Confirmed Turn: %v", err)
+		attemptID := fmt.Sprintf("attempt-%d", turn.Sequence)
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_transcription_reservations (
+				owner_user_id,
+				reservation_id,
+				question_id,
+				practice_session_id,
+				idempotency_key,
+				input_fingerprint,
+				respondent_participant_id,
+				status,
+				fencing_token,
+				deletion_generation,
+				lease_expires_at,
+				candidate_id,
+				current_attempt_id,
+				created_at,
+				updated_at
+			)
+			VALUES (
+				$1, $2, $3, $4, $5, $6, $7, 'completed',
+				1, 0, $8, $9, $10, $8, $8
+			)
+		`, command.OwnerUserID, reservationID,
+			opportunity.QuestionID,
+			command.PracticeSessionID,
+			fmt.Sprintf(
+				"fixture-reservation-key-%d",
+				turn.Sequence,
+			),
+			fmt.Sprintf("fixture-input-%d", turn.Sequence),
+			turn.RespondentParticipantID,
+			authorityAt,
+			ref.Lineage.CandidateID,
+			attemptID); err != nil {
+			t.Fatalf(
+				"insert Evidence transcription reservation %d: %v",
+				turn.Sequence,
+				err,
+			)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_transcript_candidates (
+				owner_user_id,
+				candidate_id,
+				reservation_id,
+				question_id,
+				practice_session_id,
+				respondent_participant_id,
+				transcript_id,
+				evidence_version,
+				provider,
+				model,
+				provider_request_id,
+				transcript_text,
+				status,
+				created_at
+			)
+			VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8,
+				$9, $10, $11, $12, 'confirmed', $13
+			)
+		`, command.OwnerUserID, ref.Lineage.CandidateID,
+			reservationID, opportunity.QuestionID,
+			command.PracticeSessionID,
+			turn.RespondentParticipantID,
+			turn.Transcript.ID,
+			turn.Transcript.EvidenceVersion,
+			lineage.Provider,
+			lineage.Model,
+			lineage.ProviderRequestID,
+			turn.Transcript.Text,
+			authorityAt); err != nil {
+			t.Fatalf(
+				"insert Evidence transcript candidate %d: %v",
+				turn.Sequence,
+				err,
+			)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO conversation_confirmed_turns (
+				owner_user_id,
+				turn_id,
+				candidate_id,
+				question_id,
+				practice_session_id,
+				speaker_participant_id,
+				addressee_participant_ids,
+				respondent_participant_id,
+				sequence,
+				interaction_mode,
+				answer_text,
+				evidence_version,
+				effective_turns,
+				session_completed,
+				progress_recorded_at,
+				confirmed_at,
+				created_at
+			)
+			VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8, $9,
+				$10, $11, $12, $9, $13, $14, $14, $14
+			)
+		`, command.OwnerUserID, turn.TurnID,
+			ref.Lineage.CandidateID,
+			opportunity.QuestionID,
+			command.PracticeSessionID,
+			opportunity.SpeakerParticipantID,
+			opportunity.AddresseeParticipantIDs,
+			turn.RespondentParticipantID,
+			turn.Sequence,
+			turn.InteractionMode,
+			turn.Transcript.Text,
+			turn.Transcript.EvidenceVersion,
+			turn.Sequence == len(payload.ConfirmedTurns),
+			authorityAt); err != nil {
+			t.Fatalf(
+				"insert Evidence Confirmed Turn %d: %v",
+				turn.Sequence,
+				err,
+			)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit Evidence authority fixture: %v", err)
@@ -1228,24 +1299,37 @@ func installEvidenceAuthorities(
 		t.Fatalf("begin Evidence authority probe: %v", err)
 	}
 	defer func() { _ = probe.Rollback(ctx) }()
-	if err := lockEvidenceQuestion(
-		ctx,
-		probe,
-		command,
-		opportunity,
-	); err != nil {
-		t.Fatalf("probe Evidence Question authority: %v", err)
+	for _, opportunity := range payload.OpportunityManifest {
+		if err := lockEvidenceQuestion(
+			ctx,
+			probe,
+			command,
+			opportunity,
+		); err != nil {
+			t.Fatalf(
+				"probe Evidence Question authority %d: %v",
+				opportunity.Sequence,
+				err,
+			)
+		}
 	}
-	if err := lockEvidenceTurn(
-		ctx,
-		probe,
-		command,
-		turn,
-		ref,
-		lineage,
-		opportunity,
-	); err != nil {
-		t.Fatalf("probe Evidence Turn authority: %v", err)
+	for _, turn := range payload.ConfirmedTurns {
+		opportunity := payload.OpportunityManifest[turn.Sequence-1]
+		if err := lockEvidenceTurn(
+			ctx,
+			probe,
+			command,
+			turn,
+			refsByTurnID[turn.TurnID],
+			lineageByTurnID[turn.TurnID],
+			opportunity,
+		); err != nil {
+			t.Fatalf(
+				"probe Evidence Turn authority %d: %v",
+				turn.Sequence,
+				err,
+			)
+		}
 	}
 	if err := lockCurrentEvidenceSources(ctx, probe, command); err != nil {
 		t.Fatalf("probe complete Evidence authority: %v", err)

@@ -429,8 +429,8 @@ void main() {
     final practice = _IeltsPracticeClient(
       initialCompleted: 8,
       snapshotScene: const AgentScene(
-        id: 'matter-restored',
-        title: 'IELTS 口语完整模拟',
+        id: 'unrelated-restored-scene-id',
+        title: 'Renamed server-owned practice',
         description: '恢复的练习场景',
       ),
     );
@@ -456,6 +456,44 @@ void main() {
     expect(find.byKey(const Key('ielts-mock-part-1-complete')), findsOneWidget);
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
+
+  testWidgets(
+    'same title and fourteen-turn limit do not impersonate the full mock',
+    (tester) async {
+      final practice = _IeltsPracticeClient(
+        initialCompleted: 8,
+        scenarioType: 'EXAM',
+        scenarioModel: 'EXAM_BASIC_DIALOGUE',
+        snapshotScene: const AgentScene(
+          id: ieltsSpeakingFullMockScenarioId,
+          title: 'IELTS 口语完整模拟',
+          description: '同名但不是完整模考',
+        ),
+      );
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(_ieltsScene);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PracticePage(
+            agentController: controller,
+            ieltsMockProgressStore: _MemoryProgressStore(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(controller.turnLimit, 14);
+      expect(find.byKey(const Key('practice-page')), findsOneWidget);
+      expect(find.byKey(const Key('ielts-mock-page')), findsNothing);
+    },
+  );
 
   testWidgets('save and exit returns from an in-progress full mock', (
     tester,
@@ -799,6 +837,8 @@ final class _IeltsPracticeClient implements PracticeClient {
     this.snapshotScene,
     this.turnLimit = 14,
     this.transcriptionFailuresRemaining = 0,
+    this.scenarioType = 'EXAM',
+    this.scenarioModel = 'IELTS_SPEAKING_FULL_MOCK',
   }) : completed = initialCompleted;
 
   final int initialCompleted;
@@ -806,6 +846,8 @@ final class _IeltsPracticeClient implements PracticeClient {
   Object? transcribeFailure;
   final int turnLimit;
   int transcriptionFailuresRemaining;
+  final String scenarioType;
+  final String scenarioModel;
   int completed;
   final List<String> confirmedQuestionIds = [];
 
@@ -828,6 +870,8 @@ final class _IeltsPracticeClient implements PracticeClient {
     return PracticeStartResult(
       snapshot: PracticeSessionSnapshot(
         sessionId: _sessionId,
+        scenarioType: scenarioType,
+        scenarioModel: scenarioModel,
         matter: snapshotScene == null
             ? activeMatter
             : AgentMatter(id: activeMatter.id, scene: snapshotScene!),
@@ -886,6 +930,8 @@ final class _IeltsPracticeClient implements PracticeClient {
       completedTurns: completed,
       turnLimit: turnLimit,
       sessionCompleted: done,
+      scenarioType: scenarioType,
+      scenarioModel: scenarioModel,
       nextQuestion: done ? null : _question(completed + 1),
       review: done && turnLimit == 14 ? _review : null,
     );
