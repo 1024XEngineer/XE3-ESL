@@ -153,6 +153,52 @@ void main() {
   );
 
   test(
+    'practice does not consume a pending Home draft Thread recovery',
+    () async {
+      final client = _FailingFocusAgentClient();
+      final harness = await _createHarness(client: client);
+      final workspace = PracticeWorkspaceController(
+        agentController: harness.agent,
+        recordStore: _InspectableRecordStore(),
+      );
+      addTearDown(() {
+        workspace.dispose();
+        harness.agent.dispose();
+      });
+      await workspace.activateAccount('account-1');
+      await harness.agent.clearFocusedThread();
+      client.focusFailuresRemaining = 1;
+
+      expect(await harness.agent.sendText('Keep this Home draft'), isFalse);
+      expect(harness.agent.threadId, isNull);
+      expect(harness.agent.hasPendingThreadCreationRecovery, isTrue);
+      final createCallsAfterDraft = client.createCalls;
+
+      expect(
+        await workspace.acquireThread('practice-must-be-independent'),
+        isNull,
+      );
+
+      expect(workspace.errorMessage, contains('先回到首页完成恢复'));
+      expect(client.createCalls, createCallsAfterDraft);
+      expect(harness.agent.threadId, isNull);
+
+      await harness.agent.retryThreadHistory();
+      final recoveredHomeThreadId = harness.agent.threadId;
+      expect(recoveredHomeThreadId, isNotNull);
+
+      final lease = await workspace.acquireThread(
+        'practice-must-be-independent',
+      );
+
+      expect(lease, isNotNull);
+      expect(lease?.returnThreadId, recoveredHomeThreadId);
+      expect(lease?.practiceThreadId, isNot(recoveredHomeThreadId));
+      expect(client.createCalls, createCallsAfterDraft + 1);
+    },
+  );
+
+  test(
     'activation adopts a legacy active Practice and makes it resumable',
     () async {
       final store = _InspectableRecordStore();
@@ -846,6 +892,8 @@ final class _FailingFocusAgentClient
 
   String? failSetFocusedThreadId;
   bool failClearFocusedThread = false;
+  int focusFailuresRemaining = 0;
+  int createCalls = 0;
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
@@ -862,10 +910,19 @@ final class _FailingFocusAgentClient
       _delegate.getFocusedThread();
 
   @override
-  Future<AgentThreadSummary> createThread() => _delegate.createThread();
+  Future<AgentThreadSummary> createThread() {
+    createCalls++;
+    return _delegate.createThread();
+  }
 
   @override
   Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) {
+    if (focusFailuresRemaining > 0) {
+      focusFailuresRemaining--;
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.unavailable,
+      );
+    }
     if (threadId == failSetFocusedThreadId) {
       throw const AgentClientException(
         kind: AgentClientFailureKind.unavailable,

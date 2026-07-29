@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -185,84 +187,255 @@ void main() {
     );
   });
 
+  testWidgets('no focused Thread presents a writable new conversation draft', (
+    tester,
+  ) async {
+    var createCalls = 0;
+    var openCalls = 0;
+    final submitted = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationPage(
+          hasFocusedThread: false,
+          onCreateConversation: () => createCalls++,
+          onOpenMenu: () => openCalls++,
+          onSubmitText: (value) async {
+            submitted.add(value);
+            return true;
+          },
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('no-focused-conversation-home')), findsNothing);
+    expect(find.text('你好，今天想练什么？'), findsOneWidget);
+    final composer = find.byKey(const Key('agent-composer-field'));
+    expect(tester.widget<TextField>(composer).enabled, isTrue);
+
+    await tester.enterText(composer, 'Start immediately');
+    await tester.pump();
+    final sendButton = find.byKey(const Key('agent-send-button'));
+    expect(tester.widget<IconButton>(sendButton).onPressed, isNotNull);
+    await tester.tap(sendButton);
+    await tester.pump();
+
+    expect(submitted, <String>['Start immediately']);
+    expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
+
+    await tester.tap(find.byKey(const Key('conversation-create-button')));
+    await tester.tap(find.byKey(const Key('conversation-menu-button')));
+
+    expect(createCalls, 1);
+    expect(openCalls, 1);
+  });
+
+  testWidgets('home surfaces a definite lazy Thread creation failure', (
+    tester,
+  ) async {
+    final controller = AgentController(
+      client: _DefiniteCreateFailureAgentClient(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
+    await tester.pumpAndSettle();
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    await tester.enterText(composer, 'Show the failure');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('agent-send-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('暂时无法创建新对话，请稍后再试。'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(composer).controller?.text,
+      'Show the failure',
+    );
+  });
+
   testWidgets(
-    'no focused Thread shows CTAs and disables text and voice input',
+    'materializing a draft Thread preserves text when the first send fails',
     (tester) async {
-      var createCalls = 0;
-      var openCalls = 0;
-      var voiceCalls = 0;
-      var submitCalls = 0;
+      String? threadId;
+      late StateSetter update;
       await tester.pumpWidget(
         MaterialApp(
-          home: ConversationPage(
-            hasFocusedThread: false,
-            onCreateConversation: () => createCalls++,
-            onOpenMenu: () => openCalls++,
-            onVoicePlaceholder: () => voiceCalls++,
-            onSubmitText: (_) async {
-              submitCalls++;
-              return true;
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return ConversationPage(
+                threadId: threadId,
+                hasFocusedThread: threadId != null,
+                onCreateConversation: () {},
+                onSubmitText: (_) async {
+                  update(() => threadId = 'created-from-draft');
+                  return false;
+                },
+              );
             },
           ),
         ),
       );
 
-      expect(
-        find.byKey(const Key('no-focused-conversation-home')),
-        findsOneWidget,
-      );
-      expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
-            .enabled,
-        isFalse,
-      );
-      expect(
-        tester
-            .widget<IconButton>(find.byKey(const Key('agent-send-button')))
-            .onPressed,
-        isNull,
-      );
-      expect(
-        tester
-            .widget<IconButton>(
-              find.descendant(
-                of: find.byKey(const Key('agent-mic-placeholder')),
-                matching: find.byType(IconButton),
-              ),
-            )
-            .onPressed,
-        isNull,
-      );
+      final composer = find.byKey(const Key('agent-composer-field'));
+      await tester.enterText(composer, 'Keep this draft');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-send-button')));
+      await tester.pump();
 
-      await tester.tap(find.byKey(const Key('no-focused-create-conversation')));
-      await tester.tap(find.byKey(const Key('no-focused-open-conversations')));
-
-      expect(createCalls, 1);
-      expect(openCalls, 1);
-      expect(voiceCalls, 0);
-      expect(submitCalls, 0);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ConversationPage(
-            hasFocusedThread: false,
-            isBusy: true,
-            onCreateConversation: () => createCalls++,
-            onOpenMenu: () => openCalls++,
-          ),
-        ),
-      );
+      expect(threadId, 'created-from-draft');
       expect(
-        tester
-            .widget<FilledButton>(
-              find.byKey(const Key('no-focused-create-conversation')),
-            )
-            .onPressed,
-        isNull,
+        tester.widget<TextField>(composer).controller?.text,
+        'Keep this draft',
       );
     },
   );
+
+  testWidgets('inline recovery moves the draft into the recovered Thread', (
+    tester,
+  ) async {
+    String? threadId;
+    var recoveryGeneration = 0;
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              threadId: threadId,
+              draftThreadRecoveryGeneration: recoveryGeneration,
+              hasFocusedThread: threadId != null,
+              onCreateConversation: () {},
+              onSubmitText: (_) async => false,
+            );
+          },
+        ),
+      ),
+    );
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    await tester.enterText(composer, 'Recover this draft');
+    update(() {
+      threadId = 'recovered-thread';
+      recoveryGeneration++;
+    });
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(composer).controller?.text,
+      'Recover this draft',
+    );
+  });
+
+  testWidgets('opening existing history does not inherit an empty-page draft', (
+    tester,
+  ) async {
+    String? threadId;
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              threadId: threadId,
+              hasFocusedThread: threadId != null,
+              onCreateConversation: () {},
+              onSubmitText: (_) async => false,
+            );
+          },
+        ),
+      ),
+    );
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    await tester.enterText(composer, 'Private empty-page draft');
+    update(() => threadId = 'existing-history-thread');
+    await tester.pump();
+
+    expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
+  });
+
+  testWidgets('switching between existing Threads clears the private draft', (
+    tester,
+  ) async {
+    var threadId = 'thread-a';
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            update = setState;
+            return ConversationPage(
+              threadId: threadId,
+              onSubmitText: (_) async => false,
+            );
+          },
+        ),
+      ),
+    );
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    await tester.enterText(composer, 'Thread A private draft');
+    update(() => threadId = 'thread-b');
+    await tester.pump();
+
+    expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
+  });
+
+  testWidgets('repeated keyboard submissions share one in-flight send', (
+    tester,
+  ) async {
+    final sendResult = Completer<bool>();
+    var submitCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationPage(
+          threadId: 'thread-a',
+          onSubmitText: (_) {
+            submitCalls++;
+            return sendResult.future;
+          },
+        ),
+      ),
+    );
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    await tester.enterText(composer, 'Send once');
+    await tester.pump();
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pump();
+
+    expect(submitCalls, 1);
+
+    sendResult.complete(false);
+    await tester.pump();
+    expect(tester.widget<TextField>(composer).controller?.text, 'Send once');
+  });
+
+  testWidgets('a busy empty draft keeps submission disabled', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationPage(
+          hasFocusedThread: false,
+          isBusy: true,
+          onCreateConversation: () {},
+          onSubmitText: (_) async => true,
+        ),
+      ),
+    );
+
+    final composer = find.byKey(const Key('agent-composer-field'));
+    expect(tester.widget<TextField>(composer).enabled, isFalse);
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('agent-send-button')))
+          .onPressed,
+      isNull,
+    );
+  });
 
   testWidgets('older Message pagination is visible and accessible', (
     tester,
@@ -761,4 +934,112 @@ Future<void> _tapVisible(WidgetTester tester, String key) async {
   await tester.pumpAndSettle();
   await tester.tap(finder);
   await tester.pumpAndSettle();
+}
+
+final class _DefiniteCreateFailureAgentClient
+    implements AgentClient, AgentThreadHistoryClient {
+  final FakeAgentClient _delegate = FakeAgentClient();
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
+
+  @override
+  Future<AgentThreadSnapshot> restoreThread() => _delegate.restoreThread();
+
+  @override
+  Future<AgentThreadPage> listThreads({
+    int pageSize = 20,
+    String? cursor,
+  }) async {
+    final page = await _delegate.listThreads(
+      pageSize: pageSize,
+      cursor: cursor,
+    );
+    return AgentThreadPage(threads: page.threads, nextCursor: page.nextCursor);
+  }
+
+  @override
+  Future<AgentThreadSnapshot?> getFocusedThread() async => null;
+
+  @override
+  Future<AgentThreadSummary> createThread() {
+    throw StateError('Definite Thread creation failure.');
+  }
+
+  @override
+  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) =>
+      _delegate.setFocusedThread(threadId: threadId);
+
+  @override
+  Future<void> clearFocusedThread() => _delegate.clearFocusedThread();
+
+  @override
+  Future<AgentMessagePage> listMessages({
+    required String threadId,
+    int pageSize = 50,
+    String? cursor,
+  }) => _delegate.listMessages(
+    threadId: threadId,
+    pageSize: pageSize,
+    cursor: cursor,
+  );
+
+  @override
+  Future<AgentSceneStart> startScene({
+    required String threadId,
+    required AgentScene scene,
+    required String clientOperationId,
+  }) => _delegate.startScene(
+    threadId: threadId,
+    scene: scene,
+    clientOperationId: clientOperationId,
+  );
+
+  @override
+  Future<AgentExchange> sendText({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+  }) => _delegate.sendText(
+    threadId: threadId,
+    text: text,
+    clientMessageId: clientMessageId,
+  );
+
+  @override
+  Future<String> transcribeTurn({
+    required String threadId,
+    required int turnNumber,
+    required String clientTurnId,
+  }) => _delegate.transcribeTurn(
+    threadId: threadId,
+    turnNumber: turnNumber,
+    clientTurnId: clientTurnId,
+  );
+
+  @override
+  Future<AgentExchange> submitPracticeTurn({
+    required String threadId,
+    required AgentScene scene,
+    required int turnNumber,
+    required String transcript,
+    required String clientTurnId,
+  }) => _delegate.submitPracticeTurn(
+    threadId: threadId,
+    scene: scene,
+    turnNumber: turnNumber,
+    transcript: transcript,
+    clientTurnId: clientTurnId,
+  );
+
+  @override
+  Future<AgentReview> createReview({
+    required String threadId,
+    required AgentScene scene,
+    required String clientReviewId,
+  }) => _delegate.createReview(
+    threadId: threadId,
+    scene: scene,
+    clientReviewId: clientReviewId,
+  );
 }

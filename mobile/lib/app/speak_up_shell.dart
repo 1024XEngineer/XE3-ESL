@@ -269,12 +269,14 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
         onStartVoice: widget.agentController.supportsAgentVoice
-            ? () => unawaited(widget.agentController.startAgentVoiceRecording())
+            ? widget.agentController.startAgentVoiceRecording
             : null,
         voiceController: widget.agentController.voiceController,
         onCreateConversation: widget.agentController.supportsThreadHistory
             ? () => unawaited(widget.agentController.createThread())
             : null,
+        draftThreadRecoveryGeneration:
+            widget.agentController.draftThreadRecoveryGeneration,
         messages: widget.agentController.messages,
         activeScene: widget.agentController.scene,
         hasFocusedThread:
@@ -286,9 +288,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         isBusy: widget.agentController.isBusy,
         errorMessage:
             widget.agentController.errorMessage ??
-            (widget.agentController.canRetryThreadHistory
-                ? widget.agentController.threadHistoryErrorMessage
-                : null),
+            widget.agentController.threadHistoryErrorMessage,
         onSubmitText: widget.agentController.sendText,
         onRetryOperation: widget.agentController.canRetry
             ? widget.agentController.retryLastOperation
@@ -441,7 +441,7 @@ class _ConversationDrawer extends StatelessWidget {
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                 child: Text(
-                  '尚未选择对话',
+                  '新对话 · 未发送',
                   key: Key('no-focused-conversation'),
                   style: SpeakUpDesign.body,
                 ),

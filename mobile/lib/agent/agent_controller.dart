@@ -90,6 +90,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   String? _nextMessageCursor;
   String? _threadHistoryErrorMessage;
   _ThreadHistoryRecovery? _threadHistoryRecovery;
+  String? _pendingFocusThreadId;
+  int _draftThreadRecoveryGeneration = 0;
   bool _loadingMoreThreads = false;
   bool _loadingEarlierMessages = false;
   bool _threadTransitionInFlight = false;
@@ -141,6 +143,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool get isLoadingMoreThreads => _loadingMoreThreads;
   String? get threadHistoryErrorMessage => _threadHistoryErrorMessage;
   bool get canRetryThreadHistory => _threadHistoryRecovery != null;
+  bool get hasPendingThreadCreationRecovery =>
+      _pendingFocusThreadId != null ||
+      _threadHistoryRecovery == _ThreadHistoryRecovery.create;
+  int get draftThreadRecoveryGeneration => _draftThreadRecoveryGeneration;
   bool get hasEarlierMessages => _nextMessageCursor != null;
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get practiceSessionId => _practiceSessionId;
@@ -393,6 +399,29 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (client is! AgentThreadHistoryClient || _disposed) {
       return false;
     }
+    final pendingFocusThreadId = _pendingFocusThreadId;
+    if (pendingFocusThreadId != null) {
+      return selectThread(pendingFocusThreadId);
+    }
+    return _createNewThread();
+  }
+
+  /// Creates a new Thread for a caller that requires an isolated workspace.
+  ///
+  /// Unlike the ordinary conversation entry point, this never consumes a
+  /// pending Home draft recovery. The caller must let that recovery settle
+  /// before acquiring a dedicated Thread.
+  Future<bool> createIndependentThread() async {
+    if (hasPendingThreadCreationRecovery) {
+      return false;
+    }
+    return _createNewThread();
+  }
+
+  Future<bool> _createNewThread() async {
+    if (client is! AgentThreadHistoryClient || _disposed) {
+      return false;
+    }
     final accountEpoch = _epoch;
     final transitionGeneration = _beginThreadTransition();
     if (transitionGeneration == null) {
@@ -445,6 +474,13 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     String? selectedThreadId,
     required bool createNew,
   }) async {
+    final recoveryAtStart = _threadHistoryRecovery;
+    final pendingFocusAtStart = _pendingFocusThreadId;
+    final recoveringDraftThread =
+        _threadId == null &&
+        ((createNew && recoveryAtStart == _ThreadHistoryRecovery.create) ||
+            (recoveryAtStart == _ThreadHistoryRecovery.focus &&
+                selectedThreadId == pendingFocusAtStart));
     _epoch++;
     _practiceGeneration++;
     _cancelRecordingLimit();
@@ -459,6 +495,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
       _threadHistoryErrorMessage = null;
     }
+    AgentThreadSummary? summary;
+    var targetThreadId = selectedThreadId;
     _setBusy(true);
     try {
       await _voiceController?.bindThread(null);
@@ -469,15 +507,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       if (!_isOperationCurrent(fence)) {
         return false;
       }
-      AgentThreadSummary? summary;
-      var targetThreadId = selectedThreadId;
       if (createNew) {
         summary = await historyClient.createThread();
         _validateThreadSummary(summary);
         if (!_isOperationCurrent(fence)) {
           return false;
         }
-        _threadHistoryRecovery = null;
+        _pendingFocusThreadId = summary.id;
+        _threadHistoryRecovery = _ThreadHistoryRecovery.focus;
         _mergeThreadSummary(summary, placeFirst: true);
         notifyListeners();
         targetThreadId = summary.id;
@@ -504,7 +541,19 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         _mergeThreadSummary(canonicalSummary, placeFirst: createNew);
         _currentThreadSummary = canonicalSummary;
       }
-      if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
+      final resolvedPendingFocus = targetThreadId == _pendingFocusThreadId;
+      if (resolvedPendingFocus) {
+        _pendingFocusThreadId = null;
+      }
+      if (recoveringDraftThread) {
+        _draftThreadRecoveryGeneration++;
+      }
+      if (resolvedPendingFocus ||
+          _threadHistoryRecovery != _ThreadHistoryRecovery.create) {
+        if (_threadHistoryRecovery == _ThreadHistoryRecovery.focus) {
+          _pendingFocusThreadId = null;
+        }
+        _threadHistoryRecovery = null;
         _threadHistoryErrorMessage = null;
       }
       return true;
@@ -513,8 +562,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         if (createNew &&
             error is AgentClientException &&
             error.errorCode == 'thread_creation_ambiguous') {
+          _pendingFocusThreadId = null;
           _threadHistoryRecovery = _ThreadHistoryRecovery.create;
           _threadHistoryErrorMessage = '新对话的创建结果尚未确认。请重试恢复；系统不会重复创建。';
+        } else if (targetThreadId != null &&
+            (createNew || targetThreadId == _pendingFocusThreadId)) {
+          _pendingFocusThreadId = targetThreadId;
+          _threadHistoryRecovery = _ThreadHistoryRecovery.focus;
+          _threadHistoryErrorMessage = '新对话已创建，但暂时无法打开。重试不会重复创建。';
         } else if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
           _threadHistoryErrorMessage = createNew
               ? '暂时无法创建新对话，请稍后再试。'
@@ -574,6 +629,11 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       await _voiceController?.bindThread(null);
       if (!_isOperationCurrent(fence)) {
         return;
+      }
+      _pendingFocusThreadId = null;
+      if (_threadHistoryRecovery == _ThreadHistoryRecovery.focus) {
+        _threadHistoryRecovery = null;
+        _threadHistoryErrorMessage = null;
       }
       _resetSelectedThreadPresentation();
       _initialized = true;
@@ -906,13 +966,16 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (text.isEmpty) {
       return false;
     }
-    final accountFence = _captureOperationFence();
+    final accountEpoch = _epoch;
     await _ensureInitialized();
-    if (!_isOperationCurrent(accountFence) ||
-        _threadId == null ||
-        isBusy ||
-        _disposed) {
+    if (!_isCurrent(accountEpoch) || isBusy || _disposed) {
       return false;
+    }
+    if (_threadId == null) {
+      final created = await createThread();
+      if (!created || _threadId == null || _disposed) {
+        return false;
+      }
     }
     final retry = _retry;
     final operation = retry is _TextRetry && retry.text == text
@@ -979,6 +1042,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     switch (_threadHistoryRecovery) {
       case _ThreadHistoryRecovery.create:
         await createThread();
+        return;
+      case _ThreadHistoryRecovery.focus:
+        final threadId = _pendingFocusThreadId;
+        if (threadId != null) {
+          await selectThread(threadId);
+        }
         return;
       case _ThreadHistoryRecovery.refresh:
         await _retryThreadHistoryRefresh();
@@ -1777,6 +1846,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _nextMessageCursor = null;
     _threadHistoryErrorMessage = null;
     _threadHistoryRecovery = null;
+    _pendingFocusThreadId = null;
+    _draftThreadRecoveryGeneration = 0;
     _loadingMoreThreads = false;
     _loadingEarlierMessages = false;
     _threadTransitionGeneration++;
@@ -2470,7 +2541,7 @@ sealed class _AgentRetry {
   const _AgentRetry();
 }
 
-enum _ThreadHistoryRecovery { create, refresh }
+enum _ThreadHistoryRecovery { create, focus, refresh }
 
 final class _RestoreRetry extends _AgentRetry {
   const _RestoreRetry();

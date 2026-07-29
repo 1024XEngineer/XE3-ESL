@@ -271,9 +271,20 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.byKey(const Key('no-focused-conversation-home')),
-        findsOneWidget,
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
+            .enabled,
+        isTrue,
       );
 
+      await tester.enterText(
+        find.byKey(const Key('agent-composer-field')),
+        'Keep this typed draft',
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
       await tester.pump();
 
@@ -285,6 +296,13 @@ void main() {
       );
       await controller.voiceController?.cancel();
       await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
+            .controller
+            ?.text,
+        'Keep this typed draft',
+      );
     },
   );
 
