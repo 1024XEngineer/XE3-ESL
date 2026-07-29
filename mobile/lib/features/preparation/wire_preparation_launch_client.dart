@@ -591,6 +591,8 @@ void _validateScenarioSnapshot(
       'name',
       'version',
       'status',
+      'turn_policy_ref',
+      'session_policy_ref',
     },
   );
   if (_resourceId(object['scenario_definition_id']) !=
@@ -604,6 +606,8 @@ void _validateScenarioSnapshot(
     throw _invalidResponse();
   }
   _text(object['name']);
+  _resourceId(object['turn_policy_ref']);
+  _resourceId(object['session_policy_ref']);
 }
 
 void _validateConfigSnapshot(

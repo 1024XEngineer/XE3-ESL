@@ -306,6 +306,12 @@ void main() {
         final objectives = policy['target_objectives']! as List<Object?>;
         objectives.add(_clone(objectives.single));
       },
+      'missing turn policy reference': (plan) {
+        final catalog = plan['catalog_snapshot']! as Map<String, Object?>;
+        final scenario =
+            catalog['scenario_definition']! as Map<String, Object?>;
+        scenario.remove('turn_policy_ref');
+      },
     };
 
     for (final entry in cases.entries) {
@@ -355,6 +361,12 @@ void main() {
       'unexpected session field': (root) {
         final session = root['practice_session']! as Map<String, Object?>;
         session['effective_turns'] = 0;
+      },
+      'invalid session policy reference': (root) {
+        final scenario =
+            _sessionSnapshot(root)['scenario_definition_snapshot']!
+                as Map<String, Object?>;
+        scenario['session_policy_ref'] = '';
       },
     };
 
@@ -641,6 +653,8 @@ Map<String, Object?> _scenarioJson() {
     'name': 'Technical interview',
     'version': 1,
     'status': 'active',
+    'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
+    'session_policy_ref': 'interview.project_deep_dive.session.v1',
   };
 }
 
