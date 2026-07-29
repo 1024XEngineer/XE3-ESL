@@ -18,6 +18,7 @@ type Run = core.Run
 type ContextManifest = core.ContextManifest
 type RunSubmission = core.RunSubmission
 type RunRetry = core.RunRetry
+type RunStreamObserver = core.RunStreamObserver
 type Application = core.Application
 type RunApplication = core.RunApplication
 type Service = agentapp.Service

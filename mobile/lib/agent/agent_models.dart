@@ -78,6 +78,8 @@ final class AgentMessage {
     this.createdAt,
     this.modality = AgentMessageModality.text,
     this.audio,
+    this.isStreaming = false,
+    this.hasFailed = false,
   }) : assert(
          (modality == AgentMessageModality.voice && audio != null) ||
              (modality == AgentMessageModality.text && audio == null),
@@ -90,16 +92,27 @@ final class AgentMessage {
   final DateTime? createdAt;
   final AgentMessageModality modality;
   final AgentMessageAudio? audio;
+  final bool isStreaming;
+  final bool hasFailed;
 
-  AgentMessage copyWith({AgentMessageAudio? audio, bool clearAudio = false}) {
+  AgentMessage copyWith({
+    String? id,
+    String? text,
+    AgentMessageAudio? audio,
+    bool clearAudio = false,
+    bool? isStreaming,
+    bool? hasFailed,
+  }) {
     return AgentMessage(
-      id: id,
+      id: id ?? this.id,
       role: role,
-      text: text,
+      text: text ?? this.text,
       sequence: sequence,
       createdAt: createdAt,
       modality: clearAudio ? AgentMessageModality.text : modality,
       audio: clearAudio ? null : audio ?? this.audio,
+      isStreaming: isStreaming ?? this.isStreaming,
+      hasFailed: hasFailed ?? this.hasFailed,
     );
   }
 }

@@ -13,6 +13,7 @@ import 'package:speakup/identity/network/transport_security.dart';
 final class WireAgentClient
     implements
         AgentClient,
+        AgentStreamingTextClient,
         AgentThreadHistoryClient,
         AgentPracticeAvailability {
   factory WireAgentClient({
@@ -580,6 +581,284 @@ final class WireAgentClient
         expectedClientMessageId: clientMessageId,
       );
     });
+  }
+
+  @override
+  Stream<AgentTextStreamEvent> sendTextStream({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+  }) async* {
+    final generation = _accountGeneration;
+    _requireCurrentGeneration(generation);
+    _requireUuid(threadId);
+    _requireClientIdentity(clientMessageId);
+    _requireContent(text);
+    final credential = _credentialProvider();
+    if (credential == null) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.authenticationRequired,
+        statusCode: HttpStatus.unauthorized,
+        errorCode: 'authentication_required',
+      );
+    }
+    final operationKey = '$threadId\u{0}$clientMessageId';
+    final failedRun = _failedRuns[operationKey];
+    if (failedRun != null && failedRun.content != text) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.conflict,
+        errorCode: 'idempotency_key_conflict',
+      );
+    }
+    final uri = _baseUri.resolve(
+      failedRun == null
+          ? '/v1/agent-threads/$threadId/runs/stream'
+          : '/v1/agent-runs/${failedRun.runId}/retries/stream',
+    );
+    _trustedOrigin.validateResourceUri(uri);
+    validateNoSessionCredentialInUri(
+      uri,
+      sessionToken: credential.sessionToken,
+    );
+    final httpClient = HttpClient()..connectionTimeout = _requestTimeout;
+    try {
+      final request = await httpClient.postUrl(uri).timeout(_requestTimeout);
+      request
+        ..followRedirects = false
+        ..headers.set(HttpHeaders.acceptHeader, 'text/event-stream')
+        ..headers.set(HttpHeaders.contentTypeHeader, ContentType.json.mimeType)
+        ..headers.set(
+          HttpHeaders.authorizationHeader,
+          bearerAuthorizationValue(credential.sessionToken),
+        )
+        ..write(
+          jsonEncode(
+            failedRun == null
+                ? <String, Object?>{
+                    'client_message_id': clientMessageId,
+                    'content': text,
+                  }
+                : <String, Object?>{
+                    'client_retry_id': 'retry:${failedRun.runId}',
+                  },
+          ),
+        );
+      final response = await request.close().timeout(_requestTimeout);
+      _requireCurrentGeneration(generation);
+      if (!isSameAuthSessionCredential(_credentialProvider(), credential)) {
+        throw const AgentClientOperationCancelled();
+      }
+      if (response.statusCode != HttpStatus.ok) {
+        if (response.statusCode == HttpStatus.unauthorized) {
+          unawaited(_invalidateCapturedCredential(credential));
+        }
+        await response.drain<void>();
+        throw AgentClientException(
+          kind: response.statusCode == HttpStatus.unauthorized
+              ? AgentClientFailureKind.authenticationRequired
+              : response.statusCode >= HttpStatus.internalServerError
+              ? AgentClientFailureKind.server
+              : AgentClientFailureKind.invalidRequest,
+          statusCode: response.statusCode,
+          retryable:
+              response.statusCode >= HttpStatus.internalServerError ||
+              response.statusCode == HttpStatus.tooManyRequests,
+        );
+      }
+      final contentType = response.headers.contentType;
+      if (contentType?.mimeType != 'text/event-stream') {
+        await response.drain<void>();
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidResponse,
+          retryable: true,
+        );
+      }
+      String? eventName;
+      var eventCount = 0;
+      var streamPhase = 0;
+      await for (final line
+          in response
+              .transform(const Utf8Decoder())
+              .transform(const LineSplitter())) {
+        _requireCurrentGeneration(generation);
+        if (++eventCount > 10000 || line.length > 1024 * 1024) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        if (line.isEmpty || line.startsWith(':')) {
+          continue;
+        }
+        if (line.startsWith('event: ')) {
+          if (eventName != null) {
+            throw const AgentClientException(
+              kind: AgentClientFailureKind.invalidResponse,
+              retryable: true,
+            );
+          }
+          eventName = line.substring(7);
+          continue;
+        }
+        if (!line.startsWith('data: ') || eventName == null) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        final decoded = jsonDecode(line.substring(6));
+        if (decoded is! Map<String, dynamic>) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        final event = _decodeTextStreamEvent(
+          eventName,
+          decoded,
+          expectedThreadId: threadId,
+        );
+        streamPhase = switch (event) {
+          AgentInputCommitted() when streamPhase == 0 => 1,
+          AgentAssistantStarted() when streamPhase == 1 => 2,
+          AgentAssistantDelta() when streamPhase == 2 => 2,
+          AgentRunCompleted() when streamPhase == 1 || streamPhase == 2 => 3,
+          AgentRunFailed() when streamPhase == 1 || streamPhase == 2 => 3,
+          _ => throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          ),
+        };
+        if (event case AgentRunFailed(:final runId, :final retryable)) {
+          if (retryable) {
+            _failedRuns[operationKey] = _FailedRun(
+              runId: runId,
+              threadId: threadId,
+              inputMessageId: failedRun?.inputMessageId ?? '',
+              content: text,
+            );
+          } else {
+            _failedRuns.remove(operationKey);
+          }
+        } else if (event is AgentRunCompleted) {
+          _failedRuns.remove(operationKey);
+        }
+        yield event;
+        eventName = null;
+      }
+      if (eventName != null) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidResponse,
+          retryable: true,
+        );
+      }
+      if (streamPhase != 3) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.network,
+          retryable: true,
+        );
+      }
+    } on AgentClientException {
+      rethrow;
+    } on AgentClientOperationCancelled {
+      rethrow;
+    } on TimeoutException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    } on SocketException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    } on FormatException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
+    } finally {
+      httpClient.close(force: true);
+    }
+  }
+
+  AgentTextStreamEvent _decodeTextStreamEvent(
+    String eventName,
+    Map<String, dynamic> data, {
+    required String expectedThreadId,
+  }) {
+    final run = data['run'];
+    final runId = switch (run) {
+      final Map<String, dynamic> value => value['run_id'],
+      _ => data['run_id'],
+    };
+    if (runId is! String || runId.isEmpty) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
+    }
+    switch (eventName) {
+      case 'input.committed':
+        final message = data['message'];
+        if (message is! Map<String, dynamic>) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        return AgentInputCommitted(
+          runId: runId,
+          userMessage: _decodeMessageObject(
+            message,
+            expectedThreadId: expectedThreadId,
+          ).presentation,
+        );
+      case 'assistant.started':
+        return AgentAssistantStarted(runId: runId);
+      case 'assistant.delta':
+        final delta = data['delta'];
+        if (delta is! String || delta.isEmpty) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        return AgentAssistantDelta(runId: runId, delta: delta);
+      case 'run.completed':
+        if (run is! Map<String, dynamic>) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        final assistantMessageId = run['assistant_message_id'];
+        if (assistantMessageId is! String || assistantMessageId.isEmpty) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        return AgentRunCompleted(
+          runId: runId,
+          assistantMessageId: assistantMessageId,
+        );
+      case 'run.failed':
+        final kind = data['kind'];
+        final retryable = data['retryable'];
+        if (kind is! String || retryable is! bool) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidResponse,
+            retryable: true,
+          );
+        }
+        return AgentRunFailed(runId: runId, kind: kind, retryable: retryable);
+      default:
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidResponse,
+          retryable: true,
+        );
+    }
   }
 
   Future<_WireRun> _submitRun({

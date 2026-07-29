@@ -58,6 +58,8 @@ type LogOptions struct {
 	InputPreviewMax int
 }
 
+type RunStreamObserver = core.RunStreamObserver
+
 type RunServiceOption func(*RunService) error
 
 func NewRunService(
@@ -187,11 +189,49 @@ func (service *RunService) SubmitText(
 	if err != nil {
 		return RunSubmission{}, err
 	}
-	submission.Run, err = service.process(ctx, actor, submission.Run)
+	submission.Run, err = service.process(ctx, actor, submission.Run, nil)
 	if err != nil {
 		return RunSubmission{}, err
 	}
 	return submission, nil
+}
+
+func (service *RunService) SubmitTextStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+	clientMessageID string,
+	content string,
+	observer RunStreamObserver,
+) (RunSubmission, error) {
+	if observer == nil {
+		return RunSubmission{}, ErrInvalidRequest
+	}
+	if !actor.Valid() || !core.ValidUUID(threadID) {
+		return RunSubmission{}, ErrNotFound
+	}
+	if !core.ValidClientMessageID(clientMessageID) ||
+		!core.ValidMessageContent(content) {
+		return RunSubmission{}, ErrInvalidRequest
+	}
+	submission, err := service.repository.CreateInitialRun(
+		ctx, actor.UserID, threadID, clientMessageID, content,
+		service.configuration,
+	)
+	if err != nil {
+		return RunSubmission{}, err
+	}
+	if err := observer.OnInputCommitted(ctx, submission); err != nil {
+		return RunSubmission{}, err
+	}
+	if submission.Run.Status == RunStatusPending {
+		if err := observer.OnAssistantStarted(ctx, submission.Run); err != nil {
+			return RunSubmission{}, err
+		}
+	}
+	deltas := &countingDeltaObserver{delegate: observer}
+	submission.Run, err = service.process(ctx, actor, submission.Run, deltas)
+	return submission, err
 }
 
 func (service *RunService) RetryText(
@@ -216,11 +256,57 @@ func (service *RunService) RetryText(
 	if err != nil {
 		return RunRetry{}, err
 	}
-	retry.Run, err = service.process(ctx, actor, retry.Run)
+	retry.Run, err = service.process(ctx, actor, retry.Run, nil)
 	if err != nil {
 		return RunRetry{}, err
 	}
 	return retry, nil
+}
+
+func (service *RunService) RetryTextStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	runID string,
+	retryClientID string,
+	observer RunStreamObserver,
+) (RunRetry, error) {
+	if observer == nil {
+		return RunRetry{}, ErrInvalidRequest
+	}
+	if !actor.Valid() || !core.ValidUUID(runID) {
+		return RunRetry{}, ErrNotFound
+	}
+	if !core.ValidClientMessageID(retryClientID) {
+		return RunRetry{}, ErrInvalidRequest
+	}
+	retry, err := service.repository.CreateRetryRun(
+		ctx, actor.UserID, runID, retryClientID, service.configuration,
+	)
+	if err != nil {
+		return RunRetry{}, err
+	}
+	userMessage, err := service.repository.FindMessage(
+		ctx,
+		actor.UserID,
+		retry.Run.ThreadID,
+		retry.Run.InputMessageID,
+	)
+	if err != nil {
+		return RunRetry{}, err
+	}
+	if err := observer.OnInputCommitted(ctx, RunSubmission{
+		Run: retry.Run, UserMessage: userMessage, Created: retry.Created,
+	}); err != nil {
+		return RunRetry{}, err
+	}
+	if retry.Run.Status == RunStatusPending {
+		if err := observer.OnAssistantStarted(ctx, retry.Run); err != nil {
+			return RunRetry{}, err
+		}
+	}
+	deltas := &countingDeltaObserver{delegate: observer}
+	retry.Run, err = service.process(ctx, actor, retry.Run, deltas)
+	return retry, err
 }
 
 func (service *RunService) GetRun(
@@ -291,13 +377,14 @@ func (service *RunService) ProcessPending(
 		!core.ValidUUID(run.InputMessageID) {
 		return Run{}, ErrInvalidRequest
 	}
-	return service.process(ctx, actor, run)
+	return service.process(ctx, actor, run, nil)
 }
 
 func (service *RunService) process(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	run Run,
+	observer *countingDeltaObserver,
 ) (Run, error) {
 	if run.Status != RunStatusPending {
 		return run, nil
@@ -373,7 +460,14 @@ func (service *RunService) process(
 		return failed, nil
 	}
 
-	result, err := service.generate(ctx, actor, claimed, manifest, request)
+	result, err := service.generateObserved(
+		ctx,
+		actor,
+		claimed,
+		manifest,
+		request,
+		observer,
+	)
 	if err != nil {
 		kind, retryable := generationFailure(err)
 		failed, failErr := service.persistFailure(
@@ -407,6 +501,19 @@ func (service *RunService) process(
 		)
 		return failed, failErr
 	}
+	if observer != nil && observer.count == 0 {
+		if err := observer.OnTextDelta(ctx, result.Content); err != nil {
+			failed, failErr := service.persistFailure(
+				ctx,
+				actor.UserID,
+				claimed.ID,
+				claimed.WorkerLeaseToken,
+				string(ai.ErrorCancelled),
+				true,
+			)
+			return failed, failErr
+		}
+	}
 	persistContext, cancel := runPersistenceContext(ctx)
 	defer cancel()
 	completed, err := service.repository.CompleteRun(
@@ -427,8 +534,19 @@ func (service *RunService) generate(
 	manifest ContextManifest,
 	request ai.TextRequest,
 ) (ai.TextResult, error) {
+	return service.generateObserved(ctx, actor, run, manifest, request, nil)
+}
+
+func (service *RunService) generateObserved(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	run Run,
+	manifest ContextManifest,
+	request ai.TextRequest,
+	observer ai.TextDeltaObserver,
+) (ai.TextResult, error) {
 	if service.registry == nil || service.executor == nil {
-		return service.generator.Generate(ctx, request)
+		return service.generateModel(ctx, request, observer)
 	}
 	loopCtx, cancel := context.WithTimeout(ctx, service.loopLimits.LoopTimeout)
 	defer cancel()
@@ -493,7 +611,7 @@ func (service *RunService) generate(
 	}
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
-		result, err := service.generator.Generate(loopCtx, request)
+		result, err := service.generateModel(loopCtx, request, observer)
 		if err != nil {
 			return ai.TextResult{}, err
 		}
@@ -665,6 +783,46 @@ func (service *RunService) generate(
 		request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
 		finalDecision = "tool_call_then_response"
 	}
+}
+
+func (service *RunService) generateModel(
+	ctx context.Context,
+	request ai.TextRequest,
+	observer ai.TextDeltaObserver,
+) (ai.TextResult, error) {
+	if observer == nil {
+		return service.generator.Generate(ctx, request)
+	}
+	streaming, ok := service.generator.(ai.StreamingTextGenerator)
+	if !ok {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorConfiguration,
+			0,
+			"",
+			"",
+			errors.New("agent: configured text generator does not support streaming"),
+		)
+	}
+	return streaming.GenerateStream(ctx, request, observer)
+}
+
+type countingDeltaObserver struct {
+	delegate RunStreamObserver
+	count    int
+}
+
+func (observer *countingDeltaObserver) OnTextDelta(
+	ctx context.Context,
+	delta string,
+) error {
+	if delta == "" {
+		return nil
+	}
+	if err := observer.delegate.OnAssistantDelta(ctx, delta); err != nil {
+		return err
+	}
+	observer.count += len(delta)
+	return nil
 }
 
 func (service *RunService) executeToolCall(
