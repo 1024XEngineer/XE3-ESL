@@ -631,6 +631,40 @@ void main() {
     expect(controller.recordingState, PracticeRecordingState.idle);
   });
 
+  testWidgets('practice renders the first question as a conversation bubble', (
+    tester,
+  ) async {
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: FakePracticeClient(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes[1]);
+
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text(agentScenes[1].title), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-ai-message-question-0-1')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('practice-message-list')), findsOneWidget);
+    expect(find.byKey(const Key('practice-turn-progress')), findsNothing);
+    expect(find.byKey(const Key('practice-turn-count')), findsNothing);
+    expect(find.byKey(const Key('practice-current-question')), findsNothing);
+    expect(find.textContaining('第 1 题'), findsNothing);
+    expect(find.textContaining('共 3 题'), findsNothing);
+
+    final bubble = tester.getRect(
+      find.byKey(const Key('practice-ai-message-question-0-1')),
+    );
+    expect(bubble.center.dx, lessThan(tester.view.physicalSize.width / 2));
+  });
+
   testWidgets('practice submits a typed English answer and advances one turn', (
     tester,
   ) async {
@@ -675,19 +709,105 @@ void main() {
           .text,
       answer,
     );
-    await tester.tap(find.byKey(const Key('practice-open-history')));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text(answer),
-      120,
-      scrollable: find.byType(Scrollable).first,
+    expect(
+      find.byKey(const Key('practice-ai-message-question-0-1')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('practice-user-message-answer-1')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('practice-ai-message-question-0-2')),
+      findsOneWidget,
     );
     expect(find.text(answer), findsOneWidget);
-    Navigator.of(tester.element(find.text('本轮记录'))).pop();
+
+    final firstQuestion = tester.getTopLeft(
+      find.byKey(const Key('practice-ai-message-question-0-1')),
+    );
+    final userAnswer = tester.getTopLeft(
+      find.byKey(const Key('practice-user-message-answer-1')),
+    );
+    final secondQuestion = tester.getTopLeft(
+      find.byKey(const Key('practice-ai-message-question-0-2')),
+    );
+    expect(firstQuestion.dy, lessThan(userAnswer.dy));
+    expect(userAnswer.dy, lessThan(secondQuestion.dy));
+
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
     await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('practice-user-message-answer-1')),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('practice-open-keyboard')));
     await tester.pump();
     expect(tester.widget<TextField>(input).controller?.text, isEmpty);
+  });
+
+  testWidgets('practice keeps a stable five-message conversation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: FakePracticeClient(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes[1]);
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    for (final answer in ['First answer', 'Second answer']) {
+      await tester.tap(find.byKey(const Key('practice-open-keyboard')));
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const Key('practice-text-answer')),
+        answer,
+      );
+      await tester.tap(find.byKey(const Key('practice-submit-text')));
+      await tester.pumpAndSettle();
+    }
+
+    const orderedKeys = [
+      'practice-ai-message-question-0-1',
+      'practice-user-message-answer-1',
+      'practice-ai-message-question-0-2',
+      'practice-user-message-answer-2',
+      'practice-ai-message-question-0-3',
+    ];
+    final offsets = <double>[];
+    for (final key in orderedKeys) {
+      final finder = find.byKey(Key(key));
+      expect(finder, findsOneWidget);
+      offsets.add(tester.getTopLeft(finder).dy);
+    }
+    expect(offsets, orderedEquals(offsets.toList()..sort()));
+
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+    await tester.pumpAndSettle();
+    for (final key in orderedKeys) {
+      expect(find.byKey(Key(key)), findsOneWidget);
+    }
+
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(
+        of: find.byKey(const Key('practice-message-list')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    expect(scrollable.position.maxScrollExtent, greaterThan(0));
   });
 
   testWidgets('practice keeps candidate text after a confirm network error', (
@@ -717,8 +837,163 @@ void main() {
     expect(find.text('网络连接不稳定，这一轮尚未确认，请重试。'), findsOneWidget);
     expect(find.text('Answer 1'), findsOneWidget);
     expect(
+      find.byKey(const Key('practice-user-message-answer-1')),
+      findsNothing,
+    );
+    expect(controller.practiceMessages, hasLength(1));
+    expect(
       controller.recordingState,
       PracticeRecordingState.awaitingConfirmation,
+    );
+
+    practice.confirmFailure = null;
+    await tester.tap(find.byKey(const Key('practice-confirm-turn')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('practice-user-message-answer-1')),
+      findsOneWidget,
+    );
+    expect(controller.practiceMessages, hasLength(3));
+  });
+
+  testWidgets('practice does not append a failed typed answer', (tester) async {
+    final practice = _TwoTurnPracticeClient()
+      ..textFailure = const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+
+    await tester.tap(find.byKey(const Key('practice-open-keyboard')));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('practice-text-answer')),
+      'This answer must not appear as confirmed.',
+    );
+    await tester.tap(find.byKey(const Key('practice-submit-text')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('网络连接不稳定，这一轮尚未确认，请重试。'), findsOneWidget);
+    expect(controller.practiceMessages, hasLength(1));
+    expect(
+      find.byKey(const Key('practice-user-message-answer-1')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('practice-ai-message-question-1')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('interview and daily scenes share the conversation page', (
+    tester,
+  ) async {
+    const dailyScene = AgentScene(
+      id: 'hotel-check-in',
+      title: '酒店入住',
+      description: '练习办理入住和沟通房间问题。',
+    );
+
+    for (final scene in [agentScenes[1], dailyScene]) {
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: FakePracticeClient(),
+      );
+      await controller.initialize();
+      await controller.selectScene(scene);
+      await tester.pumpWidget(
+        MaterialApp(home: PracticePage(agentController: controller)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(scene.title), findsOneWidget);
+      expect(find.byKey(const Key('practice-message-list')), findsOneWidget);
+      expect(
+        find.byKey(const Key('practice-ai-message-question-0-1')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('practice-record')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('practice-open-keyboard')));
+      await tester.pump();
+      expect(find.byKey(const Key('practice-text-answer')), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    }
+  });
+
+  testWidgets('long conversation wraps and scrolls on a narrow large-text view', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final practice = _TwoTurnPracticeClient(
+      firstQuestion: List.filled(
+        12,
+        'Please explain the context, your decision, and the measurable result.',
+      ).join(' '),
+      firstAnswer: List.filled(
+        12,
+        'I aligned the team, reduced the risk, and measured the outcome.',
+      ).join(' '),
+      secondQuestion: List.filled(
+        10,
+        'What trade-off would you revisit and why?',
+      ).join(' '),
+    );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await controller.startRecording();
+    await controller.stopRecording();
+    await controller.confirmTranscript();
+
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+        child: MaterialApp(home: PracticePage(agentController: controller)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const Key('practice-ai-message-question-1')),
+      findsOneWidget,
+    );
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(
+        of: find.byKey(const Key('practice-message-list')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    expect(scrollable.position.maxScrollExtent, greaterThan(0));
+    await tester.drag(
+      find.byKey(const Key('practice-message-list')),
+      const Offset(0, 240),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('practice-user-message-answer-1')),
+      findsOneWidget,
     );
   });
 
@@ -757,9 +1032,17 @@ void main() {
 }
 
 final class _TwoTurnPracticeClient implements PracticeClient {
-  _TwoTurnPracticeClient({this.includeAudioAssets = false});
+  _TwoTurnPracticeClient({
+    this.includeAudioAssets = false,
+    this.firstQuestion = 'First question',
+    this.firstAnswer = 'Answer 1',
+    this.secondQuestion = 'Second question',
+  });
 
   final bool includeAudioAssets;
+  final String firstQuestion;
+  final String firstAnswer;
+  final String secondQuestion;
   int completed = 0;
   int cleanupCount = 0;
   final List<String> confirmedQuestionIds = [];
@@ -768,6 +1051,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   bool omitReview = false;
   Object? transcribeFailure;
   Object? confirmFailure;
+  Object? textFailure;
   Object? restoreFailure;
   PracticeSessionSnapshot? restoreResult;
   int transcribeCount = 0;
@@ -802,10 +1086,10 @@ final class _TwoTurnPracticeClient implements PracticeClient {
         completedTurns: 0,
         turnLimit: 2,
         sessionCompleted: false,
-        currentQuestion: const PracticeQuestion(
+        currentQuestion: PracticeQuestion(
           id: 'question-1',
           sessionId: _sessionId,
-          text: 'First question',
+          text: firstQuestion,
           speechPath: '/v1/voice-questions/question-1/speech',
         ),
       ),
@@ -824,7 +1108,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
       id: 'candidate-${completed + 1}',
       sessionId: request.sessionId,
       questionId: request.questionId,
-      text: 'Answer ${completed + 1}',
+      text: completed == 0 ? firstAnswer : 'Answer ${completed + 1}',
     );
   }
 
@@ -848,10 +1132,10 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     final done = completed == 2;
     final nextQuestion = done
         ? null
-        : const PracticeQuestion(
+        : PracticeQuestion(
             id: 'question-2',
             sessionId: _sessionId,
-            text: 'Second question',
+            text: secondQuestion,
             speechPath: '/v1/voice-questions/question-2/speech',
           );
     return PracticeTurnConfirmation(
@@ -862,7 +1146,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
       answer: AgentMessage(
         id: 'answer-$completed',
         role: AgentMessageRole.user,
-        text: 'Answer $completed',
+        text: completed == 1 ? firstAnswer : 'Answer $completed',
       ),
       completedTurns: completed,
       turnLimit: 2,
@@ -887,7 +1171,10 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     required String questionId,
     required String answerText,
     required String idempotencyKey,
-  }) {
+  }) async {
+    if (textFailure case final failure?) {
+      throw failure;
+    }
     throw UnimplementedError();
   }
 }
