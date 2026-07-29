@@ -143,6 +143,7 @@ const validators = Object.fromEntries(
   [
     'CreateEvaluationRequest',
     'EvaluationAccepted',
+    'EvaluationReplay',
     'Evaluation',
     'SceneEvaluationResult',
     'CoreAbilityObservation',
@@ -187,6 +188,20 @@ assert.match(
   /^[0-9]/,
   'queued fixture must cover a digit-leading Evaluation UUID',
 );
+assertValid(
+  'ready idempotent replay',
+  'EvaluationReplay',
+  fixture.ready_replay,
+);
+for (const status of ['RUNNING', 'READY', 'FAILED']) {
+  const replay = structuredClone(fixture.ready_replay);
+  replay.evaluation_status = status;
+  assertValid(
+    `${status} idempotent replay`,
+    'EvaluationReplay',
+    replay,
+  );
+}
 assertValid('Core 4D ready', 'Evaluation', fixture.core_4d_ready);
 assert.match(
   fixture.core_4d_ready.evaluation_id,
@@ -214,6 +229,22 @@ assertValid(
   'replacement revision queued',
   'EvaluationAccepted',
   fixture.revision_queued,
+);
+
+const replayDisguisedAsQueued = structuredClone(fixture.ready_replay);
+replayDisguisedAsQueued.evaluation_status = 'QUEUED';
+assertSchemaRejected(
+  'idempotent replay disguised as queued',
+  'EvaluationReplay',
+  replayDisguisedAsQueued,
+);
+
+const freshAcceptedDisguisedAsReady = structuredClone(fixture.queued);
+freshAcceptedDisguisedAsReady.evaluation_status = 'READY';
+assertSchemaRejected(
+  'fresh accepted response disguised as ready',
+  'EvaluationAccepted',
+  freshAcceptedDisguisedAsReady,
 );
 
 const scoreFields = [

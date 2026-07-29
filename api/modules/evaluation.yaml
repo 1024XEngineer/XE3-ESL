@@ -36,6 +36,20 @@ paths:
                   pipeline_version: evaluation-pipeline/1.0.0
                   client_request_id: trace_demo_001
       responses:
+        '200':
+          description: |
+            An idempotent replay returned the same logical Evaluation and its
+            honest current non-QUEUED revision state. No work was requeued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationReplay'
+              example:
+                evaluation_id: 7b000001-0000-4000-8000-000000000001
+                evaluation_revision_id: a1000001-0000-4000-8000-000000000001
+                revision: 1
+                evaluation_status: READY
+                status_url: /v1/evaluations/7b000001-0000-4000-8000-000000000001
         '202':
           description: The logical Evaluation exists and is queued.
           content:
@@ -136,6 +150,22 @@ paths:
               pipeline_version: evaluation-pipeline/1.1.0
               client_request_id: trace_demo_reevaluate_001
       responses:
+        '200':
+          description: |
+            An idempotent replay returned the same logical Evaluation and its
+            honest current non-QUEUED revision state. No revision or work was
+            created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationReplay'
+              example:
+                evaluation_id: 7b000001-0000-4000-8000-000000000001
+                evaluation_revision_id: a1000002-0000-4000-8000-000000000002
+                revision: 2
+                supersedes_revision_id: a1000001-0000-4000-8000-000000000001
+                evaluation_status: READY
+                status_url: /v1/evaluations/7b000001-0000-4000-8000-000000000001
         '202':
           description: A replacement immutable revision has been queued.
           content:
@@ -436,6 +466,38 @@ components:
         evaluation_status:
           type: string
           const: QUEUED
+        status_url:
+          type: string
+          pattern: '^/v1/evaluations/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+    EvaluationReplay:
+      type: object
+      additionalProperties: false
+      required:
+        - evaluation_id
+        - evaluation_revision_id
+        - revision
+        - evaluation_status
+        - status_url
+      properties:
+        evaluation_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        evaluation_revision_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        revision:
+          type: integer
+          minimum: 1
+        supersedes_revision_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        evaluation_status:
+          type: string
+          enum:
+            - RECEIVED
+            - VALIDATING
+            - RUNNING
+            - PARTIAL_READY
+            - READY
+            - FAILED
+            - SUPERSEDED
         status_url:
           type: string
           pattern: '^/v1/evaluations/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
