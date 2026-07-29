@@ -160,7 +160,7 @@ func (s *Store) CreateScenario(
 		return mattertool.ScenarioResult{}, err
 	}
 	if call.RequestID == "" {
-		return mattertool.ScenarioResult{}, tool.ErrToolRejected
+		return mattertool.ScenarioResult{}, tool.ErrExecutionRejected
 	}
 	if existing, ok := s.createdScenarios[call.RequestID]; ok {
 		return existing, nil
@@ -283,7 +283,7 @@ func (s *Store) SearchMistakes(name string, query MistakeSearchInput) ([]Mistake
 
 func (s *Store) beforeLocked(name string) error {
 	if s.forbidden[name] {
-		return tool.ErrToolRejected
+		return tool.ErrExecutionRejected
 	}
 	if s.unavailable[name] {
 		return ErrTemporarilyUnavailable

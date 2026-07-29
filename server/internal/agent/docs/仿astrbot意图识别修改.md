@@ -1,10 +1,10 @@
 # 仿 AstrBot 意图识别修改计划
 
-> 状态：实施中，前四个阶段已完成。
+> 状态：已完成，五个阶段均已通过验收。
 >
 > 进度维护：每完成并通过验收一个阶段，将该阶段标题前的 `[ ]` 改为 `[x]`，并在阶段末补充实际验收命令和结果。
 >
-> 已关联 Issue：[#203「冻结全量 LLM Tool Calling 契约与回归基线」](https://github.com/1024XEngineer/XE3-ESL/issues/203)、[#204「移除关键词业务路由并向模型暴露全量工具」](https://github.com/1024XEngineer/XE3-ESL/issues/204)、[#207「强化 Agent 工具描述、参数 Schema 与执行校验」](https://github.com/1024XEngineer/XE3-ESL/issues/207)、[#209「完成有界 Agent Tool Calling Loop」](https://github.com/1024XEngineer/XE3-ESL/issues/209)，均关联 MS2。
+> 已关联 Issue：[#203「冻结全量 LLM Tool Calling 契约与回归基线」](https://github.com/1024XEngineer/XE3-ESL/issues/203)、[#204「移除关键词业务路由并向模型暴露全量工具」](https://github.com/1024XEngineer/XE3-ESL/issues/204)、[#207「强化 Agent 工具描述、参数 Schema 与执行校验」](https://github.com/1024XEngineer/XE3-ESL/issues/207)、[#209「完成有界 Agent Tool Calling Loop」](https://github.com/1024XEngineer/XE3-ESL/issues/209)、[#211「联调 LLM Tool Calling HTTP 链路并清理旧意图实现」](https://github.com/1024XEngineer/XE3-ESL/issues/211)，均关联 MS2。
 
 ## 目标
 
@@ -114,7 +114,7 @@ go test ./...
 - 统一 Schema 层支持必填项、基础类型、枚举、Unicode 字符长度、自定义格式、整数/数值上下界、数组和嵌套对象。
 - 工具注册时同步校验 Schema 本身，拒绝未知类型、无效格式、空枚举、缺失属性和倒置范围。
 - Executor 在调用工具前统一归一化参数，递归删除 Schema 未声明字段；非法参数不会进入工具实现。
-- 保留稳定错误分类：`invalid_input`、`unknown_tool`、`permission_denied` 和 `internal`，并验证对应重试语义。
+- 保留稳定错误分类：`invalid_input`、`unknown_tool`、`execution_rejected` 和 `internal`，并验证对应重试语义。
 - 工具返回 nil Content 时归一为空对象，搜索无命中时继续返回结构化空数组。
 - 离线提示注入评测与新参数过滤语义对齐：假模型负责拒绝提示注入，Executor 测试负责验证不可信字段不会进入工具。
 
@@ -158,7 +158,7 @@ go test ./internal/agent/runtime ./internal/agent/tool ./internal/ai/...
 go test ./...
 ```
 
-### [ ] 5. 端到端联调、清理旧实现
+### [x] 5. 端到端联调、清理旧实现
 
 - 使用 Review、Material、Mistake、Scenario 等现有工具进行真实 HTTP 链路联调。
 - 验证模型可以在没有关键词枚举的情况下选择工具，也可以判断无需调用工具。
@@ -180,6 +180,44 @@ go test ./...
 - 查询历史错题；
 - 搜索或创建练习场景；
 - 一句话连续触发两个有依赖关系的工具。
+
+实际结果（2026-07-29）：
+
+- 新增真实 Gin HTTP、鉴权、RunService、ContextAssembler、Provider 边界、Registry、Executor 和 PostgreSQL 审计记录组成的端到端测试。
+- 确定性 Provider 每个首轮请求都收到 6 个完整工具 Schema 和 `ToolChoiceAuto`，不依赖生产关键词枚举；测试不需要线上模型密钥。
+- 直接翻译润色不调用工具，最终回复正常写入 Assistant Message。
+- “回顾最近一次反馈”实际调用 `review.search.v1`。
+- “展开刚才那条反馈”实际调用 `review.get.v1`。
+- “结合后端项目准备自我介绍”实际调用 `material.search.v1`。
+- “以前说明负责人时有哪些表达问题”实际调用 `mistake.search.v1`。
+- “找英文面试已有场景”实际调用 `scenario.search.v1`。
+- “新建后端岗位英文面试练习”实际调用 `scenario.create.v1`。
+- “先定位面试场景，再结合对应评价给建议”先调用 `scenario.search.v1`，确认 Scenario Tool Result 已进入下一轮 Provider 请求后，再调用 `review.search.v1`。
+- 每个 Tool Call 均通过 `run_id` 关联 Agent Run，并验证状态、结构化结果、Request ID 和最终 Assistant Message。
+- 删除工具 `Policy`、写权限、确认名单和 `requires_confirm` 风险语义；Registry 成为唯一工具白名单，Scenario Create 改为 `low_risk_write`。
+- 错误分类 `permission_denied` 改为不含用户权限含义的 `execution_rejected`；未新增用户级权限鉴定。
+- 新增 000027 数据库迁移，删除 ContextManifest 中的 `blocked_tools`、`intent_mode`、`intent_reason_code`、`intent_guard_version` 和 `tool_policy_version`，保留全量暴露工具及 Schema 哈希审计。
+- 删除三份描述旧关键词路由和确认策略的过期仓库文档，只保留本实施记录。
+
+验收通过：
+
+```bash
+cd server
+go test ./...
+go test -race ./internal/agent/runtime ./internal/agent/tool
+```
+
+真实 PostgreSQL 验收通过：
+
+```bash
+TEST_DATABASE_URL='postgres://.../xe3_esl?sslmode=disable' \
+  go test ./internal/agent \
+  -run '^TestPostgresAgentToolCallingEndToEndHTTP$' -count=1 -v
+
+TEST_DATABASE_URL='postgres://.../xe3_esl?sslmode=disable' \
+  go test ./internal/platform/migration \
+  -run '^TestRunnerAppliesIdempotentlyAndRevertsLatestMigration$' -count=1 -v
+```
 
 ## 完成标准
 

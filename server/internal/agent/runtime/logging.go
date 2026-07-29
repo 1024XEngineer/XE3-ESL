@@ -54,8 +54,6 @@ func reasonSummary(reasonCode string, decision string) string {
 			return "模型根据全量工具描述自主选择了工具。"
 		}
 		return "模型查看全量工具描述后选择直接回答。"
-	case reasonExplicitCommand:
-		return "用户输入匹配显式命令，按命令声明的工具执行。"
 	case "budget_exhausted":
 		return "本轮达到 Agent Loop 工具调用或迭代预算，返回稳定降级回复。"
 	default:

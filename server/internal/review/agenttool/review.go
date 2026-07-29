@@ -75,7 +75,7 @@ func (tool ReviewSearchTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ReviewSearchInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.Query == "" {
@@ -128,7 +128,7 @@ func (tool ReviewGetTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ReviewGetInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.ReviewID == "" {

@@ -50,7 +50,7 @@ func (t MistakeSearchTool) Execute(
 	input json.RawMessage,
 ) (tool.Result, error) {
 	if t.store == nil {
-		return tool.Result{}, tool.ErrToolRejected
+		return tool.Result{}, tool.ErrExecutionRejected
 	}
 	var parsed MistakeSearchInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.Query == "" {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
@@ -413,11 +415,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get ContextManifest: %v", err)
 	}
-	if manifest.IntentMode == "" ||
-		manifest.IntentReasonCode == "" ||
-		manifest.IntentGuardVersion == "" ||
-		manifest.ToolPolicyVersion == "" ||
-		!containsString(manifest.ExposedTools, reviewtool.ReviewSearchToolName) ||
+	if !containsString(manifest.ExposedTools, reviewtool.ReviewSearchToolName) ||
 		manifest.ToolSchemaHashes[reviewtool.ReviewSearchToolName] == "" {
 		t.Fatalf("unexpected ContextManifest tool snapshot: %#v", manifest)
 	}
@@ -462,6 +460,280 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 		submission.Run.ID,
 	); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-owner ToolCalls error = %v, want not found", err)
+	}
+}
+
+func TestPostgresAgentToolCallingEndToEndHTTP(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	var legacyToolRoutingColumns int
+	if err := database.pool.QueryRow(context.Background(), `
+SELECT count(*)
+FROM information_schema.columns
+WHERE table_schema = current_schema()
+  AND table_name = 'agent_context_manifests'
+  AND column_name IN (
+      'blocked_tools',
+      'intent_mode',
+      'intent_reason_code',
+      'intent_guard_version',
+      'tool_policy_version'
+  )`).Scan(&legacyToolRoutingColumns); err != nil {
+		t.Fatalf("inspect ContextManifest columns: %v", err)
+	}
+	if legacyToolRoutingColumns != 0 {
+		t.Fatalf("legacy tool-routing columns = %d, want 0", legacyToolRoutingColumns)
+	}
+	generator := newSequenceTextGenerator(
+		integrationFinalResult("direct", "Here is the polished sentence."),
+		integrationToolResult(
+			"call-review-search",
+			reviewtool.ReviewSearchToolName,
+			`{"query":"metrics","limit":1}`,
+		),
+		integrationFinalResult("review-search", "I found your latest review."),
+		integrationToolResult(
+			"call-review-get",
+			reviewtool.ReviewGetToolName,
+			`{"review_id":"mock-review-001"}`,
+		),
+		integrationFinalResult("review-get", "Here are the review details."),
+		integrationToolResult(
+			"call-material-search",
+			mocktool.MaterialSearchToolName,
+			`{"query":"backend","kind":"resume","limit":1}`,
+		),
+		integrationFinalResult("material", "I used your resume material."),
+		integrationToolResult(
+			"call-mistake-search",
+			mocktool.MistakeSearchToolName,
+			`{"query":"owner","limit":1}`,
+		),
+		integrationFinalResult("mistake", "I found the relevant mistake."),
+		integrationToolResult(
+			"call-scenario-search",
+			mattertool.ScenarioSearchToolName,
+			`{"query":"interview","limit":1}`,
+		),
+		integrationFinalResult("scenario-search", "I found an interview scenario."),
+		integrationToolResult(
+			"call-scenario-create",
+			mattertool.ScenarioCreateToolName,
+			`{"type":"interview","title":"Backend interview practice"}`,
+		),
+		integrationFinalResult("scenario-create", "The practice scenario is ready."),
+		integrationToolResult(
+			"call-dependent-scenario",
+			mattertool.ScenarioSearchToolName,
+			`{"query":"interview","limit":1}`,
+		),
+		integrationToolResult(
+			"call-dependent-review",
+			reviewtool.ReviewSearchToolName,
+			`{"query":"metrics","scenario_id":"mock-scenario-001","limit":1}`,
+		),
+		integrationFinalResult("dependent", "I combined the scenario and its review."),
+	)
+	matterService, dataService, _, repository := newAgentRunServices(
+		t,
+		database.pool,
+		generator,
+		testRunConfiguration,
+	)
+	assembler, err := NewContextAssembler(
+		repository,
+		matterService,
+		&recordingMemorySearcher{},
+	)
+	if err != nil {
+		t.Fatalf("new ContextAssembler: %v", err)
+	}
+	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	if err != nil {
+		t.Fatalf("new mock Registry: %v", err)
+	}
+	runService, err := NewRunService(
+		repository,
+		assembler,
+		generator,
+		testRunConfiguration,
+		WithToolRegistry(registry),
+	)
+	if err != nil {
+		t.Fatalf("new RunService: %v", err)
+	}
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	handler, err := NewHTTPHandlerWithRuns(
+		dataService,
+		runService,
+		matterService,
+		authenticatorFunc(func(
+			_ context.Context,
+			token string,
+		) (requestcontext.Actor, error) {
+			if token != "token-a" {
+				return requestcontext.Actor{}, identity.ErrAuthenticationRequired
+			}
+			return actor, nil
+		}),
+		func() string { return "corr_agent_tool_e2e" },
+	)
+	if err != nil {
+		t.Fatalf("new HTTP handler: %v", err)
+	}
+	module, err := NewModule(handler)
+	if err != nil {
+		t.Fatalf("new Agent module: %v", err)
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	module.RegisterRoutes(router)
+
+	cases := []struct {
+		name          string
+		content       string
+		expectedCalls []string
+	}{
+		{name: "direct", content: "请把这句英文表达得更自然一些"},
+		{
+			name:          "review search",
+			content:       "帮我回顾最近一次反馈里和数据表达有关的部分",
+			expectedCalls: []string{reviewtool.ReviewSearchToolName},
+		},
+		{
+			name:          "review get",
+			content:       "展开刚才那条反馈的完整内容",
+			expectedCalls: []string{reviewtool.ReviewGetToolName},
+		},
+		{
+			name:          "material search",
+			content:       "结合我做过的后端项目准备一段自我介绍",
+			expectedCalls: []string{mocktool.MaterialSearchToolName},
+		},
+		{
+			name:          "mistake search",
+			content:       "我以前在说明负责人时有哪些表达问题",
+			expectedCalls: []string{mocktool.MistakeSearchToolName},
+		},
+		{
+			name:          "scenario search",
+			content:       "找一个适合练习英文面试的已有场景",
+			expectedCalls: []string{mattertool.ScenarioSearchToolName},
+		},
+		{
+			name:          "scenario create",
+			content:       "新建一个后端岗位英文面试练习",
+			expectedCalls: []string{mattertool.ScenarioCreateToolName},
+		},
+		{
+			name:    "dependent tools",
+			content: "先定位面试场景，再结合这个场景对应的评价给建议",
+			expectedCalls: []string{
+				mattertool.ScenarioSearchToolName,
+				reviewtool.ReviewSearchToolName,
+			},
+		},
+	}
+	runIDs := make([]string, 0, len(cases))
+	for index, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]string{
+				"client_message_id": fmt.Sprintf("tool-e2e-message-%02d", index+1),
+				"content":           item.content,
+			})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			response := performAgentRequest(
+				router,
+				http.MethodPost,
+				"/v1/agent-threads/"+thread.ID+"/runs",
+				string(body),
+				"token-a",
+			)
+			if response.Code != http.StatusCreated {
+				t.Fatalf("submit status = %d body = %s", response.Code, response.Body)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode Run response: %v", err)
+			}
+			runID, _ := payload["run_id"].(string)
+			if payload["status"] != string(RunStatusCompleted) || runID == "" {
+				t.Fatalf("Run response = %#v", payload)
+			}
+			runIDs = append(runIDs, runID)
+
+			records, err := runService.GetToolCalls(
+				context.Background(),
+				actor,
+				runID,
+			)
+			if err != nil {
+				t.Fatalf("get Tool Calls: %v", err)
+			}
+			if got, want := len(records), len(item.expectedCalls); got != want {
+				t.Fatalf("Tool Call count = %d, want %d: %#v", got, want, records)
+			}
+			for callIndex, record := range records {
+				if record.Name != item.expectedCalls[callIndex] ||
+					record.Status != ToolCallStatusSucceeded ||
+					record.RequestID == "" ||
+					len(record.Result) == 0 {
+					t.Fatalf("Tool Call %d = %#v", callIndex, record)
+				}
+			}
+		})
+	}
+
+	requests := generator.Requests()
+	initialRequests := 0
+	dependentResultSeen := false
+	for _, request := range requests {
+		if len(request.Messages) == 0 {
+			t.Fatal("Provider received an empty message list")
+		}
+		if request.Messages[len(request.Messages)-1].Role == ai.TextRoleUser {
+			initialRequests++
+			if len(request.Tools) != 6 ||
+				request.ToolChoice.Mode != ai.ToolChoiceAuto {
+				t.Fatalf(
+					"initial Provider request exposed %d tools with choice %#v",
+					len(request.Tools),
+					request.ToolChoice,
+				)
+			}
+		}
+		last := request.Messages[len(request.Messages)-1]
+		if last.Role == ai.TextRoleTool &&
+			last.ToolCallID == "call-dependent-scenario" &&
+			strings.Contains(last.Content, `"mock-scenario-001"`) {
+			dependentResultSeen = true
+		}
+	}
+	if initialRequests != len(cases) {
+		t.Fatalf("initial Provider requests = %d, want %d", initialRequests, len(cases))
+	}
+	if !dependentResultSeen {
+		t.Fatal("dependent Review call did not receive the Scenario Tool Result")
+	}
+	if got, want := len(runIDs), len(cases); got != want {
+		t.Fatalf("completed Run count = %d, want %d", got, want)
+	}
+
+	messages := performAgentRequest(
+		router,
+		http.MethodGet,
+		"/v1/agent-threads/"+thread.ID+"/messages",
+		"",
+		"token-a",
+	)
+	if messages.Code != http.StatusOK ||
+		!strings.Contains(messages.Body.String(), "I combined the scenario and its review.") {
+		t.Fatalf("final messages response: %d %s", messages.Code, messages.Body)
 	}
 }
 
@@ -2727,6 +2999,44 @@ func successfulTextResult() ai.TextResult {
 			InputTokens:  32,
 			OutputTokens: 14,
 			TotalTokens:  46,
+		},
+	}
+}
+
+func integrationToolResult(
+	callID string,
+	name string,
+	arguments string,
+) ai.TextResult {
+	return ai.TextResult{
+		ID:           "fake-tool-completion-" + callID,
+		Provider:     "fake",
+		Model:        "configured-model",
+		FinishReason: "tool_calls",
+		ToolCalls: []ai.ToolCall{{
+			ID:        callID,
+			Name:      name,
+			Arguments: json.RawMessage(arguments),
+		}},
+		Usage: ai.TokenUsage{
+			InputTokens:  20,
+			OutputTokens: 4,
+			TotalTokens:  24,
+		},
+	}
+}
+
+func integrationFinalResult(id string, content string) ai.TextResult {
+	return ai.TextResult{
+		ID:           "fake-final-completion-" + id,
+		Provider:     "fake",
+		Model:        "configured-model",
+		Content:      content,
+		FinishReason: "stop",
+		Usage: ai.TokenUsage{
+			InputTokens:  32,
+			OutputTokens: 12,
+			TotalTokens:  44,
 		},
 	}
 }

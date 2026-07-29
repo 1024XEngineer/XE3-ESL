@@ -448,11 +448,7 @@ func (service *RunService) generate(
 	// 自然语言请求始终拿到 Registry 的全量工具，是否调用完全由模型判断。
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
-	snapshotReason := reasonModelToolSelection
-	if explicitCommand {
-		snapshotReason = reasonExplicitCommand
-	}
-	applyModelToolSnapshot(&manifest, routing, snapshotReason)
+	applyModelToolSnapshot(&manifest, routing)
 	if err := service.saveContextToolSnapshot(loopCtx, manifest); err != nil {
 		return ai.TextResult{}, err
 	}
@@ -478,7 +474,6 @@ func (service *RunService) generate(
 			actor,
 			run,
 			commandCall,
-			commandExecutionPolicy(parsed.Invocation.Name),
 		)
 		if err != nil {
 			return ai.TextResult{}, err
@@ -590,7 +585,7 @@ func (service *RunService) generate(
 			return result, nil
 		}
 		// 先检查整批调用，防止同一批写操作只执行一部分后才发现预算不足。
-		if writeCalls+service.writeToolCallCount(result.ToolCalls, routing.Policy) >
+		if writeCalls+service.writeToolCallCount(result.ToolCalls) >
 			service.loopLimits.MaxWriteToolCalls {
 			result := fallbackResult(
 				service.configuration,
@@ -638,7 +633,7 @@ func (service *RunService) generate(
 				continue
 			}
 			definition, ok := service.toolDefinition(call.Name)
-			if !ok || !routing.Policy.Allows(definition) {
+			if !ok {
 				if err := service.markToolCallRejected(
 					loopCtx,
 					run,
@@ -661,7 +656,6 @@ func (service *RunService) generate(
 				actor,
 				run,
 				call,
-				routing.Policy,
 			)
 			if err != nil {
 				return ai.TextResult{}, err
@@ -678,7 +672,6 @@ func (service *RunService) executeToolCall(
 	actor requestcontext.Actor,
 	run Run,
 	call ai.ToolCall,
-	policy tool.Policy,
 ) (ai.TextMessage, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
@@ -704,7 +697,6 @@ func (service *RunService) executeToolCall(
 			RequestID:  requestID,
 		},
 		tool.Invocation{Name: call.Name, Input: call.Arguments},
-		policy,
 	)
 	if err != nil {
 		if service.repository != nil {
@@ -1113,12 +1105,11 @@ func toolCallRequestID(runID string, toolCallID string) string {
 
 func (service *RunService) writeToolCallCount(
 	calls []ai.ToolCall,
-	policy tool.Policy,
 ) int {
 	count := 0
 	for _, call := range calls {
 		definition, ok := service.toolDefinition(call.Name)
-		if ok && policy.Allows(definition) && !definition.ReadOnly {
+		if ok && !definition.ReadOnly {
 			count++
 		}
 	}
@@ -1179,7 +1170,7 @@ func toolFailureMessage(toolCallID string, err error) ai.TextMessage {
 		message = "tool arguments are invalid"
 	case "unknown_tool":
 		message = "tool is not registered"
-	case "permission_denied":
+	case "execution_rejected":
 		message = "tool execution was rejected"
 	}
 	raw, _ := json.Marshal(map[string]any{

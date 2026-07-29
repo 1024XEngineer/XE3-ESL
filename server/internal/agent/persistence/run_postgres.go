@@ -516,14 +516,9 @@ func (r *PostgresRepository) SaveContextManifest(
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
 	var exposedToolsJSON []byte
-	var blockedToolsJSON []byte
 	var toolSchemaHashesJSON []byte
 	var persistedMatterID pgtype.Text
 	var persistedMatterVersion pgtype.Int8
-	var intentMode pgtype.Text
-	var intentReasonCode pgtype.Text
-	var intentGuardVersion pgtype.Text
-	var toolPolicyVersion pgtype.Text
 	err = r.database.QueryRow(ctx, `
 INSERT INTO agent_context_manifests (
     run_id,
@@ -568,11 +563,6 @@ RETURNING
     requested_model,
     max_output_tokens,
     exposed_tools,
-    blocked_tools,
-    intent_mode,
-    intent_reason_code,
-    intent_guard_version,
-    tool_policy_version,
     tool_schema_hashes,
     created_at`,
 		manifest.RunID,
@@ -611,11 +601,6 @@ RETURNING
 		&result.RequestedModel,
 		&result.MaxOutputTokens,
 		&exposedToolsJSON,
-		&blockedToolsJSON,
-		&intentMode,
-		&intentReasonCode,
-		&intentGuardVersion,
-		&toolPolicyVersion,
 		&toolSchemaHashesJSON,
 		&result.CreatedAt,
 	)
@@ -629,11 +614,6 @@ RETURNING
 		selectedJSON,
 		selectedMemoriesJSON,
 		exposedToolsJSON,
-		blockedToolsJSON,
-		intentMode,
-		intentReasonCode,
-		intentGuardVersion,
-		toolPolicyVersion,
 		toolSchemaHashesJSON,
 	); err != nil {
 		return ContextManifest{}, err
@@ -650,14 +630,9 @@ func (r *PostgresRepository) FindContextManifest(
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
 	var exposedToolsJSON []byte
-	var blockedToolsJSON []byte
 	var toolSchemaHashesJSON []byte
 	var activeMatterID pgtype.Text
 	var activeMatterVersion pgtype.Int8
-	var intentMode pgtype.Text
-	var intentReasonCode pgtype.Text
-	var intentGuardVersion pgtype.Text
-	var toolPolicyVersion pgtype.Text
 	err := r.database.QueryRow(ctx, `
 SELECT
     run_id::text,
@@ -678,11 +653,6 @@ SELECT
     requested_model,
     max_output_tokens,
     exposed_tools,
-    blocked_tools,
-    intent_mode,
-    intent_reason_code,
-    intent_guard_version,
-    tool_policy_version,
     tool_schema_hashes,
     created_at
 FROM agent_context_manifests
@@ -708,11 +678,6 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result.RequestedModel,
 		&result.MaxOutputTokens,
 		&exposedToolsJSON,
-		&blockedToolsJSON,
-		&intentMode,
-		&intentReasonCode,
-		&intentGuardVersion,
-		&toolPolicyVersion,
 		&toolSchemaHashesJSON,
 		&result.CreatedAt,
 	)
@@ -726,11 +691,6 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		selectedJSON,
 		selectedMemoriesJSON,
 		exposedToolsJSON,
-		blockedToolsJSON,
-		intentMode,
-		intentReasonCode,
-		intentGuardVersion,
-		toolPolicyVersion,
 		toolSchemaHashesJSON,
 	); err != nil {
 		return ContextManifest{}, err
@@ -746,49 +706,19 @@ func (r *PostgresRepository) SaveContextToolSnapshot(
 	if err != nil {
 		return ContextManifest{}, ErrInvalidRequest
 	}
-	blockedTools, err := json.Marshal(nonNilBlockedTools(manifest.BlockedTools))
-	if err != nil {
-		return ContextManifest{}, ErrInvalidRequest
-	}
 	schemaHashes, err := json.Marshal(nonNilStringMap(manifest.ToolSchemaHashes))
 	if err != nil {
 		return ContextManifest{}, ErrInvalidRequest
-	}
-	var intentMode any
-	var intentReason any
-	var guardVersion any
-	var policyVersion any
-	if manifest.IntentMode != "" {
-		intentMode = manifest.IntentMode
-	}
-	if manifest.IntentReasonCode != "" {
-		intentReason = manifest.IntentReasonCode
-	}
-	if manifest.IntentGuardVersion != "" {
-		guardVersion = manifest.IntentGuardVersion
-	}
-	if manifest.ToolPolicyVersion != "" {
-		policyVersion = manifest.ToolPolicyVersion
 	}
 	command, err := r.database.Exec(ctx, `
 UPDATE agent_context_manifests
 SET
     exposed_tools = $3::jsonb,
-    blocked_tools = $4::jsonb,
-    intent_mode = $5,
-    intent_reason_code = $6,
-    intent_guard_version = $7,
-    tool_policy_version = $8,
-    tool_schema_hashes = $9::jsonb
+    tool_schema_hashes = $4::jsonb
 WHERE run_id = $1 AND owner_user_id = $2`,
 		manifest.RunID,
 		manifest.OwnerID,
 		exposedTools,
-		blockedTools,
-		intentMode,
-		intentReason,
-		guardVersion,
-		policyVersion,
 		schemaHashes,
 	)
 	if err != nil {
@@ -1462,11 +1392,6 @@ func decodeManifestOptionals(
 	selectedJSON []byte,
 	selectedMemoriesJSON []byte,
 	exposedToolsJSON []byte,
-	blockedToolsJSON []byte,
-	intentMode pgtype.Text,
-	intentReasonCode pgtype.Text,
-	intentGuardVersion pgtype.Text,
-	toolPolicyVersion pgtype.Text,
 	toolSchemaHashesJSON []byte,
 ) error {
 	if activeMatterID.Valid {
@@ -1489,23 +1414,6 @@ func decodeManifestOptionals(
 			return ErrRepository
 		}
 	}
-	if len(blockedToolsJSON) > 0 {
-		if err := json.Unmarshal(blockedToolsJSON, &manifest.BlockedTools); err != nil {
-			return ErrRepository
-		}
-	}
-	if intentMode.Valid {
-		manifest.IntentMode = intentMode.String
-	}
-	if intentReasonCode.Valid {
-		manifest.IntentReasonCode = intentReasonCode.String
-	}
-	if intentGuardVersion.Valid {
-		manifest.IntentGuardVersion = intentGuardVersion.String
-	}
-	if toolPolicyVersion.Valid {
-		manifest.ToolPolicyVersion = toolPolicyVersion.String
-	}
 	if len(toolSchemaHashesJSON) > 0 {
 		if err := json.Unmarshal(
 			toolSchemaHashesJSON,
@@ -1520,13 +1428,6 @@ func decodeManifestOptionals(
 func nonNilStrings(values []string) []string {
 	if values == nil {
 		return []string{}
-	}
-	return values
-}
-
-func nonNilBlockedTools(values []ContextBlockedTool) []ContextBlockedTool {
-	if values == nil {
-		return []ContextBlockedTool{}
 	}
 	return values
 }

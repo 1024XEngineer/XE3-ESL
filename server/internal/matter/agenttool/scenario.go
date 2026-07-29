@@ -70,7 +70,7 @@ func (tool ScenarioCreateTool) Definition() Definition {
 			),
 		}, []string{"type"}),
 		ReadOnly: false,
-		Risk:     RiskRequiresConfirm,
+		Risk:     RiskLowRiskWrite,
 	}
 }
 
@@ -81,7 +81,7 @@ func (tool ScenarioCreateTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ScenarioCreateInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.Type == "" {
@@ -131,7 +131,7 @@ func (tool ScenarioSearchTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ScenarioSearchInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.Query == "" {

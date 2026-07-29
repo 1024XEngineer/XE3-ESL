@@ -111,7 +111,6 @@ func (e *Evaluator) evaluateCase(
 	actor := requestcontext.Actor{UserID: "eval-user", SessionID: "eval-session"}
 	runID := fmt.Sprintf("eval-run-%03d", index+1)
 	allowedTools := registeredToolNames(e.registry)
-	executionPolicy := allowAllRegisteredTools(allowedTools)
 	route := e.router.Route(item, allowedTools)
 	caseResult := CaseResult{
 		Name:         item.Name,
@@ -131,7 +130,6 @@ func (e *Evaluator) evaluateCase(
 				RequestID:  fmt.Sprintf("%s-%d", runID, callIndex+1),
 			},
 			tool.Invocation{Name: call.Name, Input: call.Input},
-			executionPolicy,
 		)
 		if err != nil {
 			caseResult.ErrorCategory = tool.ErrorCategory(err)
@@ -312,14 +310,6 @@ func registeredToolNames(registry *tool.Registry) []string {
 		names = append(names, definition.Name)
 	}
 	return names
-}
-
-func allowAllRegisteredTools(names []string) tool.Policy {
-	return tool.Policy{
-		AllowedNames:   append([]string(nil), names...),
-		AllowWrites:    true,
-		ConfirmedNames: append([]string(nil), names...),
-	}
 }
 
 func validateCase(item RoutingCase, result CaseResult) []string {

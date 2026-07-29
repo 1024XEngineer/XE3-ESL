@@ -35,11 +35,6 @@ func TestModelToolRoutingExposesEveryRegisteredTool(t *testing.T) {
 	if routing.ToolChoice.Mode != ai.ToolChoiceAuto {
 		t.Fatalf("ToolChoice = %#v, want auto", routing.ToolChoice)
 	}
-	for _, definition := range registry.Definitions() {
-		if !routing.Policy.Allows(definition) {
-			t.Fatalf("registered tool %q is not executable", definition.Name)
-		}
-	}
 }
 
 func TestModelToolRoutingDoesNotDependOnUserInput(t *testing.T) {
@@ -63,21 +58,6 @@ func TestModelToolRoutingDoesNotDependOnUserInput(t *testing.T) {
 				t.Fatalf("exposed tools = %#v, want %#v", got, want)
 			}
 		})
-	}
-}
-
-func TestCommandExecutionPolicyOnlyAllowsParsedTool(t *testing.T) {
-	registry, err := mocktool.NewRegistry(mocktool.NewStore())
-	if err != nil {
-		t.Fatalf("NewRegistry() error = %v", err)
-	}
-	policy := commandExecutionPolicy(mattertool.ScenarioCreateToolName)
-	for _, definition := range registry.Definitions() {
-		got := policy.Allows(definition)
-		want := definition.Name == mattertool.ScenarioCreateToolName
-		if got != want {
-			t.Fatalf("Allows(%q) = %v, want %v", definition.Name, got, want)
-		}
 	}
 }
 

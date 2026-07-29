@@ -19,16 +19,15 @@ import (
 type Risk string
 
 const (
-	RiskReadOnly        Risk = "read_only"
-	RiskLowRiskWrite    Risk = "low_risk_write"
-	RiskRequiresConfirm Risk = "requires_confirm"
+	RiskReadOnly     Risk = "read_only"
+	RiskLowRiskWrite Risk = "low_risk_write"
 )
 
 var (
 	ErrInvalidDefinition = errors.New("agent tool: invalid definition")
 	ErrInvalidInput      = errors.New("agent tool: invalid input")
 	ErrUnknownTool       = errors.New("agent tool: unknown tool")
-	ErrToolRejected      = errors.New("agent tool: rejected")
+	ErrExecutionRejected = errors.New("agent tool: execution rejected")
 )
 
 var agentIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
@@ -136,8 +135,7 @@ func readOnlyRisk(risk Risk) bool {
 // validRisk 判断风险等级是否为当前支持的取值。
 func validRisk(risk Risk) bool {
 	return risk == RiskReadOnly ||
-		risk == RiskLowRiskWrite ||
-		risk == RiskRequiresConfirm
+		risk == RiskLowRiskWrite
 }
 
 // schemaType 读取 JSON Schema 的 type 字段。

@@ -81,57 +81,6 @@ func TestRegistryDefinitionsAreCompleteSortedAndIsolated(t *testing.T) {
 	}
 }
 
-func TestPolicyFiltersWriteTools(t *testing.T) {
-	registry, err := NewRegistry(
-		&stubTool{definition: readToolDefinition("review.search.v1")},
-		&stubTool{definition: writeToolDefinition("scenario.create.v1")},
-	)
-	if err != nil {
-		t.Fatalf("NewRegistry() error = %v", err)
-	}
-	definitions, err := (Policy{}).Select(registry)
-	if err != nil {
-		t.Fatalf("Select() error = %v", err)
-	}
-	if got, want := len(definitions), 1; got != want {
-		t.Fatalf("len(Select()) = %d, want %d", got, want)
-	}
-	if got, want := definitions[0].Name, "review.search.v1"; got != want {
-		t.Fatalf("selected tool = %q, want %q", got, want)
-	}
-}
-
-func TestPolicyRequiresConfirmedNameForConfirmationRisk(t *testing.T) {
-	registry, err := NewRegistry(
-		&stubTool{definition: readToolDefinition("review.search.v1")},
-		&stubTool{definition: confirmToolDefinition("scenario.create.v1")},
-	)
-	if err != nil {
-		t.Fatalf("NewRegistry() error = %v", err)
-	}
-	definitions, err := (Policy{AllowWrites: true}).Select(registry)
-	if err != nil {
-		t.Fatalf("Select() error = %v", err)
-	}
-	if got, want := len(definitions), 1; got != want {
-		t.Fatalf("len(Select()) = %d, want %d", got, want)
-	}
-	if got, want := definitions[0].Name, "review.search.v1"; got != want {
-		t.Fatalf("selected tool = %q, want %q", got, want)
-	}
-
-	definitions, err = (Policy{
-		AllowWrites:    true,
-		ConfirmedNames: []string{"scenario.create.v1"},
-	}).Select(registry)
-	if err != nil {
-		t.Fatalf("Select() confirmed error = %v", err)
-	}
-	if got, want := len(definitions), 2; got != want {
-		t.Fatalf("len(Select() confirmed) = %d, want %d", got, want)
-	}
-}
-
 func TestExecutorValidatesAndRunsTool(t *testing.T) {
 	tool := &stubTool{
 		definition: readToolDefinition("review.search.v1"),
@@ -148,7 +97,6 @@ func TestExecutorValidatesAndRunsTool(t *testing.T) {
 		context.Background(),
 		validCallContext(),
 		Invocation{Name: "review.search.v1", Input: input},
-		Policy{AllowedNames: []string{"review.search.v1"}},
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -179,33 +127,12 @@ func TestExecutorFiltersUnknownInputFields(t *testing.T) {
 				`{"query":"last interview","unexpected":true}`,
 			),
 		},
-		Policy{AllowedNames: []string{"review.search.v1"}},
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	if got, want := string(tool.input), `{"query":"last interview"}`; got != want {
 		t.Fatalf("tool input = %s, want %s", got, want)
-	}
-}
-
-func TestExecutorRejectsToolOutsidePolicy(t *testing.T) {
-	tool := &stubTool{definition: writeToolDefinition("scenario.create.v1")}
-	registry, err := NewRegistry(tool)
-	if err != nil {
-		t.Fatalf("NewRegistry() error = %v", err)
-	}
-	_, err = NewExecutor(registry).Execute(
-		context.Background(),
-		validCallContext(),
-		Invocation{Name: "scenario.create.v1", Input: json.RawMessage(`{"title":"PM interview"}`)},
-		Policy{},
-	)
-	if !errors.Is(err, ErrToolRejected) {
-		t.Fatalf("Execute() error = %v, want %v", err, ErrToolRejected)
-	}
-	if tool.calls != 0 {
-		t.Fatalf("tool calls = %d, want 0", tool.calls)
 	}
 }
 
@@ -223,7 +150,6 @@ func TestExecutorRejectsUnknownTool(t *testing.T) {
 			Name:  "missing.search.v1",
 			Input: json.RawMessage(`{"query":"last interview"}`),
 		},
-		Policy{AllowedNames: []string{"missing.search.v1"}},
 	)
 	if !errors.Is(err, ErrUnknownTool) {
 		t.Fatalf("Execute() error = %v, want %v", err, ErrUnknownTool)
@@ -239,10 +165,9 @@ func TestExecutorRejectsInvalidCallContext(t *testing.T) {
 		context.Background(),
 		CallContext{},
 		Invocation{Name: "review.search.v1", Input: json.RawMessage(`{}`)},
-		Policy{AllowedNames: []string{"review.search.v1"}},
 	)
-	if !errors.Is(err, ErrToolRejected) {
-		t.Fatalf("Execute() error = %v, want %v", err, ErrToolRejected)
+	if !errors.Is(err, ErrExecutionRejected) {
+		t.Fatalf("Execute() error = %v, want %v", err, ErrExecutionRejected)
 	}
 }
 
@@ -271,7 +196,6 @@ func TestExecutorValidatesInputSchema(t *testing.T) {
 				context.Background(),
 				validCallContext(),
 				Invocation{Name: "review.search.v1", Input: tt.input},
-				Policy{AllowedNames: []string{"review.search.v1"}},
 			)
 			if !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("Execute() error = %v, want %v", err, ErrInvalidInput)
@@ -317,7 +241,6 @@ func TestExecutorNormalizesEmptyResultAndErrorCategories(t *testing.T) {
 			Name:  "review.search.v1",
 			Input: json.RawMessage(`{"query":"nothing"}`),
 		},
-		Policy{AllowedNames: []string{"review.search.v1"}},
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -342,8 +265,8 @@ func TestExecutorNormalizesEmptyResultAndErrorCategories(t *testing.T) {
 			retryable: false,
 		},
 		"rejected tool": {
-			err:       ErrToolRejected,
-			category:  "permission_denied",
+			err:       ErrExecutionRejected,
+			category:  "execution_rejected",
 			retryable: false,
 		},
 		"internal failure": {
@@ -362,24 +285,6 @@ func TestExecutorNormalizesEmptyResultAndErrorCategories(t *testing.T) {
 			}
 		})
 	}
-}
-
-func writeToolDefinition(name string) Definition {
-	return Definition{
-		Name:        name,
-		Description: "Create data.",
-		InputSchema: objectSchema(map[string]any{
-			"title": stringSchema("Title."),
-		}, nil),
-		ReadOnly: false,
-		Risk:     RiskLowRiskWrite,
-	}
-}
-
-func confirmToolDefinition(name string) Definition {
-	definition := writeToolDefinition(name)
-	definition.Risk = RiskRequiresConfirm
-	return definition
 }
 
 func validCallContext() CallContext {
