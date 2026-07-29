@@ -19,7 +19,11 @@ void main() {
     final first = _controller(_WizardClient(), draftStore: store);
     await first.activateAccount('user-1');
     first.updateInput(_input);
-    await tester.pump();
+    await tester.runAsync(() async {
+      while (await store.read('user-1') == null) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+    });
     first.dispose();
 
     final restored = _controller(_WizardClient(), draftStore: store);
@@ -34,6 +38,12 @@ void main() {
     );
     await tester.pump();
 
+    expect(restored.hasRestorableDraft, isTrue);
+    await _scrollTo(
+      tester,
+      target: const Key('job-draft-card'),
+      scrollable: const Key('job-wizard-input-step'),
+    );
     expect(find.byKey(const Key('job-draft-card')), findsOneWidget);
     expect(find.byKey(const Key('resume-job-draft-button')), findsOneWidget);
     expect(tester.takeException(), isNull);
