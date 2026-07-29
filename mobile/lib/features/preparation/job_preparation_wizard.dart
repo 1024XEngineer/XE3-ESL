@@ -1124,6 +1124,9 @@ class _DraftCard extends StatelessWidget {
                   onPressed: onResume == null
                       ? null
                       : () => unawaited(onResume!()),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, SpeakUpDesign.minTapTarget),
+                  ),
                   child: const Text('继续'),
                 ),
               ],

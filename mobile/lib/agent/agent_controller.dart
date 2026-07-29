@@ -1562,6 +1562,35 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  Future<void> finishRecordingGesture() async {
+    if (_recordingState == PracticeRecordingState.starting) {
+      await _recorderStartFuture;
+    }
+    if (_recordingState == PracticeRecordingState.recording) {
+      await stopRecording();
+    }
+  }
+
+  Future<void> cancelRecording() async {
+    if (_recordingState != PracticeRecordingState.starting &&
+        _recordingState != PracticeRecordingState.recording) {
+      return;
+    }
+    _practiceGeneration++;
+    _cancelRecordingLimit();
+    await _recorderStartFuture;
+    if (_disposed) {
+      return;
+    }
+    await recorder.discardCurrent();
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+    _recordingState = PracticeRecordingState.idle;
+    _errorMessage = null;
+    notifyListeners();
+  }
+
   Future<void> _stopRecording({
     required PracticeClient practice,
     required String sessionId,

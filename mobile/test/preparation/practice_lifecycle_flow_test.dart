@@ -118,10 +118,6 @@ void main() {
 
       await _tapVisible(tester, find.byKey(const Key('primary-tab-scenes')));
       await _openScenario(tester, _progressScenario.id);
-      await _tapVisible(
-        tester,
-        find.byKey(const Key('preparation-start-practice')),
-      );
 
       expect(find.byKey(const Key('practice-page')), findsOneWidget);
       final firstPracticeThreadId = agentController.threadId!;
@@ -134,6 +130,10 @@ void main() {
       expect(workspaceController.currentSessionId, firstSessionId);
       expect(agentController.threads, hasLength(2));
 
+      await _tapVisible(
+        tester,
+        find.byKey(const Key('practice-open-keyboard')),
+      );
       await tester.enterText(
         find.byKey(const Key('practice-text-answer')),
         'The migration is on schedule, and I have isolated the main risk.',
@@ -232,20 +232,27 @@ void main() {
       expect(agentController.threadId, homeThreadId);
 
       expect(find.byKey(const Key('practice-continuation')), findsOneWidget);
-      await _openScenario(tester, _hotelScenario.id);
-      await _tapVisible(
-        tester,
-        find.byKey(const Key('preparation-start-practice')),
-      );
+      await _openScenario(tester, _progressScenario.id);
 
-      expect(find.text('你还有一项练习未完成'), findsOneWidget);
-      expect(find.text('结束并开始新的'), findsOneWidget);
+      expect(find.byKey(const Key('practice-page')), findsOneWidget);
+      expect(find.text('开始新的练习？'), findsNothing);
+      expect(agentController.practiceSessionId, firstSessionId);
+      expect(agentController.completedTurns, 1);
+
+      await _leavePractice(tester);
+      expect(agentController.threadId, homeThreadId);
+
+      await _openScenario(tester, _hotelScenario.id);
+
+      expect(find.text('开始新的练习？'), findsOneWidget);
+      expect(find.text('开始“${_hotelScenario.name}”'), findsOneWidget);
       expect(practiceClient.endedSessionIds, isEmpty);
 
-      await _tapVisible(
-        tester,
-        find.byKey(const Key('replace-existing-practice')),
-      );
+      final replace = find.byKey(const Key('replace-existing-practice'));
+      expect(replace, findsOneWidget);
+      await tester.tap(replace);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.byKey(const Key('practice-page')), findsOneWidget);
       expect(practiceClient.endedSessionIds, [firstSessionId]);
@@ -264,8 +271,13 @@ void main() {
 
 Future<void> _openScenario(WidgetTester tester, String scenarioId) async {
   await _tapVisible(tester, find.byKey(const Key('practice-hub-roleplay')));
-  await _tapVisible(tester, find.byKey(Key('catalog-scenario-$scenarioId')));
-  expect(find.byKey(const Key('preparation-launch-selection')), findsOneWidget);
+  final scenario = find.byKey(Key('catalog-scenario-$scenarioId'));
+  expect(scenario, findsOneWidget);
+  await tester.ensureVisible(scenario);
+  await tester.pumpAndSettle();
+  await tester.tap(scenario);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
 Future<void> _leavePractice(WidgetTester tester) async {
