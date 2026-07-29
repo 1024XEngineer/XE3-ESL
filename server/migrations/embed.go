@@ -4,7 +4,14 @@ package migrations
 
 import "embed"
 
-// Files contains every up and down migration in this directory.
+// Files contains every executable up and down migration in this directory.
 //
-//go:embed *.sql
+// The original Review policy files remain in Git as append-only history but
+// share version 000026 with the earlier Thread Summary migration. Keep them
+// outside Files; 000028 is the executable copy tracked by issue 223.
+//
+//go:embed 0000[01][0-9]_*.sql 00002[0-5]_*.sql
+//go:embed 000026_agent_thread_summary_jobs.*.sql
+//go:embed 000027_agent_summary_context_manifest.*.sql
+//go:embed 000028_review_scenario_policies.*.sql
 var Files embed.FS

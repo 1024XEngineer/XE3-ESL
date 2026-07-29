@@ -33,6 +33,64 @@ func TestEveryEmbeddedMigrationIsTransactional(t *testing.T) {
 	}
 }
 
+func TestEveryEmbeddedMigrationVersionIsUniqueAndPaired(t *testing.T) {
+	t.Parallel()
+
+	files, err := fs.Glob(Files, "*.sql")
+	if err != nil {
+		t.Fatalf("enumerate embedded migrations: %v", err)
+	}
+	type migrationPair struct {
+		name string
+		up   bool
+		down bool
+	}
+	versions := make(map[string]migrationPair)
+	for _, filename := range files {
+		var direction string
+		switch {
+		case strings.HasSuffix(filename, ".up.sql"):
+			direction = "up"
+		case strings.HasSuffix(filename, ".down.sql"):
+			direction = "down"
+		default:
+			t.Fatalf("migration %q has an invalid direction", filename)
+		}
+
+		name := strings.TrimSuffix(filename, "."+direction+".sql")
+		version, _, ok := strings.Cut(name, "_")
+		if !ok || len(version) != 6 {
+			t.Fatalf("migration %q has an invalid version", filename)
+		}
+
+		pair := versions[version]
+		if pair.name != "" && pair.name != name {
+			t.Fatalf(
+				"migration version %s is used by %q and %q",
+				version,
+				pair.name,
+				name,
+			)
+		}
+		pair.name = name
+		if direction == "up" {
+			pair.up = true
+		} else {
+			pair.down = true
+		}
+		versions[version] = pair
+	}
+
+	for version, pair := range versions {
+		if !pair.up || !pair.down {
+			t.Errorf(
+				"migration version %s must contain matching up and down files",
+				version,
+			)
+		}
+	}
+}
+
 func TestDatabaseBaselineContainsNoBusinessDDL(t *testing.T) {
 	t.Parallel()
 
