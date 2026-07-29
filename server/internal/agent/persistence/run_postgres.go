@@ -509,6 +509,10 @@ func (r *PostgresRepository) SaveContextManifest(
 	if err != nil {
 		return ContextManifest{}, ErrInvalidRequest
 	}
+	selectedStableProfile, err := json.Marshal(manifest.SelectedStableProfile)
+	if err != nil {
+		return ContextManifest{}, ErrInvalidRequest
+	}
 	var activeMatterID any
 	var activeMatterVersion any
 	if manifest.ActiveMatterID != "" {
@@ -536,6 +540,7 @@ func (r *PostgresRepository) SaveContextManifest(
 	var result ContextManifest
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
+	var selectedStableProfileJSON []byte
 	var exposedToolsJSON []byte
 	var blockedToolsJSON []byte
 	var toolSchemaHashesJSON []byte
@@ -561,6 +566,8 @@ INSERT INTO agent_context_manifests (
     active_matter_id,
     active_matter_version,
     instruction_version,
+    stable_profile_context_policy_version,
+    selected_stable_profile,
     memory_context_policy_version,
     selected_memories,
     summary_context_policy_version,
@@ -583,8 +590,9 @@ INSERT INTO agent_context_manifests (
     created_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
-    $10, $11, $12, $13, $14, $15, $16, $17, $18,
-    $19::jsonb, $20, $21, $22, $23, $24, $25, $26,
+    $10, $11::jsonb, $12, $13, $14, $15, $16, $17, $18,
+    $19, $20,
+    $21::jsonb, $22, $23, $24, $25, $26, $27, $28,
     CURRENT_TIMESTAMP
 )
 RETURNING
@@ -595,6 +603,8 @@ RETURNING
     active_matter_id::text,
     active_matter_version,
     instruction_version,
+    stable_profile_context_policy_version,
+    selected_stable_profile,
     memory_context_policy_version,
     selected_memories,
     summary_context_policy_version,
@@ -629,6 +639,8 @@ RETURNING
 		activeMatterID,
 		activeMatterVersion,
 		manifest.InstructionVersion,
+		manifest.StableProfileContextPolicyVersion,
+		selectedStableProfile,
 		manifest.MemoryContextPolicyVersion,
 		selectedMemories,
 		manifest.SummaryContextPolicyVersion,
@@ -656,6 +668,8 @@ RETURNING
 		&persistedMatterID,
 		&persistedMatterVersion,
 		&result.InstructionVersion,
+		&result.StableProfileContextPolicyVersion,
+		&selectedStableProfileJSON,
 		&result.MemoryContextPolicyVersion,
 		&selectedMemoriesJSON,
 		&result.SummaryContextPolicyVersion,
@@ -699,6 +713,7 @@ RETURNING
 		persistedSummaryProvider,
 		persistedSummaryModel,
 		selectedJSON,
+		selectedStableProfileJSON,
 		selectedMemoriesJSON,
 		exposedToolsJSON,
 		blockedToolsJSON,
@@ -721,6 +736,7 @@ func (r *PostgresRepository) FindContextManifest(
 	var result ContextManifest
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
+	var selectedStableProfileJSON []byte
 	var exposedToolsJSON []byte
 	var blockedToolsJSON []byte
 	var toolSchemaHashesJSON []byte
@@ -746,6 +762,8 @@ SELECT
     active_matter_id::text,
     active_matter_version,
     instruction_version,
+    stable_profile_context_policy_version,
+    selected_stable_profile,
     memory_context_policy_version,
     selected_memories,
     summary_context_policy_version,
@@ -785,6 +803,8 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&activeMatterID,
 		&activeMatterVersion,
 		&result.InstructionVersion,
+		&result.StableProfileContextPolicyVersion,
+		&selectedStableProfileJSON,
 		&result.MemoryContextPolicyVersion,
 		&selectedMemoriesJSON,
 		&result.SummaryContextPolicyVersion,
@@ -828,6 +848,7 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		selectedSummaryProvider,
 		selectedSummaryModel,
 		selectedJSON,
+		selectedStableProfileJSON,
 		selectedMemoriesJSON,
 		exposedToolsJSON,
 		blockedToolsJSON,
@@ -1571,6 +1592,7 @@ func decodeManifestOptionals(
 	selectedSummaryProvider pgtype.Text,
 	selectedSummaryModel pgtype.Text,
 	selectedJSON []byte,
+	selectedStableProfileJSON []byte,
 	selectedMemoriesJSON []byte,
 	exposedToolsJSON []byte,
 	blockedToolsJSON []byte,
@@ -1615,6 +1637,12 @@ func decodeManifestOptionals(
 		return ErrRepository
 	}
 	if err := json.Unmarshal(selectedJSON, &manifest.SelectedMessages); err != nil {
+		return ErrRepository
+	}
+	if err := json.Unmarshal(
+		selectedStableProfileJSON,
+		&manifest.SelectedStableProfile,
+	); err != nil {
 		return ErrRepository
 	}
 	if err := json.Unmarshal(

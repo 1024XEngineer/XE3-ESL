@@ -362,6 +362,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 	assembler, err := NewContextAssembler(
 		repository,
 		matterService,
+		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
 	)
 	if err != nil {
@@ -2099,6 +2100,97 @@ func TestPostgresContextAssemblerInjectsAuditedMemoryAsUntrustedData(
 	}
 }
 
+func TestPostgresContextAssemblerInjectsAndAuditsStableProfile(
+	t *testing.T,
+) {
+	database := newAgentTestDatabase(t)
+	generator := &recordingTextGenerator{result: successfulTextResult()}
+	stableProfile := &recordingStableProfileReader{
+		items: []StableProfileMemory{{
+			MemoryID:      "71000000-0000-4000-8000-000000000001",
+			MemoryVersion: 2,
+			CanonicalKey:  "profile.preferred_name",
+			Type:          "profile",
+			Content:       "小花",
+			Scope:         "user",
+		}},
+	}
+	searcher := &recordingMemorySearcher{}
+	ids := identity.NewUUIDv4Generator(nil)
+	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	if err != nil {
+		t.Fatalf("new Matter repository: %v", err)
+	}
+	matterService, err := matter.NewService(matterRepository)
+	if err != nil {
+		t.Fatalf("new Matter service: %v", err)
+	}
+	repository, err := NewPostgresRepository(database.pool, ids)
+	if err != nil {
+		t.Fatalf("new Agent repository: %v", err)
+	}
+	dataService, err := NewService(repository, matterService)
+	if err != nil {
+		t.Fatalf("new Agent service: %v", err)
+	}
+	runService := newRunServiceWithContexts(
+		t,
+		repository,
+		matterService,
+		generator,
+		testRunConfiguration,
+		stableProfile,
+		searcher,
+	)
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	submission, err := runService.SubmitText(
+		context.Background(),
+		actor,
+		thread.ID,
+		"stable-profile-context-0001",
+		"我是谁？",
+	)
+	if err != nil {
+		t.Fatalf("submit text: %v", err)
+	}
+	requests := searcher.Requests()
+	if len(requests) != 1 ||
+		len(requests[0].ExcludedCanonicalKeys) != 1 ||
+		requests[0].ExcludedCanonicalKeys[0] !=
+			stableProfile.items[0].CanonicalKey {
+		t.Fatalf("Memory search requests = %#v", requests)
+	}
+	providerRequests := generator.Requests()
+	if len(providerRequests) != 1 ||
+		!strings.Contains(
+			providerRequests[0].Messages[0].Content,
+			`<profile_field key="profile.preferred_name">小花</profile_field>`,
+		) {
+		t.Fatalf("provider requests = %#v", providerRequests)
+	}
+	manifest, err := runService.GetContextManifest(
+		context.Background(),
+		actor,
+		submission.Run.ID,
+	)
+	if err != nil {
+		t.Fatalf("get ContextManifest: %v", err)
+	}
+	if manifest.StableProfileContextPolicyVersion !=
+		"stable-profile-context-v1" ||
+		len(manifest.SelectedStableProfile) != 1 ||
+		manifest.SelectedStableProfile[0].MemoryID !=
+			stableProfile.items[0].MemoryID ||
+		manifest.SelectedStableProfile[0].CanonicalKey !=
+			stableProfile.items[0].CanonicalKey {
+		t.Fatalf("Stable Profile manifest = %#v", manifest)
+	}
+}
+
 func TestPostgresAgentMemoryStoresIndexesRecallsAndInjects(t *testing.T) {
 	database := newAgentTestDatabase(t)
 	ctx := context.Background()
@@ -2799,9 +2891,31 @@ func newRunServiceWithMemory(
 	memories MemorySearcher,
 ) *RunService {
 	t.Helper()
+	return newRunServiceWithContexts(
+		t,
+		repository,
+		matterService,
+		generator,
+		configuration,
+		emptyStableProfileReader{},
+		memories,
+	)
+}
+
+func newRunServiceWithContexts(
+	t *testing.T,
+	repository *PostgresRepository,
+	matterService *matter.Service,
+	generator ai.TextGenerator,
+	configuration RunConfiguration,
+	stableProfiles StableProfileReader,
+	memories MemorySearcher,
+) *RunService {
+	t.Helper()
 	assembler, err := NewContextAssembler(
 		repository,
 		matterService,
+		stableProfiles,
 		memories,
 	)
 	if err != nil {
@@ -2826,6 +2940,29 @@ type recordingMemorySearcher struct {
 	requests []MemorySearchRequest
 }
 
+type emptyStableProfileReader struct{}
+
+func (emptyStableProfileReader) ReadStableProfile(
+	context.Context,
+	StableProfileReadRequest,
+) ([]StableProfileMemory, error) {
+	return []StableProfileMemory{}, nil
+}
+
+type recordingStableProfileReader struct {
+	items    []StableProfileMemory
+	err      error
+	requests []StableProfileReadRequest
+}
+
+func (reader *recordingStableProfileReader) ReadStableProfile(
+	_ context.Context,
+	request StableProfileReadRequest,
+) ([]StableProfileMemory, error) {
+	reader.requests = append(reader.requests, request)
+	return append([]StableProfileMemory(nil), reader.items...), reader.err
+}
+
 type domainMemorySearcherAdapter struct {
 	searcher memory.Searcher
 }
@@ -2835,10 +2972,11 @@ func (adapter domainMemorySearcherAdapter) Search(
 	request MemorySearchRequest,
 ) ([]MemorySearchHit, error) {
 	hits, err := adapter.searcher.Search(ctx, memory.SearchRequest{
-		Actor:    request.Actor,
-		Query:    request.Query,
-		MatterID: request.MatterID,
-		Limit:    request.Limit,
+		Actor:                 request.Actor,
+		Query:                 request.Query,
+		MatterID:              request.MatterID,
+		ExcludedCanonicalKeys: request.ExcludedCanonicalKeys,
+		Limit:                 request.Limit,
 	})
 	if err != nil {
 		return nil, err
@@ -2848,6 +2986,7 @@ func (adapter domainMemorySearcherAdapter) Search(
 		result = append(result, MemorySearchHit{
 			MemoryID:               hit.MemoryID,
 			MemoryVersion:          hit.MemoryVersion,
+			CanonicalKey:           hit.CanonicalKey,
 			Type:                   string(hit.Type),
 			Content:                hit.Content,
 			Scope:                  string(hit.Scope),
@@ -2898,6 +3037,7 @@ func testContextMemoryHit(content string) MemorySearchHit {
 	return MemorySearchHit{
 		MemoryID:               "70000000-0000-4000-8000-000000000001",
 		MemoryVersion:          2,
+		CanonicalKey:           "goal.current",
 		Type:                   "profile",
 		Content:                content,
 		Scope:                  "user",

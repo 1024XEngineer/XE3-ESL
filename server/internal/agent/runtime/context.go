@@ -33,6 +33,7 @@ type MessageRole = core.MessageRole
 type Run = core.Run
 type ContextMessageSource = core.ContextMessageSource
 type ContextMemorySource = core.ContextMemorySource
+type ContextStableProfileSource = core.ContextStableProfileSource
 type ContextSummarySource = core.ContextSummarySource
 type ContextManifest = core.ContextManifest
 type ToolCallRecord = core.ToolCallRecord
@@ -85,23 +86,27 @@ type ContextRepository interface {
 }
 
 type ContextAssembler struct {
-	repository ContextRepository
-	matters    matter.Reader
-	memories   MemorySearcher
+	repository     ContextRepository
+	matters        matter.Reader
+	stableProfiles StableProfileReader
+	memories       MemorySearcher
 }
 
 func NewContextAssembler(
 	repository ContextRepository,
 	matters matter.Reader,
+	stableProfiles StableProfileReader,
 	memories MemorySearcher,
 ) (*ContextAssembler, error) {
-	if repository == nil || matters == nil || memories == nil {
+	if repository == nil || matters == nil ||
+		stableProfiles == nil || memories == nil {
 		return nil, errors.New("agent: context dependency is required")
 	}
 	return &ContextAssembler{
-		repository: repository,
-		matters:    matters,
-		memories:   memories,
+		repository:     repository,
+		matters:        matters,
+		stableProfiles: stableProfiles,
+		memories:       memories,
 	}, nil
 }
 
@@ -148,20 +153,22 @@ func (assembler *ContextAssembler) Assemble(
 		"mistakes. Do not expose tool names, schemas, or implementation details; " +
 		"describe capabilities naturally."
 	manifest := ContextManifest{
-		RunID:                       run.ID,
-		OwnerID:                     actor.UserID,
-		ThreadID:                    run.ThreadID,
-		InputMessageID:              input.ID,
-		TrimReason:                  contextTrimNone,
-		InstructionVersion:          instructionV1,
-		MemoryContextPolicyVersion:  memoryContextPolicyV1,
-		SelectedMemories:            make([]ContextMemorySource, 0),
-		SummaryContextPolicyVersion: summaryContextPolicyV1,
-		SummaryContextStatus:        summaryContextNotAvailable,
-		MaxInputCharacters:          configuration.MaxInputCharacters,
-		RequestedProvider:           configuration.Provider,
-		RequestedModel:              configuration.Model,
-		MaxOutputTokens:             configuration.MaxOutputTokens,
+		RunID:                             run.ID,
+		OwnerID:                           actor.UserID,
+		ThreadID:                          run.ThreadID,
+		InputMessageID:                    input.ID,
+		TrimReason:                        contextTrimNone,
+		InstructionVersion:                instructionV1,
+		StableProfileContextPolicyVersion: stableProfileContextPolicyV1,
+		SelectedStableProfile:             make([]ContextStableProfileSource, 0),
+		MemoryContextPolicyVersion:        memoryContextPolicyV1,
+		SelectedMemories:                  make([]ContextMemorySource, 0),
+		SummaryContextPolicyVersion:       summaryContextPolicyV1,
+		SummaryContextStatus:              summaryContextNotAvailable,
+		MaxInputCharacters:                configuration.MaxInputCharacters,
+		RequestedProvider:                 configuration.Provider,
+		RequestedModel:                    configuration.Model,
+		MaxOutputTokens:                   configuration.MaxOutputTokens,
 	}
 	if thread.ActiveMatterID != "" {
 		activeMatter, readErr := assembler.matters.ReadOwned(
@@ -189,11 +196,29 @@ func (assembler *ContextAssembler) Assemble(
 		configuration.MaxInputCharacters {
 		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
 	}
+	stableProfile, err := assembler.stableProfiles.ReadStableProfile(
+		ctx,
+		StableProfileReadRequest{Actor: actor},
+	)
+	if err != nil {
+		return ContextManifest{}, ai.TextRequest{}, ErrRepository
+	}
+	var excludedCanonicalKeys []string
+	systemContent, manifest.SelectedStableProfile,
+		excludedCanonicalKeys, err = selectStableProfileContext(
+		systemContent,
+		stableProfile,
+		configuration.MaxInputCharacters-inputCharacters,
+	)
+	if err != nil {
+		return ContextManifest{}, ai.TextRequest{}, err
+	}
 	hits, err := assembler.memories.Search(ctx, MemorySearchRequest{
-		Actor:    actor,
-		Query:    strings.TrimSpace(input.Content),
-		MatterID: manifest.ActiveMatterID,
-		Limit:    memoryContextLimit,
+		Actor:                 actor,
+		Query:                 strings.TrimSpace(input.Content),
+		MatterID:              manifest.ActiveMatterID,
+		ExcludedCanonicalKeys: excludedCanonicalKeys,
+		Limit:                 memoryContextLimit,
 	})
 	if err != nil {
 		return ContextManifest{}, ai.TextRequest{}, ErrRepository
