@@ -7,7 +7,12 @@ enum VoiceCapturePhase { idle, starting, recording, busy }
 
 enum VoiceCaptureMode { pressAndHold, tapToToggle }
 
+enum VoiceCaptureReleaseIntent { finish, convertToText, cancel }
+
 typedef VoiceCaptureAction = FutureOr<void> Function();
+
+typedef VoiceCaptureOverlayBuilder =
+    Widget Function(BuildContext context, VoiceCaptureReleaseIntent intent);
 
 typedef VoiceCaptureTargetBuilder =
     Widget Function({
@@ -24,17 +29,23 @@ class VoiceCaptureView {
   const VoiceCaptureView({
     required this.pressed,
     required this.cancelArmed,
+    required this.convertArmed,
     required this.tapMode,
+    required this.releaseIntent,
     required this.wrapTarget,
     required this.finishTapCapture,
+    required this.convertTapCapture,
     required this.cancelTapCapture,
   });
 
   final bool pressed;
   final bool cancelArmed;
+  final bool convertArmed;
   final bool tapMode;
+  final VoiceCaptureReleaseIntent releaseIntent;
   final VoiceCaptureTargetBuilder wrapTarget;
   final VoidCallback finishTapCapture;
+  final VoidCallback convertTapCapture;
   final VoidCallback cancelTapCapture;
 }
 
@@ -46,6 +57,8 @@ class VoiceCaptureControl extends StatefulWidget {
     required this.onCancel,
     required this.builder,
     this.onBeforeStart,
+    this.onConvertToText,
+    this.overlayBuilder,
     this.enabled = true,
     this.mode = VoiceCaptureMode.pressAndHold,
     this.holdDelay = const Duration(milliseconds: 180),
@@ -57,8 +70,10 @@ class VoiceCaptureControl extends StatefulWidget {
   final VoiceCaptureAction onStart;
   final VoiceCaptureAction? onBeforeStart;
   final VoiceCaptureAction onFinish;
+  final VoiceCaptureAction? onConvertToText;
   final VoiceCaptureAction onCancel;
   final VoiceCaptureBuilder builder;
+  final VoiceCaptureOverlayBuilder? overlayBuilder;
   final bool enabled;
   final VoiceCaptureMode mode;
   final Duration holdDelay;
@@ -68,22 +83,23 @@ class VoiceCaptureControl extends StatefulWidget {
   State<VoiceCaptureControl> createState() => _VoiceCaptureControlState();
 }
 
-enum _PendingCaptureAction { finish, cancel }
-
 class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
   Timer? _holdTimer;
+  OverlayEntry? _overlayEntry;
   Offset? _pointerOrigin;
   bool _pointerActive = false;
   bool _holdStarted = false;
-  bool _cancelArmed = false;
   bool _tapMode = false;
   bool _startInFlight = false;
   int _operationGeneration = 0;
-  _PendingCaptureAction? _pendingAction;
+  VoiceCaptureReleaseIntent _releaseIntent = VoiceCaptureReleaseIntent.finish;
+  VoiceCaptureReleaseIntent? _pendingAction;
 
   bool get _isCapturing =>
       widget.phase == VoiceCapturePhase.starting ||
       widget.phase == VoiceCapturePhase.recording;
+
+  bool get _threeWayEnabled => widget.onConvertToText != null;
 
   @override
   void didUpdateWidget(covariant VoiceCaptureControl oldWidget) {
@@ -93,25 +109,81 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
             widget.phase == VoiceCapturePhase.idle &&
             !_startInFlight)) {
       _resetInteraction();
+      return;
+    }
+    if (widget.overlayBuilder == null) {
+      _removeOverlay();
+    } else if (oldWidget.overlayBuilder == null && _holdStarted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _holdStarted && _overlayEntry == null) {
+          _showOverlay();
+        }
+      });
+    } else if (_overlayEntry != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _overlayEntry?.markNeedsBuild();
+      });
+    }
+    if (!_threeWayEnabled &&
+        _releaseIntent == VoiceCaptureReleaseIntent.convertToText) {
+      _releaseIntent = VoiceCaptureReleaseIntent.finish;
+    }
+    if (!_threeWayEnabled &&
+        _pendingAction == VoiceCaptureReleaseIntent.convertToText) {
+      _pendingAction = VoiceCaptureReleaseIntent.finish;
     }
   }
 
   @override
   void dispose() {
     _holdTimer?.cancel();
+    _removeOverlay();
     _operationGeneration++;
     super.dispose();
   }
 
   void _resetInteraction() {
     _holdTimer?.cancel();
+    _removeOverlay();
     _holdTimer = null;
     _pointerOrigin = null;
     _pointerActive = false;
     _holdStarted = false;
-    _cancelArmed = false;
     _tapMode = false;
+    _releaseIntent = VoiceCaptureReleaseIntent.finish;
     _pendingAction = null;
+  }
+
+  void _showOverlay() {
+    if (widget.overlayBuilder == null || _overlayEntry != null) {
+      return;
+    }
+    final entry = OverlayEntry(
+      builder: (context) =>
+          widget.overlayBuilder?.call(context, _releaseIntent) ??
+          const SizedBox.shrink(),
+    );
+    _overlayEntry = entry;
+    Overlay.of(context).insert(entry);
+  }
+
+  void _removeOverlay() {
+    final entry = _overlayEntry;
+    _overlayEntry = null;
+    if (entry == null) {
+      return;
+    }
+    entry.remove();
+    entry.dispose();
+  }
+
+  void _setReleaseIntent(VoiceCaptureReleaseIntent intent) {
+    if (intent == _releaseIntent) {
+      return;
+    }
+    setState(() => _releaseIntent = intent);
+    _overlayEntry?.markNeedsBuild();
+    unawaited(HapticFeedback.selectionClick());
   }
 
   void _handlePointerDown(PointerDownEvent event) {
@@ -127,7 +199,7 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
     setState(() {
       _pointerActive = true;
       _holdStarted = false;
-      _cancelArmed = false;
+      _releaseIntent = VoiceCaptureReleaseIntent.finish;
       _pointerOrigin = event.position;
     });
     if (!startingCapture || widget.mode == VoiceCaptureMode.tapToToggle) {
@@ -140,6 +212,7 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
         return;
       }
       setState(() => _holdStarted = true);
+      _showOverlay();
       unawaited(HapticFeedback.mediumImpact());
       unawaited(_beginCapture(tapMode: false));
     });
@@ -147,46 +220,51 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
 
   void _handlePointerMove(PointerMoveEvent event) {
     final origin = _pointerOrigin;
-    if (!_pointerActive || origin == null) {
+    if (!mounted || !_pointerActive || origin == null) {
       return;
     }
-    final cancelArmed = event.position.dy <= origin.dy - widget.cancelDistance;
-    if (cancelArmed == _cancelArmed) {
-      return;
-    }
-    setState(() => _cancelArmed = cancelArmed);
-    unawaited(HapticFeedback.selectionClick());
+    final delta = event.position - origin;
+    final intent = _threeWayEnabled
+        ? delta.dx <= -widget.cancelDistance
+              ? VoiceCaptureReleaseIntent.cancel
+              : delta.dx >= widget.cancelDistance
+              ? VoiceCaptureReleaseIntent.convertToText
+              : VoiceCaptureReleaseIntent.finish
+        : delta.dy <= -widget.cancelDistance
+        ? VoiceCaptureReleaseIntent.cancel
+        : VoiceCaptureReleaseIntent.finish;
+    _setReleaseIntent(intent);
   }
 
   void _handlePointerUp(PointerUpEvent event) {
-    _finishPointer(cancel: _cancelArmed);
+    _finishPointer(_releaseIntent);
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
-    _finishPointer(cancel: true);
+    _finishPointer(VoiceCaptureReleaseIntent.cancel);
   }
 
-  void _finishPointer({required bool cancel}) {
-    if (!_pointerActive) {
+  void _finishPointer(VoiceCaptureReleaseIntent intent) {
+    if (!mounted || !_pointerActive) {
       return;
     }
     _holdTimer?.cancel();
+    _removeOverlay();
     _holdTimer = null;
     final holdStarted = _holdStarted;
     final endingTapCapture = _tapMode && _isCapturing;
     setState(() {
       _pointerActive = false;
       _holdStarted = false;
-      _cancelArmed = false;
+      _releaseIntent = VoiceCaptureReleaseIntent.finish;
       _pointerOrigin = null;
     });
     if (holdStarted || endingTapCapture) {
-      _requestAction(
-        cancel ? _PendingCaptureAction.cancel : _PendingCaptureAction.finish,
-      );
+      _requestAction(intent);
       return;
     }
-    if (!cancel && widget.phase == VoiceCapturePhase.idle) {
+    if (intent != VoiceCaptureReleaseIntent.cancel &&
+        widget.phase == VoiceCapturePhase.idle) {
       unawaited(_beginCapture(tapMode: true));
     }
   }
@@ -208,7 +286,7 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
     }
     try {
       await widget.onBeforeStart?.call();
-      if (_pendingAction == _PendingCaptureAction.cancel) {
+      if (_pendingAction == VoiceCaptureReleaseIntent.cancel) {
         return;
       }
       await widget.onStart();
@@ -224,12 +302,13 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
     }
   }
 
-  void _requestAction(_PendingCaptureAction action) {
+  void _requestAction(VoiceCaptureReleaseIntent action) {
+    _removeOverlay();
     if (_startInFlight) {
       _pendingAction = action;
       if (mounted) {
         setState(() {
-          if (action == _PendingCaptureAction.cancel) {
+          if (action == VoiceCaptureReleaseIntent.cancel) {
             _tapMode = false;
           }
         });
@@ -239,15 +318,21 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
     unawaited(_runAction(action, _operationGeneration));
   }
 
-  Future<void> _runAction(_PendingCaptureAction action, int generation) async {
+  Future<void> _runAction(
+    VoiceCaptureReleaseIntent action,
+    int generation,
+  ) async {
     if (!mounted || generation != _operationGeneration) {
       return;
     }
     setState(() => _tapMode = false);
-    if (action == _PendingCaptureAction.cancel) {
-      await widget.onCancel();
-    } else {
-      await widget.onFinish();
+    switch (action) {
+      case VoiceCaptureReleaseIntent.finish:
+        await widget.onFinish();
+      case VoiceCaptureReleaseIntent.convertToText:
+        await widget.onConvertToText?.call();
+      case VoiceCaptureReleaseIntent.cancel:
+        await widget.onCancel();
     }
   }
 
@@ -258,7 +343,7 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
     if (widget.phase == VoiceCapturePhase.idle) {
       unawaited(_beginCapture(tapMode: true));
     } else if (_isCapturing) {
-      _requestAction(_PendingCaptureAction.finish);
+      _requestAction(VoiceCaptureReleaseIntent.finish);
     }
   }
 
@@ -292,11 +377,20 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
       context,
       VoiceCaptureView(
         pressed: _pointerActive,
-        cancelArmed: _cancelArmed,
+        cancelArmed: _releaseIntent == VoiceCaptureReleaseIntent.cancel,
+        convertArmed: _releaseIntent == VoiceCaptureReleaseIntent.convertToText,
         tapMode: _tapMode,
+        releaseIntent: _releaseIntent,
         wrapTarget: _wrapTarget,
-        finishTapCapture: () => _requestAction(_PendingCaptureAction.finish),
-        cancelTapCapture: () => _requestAction(_PendingCaptureAction.cancel),
+        finishTapCapture: () =>
+            _requestAction(VoiceCaptureReleaseIntent.finish),
+        convertTapCapture: () {
+          if (_threeWayEnabled) {
+            _requestAction(VoiceCaptureReleaseIntent.convertToText);
+          }
+        },
+        cancelTapCapture: () =>
+            _requestAction(VoiceCaptureReleaseIntent.cancel),
       ),
     );
   }
