@@ -9,11 +9,13 @@ class AgentMessageBubble extends StatefulWidget {
   const AgentMessageBubble({
     required this.message,
     this.voiceController,
+    this.onAction,
     super.key,
   });
 
   final AgentMessage message;
   final AgentVoiceController? voiceController;
+  final ValueChanged<AgentMessageAction>? onAction;
 
   @override
   State<AgentMessageBubble> createState() => _AgentMessageBubbleState();
@@ -87,6 +89,9 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     final message = widget.message;
     final isUser = message.role == AgentMessageRole.user;
     const foreground = SpeakUpDesign.ink;
+    final content = message.modality == AgentMessageModality.voice
+        ? _buildUserVoice(context, foreground)
+        : _buildTextMessage(context, foreground);
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -101,9 +106,23 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
           border: isUser ? Border.all(color: SpeakUpDesign.border) : null,
         ),
-        child: message.modality == AgentMessageModality.voice
-            ? _buildUserVoice(context, foreground)
-            : _buildTextMessage(context, foreground),
+        child: message.actions.isEmpty
+            ? content
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  content,
+                  const SizedBox(height: 10),
+                  for (final action in message.actions)
+                    _InterviewPreparationAction(
+                      action: action,
+                      onPressed: widget.onAction == null
+                          ? null
+                          : () => widget.onAction!(action),
+                    ),
+                ],
+              ),
       ),
     );
   }
@@ -372,6 +391,64 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _InterviewPreparationAction extends StatelessWidget {
+  const _InterviewPreparationAction({
+    required this.action,
+    required this.onPressed,
+  });
+
+  final AgentMessageAction action;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: SpeakUpDesign.surface,
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: SpeakUpDesign.border),
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: Key('agent-action-interview-${action.matterId}'),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.work_outline_rounded,
+                size: 22,
+                color: SpeakUpDesign.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      action.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: SpeakUpDesign.cardTitle,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(action.label, style: SpeakUpDesign.meta),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: SpeakUpDesign.secondary,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

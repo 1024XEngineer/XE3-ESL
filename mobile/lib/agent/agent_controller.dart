@@ -469,6 +469,34 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<bool> reloadCurrentThread() async {
+    final currentThreadId = _threadId;
+    if (client is! AgentThreadHistoryClient ||
+        _disposed ||
+        currentThreadId == null) {
+      return false;
+    }
+    final accountEpoch = _epoch;
+    final transitionGeneration = _beginThreadTransition();
+    if (transitionGeneration == null) {
+      return false;
+    }
+    final historyClient = client as AgentThreadHistoryClient;
+    try {
+      await _ensureInitialized();
+      if (!_isCurrent(accountEpoch)) {
+        return false;
+      }
+      return await _transitionThread(
+        historyClient,
+        selectedThreadId: currentThreadId,
+        createNew: false,
+      );
+    } finally {
+      _finishThreadTransition(transitionGeneration);
+    }
+  }
+
   Future<bool> _transitionThread(
     AgentThreadHistoryClient historyClient, {
     String? selectedThreadId,
@@ -814,6 +842,21 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
     final current = _activeMatter;
     if (current != null &&
+        current.scene.id == 'matter-${current.id}' &&
+        current.status == 'active') {
+      final adopted = AgentMatter(
+        id: current.id,
+        scene: scene,
+        status: current.status,
+        version: current.version,
+        createdAt: current.createdAt,
+        updatedAt: current.updatedAt,
+      );
+      _activeMatter = adopted;
+      notifyListeners();
+      return adopted;
+    }
+    if (current != null &&
         current.scene.id == scene.id &&
         current.scene.title == scene.title) {
       return current;
@@ -844,6 +887,30 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         _setBusy(false);
       }
     }
+  }
+
+  bool prepareActiveMatterForScenario(String matterId) {
+    final current = _activeMatter;
+    if (current == null ||
+        current.id != matterId ||
+        current.status != 'active' ||
+        _disposed) {
+      return false;
+    }
+    _activeMatter = AgentMatter(
+      id: current.id,
+      scene: AgentScene(
+        id: 'matter-${current.id}',
+        title: current.scene.title,
+        description: current.scene.description,
+      ),
+      status: current.status,
+      version: current.version,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+    );
+    notifyListeners();
+    return true;
   }
 
   /// Adopts the exact Session created by the Preparation launch chain.

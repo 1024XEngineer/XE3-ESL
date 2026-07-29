@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -14,6 +15,26 @@ import (
 type portRepositoryStub struct {
 	createdRequest string
 	searchQuery    matter.SearchQuery
+}
+
+type activeMatterLinkerStub struct {
+	threadID string
+	matterID string
+}
+
+func (stub *activeMatterLinkerStub) SetActiveMatter(
+	_ context.Context,
+	_ requestcontext.Actor,
+	threadID string,
+	matterID string,
+) (core.ThreadMatterLink, error) {
+	stub.threadID = threadID
+	stub.matterID = matterID
+	return core.ThreadMatterLink{
+		ThreadID: threadID,
+		MatterID: matterID,
+		Active:   true,
+	}, nil
 }
 
 func (stub *portRepositoryStub) Create(
@@ -84,11 +105,12 @@ func (stub *portRepositoryStub) UpdateStatus(
 
 func TestServicePortCreatesMatterWithTrustedRequest(t *testing.T) {
 	repository := &portRepositoryStub{}
+	linker := &activeMatterLinkerStub{}
 	service, err := matter.NewService(repository)
 	if err != nil {
 		t.Fatalf("matter.NewService() error = %v", err)
 	}
-	port, err := NewServicePort(service)
+	port, err := NewServicePort(service, linker)
 	if err != nil {
 		t.Fatalf("NewServicePort() error = %v", err)
 	}
@@ -101,6 +123,8 @@ func TestServicePortCreatesMatterWithTrustedRequest(t *testing.T) {
 		t.Fatalf("CreateScenario() error = %v", err)
 	}
 	if repository.createdRequest != "request-1" ||
+		linker.threadID != "thread-1" ||
+		linker.matterID != "matter-1" ||
 		result.MatterID != "matter-1" ||
 		len(result.SourceRefs) != 1 ||
 		result.SourceRefs[0].Type != "matter" {
@@ -114,7 +138,7 @@ func TestServicePortSearchUsesDefaultLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("matter.NewService() error = %v", err)
 	}
-	port, err := NewServicePort(service)
+	port, err := NewServicePort(service, &activeMatterLinkerStub{})
 	if err != nil {
 		t.Fatalf("NewServicePort() error = %v", err)
 	}
@@ -139,7 +163,7 @@ func TestServicePortRejectsMissingTrustedRequestID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("matter.NewService() error = %v", err)
 	}
-	port, err := NewServicePort(service)
+	port, err := NewServicePort(service, &activeMatterLinkerStub{})
 	if err != nil {
 		t.Fatalf("NewServicePort() error = %v", err)
 	}

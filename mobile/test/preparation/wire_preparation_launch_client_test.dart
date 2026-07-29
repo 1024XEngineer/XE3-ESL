@@ -419,6 +419,7 @@ void main() {
     final bootstrap = await client.createSession(
       planId: _planId,
       input: const CreatePreparationSessionInput(
+        agentThreadId: _threadId,
         expectedPlanRevision: 1,
         preparationSnapshotId: _preparationSnapshotId,
         preparationProfileId: _profileId,

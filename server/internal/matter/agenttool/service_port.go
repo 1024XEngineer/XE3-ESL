@@ -5,8 +5,10 @@ import (
 	"errors"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 const defaultMatterSearchLimit = 10
@@ -15,13 +17,28 @@ const defaultMatterSearchLimit = 10
 // Ownership always comes from the trusted CallContext Actor.
 type ServicePort struct {
 	service *matter.Service
+	links   ActiveMatterLinker
 }
 
-func NewServicePort(service *matter.Service) (*ServicePort, error) {
-	if service == nil {
-		return nil, errors.New("matter agenttool: service is required")
+type ActiveMatterLinker interface {
+	SetActiveMatter(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+	) (core.ThreadMatterLink, error)
+}
+
+func NewServicePort(
+	service *matter.Service,
+	links ActiveMatterLinker,
+) (*ServicePort, error) {
+	if service == nil || links == nil {
+		return nil, errors.New(
+			"matter agenttool: service and active Matter linker are required",
+		)
 	}
-	return &ServicePort{service: service}, nil
+	return &ServicePort{service: service, links: links}, nil
 }
 
 func (port *ServicePort) CreateScenario(
@@ -29,8 +46,8 @@ func (port *ServicePort) CreateScenario(
 	call tool.CallContext,
 	input ScenarioCreateInput,
 ) (MatterResult, error) {
-	if port == nil || port.service == nil || !call.Actor.Valid() ||
-		call.RequestID == "" {
+	if port == nil || port.service == nil || port.links == nil ||
+		!call.Actor.Valid() || call.ThreadID == "" || call.RequestID == "" {
 		return MatterResult{}, tool.ErrExecutionRejected
 	}
 	item, err := port.service.CreateIdempotent(
@@ -41,6 +58,14 @@ func (port *ServicePort) CreateScenario(
 	)
 	if err != nil {
 		return MatterResult{}, mapMatterToolError(err)
+	}
+	if _, err := port.links.SetActiveMatter(
+		ctx,
+		call.Actor,
+		call.ThreadID,
+		item.ID,
+	); err != nil {
+		return MatterResult{}, tool.ErrExecutionRejected
 	}
 	return mapMatterResult(item), nil
 }

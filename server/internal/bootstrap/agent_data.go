@@ -124,9 +124,20 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	agentRepository, err := agentpersistence.NewPostgresRepository(database, ids)
+	if err != nil {
+		return nil, err
+	}
+	agentService, err := agentapp.NewService(agentRepository, matterService)
+	if err != nil {
+		return nil, err
+	}
 	reviewRepository := review.NewPostgresRepository(database)
 	reviewHistory := review.NewHistoryService(reviewRepository)
-	matterTools, err := matteragenttool.NewServicePort(matterService)
+	matterTools, err := matteragenttool.NewServicePort(
+		matterService,
+		agentService,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -140,14 +151,6 @@ func buildIdentityAgentComposition(
 		reviewagenttool.NewReviewSearchTool(reviewTools),
 		reviewagenttool.NewReviewGetTool(reviewTools),
 	)
-	if err != nil {
-		return nil, err
-	}
-	agentRepository, err := agentpersistence.NewPostgresRepository(database, ids)
-	if err != nil {
-		return nil, err
-	}
-	agentService, err := agentapp.NewService(agentRepository, matterService)
 	if err != nil {
 		return nil, err
 	}

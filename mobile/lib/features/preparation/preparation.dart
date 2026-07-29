@@ -42,6 +42,7 @@ class PreparationPage extends StatefulWidget {
     this.onOpenJobPreparation,
     this.onSceneSelected,
     this.onPracticeStarted,
+    this.openInterviewRequestGeneration = 0,
     super.key,
   });
 
@@ -53,6 +54,7 @@ class PreparationPage extends StatefulWidget {
   final VoidCallback? onOpenJobPreparation;
   final VoidCallback? onSceneSelected;
   final VoidCallback? onPracticeStarted;
+  final int openInterviewRequestGeneration;
 
   @override
   State<PreparationPage> createState() => _PreparationPageState();
@@ -69,6 +71,9 @@ class _PreparationPageState extends State<PreparationPage> {
     widget.preparationController?.addListener(_rebuild);
     widget.launchController?.addListener(_rebuild);
     _backgroundController = _newBackgroundController(widget.launchController);
+    if (widget.openInterviewRequestGeneration > 0) {
+      _selectedHub = _PracticeHub.interview;
+    }
     unawaited(widget.preparationController?.loadIfNeeded());
   }
 
@@ -89,6 +94,11 @@ class _PreparationPageState extends State<PreparationPage> {
       widget.launchController?.addListener(_rebuild);
       _backgroundController?.dispose();
       _backgroundController = _newBackgroundController(widget.launchController);
+    }
+    if (oldWidget.openInterviewRequestGeneration !=
+        widget.openInterviewRequestGeneration) {
+      _selectedHub = _PracticeHub.interview;
+      unawaited(widget.preparationController?.loadIfNeeded());
     }
   }
 
