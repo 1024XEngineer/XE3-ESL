@@ -716,15 +716,23 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       _setError('首页对话状态异常，暂时无法开始练习。');
       return null;
     }
+    if (agentController.hasPendingThreadCreationRecovery) {
+      _setError('有一条新对话仍在恢复，请先回到首页完成恢复，再开始练习。');
+      return null;
+    }
     if (!preparedToLeave && !await _prepareToLeavePractice()) {
       return null;
     }
-    final created = await agentController.createThread();
+    final created = await agentController.createIndependentThread();
     if (!_isCurrentOperation(
       accountGeneration,
       operationGeneration,
       accountId,
     )) {
+      return null;
+    }
+    if (!created && agentController.hasPendingThreadCreationRecovery) {
+      _setError('有一条新对话仍在恢复，请先回到首页完成恢复，再开始练习。');
       return null;
     }
     final practiceThreadId = agentController.threadId;

@@ -432,9 +432,23 @@ void main() {
   );
 
   test(
-    'keeps an absent focused Thread empty until explicit creation',
+    'first text materializes an absent focused Thread exactly once',
     () async {
-      final client = _HistoryAgentClient(startsWithoutFocus: true);
+      final client = _HistoryAgentClient(
+        startsWithoutFocus: true,
+        textExchange: const AgentExchange(
+          userMessage: AgentMessage(
+            id: 'message_first_user',
+            role: AgentMessageRole.user,
+            text: 'first message',
+          ),
+          assistantMessage: AgentMessage(
+            id: 'message_first_assistant',
+            role: AgentMessageRole.assistant,
+            text: 'first reply',
+          ),
+        ),
+      );
       final controller = AgentController(client: client);
       addTearDown(controller.dispose);
 
@@ -444,9 +458,92 @@ void main() {
       expect(controller.messages, isEmpty);
       expect(controller.threads.single.id, _historyThreadOne);
 
-      expect(await controller.createThread(), isTrue);
+      expect(await controller.sendText('first message'), isTrue);
       expect(controller.threadId, _historyThreadThree);
+      expect(client.createCalls, 1);
       expect(client.focusRequests, <String>[_historyThreadThree]);
+      expect(
+        controller.messages.map((message) => message.id),
+        containsAllInOrder(<String>[
+          'message_first_user',
+          'message_first_assistant',
+        ]),
+      );
+    },
+  );
+
+  test(
+    'lazy text retries the created Thread focus without another POST',
+    () async {
+      final client = _HistoryAgentClient(
+        startsWithoutFocus: true,
+        focusFailuresRemaining: 1,
+        textExchange: const AgentExchange(
+          userMessage: AgentMessage(
+            id: 'message_recovered_user',
+            role: AgentMessageRole.user,
+            text: 'recover this message',
+          ),
+          assistantMessage: AgentMessage(
+            id: 'message_recovered_assistant',
+            role: AgentMessageRole.assistant,
+            text: 'recovered reply',
+          ),
+        ),
+      );
+      final controller = AgentController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(await controller.sendText('recover this message'), isFalse);
+      expect(controller.threadId, isNull);
+      expect(controller.canRetryThreadHistory, isTrue);
+      expect(controller.threadHistoryErrorMessage, contains('不会重复创建'));
+      expect(client.createCalls, 1);
+      expect(client.focusRequests, <String>[_historyThreadThree]);
+
+      expect(await controller.sendText('recover this message'), isTrue);
+
+      expect(controller.threadId, _historyThreadThree);
+      expect(controller.draftThreadRecoveryGeneration, 1);
+      expect(client.createCalls, 1);
+      expect(client.focusRequests, <String>[
+        _historyThreadThree,
+        _historyThreadThree,
+      ]);
+      expect(
+        controller.messages.map((message) => message.id),
+        containsAllInOrder(<String>[
+          'message_recovered_user',
+          'message_recovered_assistant',
+        ]),
+      );
+    },
+  );
+
+  test(
+    'inline Thread recovery focuses the created draft without another POST',
+    () async {
+      final client = _HistoryAgentClient(
+        startsWithoutFocus: true,
+        focusFailuresRemaining: 1,
+      );
+      final controller = AgentController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(await controller.sendText('keep this draft'), isFalse);
+      expect(controller.draftThreadRecoveryGeneration, 0);
+
+      await controller.retryThreadHistory();
+
+      expect(controller.threadId, _historyThreadThree);
+      expect(controller.draftThreadRecoveryGeneration, 1);
+      expect(client.createCalls, 1);
+      expect(client.focusRequests, <String>[
+        _historyThreadThree,
+        _historyThreadThree,
+      ]);
     },
   );
 
@@ -528,6 +625,44 @@ void main() {
       expect(client.focusRequests, <String>[_historyThreadThree]);
     },
   );
+
+  test(
+    'opening history does not treat an ambiguous creation as draft recovery',
+    () async {
+      final client = _HistoryAgentClient(
+        startsWithoutFocus: true,
+        ambiguousCreateFailuresRemaining: 1,
+      );
+      final controller = AgentController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(await controller.createThread(), isFalse);
+      expect(controller.canRetryThreadHistory, isTrue);
+      expect(controller.draftThreadRecoveryGeneration, 0);
+
+      expect(await controller.selectThread(_historyThreadOne), isTrue);
+
+      expect(controller.threadId, _historyThreadOne);
+      expect(controller.draftThreadRecoveryGeneration, 0);
+    },
+  );
+
+  test('surfaces a definite lazy Thread creation failure', () async {
+    final client = _HistoryAgentClient(
+      startsWithoutFocus: true,
+      createFailuresRemaining: 1,
+    );
+    final controller = AgentController(client: client);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    expect(await controller.sendText('show this failure'), isFalse);
+
+    expect(controller.threadId, isNull);
+    expect(controller.canRetryThreadHistory, isFalse);
+    expect(controller.threadHistoryErrorMessage, '暂时无法创建新对话，请稍后再试。');
+  });
 
   test(
     'retains a created Thread when focus fails and retries PUT without POST',
@@ -944,6 +1079,7 @@ final class _HistoryAgentClient extends _DelegatingAgentClient
     this.controlOldSend = false,
     this.startsWithoutFocus = false,
     this.focusFailuresRemaining = 0,
+    this.createFailuresRemaining = 0,
     this.ambiguousCreateFailuresRemaining = 0,
     this.initializationGate,
     this.createGate,
@@ -958,6 +1094,7 @@ final class _HistoryAgentClient extends _DelegatingAgentClient
   final bool controlOldSend;
   final bool startsWithoutFocus;
   int focusFailuresRemaining;
+  int createFailuresRemaining;
   int ambiguousCreateFailuresRemaining;
   final Completer<void>? initializationGate;
   final Completer<void>? createGate;
@@ -1036,6 +1173,10 @@ final class _HistoryAgentClient extends _DelegatingAgentClient
       createStarted.complete();
     }
     await createGate?.future;
+    if (createFailuresRemaining > 0) {
+      createFailuresRemaining--;
+      throw StateError('Definite Thread creation failure.');
+    }
     if (ambiguousCreateFailuresRemaining > 0) {
       ambiguousCreateFailuresRemaining--;
       throw const AgentClientException(

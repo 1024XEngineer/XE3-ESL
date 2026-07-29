@@ -1,6 +1,7 @@
 /// Conversation module boundary.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,8 @@ import 'package:speakup/agent/agent_voice_controller.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/agent_voice_widgets.dart';
 import 'package:speakup/design/speak_up_design.dart';
+
+typedef ConversationVoiceStarter = FutureOr<void> Function();
 
 class ConversationPage extends StatefulWidget {
   const ConversationPage({
@@ -22,9 +25,10 @@ class ConversationPage extends StatefulWidget {
     this.onCreatePlan,
     this.onContinuePractice,
     this.onOpenReview,
-    VoidCallback? onStartVoice,
-    VoidCallback? onVoicePlaceholder,
+    ConversationVoiceStarter? onStartVoice,
+    ConversationVoiceStarter? onVoicePlaceholder,
     this.onCreateConversation,
+    this.draftThreadRecoveryGeneration = 0,
     this.messages = const <AgentMessage>[],
     this.activeScene,
     this.hasFocusedThread = true,
@@ -49,8 +53,9 @@ class ConversationPage extends StatefulWidget {
   final VoidCallback? onCreatePlan;
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
-  final VoidCallback? onStartVoice;
+  final ConversationVoiceStarter? onStartVoice;
   final VoidCallback? onCreateConversation;
+  final int draftThreadRecoveryGeneration;
   final List<AgentMessage> messages;
   final AgentScene? activeScene;
   final bool hasFocusedThread;
@@ -78,6 +83,7 @@ class ConversationPage extends StatefulWidget {
     final titleSize = width < 350 ? 28.0 : 32.0;
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
     final acceptedUserMessage = _lastUserMessage(messages);
+    final canCompose = hasFocusedThread || onCreateConversation != null;
 
     return Scaffold(
       key: const Key('agent-home-page'),
@@ -127,13 +133,7 @@ class ConversationPage extends StatefulWidget {
                                   ? 16
                                   : 24,
                             ),
-                            if (!hasFocusedThread) ...[
-                              _NoFocusedConversation(
-                                onCreateConversation: onCreateConversation,
-                                onOpenConversations: onOpenMenu,
-                                isBusy: isBusy,
-                              ),
-                            ] else if (messages.isEmpty) ...[
+                            if (messages.isEmpty) ...[
                               _Greeting(displayName: displayName),
                               if (displayName != null) ...[
                                 const SizedBox(height: 5),
@@ -252,7 +252,9 @@ class ConversationPage extends StatefulWidget {
                         0,
                       ),
                       child: _AgentComposer(
-                        key: ValueKey<String?>(threadId),
+                        threadId: threadId,
+                        draftThreadRecoveryGeneration:
+                            draftThreadRecoveryGeneration,
                         keyboardVisible: keyboardVisible,
                         acceptedUserMessageId: acceptedUserMessage?.id,
                         acceptedUserMessageText: acceptedUserMessage?.text,
@@ -260,7 +262,7 @@ class ConversationPage extends StatefulWidget {
                         voiceController: voiceController,
                         voiceEnabled: voiceController != null && !isBusy,
                         onSubmitText: onSubmitText,
-                        enabled: hasFocusedThread,
+                        enabled: canCompose,
                         isBusy: isBusy,
                       ),
                     ),
@@ -565,48 +567,6 @@ class _Greeting extends StatelessWidget {
   }
 }
 
-class _NoFocusedConversation extends StatelessWidget {
-  const _NoFocusedConversation({
-    required this.onCreateConversation,
-    required this.onOpenConversations,
-    required this.isBusy,
-  });
-
-  final VoidCallback? onCreateConversation;
-  final VoidCallback? onOpenConversations;
-  final bool isBusy;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      key: const Key('no-focused-conversation-home'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('选择一个对话', style: SpeakUpDesign.pageTitle),
-        const SizedBox(height: 10),
-        const Text('打开近期对话，或创建一个新对话后再开始输入。', style: SpeakUpDesign.body),
-        const SizedBox(height: 22),
-        if (onCreateConversation != null)
-          FilledButton.icon(
-            key: const Key('no-focused-create-conversation'),
-            onPressed: isBusy ? null : onCreateConversation,
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('创建新对话'),
-          ),
-        if (onOpenConversations != null) ...[
-          const SizedBox(height: 8),
-          TextButton.icon(
-            key: const Key('no-focused-open-conversations'),
-            onPressed: onOpenConversations,
-            icon: const Icon(Icons.chat_bubble_outline_rounded),
-            label: const Text('打开近期对话'),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
 class _QuickActions extends StatelessWidget {
   const _QuickActions({
     required this.compact,
@@ -800,6 +760,8 @@ class _InlineError extends StatelessWidget {
 
 class _AgentComposer extends StatefulWidget {
   const _AgentComposer({
+    required this.threadId,
+    required this.draftThreadRecoveryGeneration,
     required this.keyboardVisible,
     required this.acceptedUserMessageId,
     required this.acceptedUserMessageText,
@@ -809,13 +771,14 @@ class _AgentComposer extends StatefulWidget {
     required this.onSubmitText,
     required this.enabled,
     required this.isBusy,
-    super.key,
   });
 
+  final String? threadId;
+  final int draftThreadRecoveryGeneration;
   final bool keyboardVisible;
   final String? acceptedUserMessageId;
   final String? acceptedUserMessageText;
-  final VoidCallback? onStartVoice;
+  final ConversationVoiceStarter? onStartVoice;
   final AgentVoiceController? voiceController;
   final bool voiceEnabled;
   final Future<bool> Function(String)? onSubmitText;
@@ -829,6 +792,9 @@ class _AgentComposer extends StatefulWidget {
 class _AgentComposerState extends State<_AgentComposer> {
   final _controller = TextEditingController();
   bool _suppressControllerNotifications = false;
+  bool _textSubmissionInFlight = false;
+  bool _draftMaterializationPending = false;
+  bool _voiceMaterializationPending = false;
   String _draftBeforeVoice = '';
 
   @override
@@ -844,6 +810,23 @@ class _AgentComposerState extends State<_AgentComposer> {
     if (oldWidget.voiceController != widget.voiceController) {
       oldWidget.voiceController?.removeListener(_handleVoiceChanged);
       widget.voiceController?.addListener(_handleVoiceChanged);
+    }
+    if (oldWidget.threadId != widget.threadId) {
+      final preserveMaterializedDraft =
+          oldWidget.threadId == null &&
+          widget.threadId != null &&
+          (_draftMaterializationPending ||
+              _voiceMaterializationPending ||
+              oldWidget.draftThreadRecoveryGeneration !=
+                  widget.draftThreadRecoveryGeneration);
+      _draftMaterializationPending = false;
+      _voiceMaterializationPending = false;
+      if (!preserveMaterializedDraft && _controller.text.isNotEmpty) {
+        _draftBeforeVoice = '';
+        _suppressControllerNotifications = true;
+        _controller.clear();
+        _suppressControllerNotifications = false;
+      }
     }
     if (widget.acceptedUserMessageId != null &&
         widget.acceptedUserMessageId != oldWidget.acceptedUserMessageId &&
@@ -892,9 +875,20 @@ class _AgentComposerState extends State<_AgentComposer> {
     setState(() {});
   }
 
-  void _startVoice() {
+  Future<void> _startVoice() async {
     _draftBeforeVoice = _controller.text;
-    widget.onStartVoice?.call();
+    _voiceMaterializationPending = widget.threadId == null;
+    try {
+      await widget.onStartVoice?.call();
+    } finally {
+      if (mounted && _voiceMaterializationPending) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && widget.threadId == null) {
+            _voiceMaterializationPending = false;
+          }
+        });
+      }
+    }
   }
 
   Future<void> _stopVoice() async {
@@ -930,12 +924,28 @@ class _AgentComposerState extends State<_AgentComposer> {
     if (!widget.enabled ||
         text.isEmpty ||
         widget.isBusy ||
+        _textSubmissionInFlight ||
         widget.onSubmitText == null) {
       return;
     }
-    final sent = await widget.onSubmitText!(text);
-    if (mounted && sent) {
-      _controller.clear();
+    setState(() => _textSubmissionInFlight = true);
+    _draftMaterializationPending = widget.threadId == null;
+    try {
+      final sent = await widget.onSubmitText!(text);
+      if (mounted && sent) {
+        _controller.clear();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _textSubmissionInFlight = false);
+        if (_draftMaterializationPending) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && widget.threadId == null) {
+              _draftMaterializationPending = false;
+            }
+          });
+        }
+      }
     }
   }
 
@@ -1090,7 +1100,7 @@ class _AgentComposerState extends State<_AgentComposer> {
                           ? confirmingText
                                 ? '检查识别文字'
                                 : '问问 SpeakUp'
-                          : '请先选择或创建对话',
+                          : '暂时无法开始对话',
                       hintStyle: const TextStyle(
                         color: SpeakUpDesign.tertiary,
                         fontSize: 15,
@@ -1135,6 +1145,8 @@ class _AgentComposerState extends State<_AgentComposer> {
                       _controller.text.trim().isEmpty ||
                           (widget.isBusy && !confirmingText) ||
                           !widget.enabled
+                      ? null
+                      : _textSubmissionInFlight
                       ? null
                       : confirmingText
                       ? voice?.canConfirm == true
