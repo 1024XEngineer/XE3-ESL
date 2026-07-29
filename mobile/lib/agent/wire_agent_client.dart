@@ -265,6 +265,7 @@ final class WireAgentClient
     );
     return AgentThreadSnapshot(
       threadId: thread.id,
+      title: thread.title,
       activeMatter: activeMatter,
       textRecovery: recovery.failure,
       messages: <AgentMessage>[
@@ -1295,16 +1296,19 @@ final class _WireThread {
     required this.id,
     required this.createdAt,
     required this.updatedAt,
+    this.title,
     this.activeMatterId,
   });
 
   final String id;
+  final String? title;
   final String? activeMatterId;
   final DateTime createdAt;
   final DateTime updatedAt;
 
   AgentThreadSummary get presentation => AgentThreadSummary(
     id: id,
+    title: title,
     activeMatterId: activeMatterId,
     createdAt: createdAt,
     updatedAt: updatedAt,
@@ -1551,13 +1555,18 @@ _WireThread _decodeThreadObject(Object? value) {
     value,
     allowed: const <String>{
       'thread_id',
+      'title',
       'active_matter_id',
       'created_at',
       'updated_at',
     },
-    required: const <String>{'thread_id', 'created_at', 'updated_at'},
+    required: const <String>{'thread_id', 'title', 'created_at', 'updated_at'},
   );
   final id = _strictUuid(object['thread_id']);
+  final titleValue = object['title'];
+  final title = titleValue == null
+      ? null
+      : _strictString(titleValue, minLength: 1, maxLength: 25);
   final activeMatterId = _absentOnlyOptional(
     object,
     'active_matter_id',
@@ -1570,6 +1579,7 @@ _WireThread _decodeThreadObject(Object? value) {
   }
   return _WireThread(
     id: id,
+    title: title,
     activeMatterId: activeMatterId,
     createdAt: createdAt,
     updatedAt: updatedAt,

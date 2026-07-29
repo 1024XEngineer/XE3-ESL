@@ -73,6 +73,7 @@ void main() {
             'threads': [
               {
                 'thread_id': _threadId,
+                'title': '英文面试准备',
                 'created_at': _timestamp,
                 'updated_at': _timestamp,
               },
@@ -86,6 +87,7 @@ void main() {
           statusCode: HttpStatus.ok,
           body: {
             'thread_id': _threadId,
+            'title': '英文面试准备',
             'created_at': _timestamp,
             'updated_at': _timestamp,
           },
@@ -218,6 +220,18 @@ void main() {
       expect(find.byKey(const Key('agent-preview-label')), findsNothing);
       expect(find.byKey(const Key('quick-action-create-plan')), findsOneWidget);
       expect(dependencies.agentController.threadId, _threadId);
+      expect(
+        dependencies.agentController.currentThreadSummary?.title,
+        '英文面试准备',
+      );
+      await tester.tap(find.byKey(const Key('conversation-menu-button')));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: find.byType(Drawer), matching: find.text('英文面试准备')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('关闭对话菜单'));
+      await tester.pumpAndSettle();
       expect(dependencies.authController.state, isA<AuthAuthenticated>());
       expect(
         identityTransport.calls.first.authorization,
