@@ -146,6 +146,49 @@ func (r *Repository) GetQuestion(
 	return question, nil
 }
 
+func (r *Repository) ListSessionQuestions(
+	ctx context.Context,
+	actor conversation.Actor,
+	sessionID string,
+) ([]conversation.PersistentQuestion, error) {
+	if !validActor(actor) || strings.TrimSpace(sessionID) == "" {
+		return nil, conversation.ErrPersistenceInvalid
+	}
+	tx, err := r.beginActorRead(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(
+		ctx,
+		questionColumns+`
+		 WHERE owner_user_id = $1 AND practice_session_id = $2
+		 ORDER BY sequence, created_at, question_id`,
+		actor.UserID,
+		sessionID,
+	)
+	if err != nil {
+		return nil, safeDatabaseError(err)
+	}
+	defer rows.Close()
+	questions := make([]conversation.PersistentQuestion, 0)
+	for rows.Next() {
+		question, scanErr := scanQuestion(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		questions = append(questions, question)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, safeDatabaseError(err)
+	}
+	rows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return nil, safeDatabaseError(err)
+	}
+	return questions, nil
+}
+
 func (r *Repository) ReserveTranscription(
 	ctx context.Context,
 	actor conversation.Actor,
@@ -1120,24 +1163,32 @@ type queryRow interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+const questionColumns = `SELECT question_id, practice_session_id,
+                                speaker_participant_id,
+                                addressee_participant_ids, objective_id,
+                                question_type,
+                                COALESCE(parent_question_id, ''),
+                                content, sequence, created_at
+                         FROM conversation_questions`
+
 func getQuestion(
 	ctx context.Context,
 	db queryRow,
 	ownerUserID string,
 	questionID string,
 ) (conversation.PersistentQuestion, error) {
-	var question conversation.PersistentQuestion
-	err := db.QueryRow(
+	return scanQuestion(db.QueryRow(
 		ctx,
-		`SELECT question_id, practice_session_id, speaker_participant_id,
-		        addressee_participant_ids, objective_id, question_type,
-		        COALESCE(parent_question_id, ''),
-		        content, sequence, created_at
-		 FROM conversation_questions
+		questionColumns+`
 		 WHERE owner_user_id = $1 AND question_id = $2`,
 		ownerUserID,
 		questionID,
-	).Scan(
+	))
+}
+
+func scanQuestion(row rowScanner) (conversation.PersistentQuestion, error) {
+	var question conversation.PersistentQuestion
+	err := row.Scan(
 		&question.ID,
 		&question.SessionID,
 		&question.SpeakerParticipantID,

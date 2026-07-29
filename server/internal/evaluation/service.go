@@ -40,12 +40,103 @@ type Repository interface {
 	) (Evaluation, error)
 }
 
-type Service struct {
-	repository Repository
+type EvidenceSnapshotComposer interface {
+	Compose(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		practiceSessionID string,
+		scope Scope,
+		sceneType SceneType,
+	) (EnsureEvidenceSnapshotCommand, error)
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+type EvidenceSnapshotReader interface {
+	GetEvidenceSnapshot(
+		ctx context.Context,
+		ownerUserID string,
+		snapshotID string,
+	) (EvidenceSnapshot, error)
+}
+
+type EvidenceSnapshotService struct {
+	composer   EvidenceSnapshotComposer
+	repository EvidenceSnapshotRepository
+}
+
+func NewEvidenceSnapshotService(
+	composer EvidenceSnapshotComposer,
+	repository EvidenceSnapshotRepository,
+) *EvidenceSnapshotService {
+	return &EvidenceSnapshotService{
+		composer:   composer,
+		repository: repository,
+	}
+}
+
+func (s *EvidenceSnapshotService) Freeze(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	practiceSessionID string,
+	scope Scope,
+	sceneType SceneType,
+) (EvidenceSnapshot, bool, error) {
+	if s == nil || s.composer == nil || s.repository == nil ||
+		ctx == nil || !validActor(actor) {
+		return EvidenceSnapshot{}, false, ErrInvalidRequest
+	}
+	trustedActor, ok := requestcontext.ActorFromContext(ctx)
+	if !ok || trustedActor != actor {
+		return EvidenceSnapshot{}, false, ErrInvalidRequest
+	}
+	command, err := s.composer.Compose(
+		ctx,
+		actor,
+		practiceSessionID,
+		scope,
+		sceneType,
+	)
+	if err != nil {
+		return EvidenceSnapshot{}, false, err
+	}
+	command, err = normalizeEvidenceSnapshotCommand(command)
+	if err != nil {
+		return EvidenceSnapshot{}, false, err
+	}
+	if command.OwnerUserID != actor.UserID ||
+		command.PracticeSessionID != practiceSessionID ||
+		command.Scope != scope ||
+		command.SceneType != sceneType {
+		return EvidenceSnapshot{}, false, ErrInvalidRequest
+	}
+	snapshot, replayed, err := s.repository.EnsureEvidenceSnapshot(ctx, command)
+	if err != nil {
+		return EvidenceSnapshot{}, false, err
+	}
+	if !snapshot.Valid() ||
+		snapshot.ID != command.SnapshotID ||
+		snapshot.OwnerUserID != command.OwnerUserID ||
+		snapshot.PracticeSessionID != command.PracticeSessionID ||
+		snapshot.Scope != command.Scope ||
+		snapshot.SceneType != command.SceneType ||
+		snapshot.SourceManifestHash != command.SourceManifestHash {
+		return EvidenceSnapshot{}, false, ErrInvalidRequest
+	}
+	return snapshot, replayed, nil
+}
+
+type Service struct {
+	repository        Repository
+	evidenceSnapshots EvidenceSnapshotReader
+}
+
+func NewService(
+	repository Repository,
+	evidenceSnapshots EvidenceSnapshotReader,
+) *Service {
+	return &Service{
+		repository:        repository,
+		evidenceSnapshots: evidenceSnapshots,
+	}
 }
 
 func (s *Service) Create(
@@ -53,12 +144,34 @@ func (s *Service) Create(
 	actor requestcontext.Actor,
 	request CreateRequest,
 ) (Evaluation, bool, error) {
-	if s == nil || s.repository == nil || ctx == nil || !validActor(actor) {
+	if s == nil || s.repository == nil || s.evidenceSnapshots == nil ||
+		ctx == nil || !validActor(actor) {
+		return Evaluation{}, false, ErrInvalidRequest
+	}
+	trustedActor, ok := requestcontext.ActorFromContext(ctx)
+	if !ok || trustedActor != actor {
 		return Evaluation{}, false, ErrInvalidRequest
 	}
 	input, err := normalizeCreate(request)
 	if err != nil {
 		return Evaluation{}, false, err
+	}
+	snapshot, err := s.evidenceSnapshots.GetEvidenceSnapshot(
+		ctx,
+		actor.UserID,
+		input.InputSnapshotID,
+	)
+	if err != nil {
+		return Evaluation{}, false, err
+	}
+	if !snapshot.Valid() ||
+		snapshot.ID != input.InputSnapshotID ||
+		snapshot.OwnerUserID != actor.UserID ||
+		snapshot.PracticeSessionID != input.PracticeSessionID ||
+		snapshot.InputRevision != input.InputRevision ||
+		snapshot.Scope != input.Scope ||
+		snapshot.SceneType != input.SceneType {
+		return Evaluation{}, false, ErrInvalidRequest
 	}
 	rootFingerprint, err := digest(struct {
 		OwnerUserID string      `json:"owner_user_id"`
