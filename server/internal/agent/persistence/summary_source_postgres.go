@@ -16,11 +16,14 @@ func (r *PostgresRepository) ListMessagesForSummary(
 ) ([]Message, error) {
 	if ctx == nil ||
 		!ValidUUID(ownerID) ||
-		!ValidUUID(threadID) ||
-		sourceFromSequence < 1 ||
-		coveredThroughSequence < sourceFromSequence ||
-		coveredThroughSequence-sourceFromSequence+1 >
-			MaxSummarySourceMessages {
+		!ValidUUID(threadID) {
+		return nil, ErrInvalidRequest
+	}
+	sourceMessageCount, validRange := summarySourceMessageCount(
+		sourceFromSequence,
+		coveredThroughSequence,
+	)
+	if !validRange {
 		return nil, ErrInvalidRequest
 	}
 	rows, err := r.database.Query(ctx, `
@@ -50,13 +53,8 @@ ORDER BY sequence_no ASC`,
 	}
 	defer rows.Close()
 
-	expectedSequence := sourceFromSequence
 	usedRunes := 0
-	result := make(
-		[]Message,
-		0,
-		coveredThroughSequence-sourceFromSequence+1,
-	)
+	result := make([]Message, 0, sourceMessageCount)
 	for rows.Next() {
 		var item Message
 		var role string
@@ -77,6 +75,10 @@ ORDER BY sequence_no ASC`,
 		}
 		item.Role = MessageRole(role)
 		item.Modality = MessageModality(modality)
+		if len(result) >= sourceMessageCount {
+			return nil, ErrRepository
+		}
+		expectedSequence := sourceFromSequence + int64(len(result))
 		if item.Sequence != expectedSequence ||
 			item.OwnerID != ownerID ||
 			item.ThreadID != threadID ||
@@ -92,14 +94,27 @@ ORDER BY sequence_no ASC`,
 			return nil, ErrInvalidRequest
 		}
 		result = append(result, item)
-		expectedSequence++
 	}
 	if err := rows.Err(); err != nil {
 		return nil, ErrRepository
 	}
-	if len(result) == 0 ||
-		expectedSequence != coveredThroughSequence+1 {
+	if len(result) != sourceMessageCount {
 		return nil, ErrNotFound
 	}
 	return result, nil
+}
+
+func summarySourceMessageCount(
+	sourceFromSequence int64,
+	coveredThroughSequence int64,
+) (int, bool) {
+	if sourceFromSequence < 1 ||
+		coveredThroughSequence < sourceFromSequence {
+		return 0, false
+	}
+	sequenceSpan := coveredThroughSequence - sourceFromSequence
+	if sequenceSpan >= int64(MaxSummarySourceMessages) {
+		return 0, false
+	}
+	return int(sequenceSpan) + 1, true
 }
