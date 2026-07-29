@@ -2335,6 +2335,307 @@ func TestPostgresAgentMemoryStoresIndexesRecallsAndInjects(t *testing.T) {
 	}
 }
 
+func TestPostgresStableProfileAndRelevantMemoryRecallAcrossThreads(
+	t *testing.T,
+) {
+	database := newAgentTestDatabase(t)
+	ctx := context.Background()
+	actor := testActorA()
+	ids := identity.NewUUIDv4Generator(nil)
+
+	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	if err != nil {
+		t.Fatalf("new Matter repository: %v", err)
+	}
+	matterService, err := matter.NewService(matterRepository)
+	if err != nil {
+		t.Fatalf("new Matter service: %v", err)
+	}
+	agentRepository, err := NewPostgresRepository(database.pool, ids)
+	if err != nil {
+		t.Fatalf("new Agent repository: %v", err)
+	}
+	dataService, err := NewService(agentRepository, matterService)
+	if err != nil {
+		t.Fatalf("new Agent service: %v", err)
+	}
+	sourceThread, err := dataService.CreateThread(ctx, actor, "")
+	if err != nil {
+		t.Fatalf("create source Thread: %v", err)
+	}
+	const sourceContent = "My name is 小花. I am a Java backend engineer. " +
+		"I enjoy hiking on weekends."
+	sourceMessage, err := dataService.AppendUserMessage(
+		ctx,
+		actor,
+		sourceThread.ID,
+		"stable-profile-cross-thread-source",
+		sourceContent,
+	)
+	if err != nil {
+		t.Fatalf("append source message: %v", err)
+	}
+
+	memoryRepository, err := memory.NewPostgresRepository(database.pool, ids)
+	if err != nil {
+		t.Fatalf("new Memory repository: %v", err)
+	}
+	createMemory := func(
+		memoryType memory.Type,
+		canonicalKey string,
+		content string,
+	) memory.Memory {
+		t.Helper()
+		item, createErr := memoryRepository.Create(
+			ctx,
+			actor,
+			memory.CreateCommand{
+				Type:          memoryType,
+				CanonicalKey:  canonicalKey,
+				Content:       content,
+				Scope:         memory.ScopeUser,
+				PolicyVersion: "memory-policy-v1",
+				Source: memory.SourceInput{
+					Type:     memory.SourceAgentMessage,
+					SourceID: sourceMessage.ID,
+					Version:  sourceMessage.Sequence,
+					Checksum: sha256.Sum256([]byte(sourceContent)),
+				},
+			},
+		)
+		if createErr != nil {
+			t.Fatalf("create Memory %s: %v", canonicalKey, createErr)
+		}
+		return item
+	}
+
+	vector := make([]float32, memory.MemoryEmbeddingDimensions)
+	vector[0] = 1
+	embeddingResult := ai.EmbeddingResult{
+		Provider:    "qianwen",
+		Model:       "text-embedding-v4",
+		Dimensions:  memory.MemoryEmbeddingDimensions,
+		Vectors:     [][]float32{vector},
+		InputTokens: 3,
+		TotalTokens: 3,
+	}
+	indexConfiguration := memory.IndexConfig{
+		Provider:      embeddingResult.Provider,
+		Model:         embeddingResult.Model,
+		Dimensions:    embeddingResult.Dimensions,
+		PolicyVersion: "memory-embedding-v1",
+		LeaseDuration: 2 * time.Minute,
+		MaxAttempts:   3,
+	}
+	indexMemory := func(expected memory.Memory) {
+		t.Helper()
+		claim, acquired, claimErr := memoryRepository.ClaimIndex(
+			ctx,
+			indexConfiguration,
+		)
+		if claimErr != nil {
+			t.Fatalf("claim Memory index: %v", claimErr)
+		}
+		if !acquired || claim.MemoryID != expected.ID {
+			t.Fatalf(
+				"Memory index claim = %#v, want %s",
+				claim,
+				expected.ID,
+			)
+		}
+		if _, completeErr := memoryRepository.CompleteIndex(
+			ctx,
+			claim,
+			embeddingResult,
+		); completeErr != nil {
+			t.Fatalf("complete Memory index: %v", completeErr)
+		}
+	}
+
+	relevant := createMemory(
+		memory.TypeInterest,
+		"interest.hiking",
+		"Enjoys hiking on weekends",
+	)
+	indexMemory(relevant)
+	occupation := createMemory(
+		memory.TypeProfile,
+		memory.CanonicalCareerOccupation,
+		"Java backend engineer",
+	)
+	indexMemory(occupation)
+	preferredName := createMemory(
+		memory.TypeProfile,
+		memory.CanonicalProfilePreferredName,
+		"小花",
+	)
+
+	var preferredNameVectorCount int
+	if err := database.pool.QueryRow(ctx, `
+SELECT count(*)
+FROM agent_memory_vectors
+WHERE memory_id = $1`,
+		preferredName.ID,
+	).Scan(&preferredNameVectorCount); err != nil {
+		t.Fatalf("count preferred-name vectors: %v", err)
+	}
+	if preferredNameVectorCount != 0 {
+		t.Fatalf(
+			"preferred-name vector count = %d, want 0",
+			preferredNameVectorCount,
+		)
+	}
+
+	searchService, err := memory.NewSearchService(
+		memoryRepository,
+		&fake.Embedder{Result: embeddingResult},
+		memory.SearchConfig{
+			Provider:               embeddingResult.Provider,
+			Model:                  embeddingResult.Model,
+			Dimensions:             embeddingResult.Dimensions,
+			EmbeddingPolicyVersion: indexConfiguration.PolicyVersion,
+			RetrievalPolicyVersion: "memory-retrieval-v1",
+			CandidateLimit:         20,
+			MinimumSimilarity:      0.25,
+		},
+		time.Now,
+	)
+	if err != nil {
+		t.Fatalf("new Memory Search service: %v", err)
+	}
+	generator := &recordingTextGenerator{result: successfulTextResult()}
+	runService := newRunServiceWithContexts(
+		t,
+		agentRepository,
+		matterService,
+		generator,
+		testRunConfiguration,
+		domainStableProfileReaderAdapter{reader: memoryRepository},
+		domainMemorySearcherAdapter{searcher: searchService},
+	)
+
+	recallThread, err := dataService.CreateThread(ctx, actor, "")
+	if err != nil {
+		t.Fatalf("create recall Thread: %v", err)
+	}
+	submission, err := runService.SubmitText(
+		ctx,
+		actor,
+		recallThread.ID,
+		"stable-profile-cross-thread-recall",
+		"Who am I, and what could we discuss?",
+	)
+	if err != nil {
+		t.Fatalf("submit recall Run: %v", err)
+	}
+	if submission.Run.Status != RunStatusCompleted {
+		t.Fatalf("recall Run = %#v", submission.Run)
+	}
+	providerRequests := generator.Requests()
+	if len(providerRequests) != 1 {
+		t.Fatalf("provider requests = %#v", providerRequests)
+	}
+	systemContent := providerRequests[0].Messages[0].Content
+	for _, expected := range []string{
+		`<profile_field key="profile.preferred_name">小花</profile_field>`,
+		`<profile_field key="career.occupation">Java backend engineer</profile_field>`,
+		`<memory type="interest" scope="user">Enjoys hiking on weekends</memory>`,
+	} {
+		if !strings.Contains(systemContent, expected) {
+			t.Fatalf(
+				"provider system content missing %q: %q",
+				expected,
+				systemContent,
+			)
+		}
+	}
+	if len(providerRequests[0].Messages) != 2 ||
+		strings.Contains(
+			providerRequests[0].Messages[1].Content,
+			sourceContent,
+		) {
+		t.Fatalf(
+			"source Thread leaked into provider messages: %#v",
+			providerRequests[0].Messages,
+		)
+	}
+
+	freshAgentRepository, err := NewPostgresRepository(database.pool, ids)
+	if err != nil {
+		t.Fatalf("new manifest repository: %v", err)
+	}
+	manifest, err := freshAgentRepository.FindContextManifest(
+		ctx,
+		actor.UserID,
+		submission.Run.ID,
+	)
+	if err != nil {
+		t.Fatalf("read persisted ContextManifest: %v", err)
+	}
+	if manifest.ThreadID != recallThread.ID ||
+		len(manifest.SelectedMessages) != 1 ||
+		manifest.SelectedMessages[0].MessageID != submission.UserMessage.ID ||
+		len(manifest.SelectedStableProfile) != 2 ||
+		manifest.SelectedStableProfile[0].MemoryID != preferredName.ID ||
+		manifest.SelectedStableProfile[1].MemoryID != occupation.ID ||
+		len(manifest.SelectedMemories) != 1 ||
+		manifest.SelectedMemories[0].MemoryID != relevant.ID {
+		t.Fatalf("persisted split ContextManifest = %#v", manifest)
+	}
+	for _, selected := range manifest.SelectedMemories {
+		if selected.MemoryID == preferredName.ID ||
+			selected.MemoryID == occupation.ID {
+			t.Fatalf(
+				"Stable Profile duplicated in semantic memories: %#v",
+				manifest,
+			)
+		}
+	}
+
+	foreignActor := testActorB()
+	foreignThread, err := dataService.CreateThread(ctx, foreignActor, "")
+	if err != nil {
+		t.Fatalf("create foreign Thread: %v", err)
+	}
+	foreignSubmission, err := runService.SubmitText(
+		ctx,
+		foreignActor,
+		foreignThread.ID,
+		"stable-profile-cross-thread-foreign",
+		"Who am I, and what could we discuss?",
+	)
+	if err != nil {
+		t.Fatalf("submit foreign Run: %v", err)
+	}
+	foreignManifest, err := freshAgentRepository.FindContextManifest(
+		ctx,
+		foreignActor.UserID,
+		foreignSubmission.Run.ID,
+	)
+	if err != nil {
+		t.Fatalf("read foreign ContextManifest: %v", err)
+	}
+	if len(foreignManifest.SelectedStableProfile) != 0 ||
+		len(foreignManifest.SelectedMemories) != 0 {
+		t.Fatalf("cross-owner ContextManifest = %#v", foreignManifest)
+	}
+	foreignProviderRequests := generator.Requests()
+	if len(foreignProviderRequests) != 2 ||
+		strings.Contains(
+			foreignProviderRequests[1].Messages[0].Content,
+			preferredName.Content,
+		) ||
+		strings.Contains(
+			foreignProviderRequests[1].Messages[0].Content,
+			relevant.Content,
+		) {
+		t.Fatalf(
+			"cross-owner provider context = %#v",
+			foreignProviderRequests,
+		)
+	}
+}
+
 func TestPostgresContextAssemblerFailsClosedWhenMemorySearchFails(
 	t *testing.T,
 ) {
@@ -2965,6 +3266,35 @@ func (reader *recordingStableProfileReader) ReadStableProfile(
 
 type domainMemorySearcherAdapter struct {
 	searcher memory.Searcher
+}
+
+type domainStableProfileReaderAdapter struct {
+	reader memory.StableProfileReader
+}
+
+func (adapter domainStableProfileReaderAdapter) ReadStableProfile(
+	ctx context.Context,
+	request StableProfileReadRequest,
+) ([]StableProfileMemory, error) {
+	items, err := adapter.reader.ListStableProfile(ctx, request.Actor)
+	if err != nil {
+		return nil, err
+	}
+	if !memory.ValidStableProfileMemories(items, request.Actor.UserID) {
+		return nil, memory.ErrRepository
+	}
+	result := make([]StableProfileMemory, 0, len(items))
+	for _, item := range items {
+		result = append(result, StableProfileMemory{
+			MemoryID:      item.ID,
+			MemoryVersion: item.Version,
+			CanonicalKey:  item.CanonicalKey,
+			Type:          string(item.Type),
+			Content:       item.Content,
+			Scope:         string(item.Scope),
+		})
+	}
+	return result, nil
 }
 
 func (adapter domainMemorySearcherAdapter) Search(
