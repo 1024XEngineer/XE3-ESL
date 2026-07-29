@@ -39,6 +39,14 @@ void main() {
                 role: 'assistant',
                 content: 'Start with the result.',
                 producedByRunId: _runId,
+                actions: const <Object?>[
+                  {
+                    'type': 'open_interview_preparation',
+                    'label': '配置并开始面试',
+                    'matter_id': _matterId,
+                    'title': 'Java Interview Practice',
+                  },
+                ],
               ),
             ],
           }),
@@ -53,6 +61,8 @@ void main() {
       expect(snapshot.messages, hasLength(2));
       expect(snapshot.messages.first.text, 'Help me explain this.');
       expect(snapshot.messages.last.role, AgentMessageRole.assistant);
+      expect(snapshot.messages.last.actions, hasLength(1));
+      expect(snapshot.messages.last.actions.single.matterId, _matterId);
       expect(
         transport.calls.every(
           (call) =>
@@ -2205,6 +2215,7 @@ Map<String, Object?> _messageJson({
   required String content,
   String? clientMessageId,
   String? producedByRunId,
+  List<Object?>? actions,
 }) {
   return {
     'message_id': id,
@@ -2213,6 +2224,7 @@ Map<String, Object?> _messageJson({
     'role': role,
     'client_message_id': ?clientMessageId,
     'produced_by_run_id': ?producedByRunId,
+    'actions': ?actions,
     'content': content,
     'created_at': _createdAt,
   };

@@ -9,9 +9,11 @@ paths:
         as resource references, never as trusted ownership. The service resolves
         the Actor from the Bearer Session and verifies the owned Thread plus the
         optional owned, active Matter before anchoring the Plan.
-        Supplying `preparation_snapshot_id` selects the JobTarget-backed path:
-        the server derives and freezes the recommended catalog selection,
-        SessionPolicy, and focuses without creating a PracticeSession.
+        Supplying `preparation_snapshot_id` freezes that immutable Preparation
+        context in the Plan. A JobTarget-backed Snapshot derives its accepted
+        recommendation server-side; an ordinary Snapshot requires the exact
+        catalog selection and policy inputs in the same request. Neither path
+        creates a PracticeSession.
       operationId: createPracticePlan
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -266,6 +268,56 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         '409':
           $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/practice-start-confirmations:
+    post:
+      tags:
+        - Practice
+      summary: Confirm and start one frozen PracticePlan revision
+      description: |
+        This authenticated action is the trusted user-confirmation boundary.
+        The server binds the current Actor, path Thread, PracticePlan, and
+        expected revision before creating exactly one PracticeSession and its
+        immutable Snapshot. Model-generated tool arguments cannot create this
+        confirmation fact. Repeating the same Idempotency-Key and payload
+        returns the original Session.
+      operationId: confirmAndStartPractice
+      parameters:
+        - $ref: ./agent.yaml#/components/parameters/AgentThreadId
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PracticeStartConfirmationRequest'
+            example:
+              practice_plan_id: plan_demo_backend
+              expected_plan_revision: 1
+              user_confirmed: true
+      responses:
+        '201':
+          description: Session and immutable bootstrap snapshot created atomically.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeSessionBootstrap'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          description: |
+            Confirmation is missing, the Plan revision changed, the
+            idempotency key conflicts, or an active Session already exists.
+            Active Session conflicts include the existing Session and Snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PracticeStartConflictResponse'
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-sessions/{practice_session_id}:
@@ -695,6 +747,35 @@ components:
             models validate exactly one role.
           items:
             $ref: '#/components/schemas/ResourceId'
+    PracticeStartConfirmationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_plan_id
+        - expected_plan_revision
+        - user_confirmed
+      properties:
+        practice_plan_id:
+          $ref: '#/components/schemas/ResourceId'
+        expected_plan_revision:
+          type: integer
+          minimum: 1
+        user_confirmed:
+          type: boolean
+          const: true
+          description: Explicit confirmation of this exact frozen Plan revision.
+    PracticeStartConflictResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: ../common/errors.yaml#/components/schemas/Error
+        practice_session:
+          $ref: '#/components/schemas/PracticeSession'
+        snapshot:
+          $ref: '#/components/schemas/PracticeSessionSnapshot'
     PracticeSession:
       type: object
       additionalProperties: false

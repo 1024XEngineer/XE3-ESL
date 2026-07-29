@@ -469,6 +469,145 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	}
 }
 
+func TestPostgresMatterAgentToolPersistence(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	matterService, _ := newAgentDataServices(t, database.pool)
+	actorA := requestcontext.Actor{
+		UserID:    agentTestUserA,
+		SessionID: "20000000-0000-4000-8000-000000000001",
+	}
+	actorB := requestcontext.Actor{
+		UserID:    agentTestUserB,
+		SessionID: "20000000-0000-4000-8000-000000000002",
+	}
+
+	first, err := matterService.CreateIdempotent(
+		context.Background(),
+		actorA,
+		"matter-tool-request-1",
+		"PM interview",
+	)
+	if err != nil {
+		t.Fatalf("create idempotent Matter: %v", err)
+	}
+	replayed, err := matterService.CreateIdempotent(
+		context.Background(),
+		actorA,
+		"matter-tool-request-1",
+		"PM interview",
+	)
+	if err != nil {
+		t.Fatalf("replay idempotent Matter: %v", err)
+	}
+	if replayed.ID != first.ID {
+		t.Fatalf("replayed Matter id = %q, want %q", replayed.ID, first.ID)
+	}
+	concurrentResults := make(chan matter.Matter, 2)
+	concurrentErrors := make(chan error, 2)
+	var concurrentCreates sync.WaitGroup
+	for range 2 {
+		concurrentCreates.Add(1)
+		go func() {
+			defer concurrentCreates.Done()
+			item, createErr := matterService.CreateIdempotent(
+				context.Background(),
+				actorA,
+				"matter-tool-concurrent-1",
+				"Concurrent interview",
+			)
+			concurrentResults <- item
+			concurrentErrors <- createErr
+		}()
+	}
+	concurrentCreates.Wait()
+	close(concurrentResults)
+	close(concurrentErrors)
+	for createErr := range concurrentErrors {
+		if createErr != nil {
+			t.Fatalf("concurrent idempotent Matter: %v", createErr)
+		}
+	}
+	var concurrentMatterID string
+	for item := range concurrentResults {
+		if concurrentMatterID == "" {
+			concurrentMatterID = item.ID
+			continue
+		}
+		if item.ID != concurrentMatterID {
+			t.Fatalf(
+				"concurrent Matter id = %q, want %q",
+				item.ID,
+				concurrentMatterID,
+			)
+		}
+	}
+	if _, err := matterService.CreateIdempotent(
+		context.Background(),
+		actorA,
+		"matter-tool-request-1",
+		"Changed interview",
+	); !errors.Is(err, matter.ErrConflict) {
+		t.Fatalf("changed replay error = %v, want conflict", err)
+	}
+
+	otherOwner, err := matterService.CreateIdempotent(
+		context.Background(),
+		actorB,
+		"matter-tool-request-1",
+		"Private interview",
+	)
+	if err != nil {
+		t.Fatalf("create other-owner Matter: %v", err)
+	}
+	if otherOwner.ID == first.ID {
+		t.Fatal("idempotency request leaked across owners")
+	}
+	if _, err := matterService.Create(
+		context.Background(),
+		actorA,
+		"Interview follow-up",
+	); err != nil {
+		t.Fatalf("create second matching Matter: %v", err)
+	}
+
+	search := func() []matter.Matter {
+		items, searchErr := matterService.Search(
+			context.Background(),
+			actorA,
+			matter.SearchQuery{Query: "INTERVIEW", Limit: 1},
+		)
+		if searchErr != nil {
+			t.Fatalf("search Matters: %v", searchErr)
+		}
+		return items
+	}
+	firstSearch := search()
+	secondSearch := search()
+	if len(firstSearch) != 1 ||
+		firstSearch[0].OwnerID != actorA.UserID ||
+		len(secondSearch) != 1 ||
+		secondSearch[0].ID != firstSearch[0].ID {
+		t.Fatalf(
+			"bounded stable owner search = %#v then %#v",
+			firstSearch,
+			secondSearch,
+		)
+	}
+
+	for _, table := range []string{"practice_sessions", "reviews"} {
+		var count int
+		if err := database.pool.QueryRow(
+			context.Background(),
+			"SELECT count(*) FROM "+table,
+		).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s count = %d, want no writes", table, count)
+		}
+	}
+}
+
 func TestPostgresActiveMatterBindingSerializesWithLifecycleTransition(
 	t *testing.T,
 ) {

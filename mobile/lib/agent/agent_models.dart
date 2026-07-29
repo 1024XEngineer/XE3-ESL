@@ -4,6 +4,22 @@ enum AgentMessageModality { text, voice }
 
 enum AgentMessageAudioStatus { readable, deleting, deleted }
 
+enum AgentMessageActionType { openInterviewPreparation }
+
+final class AgentMessageAction {
+  const AgentMessageAction({
+    required this.type,
+    required this.label,
+    required this.matterId,
+    required this.title,
+  });
+
+  final AgentMessageActionType type;
+  final String label;
+  final String matterId;
+  final String title;
+}
+
 final class AgentMessageAudio {
   const AgentMessageAudio({
     required this.id,
@@ -78,6 +94,7 @@ final class AgentMessage {
     this.createdAt,
     this.modality = AgentMessageModality.text,
     this.audio,
+    this.actions = const <AgentMessageAction>[],
   }) : assert(
          (modality == AgentMessageModality.voice && audio != null) ||
              (modality == AgentMessageModality.text && audio == null),
@@ -90,6 +107,7 @@ final class AgentMessage {
   final DateTime? createdAt;
   final AgentMessageModality modality;
   final AgentMessageAudio? audio;
+  final List<AgentMessageAction> actions;
 
   AgentMessage copyWith({AgentMessageAudio? audio, bool clearAudio = false}) {
     return AgentMessage(
@@ -100,6 +118,7 @@ final class AgentMessage {
       createdAt: createdAt,
       modality: clearAudio ? AgentMessageModality.text : modality,
       audio: clearAudio ? null : audio ?? this.audio,
+      actions: actions,
     );
   }
 }

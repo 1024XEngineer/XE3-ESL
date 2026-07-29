@@ -45,6 +45,12 @@ type contextHTTPApplicationStub struct {
 		string,
 		CreateSessionRequest,
 	) (persistence.ContextSessionBootstrap, bool, error)
+	confirmAndStart func(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		StartConfirmation,
+	) (ConfirmAndStartResult, error)
 	getSession func(
 		context.Context,
 		requestcontext.Actor,
@@ -113,6 +119,19 @@ func (s contextHTTPApplicationStub) CreateSession(
 			errors.New("unexpected CreateSession")
 	}
 	return s.createSession(ctx, actor, planID, key, request)
+}
+
+func (s contextHTTPApplicationStub) ConfirmAndStartPractice(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	key string,
+	confirmation StartConfirmation,
+) (ConfirmAndStartResult, error) {
+	if s.confirmAndStart == nil {
+		return ConfirmAndStartResult{},
+			errors.New("unexpected ConfirmAndStartPractice")
+	}
+	return s.confirmAndStart(ctx, actor, key, confirmation)
 }
 
 func (s contextHTTPApplicationStub) GetSession(
@@ -1041,6 +1060,84 @@ func TestNewContextHTTPHandlerRejectsNilApplication(t *testing.T) {
 	if _, err := NewContextHTTPHandler(nil); err == nil {
 		t.Fatal("NewContextHTTPHandler(nil) succeeded")
 	}
+}
+
+func TestContextHTTPTrustedPracticeStartConfirmation(t *testing.T) {
+	actor := contextHTTPActor()
+	want := contextHTTPBootstrap()
+	want.Session.ID = "practice-session-1"
+	want.Session.PlanID = "practice-plan-1"
+	want.Snapshot.SessionID = want.Session.ID
+	want.Snapshot.PlanRevision = 3
+	calls := 0
+	router := newContextHTTPTestRouter(t, contextHTTPApplicationStub{
+		confirmAndStart: func(
+			_ context.Context,
+			gotActor requestcontext.Actor,
+			key string,
+			confirmation StartConfirmation,
+		) (ConfirmAndStartResult, error) {
+			calls++
+			if gotActor != actor || key != "start-confirmation-0001" ||
+				confirmation.AgentThreadID != "agent-thread-1" ||
+				confirmation.PracticePlanID != "practice-plan-1" ||
+				confirmation.ExpectedPlanRevision != 3 {
+				t.Fatalf("trusted confirmation = %#v", confirmation)
+			}
+			return ConfirmAndStartResult{Bootstrap: want}, nil
+		},
+	})
+	response := serveContextHTTPRequest(router, contextHTTPRequest{
+		method: http.MethodPost,
+		path: "/v1/agent-threads/agent-thread-1/" +
+			"practice-start-confirmations",
+		body: `{
+			"practice_plan_id":"practice-plan-1",
+			"expected_plan_revision":3,
+			"user_confirmed":true
+		}`,
+		contentType: "application/json",
+		keyValues:   []string{"start-confirmation-0001"},
+		actor:       &actor,
+	})
+	assertContextHTTPSuccess(t, response, http.StatusCreated, want)
+	if calls != 1 {
+		t.Fatalf("ConfirmAndStartPractice calls = %d", calls)
+	}
+}
+
+func TestContextHTTPRejectsMissingExplicitPracticeConfirmation(t *testing.T) {
+	actor := contextHTTPActor()
+	router := newContextHTTPTestRouter(t, contextHTTPApplicationStub{
+		confirmAndStart: func(
+			context.Context,
+			requestcontext.Actor,
+			string,
+			StartConfirmation,
+		) (ConfirmAndStartResult, error) {
+			t.Fatal("unconfirmed request reached application")
+			return ConfirmAndStartResult{}, nil
+		},
+	})
+	response := serveContextHTTPRequest(router, contextHTTPRequest{
+		method: http.MethodPost,
+		path: "/v1/agent-threads/agent-thread-1/" +
+			"practice-start-confirmations",
+		body: `{
+			"practice_plan_id":"practice-plan-1",
+			"expected_plan_revision":3,
+			"user_confirmed":false
+		}`,
+		contentType: "application/json",
+		keyValues:   []string{"start-confirmation-0002"},
+		actor:       &actor,
+	})
+	assertContextHTTPError(
+		t,
+		response,
+		http.StatusConflict,
+		"confirmation_required",
+	)
 }
 
 type contextHTTPRequest struct {

@@ -294,6 +294,7 @@ final class PreparationLaunchController extends ChangeNotifier {
           context: activeContext,
           selection: activeAttempt.selection,
           preparationProfileId: profile.id,
+          preparationSnapshotId: snapshot.id,
           preparationUserId: profile.userId,
         ),
         idempotencyKey: activeAttempt.planKey,
@@ -305,6 +306,7 @@ final class PreparationLaunchController extends ChangeNotifier {
       final bootstrap = await client.createSession(
         planId: plan.id,
         input: CreatePreparationSessionInput(
+          agentThreadId: activeContext.threadId,
           expectedPlanRevision: plan.revision,
           preparationSnapshotId: snapshot.id,
           preparationProfileId: profile.id,

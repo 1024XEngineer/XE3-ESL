@@ -21,9 +21,9 @@ func (port *fakeReviewPort) SearchReviews(
 ) ([]ReviewSummary, error) {
 	port.searchInput = input
 	return []ReviewSummary{{
-		ID:      "review-1",
-		Title:   "Mock interview review",
-		Summary: "Answer was too long.",
+		ID:                "review-1",
+		PracticeSessionID: "practice-session-1",
+		Summary:           "Answer was too long.",
 	}}, nil
 }
 
@@ -31,12 +31,13 @@ func (port *fakeReviewPort) GetReview(
 	ctx context.Context,
 	call CallContext,
 	input ReviewGetInput,
-) (ReviewSummary, error) {
+) (ReviewDetail, error) {
 	port.getInput = input
-	return ReviewSummary{
-		ID:      input.ReviewID,
-		Title:   "Mock interview review",
-		Summary: "Answer was too long.",
+	return ReviewDetail{
+		ID:                input.ReviewID,
+		PracticeSessionID: "practice-session-1",
+		Status:            "completed",
+		Summary:           "Answer was too long.",
 	}, nil
 }
 
