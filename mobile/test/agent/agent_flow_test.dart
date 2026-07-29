@@ -69,23 +69,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('practice-page')), findsOneWidget);
 
-    for (var turn = 1; turn <= 3; turn++) {
-      await tester.tap(find.byKey(const Key('practice-record')));
-      await tester.pump();
-      expect(find.byKey(const Key('practice-stop-recording')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('practice-record')));
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(agentController.recordingState, PracticeRecordingState.idle);
 
-      await tester.tap(find.byKey(const Key('practice-stop-recording')));
-      await tester.pumpAndSettle();
+    final cancelledGesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('practice-record'))),
+    );
+    await tester.pump(const Duration(milliseconds: 220));
+    await cancelledGesture.moveBy(const Offset(0, -90));
+    await tester.pump();
+    expect(find.text('松开取消'), findsOneWidget);
+    await cancelledGesture.up();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('practice-transcript')), findsNothing);
+    expect(agentController.recordingState, PracticeRecordingState.idle);
+
+    for (var turn = 1; turn <= 3; turn++) {
+      await _holdAndReleaseAnswer(tester);
       expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
 
       if (turn == 1) {
         await tester.tap(find.byKey(const Key('practice-rerecord')));
         await tester.pumpAndSettle();
         expect(find.text('0 / 3'), findsOneWidget);
-        await tester.tap(find.byKey(const Key('practice-record')));
-        await tester.pump();
-        await tester.tap(find.byKey(const Key('practice-stop-recording')));
-        await tester.pumpAndSettle();
+        await _holdAndReleaseAnswer(tester);
       }
 
       await tester.tap(find.byKey(const Key('practice-confirm-turn')));
@@ -454,6 +462,15 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+Future<void> _holdAndReleaseAnswer(WidgetTester tester) async {
+  final holdTarget = find.byKey(const Key('practice-record'));
+  final gesture = await tester.startGesture(tester.getCenter(holdTarget));
+  await tester.pump(const Duration(milliseconds: 220));
+  expect(find.byKey(const Key('practice-stop-recording')), findsOneWidget);
+  await gesture.up();
+  await tester.pumpAndSettle();
 }
 
 final class _CurrentReviewHistoryClient implements ReviewHistoryClient {

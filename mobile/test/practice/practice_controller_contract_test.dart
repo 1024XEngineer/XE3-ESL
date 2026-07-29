@@ -575,6 +575,14 @@ void main() {
         'I led the rollout, communicated the risk, and delivered it safely.';
     await tester.tap(find.byKey(const Key('practice-open-keyboard')));
     await tester.pump();
+    expect(find.byKey(const Key('practice-page')), findsOneWidget);
+    expect(
+      Navigator.of(
+        tester.element(find.byKey(const Key('practice-page'))),
+      ).canPop(),
+      isFalse,
+    );
+    expect(find.byKey(const Key('practice-return-to-voice')), findsOneWidget);
     final input = find.byKey(const Key('practice-text-answer'));
     await tester.scrollUntilVisible(
       input,
