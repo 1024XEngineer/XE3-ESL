@@ -358,8 +358,8 @@ func testExtractionConfig() ExtractionConfig {
 	return ExtractionConfig{
 		Provider:      "qianwen",
 		Model:         "qwen-plus",
-		PolicyVersion: "memory-policy-v1",
-		PromptVersion: "memory-extraction-v2",
+		PolicyVersion: "memory-policy-v2",
+		PromptVersion: "memory-extraction-v3",
 		LeaseDuration: time.Minute,
 		TopicTTL:      30 * 24 * time.Hour,
 		MaxAttempts:   3,

@@ -111,7 +111,7 @@ func TestCompletedRunQueuesAndProcessesThreadSummaryJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find generated Checkpoint: %v", err)
 	}
-	if checkpoint.CoveredThroughSequence != 28 ||
+	if checkpoint.CoveredThroughSequence != 20 ||
 		checkpoint.SourceFromSequence != 1 {
 		t.Fatalf("unexpected Checkpoint: %#v", checkpoint)
 	}
@@ -121,7 +121,7 @@ func TestCompletedRunQueuesAndProcessesThreadSummaryJob(t *testing.T) {
 		submission.Run.ID,
 		"completed",
 		40,
-		28,
+		20,
 		checkpoint.ID,
 	)
 
@@ -420,7 +420,7 @@ WHERE source_run_id = $1`,
 
 func summaryWorkerConfiguration() agentsummary.WorkerConfiguration {
 	return agentsummary.WorkerConfiguration{
-		TriggerPolicyVersion: agentsummary.TriggerPolicyV1,
+		TriggerPolicyVersion: agentsummary.TriggerPolicyV2,
 		TriggerMessages:      agentsummary.DefaultTriggerMessages,
 		RetainRecentMessages: agentsummary.DefaultRetainedMessages,
 		LeaseDuration:        time.Minute,

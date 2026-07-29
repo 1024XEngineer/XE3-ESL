@@ -406,6 +406,7 @@ func (r *PostgresRepository) ListMessagesForContext(
 	ctx context.Context,
 	ownerID string,
 	threadID string,
+	minSequenceExclusive int64,
 	maxSequence int64,
 	characterBudget int,
 ) ([]Message, int, error) {
@@ -428,9 +429,10 @@ WITH recent AS (
     FROM agent_messages
     WHERE owner_user_id = $1
       AND thread_id = $2
-      AND sequence_no <= $3
+      AND sequence_no > $3
+      AND sequence_no <= $4
     ORDER BY sequence_no DESC
-    LIMIT $4
+    LIMIT $5
 ),
 eligible AS (
     SELECT
@@ -444,7 +446,7 @@ eligible AS (
 selected AS (
     SELECT *
     FROM eligible
-    WHERE cumulative_characters <= $4
+    WHERE cumulative_characters <= $5
 )
 SELECT
     id::text,
@@ -460,6 +462,7 @@ FROM selected
 ORDER BY sequence_no ASC`,
 		ownerID,
 		threadID,
+		minSequenceExclusive,
 		maxSequence,
 		characterBudget,
 	)
@@ -512,6 +515,24 @@ func (r *PostgresRepository) SaveContextManifest(
 		activeMatterID = manifest.ActiveMatterID
 		activeMatterVersion = manifest.ActiveMatterVersion
 	}
+	var summaryCheckpointID any
+	var summarySourceFromSequence any
+	var summaryCoveredThroughSequence any
+	var summaryPolicyVersion any
+	var summaryPromptVersion any
+	var summaryProvider any
+	var summaryModel any
+	if manifest.SelectedSummary != nil {
+		summaryCheckpointID = manifest.SelectedSummary.CheckpointID
+		summarySourceFromSequence =
+			manifest.SelectedSummary.SourceFromSequence
+		summaryCoveredThroughSequence =
+			manifest.SelectedSummary.CoveredThroughSequence
+		summaryPolicyVersion = manifest.SelectedSummary.PolicyVersion
+		summaryPromptVersion = manifest.SelectedSummary.PromptVersion
+		summaryProvider = manifest.SelectedSummary.Provider
+		summaryModel = manifest.SelectedSummary.Model
+	}
 	var result ContextManifest
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
@@ -520,6 +541,13 @@ func (r *PostgresRepository) SaveContextManifest(
 	var toolSchemaHashesJSON []byte
 	var persistedMatterID pgtype.Text
 	var persistedMatterVersion pgtype.Int8
+	var persistedSummaryCheckpointID pgtype.Text
+	var persistedSummarySourceFromSequence pgtype.Int8
+	var persistedSummaryCoveredThroughSequence pgtype.Int8
+	var persistedSummaryPolicyVersion pgtype.Text
+	var persistedSummaryPromptVersion pgtype.Text
+	var persistedSummaryProvider pgtype.Text
+	var persistedSummaryModel pgtype.Text
 	var intentMode pgtype.Text
 	var intentReasonCode pgtype.Text
 	var intentGuardVersion pgtype.Text
@@ -535,6 +563,15 @@ INSERT INTO agent_context_manifests (
     instruction_version,
     memory_context_policy_version,
     selected_memories,
+    summary_context_policy_version,
+    summary_context_status,
+    selected_summary_checkpoint_id,
+    selected_summary_source_from_sequence,
+    selected_summary_covered_through_sequence,
+    selected_summary_policy_version,
+    selected_summary_prompt_version,
+    selected_summary_provider,
+    selected_summary_model,
     selected_messages,
     omitted_message_count,
     trim_reason,
@@ -545,8 +582,9 @@ INSERT INTO agent_context_manifests (
     max_output_tokens,
     created_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11,
-    $12, $13, $14, $15, $16, $17,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
+    $10, $11, $12, $13, $14, $15, $16, $17, $18,
+    $19::jsonb, $20, $21, $22, $23, $24, $25, $26,
     CURRENT_TIMESTAMP
 )
 RETURNING
@@ -559,6 +597,15 @@ RETURNING
     instruction_version,
     memory_context_policy_version,
     selected_memories,
+    summary_context_policy_version,
+    summary_context_status,
+    selected_summary_checkpoint_id::text,
+    selected_summary_source_from_sequence,
+    selected_summary_covered_through_sequence,
+    selected_summary_policy_version,
+    selected_summary_prompt_version,
+    selected_summary_provider,
+    selected_summary_model,
     selected_messages,
     omitted_message_count,
     trim_reason,
@@ -584,6 +631,15 @@ RETURNING
 		manifest.InstructionVersion,
 		manifest.MemoryContextPolicyVersion,
 		selectedMemories,
+		manifest.SummaryContextPolicyVersion,
+		manifest.SummaryContextStatus,
+		summaryCheckpointID,
+		summarySourceFromSequence,
+		summaryCoveredThroughSequence,
+		summaryPolicyVersion,
+		summaryPromptVersion,
+		summaryProvider,
+		summaryModel,
 		selectedMessages,
 		manifest.OmittedMessageCount,
 		manifest.TrimReason,
@@ -602,6 +658,15 @@ RETURNING
 		&result.InstructionVersion,
 		&result.MemoryContextPolicyVersion,
 		&selectedMemoriesJSON,
+		&result.SummaryContextPolicyVersion,
+		&result.SummaryContextStatus,
+		&persistedSummaryCheckpointID,
+		&persistedSummarySourceFromSequence,
+		&persistedSummaryCoveredThroughSequence,
+		&persistedSummaryPolicyVersion,
+		&persistedSummaryPromptVersion,
+		&persistedSummaryProvider,
+		&persistedSummaryModel,
 		&selectedJSON,
 		&result.OmittedMessageCount,
 		&result.TrimReason,
@@ -626,6 +691,13 @@ RETURNING
 		&result,
 		persistedMatterID,
 		persistedMatterVersion,
+		persistedSummaryCheckpointID,
+		persistedSummarySourceFromSequence,
+		persistedSummaryCoveredThroughSequence,
+		persistedSummaryPolicyVersion,
+		persistedSummaryPromptVersion,
+		persistedSummaryProvider,
+		persistedSummaryModel,
 		selectedJSON,
 		selectedMemoriesJSON,
 		exposedToolsJSON,
@@ -654,6 +726,13 @@ func (r *PostgresRepository) FindContextManifest(
 	var toolSchemaHashesJSON []byte
 	var activeMatterID pgtype.Text
 	var activeMatterVersion pgtype.Int8
+	var selectedSummaryCheckpointID pgtype.Text
+	var selectedSummarySourceFromSequence pgtype.Int8
+	var selectedSummaryCoveredThroughSequence pgtype.Int8
+	var selectedSummaryPolicyVersion pgtype.Text
+	var selectedSummaryPromptVersion pgtype.Text
+	var selectedSummaryProvider pgtype.Text
+	var selectedSummaryModel pgtype.Text
 	var intentMode pgtype.Text
 	var intentReasonCode pgtype.Text
 	var intentGuardVersion pgtype.Text
@@ -669,6 +748,15 @@ SELECT
     instruction_version,
     memory_context_policy_version,
     selected_memories,
+    summary_context_policy_version,
+    summary_context_status,
+    selected_summary_checkpoint_id::text,
+    selected_summary_source_from_sequence,
+    selected_summary_covered_through_sequence,
+    selected_summary_policy_version,
+    selected_summary_prompt_version,
+    selected_summary_provider,
+    selected_summary_model,
     selected_messages,
     omitted_message_count,
     trim_reason,
@@ -699,6 +787,15 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result.InstructionVersion,
 		&result.MemoryContextPolicyVersion,
 		&selectedMemoriesJSON,
+		&result.SummaryContextPolicyVersion,
+		&result.SummaryContextStatus,
+		&selectedSummaryCheckpointID,
+		&selectedSummarySourceFromSequence,
+		&selectedSummaryCoveredThroughSequence,
+		&selectedSummaryPolicyVersion,
+		&selectedSummaryPromptVersion,
+		&selectedSummaryProvider,
+		&selectedSummaryModel,
 		&selectedJSON,
 		&result.OmittedMessageCount,
 		&result.TrimReason,
@@ -723,6 +820,13 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result,
 		activeMatterID,
 		activeMatterVersion,
+		selectedSummaryCheckpointID,
+		selectedSummarySourceFromSequence,
+		selectedSummaryCoveredThroughSequence,
+		selectedSummaryPolicyVersion,
+		selectedSummaryPromptVersion,
+		selectedSummaryProvider,
+		selectedSummaryModel,
 		selectedJSON,
 		selectedMemoriesJSON,
 		exposedToolsJSON,
@@ -1459,6 +1563,13 @@ func decodeManifestOptionals(
 	manifest *ContextManifest,
 	activeMatterID pgtype.Text,
 	activeMatterVersion pgtype.Int8,
+	selectedSummaryCheckpointID pgtype.Text,
+	selectedSummarySourceFromSequence pgtype.Int8,
+	selectedSummaryCoveredThroughSequence pgtype.Int8,
+	selectedSummaryPolicyVersion pgtype.Text,
+	selectedSummaryPromptVersion pgtype.Text,
+	selectedSummaryProvider pgtype.Text,
+	selectedSummaryModel pgtype.Text,
 	selectedJSON []byte,
 	selectedMemoriesJSON []byte,
 	exposedToolsJSON []byte,
@@ -1474,6 +1585,34 @@ func decodeManifestOptionals(
 	}
 	if activeMatterVersion.Valid {
 		manifest.ActiveMatterVersion = activeMatterVersion.Int64
+	}
+	summaryFieldsValid := selectedSummaryCheckpointID.Valid &&
+		selectedSummarySourceFromSequence.Valid &&
+		selectedSummaryCoveredThroughSequence.Valid &&
+		selectedSummaryPolicyVersion.Valid &&
+		selectedSummaryPromptVersion.Valid &&
+		selectedSummaryProvider.Valid &&
+		selectedSummaryModel.Valid
+	summaryFieldsEmpty := !selectedSummaryCheckpointID.Valid &&
+		!selectedSummarySourceFromSequence.Valid &&
+		!selectedSummaryCoveredThroughSequence.Valid &&
+		!selectedSummaryPolicyVersion.Valid &&
+		!selectedSummaryPromptVersion.Valid &&
+		!selectedSummaryProvider.Valid &&
+		!selectedSummaryModel.Valid
+	switch {
+	case summaryFieldsValid:
+		manifest.SelectedSummary = &ContextSummarySource{
+			CheckpointID:           selectedSummaryCheckpointID.String,
+			SourceFromSequence:     selectedSummarySourceFromSequence.Int64,
+			CoveredThroughSequence: selectedSummaryCoveredThroughSequence.Int64,
+			PolicyVersion:          selectedSummaryPolicyVersion.String,
+			PromptVersion:          selectedSummaryPromptVersion.String,
+			Provider:               selectedSummaryProvider.String,
+			Model:                  selectedSummaryModel.String,
+		}
+	case !summaryFieldsEmpty:
+		return ErrRepository
 	}
 	if err := json.Unmarshal(selectedJSON, &manifest.SelectedMessages); err != nil {
 		return ErrRepository
