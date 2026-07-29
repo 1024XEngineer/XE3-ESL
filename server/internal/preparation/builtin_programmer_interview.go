@@ -21,6 +21,7 @@ func NewBuiltinCatalog() (*Catalog, error) {
 	scenarios := []catalogScenario{
 		programmerInterviewCatalogDefinition(),
 		ieltsSpeakingPart2CatalogDefinition(),
+		ieltsSpeakingFullMockCatalogDefinition(),
 		workplaceProgressRiskCatalogDefinition(),
 		dailyHotelCheckinCatalogDefinition(),
 	}

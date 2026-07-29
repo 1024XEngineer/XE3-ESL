@@ -2037,7 +2037,11 @@ func contextSnapshotMatchesPlan(
 		snapshot.PracticeOption.Version < 1 ||
 		!validOptionType ||
 		len(snapshot.Participants) != 2 ||
-		!validContextPolicy(snapshot.SessionPolicy, snapshot.PracticeOption.Type) ||
+		!validContextPolicy(
+			snapshot.SessionPolicy,
+			snapshot.PracticeOption.Type,
+			snapshot.ScenarioModel,
+		) ||
 		!validContextObjectives(snapshot.PracticeFocuses, false) {
 		return false
 	}
@@ -2176,6 +2180,7 @@ func completeStoredPlanPreview(plan persistence.Plan) bool {
 		!validContextPolicy(
 			*plan.SessionPolicy,
 			plan.CatalogSnapshot.PracticeOption.Type,
+			plan.ScenarioModel,
 		) ||
 		!validContextObjectives(plan.PracticeFocuses, true) {
 		return false
@@ -2289,6 +2294,7 @@ func validScenarioFamilyModel(
 			model == persistence.ScenarioModelInterviewBasicDialogue
 	case persistence.ScenarioFamilyExam:
 		return model == persistence.ScenarioModelIELTSSpeakingPart2 ||
+			model == persistence.ScenarioModelIELTSSpeakingFullMock ||
 			model == persistence.ScenarioModelExamBasicDialogue
 	case persistence.ScenarioFamilyWorkplace:
 		return model == persistence.ScenarioModelProgressAndRiskUpdate ||
@@ -2471,6 +2477,7 @@ func validUpdatePlanCommand(command persistence.UpdatePlanCommand) bool {
 		validContextPolicy(
 			command.SessionPolicy,
 			command.CatalogSnapshot.PracticeOption.Type,
+			command.CatalogSnapshot.ScenarioDefinition.Model,
 		) &&
 		validContextObjectives(command.PracticeFocuses, true)
 }
@@ -2530,6 +2537,7 @@ func contextSnapshotMatchesBasicActor(
 func validContextPolicy(
 	policy persistence.ContextSessionPolicy,
 	optionType string,
+	scenarioModel persistence.ScenarioModel,
 ) bool {
 	if policy.SuggestedDurationSeconds < 1 ||
 		policy.MinEffectiveTurns < 1 ||
@@ -2542,6 +2550,12 @@ func validContextPolicy(
 	}
 	switch optionType {
 	case "FULL_SIMULATION":
+		if scenarioModel == persistence.ScenarioModelIELTSSpeakingFullMock {
+			return policy.MinEffectiveTurns == 14 &&
+				policy.CoverageCheckpointTurn == 14 &&
+				policy.MaxEffectiveTurns == 14 &&
+				policy.MaxFollowUpsPerQuestion == 0
+		}
 		return policy.MinEffectiveTurns == 4 &&
 			policy.CoverageCheckpointTurn == 4 &&
 			policy.MaxEffectiveTurns >= 4 &&
@@ -2625,7 +2639,7 @@ func validStoredContextSession(session persistence.ContextSession) bool {
 		!validContextResourceID(session.SnapshotID) ||
 		session.Version < 1 ||
 		session.EffectiveTurns < 0 ||
-		session.EffectiveTurns > 6 ||
+		session.EffectiveTurns > 14 ||
 		session.CreatedAt.IsZero() {
 		return false
 	}

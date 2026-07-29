@@ -17,7 +17,7 @@ const (
 	// MaxAudioBytes keeps a Base64 data URL below Qwen ASR's documented
 	// 10 MB encoded-input limit, including the media-type prefix.
 	MaxAudioBytes    int64 = 7_400_000
-	MaxAudioDuration       = 60 * time.Second
+	MaxAudioDuration       = 120 * time.Second
 
 	ContentTypeWAV = "audio/wav"
 )

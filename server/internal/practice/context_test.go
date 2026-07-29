@@ -136,6 +136,23 @@ func TestSessionPolicyIsFrozenByPracticeOptionType(t *testing.T) {
 		focus.MaxEffectiveTurns != 3 {
 		t.Fatalf("FOCUS policy = %+v", focus)
 	}
+
+	ieltsFull := defaultContextSessionPolicy(
+		persistence.ScenarioConfigSnapshot{
+			Model: persistence.ScenarioModelIELTSSpeakingFullMock,
+			PromptModel: persistence.ScenarioPromptModel{
+				FocusAreas:               []string{"part_1", "part_2", "part_3"},
+				SuggestedDurationSeconds: 900,
+			},
+		},
+		persistence.PracticeOptionSnapshot{Type: "FULL_SIMULATION"},
+	)
+	if ieltsFull.MinEffectiveTurns != 14 ||
+		ieltsFull.CoverageCheckpointTurn != 14 ||
+		ieltsFull.MaxEffectiveTurns != 14 ||
+		ieltsFull.MaxFollowUpsPerQuestion != 0 {
+		t.Fatalf("IELTS full mock policy = %+v", ieltsFull)
+	}
 }
 
 func TestFocusOptionMustMatchSelectedInterviewer(t *testing.T) {

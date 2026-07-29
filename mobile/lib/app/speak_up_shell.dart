@@ -9,6 +9,7 @@ import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/conversation/conversation.dart';
+import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
@@ -220,7 +221,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     final review = widget.agentController.review;
-    if (review == null) {
+    final suppressReview = isIeltsSpeakingFullMockSession(
+      widget.agentController,
+    );
+    if (review == null || suppressReview) {
       _reviewPresented = false;
     } else if (!_reviewPresented) {
       _reviewPresented = true;
@@ -231,7 +235,8 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _restorePresentedReview() {
-    if (widget.agentController.review == null) {
+    if (widget.agentController.review == null ||
+        isIeltsSpeakingFullMockSession(widget.agentController)) {
       _reviewPresented = false;
       return;
     }

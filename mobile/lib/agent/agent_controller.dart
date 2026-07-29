@@ -867,7 +867,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         _threadId != threadId ||
         matter?.id != matterId ||
         turnLimit < 1 ||
-        turnLimit > 6 ||
+        turnLimit > 14 ||
         clientOperationId.trim().isEmpty ||
         isBusy ||
         _disposed) {
@@ -1458,12 +1458,21 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> startRecording() {
+  Future<void> startRecording({Duration? limit}) {
     if (!hasActivePractice ||
         isBusy ||
         _currentQuestion == null ||
         _recordingState != PracticeRecordingState.idle) {
       return Future<void>.value();
+    }
+    final recordingLimit = limit ?? _recordingLimit;
+    if (recordingLimit <= Duration.zero ||
+        recordingLimit > const Duration(seconds: 120)) {
+      throw ArgumentError.value(
+        recordingLimit,
+        'limit',
+        'must be positive and no longer than 120 seconds',
+      );
     }
     final generation = ++_practiceGeneration;
     _candidate = null;
@@ -1481,6 +1490,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         practiceSessionId: _practiceSessionId,
         questionId: _currentQuestion?.id,
       ),
+      recordingLimit,
     );
     _recorderStartFuture = operation;
     return operation.whenComplete(() {
@@ -1490,7 +1500,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
-  Future<void> _startRecorder(_AgentOperationFence fence) async {
+  Future<void> _startRecorder(
+    _AgentOperationFence fence,
+    Duration recordingLimit,
+  ) async {
     try {
       await stopPracticeAudio();
       if (!_isOperationCurrent(fence) ||
@@ -1503,7 +1516,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         return;
       }
       _recordingState = PracticeRecordingState.recording;
-      _recordingLimitTimer = Timer(_recordingLimit, () {
+      _recordingLimitTimer = Timer(recordingLimit, () {
         if (_isOperationCurrent(fence) &&
             !_disposed &&
             _recordingState == PracticeRecordingState.recording) {
@@ -2458,7 +2471,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         snapshot.matter.scene.id.trim().isEmpty ||
         snapshot.completedTurns < 0 ||
         snapshot.turnLimit < 1 ||
-        snapshot.turnLimit > 6 ||
+        snapshot.turnLimit > 14 ||
         snapshot.completedTurns > snapshot.turnLimit ||
         (snapshot.sessionVersion != null && snapshot.sessionVersion! < 1) ||
         (!snapshot.sessionCompleted && snapshot.currentQuestion == null) ||
@@ -2515,7 +2528,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         confirmation.answer.text != expectedAnswer ||
         confirmation.completedTurns < 1 ||
         confirmation.turnLimit < 1 ||
-        confirmation.turnLimit > 6 ||
+        confirmation.turnLimit > 14 ||
         confirmation.completedTurns > confirmation.turnLimit ||
         (confirmation.sessionVersion != null &&
             confirmation.sessionVersion! < 1) ||

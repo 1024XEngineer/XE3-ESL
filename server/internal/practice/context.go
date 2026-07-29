@@ -1115,6 +1115,12 @@ func defaultContextSessionPolicy(
 	if policy.SuggestedDurationSeconds == 0 {
 		policy.SuggestedDurationSeconds = 900
 	}
+	if config.Model == persistence.ScenarioModelIELTSSpeakingFullMock {
+		policy.MinEffectiveTurns = 14
+		policy.MaxEffectiveTurns = 14
+		policy.CoverageCheckpointTurn = 14
+		policy.MaxFollowUpsPerQuestion = 0
+	}
 	if option.Type == "FOCUS" {
 		policy.SuggestedDurationSeconds = 600
 		policy.MinEffectiveTurns = 1
@@ -1143,6 +1149,7 @@ func validScenarioFamilyModel(
 			model == persistence.ScenarioModelInterviewBasicDialogue
 	case persistence.ScenarioFamilyExam:
 		return model == persistence.ScenarioModelIELTSSpeakingPart2 ||
+			model == persistence.ScenarioModelIELTSSpeakingFullMock ||
 			model == persistence.ScenarioModelExamBasicDialogue
 	case persistence.ScenarioFamilyWorkplace:
 		return model == persistence.ScenarioModelProgressAndRiskUpdate ||

@@ -34,3 +34,38 @@ func TestValidCreatePlanCommandAcceptsOptionalMatter(t *testing.T) {
 		t.Fatal("Matter-backed scenario Plan command was rejected")
 	}
 }
+
+func TestValidContextPolicyScopesFourteenTurnsToIELTSFullMock(t *testing.T) {
+	policy := persistence.ContextSessionPolicy{
+		SuggestedDurationSeconds: 900,
+		MinEffectiveTurns:        14,
+		MaxEffectiveTurns:        14,
+		CoverageCheckpointTurn:   14,
+		MaxFollowUpsPerQuestion:  0,
+		EarlyCompletionRule:      "Complete all frozen questions.",
+		TargetObjectives: []persistence.PracticeObjective{
+			{ID: "objective-1", Description: "Complete all three parts."},
+		},
+	}
+	if !validContextPolicy(
+		policy,
+		"FULL_SIMULATION",
+		persistence.ScenarioModelIELTSSpeakingFullMock,
+	) {
+		t.Fatal("IELTS full mock 14-turn policy was rejected")
+	}
+	if validContextPolicy(
+		policy,
+		"FULL_SIMULATION",
+		persistence.ScenarioModelExamBasicDialogue,
+	) {
+		t.Fatal("generic exam accepted the IELTS-only 14-turn policy")
+	}
+	if validContextPolicy(
+		policy,
+		"FOCUS",
+		persistence.ScenarioModelIELTSSpeakingFullMock,
+	) {
+		t.Fatal("IELTS focus option accepted the full-mock policy")
+	}
+}
