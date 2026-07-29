@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_input.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -59,9 +60,9 @@ class _RegisterPageState extends State<RegisterPage> {
                 decoration: authFieldDecoration(label: '昵称'),
                 validator: validateDisplayNameInput,
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: SpeakUpDesign.space16),
               AuthEmailField(controller: _emailController),
-              const SizedBox(height: 14),
+              const SizedBox(height: SpeakUpDesign.space16),
               AuthPasswordField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
@@ -72,7 +73,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     setState(() => _obscurePassword = !_obscurePassword),
                 onSubmitted: (_) => _submit(),
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: SpeakUpDesign.space24),
               AuthPrimaryButton(
                 label: '创建账号',
                 isSubmitting: widget.state.isSubmitting,

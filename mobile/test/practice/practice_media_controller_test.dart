@@ -365,6 +365,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('practice-question-audio')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('practice-open-history')));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byKey(const Key('practice-recording-play-audio-1')),
       220,
@@ -392,9 +394,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Practice hint shows one concise complete answer', (
-    tester,
-  ) async {
+  testWidgets('Practice hint shows a concise answer framework', (tester) async {
     final controller = _controller(
       snapshot: _activeSnapshot(audioAssetId: 'audio-1'),
       media: _MediaClient(),
@@ -409,18 +409,11 @@ void main() {
     await tester.tap(find.byKey(const Key('practice-hint-question-2')));
     await tester.pump();
 
-    expect(find.text('参考回答'), findsOneWidget);
-    expect(
-      find.text(
-        'From my perspective, the core responsibility of this role is to '
-        'understand the goal, work closely with the team, and deliver '
-        'reliable results.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('建议回答结构'), findsNothing);
-    expect(find.text('可用英文表达'), findsNothing);
-    expect(find.textContaining('...'), findsNothing);
+    expect(find.text('回答框架'), findsOneWidget);
+    expect(find.text('1. 先直接回答你的核心观点'), findsOneWidget);
+    expect(find.text('2. 用一个具体经历或事实支持'), findsOneWidget);
+    expect(find.text('3. 回到岗位匹配与结果'), findsOneWidget);
+    expect(find.text('参考回答'), findsNothing);
   });
 
   testWidgets('Practice media buttons are disabled while recording', (
@@ -440,22 +433,19 @@ void main() {
 
     expect(
       tester
-          .widget<IconButton>(find.byKey(const Key('practice-question-audio')))
+          .widget<TextButton>(find.byKey(const Key('practice-question-audio')))
           .onPressed,
       isNull,
-    );
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('practice-recording-play-audio-1')),
-      220,
-      scrollable: find.byType(Scrollable).first,
     );
     expect(
       tester
-          .widget<IconButton>(
-            find.byKey(const Key('practice-recording-play-audio-1')),
-          )
+          .widget<IconButton>(find.byKey(const Key('practice-open-history')))
           .onPressed,
       isNull,
+    );
+    expect(
+      find.byKey(const Key('practice-recording-play-audio-1')),
+      findsNothing,
     );
     await controller.clearPrivateState();
   });

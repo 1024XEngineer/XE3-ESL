@@ -1641,6 +1641,12 @@ func formalReviewResponse(item VoiceSessionReview) gin.H {
 		"created_at":             item.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at":             item.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if item.EvaluationContextType != "" {
+		result["evaluation_context_type"] = item.EvaluationContextType
+	}
+	if len(item.EvaluationContext) > 0 {
+		result["evaluation_context"] = item.EvaluationContext
+	}
 	if item.Result != nil {
 		result["result"] = item.Result
 	}
@@ -2018,21 +2024,34 @@ func contextManifestResponse(manifest ContextManifest) gin.H {
 		memories = append(memories, memory)
 	}
 	result := gin.H{
-		"run_id":                        manifest.RunID,
-		"thread_id":                     manifest.ThreadID,
-		"input_message_id":              manifest.InputMessageID,
-		"instruction_version":           manifest.InstructionVersion,
-		"memory_context_policy_version": manifest.MemoryContextPolicyVersion,
-		"selected_memories":             memories,
-		"selected_messages":             messages,
-		"omitted_message_count":         manifest.OmittedMessageCount,
-		"trim_reason":                   manifest.TrimReason,
-		"max_input_characters":          manifest.MaxInputCharacters,
-		"used_input_characters":         manifest.UsedInputCharacters,
-		"requested_provider":            manifest.RequestedProvider,
-		"requested_model":               manifest.RequestedModel,
-		"max_output_tokens":             manifest.MaxOutputTokens,
-		"created_at":                    manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"run_id":                         manifest.RunID,
+		"thread_id":                      manifest.ThreadID,
+		"input_message_id":               manifest.InputMessageID,
+		"instruction_version":            manifest.InstructionVersion,
+		"memory_context_policy_version":  manifest.MemoryContextPolicyVersion,
+		"selected_memories":              memories,
+		"summary_context_policy_version": manifest.SummaryContextPolicyVersion,
+		"summary_context_status":         manifest.SummaryContextStatus,
+		"selected_messages":              messages,
+		"omitted_message_count":          manifest.OmittedMessageCount,
+		"trim_reason":                    manifest.TrimReason,
+		"max_input_characters":           manifest.MaxInputCharacters,
+		"used_input_characters":          manifest.UsedInputCharacters,
+		"requested_provider":             manifest.RequestedProvider,
+		"requested_model":                manifest.RequestedModel,
+		"max_output_tokens":              manifest.MaxOutputTokens,
+		"created_at":                     manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if manifest.SelectedSummary != nil {
+		result["selected_summary"] = gin.H{
+			"checkpoint_id":            manifest.SelectedSummary.CheckpointID,
+			"source_from_sequence":     manifest.SelectedSummary.SourceFromSequence,
+			"covered_through_sequence": manifest.SelectedSummary.CoveredThroughSequence,
+			"policy_version":           manifest.SelectedSummary.PolicyVersion,
+			"prompt_version":           manifest.SelectedSummary.PromptVersion,
+			"provider":                 manifest.SelectedSummary.Provider,
+			"model":                    manifest.SelectedSummary.Model,
+		}
 	}
 	if manifest.ActiveMatterID != "" {
 		result["active_matter"] = gin.H{

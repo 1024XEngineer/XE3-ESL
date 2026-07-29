@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/design/speak_up_design.dart';
 
 class PracticeRecordingsCard extends StatelessWidget {
   const PracticeRecordingsCard({
@@ -19,11 +20,13 @@ class PracticeRecordingsCard extends StatelessWidget {
     }
     return Card(
       key: const Key('practice-recordings-card'),
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 16, 10, 12),
+        padding: const EdgeInsets.fromLTRB(
+          SpeakUpDesign.space16,
+          SpeakUpDesign.space16,
+          SpeakUpDesign.space8,
+          SpeakUpDesign.space12,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

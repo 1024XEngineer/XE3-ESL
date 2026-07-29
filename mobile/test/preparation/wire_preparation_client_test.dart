@@ -278,6 +278,8 @@ const _scenarioDefinitionJson = <String, Object?>{
   'name': 'English interview for technical roles',
   'version': 1,
   'status': 'active',
+  'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
+  'session_policy_ref': 'interview.project_deep_dive.session.v1',
 };
 
 const _scenarioJson = <String, Object?>{

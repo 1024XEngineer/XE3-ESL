@@ -125,12 +125,14 @@ type ContextSession struct {
 }
 
 type ScenarioDefinitionSnapshot struct {
-	ID      string         `json:"scenario_definition_id"`
-	Type    ScenarioFamily `json:"scenario_type"`
-	Model   ScenarioModel  `json:"scenario_model"`
-	Name    string         `json:"name"`
-	Version int            `json:"version"`
-	Status  string         `json:"status"`
+	ID               string         `json:"scenario_definition_id"`
+	Type             ScenarioFamily `json:"scenario_type"`
+	Model            ScenarioModel  `json:"scenario_model"`
+	Name             string         `json:"name"`
+	Version          int            `json:"version"`
+	Status           string         `json:"status"`
+	TurnPolicyRef    string         `json:"turn_policy_ref"`
+	SessionPolicyRef string         `json:"session_policy_ref"`
 }
 
 type ScenarioConfigSnapshot struct {

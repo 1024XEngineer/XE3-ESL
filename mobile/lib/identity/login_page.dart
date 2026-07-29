@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_input.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -45,7 +46,7 @@ class _LoginPageState extends State<LoginPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               AuthEmailField(controller: _emailController),
-              const SizedBox(height: 14),
+              const SizedBox(height: SpeakUpDesign.space16),
               AuthPasswordField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
@@ -54,7 +55,7 @@ class _LoginPageState extends State<LoginPage> {
                     setState(() => _obscurePassword = !_obscurePassword),
                 onSubmitted: (_) => _submit(),
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: SpeakUpDesign.space24),
               AuthPrimaryButton(
                 label: '登录',
                 isSubmitting: widget.state.isSubmitting,
@@ -108,12 +109,18 @@ class AuthFormScaffold extends StatelessWidget {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final minHeight = constraints.maxHeight > 48
-                ? constraints.maxHeight - 48
+            final horizontal = SpeakUpDesign.horizontalInset(context);
+            final minHeight = constraints.maxHeight > 40
+                ? constraints.maxHeight - 40
                 : 0.0;
             return SingleChildScrollView(
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              padding: const EdgeInsets.fromLTRB(24, 30, 24, 18),
+              padding: EdgeInsets.fromLTRB(
+                horizontal,
+                SpeakUpDesign.space20,
+                horizontal,
+                SpeakUpDesign.space20,
+              ),
               child: Center(
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
@@ -124,46 +131,34 @@ class AuthFormScaffold extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const Align(
-                        alignment: Alignment.center,
+                        alignment: Alignment.centerLeft,
                         child: AuthWordmark(),
                       ),
-                      const SizedBox(height: 38),
+                      const SizedBox(height: SpeakUpDesign.space32),
                       Text(
                         title,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AuthPalette.ink,
-                          fontSize: 27,
-                          height: 1.1,
-                          letterSpacing: -0.5,
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: Theme.of(context).textTheme.headlineLarge,
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: SpeakUpDesign.space8),
                       Text(
                         subtitle,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AuthPalette.muted,
-                          fontSize: 15,
-                          height: 1.5,
-                        ),
+                        style: Theme.of(context).textTheme.bodyMedium,
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: SpeakUpDesign.space4),
                       AuthSwitchPrompt(
                         prompt: switchPrompt,
                         actionLabel: switchActionLabel,
                         onPressed: onSwitch,
                       ),
                       if (message != null) ...[
-                        const SizedBox(height: 18),
+                        const SizedBox(height: SpeakUpDesign.space16),
                         AuthMessage(message: message!),
                       ],
                       if (errorMessage != null) ...[
-                        const SizedBox(height: 18),
+                        const SizedBox(height: SpeakUpDesign.space16),
                         AuthMessage(message: errorMessage!, isError: true),
                       ],
-                      const SizedBox(height: 44),
+                      const SizedBox(height: SpeakUpDesign.space32),
                       child,
                     ],
                   ),
@@ -193,33 +188,23 @@ class AuthSwitchPrompt extends StatelessWidget {
   Widget build(BuildContext context) {
     final promptText = Text(
       prompt,
-      textAlign: TextAlign.center,
-      style: const TextStyle(color: AuthPalette.muted, fontSize: 14),
+      style: Theme.of(context).textTheme.bodyMedium,
     );
     final action = TextButton(
       onPressed: onPressed,
       style: TextButton.styleFrom(
-        foregroundColor: AuthPalette.link,
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 7),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        textStyle: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          decoration: TextDecoration.underline,
-          decorationThickness: 1,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
       ),
       child: Text(actionLabel),
     );
     if (MediaQuery.textScalerOf(context).scale(1) > 1.6) {
       return Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [promptText, action],
       );
     }
     return Wrap(
-      alignment: WrapAlignment.center,
+      alignment: WrapAlignment.start,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [promptText, action],
     );
@@ -227,19 +212,19 @@ class AuthSwitchPrompt extends StatelessWidget {
 }
 
 abstract final class AuthPalette {
-  static const background = Color(0xFFFFFBF6);
-  static const field = Color(0xFFFFFFFF);
-  static const ink = Color(0xFF202628);
-  static const muted = Color(0xFF666D70);
-  static const border = Color(0xFFD9D6D1);
-  static const focusedBorder = Color(0xFF516C74);
-  static const primary = Color(0xFF183F49);
-  static const disabled = Color(0xFFD8D6D2);
-  static const link = Color(0xFF246B87);
-  static const noticeBackground = Color(0xFFEAF3EF);
-  static const noticeForeground = Color(0xFF285443);
-  static const errorBackground = Color(0xFFFFEDE8);
-  static const errorForeground = Color(0xFF8A2D21);
+  static const background = SpeakUpDesign.canvas;
+  static const field = SpeakUpDesign.surface;
+  static const ink = SpeakUpDesign.ink;
+  static const muted = SpeakUpDesign.secondary;
+  static const border = SpeakUpDesign.border;
+  static const focusedBorder = SpeakUpDesign.primary;
+  static const primary = SpeakUpDesign.primary;
+  static const disabled = SpeakUpDesign.surfaceMuted;
+  static const link = SpeakUpDesign.primary;
+  static const noticeBackground = SpeakUpDesign.successMuted;
+  static const noticeForeground = SpeakUpDesign.success;
+  static const errorBackground = SpeakUpDesign.errorMuted;
+  static const errorForeground = SpeakUpDesign.error;
 }
 
 class AuthWordmark extends StatelessWidget {
@@ -308,19 +293,20 @@ InputDecoration authFieldDecoration({
   String? helperText,
   Widget? suffixIcon,
 }) {
-  const borderRadius = BorderRadius.all(Radius.circular(11));
+  const borderRadius = BorderRadius.all(
+    Radius.circular(SpeakUpDesign.radiusControl),
+  );
   return InputDecoration(
     hintText: label,
-    hintStyle: const TextStyle(color: AuthPalette.muted, fontSize: 16),
+    hintStyle: SpeakUpDesign.body,
     helperText: helperText,
-    helperStyle: const TextStyle(
-      color: AuthPalette.muted,
-      fontSize: 12,
-      height: 1.3,
-    ),
+    helperStyle: SpeakUpDesign.meta,
     filled: true,
     fillColor: AuthPalette.field,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+    contentPadding: const EdgeInsets.symmetric(
+      horizontal: SpeakUpDesign.space16,
+      vertical: SpeakUpDesign.space16,
+    ),
     suffixIcon: suffixIcon,
     border: const OutlineInputBorder(
       borderRadius: borderRadius,
@@ -361,16 +347,7 @@ class AuthPrimaryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return FilledButton(
       onPressed: onPressed,
-      style: FilledButton.styleFrom(
-        backgroundColor: AuthPalette.primary,
-        foregroundColor: Colors.white,
-        disabledBackgroundColor: AuthPalette.disabled,
-        disabledForegroundColor: AuthPalette.muted,
-        minimumSize: const Size.fromHeight(54),
-        shape: const StadiumBorder(),
-        elevation: 0,
-        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-      ),
+      style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
       child: isSubmitting ? const AuthButtonProgress() : Text(label),
     );
   }
@@ -486,12 +463,15 @@ class AuthMessage extends StatelessWidget {
     return Semantics(
       liveRegion: true,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: SpeakUpDesign.space16,
+          vertical: SpeakUpDesign.space12,
+        ),
         decoration: BoxDecoration(
           color: isError
               ? AuthPalette.errorBackground
               : AuthPalette.noticeBackground,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
         ),
         child: Text(
           message,
@@ -499,8 +479,8 @@ class AuthMessage extends StatelessWidget {
             color: isError
                 ? AuthPalette.errorForeground
                 : AuthPalette.noticeForeground,
-            fontSize: 14,
-            height: 1.4,
+            fontSize: SpeakUpDesign.body.fontSize,
+            height: SpeakUpDesign.body.height,
           ),
         ),
       ),

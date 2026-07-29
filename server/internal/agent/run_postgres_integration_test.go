@@ -2115,6 +2115,9 @@ func TestPostgresContextAssemblerKeepsCurrentInputWithinBudget(t *testing.T) {
 		t.Fatalf("get budget manifest: %v", err)
 	}
 	if manifest.TrimReason != contextTrimBudget ||
+		manifest.SummaryContextPolicyVersion != summaryContextPolicyV1 ||
+		manifest.SummaryContextStatus != summaryContextNotAvailable ||
+		manifest.SelectedSummary != nil ||
 		manifest.OmittedMessageCount != 1 ||
 		len(manifest.SelectedMessages) != 1 ||
 		manifest.SelectedMessages[0].MessageID != submission.UserMessage.ID ||
@@ -2846,6 +2849,10 @@ WHERE owner_user_id = $1 AND thread_id = $2`,
 	)
 	if manifest.Code != http.StatusOK ||
 		!strings.Contains(manifest.Body.String(), `"selected_messages"`) ||
+		!strings.Contains(
+			manifest.Body.String(),
+			`"summary_context_status":"not_available"`,
+		) ||
 		strings.Contains(manifest.Body.String(), activeMatter.Title) {
 		t.Fatalf("manifest response: %d %s", manifest.Code, manifest.Body)
 	}

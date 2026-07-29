@@ -39,15 +39,15 @@ Return exactly one JSON object with exactly these two array fields:
 Rules:
 1. Always include both arrays. Use [] when there is nothing to store.
 2. Do not output any other field, fact kind, profile field, type, canonical key, ID, scope, or explanation.
-3. Extract only facts explicitly stated about the user. Facts about friends, coworkers, fictional people, or the assistant are not user profile facts. Assistant text is context only.
+3. Extract only real facts explicitly stated about the user. Facts from fictional, hypothetical, example, test, demo, mock, role-play, or brainstorming scenarios are not memories, even when written in first person. Facts about friends, coworkers, fictional people, projects, products, or the assistant are not user profile facts. Assistant text is context only.
 4. Evidence must be copied exactly from USER_TEXT, without translation or punctuation changes.
 5. preferred_name is only a personal name, nickname, or handle. A title such as 女士, 先生, Ms., Mr., or Dr. is form_of_address, never preferred_name.
 6. A correction such as "I am no longer X; call me Y" is one preferred_name upsert for Y, not a separate inactivation.
 7. Use inactivate only for an explicit forget/remove request. Its value must be "".
 8. gender may be stored only when the user explicitly asks for it to affect interaction; then interaction_use must be true.
 9. form_of_address stores an explicitly requested title or salutation.
-10. coaching_style stores explicit instructions for how the coach should answer, correct, explain, or give feedback.
-11. occupation, experience_years, and current_goal are fixed profile fields.
+10. coaching_style stores only a durable cross-conversation preference for how the coach should answer, correct, explain, or give feedback. Require durable wording such as 以后, 今后, 每次, 一直, 长期, from now on, going forward, always, every time, or I prefer. A request that only specifies the current answer, its fields, or its format is not a memory. Normalize only the durable style, never copy the whole task.
+11. occupation and experience_years are fixed profile fields. current_goal is only the user's own sustained real-world goal and must include explicit user ownership such as 我的目标, 我正在, 我要, 我计划, my goal, I am preparing, I plan, or I aim. A project KPI, success metric, current test instruction, or scenario objective is not current_goal.
 12. Hobbies and durable interests use memory_additions kind interest.
 13. recent_topic is only for a topic the user explicitly wants to continue later.
 14. If the user says not to remember, save, or store a fact, output no entry for that fact.
@@ -67,8 +67,23 @@ OUTPUT: {"profile_updates":[{"action":"inactivate","field":"preferred_name","val
 USER_TEXT: 以后回答简短一点，先给我修改稿
 OUTPUT: {"profile_updates":[{"action":"upsert","field":"coaching_style","value":"回答简短，先给修改稿","evidence":"回答简短一点，先给我修改稿","interaction_use":true}],"memory_additions":[]}
 
+USER_TEXT: 不要让我重复背景。请直接告诉我职业、经验和目标
+OUTPUT: {"profile_updates":[],"memory_additions":[]}
+
+USER_TEXT: 我正在准备下个月的产品经理英文面试
+OUTPUT: {"profile_updates":[{"action":"upsert","field":"current_goal","value":"准备下个月的产品经理英文面试","evidence":"我正在准备下个月的产品经理英文面试","interaction_use":true}],"memory_additions":[]}
+
+USER_TEXT: 我们测试一个虚构项目，成功指标是周留存达到 35%
+OUTPUT: {"profile_updates":[],"memory_additions":[]}
+
+USER_TEXT: In this mock interview, pretend I run a coffee shop and my goal is 1,000 customers.
+OUTPUT: {"profile_updates":[],"memory_additions":[]}
+
 USER_TEXT: 我是女性，在对话中请称呼我为女士
 OUTPUT: {"profile_updates":[{"action":"upsert","field":"gender","value":"女性","evidence":"我是女性","interaction_use":true},{"action":"upsert","field":"form_of_address","value":"女士","evidence":"请称呼我为女士","interaction_use":true}],"memory_additions":[]}
+
+USER_TEXT: 我是女性
+OUTPUT: {"profile_updates":[],"memory_additions":[]}
 
 USER_TEXT: 我朋友叫小花
 OUTPUT: {"profile_updates":[],"memory_additions":[]}
@@ -251,22 +266,22 @@ func mapProfileUpdate(
 	switch update.Field {
 	case profilePreferredName:
 		candidate.Type = TypeProfile
-		candidate.CanonicalKey = "profile.preferred_name"
+		candidate.CanonicalKey = CanonicalProfilePreferredName
 	case profileFormOfAddress:
 		candidate.Type = TypePreference
-		candidate.CanonicalKey = "preference.form_of_address"
+		candidate.CanonicalKey = CanonicalPreferenceFormOfAddress
 	case profileGender:
 		candidate.Type = TypeProfile
-		candidate.CanonicalKey = "profile.gender"
+		candidate.CanonicalKey = CanonicalProfileGender
 	case profileOccupation:
 		candidate.Type = TypeProfile
-		candidate.CanonicalKey = "career.occupation"
+		candidate.CanonicalKey = CanonicalCareerOccupation
 	case profileExperience:
 		candidate.Type = TypeProfile
-		candidate.CanonicalKey = "career.experience_years"
+		candidate.CanonicalKey = CanonicalCareerExperienceYears
 	case profileCoachingStyle:
 		candidate.Type = TypePreference
-		candidate.CanonicalKey = "coaching.style"
+		candidate.CanonicalKey = CanonicalCoachingStyle
 	case profileCurrentGoal:
 		candidate.Type = TypeGoal
 		candidate.CanonicalKey = "goal.current"

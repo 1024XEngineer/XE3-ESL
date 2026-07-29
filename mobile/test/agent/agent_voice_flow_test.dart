@@ -5,6 +5,7 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_controller.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/conversation/conversation.dart';
@@ -100,7 +101,7 @@ void main() {
       final voiceBubble = find.byKey(Key('agent-message-${voiceMessage.id}'));
       final voiceDecoration =
           tester.widget<Container>(voiceBubble).decoration! as BoxDecoration;
-      expect(voiceDecoration.color, const Color(0xFFE7E7E3));
+      expect(voiceDecoration.color, SpeakUpDesign.primaryMuted);
       expect(tester.getSize(voiceBubble).height, lessThan(140));
       expect(
         find.byKey(Key('agent-user-voice-play-${voiceMessage.id}')),
@@ -270,9 +271,20 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.byKey(const Key('no-focused-conversation-home')),
-        findsOneWidget,
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
+            .enabled,
+        isTrue,
       );
 
+      await tester.enterText(
+        find.byKey(const Key('agent-composer-field')),
+        'Keep this typed draft',
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
       await tester.pump();
 
@@ -284,6 +296,13 @@ void main() {
       );
       await controller.voiceController?.cancel();
       await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
+            .controller
+            ?.text,
+        'Keep this typed draft',
+      );
     },
   );
 

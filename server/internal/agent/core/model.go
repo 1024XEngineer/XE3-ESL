@@ -183,27 +183,40 @@ type ContextMemorySource struct {
 	RetrievalPolicyVersion string  `json:"retrieval_policy_version"`
 }
 
+type ContextSummarySource struct {
+	CheckpointID           string `json:"checkpoint_id"`
+	SourceFromSequence     int64  `json:"source_from_sequence"`
+	CoveredThroughSequence int64  `json:"covered_through_sequence"`
+	PolicyVersion          string `json:"policy_version"`
+	PromptVersion          string `json:"prompt_version"`
+	Provider               string `json:"provider"`
+	Model                  string `json:"model"`
+}
+
 type ContextManifest struct {
-	RunID                      string
-	OwnerID                    string
-	ThreadID                   string
-	InputMessageID             string
-	ActiveMatterID             string
-	ActiveMatterVersion        int64
-	InstructionVersion         string
-	MemoryContextPolicyVersion string
-	SelectedMemories           []ContextMemorySource
-	SelectedMessages           []ContextMessageSource
-	OmittedMessageCount        int
-	TrimReason                 string
-	MaxInputCharacters         int
-	UsedInputCharacters        int
-	RequestedProvider          string
-	RequestedModel             string
-	MaxOutputTokens            int
-	ExposedTools               []string
-	ToolSchemaHashes           map[string]string
-	CreatedAt                  time.Time
+	RunID                       string
+	OwnerID                     string
+	ThreadID                    string
+	InputMessageID              string
+	ActiveMatterID              string
+	ActiveMatterVersion         int64
+	InstructionVersion          string
+	MemoryContextPolicyVersion  string
+	SelectedMemories            []ContextMemorySource
+	SummaryContextPolicyVersion string
+	SummaryContextStatus        string
+	SelectedSummary             *ContextSummarySource
+	SelectedMessages            []ContextMessageSource
+	OmittedMessageCount         int
+	TrimReason                  string
+	MaxInputCharacters          int
+	UsedInputCharacters         int
+	RequestedProvider           string
+	RequestedModel              string
+	MaxOutputTokens             int
+	ExposedTools                []string
+	ToolSchemaHashes            map[string]string
+	CreatedAt                   time.Time
 }
 
 type RunConfiguration struct {

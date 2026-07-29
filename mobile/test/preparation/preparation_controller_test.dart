@@ -36,6 +36,22 @@ void main() {
     },
   );
 
+  test(
+    'selects the interview specialty configuration without another prompt',
+    () async {
+      final controller = PreparationController(client: _FixtureCatalogClient());
+      addTearDown(controller.dispose);
+
+      await controller.loadIfNeeded();
+      await controller.selectScenario(_scenario);
+
+      expect(controller.selectRecommendedConfiguration(), isTrue);
+      expect(controller.selectedRole, _technicalRole);
+      expect(controller.selectedOption, _technicalFocus);
+      expect(controller.hasCompleteSelection, isTrue);
+    },
+  );
+
   test('retries the failed directory request', () async {
     final client = _FailOnceCatalogClient();
     final controller = PreparationController(client: client);

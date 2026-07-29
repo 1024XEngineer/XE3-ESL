@@ -222,6 +222,50 @@ final class PreparationController extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool selectRecommendedConfiguration() {
+    if (_disposed ||
+        _selectedScenario == null ||
+        _detail == null ||
+        _roles.isEmpty) {
+      return false;
+    }
+    final preferredRoleType = switch (_selectedScenario!.id) {
+      'scn_interview_recruiter_screening' ||
+      'scn_interview_self_introduction' => 'HR_INTERVIEWER',
+      'scn_interview_behavioral' => 'BEHAVIORAL_INTERVIEWER',
+      'scn_interview_system_design_spoken' => 'SYSTEM_DESIGN_INTERVIEWER',
+      'scn_interview_hiring_manager' => 'HIRING_MANAGER',
+      _ => 'TECHNICAL_INTERVIEWER',
+    };
+    final role =
+        _roles.where((item) => item.type == preferredRoleType).firstOrNull ??
+        _roles.first;
+    _selectedRole = role;
+    final compatibleOptions = _detail!.options
+        .where(
+          (option) =>
+              option.type == PreparationOptionType.fullSimulation ||
+              option.roleId == role.id,
+        )
+        .toList(growable: false);
+    _selectedOption =
+        compatibleOptions
+            .where(
+              (option) =>
+                  option.type == PreparationOptionType.focus &&
+                  option.roleId == role.id,
+            )
+            .firstOrNull ??
+        compatibleOptions
+            .where(
+              (option) => option.type == PreparationOptionType.fullSimulation,
+            )
+            .firstOrNull ??
+        compatibleOptions.firstOrNull;
+    notifyListeners();
+    return hasCompleteSelection;
+  }
+
   void showScenarioList() {
     if (_disposed) {
       return;

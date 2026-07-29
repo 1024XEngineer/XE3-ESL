@@ -10,6 +10,8 @@ import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
 import 'package:speakup/features/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/preparation/practice_workspace_controller.dart';
 import 'package:speakup/features/preparation/wire_preparation_client.dart';
 import 'package:speakup/features/preparation/wire_job_preparation_client.dart';
 import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
@@ -83,6 +85,7 @@ ProductionAppDependencies createProductionAppDependencies({
   PracticeMediaClient? practiceMediaClient,
   PracticeAudioPlayer? practiceAudioPlayer,
   JobPreparationDraftStore? jobPreparationDraftStore,
+  PracticeLaunchRecordStore? practiceLaunchRecordStore,
   SessionStore? sessionStore,
 }) {
   late final AuthController authController;
@@ -167,6 +170,11 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: preparationTransport,
     ),
   );
+  final practiceWorkspaceController = PracticeWorkspaceController(
+    agentController: agentController,
+    recordStore:
+        practiceLaunchRecordStore ?? const SecurePracticeLaunchRecordStore(),
+  );
   final preparationLaunchController = PreparationLaunchController(
     client: WirePreparationLaunchClient(
       baseUri: baseUri,
@@ -180,6 +188,7 @@ ProductionAppDependencies createProductionAppDependencies({
           },
       transport: preparationLaunchTransport,
     ),
+    workspaceController: practiceWorkspaceController,
     contextProvider: () {
       final threadId = agentController.threadId;
       final matterId = agentController.activeMatter?.id;
@@ -231,6 +240,7 @@ ProductionAppDependencies createProductionAppDependencies({
     ),
     draftStore:
         jobPreparationDraftStore ?? const SecureJobPreparationDraftStore(),
+    workspaceController: practiceWorkspaceController,
     threadIdProvider: () => agentController.threadId,
     matterActivator:
         ({
@@ -268,10 +278,10 @@ ProductionAppDependencies createProductionAppDependencies({
     profileClient: identityClient,
     sessionStore: sessionStore ?? const IosKeychainSessionStore(),
     clearPrivateState: () async {
+      await preparationLaunchController.clearPrivateState();
       await Future.wait<void>([
         agentController.clearPrivateState(),
         preparationController.clearPrivateState(),
-        preparationLaunchController.clearPrivateState(),
         jobPreparationController.clearPrivateState(),
         reviewHistoryController.clearPrivateState(),
       ]);

@@ -39,12 +39,21 @@ abstract interface class PracticeClient {
   });
 }
 
+abstract interface class PracticeLifecycleClient {
+  Future<PracticeSessionLifecycle> endEarly({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  });
+}
+
 /// Compatibility adapter for explicit Fake previews and pre-#87 test doubles.
 ///
 /// Production composition injects [WirePracticeClient]. This adapter keeps the
 /// old Fake surface usable without letting its Thread-shaped contract leak
 /// into the production Controller state.
-final class LegacyAgentPracticeClient implements PracticeClient {
+final class LegacyAgentPracticeClient
+    implements PracticeClient, PracticeLifecycleClient {
   LegacyAgentPracticeClient(this._client);
 
   final AgentClient _client;
@@ -96,6 +105,7 @@ final class LegacyAgentPracticeClient implements PracticeClient {
         );
         return _snapshot = PracticeSessionSnapshot(
           sessionId: snapshot.sessionId,
+          sessionVersion: snapshot.sessionVersion,
           matter: snapshot.matter,
           completedTurns: snapshot.completedTurns,
           turnLimit: snapshot.turnLimit,
@@ -144,6 +154,7 @@ final class LegacyAgentPracticeClient implements PracticeClient {
           );
     return _snapshot = PracticeSessionSnapshot(
       sessionId: 'legacy-session-${matter.id}',
+      sessionVersion: legacy.completedTurns + 1,
       matter: matter,
       completedTurns: legacy.completedTurns,
       turnLimit: legacy.turnLimit,
@@ -166,6 +177,7 @@ final class LegacyAgentPracticeClient implements PracticeClient {
     return PracticeStartResult(
       snapshot: _snapshot = PracticeSessionSnapshot(
         sessionId: sessionId,
+        sessionVersion: 1,
         matter: activeMatter,
         completedTurns: 0,
         turnLimit: 3,
@@ -254,6 +266,7 @@ final class LegacyAgentPracticeClient implements PracticeClient {
     }
     _snapshot = PracticeSessionSnapshot(
       sessionId: sessionId,
+      sessionVersion: (snapshot.sessionVersion ?? 1) + 1,
       matter: snapshot.matter,
       completedTurns: turnNumber,
       turnLimit: snapshot.turnLimit,
@@ -270,6 +283,7 @@ final class LegacyAgentPracticeClient implements PracticeClient {
       completedTurns: turnNumber,
       turnLimit: snapshot.turnLimit,
       sessionCompleted: completed,
+      sessionVersion: _snapshot!.sessionVersion,
       nextQuestion: nextQuestion,
       review: review,
     );
@@ -300,9 +314,31 @@ final class LegacyAgentPracticeClient implements PracticeClient {
       idempotencyKey: idempotencyKey,
     );
   }
+
+  @override
+  Future<PracticeSessionLifecycle> endEarly({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  }) async {
+    final snapshot = _snapshot;
+    if (snapshot == null ||
+        snapshot.sessionId != sessionId ||
+        snapshot.sessionVersion != expectedSessionVersion ||
+        idempotencyKey.trim().isEmpty) {
+      throw StateError('Legacy practice cannot be ended.');
+    }
+    _snapshot = null;
+    return PracticeSessionLifecycle(
+      sessionId: sessionId,
+      status: PracticeSessionLifecycleStatus.endedEarly,
+      version: expectedSessionVersion + 1,
+    );
+  }
 }
 
-final class FakePracticeClient implements PracticeClient {
+final class FakePracticeClient
+    implements PracticeClient, PracticeLifecycleClient {
   FakePracticeClient({this.delay = Duration.zero});
 
   final Duration delay;
@@ -341,6 +377,7 @@ final class FakePracticeClient implements PracticeClient {
     final sessionId = 'practice-session-$generation-${scene.id}';
     final snapshot = PracticeSessionSnapshot(
       sessionId: sessionId,
+      sessionVersion: 1,
       matter: activeMatter,
       completedTurns: 0,
       turnLimit: 3,
@@ -438,12 +475,14 @@ final class FakePracticeClient implements PracticeClient {
       completedTurns: completedTurns,
       turnLimit: snapshot.turnLimit,
       sessionCompleted: completed,
+      sessionVersion: (snapshot.sessionVersion ?? 1) + 1,
       nextQuestion: nextQuestion,
       review: review,
     );
     _confirmations[key] = confirmation;
     _snapshot = PracticeSessionSnapshot(
       sessionId: sessionId,
+      sessionVersion: confirmation.sessionVersion,
       matter: snapshot.matter,
       completedTurns: completedTurns,
       turnLimit: snapshot.turnLimit,
@@ -452,6 +491,29 @@ final class FakePracticeClient implements PracticeClient {
       review: review,
     );
     return confirmation;
+  }
+
+  @override
+  Future<PracticeSessionLifecycle> endEarly({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  }) async {
+    final generation = _generation;
+    await _wait(generation);
+    final snapshot = _snapshot;
+    if (snapshot == null ||
+        snapshot.sessionId != sessionId ||
+        snapshot.sessionVersion != expectedSessionVersion ||
+        idempotencyKey.trim().isEmpty) {
+      throw StateError('Fake practice cannot be ended.');
+    }
+    _snapshot = null;
+    return PracticeSessionLifecycle(
+      sessionId: sessionId,
+      status: PracticeSessionLifecycleStatus.endedEarly,
+      version: expectedSessionVersion + 1,
+    );
   }
 
   @override

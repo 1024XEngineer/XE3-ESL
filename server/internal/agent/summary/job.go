@@ -10,8 +10,9 @@ import (
 
 const (
 	TriggerPolicyV1          = "summary-trigger-v1"
+	TriggerPolicyV2          = "summary-trigger-v2"
 	DefaultTriggerMessages   = int64(40)
-	DefaultRetainedMessages  = int64(12)
+	DefaultRetainedMessages  = int64(20)
 	DefaultWorkerMaxAttempts = 3
 )
 

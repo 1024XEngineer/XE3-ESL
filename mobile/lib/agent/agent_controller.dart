@@ -90,11 +90,15 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   String? _nextMessageCursor;
   String? _threadHistoryErrorMessage;
   _ThreadHistoryRecovery? _threadHistoryRecovery;
+  String? _pendingFocusThreadId;
+  int _draftThreadRecoveryGeneration = 0;
   bool _loadingMoreThreads = false;
   bool _loadingEarlierMessages = false;
   bool _threadTransitionInFlight = false;
   int _threadTransitionGeneration = 0;
   String? _practiceSessionId;
+  int? _practiceSessionVersion;
+  String? _endPracticeClientId;
   PracticeQuestion? _currentQuestion;
   TranscriptionCandidate? _candidate;
   String? _activeConfirmationId;
@@ -139,9 +143,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool get isLoadingMoreThreads => _loadingMoreThreads;
   String? get threadHistoryErrorMessage => _threadHistoryErrorMessage;
   bool get canRetryThreadHistory => _threadHistoryRecovery != null;
+  bool get hasPendingThreadCreationRecovery =>
+      _pendingFocusThreadId != null ||
+      _threadHistoryRecovery == _ThreadHistoryRecovery.create;
+  int get draftThreadRecoveryGeneration => _draftThreadRecoveryGeneration;
   bool get hasEarlierMessages => _nextMessageCursor != null;
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get practiceSessionId => _practiceSessionId;
+  int? get practiceSessionVersion => _practiceSessionVersion;
   String? get questionId => _currentQuestion?.id;
   String? get candidateId => _candidate?.id;
   AgentMatter? get activeMatter => _activeMatter;
@@ -347,15 +356,20 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (!_isOperationCurrent(fence)) {
       return;
     }
-    _threadId = thread.threadId;
-    _currentThreadSummary =
+    if (practice != null) {
+      _validatePracticeSnapshot(practice);
+    }
+    final messages = List<AgentMessage>.from(thread.messages);
+    final resolvedSummary =
         summary ?? _threadSummaryFromSnapshot(thread) ?? _currentThreadSummary;
-    _nextMessageCursor = thread.nextMessageCursor;
-    _messages = List<AgentMessage>.from(thread.messages);
-    await _voiceController?.bindThread(thread.threadId, messages: _messages);
+    await _voiceController?.bindThread(thread.threadId, messages: messages);
     if (!_isOperationCurrent(fence)) {
       return;
     }
+    _threadId = thread.threadId;
+    _currentThreadSummary = resolvedSummary;
+    _nextMessageCursor = thread.nextMessageCursor;
+    _messages = messages;
     _applyPracticeSnapshot(practice);
     if (practice == null) {
       _activeMatter = thread.activeMatter;
@@ -382,6 +396,29 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<bool> createThread() async {
+    if (client is! AgentThreadHistoryClient || _disposed) {
+      return false;
+    }
+    final pendingFocusThreadId = _pendingFocusThreadId;
+    if (pendingFocusThreadId != null) {
+      return selectThread(pendingFocusThreadId);
+    }
+    return _createNewThread();
+  }
+
+  /// Creates a new Thread for a caller that requires an isolated workspace.
+  ///
+  /// Unlike the ordinary conversation entry point, this never consumes a
+  /// pending Home draft recovery. The caller must let that recovery settle
+  /// before acquiring a dedicated Thread.
+  Future<bool> createIndependentThread() async {
+    if (hasPendingThreadCreationRecovery) {
+      return false;
+    }
+    return _createNewThread();
+  }
+
+  Future<bool> _createNewThread() async {
     if (client is! AgentThreadHistoryClient || _disposed) {
       return false;
     }
@@ -437,6 +474,13 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     String? selectedThreadId,
     required bool createNew,
   }) async {
+    final recoveryAtStart = _threadHistoryRecovery;
+    final pendingFocusAtStart = _pendingFocusThreadId;
+    final recoveringDraftThread =
+        _threadId == null &&
+        ((createNew && recoveryAtStart == _ThreadHistoryRecovery.create) ||
+            (recoveryAtStart == _ThreadHistoryRecovery.focus &&
+                selectedThreadId == pendingFocusAtStart));
     _epoch++;
     _practiceGeneration++;
     _cancelRecordingLimit();
@@ -451,6 +495,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
       _threadHistoryErrorMessage = null;
     }
+    AgentThreadSummary? summary;
+    var targetThreadId = selectedThreadId;
     _setBusy(true);
     try {
       await _voiceController?.bindThread(null);
@@ -461,15 +507,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       if (!_isOperationCurrent(fence)) {
         return false;
       }
-      AgentThreadSummary? summary;
-      var targetThreadId = selectedThreadId;
       if (createNew) {
         summary = await historyClient.createThread();
         _validateThreadSummary(summary);
         if (!_isOperationCurrent(fence)) {
           return false;
         }
-        _threadHistoryRecovery = null;
+        _pendingFocusThreadId = summary.id;
+        _threadHistoryRecovery = _ThreadHistoryRecovery.focus;
         _mergeThreadSummary(summary, placeFirst: true);
         notifyListeners();
         targetThreadId = summary.id;
@@ -496,7 +541,19 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         _mergeThreadSummary(canonicalSummary, placeFirst: createNew);
         _currentThreadSummary = canonicalSummary;
       }
-      if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
+      final resolvedPendingFocus = targetThreadId == _pendingFocusThreadId;
+      if (resolvedPendingFocus) {
+        _pendingFocusThreadId = null;
+      }
+      if (recoveringDraftThread) {
+        _draftThreadRecoveryGeneration++;
+      }
+      if (resolvedPendingFocus ||
+          _threadHistoryRecovery != _ThreadHistoryRecovery.create) {
+        if (_threadHistoryRecovery == _ThreadHistoryRecovery.focus) {
+          _pendingFocusThreadId = null;
+        }
+        _threadHistoryRecovery = null;
         _threadHistoryErrorMessage = null;
       }
       return true;
@@ -505,8 +562,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         if (createNew &&
             error is AgentClientException &&
             error.errorCode == 'thread_creation_ambiguous') {
+          _pendingFocusThreadId = null;
           _threadHistoryRecovery = _ThreadHistoryRecovery.create;
           _threadHistoryErrorMessage = '新对话的创建结果尚未确认。请重试恢复；系统不会重复创建。';
+        } else if (targetThreadId != null &&
+            (createNew || targetThreadId == _pendingFocusThreadId)) {
+          _pendingFocusThreadId = targetThreadId;
+          _threadHistoryRecovery = _ThreadHistoryRecovery.focus;
+          _threadHistoryErrorMessage = '新对话已创建，但暂时无法打开。重试不会重复创建。';
         } else if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
           _threadHistoryErrorMessage = createNew
               ? '暂时无法创建新对话，请稍后再试。'
@@ -566,6 +629,11 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       await _voiceController?.bindThread(null);
       if (!_isOperationCurrent(fence)) {
         return;
+      }
+      _pendingFocusThreadId = null;
+      if (_threadHistoryRecovery == _ThreadHistoryRecovery.focus) {
+        _threadHistoryRecovery = null;
+        _threadHistoryErrorMessage = null;
       }
       _resetSelectedThreadPresentation();
       _initialized = true;
@@ -898,13 +966,16 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (text.isEmpty) {
       return false;
     }
-    final accountFence = _captureOperationFence();
+    final accountEpoch = _epoch;
     await _ensureInitialized();
-    if (!_isOperationCurrent(accountFence) ||
-        _threadId == null ||
-        isBusy ||
-        _disposed) {
+    if (!_isCurrent(accountEpoch) || isBusy || _disposed) {
       return false;
+    }
+    if (_threadId == null) {
+      final created = await createThread();
+      if (!created || _threadId == null || _disposed) {
+        return false;
+      }
     }
     final retry = _retry;
     final operation = retry is _TextRetry && retry.text == text
@@ -971,6 +1042,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     switch (_threadHistoryRecovery) {
       case _ThreadHistoryRecovery.create:
         await createThread();
+        return;
+      case _ThreadHistoryRecovery.focus:
+        final threadId = _pendingFocusThreadId;
+        if (threadId != null) {
+          await selectThread(threadId);
+        }
         return;
       case _ThreadHistoryRecovery.refresh:
         await _retryThreadHistoryRefresh();
@@ -1175,6 +1252,93 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       await audioPlayer?.stop();
     } catch (_) {
       // The private UI is already cleared; native cleanup remains best effort.
+    }
+  }
+
+  Future<bool> prepareToLeavePractice() async {
+    if (_disposed ||
+        _practiceRequestInFlight ||
+        _threadTransitionInFlight ||
+        (_voiceController?.hasActiveWorkflow ?? false)) {
+      return false;
+    }
+    final state = _recordingState;
+    if (state == PracticeRecordingState.starting ||
+        state == PracticeRecordingState.recording ||
+        state == PracticeRecordingState.awaitingConfirmation) {
+      _practiceGeneration++;
+      _cancelRecordingLimit();
+      await _recorderStartFuture;
+      if (_disposed || _practiceRequestInFlight) {
+        return false;
+      }
+      await recorder.discardCurrent();
+      _candidate = null;
+      _activeConfirmationId = null;
+      _activeTextAnswer = null;
+      _recordingState = PracticeRecordingState.idle;
+      _errorMessage = null;
+      notifyListeners();
+    }
+    await stopPracticeAudio();
+    return !_disposed && !_practiceRequestInFlight;
+  }
+
+  Future<bool> endActivePracticeEarly() async {
+    final practice = practiceClient;
+    final PracticeLifecycleClient? lifecycle =
+        practice is PracticeLifecycleClient
+        ? practice as PracticeLifecycleClient
+        : null;
+    final sessionId = _practiceSessionId;
+    final sessionVersion = _practiceSessionVersion;
+    if (lifecycle == null ||
+        sessionId == null ||
+        sessionVersion == null ||
+        !hasActivePractice ||
+        isBusy ||
+        _disposed) {
+      return false;
+    }
+    final fence = _captureOperationFence(
+      threadId: _threadId,
+      practiceSessionId: sessionId,
+    );
+    final operationId = _endPracticeClientId ??= _newClientId('practice-end');
+    _setBusy(true);
+    _errorMessage = null;
+    try {
+      await stopPracticeAudio();
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      final result = await lifecycle.endEarly(
+        sessionId: sessionId,
+        expectedSessionVersion: sessionVersion,
+        idempotencyKey: operationId,
+      );
+      if (!_isOperationCurrent(fence) ||
+          result.sessionId != sessionId ||
+          result.status != PracticeSessionLifecycleStatus.endedEarly ||
+          result.version <= sessionVersion) {
+        throw StateError('Practice end response did not match the session.');
+      }
+      _applyPracticeSnapshot(null);
+      _endPracticeClientId = null;
+      return true;
+    } catch (error) {
+      if (_isOperationCurrent(fence)) {
+        _errorMessage =
+            error is AgentClientException &&
+                error.kind == AgentClientFailureKind.authenticationRequired
+            ? '登录状态已失效，请重新登录后继续。'
+            : '暂时无法结束当前练习，进度仍已保留，可以重试。';
+      }
+      return false;
+    } finally {
+      if (_isCurrent(fence.epoch)) {
+        _setBusy(false);
+      }
     }
   }
 
@@ -1398,6 +1562,35 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  Future<void> finishRecordingGesture() async {
+    if (_recordingState == PracticeRecordingState.starting) {
+      await _recorderStartFuture;
+    }
+    if (_recordingState == PracticeRecordingState.recording) {
+      await stopRecording();
+    }
+  }
+
+  Future<void> cancelRecording() async {
+    if (_recordingState != PracticeRecordingState.starting &&
+        _recordingState != PracticeRecordingState.recording) {
+      return;
+    }
+    _practiceGeneration++;
+    _cancelRecordingLimit();
+    await _recorderStartFuture;
+    if (_disposed) {
+      return;
+    }
+    await recorder.discardCurrent();
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+    _recordingState = PracticeRecordingState.idle;
+    _errorMessage = null;
+    notifyListeners();
+  }
+
   Future<void> _stopRecording({
     required PracticeClient practice,
     required String sessionId,
@@ -1582,6 +1775,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _completedTurns = confirmation.completedTurns;
     _turnLimit = confirmation.turnLimit;
     _sessionCompleted = confirmation.sessionCompleted;
+    _practiceSessionVersion =
+        confirmation.sessionVersion ?? _practiceSessionVersion;
+    _endPracticeClientId = null;
     _currentQuestion = confirmation.nextQuestion;
     _review = confirmation.review;
     final audioAssetId = confirmation.audioAssetId;
@@ -1679,11 +1875,15 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _nextMessageCursor = null;
     _threadHistoryErrorMessage = null;
     _threadHistoryRecovery = null;
+    _pendingFocusThreadId = null;
+    _draftThreadRecoveryGeneration = 0;
     _loadingMoreThreads = false;
     _loadingEarlierMessages = false;
     _threadTransitionGeneration++;
     _threadTransitionInFlight = false;
     _practiceSessionId = null;
+    _practiceSessionVersion = null;
+    _endPracticeClientId = null;
     _currentQuestion = null;
     _candidate = null;
     _activeConfirmationId = null;
@@ -1843,6 +2043,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(audioPlayer?.stop());
     if (snapshot == null) {
       _practiceSessionId = null;
+      _practiceSessionVersion = null;
+      _endPracticeClientId = null;
       _currentQuestion = null;
       _activeMatter = null;
       _completedTurns = 0;
@@ -1857,6 +2059,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final mayPreserveKnownRecordings =
         preserveKnownRecordings && snapshot.sessionId == _practiceSessionId;
     _practiceSessionId = snapshot.sessionId;
+    _practiceSessionVersion = snapshot.sessionVersion;
+    _endPracticeClientId = null;
     _currentQuestion = snapshot.currentQuestion;
     _activeMatter = snapshot.matter;
     _completedTurns = snapshot.completedTurns;
@@ -2256,6 +2460,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         snapshot.turnLimit < 1 ||
         snapshot.turnLimit > 6 ||
         snapshot.completedTurns > snapshot.turnLimit ||
+        (snapshot.sessionVersion != null && snapshot.sessionVersion! < 1) ||
         (!snapshot.sessionCompleted && snapshot.currentQuestion == null) ||
         (snapshot.currentQuestion != null &&
             snapshot.currentQuestion!.sessionId != snapshot.sessionId) ||
@@ -2312,6 +2517,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         confirmation.turnLimit < 1 ||
         confirmation.turnLimit > 6 ||
         confirmation.completedTurns > confirmation.turnLimit ||
+        (confirmation.sessionVersion != null &&
+            confirmation.sessionVersion! < 1) ||
         (!confirmation.sessionCompleted && confirmation.nextQuestion == null) ||
         (confirmation.nextQuestion != null &&
             confirmation.nextQuestion!.sessionId != confirmation.sessionId) ||
@@ -2363,7 +2570,7 @@ sealed class _AgentRetry {
   const _AgentRetry();
 }
 
-enum _ThreadHistoryRecovery { create, refresh }
+enum _ThreadHistoryRecovery { create, focus, refresh }
 
 final class _RestoreRetry extends _AgentRetry {
   const _RestoreRetry();

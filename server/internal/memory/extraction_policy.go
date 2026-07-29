@@ -103,11 +103,17 @@ func (policy *ExtractionPolicy) decideCandidate(
 	if !strings.Contains(source.UserText, candidate.Evidence) {
 		return MemoryDecision{}, RejectionEvidenceMismatch
 	}
+	if candidate.Action == CandidateUpsert &&
+		(contextualOrHypothetical(source.UserText) ||
+			contextualOrHypothetical(candidate.Evidence)) {
+		return MemoryDecision{}, RejectionContextualOrHypothetical
+	}
 	if sensitiveCandidate(candidate) {
 		return MemoryDecision{}, RejectionSensitiveCandidate
 	}
 	if genderCandidate(candidate) &&
-		!candidate.InteractionUse {
+		(!candidate.InteractionUse ||
+			!genderInteractionRequested(source.UserText)) {
 		return MemoryDecision{}, RejectionGenderInteractionUseRequired
 	}
 	matterID := ""
@@ -118,6 +124,10 @@ func (policy *ExtractionPolicy) decideCandidate(
 		matterID = source.MatterID
 	} else if candidate.Scope != ScopeUser {
 		return MemoryDecision{}, RejectionInvalidScope
+	}
+	if candidate.Action == CandidateUpsert &&
+		!durableCandidate(candidate) {
+		return MemoryDecision{}, RejectionInsufficientDurability
 	}
 	decision := MemoryDecision{
 		Action:       candidate.Action,
@@ -142,6 +152,118 @@ func (policy *ExtractionPolicy) decideCandidate(
 		return MemoryDecision{}, RejectionInvalidDecision
 	}
 	return decision, ""
+}
+
+func contextualOrHypothetical(evidence string) bool {
+	normalized := strings.ToLower(evidence)
+	for _, marker := range []string{
+		"虚构",
+		"假设",
+		"假想",
+		"测试一下",
+		"用于测试",
+		"测试内容",
+		"测试项目",
+		"模拟项目",
+		"角色扮演",
+		"fictional",
+		"hypothetical",
+		"test scenario",
+		"test project",
+		"in this mock interview",
+		"role-play",
+		"roleplay",
+		"pretend ",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func genderInteractionRequested(userText string) bool {
+	normalized := strings.ToLower(userText)
+	for _, marker := range []string{
+		"称呼我",
+		"叫我",
+		"对话中",
+		"交流中",
+		"交流时",
+		"和我互动",
+		"根据我的性别",
+		"address me",
+		"refer to me",
+		"in conversation",
+		"when we talk",
+		"use my gender",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func durableCandidate(candidate ExtractedCandidate) bool {
+	switch {
+	case candidate.Type == TypeGoal &&
+		candidate.CanonicalKey == "goal.current":
+		return containsDurabilityMarker(candidate.Evidence, []string{
+			"我的目标",
+			"我正在",
+			"我正",
+			"我要",
+			"我想",
+			"我希望",
+			"我准备",
+			"我计划",
+			"我打算",
+			"my goal",
+			"i am preparing",
+			"i'm preparing",
+			"i plan",
+			"i want",
+			"i aim",
+			"i'm working toward",
+			"i am working toward",
+		})
+	case candidate.Type == TypePreference &&
+		candidate.CanonicalKey == "coaching.style":
+		return containsDurabilityMarker(candidate.Evidence, []string{
+			"以后",
+			"今后",
+			"每次",
+			"一直",
+			"长期",
+			"从现在开始",
+			"之后都",
+			"我偏好",
+			"我习惯",
+			"请始终",
+			"总是",
+			"from now on",
+			"in the future",
+			"going forward",
+			"every time",
+			"always",
+			"i prefer",
+			"my preference",
+			"please consistently",
+		})
+	default:
+		return true
+	}
+}
+
+func containsDurabilityMarker(evidence string, markers []string) bool {
+	normalized := strings.ToLower(evidence)
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func genderCandidate(candidate ExtractedCandidate) bool {

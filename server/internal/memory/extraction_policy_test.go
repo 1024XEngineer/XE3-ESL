@@ -104,7 +104,7 @@ func TestExtractionPolicyRequiresMatterAndGenderUse(t *testing.T) {
 	}
 	source := validCompletedRunSource()
 	source.MatterID = ""
-	source.UserText = "I am a woman preparing for a PM interview."
+	source.UserText = "I am a woman. Please address me as Ms. I am preparing for a PM interview."
 	output := ExtractionOutput{Candidates: []ExtractedCandidate{
 		{
 			Action:       CandidateUpsert,
@@ -193,6 +193,171 @@ func TestExtractionPolicyRejectsSensitiveEvidence(t *testing.T) {
 		}},
 	) {
 		t.Fatalf("sensitive evidence rejections = %#v", batch.Rejections)
+	}
+}
+
+func TestExtractionPolicyRejectsContextualFactsAndTransientPreferences(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	policy, err := NewExtractionPolicy(
+		"memory-policy-v2",
+		30*24*time.Hour,
+		time.Now,
+	)
+	if err != nil {
+		t.Fatalf("NewExtractionPolicy: %v", err)
+	}
+	tests := []struct {
+		name       string
+		userText   string
+		candidate  ExtractedCandidate
+		wantReason CandidateRejectionReason
+	}{
+		{
+			name:     "fictional project with narrow evidence",
+			userText: "我们测试一个虚构项目，成功指标是周留存达到 35%",
+			candidate: ExtractedCandidate{
+				Action:       CandidateUpsert,
+				Type:         TypeGoal,
+				CanonicalKey: "goal.current",
+				Content:      "周留存达到 35%",
+				Scope:        ScopeUser,
+				Evidence:     "周留存达到 35%",
+			},
+			wantReason: RejectionContextualOrHypothetical,
+		},
+		{
+			name:     "one turn answer request",
+			userText: "不要让我重复背景。请直接告诉我职业、经验和目标",
+			candidate: ExtractedCandidate{
+				Action:         CandidateUpsert,
+				Type:           TypePreference,
+				CanonicalKey:   "coaching.style",
+				Content:        "直接回答职业、经验和目标",
+				Scope:          ScopeUser,
+				Evidence:       "请直接告诉我职业、经验和目标",
+				InteractionUse: true,
+			},
+			wantReason: RejectionInsufficientDurability,
+		},
+		{
+			name:     "project metric is not a personal goal",
+			userText: "成功指标是周留存达到 35%",
+			candidate: ExtractedCandidate{
+				Action:       CandidateUpsert,
+				Type:         TypeGoal,
+				CanonicalKey: "goal.current",
+				Content:      "周留存达到 35%",
+				Scope:        ScopeUser,
+				Evidence:     "成功指标是周留存达到 35%",
+			},
+			wantReason: RejectionInsufficientDurability,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			source := validCompletedRunSource()
+			source.MatterID = ""
+			source.UserText = test.userText
+			batch, decideErr := policy.Decide(
+				source,
+				ExtractionOutput{
+					Candidates: []ExtractedCandidate{test.candidate},
+				},
+			)
+			if decideErr != nil {
+				t.Fatalf("Decide: %v", decideErr)
+			}
+			want := []CandidateRejection{{
+				CandidateIndex: 0,
+				Reason:         test.wantReason,
+			}}
+			if len(batch.Decisions) != 0 ||
+				!equalCandidateRejections(batch.Rejections, want) {
+				t.Fatalf("batch = %#v, want rejection %#v", batch, want)
+			}
+		})
+	}
+}
+
+func TestExtractionPolicyAcceptsDurableGoalAndCoachingPreference(t *testing.T) {
+	t.Parallel()
+
+	policy, err := NewExtractionPolicy(
+		"memory-policy-v2",
+		30*24*time.Hour,
+		time.Now,
+	)
+	if err != nil {
+		t.Fatalf("NewExtractionPolicy: %v", err)
+	}
+	source := validCompletedRunSource()
+	source.MatterID = ""
+	source.UserText = "我正在准备产品经理英文面试。以后回答请先给结论。"
+	output := ExtractionOutput{Candidates: []ExtractedCandidate{
+		{
+			Action:       CandidateUpsert,
+			Type:         TypeGoal,
+			CanonicalKey: "goal.current",
+			Content:      "准备产品经理英文面试",
+			Scope:        ScopeUser,
+			Evidence:     "我正在准备产品经理英文面试",
+		},
+		{
+			Action:         CandidateUpsert,
+			Type:           TypePreference,
+			CanonicalKey:   "coaching.style",
+			Content:        "先给结论",
+			Scope:          ScopeUser,
+			Evidence:       "以后回答请先给结论",
+			InteractionUse: true,
+		},
+	}}
+	batch, err := policy.Decide(source, output)
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if len(batch.Decisions) != 2 || len(batch.Rejections) != 0 {
+		t.Fatalf("batch = %#v", batch)
+	}
+}
+
+func TestExtractionPolicyDoesNotTrustGenderInteractionFlagAlone(t *testing.T) {
+	t.Parallel()
+
+	policy, err := NewExtractionPolicy(
+		"memory-policy-v2",
+		30*24*time.Hour,
+		time.Now,
+	)
+	if err != nil {
+		t.Fatalf("NewExtractionPolicy: %v", err)
+	}
+	source := validCompletedRunSource()
+	source.UserText = "我是女性"
+	output := ExtractionOutput{Candidates: []ExtractedCandidate{{
+		Action:         CandidateUpsert,
+		Type:           TypeProfile,
+		CanonicalKey:   "profile.gender",
+		Content:        "女性",
+		Scope:          ScopeUser,
+		Evidence:       "我是女性",
+		InteractionUse: true,
+	}}}
+	batch, err := policy.Decide(source, output)
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	want := []CandidateRejection{{
+		CandidateIndex: 0,
+		Reason:         RejectionGenderInteractionUseRequired,
+	}}
+	if len(batch.Decisions) != 0 ||
+		!equalCandidateRejections(batch.Rejections, want) {
+		t.Fatalf("batch = %#v", batch)
 	}
 }
 
