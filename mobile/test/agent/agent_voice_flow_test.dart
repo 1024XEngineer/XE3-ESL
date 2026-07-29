@@ -200,6 +200,72 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('long press starts Agent recording and release uploads it', (
+    tester,
+  ) async {
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      clientIdFactory: _sequentialIdFactory(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
+    await tester.pumpAndSettle();
+    final voiceController = controller.voiceController!;
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('agent-mic-placeholder'))),
+    );
+    await tester.pump(const Duration(milliseconds: 179));
+    expect(voiceController.state, AgentVoiceComposerState.idle);
+
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(voiceController.state, AgentVoiceComposerState.recording);
+
+    await gesture.up();
+    await _pumpVoiceOperation(tester);
+
+    expect(voiceController.state, AgentVoiceComposerState.awaitingConfirmation);
+    expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
+  });
+
+  testWidgets('upward release cancels Agent recording', (tester) async {
+    final voiceController = AgentVoiceController(
+      client: FakeAgentClient(),
+      recorder: FakeAgentVoiceRecorder(),
+      audioPlayer: FakeAgentVoiceAudioPlayer(),
+      onMessagesCommitted: (_) {},
+      onMessageAudioDeleted: (_, _) {},
+      idFactory: (scope) => '${scope}_1',
+    );
+    addTearDown(voiceController.dispose);
+    await voiceController.bindThread('thread-a');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationPage(
+          onStartVoice: voiceController.startRecording,
+          voiceController: voiceController,
+          onSubmitText: (_) async => true,
+        ),
+      ),
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('agent-mic-placeholder'))),
+    );
+    await tester.pump(const Duration(milliseconds: 180));
+    expect(voiceController.state, AgentVoiceComposerState.recording);
+
+    await gesture.moveBy(const Offset(0, -80));
+    await tester.pump();
+    await gesture.up();
+    await _pumpVoiceOperation(tester);
+
+    expect(voiceController.state, AgentVoiceComposerState.idle);
+    expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
+  });
+
   testWidgets('composer drafts cannot cross the Thread boundary', (
     tester,
   ) async {

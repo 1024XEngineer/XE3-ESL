@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/practice/practice.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
@@ -11,6 +12,44 @@ import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
 
 void main() {
+  testWidgets('short-answer recorder uses tap-to-toggle voice capture', (
+    tester,
+  ) async {
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: _IeltsPracticeClient(initialCompleted: 0),
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final capture = tester.widget<VoiceCaptureControl>(
+      find.byType(VoiceCaptureControl),
+    );
+    expect(capture.mode, VoiceCaptureMode.tapToToggle);
+    expect(find.byKey(const Key('ielts-mock-record')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    await tester.pump();
+
+    expect(controller.recordingState, PracticeRecordingState.recording);
+
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    await tester.pump();
+    await tester.pump();
+  });
+
   testWidgets(
     'Part 1 boundary enters prep, keeps notes, and submits the Part 2 long turn',
     (tester) async {

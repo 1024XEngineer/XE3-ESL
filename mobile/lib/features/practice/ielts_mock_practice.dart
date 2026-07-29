@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 
 const ieltsSpeakingFullMockScenarioId = 'scn_ielts_speaking_full';
@@ -351,21 +352,12 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
   }
 
-  Future<void> _toggleShortRecording() async {
-    final state = widget.controller.recordingState;
-    if (state == PracticeRecordingState.idle) {
-      await widget.controller.startRecording();
-      return;
-    }
-    if (state == PracticeRecordingState.starting ||
-        state == PracticeRecordingState.recording) {
-      await widget.controller.finishRecordingGesture();
-      return;
-    }
-    if (state == PracticeRecordingState.awaitingConfirmation) {
-      _confirmPendingTranscript();
-    }
-  }
+  Future<void> _startShortRecording() => widget.controller.startRecording();
+
+  Future<void> _finishShortRecording() =>
+      widget.controller.finishRecordingGesture();
+
+  Future<void> _cancelShortRecording() => widget.controller.cancelRecording();
 
   Future<void> _beginPart3() async {
     final progress = _progress;
@@ -475,7 +467,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                 progress.phase == IeltsMockPhase.part3
             ? _RecorderDock(
                 controller: widget.controller,
-                onTap: _toggleShortRecording,
+                onStart: _startShortRecording,
+                onFinish: _finishShortRecording,
+                onCancel: _cancelShortRecording,
               )
             : null,
       ),
@@ -798,10 +792,17 @@ class _ExamConversation extends StatelessWidget {
 }
 
 class _RecorderDock extends StatelessWidget {
-  const _RecorderDock({required this.controller, required this.onTap});
+  const _RecorderDock({
+    required this.controller,
+    required this.onStart,
+    required this.onFinish,
+    required this.onCancel,
+  });
 
   final AgentController controller;
-  final VoidCallback onTap;
+  final VoiceCaptureAction onStart;
+  final VoiceCaptureAction onFinish;
+  final VoiceCaptureAction onCancel;
 
   @override
   Widget build(BuildContext context) {
@@ -812,6 +813,12 @@ class _RecorderDock extends StatelessWidget {
     final working =
         state == PracticeRecordingState.transcribing ||
         state == PracticeRecordingState.submitting;
+    final capturePhase = switch (state) {
+      PracticeRecordingState.idle => VoiceCapturePhase.idle,
+      PracticeRecordingState.starting => VoiceCapturePhase.starting,
+      PracticeRecordingState.recording => VoiceCapturePhase.recording,
+      _ => VoiceCapturePhase.busy,
+    };
     final label = switch (state) {
       PracticeRecordingState.starting => 'Opening microphone…',
       PracticeRecordingState.recording => 'Listening',
@@ -836,31 +843,40 @@ class _RecorderDock extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            Semantics(
-              button: true,
-              label: recording ? 'Submit answer' : 'Start recording',
-              child: IconButton.filled(
+            VoiceCaptureControl(
+              phase: capturePhase,
+              mode: VoiceCaptureMode.tapToToggle,
+              enabled: capturePhase != VoiceCapturePhase.busy,
+              onStart: onStart,
+              onFinish: onFinish,
+              onCancel: onCancel,
+              builder: (context, capture) => capture.wrapTarget(
                 key: const Key('ielts-mock-record'),
-                onPressed: working ? null : onTap,
-                style: IconButton.styleFrom(
-                  fixedSize: const Size.square(76),
-                  backgroundColor: recording
-                      ? const Color(0xFF197782)
-                      : SpeakUpDesign.ink,
-                  foregroundColor: Colors.white,
-                ),
-                icon: working
-                    ? const SizedBox.square(
-                        dimension: 25,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: Colors.white,
+                semanticsLabel: recording ? 'Submit answer' : 'Start recording',
+                child: IconButton.filled(
+                  onPressed: () {},
+                  style: IconButton.styleFrom(
+                    fixedSize: const Size.square(76),
+                    backgroundColor: recording
+                        ? const Color(0xFF197782)
+                        : SpeakUpDesign.ink,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: working
+                      ? const SizedBox.square(
+                          dimension: 25,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Icon(
+                          recording
+                              ? Icons.stop_rounded
+                              : Icons.mic_none_rounded,
+                          size: 32,
                         ),
-                      )
-                    : Icon(
-                        recording ? Icons.stop_rounded : Icons.mic_none_rounded,
-                        size: 32,
-                      ),
+                ),
               ),
             ),
             const SizedBox(height: 10),

@@ -10,6 +10,7 @@ import 'package:speakup/agent/agent_voice_controller.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/agent_voice_widgets.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/design/voice_capture_control.dart';
 
 typedef ConversationVoiceStarter = FutureOr<void> Function();
 
@@ -975,204 +976,218 @@ class _AgentComposerState extends State<_AgentComposer> {
         voiceState == AgentVoiceComposerState.confirming ||
         voiceState == AgentVoiceComposerState.awaitingAssistant;
     final voiceFailure = voiceState == AgentVoiceComposerState.failed;
-    return AnimatedContainer(
-      key: const Key('agent-composer-surface'),
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-      constraints: BoxConstraints(minHeight: widget.keyboardVisible ? 56 : 58),
-      padding: const EdgeInsets.fromLTRB(8, 7, 7, 7),
-      decoration: BoxDecoration(
-        color: SpeakUpDesign.surface,
-        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-        border: Border.all(color: SpeakUpDesign.border),
-      ),
-      child: recording || voiceProgress || voiceFailure
-          ? Row(
-              children: [
-                if (!voiceSubmissionInFlight) ...[
-                  IconButton(
-                    key: const Key('agent-voice-cancel'),
-                    tooltip: '取消语音输入',
-                    onPressed: _cancelVoice,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 40,
-                      height: 40,
-                    ),
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.close_rounded, size: 21),
-                  ),
-                  const SizedBox(width: 4),
-                ],
-                if (recording) ...[
-                  const Icon(
-                    Icons.fiber_manual_record_rounded,
-                    size: 12,
-                    color: SpeakUpDesign.error,
-                  ),
-                  const SizedBox(width: 8),
-                ] else if (voiceProgress) ...[
-                  const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Expanded(
-                  child: Text(
-                    recording
-                        ? '正在录音'
-                        : voiceFailure
-                        ? voice?.errorMessage ?? '语音识别失败'
-                        : _composerVoiceStateLabel(voiceState),
-                    key: const Key('agent-voice-state-label'),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: voiceFailure
-                          ? SpeakUpDesign.error
-                          : SpeakUpDesign.secondary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      height: 1.3,
-                    ),
-                  ),
-                ),
-                if (recording) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    _formatComposerDuration(voice!.recordingElapsed),
-                    key: const Key('agent-voice-recording-duration'),
-                    style: const TextStyle(
-                      color: SpeakUpDesign.secondary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  IconButton.filled(
-                    key: const Key('agent-voice-stop'),
-                    tooltip: '结束录音并自动转写',
-                    onPressed: _stopVoice,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 40,
-                      height: 40,
-                    ),
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.stop_rounded, size: 20),
-                  ),
-                ] else if (voiceFailure && voice?.canRetry == true)
-                  IconButton(
-                    key: const Key('agent-voice-retry'),
-                    tooltip: '重试',
-                    onPressed: voice?.retry,
-                    icon: const Icon(Icons.refresh_rounded),
-                  ),
-              ],
-            )
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (confirmingText)
-                  IconButton(
-                    key: const Key('agent-voice-cancel'),
-                    tooltip: '取消语音输入',
-                    onPressed: _cancelVoice,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 40,
-                      height: 40,
-                    ),
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.close_rounded, size: 21),
-                  ),
-                Expanded(
-                  child: TextField(
-                    key: const Key('agent-composer-field'),
-                    controller: _controller,
-                    enabled:
-                        confirmingText || (widget.enabled && !widget.isBusy),
-                    minLines: 1,
-                    maxLines: widget.keyboardVisible ? 3 : 2,
-                    inputFormatters: <TextInputFormatter>[
-                      _agentContentFormatter,
-                    ],
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => confirmingText
-                        ? widget.voiceController?.confirm()
-                        : _submit(),
-                    style: const TextStyle(
-                      color: SpeakUpDesign.ink,
-                      fontSize: 15,
-                      height: 1.4,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: widget.enabled
-                          ? confirmingText
-                                ? '检查识别文字'
-                                : '问问 SpeakUp'
-                          : '暂时无法开始对话',
-                      hintStyle: const TextStyle(
-                        color: SpeakUpDesign.tertiary,
-                        fontSize: 15,
+    final capturePhase = switch (voiceState) {
+      AgentVoiceComposerState.idle => VoiceCapturePhase.idle,
+      AgentVoiceComposerState.starting => VoiceCapturePhase.starting,
+      AgentVoiceComposerState.recording => VoiceCapturePhase.recording,
+      _ => VoiceCapturePhase.busy,
+    };
+    return VoiceCaptureControl(
+      phase: capturePhase,
+      enabled: widget.voiceEnabled && widget.onStartVoice != null,
+      onStart: _startVoice,
+      onFinish: _stopVoice,
+      onCancel: _cancelVoice,
+      builder: (context, capture) => AnimatedContainer(
+        key: const Key('agent-composer-surface'),
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        constraints: BoxConstraints(
+          minHeight: widget.keyboardVisible ? 56 : 58,
+        ),
+        padding: const EdgeInsets.fromLTRB(8, 7, 7, 7),
+        decoration: BoxDecoration(
+          color: SpeakUpDesign.surface,
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+          border: Border.all(color: SpeakUpDesign.border),
+        ),
+        child: recording || voiceProgress || voiceFailure
+            ? Row(
+                children: [
+                  if (!voiceSubmissionInFlight) ...[
+                    IconButton(
+                      key: const Key('agent-voice-cancel'),
+                      tooltip: '取消语音输入',
+                      onPressed: recording
+                          ? capture.cancelTapCapture
+                          : _cancelVoice,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
                       ),
-                      border: InputBorder.none,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.fromLTRB(7, 9, 6, 8),
+                      padding: EdgeInsets.zero,
+                      icon: const Icon(Icons.close_rounded, size: 21),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  if (recording) ...[
+                    const Icon(
+                      Icons.fiber_manual_record_rounded,
+                      size: 12,
+                      color: SpeakUpDesign.error,
+                    ),
+                    const SizedBox(width: 8),
+                  ] else if (voiceProgress) ...[
+                    const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Text(
+                      recording
+                          ? '正在录音'
+                          : voiceFailure
+                          ? voice?.errorMessage ?? '语音识别失败'
+                          : _composerVoiceStateLabel(voiceState),
+                      key: const Key('agent-voice-state-label'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: voiceFailure
+                            ? SpeakUpDesign.error
+                            : SpeakUpDesign.secondary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        height: 1.3,
+                      ),
                     ),
                   ),
-                ),
-                if (!confirmingText && widget.onStartVoice != null) ...[
-                  Semantics(
-                    key: const Key('agent-mic-placeholder'),
-                    button: true,
-                    enabled: widget.voiceEnabled,
-                    label: '录制 Agent 语音消息',
-                    onTap: widget.voiceEnabled ? _startVoice : null,
-                    child: ExcludeSemantics(
+                  if (recording) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      _formatComposerDuration(voice!.recordingElapsed),
+                      key: const Key('agent-voice-recording-duration'),
+                      style: const TextStyle(
+                        color: SpeakUpDesign.secondary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    IconButton.filled(
+                      key: const Key('agent-voice-stop'),
+                      tooltip: '结束录音并自动转写',
+                      onPressed: capture.finishTapCapture,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
+                      padding: EdgeInsets.zero,
+                      icon: const Icon(Icons.stop_rounded, size: 20),
+                    ),
+                  ] else if (voiceFailure && voice?.canRetry == true)
+                    IconButton(
+                      key: const Key('agent-voice-retry'),
+                      tooltip: '重试',
+                      onPressed: voice?.retry,
+                      icon: const Icon(Icons.refresh_rounded),
+                    ),
+                ],
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (confirmingText)
+                    IconButton(
+                      key: const Key('agent-voice-cancel'),
+                      tooltip: '取消语音输入',
+                      onPressed: _cancelVoice,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
+                      padding: EdgeInsets.zero,
+                      icon: const Icon(Icons.close_rounded, size: 21),
+                    ),
+                  Expanded(
+                    child: TextField(
+                      key: const Key('agent-composer-field'),
+                      controller: _controller,
+                      enabled:
+                          confirmingText || (widget.enabled && !widget.isBusy),
+                      minLines: 1,
+                      maxLines: widget.keyboardVisible ? 3 : 2,
+                      inputFormatters: <TextInputFormatter>[
+                        _agentContentFormatter,
+                      ],
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => confirmingText
+                          ? widget.voiceController?.confirm()
+                          : _submit(),
+                      style: const TextStyle(
+                        color: SpeakUpDesign.ink,
+                        fontSize: 15,
+                        height: 1.4,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: widget.enabled
+                            ? confirmingText
+                                  ? '检查识别文字'
+                                  : '问问 SpeakUp'
+                            : '暂时无法开始对话',
+                        hintStyle: const TextStyle(
+                          color: SpeakUpDesign.tertiary,
+                          fontSize: 15,
+                        ),
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.fromLTRB(7, 9, 6, 8),
+                      ),
+                    ),
+                  ),
+                  if (!confirmingText && widget.onStartVoice != null) ...[
+                    capture.wrapTarget(
+                      key: const Key('agent-mic-placeholder'),
+                      semanticsLabel: '录制 Agent 语音消息',
                       child: IconButton(
                         tooltip: '录制 Agent 语音消息',
-                        onPressed: widget.voiceEnabled ? _startVoice : null,
+                        onPressed: null,
                         constraints: const BoxConstraints.tightFor(
                           width: 40,
                           height: 40,
                         ),
                         padding: EdgeInsets.zero,
-                        color: SpeakUpDesign.secondary,
+                        disabledColor: widget.voiceEnabled
+                            ? SpeakUpDesign.secondary
+                            : SpeakUpDesign.tertiary,
                         icon: const Icon(Icons.mic_none_rounded, size: 21),
                       ),
                     ),
+                    const SizedBox(width: 2),
+                  ],
+                  IconButton.filled(
+                    key: Key(
+                      confirmingText
+                          ? 'agent-voice-confirm'
+                          : 'agent-send-button',
+                    ),
+                    tooltip: '发送',
+                    onPressed:
+                        _controller.text.trim().isEmpty ||
+                            (widget.isBusy && !confirmingText) ||
+                            !widget.enabled
+                        ? null
+                        : _textSubmissionInFlight
+                        ? null
+                        : confirmingText
+                        ? voice?.canConfirm == true
+                              ? voice?.confirm
+                              : null
+                        : widget.onSubmitText == null
+                        ? null
+                        : _submit,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 40,
+                      height: 40,
+                    ),
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.arrow_upward_rounded, size: 20),
                   ),
-                  const SizedBox(width: 2),
                 ],
-                IconButton.filled(
-                  key: Key(
-                    confirmingText
-                        ? 'agent-voice-confirm'
-                        : 'agent-send-button',
-                  ),
-                  tooltip: '发送',
-                  onPressed:
-                      _controller.text.trim().isEmpty ||
-                          (widget.isBusy && !confirmingText) ||
-                          !widget.enabled
-                      ? null
-                      : _textSubmissionInFlight
-                      ? null
-                      : confirmingText
-                      ? voice?.canConfirm == true
-                            ? voice?.confirm
-                            : null
-                      : widget.onSubmitText == null
-                      ? null
-                      : _submit,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 40,
-                    height: 40,
-                  ),
-                  padding: EdgeInsets.zero,
-                  icon: const Icon(Icons.arrow_upward_rounded, size: 20),
-                ),
-              ],
-            ),
+              ),
+      ),
     );
   }
 }

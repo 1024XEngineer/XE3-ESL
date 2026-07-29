@@ -4,10 +4,10 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_recordings.dart';
@@ -776,244 +776,93 @@ class _RecordingPanel extends StatefulWidget {
 }
 
 class _RecordingPanelState extends State<_RecordingPanel> {
-  static const _holdDelay = Duration(milliseconds: 180);
-  static const _cancelDistance = 72.0;
-
-  Timer? _holdTimer;
-  Offset? _pointerOrigin;
-  bool _pointerActive = false;
-  bool _recordingGestureStarted = false;
-  bool _cancelArmed = false;
-  bool _tapRecordingActive = false;
-  double _voiceHitWidth = double.infinity;
-
-  @override
-  void dispose() {
-    _holdTimer?.cancel();
-    super.dispose();
-  }
-
-  void _handlePointerDown(PointerDownEvent event) {
-    if (_pointerActive ||
-        widget.textMode ||
-        event.localPosition.dx > _voiceHitWidth ||
-        widget.controller.recordingState != PracticeRecordingState.idle) {
-      return;
-    }
-    _holdTimer?.cancel();
-    setState(() {
-      _pointerActive = true;
-      _recordingGestureStarted = false;
-      _cancelArmed = false;
-      _tapRecordingActive = false;
-      _pointerOrigin = event.position;
-    });
-    _holdTimer = Timer(_holdDelay, () {
-      if (!mounted || !_pointerActive) {
-        return;
-      }
-      setState(() => _recordingGestureStarted = true);
-      unawaited(HapticFeedback.mediumImpact());
-      unawaited(widget.controller.startRecording());
-    });
-  }
-
-  void _handlePointerMove(PointerMoveEvent event) {
-    final origin = _pointerOrigin;
-    if (!_pointerActive || origin == null) {
-      return;
-    }
-    final cancelArmed = event.position.dy <= origin.dy - _cancelDistance;
-    if (cancelArmed == _cancelArmed) {
-      return;
-    }
-    setState(() => _cancelArmed = cancelArmed);
-    unawaited(HapticFeedback.selectionClick());
-  }
-
-  void _handlePointerUp(PointerUpEvent event) {
-    _finishGesture(cancel: _cancelArmed);
-  }
-
-  void _handlePointerCancel(PointerCancelEvent event) {
-    _finishGesture(cancel: true);
-  }
-
-  void _finishGesture({required bool cancel}) {
-    if (!_pointerActive) {
-      return;
-    }
-    _holdTimer?.cancel();
-    final started = _recordingGestureStarted;
-    setState(() {
-      _pointerActive = false;
-      _recordingGestureStarted = false;
-      _cancelArmed = false;
-      _pointerOrigin = null;
-    });
-    if (!started) {
-      if (!cancel) {
-        _startTapRecording();
-      }
-      return;
-    }
-    if (cancel) {
-      unawaited(widget.controller.cancelRecording());
-    } else {
-      unawaited(widget.controller.finishRecordingGesture());
-    }
-  }
-
-  void _toggleRecordingForAccessibility() {
-    final state = widget.controller.recordingState;
-    if (state == PracticeRecordingState.idle) {
-      _startTapRecording();
-    } else if (state == PracticeRecordingState.starting ||
-        state == PracticeRecordingState.recording) {
-      _finishTapRecording();
-    }
-  }
-
-  void _startTapRecording() {
-    if (widget.textMode ||
-        widget.controller.recordingState != PracticeRecordingState.idle) {
-      return;
-    }
-    setState(() => _tapRecordingActive = true);
-    unawaited(HapticFeedback.mediumImpact());
-    unawaited(widget.controller.startRecording());
-  }
-
-  void _finishTapRecording() {
-    final state = widget.controller.recordingState;
-    if (state != PracticeRecordingState.starting &&
-        state != PracticeRecordingState.recording) {
-      return;
-    }
-    setState(() => _tapRecordingActive = false);
-    unawaited(widget.controller.finishRecordingGesture());
-  }
-
-  void _cancelTapRecording() {
-    final state = widget.controller.recordingState;
-    if (state != PracticeRecordingState.starting &&
-        state != PracticeRecordingState.recording) {
-      return;
-    }
-    setState(() => _tapRecordingActive = false);
-    unawaited(widget.controller.cancelRecording());
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = widget.controller.recordingState;
-    final tapRecordingActive =
-        _tapRecordingActive &&
-        (state == PracticeRecordingState.starting ||
-            state == PracticeRecordingState.recording);
-    final handlesHold =
-        !widget.textMode &&
-        (state == PracticeRecordingState.idle ||
-            state == PracticeRecordingState.starting ||
-            state == PracticeRecordingState.recording);
-    final panel = switch (state) {
-      PracticeRecordingState.idle => _IdleAnswerPanel(
-        textController: widget.textController,
-        textFocusNode: widget.textFocusNode,
-        onSubmitText: widget.onSubmitText,
-        textMode: widget.textMode,
-        onToggleTextMode: widget.onToggleTextMode,
-        pressed: _pointerActive,
-      ),
-      PracticeRecordingState.starting ||
-      PracticeRecordingState.recording => _ActiveRecordingPanel(
-        preparing: state == PracticeRecordingState.starting,
-        cancelArmed: _cancelArmed,
-        recordingSeconds: widget.recordingSeconds,
-        tapMode: tapRecordingActive,
-      ),
-      PracticeRecordingState.transcribing => const _WorkingState(
-        label: '正在识别英文回答…',
-      ),
-      PracticeRecordingState.awaitingConfirmation => _TranscriptConfirmation(
-        controller: widget.controller,
-      ),
-      PracticeRecordingState.submitting => const _WorkingState(
-        label: '回答已发送，正在准备下一题…',
-      ),
-      PracticeRecordingState.reviewFailed => _ReviewRetry(
-        onPressed: widget.controller.retryReview,
-      ),
-      PracticeRecordingState.completed => const _WorkingState(
-        label: '复盘已生成，正在打开',
-      ),
+    final phase = switch (state) {
+      PracticeRecordingState.idle => VoiceCapturePhase.idle,
+      PracticeRecordingState.starting => VoiceCapturePhase.starting,
+      PracticeRecordingState.recording => VoiceCapturePhase.recording,
+      _ => VoiceCapturePhase.busy,
     };
-    return Material(
-      color: SpeakUpDesign.surface,
-      shape: const Border(top: BorderSide(color: SpeakUpDesign.border)),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
-          child: tapRecordingActive
-              ? Row(
-                  children: [
-                    Expanded(
-                      child: Semantics(
-                        button: true,
-                        label: state == PracticeRecordingState.starting
-                            ? '正在打开麦克风'
-                            : '结束录音并自动转写',
-                        onTap: _finishTapRecording,
-                        child: ExcludeSemantics(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: _finishTapRecording,
-                            child: panel,
+    return VoiceCaptureControl(
+      phase: phase,
+      enabled: !widget.textMode,
+      onStart: widget.controller.startRecording,
+      onFinish: widget.controller.finishRecordingGesture,
+      onCancel: widget.controller.cancelRecording,
+      builder: (context, capture) {
+        final tapRecordingActive =
+            capture.tapMode &&
+            (state == PracticeRecordingState.starting ||
+                state == PracticeRecordingState.recording);
+        final panel = switch (state) {
+          PracticeRecordingState.idle => _IdleAnswerPanel(
+            textController: widget.textController,
+            textFocusNode: widget.textFocusNode,
+            onSubmitText: widget.onSubmitText,
+            textMode: widget.textMode,
+            onToggleTextMode: widget.onToggleTextMode,
+            capture: capture,
+          ),
+          PracticeRecordingState.starting ||
+          PracticeRecordingState.recording => capture.wrapTarget(
+            key: const Key('practice-record'),
+            semanticsLabel: state == PracticeRecordingState.starting
+                ? '正在打开麦克风'
+                : tapRecordingActive
+                ? '结束录音并自动转写'
+                : '正在录音，上滑取消，松开完成录音',
+            child: _ActiveRecordingPanel(
+              preparing: state == PracticeRecordingState.starting,
+              cancelArmed: capture.cancelArmed,
+              recordingSeconds: widget.recordingSeconds,
+              tapMode: tapRecordingActive,
+            ),
+          ),
+          PracticeRecordingState.transcribing => const _WorkingState(
+            label: '正在识别英文回答…',
+          ),
+          PracticeRecordingState.awaitingConfirmation =>
+            _TranscriptConfirmation(controller: widget.controller),
+          PracticeRecordingState.submitting => const _WorkingState(
+            label: '回答已发送，正在准备下一题…',
+          ),
+          PracticeRecordingState.reviewFailed => _ReviewRetry(
+            onPressed: widget.controller.retryReview,
+          ),
+          PracticeRecordingState.completed => const _WorkingState(
+            label: '复盘已生成，正在打开',
+          ),
+        };
+        return Material(
+          color: SpeakUpDesign.surface,
+          shape: const Border(top: BorderSide(color: SpeakUpDesign.border)),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
+              child: tapRecordingActive
+                  ? Row(
+                      children: [
+                        Expanded(child: panel),
+                        const SizedBox(width: 10),
+                        IconButton.outlined(
+                          key: const Key('practice-cancel-tap-recording'),
+                          tooltip: '取消录音',
+                          onPressed: capture.cancelTapCapture,
+                          icon: const Icon(Icons.close_rounded),
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size.square(56),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    IconButton.outlined(
-                      key: const Key('practice-cancel-tap-recording'),
-                      tooltip: '取消录音',
-                      onPressed: _cancelTapRecording,
-                      icon: const Icon(Icons.close_rounded),
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size.square(56),
-                      ),
-                    ),
-                  ],
-                )
-              : handlesHold
-              ? LayoutBuilder(
-                  builder: (context, constraints) {
-                    _voiceHitWidth =
-                        state == PracticeRecordingState.idle && !widget.textMode
-                        ? constraints.maxWidth - 66
-                        : constraints.maxWidth;
-                    return Semantics(
-                      button: true,
-                      label: state == PracticeRecordingState.idle
-                          ? '点击或按住说话'
-                          : '正在录音，上滑取消，松开发送',
-                      onTap: _toggleRecordingForAccessibility,
-                      child: Listener(
-                        key: const Key('practice-record'),
-                        behavior: HitTestBehavior.opaque,
-                        onPointerDown: _handlePointerDown,
-                        onPointerMove: _handlePointerMove,
-                        onPointerUp: _handlePointerUp,
-                        onPointerCancel: _handlePointerCancel,
-                        child: panel,
-                      ),
-                    );
-                  },
-                )
-              : panel,
-        ),
-      ),
+                      ],
+                    )
+                  : panel,
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1025,7 +874,7 @@ class _IdleAnswerPanel extends StatelessWidget {
     required this.onSubmitText,
     required this.textMode,
     required this.onToggleTextMode,
-    required this.pressed,
+    required this.capture,
   });
 
   final TextEditingController textController;
@@ -1033,7 +882,7 @@ class _IdleAnswerPanel extends StatelessWidget {
   final VoidCallback onSubmitText;
   final bool textMode;
   final VoidCallback onToggleTextMode;
-  final bool pressed;
+  final VoiceCaptureView capture;
 
   @override
   Widget build(BuildContext context) {
@@ -1041,35 +890,39 @@ class _IdleAnswerPanel extends StatelessWidget {
       return Row(
         children: [
           Expanded(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 100),
-              height: 56,
-              decoration: BoxDecoration(
-                color: pressed
-                    ? SpeakUpDesign.primary.withValues(alpha: 0.82)
-                    : SpeakUpDesign.primary,
-                borderRadius: BorderRadius.circular(
-                  SpeakUpDesign.radiusControl,
+            child: capture.wrapTarget(
+              key: const Key('practice-record'),
+              semanticsLabel: '点击或按住说话',
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 100),
+                height: 56,
+                decoration: BoxDecoration(
+                  color: capture.pressed
+                      ? SpeakUpDesign.primary.withValues(alpha: 0.82)
+                      : SpeakUpDesign.primary,
+                  borderRadius: BorderRadius.circular(
+                    SpeakUpDesign.radiusControl,
+                  ),
                 ),
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.mic_rounded, color: Colors.white),
-                  SizedBox(width: 10),
-                  Flexible(
-                    child: Text(
-                      '点击或按住说话',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.mic_rounded, color: Colors.white),
+                    SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        '点击或按住说话',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -1177,7 +1030,7 @@ class _ActiveRecordingPanel extends StatelessWidget {
                       ? '正在打开麦克风…'
                       : tapMode
                       ? '再次点击结束'
-                      : '松开发送',
+                      : '松开完成',
                   style: SpeakUpDesign.cardTitle.copyWith(
                     color: cancelArmed
                         ? SpeakUpDesign.error
