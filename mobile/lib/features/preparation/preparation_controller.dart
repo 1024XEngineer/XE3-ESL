@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:speakup/features/preparation/preparation_client.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
+const _ieltsSpeakingFullMockScenarioId = 'scn_ielts_speaking_full';
+
 final class PreparationController extends ChangeNotifier {
   PreparationController({required this.client});
 
@@ -248,20 +250,19 @@ final class PreparationController extends ChangeNotifier {
               option.roleId == role.id,
         )
         .toList(growable: false);
-    _selectedOption =
-        compatibleOptions
-            .where(
-              (option) =>
-                  option.type == PreparationOptionType.focus &&
-                  option.roleId == role.id,
-            )
-            .firstOrNull ??
-        compatibleOptions
-            .where(
-              (option) => option.type == PreparationOptionType.fullSimulation,
-            )
-            .firstOrNull ??
-        compatibleOptions.firstOrNull;
+    final fullSimulation = compatibleOptions
+        .where((option) => option.type == PreparationOptionType.fullSimulation)
+        .firstOrNull;
+    final roleFocus = compatibleOptions
+        .where(
+          (option) =>
+              option.type == PreparationOptionType.focus &&
+              option.roleId == role.id,
+        )
+        .firstOrNull;
+    _selectedOption = _selectedScenario!.id == _ieltsSpeakingFullMockScenarioId
+        ? fullSimulation ?? roleFocus ?? compatibleOptions.firstOrNull
+        : roleFocus ?? fullSimulation ?? compatibleOptions.firstOrNull;
     notifyListeners();
     return hasCompleteSelection;
   }

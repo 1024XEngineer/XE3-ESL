@@ -528,6 +528,65 @@ func TestVoiceSessionRestoresFormalEarlyCompletionBeforeMaximum(t *testing.T) {
 	}
 }
 
+func TestVoiceSessionRestoresCompletedIELTSFullMockWithoutReview(
+	t *testing.T,
+) {
+	session := VoicePracticeSession{
+		ID:                       "session-ielts-full",
+		PlanID:                   "plan-ielts-full",
+		ThreadID:                 "thread-1",
+		MatterID:                 "matter-1",
+		ScenarioType:             "EXAM",
+		ScenarioModel:            ieltsSpeakingFullMockModel,
+		PromptModel:              voiceSessionTestPrompt(),
+		SessionVersion:           15,
+		EffectiveTurns:           14,
+		TurnLimit:                14,
+		Completed:                true,
+		Status:                   "completed",
+		InterviewerParticipantID: "participant-interviewer",
+		CandidateParticipantID:   "participant-a",
+	}
+	turn := conversation.ConfirmedVoiceTurn{
+		ID:               "turn-14",
+		SessionID:        session.ID,
+		EffectiveTurns:   session.EffectiveTurns,
+		SessionCompleted: true,
+	}
+	application, err := NewVoiceSessionApplication(
+		fixedVoiceSessionPort{session: session},
+		voiceSessionTestQuestions{},
+		fixedVoiceCheckpoint{turn: turn},
+		newAgentVoiceOrchestrator(
+			t,
+			newAgentVoiceConversation(14),
+			newAgentVoicePractice(14),
+			newAgentVoiceReview(),
+		),
+		voiceSessionTestReviews{reviews: newAgentVoiceReview()},
+		voiceSessionTestMatters{},
+	)
+	if err != nil {
+		t.Fatalf("NewVoiceSessionApplication: %v", err)
+	}
+
+	state, err := application.Resume(
+		context.Background(),
+		agentVoiceActor("a"),
+		session.ThreadID,
+		session.MatterID,
+	)
+	if err != nil {
+		t.Fatalf("Resume completed IELTS full mock: %v", err)
+	}
+	if !state.Session.Completed ||
+		state.Turn == nil ||
+		state.Question != nil ||
+		state.Review != nil {
+		t.Fatalf("completed IELTS full mock state = %#v", state)
+	}
+}
+
 func newVoiceSessionTestApplication(
 	t *testing.T,
 	conversations *agentVoiceConversation,

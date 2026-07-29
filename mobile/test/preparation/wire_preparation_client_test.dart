@@ -88,6 +88,34 @@ void main() {
     transport.expectDone();
   });
 
+  test('accepts a complete IELTS cue card as one turn blueprint', () async {
+    const cueCard =
+        'Part 2 cue card: Describe a skill you would like to learn.\n'
+        'You should say:\n'
+        '• What the skill is\n'
+        '• Why you want to learn it\n'
+        '• How you would learn it\n'
+        '• And explain how learning this skill would benefit you';
+    final config = <String, Object?>{
+      ..._configJson,
+      'prompt_model': <String, Object?>{
+        ..._configJson['prompt_model']! as Map<String, Object?>,
+        'turn_blueprints': [cueCard],
+      },
+    };
+    final client = WirePreparationCatalogClient(
+      baseUri: Uri.parse('https://api.speak-up.test'),
+      transport: _QueueTransport([
+        _response(<String, Object?>{..._detailJson, 'scenario_config': config}),
+      ]),
+    );
+
+    final detail = await client.getScenario(_scenarioId);
+
+    expect(detail.config.prompt.turnBlueprints, [cueCard]);
+    expect(utf8.encode(cueCard).length, greaterThan(128));
+  });
+
   test('accepts the four supported scenario family and model pairs', () async {
     final scenarios = <Map<String, Object?>>[
       _scenarioJson,
