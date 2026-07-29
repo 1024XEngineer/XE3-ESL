@@ -1116,23 +1116,29 @@ class _TranscriptConfirmation extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('检查一下识别结果', style: SpeakUpDesign.cardTitle),
-        const SizedBox(height: 10),
-        Text(
-          controller.transcript ?? '',
-          key: const Key('practice-transcript'),
-          style: const TextStyle(height: 1.5),
+        const Text('识别结果', style: SpeakUpDesign.label),
+        const SizedBox(height: 8),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 96),
+          child: SingleChildScrollView(
+            child: Text(
+              controller.transcript ?? '',
+              key: const Key('practice-transcript'),
+              style: const TextStyle(height: 1.45),
+            ),
+          ),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
               child: OutlinedButton(
                 key: const Key('practice-rerecord'),
                 onPressed: controller.rerecord,
-                child: const Text('重新录音'),
+                child: const Text('取消'),
               ),
             ),
             const SizedBox(width: 10),

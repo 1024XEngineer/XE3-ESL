@@ -88,6 +88,11 @@ void main() {
     for (var turn = 1; turn <= 3; turn++) {
       await _holdAndReleaseAnswer(tester);
       expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
+      expect(find.text('取消'), findsOneWidget);
+      expect(
+        find.byKey(const Key('practice-current-question')).hitTestable(),
+        findsOneWidget,
+      );
 
       if (turn == 1) {
         await tester.tap(find.byKey(const Key('practice-rerecord')));
