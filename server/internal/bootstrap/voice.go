@@ -1563,11 +1563,12 @@ func mapVoiceSessionReview(
 	)
 	for index, conclusion := range formalReview.Result.Conclusions {
 		conclusions[index] = agent.VoiceReviewConclusion{
-			Key:        conclusion.Key,
-			Category:   conclusion.Category,
-			Score:      conclusion.Score,
-			Message:    conclusion.Message,
-			Suggestion: conclusion.Suggestion,
+			Key:          conclusion.Key,
+			Category:     conclusion.Category,
+			Score:        conclusion.Score,
+			ScorePresent: formalReview.ImplementationVersion == voiceReviewImplementation,
+			Message:      conclusion.Message,
+			Suggestion:   conclusion.Suggestion,
 		}
 	}
 	feedback := make(
@@ -1934,16 +1935,19 @@ func (generator *voiceReviewGenerator) GenerateReview(
 	)
 	result, err := generator.generator.Generate(
 		generationContext,
-		ai.TextRequest{Messages: []ai.TextMessage{
-			{
-				Role:    ai.TextRoleSystem,
-				Content: reviewGenerationSystemContract,
+		ai.TextRequest{
+			ResponseFormat: ai.TextResponseFormatJSON,
+			Messages: []ai.TextMessage{
+				{
+					Role:    ai.TextRoleSystem,
+					Content: reviewGenerationSystemContract,
+				},
+				{
+					Role:    ai.TextRoleUser,
+					Content: prompt,
+				},
 			},
-			{
-				Role:    ai.TextRoleUser,
-				Content: prompt,
-			},
-		}},
+		},
 	)
 	if err != nil {
 		return review.GeneratedReview{}, err
@@ -2056,7 +2060,7 @@ type generatedEvidenceAnchor struct {
 type generatedConclusion struct {
 	Key        string                    `json:"key"`
 	Category   string                    `json:"category"`
-	Score      int                       `json:"score"`
+	Score      *int                      `json:"score"`
 	Message    string                    `json:"message"`
 	Suggestion string                    `json:"suggestion"`
 	Evidence   []generatedEvidenceAnchor `json:"evidence"`
@@ -2099,12 +2103,16 @@ func parseVoiceReviewResult(content string) (review.GeneratedReview, error) {
 	}
 	links := make([]review.EvidenceLink, 0)
 	for index, conclusion := range payload.Conclusions {
+		if conclusion.Score == nil {
+			return review.GeneratedReview{}, review.ErrInvalidReview
+		}
 		result.Conclusions[index] = review.ReviewConclusion{
-			Key:        conclusion.Key,
-			Category:   conclusion.Category,
-			Score:      conclusion.Score,
-			Message:    conclusion.Message,
-			Suggestion: conclusion.Suggestion,
+			Key:          conclusion.Key,
+			Category:     conclusion.Category,
+			Score:        *conclusion.Score,
+			ScorePresent: true,
+			Message:      conclusion.Message,
+			Suggestion:   conclusion.Suggestion,
 		}
 		links = appendGeneratedEvidenceLinks(
 			links,

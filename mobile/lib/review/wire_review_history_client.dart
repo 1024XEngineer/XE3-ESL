@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
+import 'package:speakup/review/formal_review.dart';
+import 'package:speakup/review/formal_review_decoder.dart';
+import 'package:speakup/review/formal_review_presentation.dart';
 import 'package:speakup/review/review_history_client.dart';
 
 final class WireReviewHistoryClient implements ReviewHistoryClient {
@@ -197,122 +199,29 @@ ReviewHistoryPage _decodeHistoryPage(String body, {required int limit}) {
 }
 
 ReviewHistoryItem _decodeHistoryItem(Object? value) {
-  final root = _object(
-    value,
-    required: const <String>{
-      'review_id',
-      'practice_session_id',
-      'status',
-      'implementation_version',
-      'source_turn_id',
-      'source_turn_version',
-      'result',
-      'created_at',
-      'updated_at',
-      'completed_at',
-    },
-  );
-  final id = _uuid(root['review_id']);
-  final practiceSessionId = _nonEmptyString(
-    root['practice_session_id'],
-    maxBytes: _maxReviewMetadataBytes,
-  );
-  if (root['status'] != 'completed') {
+  late final FormalReview formalReview;
+  try {
+    formalReview = decodeFormalReview(value);
+  } on FormalReviewDecodeException {
     throw const ReviewHistoryException(
       kind: ReviewHistoryFailureKind.invalidResponse,
     );
   }
-  _nonEmptyString(
-    root['implementation_version'],
-    maxBytes: _maxReviewMetadataBytes,
-  );
-  _nonEmptyString(root['source_turn_id'], maxBytes: _maxReviewMetadataBytes);
-  final sourceVersion = _nonEmptyString(
-    root['source_turn_version'],
-    maxBytes: _maxReviewMetadataBytes,
-  );
-  if (!RegExp(
-    r'^conversation-turn:evidence-v[1-9][0-9]*$',
-  ).hasMatch(sourceVersion)) {
+  if (formalReview.status != FormalReviewStatus.completed ||
+      formalReview.result == null ||
+      formalReview.completedAt == null ||
+      !_validUuid(formalReview.id)) {
     throw const ReviewHistoryException(
       kind: ReviewHistoryFailureKind.invalidResponse,
     );
   }
-  final createdAt = _dateTime(root['created_at']);
-  final updatedAt = _dateTime(root['updated_at']);
-  final completedAt = _dateTime(root['completed_at']);
-  if (updatedAt.isBefore(createdAt) || completedAt.isBefore(createdAt)) {
-    throw const ReviewHistoryException(
-      kind: ReviewHistoryFailureKind.invalidResponse,
-    );
-  }
-  final result = _object(
-    root['result'],
-    required: const <String>{'overall_score', 'summary', 'conclusions'},
-  );
-  if (utf8.encode(jsonEncode(result)).length > _maxReviewResultBytes) {
-    throw const ReviewHistoryException(
-      kind: ReviewHistoryFailureKind.invalidResponse,
-    );
-  }
-  final score = result['overall_score'];
-  if (score is! int || score < 0 || score > 100) {
-    throw const ReviewHistoryException(
-      kind: ReviewHistoryFailureKind.invalidResponse,
-    );
-  }
-  final summary = _nonEmptyString(
-    result['summary'],
-    maxBytes: _maxReviewTextBytes,
-  );
-  final rawConclusions = result['conclusions'];
-  if (rawConclusions is! List<Object?> ||
-      rawConclusions.isEmpty ||
-      rawConclusions.length > _maxReviewConclusions) {
-    throw const ReviewHistoryException(
-      kind: ReviewHistoryFailureKind.invalidResponse,
-    );
-  }
-  final conclusions = rawConclusions
-      .map(_decodeConclusion)
-      .toList(growable: false);
-  final strength = conclusions.first.message;
-  final nextFocus =
-      conclusions
-          .map((item) => item.suggestion)
-          .whereType<String>()
-          .firstOrNull ??
-      conclusions.last.message;
   return ReviewHistoryItem(
-    review: AgentReview(
-      id: id,
-      title: '本次练习 · $score 分',
-      summary: summary,
-      strength: strength,
-      nextFocus: nextFocus,
-    ),
-    practiceSessionId: practiceSessionId,
-    createdAt: createdAt,
-    completedAt: completedAt,
+    review: presentFormalReview(formalReview),
+    formalReview: formalReview,
+    practiceSessionId: formalReview.practiceSessionId,
+    createdAt: formalReview.createdAt,
+    completedAt: formalReview.completedAt!,
   );
-}
-
-({String message, String? suggestion}) _decodeConclusion(Object? value) {
-  final root = _object(
-    value,
-    required: const <String>{'key', 'category', 'message'},
-    optional: const <String>{'suggestion'},
-  );
-  _nonEmptyString(root['key'], maxBytes: _maxReviewLabelBytes);
-  _nonEmptyString(root['category'], maxBytes: _maxReviewLabelBytes);
-  final message = _nonEmptyString(
-    root['message'],
-    maxBytes: _maxReviewTextBytes,
-  );
-  final suggestion = root.containsKey('suggestion')
-      ? _nonEmptyString(root['suggestion'], maxBytes: _maxReviewTextBytes)
-      : null;
-  return (message: message, suggestion: suggestion);
 }
 
 Map<String, Object?> _object(
@@ -335,47 +244,9 @@ Map<String, Object?> _object(
   return value;
 }
 
-String _nonEmptyString(Object? value, {required int maxBytes}) {
-  if (value is! String ||
-      value.trim().isEmpty ||
-      value.contains('\u0000') ||
-      utf8.encode(value).length > maxBytes) {
-    throw const ReviewHistoryException(
-      kind: ReviewHistoryFailureKind.invalidResponse,
-    );
-  }
-  return value;
-}
-
-String _uuid(Object? value) {
-  final result = _nonEmptyString(value, maxBytes: 36);
-  if (!RegExp(
-    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
-  ).hasMatch(result)) {
-    throw const ReviewHistoryException(
-      kind: ReviewHistoryFailureKind.invalidResponse,
-    );
-  }
-  return result;
-}
-
-DateTime _dateTime(Object? value) {
-  final text = _nonEmptyString(value, maxBytes: 64);
-  if (!RegExp(
-    r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$',
-  ).hasMatch(text)) {
-    throw const ReviewHistoryException(
-      kind: ReviewHistoryFailureKind.invalidResponse,
-    );
-  }
-  final result = DateTime.tryParse(text);
-  if (result == null) {
-    throw const ReviewHistoryException(
-      kind: ReviewHistoryFailureKind.invalidResponse,
-    );
-  }
-  return result.toUtc();
-}
+bool _validUuid(String value) => RegExp(
+  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+).hasMatch(value);
 
 bool _validCursor(String value) =>
     value.isNotEmpty &&
@@ -479,8 +350,3 @@ Future<Uint8List> _readBoundedReviewHistoryResponse(
 }
 
 const _maxReviewHistoryResponseBytes = 1024 * 1024;
-const _maxReviewResultBytes = 12 * 1024;
-const _maxReviewMetadataBytes = 128;
-const _maxReviewLabelBytes = 64;
-const _maxReviewTextBytes = 2048;
-const _maxReviewConclusions = 8;

@@ -9,6 +9,7 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/practice/practice_recordings.dart';
+import 'package:speakup/review/formal_review.dart';
 import 'package:speakup/review/review_history_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
@@ -98,6 +99,7 @@ class _ReviewPageState extends State<ReviewPage> {
       if (showCurrentReview)
         _ReviewListEntry.current(
           review: currentReview,
+          formalReview: widget.agentController?.formalReview,
           agentController: widget.agentController!,
         ),
       if (controller != null)
@@ -112,6 +114,7 @@ class _ReviewPageState extends State<ReviewPage> {
       if (controller == null && currentReview != null)
         _ReviewListEntry.current(
           review: currentReview,
+          formalReview: widget.agentController?.formalReview,
           agentController: widget.agentController!,
         ),
     ];
@@ -229,16 +232,19 @@ final class _ReviewListEntry {
   const _ReviewListEntry._({
     required this.review,
     required this.isCurrent,
+    this.formalReview,
     this.completedAt,
     this.agentController,
   });
 
   factory _ReviewListEntry.current({
     required AgentReview review,
+    FormalReview? formalReview,
     required AgentController agentController,
   }) {
     return _ReviewListEntry._(
       review: review,
+      formalReview: formalReview,
       isCurrent: true,
       agentController: agentController,
     );
@@ -250,6 +256,7 @@ final class _ReviewListEntry {
   }) {
     return _ReviewListEntry._(
       review: item.review,
+      formalReview: item.formalReview,
       completedAt: item.completedAt,
       isCurrent: false,
       agentController: agentController,
@@ -257,11 +264,20 @@ final class _ReviewListEntry {
   }
 
   final AgentReview review;
+  final FormalReview? formalReview;
   final DateTime? completedAt;
   final bool isCurrent;
   final AgentController? agentController;
 
-  String get statusLabel => isCurrent ? '本次结果' : '已完成';
+  String get statusLabel {
+    final eligibility = formalReview?.result?.eligibility;
+    return switch (eligibility) {
+      FormalReviewSummaryEligibility.provisional => '暂定文本反馈',
+      FormalReviewSummaryEligibility.insufficientEvidence => '证据不足',
+      _ => isCurrent ? '本次结果' : '已完成',
+    };
+  }
+
   String? get dateLabel =>
       completedAt == null ? null : _compactDateLabel(completedAt!);
   String? get detailDateLabel =>
@@ -601,6 +617,11 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
     final hasRecordingControls =
         controller != null && controller.recordings.isNotEmpty;
     final mediaError = _visibleMediaError;
+    final formalReview = entry.formalReview;
+    final scenarioReview = formalReview?.schema == FormalReviewSchema.scenarioV2
+        ? formalReview
+        : null;
+    final scenarioResult = scenarioReview?.result;
     return Scaffold(
       key: const Key('review-detail-page'),
       appBar: AppBar(
@@ -625,18 +646,40 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
               title: '整体表现',
               body: review.summary,
             ),
-            const SizedBox(height: 12),
-            _ReviewDetailSection(
-              key: const Key('review-detail-strength'),
-              title: '做得好的地方',
-              body: review.strength,
-            ),
-            const SizedBox(height: 12),
-            _ReviewDetailSection(
-              key: const Key('review-detail-focus'),
-              title: '下一次重点',
-              body: review.nextFocus,
-            ),
+            if (scenarioReview != null && scenarioResult != null) ...[
+              if (_reviewNotice(scenarioReview) case final notice?) ...[
+                const SizedBox(height: 12),
+                _ReviewStatusNotice(
+                  key: const Key('review-detail-status-notice'),
+                  title: notice.title,
+                  message: notice.message,
+                ),
+              ],
+              if (scenarioResult.dimensions.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _ReviewDimensions(dimensions: scenarioResult.dimensions),
+              ],
+              if (scenarioResult.feedbackItems.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _ReviewFeedback(
+                  items: scenarioResult.feedbackItems,
+                  priorityRefs: scenarioResult.repracticeSuggestionRefs,
+                ),
+              ],
+            ] else ...[
+              const SizedBox(height: 12),
+              _ReviewDetailSection(
+                key: const Key('review-detail-strength'),
+                title: '做得好的地方',
+                body: review.strength,
+              ),
+              const SizedBox(height: 12),
+              _ReviewDetailSection(
+                key: const Key('review-detail-focus'),
+                title: '下一次重点',
+                body: review.nextFocus,
+              ),
+            ],
             if (hasRecordingControls) ...[
               const SizedBox(height: 12),
               PracticeRecordingsCard(controller: controller, title: '练习录音'),
@@ -652,6 +695,172 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ReviewStatusNotice extends StatelessWidget {
+  const _ReviewStatusNotice({
+    required this.title,
+    required this.message,
+    super.key,
+  });
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: SpeakUpDesign.primaryMuted,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: 6),
+            Text(message, style: SpeakUpDesign.body),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewDimensions extends StatelessWidget {
+  const _ReviewDimensions({required this.dimensions});
+
+  final List<FormalReviewDimension> dimensions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: const Key('review-detail-dimensions'),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('分项表现', style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: 14),
+            for (var index = 0; index < dimensions.length; index++) ...[
+              if (index > 0) ...[
+                const SizedBox(height: 16),
+                const Divider(height: 1),
+                const SizedBox(height: 16),
+              ],
+              _ReviewDimensionRow(dimension: dimensions[index]),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewDimensionRow extends StatelessWidget {
+  const _ReviewDimensionRow({required this.dimension});
+
+  final FormalReviewDimension dimension;
+
+  @override
+  Widget build(BuildContext context) {
+    final score = dimension.score;
+    return Column(
+      key: Key('review-dimension-${dimension.key}'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                _dimensionLabel(dimension.category),
+                style: SpeakUpDesign.label,
+              ),
+            ),
+            if (score != null) ...[
+              const SizedBox(width: 12),
+              Text('$score / 100', style: SpeakUpDesign.label),
+            ],
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(dimension.message, style: SpeakUpDesign.body),
+        if (dimension.suggestion case final suggestion?) ...[
+          const SizedBox(height: 6),
+          Text('建议：$suggestion', style: SpeakUpDesign.body),
+        ],
+      ],
+    );
+  }
+}
+
+class _ReviewFeedback extends StatelessWidget {
+  const _ReviewFeedback({required this.items, required this.priorityRefs});
+
+  final List<FormalReviewFeedbackItem> items;
+  final List<String> priorityRefs;
+
+  @override
+  Widget build(BuildContext context) {
+    final priorities = priorityRefs.toSet();
+    return Card(
+      key: const Key('review-detail-feedback'),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('反馈与纠错', style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: 14),
+            for (var index = 0; index < items.length; index++) ...[
+              if (index > 0) ...[
+                const SizedBox(height: 16),
+                const Divider(height: 1),
+                const SizedBox(height: 16),
+              ],
+              _ReviewFeedbackRow(
+                item: items[index],
+                priority: priorities.contains(items[index].key),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewFeedbackRow extends StatelessWidget {
+  const _ReviewFeedbackRow({required this.item, required this.priority});
+
+  final FormalReviewFeedbackItem item;
+  final bool priority;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: Key('review-feedback-${item.key}'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _StatusLabel(label: _feedbackLabel(item.kind)),
+            if (priority) const _StatusLabel(label: '优先练习'),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(item.message, style: SpeakUpDesign.body),
+        if (item.suggestion case final suggestion?) ...[
+          const SizedBox(height: 6),
+          Text('建议：$suggestion', style: SpeakUpDesign.body),
+        ],
+      ],
     );
   }
 }
@@ -725,6 +934,72 @@ class _ReviewDetailSection extends StatelessWidget {
       ),
     );
   }
+}
+
+({String title, String message})? _reviewNotice(FormalReview review) {
+  final result = review.result!;
+  if (result.eligibility ==
+      FormalReviewSummaryEligibility.insufficientEvidence) {
+    return (
+      title: '本次暂不评分',
+      message: _insufficientMessage(result.insufficientEvidenceReasons),
+    );
+  }
+  if (review.contextType == FormalReviewContextType.ieltsSpeakingPart2) {
+    if (result.eligibility == FormalReviewSummaryEligibility.provisional) {
+      return (
+        title: '暂定文本反馈',
+        message:
+            '当前只依据已确认文字评估；发音尚未评估，因此不会生成 Overall。'
+            '这是 AI 练习反馈，不是 IELTS 官方成绩。',
+      );
+    }
+    return (title: '练习估分说明', message: '这是 AI 练习反馈，不是 IELTS 官方成绩。');
+  }
+  return null;
+}
+
+String _insufficientMessage(List<String> reasons) {
+  if (reasons.contains('confirmed_answer_too_short')) {
+    return '有效回答太短。完成一段更完整的回答后再试，本次不会按低分处理。';
+  }
+  return '本次有效证据不足，暂不评分。完成更多回答后可以重新评估。';
+}
+
+String _feedbackLabel(FormalReviewFeedbackKind kind) {
+  return switch (kind) {
+    FormalReviewFeedbackKind.correction => '纠错',
+    FormalReviewFeedbackKind.strength => '做得好的地方',
+    FormalReviewFeedbackKind.improvement => '改进建议',
+    FormalReviewFeedbackKind.recommendedExpression => '推荐表达',
+  };
+}
+
+String _dimensionLabel(String category) {
+  return const <String, String>{
+        'relevance_structure': '回答相关性与结构',
+        'technical_depth': '专业与技术深度',
+        'ownership_decisions': '主动性与决策',
+        'evidence_impact': '证据与影响',
+        'language_clarity': '英语表达清晰度',
+        'task_coverage_development': '任务覆盖与展开',
+        'coherence': '连贯与衔接',
+        'lexical_resource': '词汇资源',
+        'grammar_range_accuracy': '语法范围与准确性',
+        'progress_clarity': '进度表达',
+        'risk_specificity': '风险具体性',
+        'impact_priority': '影响与优先级',
+        'next_step_ask': '下一步与诉求',
+        'intent_clarity': '意图清晰度',
+        'information_completeness': '信息完整性',
+        'politeness_tone': '礼貌与语气',
+        'resolution_effectiveness': '问题解决效果',
+        'task_relevance': '任务相关性',
+        'clarity': '表达清晰度',
+        'grammar_accuracy': '语法准确性',
+        'interaction_effectiveness': '互动效果',
+      }[category] ??
+      category.replaceAll('_', ' ');
 }
 
 String _compactDateLabel(DateTime value) {

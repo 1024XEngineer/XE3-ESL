@@ -12,10 +12,12 @@ import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/review/formal_review.dart';
 
 void main() {
   test('consumes server turnLimit and Review from confirmation', () async {
-    final practice = _TwoTurnPracticeClient();
+    final formalReview = _provisionalFormalReview();
+    final practice = _TwoTurnPracticeClient(formalReview: formalReview);
     final recorder = _Recorder();
     final controller = AgentController(
       client: FakeAgentClient(),
@@ -41,6 +43,7 @@ void main() {
     }
 
     expect(controller.review?.id, _reviewId);
+    expect(controller.formalReview, same(formalReview));
     expect(controller.recordingState, PracticeRecordingState.completed);
     expect(practice.confirmedQuestionIds, ['question-1', 'question-2']);
     expect(recorder.discarded, 2);
@@ -1037,12 +1040,14 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     this.firstQuestion = 'First question',
     this.firstAnswer = 'Answer 1',
     this.secondQuestion = 'Second question',
+    this.formalReview,
   });
 
   final bool includeAudioAssets;
   final String firstQuestion;
   final String firstAnswer;
   final String secondQuestion;
+  final FormalReview? formalReview;
   int completed = 0;
   int cleanupCount = 0;
   final List<String> confirmedQuestionIds = [];
@@ -1161,6 +1166,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
               nextFocus: 'Next focus',
             )
           : null,
+      formalReview: done && !omitReview ? formalReview : null,
       audioAssetId: includeAudioAssets ? 'audio-$completed' : null,
     );
   }
@@ -1415,6 +1421,40 @@ final class _Recorder implements PracticeRecorder {
 
 const _sessionId = 'practice-session-server';
 const _reviewId = 'review-server';
+
+FormalReview _provisionalFormalReview() {
+  final createdAt = DateTime.utc(2026, 7, 30, 3);
+  return FormalReview(
+    id: _reviewId,
+    practiceSessionId: _sessionId,
+    status: FormalReviewStatus.completed,
+    schema: FormalReviewSchema.scenarioV2,
+    implementationVersion: 'qianwen-scenario-review-v2',
+    sourceTurnId: 'turn-2',
+    sourceTurnVersion: 'conversation-turn:evidence-v2',
+    contextType: FormalReviewContextType.interviewProjectDeepDive,
+    result: const FormalReviewResult(
+      eligibility: FormalReviewSummaryEligibility.provisional,
+      summary: '本次仅根据文本给出暂定反馈。',
+      dimensions: <FormalReviewDimension>[
+        FormalReviewDimension(
+          key: 'relevance_structure',
+          category: 'relevance_structure',
+          score: 76,
+          message: '回答与问题相关。',
+        ),
+      ],
+      feedbackItems: <FormalReviewFeedbackItem>[],
+      repracticeSuggestionRefs: <String>[],
+      insufficientEvidenceReasons: <String>[
+        'pronunciation_audio_evidence_unavailable',
+      ],
+    ),
+    createdAt: createdAt,
+    updatedAt: createdAt,
+    completedAt: createdAt,
+  );
+}
 
 Uint8List _wave() {
   final bytes = Uint8List(44);

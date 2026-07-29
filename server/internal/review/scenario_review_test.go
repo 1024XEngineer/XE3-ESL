@@ -50,6 +50,42 @@ func TestValidateGeneratedOmitsInterviewOverallAndKeepsUTF8Anchors(
 	}
 }
 
+func TestValidateGeneratedPersistsAnExplicitZeroDimensionScore(
+	t *testing.T,
+) {
+	t.Parallel()
+	source := scenarioReviewSource(t, "我 chose café because it was reliable.")
+	generated := interviewGeneratedReview(source)
+	generated.Result.Conclusions[0].Score = 0
+	generated.Result.Conclusions[0].ScorePresent = true
+
+	result, _, err := validateGenerated(source, generated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Conclusions []map[string]json.RawMessage `json:"conclusions"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if score, present := wire.Conclusions[0]["score"]; !present || string(score) != "0" {
+		t.Fatalf("explicit zero score was not persisted: %s", encoded)
+	}
+
+	generated.Result.Conclusions[0].ScorePresent = false
+	if _, _, err := validateGenerated(source, generated); !errors.Is(
+		err,
+		ErrInvalidReview,
+	) {
+		t.Fatalf("implicit zero score error=%v, want invalid Review", err)
+	}
+}
+
 func TestFourScenarioPoliciesProduceIndependentFeedbackWithPreciseEvidence(
 	t *testing.T,
 ) {

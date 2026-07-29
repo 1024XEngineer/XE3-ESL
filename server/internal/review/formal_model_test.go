@@ -26,6 +26,84 @@ func TestReviewResultAcceptsTheMaximumJSONBudget(t *testing.T) {
 	}
 }
 
+func TestReviewResultPreservesScenarioZeroAndLegacyScoreShapes(t *testing.T) {
+	t.Parallel()
+	scenarioJSON := []byte(`{
+		"summary_eligibility":"eligible",
+		"summary":"Needs a full rewrite.",
+		"conclusions":[{
+			"key":"clarity",
+			"category":"language_clarity",
+			"score":0,
+			"message":"The answer was not understandable."
+		}]
+	}`)
+	var scenario ReviewResult
+	if err := json.Unmarshal(scenarioJSON, &scenario); err != nil {
+		t.Fatalf("unmarshal scenario zero: %v", err)
+	}
+	if scenario.Conclusions[0].Score != 0 ||
+		!scenario.Conclusions[0].ScorePresent {
+		t.Fatalf("scenario zero presence lost: %+v", scenario.Conclusions[0])
+	}
+	encoded, err := json.Marshal(scenario)
+	if err != nil {
+		t.Fatalf("marshal scenario zero: %v", err)
+	}
+	var wire struct {
+		Conclusions []map[string]json.RawMessage `json:"conclusions"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if score, present := wire.Conclusions[0]["score"]; !present || string(score) != "0" {
+		t.Fatalf("scenario zero omitted from persistence JSON: %s", encoded)
+	}
+
+	missingScenarioScore := []byte(`{
+		"summary_eligibility":"eligible",
+		"summary":"Missing score.",
+		"conclusions":[{
+			"key":"clarity",
+			"category":"language_clarity",
+			"message":"The score is absent."
+		}]
+	}`)
+	if err := json.Unmarshal(
+		missingScenarioScore,
+		&ReviewResult{},
+	); !errors.Is(err, ErrInvalidReview) {
+		t.Fatalf("missing scenario score error=%v, want invalid Review", err)
+	}
+
+	legacyJSON := []byte(`{
+		"overall_score":80,
+		"summary":"Legacy review.",
+		"conclusions":[{
+			"key":"clarity",
+			"category":"clarity",
+			"message":"Clear answer."
+		}]
+	}`)
+	var legacy ReviewResult
+	if err := json.Unmarshal(legacyJSON, &legacy); err != nil {
+		t.Fatalf("unmarshal legacy result: %v", err)
+	}
+	encoded, err = json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy result: %v", err)
+	}
+	var legacyWire struct {
+		Conclusions []map[string]json.RawMessage `json:"conclusions"`
+	}
+	if err := json.Unmarshal(encoded, &legacyWire); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := legacyWire.Conclusions[0]["score"]; present {
+		t.Fatalf("legacy JSON unexpectedly gained score: %s", encoded)
+	}
+}
+
 func TestReviewResultRejectsEveryFrozenBudgetViolation(t *testing.T) {
 	invalidUTF8 := string([]byte{0xff})
 	tests := []struct {
