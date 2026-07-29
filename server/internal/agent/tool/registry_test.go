@@ -161,6 +161,34 @@ func TestExecutorValidatesAndRunsTool(t *testing.T) {
 	}
 }
 
+func TestExecutorFiltersUnknownInputFields(t *testing.T) {
+	tool := &stubTool{
+		definition: readToolDefinition("review.search.v1"),
+		result:     Result{Content: map[string]any{"ok": true}},
+	}
+	registry, err := NewRegistry(tool)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	_, err = NewExecutor(registry).Execute(
+		context.Background(),
+		validCallContext(),
+		Invocation{
+			Name: "review.search.v1",
+			Input: json.RawMessage(
+				`{"query":"last interview","unexpected":true}`,
+			),
+		},
+		Policy{AllowedNames: []string{"review.search.v1"}},
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := string(tool.input), `{"query":"last interview"}`; got != want {
+		t.Fatalf("tool input = %s, want %s", got, want)
+	}
+}
+
 func TestExecutorRejectsToolOutsidePolicy(t *testing.T) {
 	tool := &stubTool{definition: writeToolDefinition("scenario.create.v1")}
 	registry, err := NewRegistry(tool)
@@ -225,8 +253,12 @@ func TestExecutorValidatesInputSchema(t *testing.T) {
 	}{
 		{name: "missing required", input: json.RawMessage(`{}`)},
 		{name: "wrong type", input: json.RawMessage(`{"query":123}`)},
-		{name: "extra field", input: json.RawMessage(`{"query":"x","unexpected":true}`)},
 		{name: "null field", input: json.RawMessage(`{"query":null}`)},
+		{name: "blank text", input: json.RawMessage(`{"query":"   "}`)},
+		{name: "invalid enum", input: json.RawMessage(`{"query":"x","kind":"other"}`)},
+		{name: "integer below minimum", input: json.RawMessage(`{"query":"x","limit":0}`)},
+		{name: "integer above maximum", input: json.RawMessage(`{"query":"x","limit":21}`)},
+		{name: "fractional integer", input: json.RawMessage(`{"query":"x","limit":1.5}`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -256,10 +288,79 @@ func readToolDefinition(name string) Definition {
 		Name:        name,
 		Description: "Search data.",
 		InputSchema: objectSchema(map[string]any{
-			"query": stringSchema("Query text."),
+			"query": TextSchema("Query text.", 100),
+			"kind": StringEnumSchema(
+				"Data kind.",
+				"review",
+				"scenario",
+			),
+			"limit": IntegerRangeSchema("Maximum results.", 1, 20),
 		}, []string{"query"}),
 		ReadOnly: true,
 		Risk:     RiskReadOnly,
+	}
+}
+
+func TestExecutorNormalizesEmptyResultAndErrorCategories(t *testing.T) {
+	emptyTool := &stubTool{
+		definition: readToolDefinition("review.search.v1"),
+		result:     Result{},
+	}
+	registry, err := NewRegistry(emptyTool)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	result, err := NewExecutor(registry).Execute(
+		context.Background(),
+		validCallContext(),
+		Invocation{
+			Name:  "review.search.v1",
+			Input: json.RawMessage(`{"query":"nothing"}`),
+		},
+		Policy{AllowedNames: []string{"review.search.v1"}},
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Content == nil || len(result.Content) != 0 {
+		t.Fatalf("Content = %#v, want empty object", result.Content)
+	}
+
+	tests := map[string]struct {
+		err       error
+		category  string
+		retryable bool
+	}{
+		"invalid input": {
+			err:       ErrInvalidInput,
+			category:  "invalid_input",
+			retryable: false,
+		},
+		"unknown tool": {
+			err:       ErrUnknownTool,
+			category:  "unknown_tool",
+			retryable: false,
+		},
+		"rejected tool": {
+			err:       ErrToolRejected,
+			category:  "permission_denied",
+			retryable: false,
+		},
+		"internal failure": {
+			err:       errors.New("temporary"),
+			category:  "internal",
+			retryable: true,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := ErrorCategory(tt.err); got != tt.category {
+				t.Fatalf("ErrorCategory() = %q, want %q", got, tt.category)
+			}
+			if got := RetryableError(tt.err); got != tt.retryable {
+				t.Fatalf("RetryableError() = %v, want %v", got, tt.retryable)
+			}
+		})
 	}
 }
 

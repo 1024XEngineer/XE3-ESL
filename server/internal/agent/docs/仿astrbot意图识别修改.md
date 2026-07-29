@@ -1,10 +1,10 @@
 # 仿 AstrBot 意图识别修改计划
 
-> 状态：实施中，前两个阶段已完成。
+> 状态：实施中，前三个阶段已完成。
 >
 > 进度维护：每完成并通过验收一个阶段，将该阶段标题前的 `[ ]` 改为 `[x]`，并在阶段末补充实际验收命令和结果。
 >
-> 已关联 Issue：[#203「冻结全量 LLM Tool Calling 契约与回归基线」](https://github.com/1024XEngineer/XE3-ESL/issues/203)、[#204「移除关键词业务路由并向模型暴露全量工具」](https://github.com/1024XEngineer/XE3-ESL/issues/204)，均关联 MS2。
+> 已关联 Issue：[#203「冻结全量 LLM Tool Calling 契约与回归基线」](https://github.com/1024XEngineer/XE3-ESL/issues/203)、[#204「移除关键词业务路由并向模型暴露全量工具」](https://github.com/1024XEngineer/XE3-ESL/issues/204)、[#207「强化 Agent 工具描述、参数 Schema 与执行校验」](https://github.com/1024XEngineer/XE3-ESL/issues/207)，均关联 MS2。
 
 ## 目标
 
@@ -94,7 +94,7 @@ go test ./internal/agent/runtime ./internal/agent/eval ./internal/agent/tool ./i
 go test ./...
 ```
 
-### [ ] 3. 强化工具描述与参数 Schema
+### [x] 3. 强化工具描述与参数 Schema
 
 - 为每个工具补全清晰的用途、适用场景和不适用场景描述，让工具定义承担“意图说明书”的职责。
 - 为输入参数补全类型、必填项、枚举、长度和格式约束。
@@ -106,6 +106,25 @@ go test ./...
 - 非法工具名不会进入工具实现。
 - 缺失必填参数、类型错误和未知参数都有确定性测试。
 - 工具执行结果能作为结构化 Tool Result 正确回填。
+
+实际结果（2026-07-29）：
+
+- 完善 Scenario Create/Search、Review Search/Get、Material Search 和 Mistake Search 共 6 个工具的用途、适用场景及不适用场景描述。
+- 新增非空文本、Agent ID、字符串枚举和整数范围 Schema 构造器，并使用中文注释说明约束用途。
+- 统一 Schema 层支持必填项、基础类型、枚举、Unicode 字符长度、自定义格式、整数/数值上下界、数组和嵌套对象。
+- 工具注册时同步校验 Schema 本身，拒绝未知类型、无效格式、空枚举、缺失属性和倒置范围。
+- Executor 在调用工具前统一归一化参数，递归删除 Schema 未声明字段；非法参数不会进入工具实现。
+- 保留稳定错误分类：`invalid_input`、`unknown_tool`、`permission_denied` 和 `internal`，并验证对应重试语义。
+- 工具返回 nil Content 时归一为空对象，搜索无命中时继续返回结构化空数组。
+- 离线提示注入评测与新参数过滤语义对齐：假模型负责拒绝提示注入，Executor 测试负责验证不可信字段不会进入工具。
+
+验收命令通过：
+
+```bash
+cd server
+go test ./internal/agent/runtime ./internal/agent/eval ./internal/agent/tool ./internal/agent/mocktool ./internal/matter/agenttool ./internal/review/agenttool ./internal/ai/...
+go test ./...
+```
 
 ### [ ] 4. 完成有界 Tool Calling Loop
 

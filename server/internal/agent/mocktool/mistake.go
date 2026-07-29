@@ -24,14 +24,20 @@ func NewMistakeSearchTool(store *Store) MistakeSearchTool {
 func (t MistakeSearchTool) Definition() tool.Definition {
 	return tool.Definition{
 		Name:        MistakeSearchToolName,
-		Description: "Search recurring speaking mistakes and coaching suggestions. Use when the user asks for 历史错题, 以前的错误, recurring mistakes, pronunciation issues, grammar patterns, or repeated expression problems. Do not use for correcting only the current sentence.",
+		Description: "Search the current user's saved historical speaking mistakes and coaching suggestions. Use for recurring grammar, pronunciation, clarity, structure, or expression problems observed across earlier practice. Do not use to correct only the current utterance, inspect a review, or search resume and job-description materials.",
 		InputSchema: tool.ObjectSchema(map[string]any{
-			"query":       tool.StringSchema("Mistake category or phrasing to find."),
-			"scenario_id": tool.StringSchema("Optional scenario id to restrict the search."),
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Maximum number of mistakes to return.",
-			},
+			"query": tool.TextSchema(
+				"Mistake category, language pattern, or coaching topic to find.",
+				500,
+			),
+			"scenario_id": tool.IdentifierSchema(
+				"Optional existing scenario id used to narrow the mistake search.",
+			),
+			"limit": tool.IntegerRangeSchema(
+				"Maximum number of historical mistakes to return.",
+				1,
+				20,
+			),
 		}, []string{"query"}),
 		ReadOnly: true,
 		Risk:     tool.RiskReadOnly,

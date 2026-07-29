@@ -58,13 +58,18 @@ func (executor *Executor) Execute(
 		call.RequestID == "" {
 		return Result{}, ErrToolRejected
 	}
-	if err := ValidateInput(definition.InputSchema, invocation.Input); err != nil {
+	// 在进入业务工具前统一校验并过滤模型生成的参数，工具实现无需重复处理未知字段。
+	normalizedInput, err := NormalizeInput(
+		definition.InputSchema,
+		invocation.Input,
+	)
+	if err != nil {
 		executor.logFailure(call, definition, 0, err)
 		return Result{}, err
 	}
 	startedAt := time.Now()
-	executor.logStarted(call, definition, invocation.Input)
-	result, err := tool.Execute(ctx, call, invocation.Input)
+	executor.logStarted(call, definition, normalizedInput)
+	result, err := tool.Execute(ctx, call, normalizedInput)
 	if err != nil {
 		executor.logFailure(call, definition, time.Since(startedAt), err)
 		return Result{}, err

@@ -24,14 +24,22 @@ func NewMaterialSearchTool(store *Store) MaterialSearchTool {
 func (t MaterialSearchTool) Definition() tool.Definition {
 	return tool.Definition{
 		Name:        MaterialSearchToolName,
-		Description: "Search resume and job description materials for relevant facts. Use when the user asks to combine 简历, 履历, JD, 岗位要求, resume, or job description context with English practice. Do not use for generic wording help without material context.",
+		Description: "Search the current user's saved resume and job-description materials and return relevant factual snippets. Use when a response must be grounded in the user's resume, work history, JD, role requirements, or matching experience. Do not use for generic wording help, historical reviews, mistakes, or facts the user already supplied directly in the current message.",
 		InputSchema: tool.ObjectSchema(map[string]any{
-			"query": tool.StringSchema("Resume or JD facts to find."),
-			"kind":  tool.StringSchema("Optional material kind: resume or jd."),
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Maximum number of material snippets to return.",
-			},
+			"query": tool.TextSchema(
+				"Facts, skills, experience, or requirements to find.",
+				500,
+			),
+			"kind": tool.StringEnumSchema(
+				"Optional material category used to narrow the search.",
+				"resume",
+				"jd",
+			),
+			"limit": tool.IntegerRangeSchema(
+				"Maximum number of material snippets to return.",
+				1,
+				20,
+			),
 		}, []string{"query"}),
 		ReadOnly: true,
 		Risk:     tool.RiskReadOnly,

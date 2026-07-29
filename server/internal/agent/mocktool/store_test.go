@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
@@ -32,6 +33,78 @@ func TestRegistryExposesInitialMockToolSet(t *testing.T) {
 	}
 	if !equalStrings(names, want) {
 		t.Fatalf("tool names = %#v, want %#v", names, want)
+	}
+}
+
+func TestToolDefinitionsGuideModelAndConstrainArguments(t *testing.T) {
+	registry, err := NewRegistry(NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	for _, definition := range registry.Definitions() {
+		t.Run(definition.Name, func(t *testing.T) {
+			if !strings.Contains(definition.Description, "Use ") ||
+				!strings.Contains(definition.Description, "Do not use") {
+				t.Fatalf(
+					"description lacks routing guidance: %q",
+					definition.Description,
+				)
+			}
+			if disabled, ok := definition.InputSchema["additionalProperties"].(bool); !ok || disabled {
+				t.Fatalf(
+					"additionalProperties = %#v, want false",
+					definition.InputSchema["additionalProperties"],
+				)
+			}
+			properties, ok := definition.InputSchema["properties"].(map[string]any)
+			if !ok || len(properties) == 0 {
+				t.Fatalf("properties = %#v", definition.InputSchema["properties"])
+			}
+			for name, raw := range properties {
+				property, ok := raw.(map[string]any)
+				if !ok {
+					t.Fatalf("property %q has no description: %#v", name, raw)
+				}
+				description, _ := property["description"].(string)
+				if strings.TrimSpace(description) == "" {
+					t.Fatalf("property %q has no description: %#v", name, raw)
+				}
+			}
+			if limit, ok := properties["limit"].(map[string]any); ok {
+				if limit["type"] != "integer" ||
+					limit["minimum"] != 1 ||
+					limit["maximum"] != 20 {
+					t.Fatalf("limit schema = %#v", limit)
+				}
+			}
+		})
+	}
+
+	createTool, ok := registry.Get(mattertool.ScenarioCreateToolName)
+	if !ok {
+		t.Fatal("scenario.create.v1 not registered")
+	}
+	createProperties := createTool.Definition().
+		InputSchema["properties"].(map[string]any)
+	scenarioTypes := createProperties["type"].(map[string]any)["enum"]
+	if !equalAny(
+		scenarioTypes,
+		[]string{"interview", "meeting", "client", "presentation", "speaking"},
+	) {
+		t.Fatalf("scenario type enum = %#v", scenarioTypes)
+	}
+
+	materialTool, ok := registry.Get(MaterialSearchToolName)
+	if !ok {
+		t.Fatal("material.search.v1 not registered")
+	}
+	materialProperties := materialTool.Definition().
+		InputSchema["properties"].(map[string]any)
+	if !equalAny(
+		materialProperties["kind"].(map[string]any)["enum"],
+		[]string{"resume", "jd"},
+	) {
+		t.Fatalf("material kind schema = %#v", materialProperties["kind"])
 	}
 }
 
