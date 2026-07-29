@@ -37,5 +37,5 @@ server/bin/
 *.test
 *.out
 
-#sql
-*.sql
+#docs
+server/internal/agent/docs

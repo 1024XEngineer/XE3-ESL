@@ -29,9 +29,6 @@ func TestBaselineRoutingEval(t *testing.T) {
 	if result.WriteMisrouteRate != 0 {
 		t.Fatalf("WriteMisrouteRate = %v, want 0", result.WriteMisrouteRate)
 	}
-	if !result.UnauthorizedRejected {
-		t.Fatal("UnauthorizedRejected = false, want true")
-	}
 	if result.CoreRoutingAccuracy < 0.90 {
 		t.Fatalf("CoreRoutingAccuracy = %v, want >= 0.90", result.CoreRoutingAccuracy)
 	}

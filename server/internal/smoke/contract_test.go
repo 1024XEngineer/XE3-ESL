@@ -130,7 +130,7 @@ func TestAgentToolCapabilityDisplay(t *testing.T) {
 	}
 	if response.Tools[0].Name != "material.search.v1" ||
 		response.Tools[4].Name != "scenario.create.v1" ||
-		response.Tools[4].Risk != "requires_confirm" ||
+		response.Tools[4].Risk != "low_risk_write" ||
 		response.Tools[4].ReadOnly {
 		t.Fatalf("unexpected tool summaries: %#v", response.Tools)
 	}

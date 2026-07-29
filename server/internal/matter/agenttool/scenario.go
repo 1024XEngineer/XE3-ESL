@@ -50,14 +50,27 @@ func NewScenarioCreateTool(port ScenarioPort) ScenarioCreateTool {
 func (tool ScenarioCreateTool) Definition() Definition {
 	return Definition{
 		Name:        ScenarioCreateToolName,
-		Description: "Create a user's real-world interview, meeting, client, presentation, or speaking scenario. Use when the user explicitly wants to prepare a new 面试, 会议, 客户沟通, 演讲, or 场景. Do not use for simple translation, grammar, or wording help.",
+		Description: "Create and persist one new English-practice scenario for the current user. Use when the user wants to start or create a new interview, meeting, client conversation, presentation, or general speaking practice. This is a write operation. Do not use to find or continue an existing scenario, inspect reviews, search user materials, or answer standalone translation and wording questions.",
 		InputSchema: ObjectSchema(map[string]any{
-			"type":  StringSchema("Scenario type such as interview, meeting, client, presentation, or speaking."),
-			"title": StringSchema("Short user-facing scenario title."),
-			"goal":  StringSchema("What the user wants to prepare or improve."),
+			"type": StringEnumSchema(
+				"Practice scenario category.",
+				"interview",
+				"meeting",
+				"client",
+				"presentation",
+				"speaking",
+			),
+			"title": TextSchema(
+				"Optional short user-facing title for the new scenario.",
+				120,
+			),
+			"goal": TextSchema(
+				"Optional practice goal or skill the user wants to improve.",
+				500,
+			),
 		}, []string{"type"}),
 		ReadOnly: false,
-		Risk:     RiskRequiresConfirm,
+		Risk:     RiskLowRiskWrite,
 	}
 }
 
@@ -68,7 +81,7 @@ func (tool ScenarioCreateTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ScenarioCreateInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.Type == "" {
@@ -94,13 +107,17 @@ func NewScenarioSearchTool(port ScenarioPort) ScenarioSearchTool {
 func (tool ScenarioSearchTool) Definition() Definition {
 	return Definition{
 		Name:        ScenarioSearchToolName,
-		Description: "Search the user's existing scenarios when the current scenario is ambiguous. Use for 上次那个面试, 继续准备, previous interview, existing meeting, or when the user refers to an earlier 场景. Do not create a new scenario with this tool.",
+		Description: "Search the current user's existing English-practice scenarios and return matching summaries. Use when the user refers to a previous interview, meeting, client conversation, presentation, or asks to continue an earlier scenario. Do not use to create a new scenario, read a review, or search resume and job-description materials.",
 		InputSchema: ObjectSchema(map[string]any{
-			"query": StringSchema("User phrase describing the scenario to find."),
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Maximum number of scenarios to return.",
-			},
+			"query": TextSchema(
+				"Words describing the existing scenario to find.",
+				500,
+			),
+			"limit": IntegerRangeSchema(
+				"Maximum number of scenario summaries to return.",
+				1,
+				20,
+			),
 		}, []string{"query"}),
 		ReadOnly: true,
 		Risk:     RiskReadOnly,
@@ -114,7 +131,7 @@ func (tool ScenarioSearchTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ScenarioSearchInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.Query == "" {

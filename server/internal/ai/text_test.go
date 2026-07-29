@@ -82,6 +82,46 @@ func TestValidateTextRequestSupportsToolRoundTrip(t *testing.T) {
 	}
 }
 
+func TestValidateTextRequestSupportsParallelToolRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	request := TextRequest{
+		Messages: []TextMessage{
+			{Role: TextRoleUser, Content: "Compare my last two reviews."},
+			{
+				Role: TextRoleAssistant,
+				ToolCalls: []ToolCall{
+					{
+						ID:        "call-1",
+						Name:      "review.search.v1",
+						Arguments: json.RawMessage(`{"query":"first"}`),
+					},
+					{
+						ID:        "call-2",
+						Name:      "review.search.v1",
+						Arguments: json.RawMessage(`{"query":"second"}`),
+					},
+				},
+			},
+			{
+				Role:       TextRoleTool,
+				Content:    `{"reviews":[{"id":"review-1"}]}`,
+				ToolCallID: "call-1",
+			},
+			{
+				Role:       TextRoleTool,
+				Content:    `{"reviews":[{"id":"review-2"}]}`,
+				ToolCallID: "call-2",
+			},
+		},
+		Tools: []ToolDefinition{validToolDefinition()},
+	}
+
+	if err := ValidateTextRequest(request); err != nil {
+		t.Fatalf("valid parallel tool round trip rejected: %v", err)
+	}
+}
+
 func TestValidateTextRequestSupportsToolChoice(t *testing.T) {
 	t.Parallel()
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
@@ -35,41 +36,97 @@ func TestRegistryExposesInitialMockToolSet(t *testing.T) {
 	}
 }
 
-func TestScenarioCreateRequiresConfirmationAndIsIdempotent(t *testing.T) {
+func TestToolDefinitionsGuideModelAndConstrainArguments(t *testing.T) {
+	registry, err := NewRegistry(NewStore())
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	for _, definition := range registry.Definitions() {
+		t.Run(definition.Name, func(t *testing.T) {
+			if !strings.Contains(definition.Description, "Use ") ||
+				!strings.Contains(definition.Description, "Do not use") {
+				t.Fatalf(
+					"description lacks routing guidance: %q",
+					definition.Description,
+				)
+			}
+			if disabled, ok := definition.InputSchema["additionalProperties"].(bool); !ok || disabled {
+				t.Fatalf(
+					"additionalProperties = %#v, want false",
+					definition.InputSchema["additionalProperties"],
+				)
+			}
+			properties, ok := definition.InputSchema["properties"].(map[string]any)
+			if !ok || len(properties) == 0 {
+				t.Fatalf("properties = %#v", definition.InputSchema["properties"])
+			}
+			for name, raw := range properties {
+				property, ok := raw.(map[string]any)
+				if !ok {
+					t.Fatalf("property %q has no description: %#v", name, raw)
+				}
+				description, _ := property["description"].(string)
+				if strings.TrimSpace(description) == "" {
+					t.Fatalf("property %q has no description: %#v", name, raw)
+				}
+			}
+			if limit, ok := properties["limit"].(map[string]any); ok {
+				if limit["type"] != "integer" ||
+					limit["minimum"] != 1 ||
+					limit["maximum"] != 20 {
+					t.Fatalf("limit schema = %#v", limit)
+				}
+			}
+		})
+	}
+
+	createTool, ok := registry.Get(mattertool.ScenarioCreateToolName)
+	if !ok {
+		t.Fatal("scenario.create.v1 not registered")
+	}
+	createProperties := createTool.Definition().
+		InputSchema["properties"].(map[string]any)
+	scenarioTypes := createProperties["type"].(map[string]any)["enum"]
+	if !equalAny(
+		scenarioTypes,
+		[]string{"interview", "meeting", "client", "presentation", "speaking"},
+	) {
+		t.Fatalf("scenario type enum = %#v", scenarioTypes)
+	}
+
+	materialTool, ok := registry.Get(MaterialSearchToolName)
+	if !ok {
+		t.Fatal("material.search.v1 not registered")
+	}
+	materialProperties := materialTool.Definition().
+		InputSchema["properties"].(map[string]any)
+	if !equalAny(
+		materialProperties["kind"].(map[string]any)["enum"],
+		[]string{"resume", "jd"},
+	) {
+		t.Fatalf("material kind schema = %#v", materialProperties["kind"])
+	}
+}
+
+func TestScenarioCreateIsAvailableAndIdempotent(t *testing.T) {
 	registry, err := NewRegistry(NewStore())
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
 	executor := tool.NewExecutor(registry)
 	input := json.RawMessage(`{"type":"interview","title":"PM interview","goal":"prepare concise answers"}`)
-	_, err = executor.Execute(
-		context.Background(),
-		validCallContext("create-scenario-1"),
-		tool.Invocation{Name: mattertool.ScenarioCreateToolName, Input: input},
-		tool.Policy{AllowWrites: true},
-	)
-	if !errors.Is(err, tool.ErrToolRejected) {
-		t.Fatalf("unconfirmed Execute() error = %v, want %v", err, tool.ErrToolRejected)
-	}
-
-	policy := tool.Policy{
-		AllowWrites:    true,
-		ConfirmedNames: []string{mattertool.ScenarioCreateToolName},
-	}
 	first, err := executor.Execute(
 		context.Background(),
 		validCallContext("create-scenario-1"),
 		tool.Invocation{Name: mattertool.ScenarioCreateToolName, Input: input},
-		policy,
 	)
 	if err != nil {
-		t.Fatalf("confirmed Execute() error = %v", err)
+		t.Fatalf("Execute() error = %v", err)
 	}
 	replayed, err := executor.Execute(
 		context.Background(),
 		validCallContext("create-scenario-1"),
 		tool.Invocation{Name: mattertool.ScenarioCreateToolName, Input: input},
-		policy,
 	)
 	if err != nil {
 		t.Fatalf("replay Execute() error = %v", err)
@@ -134,7 +191,6 @@ func TestReadOnlyMockToolsReturnExpectedFixtures(t *testing.T) {
 				context.Background(),
 				validCallContext("read-"+tt.toolName),
 				tool.Invocation{Name: tt.toolName, Input: tt.input},
-				tool.Policy{},
 			)
 			if err != nil {
 				t.Fatalf("Execute() error = %v", err)
@@ -164,7 +220,6 @@ func TestMockToolsSupportEmptyResultInvalidForbiddenAndUnavailable(t *testing.T)
 			Name:  MaterialSearchToolName,
 			Input: json.RawMessage(`{"query":"nothing matches this"}`),
 		},
-		tool.Policy{},
 	)
 	if err != nil {
 		t.Fatalf("empty Execute() error = %v", err)
@@ -180,7 +235,6 @@ func TestMockToolsSupportEmptyResultInvalidForbiddenAndUnavailable(t *testing.T)
 			Name:  MaterialSearchToolName,
 			Input: json.RawMessage(`{"query":"backend","kind":"linkedin"}`),
 		},
-		tool.Policy{},
 	)
 	if !errors.Is(err, tool.ErrInvalidInput) {
 		t.Fatalf("invalid Execute() error = %v, want %v", err, tool.ErrInvalidInput)
@@ -194,10 +248,9 @@ func TestMockToolsSupportEmptyResultInvalidForbiddenAndUnavailable(t *testing.T)
 			Name:  MaterialSearchToolName,
 			Input: json.RawMessage(`{"query":"backend"}`),
 		},
-		tool.Policy{},
 	)
-	if !errors.Is(err, tool.ErrToolRejected) {
-		t.Fatalf("forbidden Execute() error = %v, want %v", err, tool.ErrToolRejected)
+	if !errors.Is(err, tool.ErrExecutionRejected) {
+		t.Fatalf("forbidden Execute() error = %v, want %v", err, tool.ErrExecutionRejected)
 	}
 	store.SetForbidden(MaterialSearchToolName, false)
 
@@ -209,7 +262,6 @@ func TestMockToolsSupportEmptyResultInvalidForbiddenAndUnavailable(t *testing.T)
 			Name:  MaterialSearchToolName,
 			Input: json.RawMessage(`{"query":"backend"}`),
 		},
-		tool.Policy{},
 	)
 	if !errors.Is(err, ErrTemporarilyUnavailable) {
 		t.Fatalf("unavailable Execute() error = %v, want %v", err, ErrTemporarilyUnavailable)
@@ -232,7 +284,7 @@ func TestCapabilitySummariesIncludeRiskAndSchemaFields(t *testing.T) {
 			break
 		}
 	}
-	if scenario.Risk != string(tool.RiskRequiresConfirm) ||
+	if scenario.Risk != string(tool.RiskLowRiskWrite) ||
 		scenario.ReadOnly ||
 		!containsString(scenario.SchemaFields, "type") ||
 		!containsString(scenario.RequiredNames, "type") {

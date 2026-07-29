@@ -40,7 +40,6 @@ func (executor *Executor) Execute(
 	ctx context.Context,
 	call CallContext,
 	invocation Invocation,
-	policy Policy,
 ) (Result, error) {
 	if executor == nil || executor.registry == nil {
 		return Result{}, ErrUnknownTool
@@ -50,21 +49,23 @@ func (executor *Executor) Execute(
 		return Result{}, ErrUnknownTool
 	}
 	definition := tool.Definition()
-	if !policy.Allows(definition) {
-		return Result{}, ErrToolRejected
-	}
 	if !call.Actor.Valid() || call.ThreadID == "" ||
 		call.RunID == "" || call.ToolCallID == "" ||
 		call.RequestID == "" {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
-	if err := ValidateInput(definition.InputSchema, invocation.Input); err != nil {
+	// 在进入业务工具前统一校验并过滤模型生成的参数，工具实现无需重复处理未知字段。
+	normalizedInput, err := NormalizeInput(
+		definition.InputSchema,
+		invocation.Input,
+	)
+	if err != nil {
 		executor.logFailure(call, definition, 0, err)
 		return Result{}, err
 	}
 	startedAt := time.Now()
-	executor.logStarted(call, definition, invocation.Input)
-	result, err := tool.Execute(ctx, call, invocation.Input)
+	executor.logStarted(call, definition, normalizedInput)
+	result, err := tool.Execute(ctx, call, normalizedInput)
 	if err != nil {
 		executor.logFailure(call, definition, time.Since(startedAt), err)
 		return Result{}, err
@@ -147,8 +148,8 @@ func ErrorCategory(err error) string {
 		return "invalid_input"
 	case errors.Is(err, ErrUnknownTool):
 		return "unknown_tool"
-	case errors.Is(err, ErrToolRejected):
-		return "permission_denied"
+	case errors.Is(err, ErrExecutionRejected):
+		return "execution_rejected"
 	default:
 		return "internal"
 	}
@@ -156,7 +157,7 @@ func ErrorCategory(err error) string {
 
 func RetryableError(err error) bool {
 	return !errors.Is(err, ErrInvalidInput) &&
-		!errors.Is(err, ErrToolRejected) &&
+		!errors.Is(err, ErrExecutionRejected) &&
 		!errors.Is(err, ErrUnknownTool)
 }
 

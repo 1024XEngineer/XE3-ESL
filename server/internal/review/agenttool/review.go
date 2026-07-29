@@ -48,14 +48,20 @@ func NewReviewSearchTool(port ReviewPort) ReviewSearchTool {
 func (tool ReviewSearchTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewSearchToolName,
-		Description: "Search the user's historical practice reviews or interview evaluations. Use when the user asks for 上次评价, 复盘, feedback, review, 面试表现, or previous practice results. Do not use for immediate grammar correction of the current sentence.",
+		Description: "Search the current user's historical practice reviews and interview evaluations, returning summary records with review ids. Use when the user asks about previous feedback, performance, recurring review themes, or wants to locate a review before opening it. Do not use for correcting only the current sentence, searching scenarios, or reading one known review id.",
 		InputSchema: ObjectSchema(map[string]any{
-			"query":       StringSchema("What review or evaluation the user wants to find."),
-			"scenario_id": StringSchema("Optional scenario id to restrict the search."),
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Maximum number of reviews to return.",
-			},
+			"query": TextSchema(
+				"Words describing the review or evaluation to find.",
+				500,
+			),
+			"scenario_id": IdentifierSchema(
+				"Optional existing scenario id used to narrow the review search.",
+			),
+			"limit": IntegerRangeSchema(
+				"Maximum number of review summaries to return.",
+				1,
+				20,
+			),
 		}, []string{"query"}),
 		ReadOnly: true,
 		Risk:     RiskReadOnly,
@@ -69,7 +75,7 @@ func (tool ReviewSearchTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ReviewSearchInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.Query == "" {
@@ -104,9 +110,11 @@ func NewReviewGetTool(port ReviewPort) ReviewGetTool {
 func (tool ReviewGetTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewGetToolName,
-		Description: "Read one structured review or interview evaluation by id after a review search or when the user asks to expand a specific review, such as 第一条评价 or details of a previous feedback item.",
+		Description: "Read the full structured details of exactly one review by review_id. Use after review.search.v1 returned an id or when the conversation already contains a specific review id and the user asks to expand that item. Do not use for broad historical review searches or guess a review id from natural language.",
 		InputSchema: ObjectSchema(map[string]any{
-			"review_id": StringSchema("Review id to read."),
+			"review_id": IdentifierSchema(
+				"Exact review id returned by a previous review search.",
+			),
 		}, []string{"review_id"}),
 		ReadOnly: true,
 		Risk:     RiskReadOnly,
@@ -120,7 +128,7 @@ func (tool ReviewGetTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ReviewGetInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.ReviewID == "" {

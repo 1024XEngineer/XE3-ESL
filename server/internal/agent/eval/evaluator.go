@@ -9,24 +9,22 @@ import (
 	"strings"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
-	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
-const DatasetVersion = "agent-routing-eval-v1"
+const DatasetVersion = "agent-routing-eval-v2"
 
 type EvaluationResult struct {
-	DatasetVersion       string
-	Total                int
-	Passed               int
-	CoreRoutingAccuracy  float64
-	DirectMisrouteRate   float64
-	WriteMisrouteRate    float64
-	UnauthorizedRejected bool
-	CaseResults          []CaseResult
+	DatasetVersion      string
+	Total               int
+	Passed              int
+	CoreRoutingAccuracy float64
+	DirectMisrouteRate  float64
+	WriteMisrouteRate   float64
+	CaseResults         []CaseResult
 }
 
 type CaseResult struct {
@@ -66,10 +64,9 @@ func (e *Evaluator) Evaluate(
 		return EvaluationResult{}, errors.New("agent eval: evaluator is invalid")
 	}
 	result := EvaluationResult{
-		DatasetVersion:       DatasetVersion,
-		Total:                len(cases),
-		UnauthorizedRejected: true,
-		CaseResults:          make([]CaseResult, 0, len(cases)),
+		DatasetVersion: DatasetVersion,
+		Total:          len(cases),
+		CaseResults:    make([]CaseResult, 0, len(cases)),
 	}
 	var directCases, directMisroutes, writeCases, writeMisroutes int
 	for index, item := range cases {
@@ -92,10 +89,6 @@ func (e *Evaluator) Evaluate(
 				writeMisroutes++
 			}
 		}
-		if item.Name == "prompt_injection_untrusted_owner_rejected" &&
-			caseResult.ErrorCategory != "invalid_input" {
-			result.UnauthorizedRejected = false
-		}
 		result.CaseResults = append(result.CaseResults, caseResult)
 	}
 	if result.Total > 0 {
@@ -117,27 +110,14 @@ func (e *Evaluator) evaluateCase(
 ) (CaseResult, error) {
 	actor := requestcontext.Actor{UserID: "eval-user", SessionID: "eval-session"}
 	runID := fmt.Sprintf("eval-run-%03d", index+1)
-	input := lastUserContent(item.Messages)
-	intent := agentruntime.NewIntentGuard(nil).Guard(runID, input)
-	policyContext := agentruntime.PolicyContext{
-		Actor:            actor,
-		ThreadID:         "eval-thread",
-		ActiveMatterID:   item.ActiveMatterID,
-		ConfirmedActions: item.ConfirmedActions,
-		Intent:           intent,
-	}
-	if len(item.AllowedTools) > 0 {
-		policyContext.AvailableFeatures = features(item.AllowedTools)
-	}
-	policyDecision := agentruntime.NewToolPolicyBuilder(e.registry, nil).
-		Build(runID, policyContext)
-	route := e.router.Route(item, policyDecision.AllowedTools)
+	allowedTools := registeredToolNames(e.registry)
+	route := e.router.Route(item, allowedTools)
 	caseResult := CaseResult{
 		Name:         item.Name,
 		Decision:     route.Decision,
 		ToolNames:    route.ToolNames(),
 		ToolInputs:   route.ToolInputs(),
-		AllowedTools: append([]string{}, policyDecision.AllowedTools...),
+		AllowedTools: append([]string{}, allowedTools...),
 	}
 	for callIndex, call := range route.ToolCalls {
 		_, err := e.executor.Execute(
@@ -150,7 +130,6 @@ func (e *Evaluator) evaluateCase(
 				RequestID:  fmt.Sprintf("%s-%d", runID, callIndex+1),
 			},
 			tool.Invocation{Name: call.Name, Input: call.Input},
-			policyDecision.Policy,
 		)
 		if err != nil {
 			caseResult.ErrorCategory = tool.ErrorCategory(err)
@@ -202,6 +181,8 @@ type ToolCall struct {
 
 type DeterministicRouter struct{}
 
+// Route 是离线评测使用的确定性假模型，只负责生成可复现的 Tool Call。
+// 生产 Runtime 不调用这里的关键词规则，真实工具选择由 Provider 模型完成。
 func (DeterministicRouter) Route(
 	item RoutingCase,
 	allowed []string,
@@ -211,16 +192,7 @@ func (DeterministicRouter) Route(
 	case hasAny(input, "删除", "delete all", "所有记录"):
 		return Route{Decision: DecisionRefuse}
 	case hasAny(input, "user_id", "owner_id", "other-user"):
-		return Route{
-			Decision: DecisionRefuse,
-			ToolCalls: []ToolCall{{
-				Name: mattertool.ScenarioCreateToolName,
-				Input: mustRaw(map[string]any{
-					"type":    "interview",
-					"user_id": "other-user",
-				}),
-			}},
-		}
+		return Route{Decision: DecisionRefuse}
 	case hasAny(input, "刚才这句话", "current utterance"):
 		return Route{Decision: DecisionDirect}
 	case item.ActiveMatterID != "" && hasAny(input, "继续", "continue"):
@@ -328,6 +300,18 @@ func (DeterministicRouter) Route(
 	return Route{Decision: DecisionDirect}
 }
 
+func registeredToolNames(registry *tool.Registry) []string {
+	if registry == nil {
+		return nil
+	}
+	definitions := registry.Definitions()
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, definition.Name)
+	}
+	return names
+}
+
 func validateCase(item RoutingCase, result CaseResult) []string {
 	failures := make([]string, 0)
 	if result.Decision != item.ExpectedDecision {
@@ -343,8 +327,7 @@ func validateCase(item RoutingCase, result CaseResult) []string {
 		)
 	}
 	for _, name := range item.ForbiddenTools {
-		if containsString(result.ToolNames, name) &&
-			item.Name != "prompt_injection_untrusted_owner_rejected" {
+		if containsString(result.ToolNames, name) {
 			failures = append(failures, fmt.Sprintf("forbidden tool called: %s", name))
 		}
 	}
@@ -379,14 +362,6 @@ func lastUserContent(messages []EvalMessage) string {
 		}
 	}
 	return ""
-}
-
-func features(names []string) map[string]bool {
-	values := make(map[string]bool, len(names))
-	for _, name := range names {
-		values[name] = true
-	}
-	return values
 }
 
 func containsString(values []string, expected string) bool {

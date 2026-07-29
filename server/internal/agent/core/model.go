@@ -225,18 +225,8 @@ type ContextManifest struct {
 	RequestedModel                    string
 	MaxOutputTokens                   int
 	ExposedTools                      []string
-	BlockedTools                      []ContextBlockedTool
-	IntentMode                        string
-	IntentReasonCode                  string
-	IntentGuardVersion                string
-	ToolPolicyVersion                 string
 	ToolSchemaHashes                  map[string]string
 	CreatedAt                         time.Time
-}
-
-type ContextBlockedTool struct {
-	Name   string `json:"name"`
-	Reason string `json:"reason"`
 }
 
 type RunConfiguration struct {
