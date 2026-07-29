@@ -462,7 +462,7 @@ func (application *VoiceSessionApplication) state(
 		!validVoiceScenarioPrompt(session) ||
 		session.SessionVersion < 1 ||
 		session.TurnLimit < 1 ||
-		session.TurnLimit > 6 ||
+		session.TurnLimit > 14 ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > session.TurnLimit ||
 		!validVoiceSessionLifecycle(session) ||

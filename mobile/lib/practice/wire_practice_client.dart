@@ -635,7 +635,7 @@ PracticeSessionSnapshot _decodeSessionState(
       sessionVersion < 1 ||
       effectiveTurns < 0 ||
       turnLimit < 1 ||
-      turnLimit > 6 ||
+      turnLimit > 14 ||
       effectiveTurns > turnLimit ||
       (!completed && (question == null || formalReview != null)) ||
       (completed && (question != null || turn == null)) ||

@@ -176,7 +176,7 @@ final class AgentPracticeSnapshot {
     this.review,
     this.pendingReviewClientId,
   }) : sessionCompleted = sessionCompleted ?? completedTurns == turnLimit,
-       assert(turnLimit >= 1 && turnLimit <= 6),
+       assert(turnLimit >= 1 && turnLimit <= 14),
        assert(completedTurns >= 0 && completedTurns <= turnLimit),
        assert(
          review == null || (sessionCompleted ?? completedTurns == turnLimit),

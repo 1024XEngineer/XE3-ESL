@@ -592,7 +592,7 @@ func mapContextPracticeSession(
 		result.CandidateParticipantID == "" ||
 		len(interviewerRoles) != len(selectedRoles) ||
 		result.TurnLimit < 1 ||
-		result.TurnLimit > 6 ||
+		result.TurnLimit > 14 ||
 		result.EffectiveTurns < 0 ||
 		result.EffectiveTurns > result.TurnLimit ||
 		(result.Status == string(
@@ -620,7 +620,7 @@ func validMappedContextVoiceLifecycle(
 	session practicepersistence.ContextSession,
 	turnLimit int,
 ) bool {
-	if turnLimit < 1 || turnLimit > 6 ||
+	if turnLimit < 1 || turnLimit > 14 ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > turnLimit {
 		return false
@@ -1152,12 +1152,18 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 	if err != nil {
 		return conversation.VoiceQuestion{}, err
 	}
-	generated, err := adapter.generator.Generate(ctx, request)
+	content := ""
+	if session.ScenarioModel == "IELTS_SPEAKING_FULL_MOCK" {
+		content, err = frozenIELTSFullMockQuestion(session, sequence)
+	} else {
+		var generated ai.TextResult
+		generated, err = adapter.generator.Generate(ctx, request)
+		content = strings.TrimSpace(generated.Content)
+	}
 	if err != nil {
 		return conversation.VoiceQuestion{}, err
 	}
-	content := strings.TrimSpace(generated.Content)
-	if content == "" {
+	if strings.TrimSpace(content) == "" {
 		return conversation.VoiceQuestion{}, agent.ErrInvalidContext
 	}
 	saved, err := adapter.repository.SaveQuestion(
@@ -1190,6 +1196,22 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		return conversation.VoiceQuestion{}, mapConversationError(err)
 	}
 	return mapVoiceQuestion(saved), nil
+}
+
+func frozenIELTSFullMockQuestion(
+	session agent.VoicePracticeSession,
+	sequence int,
+) (string, error) {
+	blueprints := session.PromptModel.TurnBlueprints
+	if sequence < 1 || sequence > len(blueprints) {
+		return "", agent.ErrInvalidContext
+	}
+	blueprint := strings.TrimSpace(blueprints[sequence-1])
+	separator := strings.Index(blueprint, ":")
+	if separator < 0 || separator == len(blueprint)-1 {
+		return "", agent.ErrInvalidContext
+	}
+	return strings.TrimSpace(blueprint[separator+1:]), nil
 }
 
 func voiceQuestionRequest(
@@ -1640,7 +1662,7 @@ func (reader *voiceReviewSourceReader) ReadReviewSource(
 	if session.Status != practicepersistence.ContextSessionCompleted ||
 		session.EffectiveTurns < 1 ||
 		session.EffectiveTurns > turnLimit ||
-		turnLimit < 1 || turnLimit > 6 ||
+		turnLimit < 1 || turnLimit > 14 ||
 		len(turns) != session.EffectiveTurns {
 		return review.ReviewSourceSnapshot{}, review.ErrInvalidReview
 	}

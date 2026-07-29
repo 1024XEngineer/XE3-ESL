@@ -123,7 +123,7 @@ final class LegacyAgentPracticeClient
     }
     if (legacy.completedTurns < 0 ||
         legacy.turnLimit < 1 ||
-        legacy.turnLimit > 6 ||
+        legacy.turnLimit > 14 ||
         legacy.completedTurns > legacy.turnLimit ||
         (legacy.review != null && !legacy.sessionCompleted) ||
         (legacy.pendingReviewClientId != null &&

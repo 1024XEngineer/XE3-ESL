@@ -348,10 +348,10 @@ func candidateMatchesTurn(
 
 func validVoiceTurnProgress(progress VoiceTurnProgress) bool {
 	return progress.EffectiveTurns >= 1 &&
-		progress.EffectiveTurns <= 6 &&
+		progress.EffectiveTurns <= 14 &&
 		progress.SessionVersion > 1 &&
 		progress.TurnLimit >= 1 &&
-		progress.TurnLimit <= 6 &&
+		progress.TurnLimit <= 14 &&
 		progress.EffectiveTurns <= progress.TurnLimit &&
 		progress.SessionCompleted ==
 			(progress.EffectiveTurns == progress.TurnLimit)
@@ -367,7 +367,7 @@ func validVoiceTurnCheckpoint(turn conversation.ConfirmedVoiceTurn) bool {
 		turn.EvidenceVersion < 1 ||
 		strings.TrimSpace(turn.AnswerText) == "" ||
 		turn.EffectiveTurns < 0 ||
-		turn.EffectiveTurns > 6 {
+		turn.EffectiveTurns > 14 {
 		return false
 	}
 	if turn.EffectiveTurns == 0 {

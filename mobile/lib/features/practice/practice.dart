@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/practice/ielts_mock_practice.dart';
+import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_recordings.dart';
 
 class PracticePage extends StatefulWidget {
@@ -15,12 +17,14 @@ class PracticePage extends StatefulWidget {
     this.previewMode = false,
     this.agentController,
     this.onExitRequested,
+    this.ieltsMockProgressStore,
     super.key,
   });
 
   final bool previewMode;
   final AgentController? agentController;
   final Future<bool> Function()? onExitRequested;
+  final IeltsMockProgressStore? ieltsMockProgressStore;
 
   @override
   State<PracticePage> createState() => _PracticePageState();
@@ -80,6 +84,10 @@ class _PracticePageState extends State<PracticePage> {
     }
     _syncRecordingTimer();
     setState(() {});
+    if (_isIeltsSpeakingFullMock) {
+      _resetReviewExit();
+      return;
+    }
     if (widget.agentController?.review == null) {
       _resetReviewExit();
       return;
@@ -119,7 +127,8 @@ class _PracticePageState extends State<PracticePage> {
   }
 
   void _scheduleReviewExitIfNeeded() {
-    if (widget.agentController?.review == null ||
+    if (_isIeltsSpeakingFullMock ||
+        widget.agentController?.review == null ||
         _scheduledReviewExit ||
         _reviewExitAttempts >= _maxReviewExitFrameAttempts) {
       return;
@@ -346,6 +355,13 @@ class _PracticePageState extends State<PracticePage> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.agentController;
+    if (controller != null && isIeltsSpeakingFullMockSession(controller)) {
+      return IeltsSpeakingMockPage(
+        controller: controller,
+        onExitRequested: widget.onExitRequested,
+        progressStore: widget.ieltsMockProgressStore,
+      );
+    }
     final scene = controller?.scene;
     return PopScope<void>(
       canPop: widget.onExitRequested == null || _exitApproved,
@@ -463,6 +479,10 @@ class _PracticePageState extends State<PracticePage> {
       ),
     );
   }
+
+  bool get _isIeltsSpeakingFullMock =>
+      widget.agentController != null &&
+      isIeltsSpeakingFullMockSession(widget.agentController!);
 }
 
 class _NoScene extends StatelessWidget {

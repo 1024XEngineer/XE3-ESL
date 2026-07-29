@@ -357,6 +357,73 @@ void main() {
     expect(bootstrap.maxEffectiveTurns, 6);
   });
 
+  test('accepts the dedicated fourteen-turn IELTS full mock budget', () async {
+    final response = _bootstrapJson();
+    final session = response['practice_session']! as Map<String, Object?>;
+    session
+      ..['scenario_type'] = 'EXAM'
+      ..['scenario_model'] = 'IELTS_SPEAKING_FULL_MOCK';
+    final snapshot = response['snapshot']! as Map<String, Object?>;
+    snapshot
+      ..['scenario_type'] = 'EXAM'
+      ..['scenario_model'] = 'IELTS_SPEAKING_FULL_MOCK';
+    final scenario =
+        snapshot['scenario_definition_snapshot']! as Map<String, Object?>;
+    scenario
+      ..['scenario_definition_id'] = _ieltsScenarioId
+      ..['scenario_type'] = 'EXAM'
+      ..['scenario_model'] = 'IELTS_SPEAKING_FULL_MOCK'
+      ..['name'] = 'IELTS 口语完整模拟'
+      ..['version'] = 2;
+    final config =
+        snapshot['scenario_config_snapshot']! as Map<String, Object?>;
+    config
+      ..['scenario_config_id'] = _ieltsConfigId
+      ..['scenario_definition_id'] = _ieltsScenarioId
+      ..['config_type'] = 'EXAM'
+      ..['scenario_model'] = 'IELTS_SPEAKING_FULL_MOCK'
+      ..['version'] = 2
+      ..remove('job_title')
+      ..remove('job_description');
+    final participants = snapshot['participants']! as List<Object?>;
+    final examiner = participants.first as Map<String, Object?>;
+    final role = examiner['role_snapshot']! as Map<String, Object?>;
+    role['scenario_definition_id'] = _ieltsScenarioId;
+    final option = snapshot['practice_option']! as Map<String, Object?>;
+    option
+      ..remove('role_definition_id')
+      ..['practice_option_id'] = _ieltsFullOptionId
+      ..['scenario_definition_id'] = _ieltsScenarioId
+      ..['practice_option_type'] = 'FULL_SIMULATION'
+      ..['display_name'] = '完整模考'
+      ..['version'] = 2;
+    final policy = _sessionPolicy(response);
+    policy
+      ..['suggested_duration_seconds'] = 900
+      ..['min_effective_turns'] = 14
+      ..['max_effective_turns'] = 14
+      ..['coverage_checkpoint_turn'] = 14
+      ..['max_follow_ups_per_question'] = 0;
+    final client = _client(_QueueTransport([_response(response)]));
+
+    final bootstrap = await client.createSession(
+      planId: _planId,
+      input: const CreatePreparationSessionInput(
+        expectedPlanRevision: 1,
+        preparationSnapshotId: _preparationSnapshotId,
+        preparationProfileId: _profileId,
+        preparationProfileVersion: 1,
+        preparationUserId: _userId,
+        backgroundSummary: _background,
+        selection: _ieltsFullSelection,
+      ),
+      idempotencyKey: 'session-ielts-full-key',
+    );
+
+    expect(bootstrap.maxEffectiveTurns, 14);
+    expect(bootstrap.session.scenarioModel, 'IELTS_SPEAKING_FULL_MOCK');
+  });
+
   test('fences a response that completes after account cleanup', () async {
     final transport = _CompleterTransport();
     final client = _client(transport);
@@ -658,6 +725,9 @@ const _configId = 'config-1';
 const _roleId = 'role-1';
 const _optionId = 'option-1';
 const _fullOptionId = 'option-full';
+const _ieltsScenarioId = 'scn_ielts_speaking_full';
+const _ieltsConfigId = 'scfg_ielts_speaking_full';
+const _ieltsFullOptionId = 'option_ielts_speaking_full_full';
 const _background = 'Backend engineer preparing a technical interview.';
 
 const _context = AgentPracticeContext(threadId: _threadId, matterId: _matterId);
@@ -692,4 +762,20 @@ const _fullSelection = PreparationLaunchSelection(
   practiceOptionId: _fullOptionId,
   practiceOptionType: PreparationOptionType.fullSimulation,
   practiceOptionVersion: 1,
+);
+
+const _ieltsFullSelection = PreparationLaunchSelection(
+  scenarioDefinitionId: _ieltsScenarioId,
+  scenarioDefinitionVersion: 2,
+  scenarioType: 'EXAM',
+  scenarioModel: 'IELTS_SPEAKING_FULL_MOCK',
+  scenarioDisplayName: 'IELTS 口语完整模拟',
+  scenarioDescription: '按 Part 1、Part 2、Part 3 连续完成。',
+  scenarioConfigId: _ieltsConfigId,
+  scenarioConfigVersion: 2,
+  roleDefinitionId: _roleId,
+  roleDefinitionVersion: 2,
+  practiceOptionId: _ieltsFullOptionId,
+  practiceOptionType: PreparationOptionType.fullSimulation,
+  practiceOptionVersion: 2,
 );
