@@ -99,6 +99,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   bool _exitApproved = false;
   bool _exitInFlight = false;
   final Set<IeltsPracticeMode> _recordedCompletions = <IeltsPracticeMode>{};
+  String? _reportSessionId;
 
   IeltsPracticeSelection? get _selection {
     final sessionId = widget.controller.practiceSessionId;
@@ -135,16 +136,18 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   @override
   void didUpdateWidget(covariant IeltsSpeakingMockPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
+    final controllerChanged = oldWidget.controller != widget.controller;
+    final reportControllerChanged =
+        oldWidget.reportController != widget.reportController;
+    if (controllerChanged || reportControllerChanged) {
+      _cancelReport(oldWidget.reportController);
+    }
+    if (controllerChanged) {
       oldWidget.controller.removeListener(_handleControllerState);
       widget.controller.addListener(_handleControllerState);
       unawaited(_restoreProgress());
     }
-    if (oldWidget.reportController != widget.reportController) {
-      final oldSessionId = oldWidget.controller.practiceSessionId;
-      if (oldSessionId != null) {
-        oldWidget.reportController?.cancel(oldSessionId);
-      }
+    if (reportControllerChanged && !controllerChanged) {
       _syncReport();
     }
   }
@@ -158,10 +161,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     _convertedAnswerController.dispose();
     _convertedAnswerFocusNode.dispose();
     _ticker?.cancel();
-    final sessionId = widget.controller.practiceSessionId;
-    if (sessionId != null) {
-      widget.reportController?.cancel(sessionId);
-    }
+    _cancelReport(widget.reportController);
     super.dispose();
   }
 
@@ -338,10 +338,18 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   void _syncReport() {
     final reportController = widget.reportController;
     final sessionId = widget.controller.practiceSessionId;
-    if (_progress?.phase != IeltsMockPhase.complete ||
+    if (_mode != IeltsPracticeMode.fullMock ||
+        _progress?.phase != IeltsMockPhase.complete ||
         reportController == null ||
-        sessionId == null ||
-        reportController.practiceSessionId == sessionId) {
+        sessionId == null) {
+      _cancelReport(reportController);
+      return;
+    }
+    if (_reportSessionId != null && _reportSessionId != sessionId) {
+      _cancelReport(reportController);
+    }
+    _reportSessionId = sessionId;
+    if (reportController.practiceSessionId == sessionId) {
       return;
     }
     unawaited(reportController.load(sessionId));
@@ -386,6 +394,14 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         if (completed >= widget.controller.turnLimit) {
           complete(IeltsPracticeMode.part3);
         }
+    }
+  }
+
+  void _cancelReport(IeltsSpeakingReportController? reportController) {
+    final sessionId = _reportSessionId;
+    _reportSessionId = null;
+    if (sessionId != null) {
+      reportController?.cancel(sessionId);
     }
   }
 

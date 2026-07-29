@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
@@ -13,6 +15,9 @@ import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/review/ielts_speaking_report.dart';
+import 'package:speakup/review/ielts_speaking_report_client.dart';
+import 'package:speakup/review/ielts_speaking_report_controller.dart';
 
 void main() {
   testWidgets(
@@ -422,6 +427,45 @@ void main() {
       expect(find.byKey(const Key('ielts-mock-page')), findsNothing);
     },
   );
+
+  testWidgets('clearing practice state fences the bound report poll', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 14);
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    final reportClient = _PendingReportClient();
+    final reportController = IeltsSpeakingReportController(
+      client: reportClient,
+    );
+    addTearDown(controller.dispose);
+    addTearDown(reportController.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          reportController: reportController,
+        ),
+      ),
+    );
+    await tester.pump();
+    await reportClient.started.future;
+    expect(reportController.practiceSessionId, _sessionId);
+
+    await controller.clearPrivateState();
+    await tester.pump();
+
+    expect(controller.practiceSessionId, isNull);
+    expect(reportController.practiceSessionId, isNull);
+    expect(reportController.isLoading, isFalse);
+  });
 
   testWidgets('restored matter identity still opens the three-part mock flow', (
     tester,
@@ -978,6 +1022,20 @@ final class _Recorder implements PracticeRecorder {
   Future<void> clearAccountState() async {
     recording = false;
   }
+}
+
+final class _PendingReportClient implements IeltsSpeakingReportClient {
+  final started = Completer<void>();
+  final response = Completer<IeltsSpeakingReportEnvelope>();
+
+  @override
+  Future<IeltsSpeakingReportEnvelope> getReport(String practiceSessionId) {
+    started.complete();
+    return response.future;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
 }
 
 PracticeQuestion _question(int turn) {
