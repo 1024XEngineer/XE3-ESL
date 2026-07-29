@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:speakup/design/speak_up_design.dart';
 
 import 'agent_models.dart';
 import 'agent_voice_controller.dart';
@@ -84,7 +85,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   Widget build(BuildContext context) {
     final message = widget.message;
     final isUser = message.role == AgentMessageRole.user;
-    const foreground = Color(0xFF25262A);
+    const foreground = SpeakUpDesign.ink;
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -95,9 +96,9 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             ? const EdgeInsets.fromLTRB(14, 11, 12, 11)
             : const EdgeInsets.fromLTRB(2, 7, 12, 9),
         decoration: BoxDecoration(
-          color: isUser ? const Color(0xFFE7E7E3) : Colors.transparent,
-          borderRadius: BorderRadius.circular(18),
-          border: isUser ? Border.all(color: const Color(0xFFDCDCD7)) : null,
+          color: isUser ? SpeakUpDesign.primaryMuted : Colors.transparent,
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+          border: isUser ? Border.all(color: SpeakUpDesign.border) : null,
         ),
         child: message.modality == AgentMessageModality.voice
             ? _buildUserVoice(context, foreground)
@@ -138,8 +139,8 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
               key: Key('agent-assistant-tts-${message.id}'),
               onPressed: () => voice.toggleMessagePlayback(message),
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF55575E),
-                backgroundColor: const Color(0xFFE8E8E4),
+                foregroundColor: SpeakUpDesign.primary,
+                backgroundColor: SpeakUpDesign.surfaceMuted,
                 minimumSize: const Size(0, 32),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 visualDensity: VisualDensity.compact,
@@ -171,7 +172,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
               key: Key('agent-assistant-speed-${message.id}'),
               onPressed: voice.cycleSpeechSpeed,
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF66686F),
+                foregroundColor: SpeakUpDesign.secondary,
                 minimumSize: const Size(0, 32),
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 visualDensity: VisualDensity.compact,
@@ -190,7 +191,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             error,
             key: Key('agent-message-media-error-${message.id}'),
             style: const TextStyle(
-              color: Color(0xFF8B2E26),
+              color: SpeakUpDesign.error,
               fontSize: 12,
               height: 1.35,
             ),
@@ -230,10 +231,10 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                   ? () => voice.toggleMessagePlayback(message)
                   : null,
               style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFFD6D6D1),
+                backgroundColor: SpeakUpDesign.surfaceMuted,
                 foregroundColor: foreground,
-                disabledBackgroundColor: const Color(0xFFDCDCD7),
-                disabledForegroundColor: const Color(0xFF8A8B90),
+                disabledBackgroundColor: SpeakUpDesign.surfaceMuted,
+                disabledForegroundColor: SpeakUpDesign.tertiary,
                 minimumSize: const Size.square(36),
                 maximumSize: const Size.square(36),
                 padding: EdgeInsets.zero,
@@ -243,7 +244,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                       dimension: 15,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Color(0xFF55575E),
+                        color: SpeakUpDesign.secondary,
                       ),
                     )
                   : Icon(
@@ -280,7 +281,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                     : null,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Color(0xFF6B6D73), fontSize: 13),
+                style: SpeakUpDesign.meta,
               ),
             ),
             if (!audio.isReadable) const SizedBox(width: 2),
@@ -298,7 +299,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                 ),
                 padding: EdgeInsets.zero,
                 visualDensity: VisualDensity.compact,
-                color: const Color(0xFF686A70),
+                color: SpeakUpDesign.secondary,
                 icon: deleting
                     ? const SizedBox.square(
                         dimension: 14,
@@ -315,15 +316,17 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             value: playing ? progress : 0,
             minHeight: 2,
             borderRadius: BorderRadius.circular(1),
-            backgroundColor: const Color(0xFFCECEC9),
-            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF55575E)),
+            backgroundColor: SpeakUpDesign.border,
+            valueColor: const AlwaysStoppedAnimation<Color>(
+              SpeakUpDesign.primary,
+            ),
           ),
         ],
         const SizedBox(height: 4),
         TextButton.icon(
           key: Key('agent-user-voice-transcript-toggle-${message.id}'),
           style: TextButton.styleFrom(
-            foregroundColor: const Color(0xFF5F6167),
+            foregroundColor: SpeakUpDesign.secondary,
             minimumSize: const Size(0, 30),
             padding: const EdgeInsets.symmetric(horizontal: 2),
             visualDensity: VisualDensity.compact,
@@ -357,7 +360,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             error,
             key: Key('agent-message-media-error-${message.id}'),
             style: const TextStyle(
-              color: Color(0xFF8B2E26),
+              color: SpeakUpDesign.error,
               fontSize: 12,
               height: 1.35,
             ),

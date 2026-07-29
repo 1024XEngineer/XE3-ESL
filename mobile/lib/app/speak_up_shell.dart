@@ -6,6 +6,8 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
+import 'package:speakup/design/speak_up_components.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/conversation/conversation.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/preparation.dart';
@@ -334,7 +336,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       extendBody: !practiceSelected,
       resizeToAvoidBottomInset: false,
       backgroundColor: practiceSelected
-          ? const Color(0xFFF6F7FA)
+          ? SpeakUpDesign.canvas
           : Colors.transparent,
       drawer: _ConversationDrawer(
         previewMode: widget.previewMode,
@@ -346,7 +348,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
               ?.currentPracticeThreadId,
         },
       ),
-      drawerScrimColor: const Color(0x330E1120),
+      drawerScrimColor: const Color(0x52000000),
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: keyboardVisible
           ? null
@@ -383,7 +385,7 @@ class _ConversationDrawer extends StatelessWidget {
     ];
     return Drawer(
       width: 300,
-      backgroundColor: const Color(0xFFF5F5F2),
+      backgroundColor: SpeakUpDesign.canvas,
       child: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
@@ -391,10 +393,7 @@ class _ConversationDrawer extends StatelessWidget {
             Row(
               children: [
                 const Expanded(
-                  child: Text(
-                    'SpeakUp',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-                  ),
+                  child: Text('SpeakUp', style: SpeakUpDesign.sectionTitle),
                 ),
                 IconButton(
                   tooltip: '关闭对话菜单',
@@ -405,7 +404,7 @@ class _ConversationDrawer extends StatelessWidget {
             ),
             Text(
               previewMode ? '本地 Fake 预览，未连接正式账号' : '已连接当前账号',
-              style: const TextStyle(color: Color(0xFF6B6D74), fontSize: 13),
+              style: SpeakUpDesign.meta,
             ),
             const SizedBox(height: 20),
             FilledButton.tonalIcon(
@@ -424,8 +423,8 @@ class _ConversationDrawer extends StatelessWidget {
               style: FilledButton.styleFrom(
                 alignment: Alignment.centerLeft,
                 minimumSize: const Size.fromHeight(48),
-                backgroundColor: const Color(0xFFE8E8E4),
-                foregroundColor: const Color(0xFF202124),
+                backgroundColor: SpeakUpDesign.primaryMuted,
+                foregroundColor: SpeakUpDesign.primary,
               ),
             ),
             if (controller.isBusy) ...[
@@ -436,14 +435,7 @@ class _ConversationDrawer extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 28),
-            const Text(
-              '当前对话',
-              style: TextStyle(
-                color: Color(0xFF777983),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+            const Text('当前对话', style: SpeakUpDesign.label),
             const SizedBox(height: 8),
             if (currentThreadId == null)
               const Padding(
@@ -451,7 +443,7 @@ class _ConversationDrawer extends StatelessWidget {
                 child: Text(
                   '尚未选择对话',
                   key: Key('no-focused-conversation'),
-                  style: TextStyle(color: Color(0xFF777983)),
+                  style: SpeakUpDesign.body,
                 ),
               )
             else
@@ -463,14 +455,7 @@ class _ConversationDrawer extends StatelessWidget {
                 onTap: () => Navigator.of(context).pop(),
               ),
             const SizedBox(height: 24),
-            const Text(
-              '近期对话',
-              style: TextStyle(
-                color: Color(0xFF777983),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+            const Text('近期对话', style: SpeakUpDesign.label),
             const SizedBox(height: 8),
             if (recentThreads.isEmpty)
               const Padding(
@@ -478,7 +463,7 @@ class _ConversationDrawer extends StatelessWidget {
                 child: Text(
                   '暂无其他对话',
                   key: Key('no-recent-conversations'),
-                  style: TextStyle(color: Color(0xFF777983)),
+                  style: SpeakUpDesign.body,
                 ),
               )
             else
@@ -501,11 +486,7 @@ class _ConversationDrawer extends StatelessWidget {
               Text(
                 message,
                 key: const Key('conversation-history-error'),
-                style: const TextStyle(
-                  color: Color(0xFF9B2C24),
-                  fontSize: 13,
-                  height: 1.35,
-                ),
+                style: SpeakUpDesign.meta.copyWith(color: SpeakUpDesign.error),
               ),
             ],
             if (controller.hasMoreThreads) ...[
@@ -551,8 +532,10 @@ class _ConversationThreadTile extends StatelessWidget {
         key: Key('conversation-thread-$threadId'),
         contentPadding: const EdgeInsets.symmetric(horizontal: 8),
         selected: selected,
-        selectedTileColor: const Color(0xFFE8E8E4),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        selectedTileColor: SpeakUpDesign.primaryMuted,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+        ),
         leading: const Icon(Icons.chat_bubble_outline_rounded),
         title: const Text('Agent 对话'),
         subtitle: lastUpdatedAt == null
@@ -601,13 +584,8 @@ class _ProfilePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('profile-page'),
-      backgroundColor: const Color(0xFFF3F3F0),
       appBar: showBackButton
           ? AppBar(
-              backgroundColor: const Color(0xFFF3F3F0),
-              surfaceTintColor: Colors.transparent,
-              elevation: 0,
-              scrolledUnderElevation: 0,
               leading: IconButton(
                 key: const Key('profile-route-back-button'),
                 tooltip: '返回',
@@ -619,25 +597,24 @@ class _ProfilePage extends StatelessWidget {
       body: SafeArea(
         bottom: false,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 28, 20, 140),
+          padding: EdgeInsets.fromLTRB(
+            SpeakUpDesign.horizontalInset(context),
+            SpeakUpDesign.space24,
+            SpeakUpDesign.horizontalInset(context),
+            140,
+          ),
           children: [
-            const Text(
-              '我的',
-              style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '当前账号与本机登录状态。',
-              style: TextStyle(color: Color(0xFF696B73), fontSize: 15),
-            ),
-            const SizedBox(height: 28),
+            const SpeakUpPageHeader(title: '我的', subtitle: '管理账号与练习身份。'),
+            const SizedBox(height: SpeakUpDesign.space24),
             Card(
-              elevation: 0,
-              color: Colors.white,
               child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: SpeakUpDesign.space16,
+                  vertical: SpeakUpDesign.space8,
+                ),
                 leading: CircleAvatar(
-                  backgroundColor: Color(0xFFE8E8E5),
-                  foregroundColor: Color(0xFF35363A),
+                  backgroundColor: SpeakUpDesign.primaryMuted,
+                  foregroundColor: SpeakUpDesign.primary,
                   child: Text(
                     _profileInitial(profile?.displayName),
                     style: const TextStyle(fontWeight: FontWeight.w700),
@@ -660,13 +637,13 @@ class _ProfilePage extends StatelessWidget {
               ),
             ),
             if (profileErrorMessage != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: SpeakUpDesign.space8),
               Text(
                 profileErrorMessage!,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
-            const SizedBox(height: 16),
+            const SizedBox(height: SpeakUpDesign.space16),
             OutlinedButton.icon(
               key: const Key('profile-logout-button'),
               onPressed: onLogout,

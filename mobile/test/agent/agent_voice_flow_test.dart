@@ -5,6 +5,7 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_controller.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/conversation/conversation.dart';
@@ -100,7 +101,7 @@ void main() {
       final voiceBubble = find.byKey(Key('agent-message-${voiceMessage.id}'));
       final voiceDecoration =
           tester.widget<Container>(voiceBubble).decoration! as BoxDecoration;
-      expect(voiceDecoration.color, const Color(0xFFE7E7E3));
+      expect(voiceDecoration.color, SpeakUpDesign.primaryMuted);
       expect(tester.getSize(voiceBubble).height, lessThan(140));
       expect(
         find.byKey(Key('agent-user-voice-play-${voiceMessage.id}')),
