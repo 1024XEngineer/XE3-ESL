@@ -860,7 +860,7 @@ class _CatalogEmpty extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Material(
       key: Key('preparation-catalog-empty'),
-      color: Colors.white,
+      color: PreparationDesign.surface,
       borderRadius: BorderRadius.all(Radius.circular(20)),
       child: Padding(
         padding: EdgeInsets.all(20),
@@ -873,7 +873,7 @@ class _CatalogEmpty extends StatelessWidget {
             Text(
               '你仍然可以返回 Agent 首页描述自己的职业英语需求。',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF696B73)),
+              style: TextStyle(color: PreparationDesign.inkSecondary),
             ),
           ],
         ),
@@ -911,13 +911,13 @@ class _PracticeContinuation extends StatelessWidget {
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              color: const Color(0xFFE4E4DF),
+              color: PreparationDesign.surfaceMuted,
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(
               Icons.history_rounded,
               size: 20,
-              color: Color(0xFF4F5054),
+              color: PreparationDesign.inkSecondary,
             ),
           ),
           const SizedBox(width: 12),
@@ -928,7 +928,7 @@ class _PracticeContinuation extends StatelessWidget {
                 Text(
                   label,
                   style: const TextStyle(
-                    color: Color(0xFF696B73),
+                    color: PreparationDesign.inkSecondary,
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
                   ),
@@ -954,7 +954,7 @@ class _PracticeContinuation extends StatelessWidget {
       key: const Key('practice-continuation'),
       decoration: const BoxDecoration(
         border: Border.symmetric(
-          horizontal: BorderSide(color: Color(0xFFD8D8D2)),
+          horizontal: BorderSide(color: PreparationDesign.border),
         ),
       ),
       child: onPressed == null
@@ -2162,14 +2162,17 @@ class _ScenarioPickerSheet extends StatelessWidget {
             const SizedBox(height: 5),
             const Text(
               '选择一个练习',
-              style: TextStyle(color: Color(0xFF696B73), fontSize: 14),
+              style: TextStyle(
+                color: PreparationDesign.inkSecondary,
+                fontSize: 14,
+              ),
             ),
             const SizedBox(height: 12),
             Expanded(
               child: ListView.separated(
                 itemCount: scenarios.length,
                 separatorBuilder: (_, _) =>
-                    const Divider(height: 1, color: Color(0xFFE2E2DE)),
+                    const Divider(height: 1, color: PreparationDesign.border),
                 itemBuilder: (context, index) {
                   final scenario = scenarios[index];
                   return _CatalogScenarioCard(
@@ -2199,7 +2202,7 @@ class _HubEmpty extends StatelessWidget {
         child: Text(
           message,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Color(0xFF696B73)),
+          style: const TextStyle(color: PreparationDesign.inkSecondary),
         ),
       ),
     );
@@ -2235,7 +2238,7 @@ class _CatalogScenarioCard extends StatelessWidget {
                   child: Icon(
                     _scenarioFamilyIcon(scenario.type),
                     size: 20,
-                    color: const Color(0xFF55575E),
+                    color: PreparationDesign.inkSecondary,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -2256,7 +2259,7 @@ class _CatalogScenarioCard extends StatelessWidget {
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Color(0xFF696B73),
+                          color: PreparationDesign.inkSecondary,
                           fontSize: 13,
                           height: 1.4,
                         ),
@@ -2270,7 +2273,7 @@ class _CatalogScenarioCard extends StatelessWidget {
                   child: Icon(
                     Icons.arrow_forward_ios_rounded,
                     size: 15,
-                    color: Color(0xFF777980),
+                    color: PreparationDesign.inkTertiary,
                   ),
                 ),
               ],
@@ -2581,7 +2584,10 @@ class _LaunchSelectionCard extends StatelessWidget {
               const Text(
                 'Agent 对话仍在恢复。无需预先建立事项，恢复完成后可从这里直接开始。',
                 key: Key('preparation-agent-context-missing'),
-                style: TextStyle(color: Color(0xFF6A5B38), height: 1.4),
+                style: TextStyle(
+                  color: PreparationDesign.inkSecondary,
+                  height: 1.4,
+                ),
               ),
             ],
             if (controller.errorMessage ?? controller.workspaceErrorMessage
@@ -2590,7 +2596,10 @@ class _LaunchSelectionCard extends StatelessWidget {
               Text(
                 message,
                 key: const Key('preparation-launch-error'),
-                style: const TextStyle(color: Color(0xFF9A332A), height: 1.4),
+                style: const TextStyle(
+                  color: PreparationDesign.error,
+                  height: 1.4,
+                ),
               ),
               if (controller.canRetryWorkspaceActivation)
                 Align(
@@ -2651,7 +2660,7 @@ class _LaunchUnavailableNotice extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Material(
       key: Key('preparation-launch-unavailable'),
-      color: Color(0xFFEDEDEA),
+      color: PreparationDesign.surfaceMuted,
       borderRadius: BorderRadius.all(Radius.circular(18)),
       child: Padding(
         padding: EdgeInsets.all(16),
@@ -2861,7 +2870,7 @@ class _InlineFailure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFFFF3F1),
+      color: PreparationDesign.errorMuted,
       borderRadius: BorderRadius.circular(16),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
@@ -2870,7 +2879,7 @@ class _InlineFailure extends StatelessWidget {
             const Icon(
               Icons.error_outline_rounded,
               size: 20,
-              color: Color(0xFF8B2E26),
+              color: PreparationDesign.error,
             ),
             const SizedBox(width: 8),
             Expanded(child: Text(message)),
@@ -2904,12 +2913,12 @@ class _PreviewSceneCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: PreparationDesign.surface,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
         side: BorderSide(
-          color: selected ? const Color(0xFF303136) : const Color(0xFFE8E8E4),
+          color: selected ? PreparationDesign.ink : PreparationDesign.border,
           width: selected ? 1.5 : 1,
         ),
       ),
@@ -2925,12 +2934,12 @@ class _PreviewSceneCard extends StatelessWidget {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8E8E5),
+                  color: PreparationDesign.surfaceMuted,
                   borderRadius: BorderRadius.circular(15),
                 ),
                 child: Icon(
                   selected ? Icons.check_rounded : Icons.work_outline_rounded,
-                  color: const Color(0xFF4F5054),
+                  color: PreparationDesign.inkSecondary,
                 ),
               ),
               const SizedBox(width: 14),
@@ -2949,7 +2958,7 @@ class _PreviewSceneCard extends StatelessWidget {
                     Text(
                       scene.description,
                       style: const TextStyle(
-                        color: Color(0xFF696B73),
+                        color: PreparationDesign.inkSecondary,
                         height: 1.4,
                       ),
                     ),

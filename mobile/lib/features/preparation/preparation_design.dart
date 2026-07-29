@@ -9,11 +9,16 @@ import 'package:speakup/design/speak_up_design.dart';
 abstract final class PreparationDesign {
   static const canvas = SpeakUpDesign.canvas;
   static const surface = SpeakUpDesign.surface;
+  static const surfaceMuted = SpeakUpDesign.surfaceMuted;
   static const ink = SpeakUpDesign.ink;
+  static const inkSecondary = SpeakUpDesign.secondary;
+  static const inkTertiary = SpeakUpDesign.tertiary;
   static const secondary = SpeakUpDesign.secondary;
   static const tertiary = SpeakUpDesign.tertiary;
   static const border = SpeakUpDesign.border;
   static const softSurface = SpeakUpDesign.surfaceMuted;
+  static const error = SpeakUpDesign.error;
+  static const errorMuted = SpeakUpDesign.errorMuted;
 
   static const interview = Color(0xFF20252A);
   static const interviewTint = Color(0xFFE9EAEC);
