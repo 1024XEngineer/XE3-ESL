@@ -491,7 +491,7 @@ void main() {
     await tester.pumpAndSettle();
     await _tapVisible(tester, 'quick-action-recent-review');
     expect(find.byKey(const Key('review-page')), findsOneWidget);
-    expect(find.text('本地 UI Mock；复盘结果不会写入正式服务。'), findsOneWidget);
+    expect(find.text('本地预览；结果不会写入正式服务。'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
