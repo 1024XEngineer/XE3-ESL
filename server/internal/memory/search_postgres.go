@@ -26,6 +26,9 @@ func (repository *PostgresRepository) SearchCandidates(
 	if err != nil {
 		return nil, err
 	}
+	if len(excludedCanonicalKeys) == 0 {
+		excludedCanonicalKeys = []string{}
+	}
 	if matterID != "" {
 		var owned bool
 		if err := repository.database.QueryRow(ctx, `
