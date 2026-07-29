@@ -42,6 +42,11 @@ type applicationStub struct {
 		requestcontext.Actor,
 		string,
 	) (EvaluationResource, error)
+	getInterviewReport func(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (InterviewReportResource, error)
 	reevaluate func(
 		context.Context,
 		requestcontext.Actor,
@@ -70,6 +75,18 @@ func (stub applicationStub) Get(
 		return EvaluationResource{}, errors.New("unexpected Get")
 	}
 	return stub.get(ctx, actor, evaluationID)
+}
+
+func (stub applicationStub) GetInterviewReport(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	practiceSessionID string,
+) (InterviewReportResource, error) {
+	if stub.getInterviewReport == nil {
+		return InterviewReportResource{},
+			errors.New("unexpected GetInterviewReport")
+	}
+	return stub.getInterviewReport(ctx, actor, practiceSessionID)
 }
 
 func (stub applicationStub) Reevaluate(
@@ -366,6 +383,223 @@ func TestGetPublishesEveryLifecycleStateHonestly(t *testing.T) {
 	}
 }
 
+func TestGetInterviewReportPublishesStrictLifecycleEnvelope(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   evaluation.Status
+		wantKey  string
+		omitKeys []string
+	}{
+		{
+			name:     "queued",
+			status:   evaluation.StatusQueued,
+			omitKeys: []string{"report", "stable_failure"},
+		},
+		{
+			name:     "running",
+			status:   evaluation.StatusRunning,
+			omitKeys: []string{"report", "stable_failure"},
+		},
+		{
+			name:     "ready",
+			status:   evaluation.StatusReady,
+			wantKey:  "report",
+			omitKeys: []string{"stable_failure"},
+		},
+		{
+			name:     "failed",
+			status:   evaluation.StatusFailed,
+			wantKey:  "stable_failure",
+			omitKeys: []string{"report"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			want := interviewReportResourceForStatus(test.status)
+			router := newTestRouter(t, applicationStub{
+				getInterviewReport: func(
+					ctx context.Context,
+					actor requestcontext.Actor,
+					practiceSessionID string,
+				) (InterviewReportResource, error) {
+					if actor != testActor ||
+						practiceSessionID != "session_demo_001" {
+						t.Fatalf(
+							"report input actor=%#v session=%q",
+							actor,
+							practiceSessionID,
+						)
+					}
+					if trusted, ok := requestcontext.ActorFromContext(ctx); !ok ||
+						trusted != testActor {
+						t.Fatal("trusted actor missing from report context")
+					}
+					return want, nil
+				},
+			}, &testActor)
+			response := performRequest(
+				router,
+				http.MethodGet,
+				"/v1/practice-sessions/session_demo_001/interview-report",
+				"",
+				"",
+			)
+			if response.Code != http.StatusOK {
+				t.Fatalf(
+					"status = %d, body = %s",
+					response.Code,
+					response.Body,
+				)
+			}
+			if response.Header().Get("Cache-Control") !=
+				"private, no-store" ||
+				response.Header().Get("Pragma") != "no-cache" {
+				t.Fatalf("report headers = %#v", response.Header())
+			}
+			body := decodeJSONObjectForTest(t, response.Body.String())
+			for key, expected := range map[string]any{
+				"practice_session_id":    "session_demo_001",
+				"evaluation_id":          testEvaluationID,
+				"evaluation_revision_id": testRevisionID,
+				"revision":               float64(1),
+				"evaluation_status":      string(test.status),
+				"is_final":               false,
+				"status_url": "/v1/practice-sessions/" +
+					"session_demo_001/interview-report",
+			} {
+				if body[key] != expected {
+					t.Errorf("%s = %#v, want %#v", key, body[key], expected)
+				}
+			}
+			if test.wantKey != "" {
+				if _, exists := body[test.wantKey]; !exists {
+					t.Errorf("response missing %q: %s", test.wantKey, response.Body)
+				}
+			}
+			for _, key := range test.omitKeys {
+				if _, exists := body[key]; exists {
+					t.Errorf("response fabricated %q: %s", key, response.Body)
+				}
+			}
+			if report, exists := body["report"].(map[string]any); exists {
+				if report["schema_version"] !=
+					evaluation.InterviewReportSchemaVersion {
+					t.Errorf("report = %#v", report)
+				}
+				if _, exposed := report["snapshot_id"]; exposed {
+					t.Fatal("report exposed snapshot_id")
+				}
+			}
+		})
+	}
+}
+
+func TestGetInterviewReportRejectsInvalidRouteAndProjection(t *testing.T) {
+	calls := 0
+	router := newTestRouter(t, applicationStub{
+		getInterviewReport: func(
+			context.Context,
+			requestcontext.Actor,
+			string,
+		) (InterviewReportResource, error) {
+			calls++
+			invalid := interviewReportResourceForStatus(
+				evaluation.StatusReady,
+			)
+			invalid.Report.SchemaVersion = "unknown-report/v1"
+			return invalid, nil
+		},
+	}, &testActor)
+	response := performRequest(
+		router,
+		http.MethodGet,
+		"/v1/practice-sessions/not.valid/interview-report",
+		"",
+		"",
+	)
+	assertAPIError(
+		t,
+		response,
+		http.StatusNotFound,
+		"evaluation_not_found",
+	)
+	if calls != 0 {
+		t.Fatalf("invalid report path called application %d times", calls)
+	}
+
+	response = performRequest(
+		router,
+		http.MethodGet,
+		"/v1/practice-sessions/session_demo_001/interview-report",
+		"",
+		"",
+	)
+	assertAPIError(
+		t,
+		response,
+		http.StatusInternalServerError,
+		"internal_error",
+	)
+	if calls != 1 {
+		t.Fatalf("valid report path called application %d times", calls)
+	}
+}
+
+func TestGetInterviewReportRejectsContradictoryFailureRetryability(
+	t *testing.T,
+) {
+	if !validInterviewReportFailure(&EvaluationFailure{
+		ReasonCode: ReasonInternalNonRetryable,
+	}) {
+		t.Fatal("non-retryable internal failure was rejected")
+	}
+	tests := []EvaluationFailure{
+		{
+			ReasonCode: ReasonInternalRetryable,
+			Retryable:  false,
+		},
+		{
+			ReasonCode: ReasonInternalNonRetryable,
+			Retryable:  true,
+		},
+		{
+			ReasonCode: ReasonPolicyViolation,
+			Retryable:  true,
+		},
+	}
+	for _, failure := range tests {
+		failure := failure
+		t.Run(string(failure.ReasonCode), func(t *testing.T) {
+			resource := interviewReportResourceForStatus(
+				evaluation.StatusFailed,
+			)
+			resource.StableFailure = &failure
+			router := newTestRouter(t, applicationStub{
+				getInterviewReport: func(
+					context.Context,
+					requestcontext.Actor,
+					string,
+				) (InterviewReportResource, error) {
+					return resource, nil
+				},
+			}, &testActor)
+			response := performRequest(
+				router,
+				http.MethodGet,
+				"/v1/practice-sessions/session_demo_001/interview-report",
+				"",
+				"",
+			)
+			assertAPIError(
+				t,
+				response,
+				http.StatusInternalServerError,
+				"internal_error",
+			)
+		})
+	}
+}
+
 func TestReadyProjectionMatchesEveryRequestedChannelExactly(t *testing.T) {
 	sceneOnly := resourceForStatus(evaluation.StatusReady)
 
@@ -463,6 +697,16 @@ func TestEndpointsRequireActorFromRequestContext(t *testing.T) {
 			calls++
 			return resourceForStatus(evaluation.StatusQueued), nil
 		},
+		getInterviewReport: func(
+			context.Context,
+			requestcontext.Actor,
+			string,
+		) (InterviewReportResource, error) {
+			calls++
+			return interviewReportResourceForStatus(
+				evaluation.StatusQueued,
+			), nil
+		},
 		reevaluate: func(
 			context.Context,
 			requestcontext.Actor,
@@ -494,6 +738,11 @@ func TestEndpointsRequireActorFromRequestContext(t *testing.T) {
 		{
 			method: http.MethodGet,
 			path:   "/v1/evaluations/" + testEvaluationID,
+		},
+		{
+			method: http.MethodGet,
+			path: "/v1/practice-sessions/session_demo_001/" +
+				"interview-report",
 		},
 		{
 			method:      http.MethodPost,
@@ -1450,6 +1699,90 @@ func genericSceneResult() json.RawMessage {
 	return json.RawMessage(`{"summary":"provider-independent result"}`)
 }
 
+func interviewReportResourceForStatus(
+	status evaluation.Status,
+) InterviewReportResource {
+	resource := InterviewReportResource{
+		PracticeSessionID:    "session_demo_001",
+		EvaluationID:         testEvaluationID,
+		EvaluationRevisionID: testRevisionID,
+		Revision:             1,
+		EvaluationStatus:     status,
+		IsFinal:              false,
+	}
+	switch status {
+	case evaluation.StatusReady:
+		report := insufficientInterviewReport()
+		resource.Report = &report
+	case evaluation.StatusFailed:
+		resource.StableFailure = &EvaluationFailure{
+			ReasonCode: ReasonInternalRetryable,
+			Retryable:  true,
+		}
+	}
+	return resource
+}
+
+func insufficientInterviewReport() evaluation.InterviewReport {
+	dimensions := make(
+		[]evaluation.InterviewReportDimension,
+		0,
+		5,
+	)
+	dimensionFindings := make(
+		[]evaluation.InterviewQuestionDimensionRefs,
+		0,
+		5,
+	)
+	for _, dimensionID := range evaluation.InterviewDimensions() {
+		dimensions = append(
+			dimensions,
+			evaluation.InterviewReportDimension{
+				DimensionID: dimensionID,
+				ScoreabilityStatus: evaluation.
+					InterviewScoreabilityInsufficient,
+				GateStatus: evaluation.InterviewGateBlocked,
+				ReasonCodes: []evaluation.InterviewReasonCode{
+					evaluation.InterviewReasonInsufficientEvidence,
+				},
+				EvidenceRefIDs:         []string{},
+				Strengths:              []evaluation.InterviewReportFinding{},
+				Improvements:           []evaluation.InterviewReportFinding{},
+				RecommendedExpressions: []evaluation.InterviewReportFinding{},
+			},
+		)
+		dimensionFindings = append(
+			dimensionFindings,
+			evaluation.InterviewQuestionDimensionRefs{
+				DimensionID:                     dimensionID,
+				StrengthFindingIDs:              []string{},
+				ImprovementFindingIDs:           []string{},
+				RecommendedExpressionFindingIDs: []string{},
+			},
+		)
+	}
+	return evaluation.InterviewReport{
+		SchemaVersion: evaluation.InterviewReportSchemaVersion,
+		ScoreabilityStatus: evaluation.
+			InterviewScoreabilityInsufficient,
+		GateStatus:     evaluation.InterviewGateBlocked,
+		ReadinessLevel: evaluation.InterviewReadinessNotAssessed,
+		ReadinessNotice: evaluation.
+			InterviewReportReadinessNotice,
+		Dimensions: dimensions,
+		Questions: []evaluation.InterviewReportQuestion{{
+			QuestionID:        "question-1",
+			QuestionType:      "PRIMARY",
+			OpportunityStatus: evaluation.InterviewOpportunityNotProvided,
+			AssessmentStatus:  evaluation.InterviewAssessmentNotAssessed,
+			QuestionText:      "Tell me about a migration you led.",
+			EvidenceRefIDs:    []string{},
+			DimensionFindings: dimensionFindings,
+		}},
+		PriorityActions: []evaluation.InterviewReportPriorityRef{},
+	}
+}
+
 func validCreateBody() string {
 	return `{
 		"practice_session_id":"session_demo_001",
@@ -1522,7 +1855,9 @@ func assertPrivateResponse(
 	response *httptest.ResponseRecorder,
 ) {
 	t.Helper()
-	if response.Header().Get("Cache-Control") != "no-store" ||
+	cacheControl := response.Header().Get("Cache-Control")
+	if (cacheControl != "no-store" &&
+		cacheControl != "private, no-store") ||
 		response.Header().Get("Pragma") != "no-cache" {
 		t.Fatalf("private response headers = %#v", response.Header())
 	}

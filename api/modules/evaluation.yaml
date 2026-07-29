@@ -191,6 +191,49 @@ paths:
           $ref: '#/components/responses/EvaluationPolicyRejected'
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/interview-report:
+    get:
+      tags:
+        - Evaluation
+      summary: Get the current Interview Shadow report
+      description: |
+        Returns the current Actor-owned SESSION + INTERVIEW + SCENE Shadow
+        Evaluation revision projected as a private, qualitative report. A
+        resource owned by another Actor is indistinguishable from a missing
+        resource. This read never freezes evidence, creates or re-evaluates an
+        Evaluation, or invokes a provider.
+
+        The response is private and must not be persisted by intermediaries.
+        Servers must not log report findings, confirmed transcripts, resume
+        context, or evidence excerpts.
+      operationId: getInterviewReport
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+      responses:
+        '200':
+          description: |
+            Current report state. QUEUED and RUNNING are pollable, READY
+            contains a qualitative report, and FAILED contains only a stable
+            technical failure.
+          headers:
+            Cache-Control:
+              required: true
+              description: Prevents shared or private storage of the report.
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterviewReportEnvelope'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
 
 components:
   responses:
@@ -237,6 +280,12 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/EvaluationUUID'
+    PracticeSessionId:
+      name: practice_session_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/StableIdentifier'
   schemas:
     EvaluationUUID:
       type: string
@@ -321,6 +370,7 @@ components:
         - DUPLICATE_REQUEST
         - POLICY_VIOLATION
         - INTERNAL_RETRYABLE
+        - INTERNAL_NON_RETRYABLE
         - OPPORTUNITY_NOT_PROVIDED
     RoundingRule:
       type: string
@@ -501,6 +551,630 @@ components:
         status_url:
           type: string
           pattern: '^/v1/evaluations/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+    InterviewReportEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+        - practice_session_id
+        - evaluation_id
+        - evaluation_revision_id
+        - revision
+        - evaluation_status
+        - is_final
+        - status_url
+      properties:
+        practice_session_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evaluation_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        evaluation_revision_id:
+          $ref: '#/components/schemas/EvaluationUUID'
+        revision:
+          type: integer
+          minimum: 1
+        evaluation_status:
+          type: string
+          enum:
+            - QUEUED
+            - RUNNING
+            - READY
+            - FAILED
+        is_final:
+          type: boolean
+          const: false
+        status_url:
+          type: string
+          maxLength: 167
+          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/interview-report$'
+        report:
+          $ref: '#/components/schemas/InterviewReport'
+        stable_failure:
+          $ref: '#/components/schemas/InterviewReportFailure'
+      allOf:
+        - if:
+            properties:
+              evaluation_status:
+                const: READY
+            required:
+              - evaluation_status
+          then:
+            required:
+              - report
+            not:
+              required:
+                - stable_failure
+        - if:
+            properties:
+              evaluation_status:
+                const: FAILED
+            required:
+              - evaluation_status
+          then:
+            required:
+              - stable_failure
+            not:
+              required:
+                - report
+        - if:
+            properties:
+              evaluation_status:
+                enum:
+                  - QUEUED
+                  - RUNNING
+            required:
+              - evaluation_status
+          then:
+            not:
+              anyOf:
+                - required:
+                    - report
+                - required:
+                    - stable_failure
+    InterviewReport:
+      type: object
+      additionalProperties: false
+      description: |
+        Versioned qualitative Interview feedback projected from one frozen
+        Shadow revision. It contains no numeric performance score, hiring
+        probability, readiness inference, pronunciation, pace, stress,
+        phoneme, or other acoustic assessment.
+      required:
+        - schema_version
+        - scoreability_status
+        - gate_status
+        - readiness_level
+        - readiness_notice
+        - dimensions
+        - questions
+        - priority_actions
+      properties:
+        schema_version:
+          type: string
+          const: interview-report/v1
+        scoreability_status:
+          $ref: '#/components/schemas/InterviewReportScoreabilityStatus'
+        gate_status:
+          $ref: '#/components/schemas/InterviewReportGateStatus'
+        readiness_level:
+          type: string
+          const: NOT_ASSESSED
+        readiness_notice:
+          type: string
+          const: Practice feedback only; not a hiring decision or probability.
+        dimensions:
+          $ref: '#/components/schemas/InterviewReportDimensions'
+        questions:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/InterviewReportQuestion'
+        priority_actions:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/InterviewReportPriorityAction'
+      allOf:
+        - if:
+            properties:
+              scoreability_status:
+                const: PROVISIONAL
+            required:
+              - scoreability_status
+          then:
+            properties:
+              gate_status:
+                const: FEEDBACK_ONLY
+        - if:
+            properties:
+              scoreability_status:
+                const: INSUFFICIENT
+            required:
+              - scoreability_status
+          then:
+            properties:
+              gate_status:
+                const: BLOCKED
+    InterviewReportScoreabilityStatus:
+      type: string
+      enum:
+        - PROVISIONAL
+        - INSUFFICIENT
+    InterviewReportGateStatus:
+      type: string
+      enum:
+        - FEEDBACK_ONLY
+        - BLOCKED
+    InterviewReportReasonCode:
+      type: string
+      enum:
+        - ASR_CONFIDENCE_UNAVAILABLE
+        - INSUFFICIENT_EVIDENCE
+        - OPPORTUNITY_NOT_PROVIDED
+    InterviewReportDimensionId:
+      type: string
+      enum:
+        - INTERVIEW_RELEVANCE
+        - INTERVIEW_STRUCTURE
+        - INTERVIEW_EVIDENCE
+        - INTERVIEW_PROFESSIONAL
+        - INTERVIEW_INTERACTION
+    InterviewReportDimensions:
+      type: array
+      minItems: 5
+      maxItems: 5
+      prefixItems:
+        - $ref: '#/components/schemas/InterviewReportRelevanceDimension'
+        - $ref: '#/components/schemas/InterviewReportStructureDimension'
+        - $ref: '#/components/schemas/InterviewReportEvidenceDimension'
+        - $ref: '#/components/schemas/InterviewReportProfessionalDimension'
+        - $ref: '#/components/schemas/InterviewReportInteractionDimension'
+      items: false
+    InterviewReportRelevanceDimension:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_RELEVANCE
+    InterviewReportStructureDimension:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_STRUCTURE
+    InterviewReportEvidenceDimension:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_EVIDENCE
+    InterviewReportProfessionalDimension:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_PROFESSIONAL
+    InterviewReportInteractionDimension:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_INTERACTION
+    InterviewReportDimension:
+      type: object
+      additionalProperties: false
+      required:
+        - dimension_id
+        - scoreability_status
+        - gate_status
+        - coverage
+        - confidence
+        - reason_codes
+        - evidence_ref_ids
+        - strengths
+        - improvements
+        - recommended_expressions
+      properties:
+        dimension_id:
+          $ref: '#/components/schemas/InterviewReportDimensionId'
+        scoreability_status:
+          $ref: '#/components/schemas/InterviewReportScoreabilityStatus'
+        gate_status:
+          $ref: '#/components/schemas/InterviewReportGateStatus'
+        coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Evidence opportunity coverage metadata, not a user score.
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Evidence attribution confidence metadata, not a user score.
+        reason_codes:
+          type: array
+          minItems: 1
+          maxItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/InterviewReportReasonCode'
+        evidence_ref_ids:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+        strengths:
+          $ref: '#/components/schemas/InterviewReportFindings'
+        improvements:
+          $ref: '#/components/schemas/InterviewReportFindings'
+        recommended_expressions:
+          $ref: '#/components/schemas/InterviewReportFindings'
+      allOf:
+        - if:
+            properties:
+              scoreability_status:
+                const: PROVISIONAL
+            required:
+              - scoreability_status
+          then:
+            properties:
+              gate_status:
+                const: FEEDBACK_ONLY
+              reason_codes:
+                type: array
+                items:
+                  const: ASR_CONFIDENCE_UNAVAILABLE
+              evidence_ref_ids:
+                type: array
+                minItems: 1
+            anyOf:
+              - properties:
+                  strengths:
+                    type: array
+                    minItems: 1
+              - properties:
+                  improvements:
+                    type: array
+                    minItems: 1
+        - if:
+            properties:
+              scoreability_status:
+                const: INSUFFICIENT
+            required:
+              - scoreability_status
+          then:
+            properties:
+              gate_status:
+                const: BLOCKED
+              reason_codes:
+                type: array
+                items:
+                  enum:
+                    - INSUFFICIENT_EVIDENCE
+                    - OPPORTUNITY_NOT_PROVIDED
+              evidence_ref_ids:
+                type: array
+                maxItems: 0
+              strengths:
+                type: array
+                maxItems: 0
+              improvements:
+                type: array
+                maxItems: 0
+              recommended_expressions:
+                type: array
+                maxItems: 0
+    InterviewReportFindings:
+      type: array
+      maxItems: 3
+      items:
+        $ref: '#/components/schemas/InterviewReportFinding'
+    InterviewReportFinding:
+      type: object
+      additionalProperties: false
+      required:
+        - finding_id
+        - message
+        - evidence
+      properties:
+        finding_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        message:
+          $ref: '#/components/schemas/InterviewReportText'
+        suggestion:
+          $ref: '#/components/schemas/InterviewReportText'
+        evidence:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/InterviewReportEvidence'
+    InterviewReportEvidence:
+      type: object
+      additionalProperties: false
+      required:
+        - evidence_ref_id
+        - turn_id
+        - start_utf8_byte
+        - end_utf8_byte
+        - original_excerpt
+      properties:
+        evidence_ref_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        turn_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        start_utf8_byte:
+          type: integer
+          minimum: 0
+        end_utf8_byte:
+          type: integer
+          minimum: 1
+        original_excerpt:
+          type: string
+          minLength: 1
+          maxLength: 16384
+    InterviewReportQuestion:
+      type: object
+      additionalProperties: false
+      required:
+        - question_id
+        - question_type
+        - opportunity_status
+        - assessment_status
+        - question_text
+        - evidence_ref_ids
+        - dimension_findings
+      properties:
+        question_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        question_type:
+          type: string
+          enum:
+            - PRIMARY
+            - FOLLOW_UP
+        parent_question_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        opportunity_status:
+          type: string
+          enum:
+            - PROVIDED
+            - NOT_PROVIDED
+        assessment_status:
+          type: string
+          enum:
+            - ASSESSED
+            - NOT_ASSESSED
+        question_text:
+          $ref: '#/components/schemas/InterviewReportSourceText'
+        confirmed_transcript:
+          $ref: '#/components/schemas/InterviewReportSourceText'
+        response_turn_id:
+          $ref: '#/components/schemas/StableIdentifier'
+        evidence_ref_ids:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/StableIdentifier'
+        dimension_findings:
+          $ref: '#/components/schemas/InterviewReportQuestionDimensions'
+      allOf:
+        - if:
+            properties:
+              question_type:
+                const: PRIMARY
+            required:
+              - question_type
+          then:
+            not:
+              required:
+                - parent_question_id
+        - if:
+            properties:
+              question_type:
+                const: FOLLOW_UP
+            required:
+              - question_type
+          then:
+            required:
+              - parent_question_id
+        - if:
+            properties:
+              opportunity_status:
+                const: PROVIDED
+            required:
+              - opportunity_status
+          then:
+            required:
+              - confirmed_transcript
+              - response_turn_id
+            properties:
+              assessment_status:
+                const: ASSESSED
+              evidence_ref_ids:
+                type: array
+                minItems: 1
+        - if:
+            properties:
+              opportunity_status:
+                const: NOT_PROVIDED
+            required:
+              - opportunity_status
+          then:
+            properties:
+              assessment_status:
+                const: NOT_ASSESSED
+              evidence_ref_ids:
+                type: array
+                maxItems: 0
+            not:
+              anyOf:
+                - required:
+                    - confirmed_transcript
+                - required:
+                    - response_turn_id
+    InterviewReportQuestionDimensions:
+      type: array
+      minItems: 5
+      maxItems: 5
+      prefixItems:
+        - $ref: '#/components/schemas/InterviewReportQuestionRelevance'
+        - $ref: '#/components/schemas/InterviewReportQuestionStructure'
+        - $ref: '#/components/schemas/InterviewReportQuestionEvidence'
+        - $ref: '#/components/schemas/InterviewReportQuestionProfessional'
+        - $ref: '#/components/schemas/InterviewReportQuestionInteraction'
+      items: false
+    InterviewReportQuestionRelevance:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_RELEVANCE
+    InterviewReportQuestionStructure:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_STRUCTURE
+    InterviewReportQuestionEvidence:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_EVIDENCE
+    InterviewReportQuestionProfessional:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_PROFESSIONAL
+    InterviewReportQuestionInteraction:
+      allOf:
+        - $ref: '#/components/schemas/InterviewReportQuestionDimension'
+        - type: object
+          required:
+            - dimension_id
+          properties:
+            dimension_id:
+              const: INTERVIEW_INTERACTION
+    InterviewReportQuestionDimension:
+      type: object
+      additionalProperties: false
+      required:
+        - dimension_id
+        - strength_finding_ids
+        - improvement_finding_ids
+        - recommended_expression_finding_ids
+      properties:
+        dimension_id:
+          $ref: '#/components/schemas/InterviewReportDimensionId'
+        strength_finding_ids:
+          $ref: '#/components/schemas/InterviewReportFindingIds'
+        improvement_finding_ids:
+          $ref: '#/components/schemas/InterviewReportFindingIds'
+        recommended_expression_finding_ids:
+          $ref: '#/components/schemas/InterviewReportFindingIds'
+    InterviewReportFindingIds:
+      type: array
+      maxItems: 3
+      uniqueItems: true
+      items:
+        $ref: '#/components/schemas/StableIdentifier'
+    InterviewReportPriorityAction:
+      type: object
+      additionalProperties: false
+      required:
+        - dimension_id
+        - finding_id
+      properties:
+        dimension_id:
+          $ref: '#/components/schemas/InterviewReportDimensionId'
+        finding_id:
+          $ref: '#/components/schemas/StableIdentifier'
+    InterviewReportFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - reason_code
+        - retryable
+      properties:
+        reason_code:
+          type: string
+          enum:
+            - POLICY_VIOLATION
+            - EVIDENCE_REF_INVALID
+            - VERSION_CONFLICT
+            - INTERNAL_RETRYABLE
+            - INTERNAL_NON_RETRYABLE
+        retryable:
+          type: boolean
+      allOf:
+        - if:
+            properties:
+              reason_code:
+                const: INTERNAL_RETRYABLE
+            required:
+              - reason_code
+          then:
+            properties:
+              retryable:
+                const: true
+        - if:
+            properties:
+              reason_code:
+                enum:
+                  - POLICY_VIOLATION
+                  - EVIDENCE_REF_INVALID
+                  - VERSION_CONFLICT
+                  - INTERNAL_NON_RETRYABLE
+            required:
+              - reason_code
+          then:
+            properties:
+              retryable:
+                const: false
+    InterviewReportText:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      pattern: '^\S(?:[\s\S]*\S)?$'
+      description: |
+        Server-controlled feedback template text validated by the frozen
+        Interview Shadow revision; never unvalidated provider prose.
+    InterviewReportSourceText:
+      type: string
+      minLength: 1
+      maxLength: 16384
+      pattern: '^\S(?:[\s\S]*\S)?$'
     Evaluation:
       $ref: '#/components/schemas/EvaluationCommonProperties'
     EvaluationCommonProperties:

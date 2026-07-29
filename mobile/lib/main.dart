@@ -29,7 +29,9 @@ import 'package:speakup/practice/practice_audio_player.dart';
 import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/practice/wire_practice_client.dart';
+import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/review_history_controller.dart';
+import 'package:speakup/review/wire_interview_report_client.dart';
 import 'package:speakup/review/wire_review_history_client.dart';
 
 void main() {
@@ -50,6 +52,7 @@ void main() {
       preparationLaunchController: dependencies.preparationLaunchController,
       reviewHistoryController: dependencies.reviewHistoryController,
       avatarControllerFactory: dependencies.avatarControllerFactory,
+      interviewReportController: dependencies.interviewReportController,
     ),
   );
 }
@@ -63,6 +66,7 @@ final class ProductionAppDependencies {
     required this.preparationLaunchController,
     required this.reviewHistoryController,
     required this.avatarControllerFactory,
+    required this.interviewReportController,
   });
 
   final AuthController authController;
@@ -72,6 +76,7 @@ final class ProductionAppDependencies {
   final PreparationLaunchController preparationLaunchController;
   final ReviewHistoryController reviewHistoryController;
   final AvatarControllerFactory avatarControllerFactory;
+  final InterviewReportController interviewReportController;
 }
 
 ProductionAppDependencies createProductionAppDependencies({
@@ -84,6 +89,7 @@ ProductionAppDependencies createProductionAppDependencies({
   IdentityHttpTransport? jobPreparationTransport,
   IdentityHttpTransport? preparationLaunchTransport,
   IdentityHttpTransport? reviewHistoryTransport,
+  IdentityHttpTransport? interviewReportTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
   PracticeMediaWireTransport? signedAudioTransport,
@@ -215,6 +221,20 @@ ProductionAppDependencies createProductionAppDependencies({
             );
           },
       transport: reviewHistoryTransport,
+    ),
+  );
+  final interviewReportController = InterviewReportController(
+    client: WireInterviewReportClient(
+      baseUri: baseUri,
+      credentialProvider: () => authController.currentCredential,
+      invalidateSession:
+          ({required expectedSessionToken, required expectedGeneration}) {
+            return authController.invalidateSession(
+              expectedSessionToken: expectedSessionToken,
+              expectedGeneration: expectedGeneration,
+            );
+          },
+      transport: interviewReportTransport,
     ),
   );
   final preparationCatalogClient = WirePreparationCatalogClient(
@@ -351,14 +371,20 @@ ProductionAppDependencies createProductionAppDependencies({
     profileClient: identityClient,
     sessionStore: sessionStore ?? const IosKeychainSessionStore(),
     clearPrivateState: () async {
-      await preparationLaunchController.clearPrivateState();
-      await clearAvatarPrivateState();
-      await Future.wait<void>([
-        agentController.clearPrivateState(),
-        preparationController.clearPrivateState(),
-        jobPreparationController.clearPrivateState(),
-        reviewHistoryController.clearPrivateState(),
-      ]);
+      final interviewReportCleanup = interviewReportController
+          .clearPrivateState();
+      try {
+        await preparationLaunchController.clearPrivateState();
+        await clearAvatarPrivateState();
+        await Future.wait<void>([
+          agentController.clearPrivateState(),
+          preparationController.clearPrivateState(),
+          jobPreparationController.clearPrivateState(),
+          reviewHistoryController.clearPrivateState(),
+        ]);
+      } finally {
+        await interviewReportCleanup;
+      }
     },
   );
   return ProductionAppDependencies(
@@ -369,5 +395,6 @@ ProductionAppDependencies createProductionAppDependencies({
     preparationLaunchController: preparationLaunchController,
     reviewHistoryController: reviewHistoryController,
     avatarControllerFactory: createAvatarController,
+    interviewReportController: interviewReportController,
   );
 }

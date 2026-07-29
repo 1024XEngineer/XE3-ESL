@@ -115,6 +115,7 @@ func NewEvaluationComposition(
 	application := &evaluationHTTPApplication{
 		evaluations:   evaluationService,
 		runtime:       repository,
+		reports:       repository,
 		configuration: runtimeConfiguration,
 	}
 	handler, err := evaluationtransport.NewHTTPHandler(application)
@@ -237,9 +238,18 @@ type evaluationRuntimeReader interface {
 	) (evaluation.InterviewShadowReadState, error)
 }
 
+type interviewReportReader interface {
+	GetCurrentInterviewReportState(
+		context.Context,
+		string,
+		string,
+	) (evaluation.InterviewReportReadState, error)
+}
+
 type evaluationHTTPApplication struct {
 	evaluations   evaluationService
 	runtime       evaluationRuntimeReader
+	reports       interviewReportReader
 	configuration evaluation.InterviewShadowRuntimeConfiguration
 }
 
@@ -343,6 +353,43 @@ func (application *evaluationHTTPApplication) Get(
 		value,
 		state,
 		application.configuration,
+	)
+}
+
+func (application *evaluationHTTPApplication) GetInterviewReport(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	practiceSessionID string,
+) (evaluationtransport.InterviewReportResource, error) {
+	if application == nil || application.reports == nil ||
+		ctx == nil || !actor.Valid() ||
+		!application.configuration.Valid() {
+		return evaluationtransport.InterviewReportResource{},
+			evaluation.ErrInvalidRequest
+	}
+	trustedActor, ok := requestcontext.ActorFromContext(ctx)
+	if !ok || trustedActor != actor {
+		return evaluationtransport.InterviewReportResource{},
+			evaluation.ErrInvalidRequest
+	}
+	state, err := application.reports.GetCurrentInterviewReportState(
+		ctx,
+		actor.UserID,
+		practiceSessionID,
+	)
+	if err != nil {
+		if errors.Is(
+			err,
+			evaluation.ErrInterviewShadowConfigurationConflict,
+		) {
+			return evaluationtransport.InterviewReportResource{},
+				interviewShadowVersionConflictError()
+		}
+		return evaluationtransport.InterviewReportResource{}, err
+	}
+	return interviewReportResource(
+		practiceSessionID,
+		state,
 	)
 }
 
@@ -467,14 +514,90 @@ func interviewShadowResource(
 			return evaluationtransport.EvaluationResource{},
 				evaluation.ErrInvalidRequest
 		}
-		resource.StableFailure = &evaluationtransport.EvaluationFailure{
-			ReasonCode: interviewShadowFailureReason(
-				state.Failure.Code,
-			),
-			Retryable: state.Failure.Retryable,
-		}
+		failure := interviewShadowFailure(state.Failure.Code)
+		resource.StableFailure = &failure
 	default:
 		return evaluationtransport.EvaluationResource{},
+			evaluation.ErrInvalidRequest
+	}
+	return resource, nil
+}
+
+func interviewReportResource(
+	practiceSessionID string,
+	state evaluation.InterviewReportReadState,
+) (evaluationtransport.InterviewReportResource, error) {
+	value := state.Evaluation
+	if practiceSessionID == "" ||
+		value.PracticeSessionID != practiceSessionID ||
+		!interviewShadowEvaluation(value) ||
+		value.Revision.IsFinal {
+		return evaluationtransport.InterviewReportResource{},
+			evaluation.ErrInvalidRequest
+	}
+	resource := evaluationtransport.InterviewReportResource{
+		PracticeSessionID:    value.PracticeSessionID,
+		EvaluationID:         value.ID,
+		EvaluationRevisionID: value.Revision.ID,
+		Revision:             value.Revision.Number,
+		EvaluationStatus:     value.Revision.Status,
+		IsFinal:              false,
+	}
+	switch value.Revision.Status {
+	case evaluation.StatusQueued:
+		if state.Runtime.ModuleStatus !=
+			evaluation.InterviewShadowRuntimePending ||
+			state.Runtime.Result != nil ||
+			state.Runtime.Failure != nil ||
+			state.Snapshot != nil {
+			return evaluationtransport.InterviewReportResource{},
+				evaluation.ErrInvalidRequest
+		}
+	case evaluation.StatusRunning:
+		if (state.Runtime.ModuleStatus !=
+			evaluation.InterviewShadowRuntimePending &&
+			state.Runtime.ModuleStatus !=
+				evaluation.InterviewShadowRuntimeRunning) ||
+			state.Runtime.Result != nil ||
+			state.Runtime.Failure != nil ||
+			state.Snapshot != nil {
+			return evaluationtransport.InterviewReportResource{},
+				evaluation.ErrInvalidRequest
+		}
+	case evaluation.StatusReady:
+		if state.Runtime.ModuleStatus !=
+			evaluation.InterviewShadowRuntimeReady ||
+			state.Runtime.Result == nil ||
+			state.Runtime.Failure != nil ||
+			state.Snapshot == nil ||
+			state.Snapshot.ID != value.InputSnapshotID ||
+			state.Snapshot.OwnerUserID != value.OwnerUserID ||
+			state.Snapshot.PracticeSessionID !=
+				value.PracticeSessionID {
+			return evaluationtransport.InterviewReportResource{},
+				evaluation.ErrInvalidRequest
+		}
+		report, err := evaluation.ProjectInterviewReport(
+			*state.Snapshot,
+			*state.Runtime.Result,
+		)
+		if err != nil {
+			return evaluationtransport.InterviewReportResource{}, err
+		}
+		resource.Report = &report
+	case evaluation.StatusFailed:
+		if state.Runtime.ModuleStatus !=
+			evaluation.InterviewShadowRuntimeFailed ||
+			state.Runtime.Result != nil ||
+			state.Runtime.Failure == nil ||
+			state.Snapshot != nil {
+			return evaluationtransport.InterviewReportResource{},
+				evaluation.ErrInvalidRequest
+		}
+		failure := interviewShadowFailure(state.Runtime.Failure.Code)
+		resource.StableFailure = &failure
+	default:
+		return evaluationtransport.InterviewReportResource{},
 			evaluation.ErrInvalidRequest
 	}
 	return resource, nil
@@ -650,18 +773,39 @@ func validInterviewShadowDimensionGate(
 	}
 }
 
-func interviewShadowFailureReason(
+func interviewShadowFailure(
 	code string,
-) evaluationtransport.ReasonCode {
+) evaluationtransport.EvaluationFailure {
 	switch code {
 	case "provider_invalid_response":
-		return evaluationtransport.ReasonPolicyViolation
+		return evaluationtransport.EvaluationFailure{
+			ReasonCode: evaluationtransport.ReasonPolicyViolation,
+		}
 	case "evidence_ref_invalid":
-		return evaluationtransport.ReasonEvidenceRefInvalid
-	case "version_conflict":
-		return evaluationtransport.ReasonVersionConflict
+		return evaluationtransport.EvaluationFailure{
+			ReasonCode: evaluationtransport.ReasonEvidenceRefInvalid,
+		}
+	case "version_conflict", "runtime_configuration_changed":
+		return evaluationtransport.EvaluationFailure{
+			ReasonCode: evaluationtransport.ReasonVersionConflict,
+		}
+	case "provider_canceled",
+		"provider_timeout",
+		"rate_limited",
+		"timeout",
+		"provider_unavailable",
+		"invalid_response",
+		"cancelled",
+		"dependency_error",
+		"attempts_exhausted":
+		return evaluationtransport.EvaluationFailure{
+			ReasonCode: evaluationtransport.ReasonInternalRetryable,
+			Retryable:  true,
+		}
 	default:
-		return evaluationtransport.ReasonInternalRetryable
+		return evaluationtransport.EvaluationFailure{
+			ReasonCode: evaluationtransport.ReasonInternalNonRetryable,
+		}
 	}
 }
 

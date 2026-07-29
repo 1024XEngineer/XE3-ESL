@@ -8,8 +8,11 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/review/interview_report_view.dart';
 import 'package:speakup/practice/practice_recordings.dart';
 import 'package:speakup/review/formal_review.dart';
+import 'package:speakup/review/interview_report_client.dart';
+import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/review_history_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
@@ -20,6 +23,7 @@ class ReviewPage extends StatefulWidget {
     this.practiceAvailable = true,
     this.historyController,
     this.agentController,
+    this.interviewReportController,
     this.autoload = true,
     super.key,
   });
@@ -29,6 +33,7 @@ class ReviewPage extends StatefulWidget {
   final bool practiceAvailable;
   final ReviewHistoryController? historyController;
   final AgentController? agentController;
+  final InterviewReportController? interviewReportController;
   final bool autoload;
 
   @override
@@ -81,7 +86,10 @@ class _ReviewPageState extends State<ReviewPage> {
     unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => _ReviewDetailPage(entry: entry),
+          builder: (_) => _ReviewDetailPage(
+            entry: entry,
+            interviewReportController: widget.interviewReportController,
+          ),
         ),
       ),
     );
@@ -549,9 +557,13 @@ class _EmptyReview extends StatelessWidget {
 }
 
 class _ReviewDetailPage extends StatefulWidget {
-  const _ReviewDetailPage({required this.entry});
+  const _ReviewDetailPage({
+    required this.entry,
+    required this.interviewReportController,
+  });
 
   final _ReviewListEntry entry;
+  final InterviewReportController? interviewReportController;
 
   @override
   State<_ReviewDetailPage> createState() => _ReviewDetailPageState();
@@ -565,7 +577,9 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
   void initState() {
     super.initState();
     widget.entry.agentController?.addListener(_rebuild);
+    widget.interviewReportController?.addListener(_rebuild);
     _ignoredInitialMediaError = _matchingController()?.mediaErrorMessage;
+    _loadInterviewReport();
   }
 
   @override
@@ -575,16 +589,43 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
       oldWidget.entry.agentController?.removeListener(_rebuild);
       widget.entry.agentController?.addListener(_rebuild);
     }
+    if (oldWidget.interviewReportController !=
+        widget.interviewReportController) {
+      oldWidget.interviewReportController?.removeListener(_rebuild);
+      widget.interviewReportController?.addListener(_rebuild);
+    }
     _visibleMediaError = null;
     _ignoredInitialMediaError = _matchingController()?.mediaErrorMessage;
+    if (_interviewSessionId(oldWidget.entry) !=
+            _interviewSessionId(widget.entry) ||
+        oldWidget.interviewReportController !=
+            widget.interviewReportController) {
+      final oldSessionId = _interviewSessionId(oldWidget.entry);
+      if (oldSessionId != null) {
+        oldWidget.interviewReportController?.cancel(oldSessionId);
+      }
+      _loadInterviewReport();
+    }
   }
 
   @override
   void dispose() {
     final attachedController = widget.entry.agentController;
     attachedController?.removeListener(_rebuild);
+    widget.interviewReportController?.removeListener(_rebuild);
     unawaited(_matchingController()?.stopPracticeAudio(notify: false));
+    final sessionId = _interviewSessionId(widget.entry);
+    if (sessionId != null) {
+      widget.interviewReportController?.cancel(sessionId);
+    }
     super.dispose();
+  }
+
+  void _loadInterviewReport() {
+    final sessionId = _interviewSessionId(widget.entry);
+    if (sessionId != null) {
+      unawaited(widget.interviewReportController?.load(sessionId));
+    }
   }
 
   void _rebuild() {
@@ -622,6 +663,13 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
         ? formalReview
         : null;
     final scenarioResult = scenarioReview?.result;
+    final interviewSessionId = _interviewSessionId(entry);
+    final interviewReportController = widget.interviewReportController;
+    final showInterviewReport =
+        interviewSessionId != null &&
+        interviewReportController != null &&
+        interviewReportController.failureKind !=
+            InterviewReportFailureKind.notFound;
     return Scaffold(
       key: const Key('review-detail-page'),
       appBar: AppBar(
@@ -641,44 +689,48 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
           children: [
             _ReviewDetailHeader(entry: entry),
             const SizedBox(height: 12),
-            _ReviewDetailSection(
-              key: const Key('review-detail-summary'),
-              title: '整体表现',
-              body: review.summary,
-            ),
-            if (scenarioReview != null && scenarioResult != null) ...[
-              if (_reviewNotice(scenarioReview) case final notice?) ...[
+            if (showInterviewReport)
+              InterviewReportPanel(controller: interviewReportController)
+            else ...[
+              _ReviewDetailSection(
+                key: const Key('review-detail-summary'),
+                title: '整体表现',
+                body: review.summary,
+              ),
+              if (scenarioReview != null && scenarioResult != null) ...[
+                if (_reviewNotice(scenarioReview) case final notice?) ...[
+                  const SizedBox(height: 12),
+                  _ReviewStatusNotice(
+                    key: const Key('review-detail-status-notice'),
+                    title: notice.title,
+                    message: notice.message,
+                  ),
+                ],
+                if (scenarioResult.dimensions.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _ReviewDimensions(dimensions: scenarioResult.dimensions),
+                ],
+                if (scenarioResult.feedbackItems.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _ReviewFeedback(
+                    items: scenarioResult.feedbackItems,
+                    priorityRefs: scenarioResult.repracticeSuggestionRefs,
+                  ),
+                ],
+              ] else ...[
                 const SizedBox(height: 12),
-                _ReviewStatusNotice(
-                  key: const Key('review-detail-status-notice'),
-                  title: notice.title,
-                  message: notice.message,
+                _ReviewDetailSection(
+                  key: const Key('review-detail-strength'),
+                  title: '做得好的地方',
+                  body: review.strength,
+                ),
+                const SizedBox(height: 12),
+                _ReviewDetailSection(
+                  key: const Key('review-detail-focus'),
+                  title: '下一次重点',
+                  body: review.nextFocus,
                 ),
               ],
-              if (scenarioResult.dimensions.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _ReviewDimensions(dimensions: scenarioResult.dimensions),
-              ],
-              if (scenarioResult.feedbackItems.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _ReviewFeedback(
-                  items: scenarioResult.feedbackItems,
-                  priorityRefs: scenarioResult.repracticeSuggestionRefs,
-                ),
-              ],
-            ] else ...[
-              const SizedBox(height: 12),
-              _ReviewDetailSection(
-                key: const Key('review-detail-strength'),
-                title: '做得好的地方',
-                body: review.strength,
-              ),
-              const SizedBox(height: 12),
-              _ReviewDetailSection(
-                key: const Key('review-detail-focus'),
-                title: '下一次重点',
-                body: review.nextFocus,
-              ),
             ],
             if (hasRecordingControls) ...[
               const SizedBox(height: 12),
@@ -697,6 +749,15 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
       ),
     );
   }
+}
+
+String? _interviewSessionId(_ReviewListEntry entry) {
+  final review = entry.formalReview;
+  if (review?.schema != FormalReviewSchema.scenarioV2 ||
+      review?.contextType != FormalReviewContextType.interviewProjectDeepDive) {
+    return null;
+  }
+  return review!.practiceSessionId;
 }
 
 class _ReviewStatusNotice extends StatelessWidget {

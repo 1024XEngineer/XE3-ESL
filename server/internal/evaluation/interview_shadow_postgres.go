@@ -884,6 +884,23 @@ func (r *PostgresRepository) GetInterviewShadowState(
 		!validUUID(evaluationRevisionID) {
 		return InterviewShadowReadState{}, ErrInvalidRequest
 	}
+	state, _, err := getInterviewShadowState(
+		ctx,
+		r.pool,
+		ownerUserID,
+		evaluationID,
+		evaluationRevisionID,
+	)
+	return state, err
+}
+
+func getInterviewShadowState(
+	ctx context.Context,
+	db queryable,
+	ownerUserID string,
+	evaluationID string,
+	evaluationRevisionID string,
+) (InterviewShadowReadState, *EvidenceSnapshot, error) {
 	var deliveryStatus string
 	var leaseActive bool
 	var moduleStatus string
@@ -892,7 +909,7 @@ func (r *PostgresRepository) GetInterviewShadowState(
 	var payload []byte
 	var inputSnapshotID string
 	var fullConfigHash []byte
-	err := r.pool.QueryRow(ctx, `
+	err := db.QueryRow(ctx, `
 		SELECT
 			outbox.delivery_status,
 			coalesce(
@@ -954,10 +971,10 @@ func (r *PostgresRepository) GetInterviewShadowState(
 		&inputSnapshotID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return InterviewShadowReadState{}, ErrNotFound
+		return InterviewShadowReadState{}, nil, ErrNotFound
 	}
 	if err != nil {
-		return InterviewShadowReadState{}, fmt.Errorf(
+		return InterviewShadowReadState{}, nil, fmt.Errorf(
 			"read Interview Shadow state: %w",
 			err,
 		)
@@ -965,7 +982,7 @@ func (r *PostgresRepository) GetInterviewShadowState(
 	var persistedConfigHash [32]byte
 	if len(fullConfigHash) != 0 {
 		if len(fullConfigHash) != len(persistedConfigHash) {
-			return InterviewShadowReadState{},
+			return InterviewShadowReadState{}, nil,
 				ErrInterviewShadowConfigurationConflict
 		}
 		copy(persistedConfigHash[:], fullConfigHash)
@@ -977,22 +994,22 @@ func (r *PostgresRepository) GetInterviewShadowState(
 			return InterviewShadowReadState{
 				ModuleStatus:   InterviewShadowRuntimeRunning,
 				FullConfigHash: persistedConfigHash,
-			}, nil
+			}, nil, nil
 		}
 		if revisionStatus != "QUEUED" &&
 			revisionStatus != "RUNNING" {
-			return InterviewShadowReadState{},
+			return InterviewShadowReadState{}, nil,
 				ErrInterviewShadowConfigurationConflict
 		}
 		return InterviewShadowReadState{
 			ModuleStatus:   InterviewShadowRuntimePending,
 			FullConfigHash: persistedConfigHash,
-		}, nil
+		}, nil, nil
 	case "FAILED":
 		if moduleStatus != "FAILED" ||
 			revisionStatus != "FAILED" ||
 			!interviewShadowFailureCodePattern.MatchString(failureCode) {
-			return InterviewShadowReadState{},
+			return InterviewShadowReadState{}, nil,
 				ErrInterviewShadowConfigurationConflict
 		}
 		return InterviewShadowReadState{
@@ -1001,43 +1018,44 @@ func (r *PostgresRepository) GetInterviewShadowState(
 			Failure: &InterviewShadowFailure{
 				Code: failureCode,
 			},
-		}, nil
+		}, nil, nil
 	case "DELIVERED":
 		if moduleStatus != "READY" ||
 			revisionStatus != "READY" ||
 			len(payload) == 0 {
-			return InterviewShadowReadState{},
+			return InterviewShadowReadState{}, nil,
 				ErrInterviewShadowConfigurationConflict
 		}
 		var result InterviewShadowResult
 		if err := json.Unmarshal(payload, &result); err != nil {
-			return InterviewShadowReadState{}, fmt.Errorf(
+			return InterviewShadowReadState{}, nil, fmt.Errorf(
 				"decode Interview Shadow result: %w",
 				err,
 			)
 		}
-		snapshot, err := r.GetEvidenceSnapshot(
+		snapshot, err := selectEvidenceSnapshotByID(
 			ctx,
+			db,
 			ownerUserID,
 			inputSnapshotID,
 		)
 		if err != nil {
-			return InterviewShadowReadState{}, err
+			return InterviewShadowReadState{}, nil, err
 		}
 		if err := ValidateInterviewShadowResult(
 			snapshot,
 			result,
 		); err != nil {
-			return InterviewShadowReadState{},
+			return InterviewShadowReadState{}, nil,
 				ErrInterviewShadowConfigurationConflict
 		}
 		return InterviewShadowReadState{
 			ModuleStatus:   InterviewShadowRuntimeReady,
 			FullConfigHash: persistedConfigHash,
 			Result:         &result,
-		}, nil
+		}, &snapshot, nil
 	default:
-		return InterviewShadowReadState{},
+		return InterviewShadowReadState{}, nil,
 			ErrInterviewShadowConfigurationConflict
 	}
 }
