@@ -12,6 +12,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
 	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
 	agenttransport "github.com/1024XEngineer/XE3-ESL/server/internal/agent/transport"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
@@ -39,6 +40,9 @@ type ThreadSummaryContent = core.ThreadSummaryContent
 type ThreadSummaryCheckpoint = core.ThreadSummaryCheckpoint
 type CreateThreadSummaryCheckpointCommand = core.CreateThreadSummaryCheckpointCommand
 type ThreadSummaryCheckpointRepository = core.ThreadSummaryCheckpointRepository
+type SummaryConfiguration = agentsummary.Configuration
+type GenerateSummaryCheckpointCommand = agentsummary.GenerateCheckpointCommand
+type SummaryService = agentsummary.Service
 type RunConfiguration = core.RunConfiguration
 type RunSubmission = core.RunSubmission
 type RunRetry = core.RunRetry
@@ -137,6 +141,7 @@ var (
 	NewRunService               = agentruntime.NewRunService
 	WithToolRegistry            = agentruntime.WithToolRegistry
 	NewPostgresRepository       = agentpersistence.NewPostgresRepository
+	NewSummaryService           = agentsummary.NewService
 	NewVoiceMessageService      = agentvoice.NewVoiceMessageService
 	NewHTTPHandler              = agenttransport.NewHTTPHandler
 	NewHTTPHandlerWithRuns      = agenttransport.NewHTTPHandlerWithRuns

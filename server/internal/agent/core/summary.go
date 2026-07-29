@@ -14,11 +14,17 @@ const (
 	MaxSummaryItems           = 60
 	MaxSummaryItemRunes       = 512
 	MaxSummaryItemBytes       = 2048
+	MaxSummarySourceMessages  = 100
+	MaxSummarySourceRunes     = 64000
 )
 
 var summaryVersionPattern = regexp.MustCompile(
 	`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`,
 )
+
+func ValidSummaryVersion(value string) bool {
+	return summaryVersionPattern.MatchString(value)
+}
 
 // ThreadSummaryContent is the bounded, structured state carried between
 // conversation context windows.
@@ -152,8 +158,8 @@ func validSummaryCheckpointFields(
 		previousValid &&
 		sequenceValid &&
 		content.Valid() &&
-		summaryVersionPattern.MatchString(policyVersion) &&
-		summaryVersionPattern.MatchString(promptVersion) &&
+		ValidSummaryVersion(policyVersion) &&
+		ValidSummaryVersion(promptVersion) &&
 		ValidProviderID(provider) &&
 		ValidModelID(model) &&
 		sourceChecksum != [sha256.Size]byte{}
