@@ -6,6 +6,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/design/speak_up_components.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/practice/practice_recordings.dart';
 
 class PracticePage extends StatefulWidget {
@@ -262,31 +264,18 @@ class _PracticePageState extends State<PracticePage> {
       },
       child: Scaffold(
         key: const Key('practice-page'),
-        backgroundColor: const Color(0xFFF3F3F0),
-        appBar: AppBar(
-          title: const Text('按轮练习'),
-          backgroundColor: const Color(0xFFF3F3F0),
-          surfaceTintColor: Colors.transparent,
-        ),
+        appBar: AppBar(title: const Text('练习')),
         body: SafeArea(
           child: controller == null || scene == null
               ? const _NoScene()
               : ListView(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
                   children: [
-                    Text(
-                      scene.title,
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                      ),
+                    SpeakUpPageHeader(
+                      title: scene.title,
+                      subtitle: '完成 ${controller.turnLimit} 轮有效回答后生成复盘。',
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '一问一答，完成 ${controller.turnLimit} 轮有效回答后自动生成复盘。',
-                      style: TextStyle(color: Color(0xFF696B73), height: 1.4),
-                    ),
-                    const SizedBox(height: 22),
+                    const SizedBox(height: SpeakUpDesign.space24),
                     _TurnProgress(
                       completedTurns: controller.completedTurns,
                       turnLimit: controller.turnLimit,
@@ -297,14 +286,12 @@ class _PracticePageState extends State<PracticePage> {
                       expandedHintQuestionId: _expandedHintQuestionId,
                       onToggleHint: _toggleHint,
                     ),
-                    const SizedBox(height: 12),
-                    const _CorrectionIntegrationStatus(),
                     if (controller.errorMessage case final message?) ...[
                       const SizedBox(height: 14),
                       Text(
                         message,
                         key: const Key('practice-error-message'),
-                        style: const TextStyle(color: Color(0xFF8B2E26)),
+                        style: const TextStyle(color: SpeakUpDesign.error),
                       ),
                     ],
                     if (controller.mediaErrorMessage case final message?) ...[
@@ -312,7 +299,7 @@ class _PracticePageState extends State<PracticePage> {
                       Text(
                         message,
                         key: const Key('practice-media-error-message'),
-                        style: const TextStyle(color: Color(0xFF8B2E26)),
+                        style: const TextStyle(color: SpeakUpDesign.error),
                       ),
                     ],
                     const SizedBox(height: 18),
@@ -329,13 +316,7 @@ class _PracticePageState extends State<PracticePage> {
                       (message) => message.id != controller.questionId,
                     )) ...[
                       const SizedBox(height: 22),
-                      const Text(
-                        '本次对话记录',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
+                      const Text('本次对话记录', style: SpeakUpDesign.sectionTitle),
                       const SizedBox(height: 12),
                       _ConversationHistory(
                         messages: controller.messages
@@ -352,10 +333,7 @@ class _PracticePageState extends State<PracticePage> {
                       const Text(
                         '当前页面仅供显式 Fake 预览，不代表生产语音服务已经接入。',
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Color(0xFF85878E),
-                          fontSize: 12,
-                        ),
+                        style: SpeakUpDesign.meta,
                       ),
                   ],
                 ),
@@ -397,8 +375,8 @@ class _TurnProgress extends StatelessWidget {
               height: 7,
               decoration: BoxDecoration(
                 color: index < completedTurns
-                    ? const Color(0xFF2B2C30)
-                    : const Color(0xFFDCDDD9),
+                    ? SpeakUpDesign.primary
+                    : SpeakUpDesign.border,
                 borderRadius: BorderRadius.circular(8),
               ),
             ),
@@ -443,9 +421,12 @@ class _ConversationHistory extends StatelessWidget {
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: message.role == AgentMessageRole.user
-                    ? const Color(0xFF303136)
-                    : Colors.white,
-                borderRadius: BorderRadius.circular(16),
+                    ? SpeakUpDesign.primary
+                    : SpeakUpDesign.surface,
+                borderRadius: BorderRadius.circular(
+                  SpeakUpDesign.radiusControl,
+                ),
+                border: Border.all(color: SpeakUpDesign.border),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -455,7 +436,7 @@ class _ConversationHistory extends StatelessWidget {
                     style: TextStyle(
                       color: message.role == AgentMessageRole.user
                           ? Colors.white
-                          : const Color(0xFF303136),
+                          : SpeakUpDesign.ink,
                       height: 1.45,
                     ),
                   ),
@@ -502,9 +483,6 @@ class _CurrentQuestion extends StatelessWidget {
     final hintExpanded =
         question != null && expandedHintQuestionId == question.id;
     return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -512,16 +490,7 @@ class _CurrentQuestion extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Expanded(
-                  child: Text(
-                    '当前问题',
-                    style: TextStyle(
-                      color: Color(0xFF777983),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
+                const Expanded(child: Text('当前问题', style: SpeakUpDesign.label)),
                 if (question != null)
                   TextButton.icon(
                     key: Key('practice-hint-${question.id}'),
@@ -561,11 +530,7 @@ class _CurrentQuestion extends StatelessWidget {
             Text(
               question?.text ?? '准备好后开始第一轮。',
               key: const Key('practice-current-question'),
-              style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                height: 1.45,
-              ),
+              style: SpeakUpDesign.cardTitle,
             ),
             if (hintExpanded) ...[
               const SizedBox(height: 16),
@@ -586,8 +551,10 @@ class _AnswerHint extends StatelessWidget {
     return const DecoratedBox(
       key: Key('practice-answer-hint'),
       decoration: BoxDecoration(
-        color: Color(0xFFF3F3F0),
-        borderRadius: BorderRadius.all(Radius.circular(16)),
+        color: SpeakUpDesign.surfaceMuted,
+        borderRadius: BorderRadius.all(
+          Radius.circular(SpeakUpDesign.radiusControl),
+        ),
       ),
       child: Padding(
         padding: EdgeInsets.all(16),
@@ -600,35 +567,7 @@ class _AnswerHint extends StatelessWidget {
               'From my perspective, the core responsibility of this role is '
               'to understand the goal, work closely with the team, and '
               'deliver reliable results.',
-              style: TextStyle(color: Color(0xFF5F6168), height: 1.45),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CorrectionIntegrationStatus extends StatelessWidget {
-  const _CorrectionIntegrationStatus();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Material(
-      key: Key('practice-correction-status'),
-      color: Color(0xFFE9E9E5),
-      borderRadius: BorderRadius.all(Radius.circular(14)),
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        child: Row(
-          children: [
-            Icon(Icons.fact_check_outlined, size: 19),
-            SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                '逐轮纠错：当前暂无结果（已预留正式接口）',
-                style: TextStyle(fontSize: 13, color: Color(0xFF5F6168)),
-              ),
+              style: SpeakUpDesign.body,
             ),
           ],
         ),
@@ -651,9 +590,6 @@ class _RecordingPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: switch (controller.recordingState) {
@@ -723,19 +659,13 @@ class _IdleAnswerPanel extends StatelessWidget {
               Expanded(child: Divider()),
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 12),
-                child: Text(
-                  '或输入文字',
-                  style: TextStyle(color: Color(0xFF777981)),
-                ),
+                child: Text('或输入文字', style: SpeakUpDesign.meta),
               ),
               Expanded(child: Divider()),
             ],
           ),
         ),
-        const Text(
-          '用英文回答',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-        ),
+        const Text('用英文回答', style: SpeakUpDesign.cardTitle),
         const SizedBox(height: 10),
         TextField(
           key: const Key('practice-text-answer'),
@@ -746,7 +676,6 @@ class _IdleAnswerPanel extends StatelessWidget {
           textCapitalization: TextCapitalization.sentences,
           decoration: const InputDecoration(
             hintText: 'Type your answer in English…',
-            border: OutlineInputBorder(),
             counterText: '',
           ),
         ),
@@ -772,7 +701,11 @@ class _ReviewRetry extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        const Icon(Icons.refresh_rounded, size: 42, color: Color(0xFF303136)),
+        const Icon(
+          Icons.refresh_rounded,
+          size: 36,
+          color: SpeakUpDesign.primary,
+        ),
         const SizedBox(height: 14),
         FilledButton(
           key: const Key('practice-retry-review'),
@@ -805,7 +738,7 @@ class _RecordAction extends StatelessWidget {
         Icon(
           icon,
           size: 42,
-          color: emphasized ? const Color(0xFF8B2E26) : const Color(0xFF303136),
+          color: emphasized ? SpeakUpDesign.error : SpeakUpDesign.primary,
         ),
         const SizedBox(height: 14),
         FilledButton(

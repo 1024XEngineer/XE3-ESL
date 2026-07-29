@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/job_preparation_models.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
@@ -356,11 +357,8 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       },
       child: Scaffold(
         key: const Key('job-preparation-wizard'),
-        backgroundColor: const Color(0xFFF3F3F0),
         appBar: AppBar(
           title: const Text('准备英文面试'),
-          backgroundColor: const Color(0xFFF3F3F0),
-          surfaceTintColor: Colors.transparent,
           leading: IconButton(
             key: const Key('job-wizard-close'),
             tooltip: '关闭准备流程',
@@ -389,10 +387,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
                     child: Text(
                       _busyLabel(controller.operationStage),
                       key: const Key('job-wizard-progress-label'),
-                      style: const TextStyle(
-                        color: Color(0xFF686A72),
-                        fontSize: 13,
-                      ),
+                      style: SpeakUpDesign.meta,
                     ),
                   ),
                 ),
@@ -427,10 +422,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
           ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 8),
-        const Text(
-          '优先粘贴真实 JD。没有 JD 也可以只填岗位快速开始。',
-          style: TextStyle(color: Color(0xFF686A72), height: 1.45),
-        ),
+        const Text('优先粘贴真实 JD。没有 JD 也可以只填岗位快速开始。', style: SpeakUpDesign.body),
         const SizedBox(height: 20),
         SegmentedButton<JobTargetSource>(
           key: const Key('job-source-selector'),
@@ -584,7 +576,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
         Text(
           candidate.scopeNotice,
           key: const Key('job-analysis-scope-notice'),
-          style: const TextStyle(color: Color(0xFF686A72), height: 1.45),
+          style: SpeakUpDesign.body,
         ),
         const SizedBox(height: 18),
         _Field(
@@ -686,7 +678,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
         const SizedBox(height: 8),
         const Text(
           '系统会根据已确认的岗位信息、服务端训练目录和练习策略生成不可变预览，不会立即创建练习。',
-          style: TextStyle(color: Color(0xFF686A72), height: 1.45),
+          style: SpeakUpDesign.body,
         ),
         const SizedBox(height: 18),
         _SummaryCard(
@@ -742,7 +734,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
         const SizedBox(height: 8),
         const Text(
           '计划已冻结。只有点击“开始练习”才会创建正式 Session。',
-          style: TextStyle(color: Color(0xFF686A72), height: 1.45),
+          style: SpeakUpDesign.body,
         ),
         const SizedBox(height: 18),
         _SummaryCard(
@@ -940,8 +932,8 @@ class _StepProgress extends StatelessWidget {
                 margin: EdgeInsets.only(right: item == 3 ? 0 : 6),
                 decoration: BoxDecoration(
                   color: item <= index
-                      ? const Color(0xFF27282C)
-                      : const Color(0xFFD7D7D2),
+                      ? SpeakUpDesign.primary
+                      : SpeakUpDesign.border,
                   borderRadius: BorderRadius.circular(99),
                 ),
               ),
@@ -983,16 +975,6 @@ class _Field extends StatelessWidget {
         labelText: label,
         hintText: hint,
         alignLabelWithHint: maxLines > 1,
-        filled: true,
-        fillColor: Colors.white.withValues(alpha: 0.82),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: Color(0xFFD8D8D3)),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: Color(0xFFD8D8D3)),
-        ),
       ),
     );
   }
@@ -1009,8 +991,8 @@ class _Notice extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFE9E9E5),
-        borderRadius: BorderRadius.circular(16),
+        color: SpeakUpDesign.surfaceMuted,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1039,8 +1021,8 @@ class _ErrorCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: const Color(0xFFFFECE8),
-            borderRadius: BorderRadius.circular(16),
+            color: SpeakUpDesign.errorMuted,
+            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
           ),
           child: Row(
             children: [
@@ -1167,39 +1149,26 @@ class _SummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.85),
-        border: Border.all(color: const Color(0xFFD8D8D3)),
-        borderRadius: BorderRadius.circular(22),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-          ),
-          if (subtitle.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(subtitle, style: const TextStyle(color: Color(0xFF686A72))),
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: SpeakUpDesign.sectionTitle),
+            if (subtitle.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(subtitle, style: SpeakUpDesign.body),
+            ],
+            const SizedBox(height: 14),
+            for (final row in rows) ...[
+              Text(row.$1, style: SpeakUpDesign.meta),
+              const SizedBox(height: 3),
+              Text(row.$2.isEmpty ? '—' : row.$2),
+              const SizedBox(height: 12),
+            ],
           ],
-          const SizedBox(height: 14),
-          for (final row in rows) ...[
-            Text(
-              row.$1,
-              style: const TextStyle(
-                color: Color(0xFF777983),
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(row.$2.isEmpty ? '—' : row.$2),
-            const SizedBox(height: 12),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -1222,10 +1191,8 @@ String _busyLabel(JobPreparationOperationStage? stage) {
 
 final ButtonStyle _primaryButtonStyle = FilledButton.styleFrom(
   minimumSize: const Size.fromHeight(52),
-  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
 );
 
 final ButtonStyle _secondaryButtonStyle = OutlinedButton.styleFrom(
   minimumSize: const Size.fromHeight(52),
-  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
 );

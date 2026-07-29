@@ -6,6 +6,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/design/speak_up_components.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/practice/practice_recordings.dart';
 import 'package:speakup/review/review_history_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
@@ -116,13 +118,8 @@ class _ReviewPageState extends State<ReviewPage> {
     final hasEntries = entries.isNotEmpty;
     return Scaffold(
       key: const Key('review-page'),
-      backgroundColor: const Color(0xFFF3F3F0),
       appBar: widget.showBackButton
           ? AppBar(
-              backgroundColor: const Color(0xFFF3F3F0),
-              surfaceTintColor: Colors.transparent,
-              elevation: 0,
-              scrolledUnderElevation: 0,
               leading: IconButton(
                 key: const Key('review-route-back-button'),
                 tooltip: '返回',
@@ -218,20 +215,9 @@ class _ReviewHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '复盘',
-            style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            previewMode
-                ? '本地 UI Mock；复盘结果不会写入正式服务。'
-                : '查看每次练习的正式结果，并把下一步改进留给下一次练习。',
-            style: const TextStyle(
-              color: Color(0xFF696B73),
-              fontSize: 15,
-              height: 1.45,
-            ),
+          SpeakUpPageHeader(
+            title: '复盘',
+            subtitle: previewMode ? '本地预览；结果不会写入正式服务。' : '查看练习结果，明确下一次要改进的重点。',
           ),
         ],
       ),
@@ -316,13 +302,6 @@ class _ReviewListCard extends StatelessWidget {
               ? 'review-current-${review.id}'
               : 'review-history-${review.id}',
         ),
-        margin: EdgeInsets.zero,
-        elevation: 0,
-        color: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Color(0xFFE4E4DF)),
-        ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           key: Key(
@@ -351,11 +330,7 @@ class _ReviewListCard extends StatelessWidget {
                               ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          height: 1.25,
-                        ),
+                        style: SpeakUpDesign.cardTitle,
                       ),
                       const SizedBox(height: 6),
                       Text(
@@ -363,11 +338,7 @@ class _ReviewListCard extends StatelessWidget {
                         key: Key('review-list-summary-${review.id}'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF5F6269),
-                          fontSize: 14,
-                          height: 1.35,
-                        ),
+                        style: SpeakUpDesign.body,
                       ),
                       const SizedBox(height: 8),
                       Wrap(
@@ -376,13 +347,7 @@ class _ReviewListCard extends StatelessWidget {
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           if (dateLabel != null)
-                            Text(
-                              dateLabel,
-                              style: const TextStyle(
-                                color: Color(0xFF696B73),
-                                fontSize: 13,
-                              ),
-                            ),
+                            Text(dateLabel, style: SpeakUpDesign.meta),
                           _StatusLabel(
                             key: entry.isCurrent
                                 ? const Key('review-current-label')
@@ -397,7 +362,7 @@ class _ReviewListCard extends StatelessWidget {
                 const SizedBox(width: 10),
                 const Icon(
                   Icons.chevron_right_rounded,
-                  color: Color(0xFF6F7178),
+                  color: SpeakUpDesign.secondary,
                 ),
               ],
             ),
@@ -417,19 +382,12 @@ class _StatusLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFFF0F1ED),
+        color: SpeakUpDesign.surfaceMuted,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF55585F),
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        child: Text(label, style: SpeakUpDesign.meta),
       ),
     );
   }
@@ -460,8 +418,6 @@ class _HistoryFailure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      elevation: 0,
-      color: Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(22),
         child: Column(
@@ -470,7 +426,7 @@ class _HistoryFailure extends StatelessWidget {
               message,
               key: const Key('review-history-error'),
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFF8B2E26)),
+              style: const TextStyle(color: SpeakUpDesign.error),
             ),
             const SizedBox(height: 12),
             OutlinedButton(
@@ -501,7 +457,7 @@ class _InlineHistoryFailure extends StatelessWidget {
             child: Text(
               message,
               key: const Key('review-history-page-error'),
-              style: const TextStyle(color: Color(0xFF8B2E26)),
+              style: const TextStyle(color: SpeakUpDesign.error),
             ),
           ),
           TextButton(
@@ -563,37 +519,15 @@ class _EmptyReview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 34),
-        child: Column(
-          children: [
-            const Icon(
-              Icons.fact_check_outlined,
-              size: 42,
-              color: Color(0xFF8B8E99),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              practiceAvailable ? '完成本次练习后再来看看' : '复盘功能尚未开放',
-              key: const Key('review-availability-title'),
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              previewMode
-                  ? '预览模式不会用当前页面状态伪造历史记录。'
-                  : practiceAvailable
-                  ? '完成练习后，正式复盘会保存在当前账号的历史中。'
-                  : '待服务端场景、语音与复盘契约开放后再接入。',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFF777983)),
-            ),
-          ],
-        ),
-      ),
+    return SpeakUpEmptyState(
+      key: const Key('review-availability-title'),
+      title: practiceAvailable ? '完成练习后查看复盘' : '复盘功能尚未开放',
+      message: previewMode
+          ? '预览模式不会伪造历史记录。'
+          : practiceAvailable
+          ? '练习结束后，结果会保存在当前账号中。'
+          : '正式训练服务开放后可在这里查看结果。',
+      icon: Icons.fact_check_outlined,
     );
   }
 }
@@ -669,12 +603,7 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
     final mediaError = _visibleMediaError;
     return Scaffold(
       key: const Key('review-detail-page'),
-      backgroundColor: const Color(0xFFF3F3F0),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F3F0),
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
         title: const Text('复盘详情'),
         leading: IconButton(
           key: const Key('review-detail-back'),
@@ -717,7 +646,7 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
               Text(
                 mediaError,
                 key: const Key('review-detail-media-error'),
-                style: const TextStyle(color: Color(0xFF8B2E26)),
+                style: const TextStyle(color: SpeakUpDesign.error),
               ),
             ],
           ],
@@ -736,9 +665,7 @@ class _ReviewDetailHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final detailDateLabel = entry.detailDateLabel;
     return Card(
-      elevation: 0,
-      color: const Color(0xFFE9EAE5),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      color: SpeakUpDesign.primaryMuted,
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -756,24 +683,14 @@ class _ReviewDetailHeader extends StatelessWidget {
                   label: entry.statusLabel,
                 ),
                 if (detailDateLabel != null)
-                  Text(
-                    detailDateLabel,
-                    style: const TextStyle(
-                      color: Color(0xFF65676E),
-                      fontSize: 13,
-                    ),
-                  ),
+                  Text(detailDateLabel, style: SpeakUpDesign.meta),
               ],
             ),
             const SizedBox(height: 14),
             Text(
               entry.review.title,
               key: const Key('review-detail-title'),
-              style: const TextStyle(
-                fontSize: 24,
-                height: 1.2,
-                fontWeight: FontWeight.w800,
-              ),
+              style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24),
             ),
           ],
         ),
@@ -795,27 +712,14 @@ class _ReviewDetailSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: EdgeInsets.zero,
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: Color(0xFFE4E4DF)),
-      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
+            Text(title, style: SpeakUpDesign.cardTitle),
             const SizedBox(height: 8),
-            Text(
-              body,
-              style: const TextStyle(color: Color(0xFF55575E), height: 1.55),
-            ),
+            Text(body, style: SpeakUpDesign.body),
           ],
         ),
       ),
