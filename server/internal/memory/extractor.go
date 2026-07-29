@@ -266,22 +266,22 @@ func mapProfileUpdate(
 	switch update.Field {
 	case profilePreferredName:
 		candidate.Type = TypeProfile
-		candidate.CanonicalKey = "profile.preferred_name"
+		candidate.CanonicalKey = CanonicalProfilePreferredName
 	case profileFormOfAddress:
 		candidate.Type = TypePreference
-		candidate.CanonicalKey = "preference.form_of_address"
+		candidate.CanonicalKey = CanonicalPreferenceFormOfAddress
 	case profileGender:
 		candidate.Type = TypeProfile
-		candidate.CanonicalKey = "profile.gender"
+		candidate.CanonicalKey = CanonicalProfileGender
 	case profileOccupation:
 		candidate.Type = TypeProfile
-		candidate.CanonicalKey = "career.occupation"
+		candidate.CanonicalKey = CanonicalCareerOccupation
 	case profileExperience:
 		candidate.Type = TypeProfile
-		candidate.CanonicalKey = "career.experience_years"
+		candidate.CanonicalKey = CanonicalCareerExperienceYears
 	case profileCoachingStyle:
 		candidate.Type = TypePreference
-		candidate.CanonicalKey = "coaching.style"
+		candidate.CanonicalKey = CanonicalCoachingStyle
 	case profileCurrentGoal:
 		candidate.Type = TypeGoal
 		candidate.CanonicalKey = "goal.current"

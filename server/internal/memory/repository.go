@@ -135,6 +135,13 @@ type Repository interface {
 	DeleteOwnerData(context.Context, DeleteOwnerCommand) error
 }
 
+type StableProfileReader interface {
+	ListStableProfile(
+		context.Context,
+		requestcontext.Actor,
+	) ([]Memory, error)
+}
+
 type IDGenerator interface {
 	NewID() (string, error)
 }
