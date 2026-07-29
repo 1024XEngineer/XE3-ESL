@@ -1,10 +1,10 @@
 # 仿 AstrBot 意图识别修改计划
 
-> 状态：实施中，第一阶段已完成。
+> 状态：实施中，前两个阶段已完成。
 >
 > 进度维护：每完成并通过验收一个阶段，将该阶段标题前的 `[ ]` 改为 `[x]`，并在阶段末补充实际验收命令和结果。
 >
-> 当前实施 Issue：[#203「冻结全量 LLM Tool Calling 契约与回归基线」](https://github.com/1024XEngineer/XE3-ESL/issues/203)，关联 MS2。
+> 已关联 Issue：[#203「冻结全量 LLM Tool Calling 契约与回归基线」](https://github.com/1024XEngineer/XE3-ESL/issues/203)、[#204「移除关键词业务路由并向模型暴露全量工具」](https://github.com/1024XEngineer/XE3-ESL/issues/204)，均关联 MS2。
 
 ## 目标
 
@@ -63,7 +63,7 @@ go test ./internal/agent/runtime ./internal/agent/tool ./internal/ai/...
 go test ./...
 ```
 
-### [ ] 2. 移除关键词业务意图路由和工具裁剪
+### [x] 2. 移除关键词业务意图路由和工具裁剪
 
 - 删除 `RouteIntent`、业务关键词 signal、`PreferredTools` 和基于关键词生成 `ToolChoice` 的逻辑。
 - 移除 `ToolPolicyBuilder` 对候选工具、写工具确认和用户身份权限的筛选职责。
@@ -74,7 +74,25 @@ go test ./...
 
 - 同一轮请求中，所有已注册工具都进入 Provider 请求。
 - 未出现工具关键词的自然语言也可以由模型选择正确工具。
-- 代码中不再存在业务意图关键词到工具名的映射。
+- 生产 Runtime 代码中不再存在业务意图关键词到工具名的映射。
+
+实际结果（2026-07-29）：
+
+- 删除生产 Runtime 中的 `IntentGuard`、`RouteIntent`、业务关键词 signals、`PreferredTools` 和 `ToolPolicyBuilder`。
+- 自然语言请求统一读取 Registry 的全部工具定义，并固定使用 `ToolChoiceAuto`。
+- 全部已注册工具均可执行，不再按用户、关键词、写操作确认或功能候选进行裁剪；Registry 白名单、参数校验和循环预算继续有效。
+- 显式斜杠命令仍先执行其指定工具，执行结果回填后由模型基于全量工具继续组织回复。
+- Context Manifest 保留原数据库字段以兼容既有契约，固定记录 `model_tool_selection`、`disabled` 和 `model-tool-routing-v1`。
+- 离线评测不再调用生产关键词路由；其中的确定性规则仅作为可复现的假模型，并已用中文注释标明边界。
+- 关键入口、全量工具暴露和显式命令分流已添加中文注释。
+
+验收命令通过：
+
+```bash
+cd server
+go test ./internal/agent/runtime ./internal/agent/eval ./internal/agent/tool ./internal/ai/...
+go test ./...
+```
 
 ### [ ] 3. 强化工具描述与参数 Schema
 

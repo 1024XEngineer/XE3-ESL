@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/command"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
@@ -18,7 +20,7 @@ import (
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
-func TestRunLoopDirectResponseDoesNotExposeTools(t *testing.T) {
+func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 	generator := newScriptedGenerator(finalLoopResult("direct-answer"))
 	service := newLoopTestService(t, generator)
 
@@ -36,11 +38,20 @@ func TestRunLoopDirectResponseDoesNotExposeTools(t *testing.T) {
 		t.Fatalf("Content = %q, want direct-answer", result.Content)
 	}
 	requests := generator.Requests()
-	if got := len(requests[0].Tools); got != 0 {
-		t.Fatalf("len(Tools) = %d, want 0", got)
+	gotTools := exposedToolNameList(requests[0].Tools)
+	wantTools := []string{
+		mocktool.MaterialSearchToolName,
+		mocktool.MistakeSearchToolName,
+		reviewtool.ReviewGetToolName,
+		reviewtool.ReviewSearchToolName,
+		mattertool.ScenarioCreateToolName,
+		mattertool.ScenarioSearchToolName,
 	}
-	if requests[0].ToolChoice.Mode != ai.ToolChoiceNone {
-		t.Fatalf("ToolChoice = %#v, want none", requests[0].ToolChoice)
+	if !reflect.DeepEqual(gotTools, wantTools) {
+		t.Fatalf("Tools = %#v, want %#v", gotTools, wantTools)
+	}
+	if requests[0].ToolChoice.Mode != ai.ToolChoiceAuto {
+		t.Fatalf("ToolChoice = %#v, want auto", requests[0].ToolChoice)
 	}
 }
 
@@ -56,7 +67,7 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 		loopActor(),
 		loopRun(),
 		ContextManifest{},
-		loopRequest("看看我面试评价"),
+		loopRequest("请结合我的信息处理一下"),
 	)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
@@ -71,9 +82,8 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 	if got := len(requests[0].Tools); got == 0 {
 		t.Fatal("first request exposed no tools")
 	}
-	if requests[0].ToolChoice.Mode != ai.ToolChoiceSpecific ||
-		requests[0].ToolChoice.Name != reviewtool.ReviewSearchToolName {
-		t.Fatalf("first ToolChoice = %#v, want review.search specific", requests[0].ToolChoice)
+	if requests[0].ToolChoice.Mode != ai.ToolChoiceAuto {
+		t.Fatalf("first ToolChoice = %#v, want auto", requests[0].ToolChoice)
 	}
 	second := requests[1]
 	if second.ToolChoice.Mode != ai.ToolChoiceAuto {
@@ -156,7 +166,7 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 	}
 }
 
-func TestRunLoopReturnsFallbackWhenSpecificToolChoiceIsIgnored(t *testing.T) {
+func TestRunLoopAllowsModelToAnswerWithoutToolCall(t *testing.T) {
 	generator := newScriptedGenerator(finalLoopResult("made-up review"))
 	service := newLoopTestService(t, generator)
 
@@ -170,8 +180,60 @@ func TestRunLoopReturnsFallbackWhenSpecificToolChoiceIsIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
-	if !strings.Contains(result.Content, "需要先查询") {
-		t.Fatalf("fallback content = %q", result.Content)
+	if result.Content != "made-up review" {
+		t.Fatalf("Content = %q, want model response", result.Content)
+	}
+}
+
+func TestRunLoopExecutesExplicitCommandBeforeModelResponse(t *testing.T) {
+	generator := newScriptedGenerator(finalLoopResult("I found your review."))
+	service := newLoopTestService(t, generator)
+	commandRegistry, err := command.NewRegistry(command.Builtins()...)
+	if err != nil {
+		t.Fatalf("command.NewRegistry() error = %v", err)
+	}
+	service.commands = command.NewRouter(commandRegistry)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		ContextManifest{},
+		loopRequest("/查评价 last interview"),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if result.Content != "I found your review." {
+		t.Fatalf("Content = %q", result.Content)
+	}
+	requests := generator.Requests()
+	if got, want := len(requests), 1; got != want {
+		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+	request := requests[0]
+	if request.ToolChoice.Mode != ai.ToolChoiceAuto ||
+		len(request.Tools) != 6 {
+		t.Fatalf(
+			"command response routing = choice %#v, tools %d",
+			request.ToolChoice,
+			len(request.Tools),
+		)
+	}
+	if got, want := len(request.Messages), 4; got != want {
+		t.Fatalf("messages = %d, want %d", got, want)
+	}
+	assistant := request.Messages[2]
+	toolResult := request.Messages[3]
+	if len(assistant.ToolCalls) != 1 ||
+		assistant.ToolCalls[0].Name != reviewtool.ReviewSearchToolName ||
+		toolResult.Role != ai.TextRoleTool ||
+		toolResult.ToolCallID != "command-call" {
+		t.Fatalf(
+			"command messages = assistant %#v, tool %#v",
+			assistant,
+			toolResult,
+		)
 	}
 }
 
@@ -229,7 +291,7 @@ func TestRunLoopReturnsFallbackWhenToolBudgetExhausted(t *testing.T) {
 
 func TestRunLoopRejectsUnexposedToolCall(t *testing.T) {
 	generator := newScriptedGenerator(
-		toolLoopResult("call-1", reviewtool.ReviewSearchToolName, `{"query":"one"}`),
+		toolLoopResult("call-1", "missing.search.v1", `{"query":"one"}`),
 	)
 	service := newLoopTestService(t, generator)
 
@@ -243,7 +305,7 @@ func TestRunLoopRejectsUnexposedToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
 	}
-	if !strings.Contains(result.Content, "没有开放") {
+	if !strings.Contains(result.Content, "未注册") {
 		t.Fatalf("fallback content = %q", result.Content)
 	}
 }
@@ -269,13 +331,6 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 		Usage: ai.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 	})
 	service := newLoopTestService(t, generator)
-	service.confirmed = func(
-		context.Context,
-		requestcontext.Actor,
-		Run,
-	) []string {
-		return []string{mattertool.ScenarioCreateToolName}
-	}
 
 	result, err := service.generate(
 		context.Background(),
@@ -327,8 +382,7 @@ func TestRunLoopLogsEndToEndToolSequence(t *testing.T) {
 	output := logs.String()
 	assertLogOrder(t, output, []string{
 		"agent.run.received",
-		"agent.intent.guarded",
-		"agent.routing.candidates",
+		"agent.tools.exposed",
 		"agent.loop.iteration",
 		"agent.routing.decision",
 		"agent.tool.call.started",

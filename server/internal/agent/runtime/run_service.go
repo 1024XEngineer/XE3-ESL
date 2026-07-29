@@ -39,7 +39,6 @@ type RunService struct {
 	executor      *tool.Executor
 	loopLimits    LoopLimits
 	commands      *command.Router
-	confirmed     ConfirmedActionsProvider
 	logger        *slog.Logger
 	logOptions    LogOptions
 }
@@ -52,12 +51,6 @@ type LoopLimits struct {
 	LoopTimeout        time.Duration
 	MaxToolResultBytes int
 }
-
-type ConfirmedActionsProvider func(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	run Run,
-) []string
 
 type LogOptions struct {
 	LogUserInput    bool
@@ -165,16 +158,6 @@ func WithCommandRouter(router *command.Router) RunServiceOption {
 			return errors.New("agent: command router is required")
 		}
 		service.commands = router
-		return nil
-	}
-}
-
-func WithConfirmedActions(provider ConfirmedActionsProvider) RunServiceOption {
-	return func(service *RunService) error {
-		if provider == nil {
-			return errors.New("agent: confirmed action provider is required")
-		}
-		service.confirmed = provider
 		return nil
 	}
 }
@@ -453,49 +436,29 @@ func (service *RunService) generate(
 
 	input := lastUserContent(request)
 	service.logRunReceived(run, input)
-	intent := NewIntentGuard(service.logger).Guard(run.ID, input)
-	policyContext := PolicyContext{
-		Actor:            actor,
-		ThreadID:         run.ThreadID,
-		ActiveMatterID:   manifest.ActiveMatterID,
-		ConfirmedActions: service.confirmedActions(ctx, actor, run),
-		Intent:           intent,
-	}
+	routing := buildModelToolRouting(service.registry, service.logger, run.ID)
 	if parsed, ok, err := service.parseCommand(input); err != nil {
 		return fallbackResult(
 			service.configuration,
 			"我暂时无法识别这条命令，请换成自然语言告诉我你想做什么。",
 		), nil
 	} else if ok {
-		policyContext.EntryPoint = "command"
-		policyContext.ExplicitToolName = parsed.Invocation.Name
-		result, handled, err := service.executeCommand(
+		result, err := service.executeCommand(
 			loopCtx,
 			actor,
 			run,
 			manifest,
 			request,
 			parsed.Invocation,
-			policyContext,
+			routing,
 		)
-		if handled || err != nil {
-			return result, err
-		}
+		return result, err
 	}
 
-	policyDecision := NewToolPolicyBuilder(service.registry, service.logger).Build(
-		run.ID,
-		policyContext,
-	)
-	request.Tools = service.toolDefinitions(policyDecision.AllowedTools)
-	request.ToolChoice = policyDecision.ToolChoice
-	manifest.ExposedTools = exposedToolNameList(request.Tools)
-	manifest.BlockedTools = contextBlockedTools(policyDecision.BlockedTools)
-	manifest.IntentMode = string(intent.Mode)
-	manifest.IntentReasonCode = intent.ReasonCode
-	manifest.IntentGuardVersion = intent.GuardVersion
-	manifest.ToolPolicyVersion = policyDecision.PolicyVersion
-	manifest.ToolSchemaHashes = toolSchemaHashes(request.Tools)
+	// 自然语言请求始终拿到 Registry 的全量工具，是否调用完全由模型判断。
+	request.Tools = routing.Definitions
+	request.ToolChoice = routing.ToolChoice
+	applyModelToolSnapshot(&manifest, routing, reasonModelToolSelection)
 	if err := service.saveContextToolSnapshot(loopCtx, manifest); err != nil {
 		return ai.TextResult{}, err
 	}
@@ -516,35 +479,12 @@ func (service *RunService) generate(
 			return result, nil
 		}
 		if len(result.ToolCalls) == 0 {
-			if requiresToolCall(request.ToolChoice) {
-				service.logRoutingDecision(
-					run,
-					"tool_call_required_missing",
-					nil,
-					policyDecision.ReasonCode,
-					reasonSummary(policyDecision.ReasonCode, "tool_call_required_missing"),
-					iteration+1,
-				)
-				result := fallbackResult(
-					service.configuration,
-					"我需要先查询你的历史数据，才能给出可靠回复。请稍后重试，或把要查询的范围说得更具体一点。",
-				)
-				service.logRunCompleted(
-					run,
-					"tool_call_required_missing",
-					iteration+1,
-					toolCalls,
-					startedAt,
-					result.Content,
-				)
-				return result, nil
-			}
 			service.logRoutingDecision(
 				run,
 				finalDecision,
 				nil,
-				policyDecision.ReasonCode,
-				reasonSummary(policyDecision.ReasonCode, finalDecision),
+				reasonModelToolSelection,
+				reasonSummary(reasonModelToolSelection, finalDecision),
 				iteration+1,
 			)
 			service.logRunCompleted(
@@ -563,8 +503,8 @@ func (service *RunService) generate(
 			run,
 			finalDecision,
 			selected,
-			policyDecision.ReasonCode,
-			reasonSummary(policyDecision.ReasonCode, finalDecision),
+			reasonModelToolSelection,
+			reasonSummary(reasonModelToolSelection, finalDecision),
 			iteration+1,
 		)
 		if toolCalls+len(result.ToolCalls) > service.loopLimits.MaxToolCalls {
@@ -607,15 +547,15 @@ func (service *RunService) generate(
 					loopCtx,
 					run,
 					call.ID,
-					"permission_denied",
+					"unknown_tool",
 				)
 				result := fallbackResult(
 					service.configuration,
-					"这个工具当前没有开放给本轮对话，我先不执行它。",
+					"模型选择了一个未注册的工具，我先不执行它。",
 				)
 				service.logRunCompleted(
 					run,
-					"policy_rejected",
+					"unknown_tool",
 					iteration+1,
 					toolCalls,
 					startedAt,
@@ -624,20 +564,20 @@ func (service *RunService) generate(
 				return result, nil
 			}
 			definition, ok := service.toolDefinition(call.Name)
-			if !ok || !policyDecision.Policy.Allows(definition) {
+			if !ok || !routing.Policy.Allows(definition) {
 				_ = service.markToolCallRejected(
 					loopCtx,
 					run,
 					call.ID,
-					"permission_denied",
+					"unknown_tool",
 				)
 				result := fallbackResult(
 					service.configuration,
-					"这个操作当前不可用或需要额外确认，我先不执行它。",
+					"模型选择了一个未注册的工具，我先不执行它。",
 				)
 				service.logRunCompleted(
 					run,
-					"policy_rejected",
+					"unknown_tool",
 					iteration+1,
 					toolCalls,
 					startedAt,
@@ -668,7 +608,7 @@ func (service *RunService) generate(
 				actor,
 				run,
 				call,
-				policyDecision.Policy,
+				routing.Policy,
 			)
 			if err != nil {
 				result := fallbackResult(
@@ -721,23 +661,14 @@ func (service *RunService) executeCommand(
 	manifest ContextManifest,
 	request ai.TextRequest,
 	invocation tool.Invocation,
-	policyContext PolicyContext,
-) (ai.TextResult, bool, error) {
-	policyDecision := NewToolPolicyBuilder(service.registry, service.logger).Build(
-		run.ID,
-		policyContext,
-	)
-	request.Tools = service.toolDefinitions(policyDecision.AllowedTools)
-	request.ToolChoice = policyDecision.ToolChoice
-	manifest.ExposedTools = exposedToolNameList(request.Tools)
-	manifest.BlockedTools = contextBlockedTools(policyDecision.BlockedTools)
-	manifest.IntentMode = string(policyContext.Intent.Mode)
-	manifest.IntentReasonCode = policyDecision.ReasonCode
-	manifest.IntentGuardVersion = policyContext.Intent.GuardVersion
-	manifest.ToolPolicyVersion = policyDecision.PolicyVersion
-	manifest.ToolSchemaHashes = toolSchemaHashes(request.Tools)
+	routing modelToolRouting,
+) (ai.TextResult, error) {
+	// 斜杠命令先直接执行已解析的工具，随后仍让模型看到全量工具组织回复。
+	request.Tools = routing.Definitions
+	request.ToolChoice = routing.ToolChoice
+	applyModelToolSnapshot(&manifest, routing, reasonExplicitCommand)
 	if err := service.saveContextToolSnapshot(ctx, manifest); err != nil {
-		return ai.TextResult{}, true, err
+		return ai.TextResult{}, err
 	}
 	commandCall := ai.ToolCall{
 		ID:        "command-call",
@@ -745,27 +676,27 @@ func (service *RunService) executeCommand(
 		Arguments: invocation.Input,
 	}
 	if err := service.saveToolCallProposed(ctx, run, commandCall); err != nil {
-		return ai.TextResult{}, true, err
+		return ai.TextResult{}, err
 	}
 	toolMessage, err := service.executeToolCall(
 		ctx,
 		actor,
 		run,
 		commandCall,
-		policyDecision.Policy,
+		commandExecutionPolicy(invocation.Name),
 	)
 	if err != nil {
 		return fallbackResult(
 			service.configuration,
-			"这条命令当前无法执行，可能需要确认或参数不完整。",
-		), true, nil
+			"这条命令当前无法执行，可能是参数不完整。",
+		), nil
 	}
 	request.Messages = append(request.Messages, ai.TextMessage{
 		Role:      ai.TextRoleAssistant,
 		ToolCalls: []ai.ToolCall{commandCall},
 	}, toolMessage)
 	result, err := service.generator.Generate(ctx, request)
-	return result, true, err
+	return result, err
 }
 
 func (service *RunService) executeToolCall(
@@ -898,25 +829,6 @@ func toolSourceRefs(refs []tool.SourceRef) []core.ToolSourceRef {
 		result = append(result, core.ToolSourceRef{
 			Type: ref.Type,
 			ID:   ref.ID,
-		})
-	}
-	return result
-}
-
-func requiresToolCall(choice ai.ToolChoice) bool {
-	return choice.Mode == ai.ToolChoiceRequired ||
-		choice.Mode == ai.ToolChoiceSpecific
-}
-
-func contextBlockedTools(blocked []BlockedTool) []core.ContextBlockedTool {
-	if len(blocked) == 0 {
-		return nil
-	}
-	result := make([]core.ContextBlockedTool, 0, len(blocked))
-	for _, item := range blocked {
-		result = append(result, core.ContextBlockedTool{
-			Name:   item.Name,
-			Reason: item.Reason,
 		})
 	}
 	return result
@@ -1181,42 +1093,11 @@ func normalizeLoopLimits(limits LoopLimits) LoopLimits {
 	return limits
 }
 
-func (service *RunService) confirmedActions(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	run Run,
-) []string {
-	if service.confirmed == nil {
-		return nil
-	}
-	return service.confirmed(ctx, actor, run)
-}
-
 func (service *RunService) parseCommand(input string) (command.Parsed, bool, error) {
 	if service.commands == nil {
 		return command.Parsed{}, false, nil
 	}
 	return service.commands.Parse(input)
-}
-
-func (service *RunService) toolDefinitions(names []string) []ai.ToolDefinition {
-	if service.registry == nil || len(names) == 0 {
-		return nil
-	}
-	definitions := make([]ai.ToolDefinition, 0, len(names))
-	for _, name := range names {
-		registered, ok := service.registry.Get(name)
-		if !ok {
-			continue
-		}
-		definition := registered.Definition()
-		definitions = append(definitions, ai.ToolDefinition{
-			Name:        definition.Name,
-			Description: definition.Description,
-			InputSchema: definition.InputSchema,
-		})
-	}
-	return definitions
 }
 
 func (service *RunService) toolDefinition(name string) (tool.Definition, bool) {

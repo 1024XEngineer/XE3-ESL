@@ -49,31 +49,17 @@ func toolCallNames(calls []ai.ToolCall) []string {
 
 func reasonSummary(reasonCode string, decision string) string {
 	switch reasonCode {
-	case ReasonDirectLanguageHelp:
-		return "用户请求属于表达、翻译、润色或语法帮助，本轮直接回答。"
-	case ReasonNewRealWorldScenario:
+	case reasonModelToolSelection:
 		if decision == "tool_call" {
-			return "用户提到新的现实英语使用场景，模型选择调用场景相关工具。"
+			return "模型根据全量工具描述自主选择了工具。"
 		}
-		return "用户提到新的现实英语使用场景，需结合确认和候选工具继续判断。"
-	case ReasonExistingScenarioRef:
-		return "用户使用上下文指代表达，优先查找已有场景而不是重复创建。"
-	case ReasonHistoricalReviewRequest:
-		return "用户请求历史评价或复盘，候选工具聚焦 Review 查询。"
-	case ReasonMaterialContextRequest:
-		return "用户希望结合简历、JD 或材料上下文，候选工具聚焦材料检索。"
-	case ReasonHistoricalMistakeRequest:
-		return "用户请求历史错题或错误记录，候选工具聚焦错题检索。"
-	case ReasonExplicitCommand:
+		return "模型查看全量工具描述后选择直接回答。"
+	case reasonExplicitCommand:
 		return "用户输入匹配显式命令，按命令声明的工具执行。"
-	case ReasonToolUnavailable:
-		return "候选工具当前未注册或功能开关不可用。"
-	case ReasonPolicyRejected:
-		return "服务端策略拒绝本轮工具调用。"
 	case "budget_exhausted":
 		return "本轮达到 Agent Loop 工具调用或迭代预算，返回稳定降级回复。"
 	default:
-		return "意图不够明确，模型在服务端策略允许范围内决定直接回答、追问或调用工具。"
+		return "模型根据工具描述决定直接回答、追问或调用工具。"
 	}
 }
 

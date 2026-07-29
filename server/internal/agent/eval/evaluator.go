@@ -9,14 +9,13 @@ import (
 	"strings"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
-	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
-const DatasetVersion = "agent-routing-eval-v1"
+const DatasetVersion = "agent-routing-eval-v2"
 
 type EvaluationResult struct {
 	DatasetVersion       string
@@ -117,27 +116,15 @@ func (e *Evaluator) evaluateCase(
 ) (CaseResult, error) {
 	actor := requestcontext.Actor{UserID: "eval-user", SessionID: "eval-session"}
 	runID := fmt.Sprintf("eval-run-%03d", index+1)
-	input := lastUserContent(item.Messages)
-	intent := agentruntime.NewIntentGuard(nil).Guard(runID, input)
-	policyContext := agentruntime.PolicyContext{
-		Actor:            actor,
-		ThreadID:         "eval-thread",
-		ActiveMatterID:   item.ActiveMatterID,
-		ConfirmedActions: item.ConfirmedActions,
-		Intent:           intent,
-	}
-	if len(item.AllowedTools) > 0 {
-		policyContext.AvailableFeatures = features(item.AllowedTools)
-	}
-	policyDecision := agentruntime.NewToolPolicyBuilder(e.registry, nil).
-		Build(runID, policyContext)
-	route := e.router.Route(item, policyDecision.AllowedTools)
+	allowedTools := registeredToolNames(e.registry)
+	executionPolicy := allowAllRegisteredTools(allowedTools)
+	route := e.router.Route(item, allowedTools)
 	caseResult := CaseResult{
 		Name:         item.Name,
 		Decision:     route.Decision,
 		ToolNames:    route.ToolNames(),
 		ToolInputs:   route.ToolInputs(),
-		AllowedTools: append([]string{}, policyDecision.AllowedTools...),
+		AllowedTools: append([]string{}, allowedTools...),
 	}
 	for callIndex, call := range route.ToolCalls {
 		_, err := e.executor.Execute(
@@ -150,7 +137,7 @@ func (e *Evaluator) evaluateCase(
 				RequestID:  fmt.Sprintf("%s-%d", runID, callIndex+1),
 			},
 			tool.Invocation{Name: call.Name, Input: call.Input},
-			policyDecision.Policy,
+			executionPolicy,
 		)
 		if err != nil {
 			caseResult.ErrorCategory = tool.ErrorCategory(err)
@@ -202,6 +189,8 @@ type ToolCall struct {
 
 type DeterministicRouter struct{}
 
+// Route 是离线评测使用的确定性假模型，只负责生成可复现的 Tool Call。
+// 生产 Runtime 不调用这里的关键词规则，真实工具选择由 Provider 模型完成。
 func (DeterministicRouter) Route(
 	item RoutingCase,
 	allowed []string,
@@ -328,6 +317,26 @@ func (DeterministicRouter) Route(
 	return Route{Decision: DecisionDirect}
 }
 
+func registeredToolNames(registry *tool.Registry) []string {
+	if registry == nil {
+		return nil
+	}
+	definitions := registry.Definitions()
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, definition.Name)
+	}
+	return names
+}
+
+func allowAllRegisteredTools(names []string) tool.Policy {
+	return tool.Policy{
+		AllowedNames:   append([]string(nil), names...),
+		AllowWrites:    true,
+		ConfirmedNames: append([]string(nil), names...),
+	}
+}
+
 func validateCase(item RoutingCase, result CaseResult) []string {
 	failures := make([]string, 0)
 	if result.Decision != item.ExpectedDecision {
@@ -379,14 +388,6 @@ func lastUserContent(messages []EvalMessage) string {
 		}
 	}
 	return ""
-}
-
-func features(names []string) map[string]bool {
-	values := make(map[string]bool, len(names))
-	for _, name := range names {
-		values[name] = true
-	}
-	return values
 }
 
 func containsString(values []string, expected string) bool {
