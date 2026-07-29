@@ -118,6 +118,8 @@ void main() {
       expect(find.text('IELTS 口语'), findsOneWidget);
       expect(find.text('一次完成三个 Part'), findsOneWidget);
       expect(find.text('Part 1'), findsOneWidget);
+      expect(find.text('题卡陈述 · 可继续 Part 3'), findsOneWidget);
+      expect(find.text('承接 Part 2 主题讨论'), findsOneWidget);
       expect(
         find.byKey(const Key('catalog-scenario-scn_ielts_speaking_part_1')),
         findsOneWidget,
@@ -427,6 +429,24 @@ const _hubScenarios = <PreparationScenario>[
     model: 'EXAM_BASIC_DIALOGUE',
     name: 'IELTS Speaking Part 1',
     summary: '围绕熟悉话题完成简短问答。',
+    version: 1,
+    status: 'active',
+  ),
+  PreparationScenario(
+    id: 'scn_ielts_speaking_part_2',
+    type: 'EXAM',
+    model: 'IELTS_SPEAKING_PART_2',
+    name: 'IELTS Speaking Part 2',
+    summary: '完成题卡陈述，并可继续练习同主题 Part 3。',
+    version: 1,
+    status: 'active',
+  ),
+  PreparationScenario(
+    id: 'scn_ielts_speaking_part_3',
+    type: 'EXAM',
+    model: 'EXAM_BASIC_DIALOGUE',
+    name: 'IELTS Speaking Part 3',
+    summary: '基于对应的 Part 2 主题展开讨论。',
     version: 1,
     status: 'active',
   ),
