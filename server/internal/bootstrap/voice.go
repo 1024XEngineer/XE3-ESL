@@ -31,9 +31,10 @@ import (
 )
 
 const (
-	voiceReviewImplementation = "qianwen-scenario-review-v2"
-	voiceReviewMaxGeneration  = 20 * time.Second
-	voiceQuestionObjective    = "targeted-english-practice"
+	legacyVoiceReviewImplementation = "qianwen-voice-review-v1"
+	voiceReviewImplementation       = "qianwen-scenario-review-v2"
+	voiceReviewMaxGeneration        = 20 * time.Second
+	voiceQuestionObjective          = "targeted-english-practice"
 )
 
 // VoiceReviewGateway is the narrow Review capability consumed by the Agent
@@ -1376,9 +1377,11 @@ func (adapter *voiceReviewAdapter) EnsureSessionReview(
 	formalReview, err := adapter.service.EnsureReview(
 		ctx,
 		review.EnsureReviewCommand{
-			Actor:                     reviewActor,
-			PracticeSessionID:         source.SessionID,
-			ImplementationVersion:     voiceReviewImplementation,
+			Actor:             reviewActor,
+			PracticeSessionID: source.SessionID,
+			ImplementationVersion: reviewImplementationVersion(
+				snapshot.EvaluationContext,
+			),
 			SourceTurnID:              snapshot.SourceTurnID,
 			SourceTurnVersion:         snapshot.SourceTurnVersion,
 			SourceManifestFingerprint: snapshot.ManifestFingerprint,
@@ -1680,7 +1683,7 @@ func (reader *voiceReviewSourceReader) ReadReviewSource(
 		})
 	}
 	trigger := turns[len(turns)-1]
-	evaluationContext, err := reviewEvaluationContext(snapshot)
+	evaluationContext, err := reviewEvaluationContextForSnapshot(snapshot)
 	if err != nil {
 		return review.ReviewSourceSnapshot{}, err
 	}
@@ -1698,6 +1701,24 @@ func (reader *voiceReviewSourceReader) ReadReviewSource(
 		EvaluationContext:   evaluationContext,
 		Sources:             sources,
 	}, nil
+}
+
+func reviewEvaluationContextForSnapshot(
+	snapshot practicepersistence.ContextSessionSnapshot,
+) (review.EvaluationContext, error) {
+	hasTurnPolicy := strings.TrimSpace(
+		snapshot.ScenarioDefinition.TurnPolicyRef,
+	) != ""
+	hasSessionPolicy := strings.TrimSpace(
+		snapshot.ScenarioDefinition.SessionPolicyRef,
+	) != ""
+	if hasTurnPolicy != hasSessionPolicy {
+		return review.EvaluationContext{}, review.ErrInvalidReview
+	}
+	if !hasTurnPolicy {
+		return review.EvaluationContext{}, nil
+	}
+	return reviewEvaluationContext(snapshot)
 }
 
 func reviewEvaluationContext(
@@ -1824,6 +1845,13 @@ func (generator *voiceReviewGenerator) GenerateReview(
 ) (review.GeneratedReview, error) {
 	generationContext, cancel := context.WithTimeout(ctx, generator.timeout)
 	defer cancel()
+	switch input.ImplementationVersion {
+	case legacyVoiceReviewImplementation:
+		return generator.generateLegacyReview(generationContext, input)
+	case voiceReviewImplementation:
+	default:
+		return review.GeneratedReview{}, review.ErrInvalidReview
+	}
 	policy, err := review.DefaultPolicyRegistry().Resolve(
 		input.Source.EvaluationContext.SessionPolicyRef,
 		review.PolicyScopeSession,
@@ -1901,6 +1929,89 @@ func (generator *voiceReviewGenerator) GenerateReview(
 		return review.GeneratedReview{}, err
 	}
 	return generated, nil
+}
+
+func (generator *voiceReviewGenerator) generateLegacyReview(
+	ctx context.Context,
+	input review.ReviewGenerationInput,
+) (review.GeneratedReview, error) {
+	providerEvidence := make([]struct {
+		Question string `json:"question"`
+		Answer   string `json:"answer"`
+	}, 0, len(input.Source.Sources))
+	for _, source := range input.Source.Sources {
+		var snapshot struct {
+			Question string `json:"question_text"`
+			Answer   string `json:"answer_text"`
+		}
+		if err := json.Unmarshal(source.Snapshot, &snapshot); err != nil ||
+			strings.TrimSpace(snapshot.Question) == "" ||
+			strings.TrimSpace(snapshot.Answer) == "" {
+			return review.GeneratedReview{}, review.ErrInvalidReview
+		}
+		providerEvidence = append(providerEvidence, struct {
+			Question string `json:"question"`
+			Answer   string `json:"answer"`
+		}{
+			Question: snapshot.Question,
+			Answer:   snapshot.Answer,
+		})
+	}
+	sourceJSON, err := json.Marshal(providerEvidence)
+	if err != nil {
+		return review.GeneratedReview{}, err
+	}
+	result, err := generator.generator.Generate(
+		ctx,
+		ai.TextRequest{Messages: []ai.TextMessage{
+			{
+				Role: ai.TextRoleSystem,
+				Content: "You are an English coach. Return only valid JSON " +
+					"with this shape: {\"overall_score\":0,\"summary\":\"...\"," +
+					"\"conclusions\":[{\"key\":\"overall\",\"category\":\"...\"," +
+					"\"message\":\"...\",\"suggestion\":\"...\"}]}. Score must " +
+					"be 0-100 and every string must be non-empty.",
+			},
+			{
+				Role: ai.TextRoleUser,
+				Content: fmt.Sprintf(
+					"Review these %d confirmed interview answers. Base every "+
+						"conclusion only on this evidence: %s",
+					len(providerEvidence),
+					sourceJSON,
+				),
+			},
+		}},
+	)
+	if err != nil {
+		return review.GeneratedReview{}, err
+	}
+	var resultValue review.ReviewResult
+	if err := json.Unmarshal(
+		[]byte(stripJSONFence(result.Content)),
+		&resultValue,
+	); err != nil {
+		return review.GeneratedReview{}, err
+	}
+	links := make(
+		[]review.EvidenceLink,
+		0,
+		len(resultValue.Conclusions)*len(input.Source.Sources),
+	)
+	for _, conclusion := range resultValue.Conclusions {
+		for _, source := range input.Source.Sources {
+			links = append(links, review.EvidenceLink{
+				ConclusionKey: conclusion.Key,
+				SourceType:    source.SourceType,
+				SourceID:      source.SourceID,
+				SourceVersion: source.SourceVersion,
+			})
+		}
+	}
+	return review.GeneratedReview{
+		Result:        resultValue,
+		EvidenceLinks: links,
+	}, nil
 }
 
 const reviewGenerationSystemContract = `You are a rubric-bound English practice reviewer.
@@ -2036,14 +2147,16 @@ func reviewManifestFingerprint(
 ) string {
 	hash := sha256.New()
 	_, _ = fmt.Fprintf(hash, "practice-session:v%d", sessionVersion)
-	contextJSON, err := evaluationContext.CanonicalJSON(
-		review.DefaultPolicyRegistry(),
-	)
-	if err != nil {
-		return ""
+	if evaluationContext.ContextType != "" {
+		contextJSON, err := evaluationContext.CanonicalJSON(
+			review.DefaultPolicyRegistry(),
+		)
+		if err != nil {
+			return ""
+		}
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write(contextJSON)
 	}
-	_, _ = hash.Write([]byte{0})
-	_, _ = hash.Write(contextJSON)
 	for _, source := range sources {
 		_, _ = fmt.Fprintf(
 			hash,
@@ -2055,6 +2168,24 @@ func reviewManifestFingerprint(
 		)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func reviewImplementationVersion(
+	evaluationContext review.EvaluationContext,
+) string {
+	if evaluationContext.ContextType == "" {
+		return legacyVoiceReviewImplementation
+	}
+	return voiceReviewImplementation
+}
+
+func stripJSONFence(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "```json") {
+		value = strings.TrimPrefix(value, "```json")
+		value = strings.TrimSuffix(value, "```")
+	}
+	return strings.TrimSpace(value)
 }
 
 var (

@@ -2,7 +2,10 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -68,7 +71,64 @@ func TestReviewEvaluationContextMapsFourScenesAndGeneric(t *testing.T) {
 			if got.ContextType != test.want {
 				t.Fatalf("context type=%q, want %q", got.ContextType, test.want)
 			}
+			if reviewImplementationVersion(got) != voiceReviewImplementation {
+				t.Fatalf("new snapshot did not select v2: %+v", got)
+			}
 		})
+	}
+}
+
+func TestLegacyReviewSnapshotKeepsV1Compatibility(t *testing.T) {
+	t.Parallel()
+	snapshot := practicepersistence.ContextSessionSnapshot{
+		ScenarioDefinition: practicepersistence.ScenarioDefinitionSnapshot{
+			ID:      "legacy-scene",
+			Version: 1,
+		},
+	}
+	evaluationContext, err := reviewEvaluationContextForSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evaluationContext.ContextType != "" ||
+		reviewImplementationVersion(evaluationContext) !=
+			legacyVoiceReviewImplementation {
+		t.Fatalf("legacy snapshot routed incorrectly: %+v", evaluationContext)
+	}
+
+	snapshot.ScenarioDefinition.TurnPolicyRef =
+		"generic.practice.turn.v1"
+	if _, err := reviewEvaluationContextForSnapshot(snapshot); !errors.Is(
+		err,
+		review.ErrInvalidReview,
+	) {
+		t.Fatalf("partial policy refs error=%v, want invalid review", err)
+	}
+}
+
+func TestLegacyReviewManifestFingerprintRemainsStable(t *testing.T) {
+	t.Parallel()
+	source := bootstrapReviewSource(t)
+	got := reviewManifestFingerprint(
+		3,
+		review.EvaluationContext{},
+		source.Sources,
+	)
+	hash := sha256.New()
+	_, _ = fmt.Fprint(hash, "practice-session:v3")
+	for _, item := range source.Sources {
+		_, _ = fmt.Fprintf(
+			hash,
+			"\x00%s\x00%s\x00%s\x00%s",
+			item.SourceType,
+			item.SourceID,
+			item.SourceVersion,
+			item.Checksum,
+		)
+	}
+	want := hex.EncodeToString(hash.Sum(nil))
+	if got != want {
+		t.Fatalf("legacy manifest fingerprint=%q, want %q", got, want)
 	}
 }
 
@@ -111,6 +171,49 @@ func TestVoiceReviewGeneratorBuildsCanonicalPolicyPrompt(t *testing.T) {
 	if len(first.Result.Conclusions) != 5 ||
 		len(first.EvidenceLinks) != 5 {
 		t.Fatalf("generated review=%#v", first)
+	}
+}
+
+func TestVoiceReviewGeneratorPreservesLegacyContract(t *testing.T) {
+	t.Parallel()
+	provider := &capturingTextGenerator{content: `{
+		"overall_score":82,
+		"summary":"A clear answer.",
+		"conclusions":[{
+			"key":"overall",
+			"category":"clarity",
+			"message":"The answer is clear.",
+			"suggestion":"Add one result."
+		}]
+	}`}
+	generator := &voiceReviewGenerator{
+		generator: provider,
+		timeout:   time.Second,
+	}
+	source := bootstrapReviewSource(t)
+	source.EvaluationContext = review.EvaluationContext{}
+	generated, err := generator.GenerateReview(
+		context.Background(),
+		review.ReviewGenerationInput{
+			ReviewID:              "legacy-review",
+			ImplementationVersion: legacyVoiceReviewImplementation,
+			Source:                source,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generated.Result.OverallScore != 82 ||
+		len(generated.Result.Conclusions) != 1 ||
+		len(generated.EvidenceLinks) != len(source.Sources) {
+		t.Fatalf("legacy generated review=%+v", generated)
+	}
+	if len(provider.requests) != 1 ||
+		!strings.Contains(
+			provider.requests[0].Messages[1].Content,
+			"confirmed interview answers",
+		) {
+		t.Fatalf("legacy request=%+v", provider.requests)
 	}
 }
 
