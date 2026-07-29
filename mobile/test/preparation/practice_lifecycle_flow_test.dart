@@ -130,6 +130,10 @@ void main() {
       expect(workspaceController.currentSessionId, firstSessionId);
       expect(agentController.threads, hasLength(2));
 
+      await _tapVisible(
+        tester,
+        find.byKey(const Key('practice-open-keyboard')),
+      );
       await tester.enterText(
         find.byKey(const Key('practice-text-answer')),
         'The migration is on schedule, and I have isolated the main risk.',

@@ -573,6 +573,8 @@ void main() {
 
     const answer =
         'I led the rollout, communicated the risk, and delivered it safely.';
+    await tester.tap(find.byKey(const Key('practice-open-keyboard')));
+    await tester.pump();
     final input = find.byKey(const Key('practice-text-answer'));
     await tester.scrollUntilVisible(
       input,
@@ -591,12 +593,18 @@ void main() {
           .text,
       answer,
     );
+    await tester.tap(find.byKey(const Key('practice-open-history')));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text(answer),
       120,
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text(answer), findsOneWidget);
+    Navigator.of(tester.element(find.text('本轮记录'))).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('practice-open-keyboard')));
+    await tester.pump();
     expect(tester.widget<TextField>(input).controller?.text, isEmpty);
   });
 
