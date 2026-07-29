@@ -99,6 +99,7 @@ func TestAgentVoiceCompositionRequiresCleanupAwareConstructor(t *testing.T) {
 		},
 		emptyBootstrapMemorySearcher{},
 		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("build composition without Agent voice: %v", err)
@@ -177,6 +178,7 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 			MaxInputCharacters: 12000,
 		},
 		emptyBootstrapMemorySearcher{},
+		nil,
 		nil,
 		configuration,
 	)

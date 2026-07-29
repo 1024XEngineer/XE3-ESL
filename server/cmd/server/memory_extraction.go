@@ -58,7 +58,7 @@ func buildMemoryExtractionWorker(
 		memoryExtractionClaimLimit,
 		wakeup,
 		indexWakeup,
-		waitForMemoryWork,
+		waitForWorkerWork,
 	)
 }
 

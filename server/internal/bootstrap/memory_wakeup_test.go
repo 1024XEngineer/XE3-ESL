@@ -21,7 +21,7 @@ func TestRunCompletionNotifierFiresOnlyAfterSuccessfulCommit(t *testing.T) {
 	notifier := &countingNotifier{}
 	repository := &runCompletionNotifyingRepository{
 		RunRepository: underlying,
-		notifier:      notifier,
+		notifiers:     []interface{ Notify() }{notifier},
 	}
 	if _, err := repository.CompleteRun(
 		context.Background(),
@@ -52,6 +52,38 @@ func TestRunCompletionNotifierFiresOnlyAfterSuccessfulCommit(t *testing.T) {
 	}
 	if notifier.calls != 1 {
 		t.Fatalf("notifier fired before commit: %d calls", notifier.calls)
+	}
+}
+
+func TestRunCompletionNotifierFansOutPayloadFreeWakeups(t *testing.T) {
+	t.Parallel()
+
+	first := &countingNotifier{}
+	second := &countingNotifier{}
+	repository := &runCompletionNotifyingRepository{
+		RunRepository: &completionRepositoryStub{
+			complete: func() (core.Run, error) {
+				return core.Run{Status: core.RunStatusCompleted}, nil
+			},
+		},
+		notifiers: []interface{ Notify() }{first, second},
+	}
+	if _, err := repository.CompleteRun(
+		context.Background(),
+		"owner",
+		"run",
+		"lease",
+		"content",
+		ai.TextResult{},
+	); err != nil {
+		t.Fatalf("CompleteRun: %v", err)
+	}
+	if first.calls != 1 || second.calls != 1 {
+		t.Fatalf(
+			"notifier calls = %d/%d, want 1/1",
+			first.calls,
+			second.calls,
+		)
 	}
 }
 

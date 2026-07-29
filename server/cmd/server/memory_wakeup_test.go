@@ -15,7 +15,7 @@ import (
 func TestMemoryWorkerWakeupCoalescesWithoutBlocking(t *testing.T) {
 	t.Parallel()
 
-	wakeup := newMemoryWorkerWakeup()
+	wakeup := newWorkerWakeup()
 	var senders sync.WaitGroup
 	for range 100 {
 		senders.Add(1)
@@ -53,8 +53,8 @@ func TestMemoryExtractionWorkerWakesDuringSweepAndNotifiesIndex(
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	extractionWakeup := newMemoryWorkerWakeup()
-	indexWakeup := newMemoryWorkerWakeup()
+	extractionWakeup := newWorkerWakeup()
+	indexWakeup := newWorkerWakeup()
 	firstSweepStarted := make(chan struct{})
 	releaseFirstSweep := make(chan struct{})
 	var calls atomic.Int32
@@ -80,7 +80,7 @@ func TestMemoryExtractionWorkerWakesDuringSweepAndNotifiesIndex(
 		1,
 		extractionWakeup.Events(),
 		indexWakeup,
-		waitForMemoryWork,
+		waitForWorkerWork,
 	)
 	if err != nil {
 		t.Fatalf("newMemoryExtractionWorker: %v", err)
@@ -115,7 +115,7 @@ func TestMemoryIndexWorkerWakesWithoutWaitingForRecoveryInterval(
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	wakeup := newMemoryWorkerWakeup()
+	wakeup := newWorkerWakeup()
 	firstSweepDone := make(chan struct{})
 	var calls atomic.Int32
 	processor := memoryIndexProcessorFunc(func(

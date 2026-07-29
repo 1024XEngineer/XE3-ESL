@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
 	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
 	agenttransport "github.com/1024XEngineer/XE3-ESL/server/internal/agent/transport"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
@@ -48,6 +50,7 @@ func NewIdentityAndAgentModules(
 		runConfiguration,
 		memorySearcher,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -63,6 +66,7 @@ type identityAgentComposition struct {
 	agentVoiceReclaimer AgentVoiceObjectReclaimer
 	matterService       *matter.Service
 	memoryExtraction    memory.ExtractionProcessor
+	summaryProcessor    agentsummary.Processor
 	ids                 *identity.UUIDv4Generator
 }
 
@@ -85,6 +89,7 @@ func buildIdentityAgentComposition(
 	runConfiguration core.RunConfiguration,
 	memorySearcher memory.Searcher,
 	memoryExtractionNotifier interface{ Notify() },
+	summaryNotifier interface{ Notify() },
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || generator == nil ||
@@ -135,10 +140,17 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	runRepository := core.RunRepository(agentRepository)
+	notifiers := make([]interface{ Notify() }, 0, 2)
 	if memoryExtractionNotifier != nil {
+		notifiers = append(notifiers, memoryExtractionNotifier)
+	}
+	if summaryNotifier != nil {
+		notifiers = append(notifiers, summaryNotifier)
+	}
+	if len(notifiers) > 0 {
 		runRepository = &runCompletionNotifyingRepository{
 			RunRepository: agentRepository,
-			notifier:      memoryExtractionNotifier,
+			notifiers:     notifiers,
 		}
 	}
 	runService, err := agentruntime.NewRunService(
@@ -160,6 +172,40 @@ func buildIdentityAgentComposition(
 		agentRepository,
 		generator,
 		runConfiguration,
+	)
+	if err != nil {
+		return nil, err
+	}
+	summaryService, err := agentsummary.NewService(
+		agentRepository,
+		generator,
+		agentsummary.Configuration{
+			PolicyVersion: "summary-policy-v1",
+			PromptVersion: "summary-prompt-v1",
+			Provider:      runConfiguration.Provider,
+			Model:         runConfiguration.Model,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	summaryProcessor, err := agentsummary.NewWorker(
+		agentRepository,
+		agentRepository,
+		summaryService,
+		agentsummary.WorkerConfiguration{
+			TriggerPolicyVersion: agentsummary.TriggerPolicyV1,
+			TriggerMessages:      agentsummary.DefaultTriggerMessages,
+			RetainRecentMessages: agentsummary.DefaultRetainedMessages,
+			LeaseDuration:        2 * time.Minute,
+			MaxAttempts:          agentsummary.DefaultWorkerMaxAttempts,
+			Summary: agentsummary.Configuration{
+				PolicyVersion: "summary-policy-v1",
+				PromptVersion: "summary-prompt-v1",
+				Provider:      runConfiguration.Provider,
+				Model:         runConfiguration.Model,
+			},
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -228,6 +274,7 @@ func buildIdentityAgentComposition(
 		agentVoiceReclaimer: agentVoiceReclaimer,
 		matterService:       matterService,
 		memoryExtraction:    memoryExtraction,
+		summaryProcessor:    summaryProcessor,
 		ids:                 ids,
 	}, nil
 }
@@ -257,6 +304,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 		generator,
 		runConfiguration,
 		memorySearcher,
+		nil,
 		nil,
 		voiceConfigurations...,
 	)
