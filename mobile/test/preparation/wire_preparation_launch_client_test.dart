@@ -290,6 +290,12 @@ void main() {
       'option turn budget': (root) {
         _sessionPolicy(root)['max_effective_turns'] = 6;
       },
+      'missing turn policy reference': (root) {
+        _scenarioDefinitionSnapshot(root).remove('turn_policy_ref');
+      },
+      'invalid session policy reference': (root) {
+        _scenarioDefinitionSnapshot(root)['session_policy_ref'] = '';
+      },
     };
 
     for (final entry in cases.entries) {
@@ -524,6 +530,8 @@ Map<String, Object?> _bootstrapJson() => {
       'name': 'Technical interview',
       'version': 1,
       'status': 'active',
+      'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
+      'session_policy_ref': 'interview.project_deep_dive.session.v1',
     },
     'scenario_config_snapshot': {
       'scenario_config_id': _configId,
@@ -612,6 +620,11 @@ Map<String, Object?> _roleSnapshot(Map<String, Object?> root) {
   final participants = snapshot['participants']! as List<Object?>;
   final interviewer = participants.first as Map<String, Object?>;
   return interviewer['role_snapshot']! as Map<String, Object?>;
+}
+
+Map<String, Object?> _scenarioDefinitionSnapshot(Map<String, Object?> root) {
+  final snapshot = root['snapshot']! as Map<String, Object?>;
+  return snapshot['scenario_definition_snapshot']! as Map<String, Object?>;
 }
 
 Map<String, Object?> _preparationSnapshot(Map<String, Object?> root) {

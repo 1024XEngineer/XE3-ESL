@@ -1020,6 +1020,8 @@ JobPlanCatalog _jobPlanCatalog(Object? value) {
       'name',
       'version',
       'status',
+      'turn_policy_ref',
+      'session_policy_ref',
     },
   );
   final configObject = _object(
@@ -1060,6 +1062,8 @@ JobPlanCatalog _jobPlanCatalog(Object? value) {
     version: _version(scenarioObject['version']),
     status: _enumText(scenarioObject['status'], const <String>{'active'}),
   );
+  _resourceId(scenarioObject['turn_policy_ref']);
+  _resourceId(scenarioObject['session_policy_ref']);
   final rolesValue = object['selected_roles'];
   if (rolesValue is! List<Object?> || rolesValue.length != 1) {
     throw _invalidResponse();
@@ -1338,8 +1342,12 @@ PreparationScenario _scenarioSnapshot(
       'name',
       'version',
       'status',
+      'turn_policy_ref',
+      'session_policy_ref',
     },
   );
+  _resourceId(object['turn_policy_ref']);
+  _resourceId(object['session_policy_ref']);
   return PreparationScenario(
     id: _resourceId(object['scenario_definition_id']),
     type: _enumText(object['scenario_type'], const <String>{'INTERVIEW'}),
