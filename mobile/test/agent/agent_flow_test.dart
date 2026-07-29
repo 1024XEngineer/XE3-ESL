@@ -30,6 +30,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('primary-tab-scenes')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('practice-hub-interview')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('scene-self-introduction')));
     await tester.pumpAndSettle();
 
@@ -213,13 +215,18 @@ void main() {
 
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('practice-hub-interview')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('scene-self-introduction')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('scene-operation-error')), findsOneWidget);
       expect(find.byKey(const Key('scene-retry-operation')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('scene-retry-operation')));
+      final retry = find.byKey(const Key('scene-retry-operation'));
+      await tester.ensureVisible(retry);
+      await tester.pumpAndSettle();
+      await tester.tap(retry);
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('agent-thread-title')), findsOneWidget);

@@ -170,6 +170,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   Widget build(BuildContext context) {
     final practiceAvailable = widget.agentController.supportsPracticeFlow;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final practiceSelected = _selectedIndex == 1;
     final safeBottom = math.max(
       MediaQuery.viewPaddingOf(context).bottom,
       GlassNavigationBar.minimumBottomInset,
@@ -255,9 +256,11 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
     return Scaffold(
       key: _scaffoldKey,
-      extendBody: true,
+      extendBody: !practiceSelected,
       resizeToAvoidBottomInset: false,
-      backgroundColor: Colors.transparent,
+      backgroundColor: practiceSelected
+          ? const Color(0xFFF6F7FA)
+          : Colors.transparent,
       drawer: _ConversationDrawer(
         previewMode: widget.previewMode,
         controller: widget.agentController,
@@ -270,6 +273,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
               destinations: _destinations,
               selectedIndex: _selectedIndex,
               onDestinationSelected: _selectDestination,
+              solid: practiceSelected,
             ),
     );
   }

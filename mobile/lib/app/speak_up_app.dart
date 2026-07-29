@@ -184,6 +184,11 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             agentController: _agentController,
             preparationController: widget.preparationController,
             launchController: widget.preparationLaunchController,
+            onOpenJobPreparation: widget.jobPreparationController == null
+                ? null
+                : () => _navigatorKey.currentState?.pushNamed(
+                    AppRoutes.jobPreparation,
+                  ),
             onPracticeStarted: () => _navigatorKey.currentState
                 ?.pushReplacementNamed(AppRoutes.practice),
           ),

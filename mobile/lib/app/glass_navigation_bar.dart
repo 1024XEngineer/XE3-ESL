@@ -19,6 +19,7 @@ class GlassNavigationBar extends StatelessWidget {
     required this.destinations,
     required this.selectedIndex,
     required this.onDestinationSelected,
+    this.solid = false,
     super.key,
   });
 
@@ -29,6 +30,7 @@ class GlassNavigationBar extends StatelessWidget {
   final List<GlassNavigationDestination> destinations;
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
+  final bool solid;
 
   static double heightFor(BuildContext context) {
     final labelScale = _labelScaleFor(context);
@@ -50,6 +52,49 @@ class GlassNavigationBar extends StatelessWidget {
         ? 20.0
         : 16.0;
 
+    final navigation = Container(
+      key: const Key('primary-navigation'),
+      height: navigationHeight,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: solid || highContrast
+            ? const Color(0xFFF8F8F6)
+            : const Color(0xDEFFFFFF),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: solid || highContrast
+              ? const Color(0xFFD8DAE2)
+              : const Color(0xBFFFFFFF),
+        ),
+      ),
+      child: Semantics(
+        container: true,
+        label: '主导航',
+        child: Row(
+          children: [
+            for (var index = 0; index < destinations.length; index++)
+              Expanded(
+                child: _NavigationItem(
+                  destination: destinations[index],
+                  selected: selectedIndex == index,
+                  reduceMotion: reduceMotion,
+                  onTap: () => onDestinationSelected(index),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+    final clippedNavigation = ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: solid
+          ? navigation
+          : BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: navigation,
+            ),
+    );
+
     return SafeArea(
       minimum: EdgeInsets.fromLTRB(
         horizontalInset,
@@ -68,45 +113,7 @@ class GlassNavigationBar extends StatelessWidget {
             ),
           ],
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: Container(
-              key: const Key('primary-navigation'),
-              height: navigationHeight,
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: highContrast
-                    ? const Color(0xFFF8F8F6)
-                    : const Color(0xDEFFFFFF),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: highContrast
-                      ? const Color(0xFFD8DAE2)
-                      : const Color(0xBFFFFFFF),
-                ),
-              ),
-              child: Semantics(
-                container: true,
-                label: '主导航',
-                child: Row(
-                  children: [
-                    for (var index = 0; index < destinations.length; index++)
-                      Expanded(
-                        child: _NavigationItem(
-                          destination: destinations[index],
-                          selected: selectedIndex == index,
-                          reduceMotion: reduceMotion,
-                          onTap: () => onDestinationSelected(index),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
+        child: clippedNavigation,
       ),
     );
   }

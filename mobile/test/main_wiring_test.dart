@@ -109,6 +109,7 @@ void main() {
                 'scenario_type': 'INTERVIEW',
                 'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
                 'name': 'English interview for technical roles',
+                'summary': 'Discuss one backend project.',
                 'version': 1,
                 'status': 'active',
               },
@@ -227,11 +228,16 @@ void main() {
       expect(agentVoiceRecorder.clearCount, 2);
       expect(agentVoiceAudioPlayer.clearCount, 2);
 
+      await dependencies.preparationController.loadIfNeeded();
+      expect(dependencies.preparationController.errorMessage, isNull);
+      expect(dependencies.preparationController.scenarios, isNotEmpty);
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('scenes-page')), findsOneWidget);
       expect(find.byKey(const Key('training-center-title')), findsOneWidget);
       expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('practice-hub-interview')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('open-job-preparation')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);

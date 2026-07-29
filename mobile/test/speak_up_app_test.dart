@@ -73,6 +73,24 @@ void main() {
       key: 'primary-tab-scenes',
       expectedPageKey: 'scenes-page',
     );
+    final practiceNavigation = tester.widget<GlassNavigationBar>(
+      find.byType(GlassNavigationBar),
+    );
+    expect(practiceNavigation.solid, isTrue);
+    expect(
+      find.ancestor(
+        of: find.byKey(const Key('primary-navigation')),
+        matching: find.byType(BackdropFilter),
+      ),
+      findsNothing,
+    );
+    final shellScaffold = tester.widget<Scaffold>(
+      find.ancestor(
+        of: find.byKey(const Key('primary-navigation')),
+        matching: find.byType(Scaffold),
+      ),
+    );
+    expect(shellScaffold.extendBody, isFalse);
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-review',
@@ -464,7 +482,11 @@ void main() {
 
     await _tapVisible(tester, 'quick-action-create-plan');
     expect(find.byKey(const Key('scenes-page')), findsOneWidget);
-    expect(find.text('预览练习专题与进入流程。'), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-availability-message')),
+      findsOneWidget,
+    );
+    expect(find.text('今天想练什么？'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
