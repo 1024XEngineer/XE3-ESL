@@ -5,6 +5,7 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
+import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/practice/practice.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/job_preparation_wizard.dart';
@@ -53,18 +54,7 @@ class SpeakUpApp extends StatelessWidget {
     return MaterialApp(
       title: 'SpeakUp',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF4F5054),
-          surface: const Color(0xFFF3F3F0),
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF3F3F0),
-        textTheme: ThemeData.light().textTheme.apply(
-          bodyColor: const Color(0xFF111217),
-          displayColor: const Color(0xFF111217),
-        ),
-        useMaterial3: true,
-      ),
+      theme: SpeakUpTheme.light,
       home: controller == null
           ? _AuthenticatedNavigator(
               agentController: agentController,
