@@ -437,41 +437,72 @@ func (service *RunService) generate(
 	input := lastUserContent(request)
 	service.logRunReceived(run, input)
 	routing := buildModelToolRouting(service.registry, service.logger, run.ID)
-	if parsed, ok, err := service.parseCommand(input); err != nil {
+	parsed, explicitCommand, err := service.parseCommand(input)
+	if err != nil {
 		return fallbackResult(
 			service.configuration,
 			"我暂时无法识别这条命令，请换成自然语言告诉我你想做什么。",
 		), nil
-	} else if ok {
-		result, err := service.executeCommand(
-			loopCtx,
-			actor,
-			run,
-			manifest,
-			request,
-			parsed.Invocation,
-			routing,
-		)
-		return result, err
 	}
 
 	// 自然语言请求始终拿到 Registry 的全量工具，是否调用完全由模型判断。
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
-	applyModelToolSnapshot(&manifest, routing, reasonModelToolSelection)
+	snapshotReason := reasonModelToolSelection
+	if explicitCommand {
+		snapshotReason = reasonExplicitCommand
+	}
+	applyModelToolSnapshot(&manifest, routing, snapshotReason)
 	if err := service.saveContextToolSnapshot(loopCtx, manifest); err != nil {
 		return ai.TextResult{}, err
 	}
 	exposed := exposedToolNames(request.Tools)
 	toolCalls := 0
 	writeCalls := 0
+	toolIterations := 0
+	modelIterations := 0
+	seenToolCallIDs := make(map[string]struct{})
 	finalDecision := "direct_response"
-	for iteration := 0; iteration < service.loopLimits.MaxIterations; iteration++ {
-		service.logLoopIteration(run, iteration, toolCalls)
+	if explicitCommand {
+		// 显式命令只负责预先确定第一个工具，执行结果仍进入统一有界循环。
+		commandCall := ai.ToolCall{
+			ID:        "command-call",
+			Name:      parsed.Invocation.Name,
+			Arguments: parsed.Invocation.Input,
+		}
+		if err := service.saveToolCallProposed(loopCtx, run, commandCall); err != nil {
+			return ai.TextResult{}, err
+		}
+		toolMessage, err := service.executeToolCall(
+			loopCtx,
+			actor,
+			run,
+			commandCall,
+			commandExecutionPolicy(parsed.Invocation.Name),
+		)
+		if err != nil {
+			return ai.TextResult{}, err
+		}
+		request.Messages = append(request.Messages, ai.TextMessage{
+			Role:      ai.TextRoleAssistant,
+			ToolCalls: []ai.ToolCall{commandCall},
+		}, toolMessage)
+		seenToolCallIDs[commandCall.ID] = struct{}{}
+		toolCalls = 1
+		toolIterations = 1
+		if definition, ok := service.toolDefinition(commandCall.Name); ok &&
+			!definition.ReadOnly {
+			writeCalls = 1
+		}
+		finalDecision = "tool_call_then_response"
+	}
+	for {
+		service.logLoopIteration(run, modelIterations, toolCalls)
 		result, err := service.generator.Generate(loopCtx, request)
 		if err != nil {
 			return ai.TextResult{}, err
 		}
+		modelIterations++
 		if !validLoopTextResult(result) ||
 			result.Provider != service.configuration.Provider ||
 			result.Model != service.configuration.Model ||
@@ -485,12 +516,12 @@ func (service *RunService) generate(
 				nil,
 				reasonModelToolSelection,
 				reasonSummary(reasonModelToolSelection, finalDecision),
-				iteration+1,
+				modelIterations,
 			)
 			service.logRunCompleted(
 				run,
 				finalDecision,
-				iteration+1,
+				modelIterations,
 				toolCalls,
 				startedAt,
 				result.Content,
@@ -505,8 +536,18 @@ func (service *RunService) generate(
 			selected,
 			reasonModelToolSelection,
 			reasonSummary(reasonModelToolSelection, finalDecision),
-			iteration+1,
+			modelIterations,
 		)
+		// MaxIterations 表示最多执行多少轮工具；达到上限后仍允许模型生成一次最终回复。
+		if toolIterations >= service.loopLimits.MaxIterations {
+			return service.loopBudgetFallback(
+				run,
+				"这次对话需要更多步骤才能完成，我先停在这里。请把最重要的一步单独发给我。",
+				modelIterations,
+				toolCalls,
+				startedAt,
+			), nil
+		}
 		if toolCalls+len(result.ToolCalls) > service.loopLimits.MaxToolCalls {
 			service.logRoutingDecision(
 				run,
@@ -514,7 +555,7 @@ func (service *RunService) generate(
 				selected,
 				"budget_exhausted",
 				reasonSummary("budget_exhausted", "budget_exhausted"),
-				iteration+1,
+				modelIterations,
 			)
 			result := fallbackResult(
 				service.configuration,
@@ -523,7 +564,42 @@ func (service *RunService) generate(
 			service.logRunCompleted(
 				run,
 				"budget_exhausted",
-				iteration+1,
+				modelIterations,
+				toolCalls,
+				startedAt,
+				result.Content,
+			)
+			return result, nil
+		}
+		if duplicateID := repeatedToolCallID(
+			result.ToolCalls,
+			seenToolCallIDs,
+		); duplicateID != "" {
+			result := fallbackResult(
+				service.configuration,
+				"模型重复提交了同一个工具调用，我已停止执行以避免重复操作。",
+			)
+			service.logRunCompleted(
+				run,
+				"duplicate_tool_call",
+				modelIterations,
+				toolCalls,
+				startedAt,
+				result.Content,
+			)
+			return result, nil
+		}
+		// 先检查整批调用，防止同一批写操作只执行一部分后才发现预算不足。
+		if writeCalls+service.writeToolCallCount(result.ToolCalls, routing.Policy) >
+			service.loopLimits.MaxWriteToolCalls {
+			result := fallbackResult(
+				service.configuration,
+				"这次已经达到写操作上限，我先不继续执行新的写操作。",
+			)
+			service.logRunCompleted(
+				run,
+				"budget_exhausted",
+				modelIterations,
 				toolCalls,
 				startedAt,
 				result.Content,
@@ -531,10 +607,14 @@ func (service *RunService) generate(
 			return result, nil
 		}
 		request.Messages = append(request.Messages, ai.TextMessage{
+			Content:   result.Content,
 			Role:      ai.TextRoleAssistant,
 			ToolCalls: result.ToolCalls,
 		})
+		toolIterations++
+		toolCalls += len(result.ToolCalls)
 		for _, call := range result.ToolCalls {
+			seenToolCallIDs[call.ID] = struct{}{}
 			if err := service.saveToolCallProposed(
 				loopCtx,
 				run,
@@ -543,64 +623,37 @@ func (service *RunService) generate(
 				return ai.TextResult{}, err
 			}
 			if !toolExposed(exposed, call.Name) {
-				_ = service.markToolCallRejected(
+				if err := service.markToolCallRejected(
 					loopCtx,
 					run,
 					call.ID,
 					"unknown_tool",
+				); err != nil {
+					return ai.TextResult{}, err
+				}
+				request.Messages = append(
+					request.Messages,
+					toolFailureMessage(call.ID, tool.ErrUnknownTool),
 				)
-				result := fallbackResult(
-					service.configuration,
-					"模型选择了一个未注册的工具，我先不执行它。",
-				)
-				service.logRunCompleted(
-					run,
-					"unknown_tool",
-					iteration+1,
-					toolCalls,
-					startedAt,
-					result.Content,
-				)
-				return result, nil
+				continue
 			}
 			definition, ok := service.toolDefinition(call.Name)
 			if !ok || !routing.Policy.Allows(definition) {
-				_ = service.markToolCallRejected(
+				if err := service.markToolCallRejected(
 					loopCtx,
 					run,
 					call.ID,
 					"unknown_tool",
+				); err != nil {
+					return ai.TextResult{}, err
+				}
+				request.Messages = append(
+					request.Messages,
+					toolFailureMessage(call.ID, tool.ErrUnknownTool),
 				)
-				result := fallbackResult(
-					service.configuration,
-					"模型选择了一个未注册的工具，我先不执行它。",
-				)
-				service.logRunCompleted(
-					run,
-					"unknown_tool",
-					iteration+1,
-					toolCalls,
-					startedAt,
-					result.Content,
-				)
-				return result, nil
+				continue
 			}
 			if !definition.ReadOnly {
-				if writeCalls >= service.loopLimits.MaxWriteToolCalls {
-					result := fallbackResult(
-						service.configuration,
-						"这次已经达到写操作上限，我先不继续执行新的写操作。",
-					)
-					service.logRunCompleted(
-						run,
-						"budget_exhausted",
-						iteration+1,
-						toolCalls,
-						startedAt,
-						result.Content,
-					)
-					return result, nil
-				}
 				writeCalls++
 			}
 			toolMessage, err := service.executeToolCall(
@@ -611,92 +664,13 @@ func (service *RunService) generate(
 				routing.Policy,
 			)
 			if err != nil {
-				result := fallbackResult(
-					service.configuration,
-					"工具执行失败了，我先给出一个保守回复：请稍后重试，或把需求说得更具体一点。",
-				)
-				service.logRunCompleted(
-					run,
-					"tool_call_failed",
-					iteration+1,
-					toolCalls,
-					startedAt,
-					result.Content,
-				)
-				return result, nil
+				return ai.TextResult{}, err
 			}
 			request.Messages = append(request.Messages, toolMessage)
-			toolCalls++
 		}
 		request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
 		finalDecision = "tool_call_then_response"
 	}
-	service.logRoutingDecision(
-		run,
-		"budget_exhausted",
-		nil,
-		"budget_exhausted",
-		reasonSummary("budget_exhausted", "budget_exhausted"),
-		service.loopLimits.MaxIterations,
-	)
-	result := fallbackResult(
-		service.configuration,
-		"这次对话需要更多步骤才能完成，我先停在这里。请把最重要的一步单独发给我。",
-	)
-	service.logRunCompleted(
-		run,
-		"budget_exhausted",
-		service.loopLimits.MaxIterations,
-		toolCalls,
-		startedAt,
-		result.Content,
-	)
-	return result, nil
-}
-
-func (service *RunService) executeCommand(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	run Run,
-	manifest ContextManifest,
-	request ai.TextRequest,
-	invocation tool.Invocation,
-	routing modelToolRouting,
-) (ai.TextResult, error) {
-	// 斜杠命令先直接执行已解析的工具，随后仍让模型看到全量工具组织回复。
-	request.Tools = routing.Definitions
-	request.ToolChoice = routing.ToolChoice
-	applyModelToolSnapshot(&manifest, routing, reasonExplicitCommand)
-	if err := service.saveContextToolSnapshot(ctx, manifest); err != nil {
-		return ai.TextResult{}, err
-	}
-	commandCall := ai.ToolCall{
-		ID:        "command-call",
-		Name:      invocation.Name,
-		Arguments: invocation.Input,
-	}
-	if err := service.saveToolCallProposed(ctx, run, commandCall); err != nil {
-		return ai.TextResult{}, err
-	}
-	toolMessage, err := service.executeToolCall(
-		ctx,
-		actor,
-		run,
-		commandCall,
-		commandExecutionPolicy(invocation.Name),
-	)
-	if err != nil {
-		return fallbackResult(
-			service.configuration,
-			"这条命令当前无法执行，可能是参数不完整。",
-		), nil
-	}
-	request.Messages = append(request.Messages, ai.TextMessage{
-		Role:      ai.TextRoleAssistant,
-		ToolCalls: []ai.ToolCall{commandCall},
-	}, toolMessage)
-	result, err := service.generator.Generate(ctx, request)
-	return result, err
 }
 
 func (service *RunService) executeToolCall(
@@ -708,7 +682,7 @@ func (service *RunService) executeToolCall(
 ) (ai.TextMessage, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
-	requestID := run.ID + "-" + call.ID
+	requestID := toolCallRequestID(run.ID, call.ID)
 	if service.repository != nil {
 		if _, err := service.repository.MarkToolCallRunning(
 			toolCtx,
@@ -734,24 +708,45 @@ func (service *RunService) executeToolCall(
 	)
 	if err != nil {
 		if service.repository != nil {
-			_, _ = service.repository.MarkToolCallFailed(
-				context.WithoutCancel(ctx),
+			persistCtx, persistCancel := runPersistenceContext(ctx)
+			defer persistCancel()
+			if _, persistErr := service.repository.MarkToolCallFailed(
+				persistCtx,
 				actor.UserID,
 				run.ID,
 				call.ID,
 				core.ToolCallStatusFailed,
 				tool.ErrorCategory(err),
-			)
+			); persistErr != nil {
+				return ai.TextMessage{}, persistErr
+			}
 		}
-		return ai.TextMessage{}, err
+		// 工具自身失败属于模型可处理结果，回填稳定分类后让模型决定重试、换工具或解释。
+		return toolFailureMessage(call.ID, err), nil
 	}
 	content, err := marshalToolResult(result, service.loopLimits.MaxToolResultBytes)
 	if err != nil {
-		return ai.TextMessage{}, err
+		if service.repository != nil {
+			persistCtx, persistCancel := runPersistenceContext(ctx)
+			defer persistCancel()
+			if _, persistErr := service.repository.MarkToolCallFailed(
+				persistCtx,
+				actor.UserID,
+				run.ID,
+				call.ID,
+				core.ToolCallStatusFailed,
+				"internal",
+			); persistErr != nil {
+				return ai.TextMessage{}, persistErr
+			}
+		}
+		return toolFailureMessage(call.ID, err), nil
 	}
 	if service.repository != nil {
+		persistCtx, persistCancel := runPersistenceContext(ctx)
+		defer persistCancel()
 		if _, err := service.repository.MarkToolCallSucceeded(
-			context.WithoutCancel(ctx),
+			persistCtx,
 			actor.UserID,
 			run.ID,
 			call.ID,
@@ -1109,6 +1104,96 @@ func (service *RunService) toolDefinition(name string) (tool.Definition, bool) {
 		return tool.Definition{}, false
 	}
 	return registered.Definition(), true
+}
+
+// toolCallRequestID 在同一 Run 重放同一个 Tool Call 时保持不变，供写工具做幂等去重。
+func toolCallRequestID(runID string, toolCallID string) string {
+	return runID + "-" + toolCallID
+}
+
+func (service *RunService) writeToolCallCount(
+	calls []ai.ToolCall,
+	policy tool.Policy,
+) int {
+	count := 0
+	for _, call := range calls {
+		definition, ok := service.toolDefinition(call.Name)
+		if ok && policy.Allows(definition) && !definition.ReadOnly {
+			count++
+		}
+	}
+	return count
+}
+
+func (service *RunService) loopBudgetFallback(
+	run Run,
+	content string,
+	modelIterations int,
+	toolCalls int,
+	startedAt time.Time,
+) ai.TextResult {
+	service.logRoutingDecision(
+		run,
+		"budget_exhausted",
+		nil,
+		"budget_exhausted",
+		reasonSummary("budget_exhausted", "budget_exhausted"),
+		modelIterations,
+	)
+	result := fallbackResult(service.configuration, content)
+	service.logRunCompleted(
+		run,
+		"budget_exhausted",
+		modelIterations,
+		toolCalls,
+		startedAt,
+		result.Content,
+	)
+	return result
+}
+
+// repeatedToolCallID 同时检查本批和前序批次，防止模型复用 ID 导致重复执行。
+func repeatedToolCallID(
+	calls []ai.ToolCall,
+	seen map[string]struct{},
+) string {
+	current := make(map[string]struct{}, len(calls))
+	for _, call := range calls {
+		if _, ok := seen[call.ID]; ok {
+			return call.ID
+		}
+		if _, ok := current[call.ID]; ok {
+			return call.ID
+		}
+		current[call.ID] = struct{}{}
+	}
+	return ""
+}
+
+// toolFailureMessage 只向模型暴露稳定错误语义，不泄漏数据库或业务内部错误文本。
+func toolFailureMessage(toolCallID string, err error) ai.TextMessage {
+	category := tool.ErrorCategory(err)
+	message := "tool execution failed"
+	switch category {
+	case "invalid_input":
+		message = "tool arguments are invalid"
+	case "unknown_tool":
+		message = "tool is not registered"
+	case "permission_denied":
+		message = "tool execution was rejected"
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"category":  category,
+			"message":   message,
+			"retryable": tool.RetryableError(err),
+		},
+	})
+	return ai.TextMessage{
+		Role:       ai.TextRoleTool,
+		Content:    string(raw),
+		ToolCallID: toolCallID,
+	}
 }
 
 func lastUserContent(request ai.TextRequest) string {

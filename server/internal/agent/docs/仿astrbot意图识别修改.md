@@ -1,10 +1,10 @@
 # 仿 AstrBot 意图识别修改计划
 
-> 状态：实施中，前三个阶段已完成。
+> 状态：实施中，前四个阶段已完成。
 >
 > 进度维护：每完成并通过验收一个阶段，将该阶段标题前的 `[ ]` 改为 `[x]`，并在阶段末补充实际验收命令和结果。
 >
-> 已关联 Issue：[#203「冻结全量 LLM Tool Calling 契约与回归基线」](https://github.com/1024XEngineer/XE3-ESL/issues/203)、[#204「移除关键词业务路由并向模型暴露全量工具」](https://github.com/1024XEngineer/XE3-ESL/issues/204)、[#207「强化 Agent 工具描述、参数 Schema 与执行校验」](https://github.com/1024XEngineer/XE3-ESL/issues/207)，均关联 MS2。
+> 已关联 Issue：[#203「冻结全量 LLM Tool Calling 契约与回归基线」](https://github.com/1024XEngineer/XE3-ESL/issues/203)、[#204「移除关键词业务路由并向模型暴露全量工具」](https://github.com/1024XEngineer/XE3-ESL/issues/204)、[#207「强化 Agent 工具描述、参数 Schema 与执行校验」](https://github.com/1024XEngineer/XE3-ESL/issues/207)、[#209「完成有界 Agent Tool Calling Loop」](https://github.com/1024XEngineer/XE3-ESL/issues/209)，均关联 MS2。
 
 ## 目标
 
@@ -126,7 +126,7 @@ go test ./internal/agent/runtime ./internal/agent/eval ./internal/agent/tool ./i
 go test ./...
 ```
 
-### [ ] 4. 完成有界 Tool Calling Loop
+### [x] 4. 完成有界 Tool Calling Loop
 
 - Provider 返回普通文本时直接结束本轮。
 - Provider 返回一个或多个 Tool Call 时，按 Registry 查找、Schema 校验和执行，并把结果追加到消息上下文。
@@ -138,6 +138,25 @@ go test ./...
 
 - 覆盖“直接回复”“一次调用后回复”“连续调用后回复”“工具报错后回复”和“循环超限”。
 - Agent Run 中能关联模型请求、Tool Call、Tool Result 和最终回复。
+
+实际结果（2026-07-29）：
+
+- 将自然语言和显式斜杠命令统一到同一个 Tool Calling Loop；显式命令只预先确定第一个工具，模型仍可根据结果继续调用其他工具。
+- `MaxIterations` 明确限制工具执行轮数，达到上限后仍允许模型生成一次最终回复；同时继续限制工具调用总数、写工具调用数、单工具超时、整轮超时和 Tool Result 大小。
+- 同一批工具调用在执行前统一检查调用总数、写操作数和重复 Tool Call ID，避免部分写入后才发现超限。
+- 每个已接受的 Tool Call 都会回填对应 Tool Result；非法参数、未知工具和业务执行失败返回稳定的结构化错误分类与 `retryable` 标记，由模型继续追问、换工具或解释。
+- 工具执行失败与调用记录持久化失败分开处理：前者回填模型继续循环，后者中断 Run，避免审计记录与真实执行状态不一致。
+- 写工具使用稳定的 `run_id + tool_call_id` 作为 Request ID；同一 Run 重放同一 Tool Call 时由工具层幂等去重。
+- Tool Call 记录继续通过 `run_id` 关联 Agent Run，并记录输入、状态、结果或错误分类、Request ID 和来源引用。
+- 关键循环边界、错误回填和幂等规则均已添加中文注释。
+
+验收命令通过：
+
+```bash
+cd server
+go test ./internal/agent/runtime ./internal/agent/tool ./internal/ai/...
+go test ./...
+```
 
 ### [ ] 5. 端到端联调、清理旧实现
 
