@@ -8,10 +8,12 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 
 const ieltsSpeakingFullMockScenarioId = 'scn_ielts_speaking_full';
+const _ieltsSpeakingFullMockTitle = 'IELTS 口语完整模拟';
 
 bool isIeltsSpeakingFullMockSession(AgentController controller) =>
-    controller.scene?.id == ieltsSpeakingFullMockScenarioId &&
-    controller.turnLimit == 14;
+    controller.turnLimit == 14 &&
+    (controller.scene?.id == ieltsSpeakingFullMockScenarioId ||
+        controller.scene?.title == _ieltsSpeakingFullMockTitle);
 
 class IeltsSpeakingMockPage extends StatefulWidget {
   const IeltsSpeakingMockPage({

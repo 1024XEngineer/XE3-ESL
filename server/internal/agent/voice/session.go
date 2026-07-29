@@ -21,6 +21,7 @@ const (
 	maxVoiceReviewConclusions       = 8
 	maxVoiceReviewLabelUTF8Bytes    = 64
 	maxVoiceReviewTextUTF8Bytes     = 2048
+	ieltsSpeakingFullMockModel      = "IELTS_SPEAKING_FULL_MOCK"
 )
 
 // VoicePracticeSession is the Agent application view of Practice state. It
@@ -502,7 +503,8 @@ func (application *VoiceSessionApplication) state(
 		state.Turn = &latest
 	}
 	if found && (latest.EffectiveTurns == 0 ||
-		(latest.SessionCompleted && latest.ReviewID == "")) {
+		(latest.SessionCompleted && latest.ReviewID == "" &&
+			requiresSynchronousSessionReview(session))) {
 		recovered, recoveryErr := application.orchestrator.Confirm(
 			ctx,
 			actor,
@@ -559,7 +561,9 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	if state.Session.Completed {
-		if state.Turn == nil || state.Review == nil {
+		if state.Turn == nil ||
+			(requiresSynchronousSessionReview(session) &&
+				state.Review == nil) {
 			return VoiceSessionState{}, ErrInvalidContext
 		}
 		return state, nil
@@ -588,6 +592,10 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return state, nil
+}
+
+func requiresSynchronousSessionReview(session VoicePracticeSession) bool {
+	return session.ScenarioModel != ieltsSpeakingFullMockModel
 }
 
 func validVoiceScenarioPrompt(session VoicePracticeSession) bool {

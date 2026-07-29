@@ -61,6 +61,14 @@ func TestPracticeVoicePortMapsTrustedActorAndProgress(t *testing.T) {
 	}) {
 		t.Fatalf("mapped actor = %#v", application.actor)
 	}
+	required, err := port.RequiresSessionReview(
+		context.Background(),
+		actor,
+		"practice-session",
+	)
+	if err != nil || !required {
+		t.Fatalf("RequiresSessionReview = %t, %v", required, err)
+	}
 }
 
 func TestPracticeVoicePortPropagatesPracticeFailure(t *testing.T) {
@@ -157,6 +165,15 @@ func (s *practiceVoiceApplicationStub) ApplyEffectiveTurn(
 ) (practice.VoiceTurnProgress, error) {
 	s.actor = actor
 	return s.progress, s.err
+}
+
+func (s *practiceVoiceApplicationStub) RequiresSessionReview(
+	_ context.Context,
+	actor persistence.Actor,
+	_ string,
+) (bool, error) {
+	s.actor = actor
+	return true, s.err
 }
 
 var _ PracticeVoiceApplication = (*practiceVoiceApplicationStub)(nil)

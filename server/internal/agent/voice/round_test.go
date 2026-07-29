@@ -157,6 +157,41 @@ func TestVoiceRoundOrchestratorOwnsThreeTurnReviewSaga(t *testing.T) {
 	}
 }
 
+func TestVoiceRoundOrchestratorCompletesWhenReviewIsDeferred(t *testing.T) {
+	conversations := newAgentVoiceConversation(1)
+	practice := newAgentVoicePractice(2)
+	practice.skipReview = true
+	reviews := newAgentVoiceReview()
+	orchestrator := newAgentVoiceOrchestrator(
+		t,
+		conversations,
+		practice,
+		reviews,
+	)
+
+	result, err := orchestrator.Confirm(
+		context.Background(),
+		agentVoiceActor("a"),
+		conversation.ConfirmVoiceTurnCommand{
+			CandidateID:    "candidate-1",
+			IdempotencyKey: "confirm-candidate-1",
+		},
+	)
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if !result.SessionCompleted || result.ReviewID != "" {
+		t.Fatalf("completed result = %#v", result)
+	}
+	if reviews.creations != 0 || conversations.reviewSaves != 0 {
+		t.Fatalf(
+			"deferred review generated: reviews=%d saves=%d",
+			reviews.creations,
+			conversations.reviewSaves,
+		)
+	}
+}
+
 func TestVoiceRoundOrchestratorConcurrentThirdTurnCreatesOneReview(t *testing.T) {
 	conversations := newAgentVoiceConversation(1)
 	practice := newAgentVoicePractice(2)
@@ -558,6 +593,7 @@ type agentVoicePractice struct {
 	mu             sync.Mutex
 	turns          map[string]VoiceTurnProgress
 	effectiveTurns int
+	skipReview     bool
 }
 
 func newAgentVoicePractice(effectiveTurns int) *agentVoicePractice {
@@ -601,6 +637,17 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	}
 	practice.turns[turnID] = result
 	return result, nil
+}
+
+func (practice *agentVoicePractice) RequiresSessionReview(
+	_ context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) (bool, error) {
+	if actor.UserID != "user-a" || sessionID != "session-1" {
+		return false, conversation.ErrVoiceRoundNotFound
+	}
+	return !practice.skipReview, nil
 }
 
 var errAgentVoiceLostAcknowledgement = errors.New(

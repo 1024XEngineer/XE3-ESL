@@ -110,21 +110,23 @@ void main() {
       expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
       expect(find.text('取消'), findsOneWidget);
       expect(
-        find.byKey(const Key('practice-current-question')).hitTestable(),
+        find
+            .byKey(Key('practice-ai-message-${agentController.questionId}'))
+            .hitTestable(),
         findsOneWidget,
       );
 
       if (turn == 1) {
         await tester.tap(find.byKey(const Key('practice-rerecord')));
         await tester.pumpAndSettle();
-        expect(find.text('0 / 3'), findsOneWidget);
+        expect(agentController.practiceMessages, hasLength(1));
         await _holdAndReleaseAnswer(tester);
       }
 
       await tester.tap(find.byKey(const Key('practice-confirm-turn')));
       await tester.pumpAndSettle();
       if (turn < 3) {
-        expect(find.text('$turn / 3'), findsOneWidget);
+        expect(agentController.practiceMessages, hasLength(turn * 2 + 1));
       }
     }
 

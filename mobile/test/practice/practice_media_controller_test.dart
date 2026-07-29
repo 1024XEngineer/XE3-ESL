@@ -394,7 +394,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Practice hint shows a concise answer framework', (tester) async {
+  testWidgets('Practice hides actions without backed data', (tester) async {
     final controller = _controller(
       snapshot: _activeSnapshot(audioAssetId: 'audio-1'),
       media: _MediaClient(),
@@ -406,13 +406,10 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: controller)),
     );
-    await tester.tap(find.byKey(const Key('practice-hint-question-2')));
-    await tester.pump();
 
-    expect(find.text('回答框架'), findsOneWidget);
-    expect(find.text('1. 先直接回答你的核心观点'), findsOneWidget);
-    expect(find.text('2. 用一个具体经历或事实支持'), findsOneWidget);
-    expect(find.text('3. 回到岗位匹配与结果'), findsOneWidget);
+    expect(find.byKey(const Key('practice-question-audio')), findsOneWidget);
+    expect(find.byKey(const Key('practice-hint-question-2')), findsNothing);
+    expect(find.text('回答框架'), findsNothing);
     expect(find.text('参考回答'), findsNothing);
   });
 
