@@ -39,6 +39,29 @@ type VoiceTurnProgress struct {
 	SessionCompleted bool
 }
 
+// RequiresSessionReview reports whether completing this frozen Session must
+// synchronously create a formal Review. IELTS full mock reports are delivered
+// separately, so their speaking flow must not depend on Review generation.
+func (a *VoiceApplication) RequiresSessionReview(
+	ctx context.Context,
+	actor persistence.Actor,
+	sessionID string,
+) (bool, error) {
+	if a == nil || a.repository == nil || ctx == nil ||
+		sessionID == "" || sessionID != strings.TrimSpace(sessionID) {
+		return false, persistence.ErrInvalidArgument
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	session, err := a.repository.GetContextSession(ctx, actor, sessionID)
+	if err != nil {
+		return false, err
+	}
+	return session.ScenarioModel !=
+		persistence.ScenarioModelIELTSSpeakingFullMock, nil
+}
+
 // VoiceApplication exposes Practice capabilities without leaking its
 // Repository to Agent or Conversation. actorSubjectNamespace is supplied by
 // composition because Practice treats SubjectRef namespaces as opaque.

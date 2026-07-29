@@ -17,4 +17,5 @@ import "embed"
 //go:embed 000029_agent_stable_profile_context_manifest.*.sql
 //go:embed 000030_agent_tool_routing_cleanup.*.sql
 //go:embed 000031_agent_memory_extraction_barrier.*.sql
+//go:embed 000032_ielts_speaking_full_mock_model.*.sql
 var Files embed.FS

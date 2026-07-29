@@ -330,6 +330,17 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	return result, nil
 }
 
+func (practice *agentVoicePractice) RequiresSessionReview(
+	_ context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) (bool, error) {
+	if actor.UserID != "user-a" || sessionID != "session-1" {
+		return false, conversation.ErrVoiceRoundNotFound
+	}
+	return true, nil
+}
+
 var errAgentVoiceLostAcknowledgement = errors.New(
 	"review acknowledgement lost",
 )
