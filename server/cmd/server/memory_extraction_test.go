@@ -74,7 +74,7 @@ func TestMemoryExtractionWorkerStopsWithContext(t *testing.T) {
 		1,
 		nil,
 		nil,
-		waitForMemoryWork,
+		waitForWorkerWork,
 	)
 	if err != nil {
 		t.Fatalf("newMemoryExtractionWorker: %v", err)

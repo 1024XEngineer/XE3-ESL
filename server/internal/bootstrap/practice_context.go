@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
@@ -34,6 +35,7 @@ type IdentityAgentPracticeComposition struct {
 	agentModule            RouteRegistrar
 	agentVoiceReclaimer    AgentVoiceObjectReclaimer
 	memoryExtraction       memory.ExtractionProcessor
+	summaryProcessor       agentsummary.Processor
 	identityHTTP           *identity.HTTPHandler
 	preparationApplication *preparation.PersistenceService
 	preparationHTTP        *preparation.ProfileHTTPHandler
@@ -67,6 +69,7 @@ func NewIdentityAgentAndPracticeComposition(
 		memorySearcher,
 		catalog,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 }
@@ -95,6 +98,39 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 		memorySearcher,
 		catalog,
 		memoryExtractionNotifier,
+		nil,
+		voiceConfigurations...,
+	)
+}
+
+type AgentWorkerWakeups struct {
+	MemoryExtraction interface{ Notify() }
+	ThreadSummary    interface{ Notify() }
+}
+
+func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	catalog preparation.CatalogReader,
+	wakeups AgentWorkerWakeups,
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		wakeups.MemoryExtraction,
+		wakeups.ThreadSummary,
 		voiceConfigurations...,
 	)
 }
@@ -109,6 +145,7 @@ func newIdentityAgentAndPracticeComposition(
 	memorySearcher memory.Searcher,
 	catalog preparation.CatalogReader,
 	memoryExtractionNotifier interface{ Notify() },
+	summaryNotifier interface{ Notify() },
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
 	if catalog == nil {
@@ -123,6 +160,7 @@ func newIdentityAgentAndPracticeComposition(
 		runConfiguration,
 		memorySearcher,
 		memoryExtractionNotifier,
+		summaryNotifier,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -203,6 +241,7 @@ func newIdentityAgentAndPracticeComposition(
 		agentModule:            base.agentModule,
 		agentVoiceReclaimer:    base.agentVoiceReclaimer,
 		memoryExtraction:       base.memoryExtraction,
+		summaryProcessor:       base.summaryProcessor,
 		identityHTTP:           base.identity.handler,
 		preparationApplication: preparationApplication,
 		preparationHTTP:        preparationHTTP,
@@ -243,6 +282,13 @@ func (c *IdentityAgentPracticeComposition) MemoryExtractionProcessor() memory.Ex
 		return nil
 	}
 	return c.memoryExtraction
+}
+
+func (c *IdentityAgentPracticeComposition) ThreadSummaryProcessor() agentsummary.Processor {
+	if c == nil {
+		return nil
+	}
+	return c.summaryProcessor
 }
 
 func (c *IdentityAgentPracticeComposition) PreparationApplication() *preparation.PersistenceService {

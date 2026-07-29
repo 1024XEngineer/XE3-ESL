@@ -164,8 +164,9 @@ func run() int {
 		)
 		return 1
 	}
-	memoryExtractionWakeup := newMemoryWorkerWakeup()
-	memoryIndexWakeup := newMemoryWorkerWakeup()
+	memoryExtractionWakeup := newWorkerWakeup()
+	memoryIndexWakeup := newWorkerWakeup()
+	threadSummaryWakeup := newWorkerWakeup()
 
 	var recordingStore objectstore.Store
 	if storageConfig.Enabled {
@@ -183,7 +184,7 @@ func run() int {
 	}
 
 	applicationComposition, err :=
-		bootstrap.NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
+		bootstrap.NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 			ctx,
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
@@ -197,7 +198,10 @@ func run() int {
 			},
 			memoryIndexComposition.Searcher(),
 			preparationCatalog,
-			memoryExtractionWakeup,
+			bootstrap.AgentWorkerWakeups{
+				MemoryExtraction: memoryExtractionWakeup,
+				ThreadSummary:    threadSummaryWakeup,
+			},
 			bootstrap.VoiceConfiguration{
 				Recognizer:                recognizer,
 				Synthesizer:               synthesizer,
@@ -220,6 +224,18 @@ func run() int {
 		)
 	if err != nil {
 		logger.Error("application startup failed", slog.Any("error", err))
+		return 1
+	}
+	threadSummary, err := buildThreadSummaryWorker(
+		applicationComposition.ThreadSummaryProcessor(),
+		logger,
+		threadSummaryWakeup.Events(),
+	)
+	if err != nil {
+		logger.Error(
+			"thread summary startup failed",
+			slog.String("error_kind", "dependency"),
+		)
 		return 1
 	}
 	contextRoutes, err := applicationComposition.ProtectedRoutes()
@@ -305,6 +321,11 @@ func run() int {
 		defer close(memoryIndexDone)
 		memoryIndex.Run(ctx)
 	}()
+	threadSummaryDone := make(chan struct{})
+	go func() {
+		defer close(threadSummaryDone)
+		threadSummary.Run(ctx)
+	}()
 
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
 		logger,
@@ -387,6 +408,15 @@ func run() int {
 	case <-shutdownCtx.Done():
 		logger.Error(
 			"memory index shutdown failed",
+			slog.String("error_kind", "timeout"),
+		)
+		exitCode = 1
+	}
+	select {
+	case <-threadSummaryDone:
+	case <-shutdownCtx.Done():
+		logger.Error(
+			"thread summary shutdown failed",
 			slog.String("error_kind", "timeout"),
 		)
 		exitCode = 1

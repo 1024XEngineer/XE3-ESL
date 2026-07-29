@@ -5,17 +5,17 @@ import (
 	"time"
 )
 
-// memoryWorkerWakeup is an edge-triggered hint only. The database remains the
-// source of truth, so concurrent hints may be safely coalesced.
-type memoryWorkerWakeup struct {
+// workerWakeup is an edge-triggered hint only. The database remains the source
+// of truth, so concurrent hints may be safely coalesced.
+type workerWakeup struct {
 	events chan struct{}
 }
 
-func newMemoryWorkerWakeup() *memoryWorkerWakeup {
-	return &memoryWorkerWakeup{events: make(chan struct{}, 1)}
+func newWorkerWakeup() *workerWakeup {
+	return &workerWakeup{events: make(chan struct{}, 1)}
 }
 
-func (wakeup *memoryWorkerWakeup) Notify() {
+func (wakeup *workerWakeup) Notify() {
 	if wakeup == nil {
 		return
 	}
@@ -25,14 +25,14 @@ func (wakeup *memoryWorkerWakeup) Notify() {
 	}
 }
 
-func (wakeup *memoryWorkerWakeup) Events() <-chan struct{} {
+func (wakeup *workerWakeup) Events() <-chan struct{} {
 	if wakeup == nil {
 		return nil
 	}
 	return wakeup.events
 }
 
-func waitForMemoryWork(
+func waitForWorkerWork(
 	ctx context.Context,
 	interval time.Duration,
 	wakeup <-chan struct{},

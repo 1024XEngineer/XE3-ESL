@@ -9,7 +9,7 @@ import (
 
 type runCompletionNotifyingRepository struct {
 	core.RunRepository
-	notifier interface{ Notify() }
+	notifiers []interface{ Notify() }
 }
 
 func (repository *runCompletionNotifyingRepository) CompleteRun(
@@ -29,7 +29,11 @@ func (repository *runCompletionNotifyingRepository) CompleteRun(
 		result,
 	)
 	if err == nil && run.Status == core.RunStatusCompleted {
-		repository.notifier.Notify()
+		for _, notifier := range repository.notifiers {
+			if notifier != nil {
+				notifier.Notify()
+			}
+		}
 	}
 	return run, err
 }

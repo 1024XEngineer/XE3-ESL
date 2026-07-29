@@ -129,8 +129,8 @@ func (service *Service) GenerateCheckpoint(
 		sourceFromSequence = previous.CoveredThroughSequence + 1
 		previousCheckpointID = previous.ID
 	}
-	if command.CoveredThroughSequence-sourceFromSequence+1 >
-		core.MaxSummarySourceMessages {
+	if command.CoveredThroughSequence-sourceFromSequence >=
+		int64(core.MaxSummarySourceMessages) {
 		return core.ThreadSummaryCheckpoint{}, ErrInvalidArgument
 	}
 	messages, err := service.repository.ListMessagesForSummary(
