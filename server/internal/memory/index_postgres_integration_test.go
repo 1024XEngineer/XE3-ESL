@@ -66,6 +66,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 		actorA,
 		validEmbeddingResult().Vectors[0],
 		"",
+		nil,
 		searchConfiguration,
 	)
 	if err != nil {
@@ -105,6 +106,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 		actorA,
 		validEmbeddingResult().Vectors[0],
 		"",
+		nil,
 		searchConfiguration,
 	)
 	if err != nil {
@@ -129,6 +131,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 		actorB,
 		validEmbeddingResult().Vectors[0],
 		"",
+		nil,
 		searchConfiguration,
 	)
 	if err != nil {
@@ -158,6 +161,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 		actorA,
 		validEmbeddingResult().Vectors[0],
 		"",
+		nil,
 		searchConfiguration,
 	)
 	if err != nil {
@@ -206,6 +210,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 		actorA,
 		validEmbeddingResult().Vectors[0],
 		"",
+		nil,
 		searchConfiguration,
 	)
 	if err != nil {
@@ -219,9 +224,64 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 		actorA,
 		validEmbeddingResult().Vectors[0],
 		integrationMatterB,
+		nil,
 		searchConfiguration,
 	); err != ErrNotFound {
 		t.Fatalf("foreign Matter search error = %v", err)
+	}
+}
+
+func TestPostgresSearchCandidatesExcludesCanonicalKeysBeforeLimit(
+	t *testing.T,
+) {
+	database := newMemoryTestDatabase(t)
+	repository, err := NewPostgresRepository(
+		database,
+		identity.NewUUIDv4Generator(nil),
+	)
+	if err != nil {
+		t.Fatalf("NewPostgresRepository: %v", err)
+	}
+	ctx := context.Background()
+	actor := requestcontext.Actor{
+		UserID:    integrationUserA,
+		SessionID: integrationSessionA,
+	}
+	item, err := repository.Create(
+		ctx,
+		actor,
+		createCommand(CanonicalProfilePreferredName, "小花"),
+	)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	claim, acquired, err := repository.ClaimIndex(ctx, testIndexConfig())
+	if err != nil {
+		t.Fatalf("ClaimIndex: %v", err)
+	}
+	if !acquired || claim.MemoryID != item.ID {
+		t.Fatalf("claim = %#v, acquired=%t", claim, acquired)
+	}
+	if _, err := repository.CompleteIndex(
+		ctx,
+		claim,
+		validEmbeddingResult(),
+	); err != nil {
+		t.Fatalf("CompleteIndex: %v", err)
+	}
+	candidates, err := repository.SearchCandidates(
+		ctx,
+		actor,
+		validEmbeddingResult().Vectors[0],
+		"",
+		[]string{CanonicalProfilePreferredName},
+		testSearchConfig(),
+	)
+	if err != nil {
+		t.Fatalf("SearchCandidates: %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("excluded candidates = %#v", candidates)
 	}
 }
 
@@ -354,6 +414,7 @@ FROM inserted_memory`,
 		actorA,
 		targetVector,
 		"",
+		nil,
 		configuration,
 	)
 	if err != nil {

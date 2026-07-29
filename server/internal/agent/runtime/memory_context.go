@@ -23,15 +23,17 @@ var memoryPolicyVersionPattern = regexp.MustCompile(
 )
 
 type MemorySearchRequest struct {
-	Actor    requestcontext.Actor
-	Query    string
-	MatterID string
-	Limit    int
+	Actor                 requestcontext.Actor
+	Query                 string
+	MatterID              string
+	ExcludedCanonicalKeys []string
+	Limit                 int
 }
 
 type MemorySearchHit struct {
 	MemoryID               string
 	MemoryVersion          int64
+	CanonicalKey           string
 	Type                   string
 	Content                string
 	Scope                  string
@@ -62,6 +64,7 @@ func (hit MemorySearchHit) valid(matterID string) bool {
 func coreValidMemoryHit(hit MemorySearchHit) bool {
 	return core.ValidUUID(hit.MemoryID) &&
 		hit.MemoryVersion > 0 &&
+		stableProfileCanonicalKeyPattern.MatchString(hit.CanonicalKey) &&
 		hit.Type != "" &&
 		hit.Type == strings.TrimSpace(hit.Type) &&
 		len(hit.Type) <= 32 &&

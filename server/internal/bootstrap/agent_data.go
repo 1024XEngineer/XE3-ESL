@@ -127,9 +127,18 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	memoryRepository, err := memory.NewPostgresRepository(database, ids)
+	if err != nil {
+		return nil, err
+	}
+	stableProfileReader, err := newAgentStableProfileReader(memoryRepository)
+	if err != nil {
+		return nil, err
+	}
 	contextAssembler, err := agentruntime.NewContextAssembler(
 		agentRepository,
 		matterService,
+		stableProfileReader,
 		contextMemorySearcher,
 	)
 	if err != nil {

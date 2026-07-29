@@ -38,10 +38,11 @@ func (configuration SearchConfig) Valid() bool {
 }
 
 type SearchRequest struct {
-	Actor    requestcontext.Actor
-	Query    string
-	MatterID string
-	Limit    int
+	Actor                 requestcontext.Actor
+	Query                 string
+	MatterID              string
+	ExcludedCanonicalKeys []string
+	Limit                 int
 }
 
 func (request SearchRequest) Valid() bool {
@@ -50,6 +51,7 @@ func (request SearchRequest) Valid() bool {
 		request.Query == strings.TrimSpace(request.Query) &&
 		len(request.Query) <= ai.MaxEmbeddingInputBytes &&
 		(request.MatterID == "" || validUUID(request.MatterID)) &&
+		ValidStableProfileCanonicalKeys(request.ExcludedCanonicalKeys) &&
 		request.Limit >= 1 &&
 		request.Limit <= maxSearchResults
 }
@@ -62,6 +64,7 @@ type SearchCandidate struct {
 type SearchHit struct {
 	MemoryID               string
 	MemoryVersion          int64
+	CanonicalKey           string
 	Type                   Type
 	Content                string
 	Scope                  ScopeType
@@ -81,6 +84,7 @@ type SearchCandidateRepository interface {
 		requestcontext.Actor,
 		[]float32,
 		string,
+		[]string,
 		SearchConfig,
 	) ([]SearchCandidate, error)
 }
@@ -148,6 +152,7 @@ func (service *SearchService) Search(
 		request.Actor,
 		result.Vectors[0],
 		request.MatterID,
+		request.ExcludedCanonicalKeys,
 		service.config,
 	)
 	if err != nil {
@@ -167,9 +172,16 @@ func (service *SearchService) Search(
 			candidate.Memory.MatterID != request.MatterID {
 			return nil, ErrRepository
 		}
+		if containsString(
+			request.ExcludedCanonicalKeys,
+			candidate.Memory.CanonicalKey,
+		) {
+			return nil, ErrRepository
+		}
 		hits = append(hits, SearchHit{
 			MemoryID:               candidate.Memory.ID,
 			MemoryVersion:          candidate.Memory.Version,
+			CanonicalKey:           candidate.Memory.CanonicalKey,
 			Type:                   candidate.Memory.Type,
 			Content:                candidate.Memory.Content,
 			Scope:                  candidate.Memory.Scope,
@@ -196,6 +208,15 @@ func (service *SearchService) Search(
 		hits = hits[:request.Limit]
 	}
 	return hits, nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func rerankScore(
