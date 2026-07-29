@@ -73,16 +73,24 @@ enum PracticeRecordingState {
   completed,
 }
 
+/// Selects the product presentation without coupling navigation to a scene
+/// title or a concrete avatar vendor.
+enum AgentScenePresentationMode { standard, immersiveRoleplay }
+
 final class AgentScene {
   const AgentScene({
     required this.id,
     required this.title,
     required this.description,
+    this.scenarioType,
+    this.presentationMode = AgentScenePresentationMode.standard,
   });
 
   final String id;
   final String title;
   final String description;
+  final String? scenarioType;
+  final AgentScenePresentationMode presentationMode;
 }
 
 final class AgentMessage {

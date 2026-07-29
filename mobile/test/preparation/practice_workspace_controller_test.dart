@@ -48,7 +48,7 @@ void main() {
         containsPair('practice_thread_id', retried?.practiceThreadId),
       );
       expect(record, containsPair('return_thread_id', homeThreadId));
-      expect(record, containsPair('schema_version', 1));
+      expect(record, containsPair('schema_version', 2));
 
       final replacement = await workspace.acquireThread(
         'different-operation-2',
@@ -106,6 +106,55 @@ void main() {
       expect(harness.agent.hasActivePractice, isTrue);
       expect(await restoredWorkspace.parkCurrentPractice(), isTrue);
       expect(harness.agent.threadId, newerHomeThreadId);
+    },
+  );
+
+  test(
+    'roleplay presentation survives parking and cold workspace restore',
+    () async {
+      final store = _InspectableRecordStore();
+      final harness = await _createHarness();
+      final firstWorkspace = PracticeWorkspaceController(
+        agentController: harness.agent,
+        recordStore: store,
+      );
+      addTearDown(harness.agent.dispose);
+      await firstWorkspace.activateAccount('account-1');
+      await _launchPractice(
+        harness: harness,
+        workspace: firstWorkspace,
+        operationId: 'launch-roleplay-operation',
+        scenarioId: 'daily-hotel',
+        scenarioTitle: '酒店入住',
+        sessionId: 'practice-roleplay-session',
+        scenarioType: 'DAILY',
+        presentationMode: AgentScenePresentationMode.immersiveRoleplay,
+      );
+      expect(firstWorkspace.currentScenarioType, 'DAILY');
+      expect(
+        firstWorkspace.currentPresentationMode,
+        AgentScenePresentationMode.immersiveRoleplay,
+      );
+      expect(await firstWorkspace.parkCurrentPractice(), isTrue);
+      firstWorkspace.dispose();
+
+      final restoredWorkspace = PracticeWorkspaceController(
+        agentController: harness.agent,
+        recordStore: store,
+      );
+      addTearDown(restoredWorkspace.dispose);
+      await restoredWorkspace.activateAccount('account-1');
+
+      expect(restoredWorkspace.currentScenarioType, 'DAILY');
+      expect(
+        restoredWorkspace.currentPresentationMode,
+        AgentScenePresentationMode.immersiveRoleplay,
+      );
+      final record = jsonDecode((await store.read('account-1'))!);
+      expect(record, containsPair('scenario_type', 'DAILY'));
+      expect(record, containsPair('presentation_mode', 'immersiveRoleplay'));
+      expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
+      expect(restoredWorkspace.currentScenarioId, 'daily-hotel');
     },
   );
 
@@ -837,6 +886,9 @@ Future<_LaunchedPractice> _launchPractice({
   required String scenarioId,
   required String scenarioTitle,
   required String sessionId,
+  String? scenarioType,
+  AgentScenePresentationMode presentationMode =
+      AgentScenePresentationMode.standard,
 }) async {
   final lease = await workspace.acquireThread(operationId);
   expect(lease, isNotNull);
@@ -844,6 +896,8 @@ Future<_LaunchedPractice> _launchPractice({
     id: scenarioId,
     title: scenarioTitle,
     description: 'Test practice scenario.',
+    scenarioType: scenarioType,
+    presentationMode: presentationMode,
   );
   final matter = await harness.agent.activateMatterForScenario(
     threadId: lease!.practiceThreadId,
@@ -857,6 +911,8 @@ Future<_LaunchedPractice> _launchPractice({
       sessionId: sessionId,
       scenarioId: scenarioId,
       scenarioTitle: scenarioTitle,
+      scenarioType: scenarioType,
+      presentationMode: presentationMode,
     ),
     isTrue,
   );

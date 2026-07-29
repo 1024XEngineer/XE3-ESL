@@ -3,9 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/design/speak_up_theme.dart';
+import 'package:speakup/features/practice/immersive_roleplay.dart';
+import 'package:speakup/features/practice/immersive_roleplay_session.dart';
 import 'package:speakup/features/practice/practice.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/job_preparation_wizard.dart';
@@ -26,6 +29,7 @@ class SpeakUpApp extends StatelessWidget {
     this.jobPreparationController,
     this.preparationLaunchController,
     this.reviewHistoryController,
+    this.avatarControllerFactory,
     super.key,
   }) : _authentication = (controller: authController),
        _allowFakePreview = false;
@@ -36,6 +40,7 @@ class SpeakUpApp extends StatelessWidget {
     this.jobPreparationController,
     this.preparationLaunchController,
     this.reviewHistoryController,
+    this.avatarControllerFactory,
     super.key,
   }) : _authentication = null,
        _allowFakePreview = true;
@@ -46,6 +51,7 @@ class SpeakUpApp extends StatelessWidget {
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
   final ReviewHistoryController? reviewHistoryController;
+  final AvatarControllerFactory? avatarControllerFactory;
   final bool _allowFakePreview;
 
   @override
@@ -62,6 +68,7 @@ class SpeakUpApp extends StatelessWidget {
               jobPreparationController: jobPreparationController,
               preparationLaunchController: preparationLaunchController,
               reviewHistoryController: reviewHistoryController,
+              avatarControllerFactory: avatarControllerFactory,
               allowFakePreview: _allowFakePreview,
             )
           : AuthGate(
@@ -74,6 +81,7 @@ class SpeakUpApp extends StatelessWidget {
                 jobPreparationController: jobPreparationController,
                 preparationLaunchController: preparationLaunchController,
                 reviewHistoryController: reviewHistoryController,
+                avatarControllerFactory: avatarControllerFactory,
                 allowFakePreview: _allowFakePreview,
               ),
             ),
@@ -90,6 +98,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.jobPreparationController,
     this.preparationLaunchController,
     this.reviewHistoryController,
+    this.avatarControllerFactory,
     required this.allowFakePreview,
   });
 
@@ -100,6 +109,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
   final ReviewHistoryController? reviewHistoryController;
+  final AvatarControllerFactory? avatarControllerFactory;
   final bool allowFakePreview;
 
   @override
@@ -200,12 +210,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
               onPracticeStarted: () => _navigatorKey.currentState
                   ?.pushReplacementNamed(AppRoutes.practice),
             ),
-          AppRoutes.practice => PracticePage(
-            previewMode: widget.allowFakePreview,
-            agentController: _agentController,
-            onExitRequested:
-                widget.preparationLaunchController?.parkCurrentPractice,
-          ),
+          AppRoutes.practice => _buildPracticePage(),
           AppRoutes.conversation => SpeakUpShell(
             showBackButton: true,
             previewMode: widget.allowFakePreview,
@@ -234,6 +239,34 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           builder: (_) => page,
         );
       },
+    );
+  }
+
+  Widget _buildPracticePage() {
+    final launchController = widget.preparationLaunchController;
+    final presentationMode = launchController?.hasResumablePractice ?? false
+        ? launchController!.resumablePresentationMode
+        : _agentController.scene?.presentationMode ??
+              AgentScenePresentationMode.standard;
+    if (presentationMode == AgentScenePresentationMode.immersiveRoleplay) {
+      final factory = widget.avatarControllerFactory;
+      if (factory != null) {
+        return ImmersiveRoleplaySession(
+          agentController: _agentController,
+          avatarControllerFactory: factory,
+          onExitRequested: launchController?.parkCurrentPractice,
+        );
+      }
+      return ImmersiveRoleplayPage(
+        previewMode: widget.allowFakePreview,
+        agentController: _agentController,
+        onExitRequested: launchController?.parkCurrentPractice,
+      );
+    }
+    return PracticePage(
+      previewMode: widget.allowFakePreview,
+      agentController: _agentController,
+      onExitRequested: launchController?.parkCurrentPractice,
     );
   }
 }

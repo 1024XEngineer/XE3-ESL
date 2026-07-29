@@ -152,6 +152,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get practiceSessionId => _practiceSessionId;
   int? get practiceSessionVersion => _practiceSessionVersion;
+  PracticeQuestion? get currentQuestion => _currentQuestion;
   String? get questionId => _currentQuestion?.id;
   String? get candidateId => _candidate?.id;
   AgentMatter? get activeMatter => _activeMatter;
