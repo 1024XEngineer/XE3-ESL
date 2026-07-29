@@ -910,7 +910,7 @@ void main() {
       expect(launchController.isSelectionLocked, isFalse);
       expect(
         tester.widget<PopScope<void>>(find.byType(PopScope<void>)).canPop,
-        isFalse,
+        isTrue,
       );
       expect(navigations, 1);
     },

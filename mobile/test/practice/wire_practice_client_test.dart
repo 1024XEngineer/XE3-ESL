@@ -81,6 +81,10 @@ void main() {
       endpoints.confirmPath(opaque),
       '/v1/transcription-candidates/$encoded/confirmations',
     );
+    expect(
+      endpoints.endEarlyPath(opaque),
+      '/v1/practice-sessions/$encoded/end-early',
+    );
   });
 
   test('uses the frozen #87 empty-body and raw WAV routes', () async {
@@ -254,6 +258,46 @@ void main() {
     expect(confirmation.answer.text, answer);
     expect(confirmation.candidateId, 'text-candidate-1');
     expect(confirmation.nextQuestion?.id, _nextQuestionId);
+    transport.expectDone();
+  });
+
+  test('ends the exact active session with its current version', () async {
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path: '/v1/practice-sessions/$_sessionId/end-early',
+        verify: (request) {
+          expect(request.rawFilePath, isNull);
+          expect(jsonDecode(request.jsonBody!), {
+            'expected_session_version': 3,
+          });
+          expect(request.headers['Idempotency-Key'], 'end-practice-operation');
+        },
+        response: _json(HttpStatus.ok, {
+          'practice_session_id': _sessionId,
+          'practice_plan_id': 'plan-1',
+          'scenario_type': 'INTERVIEW',
+          'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'snapshot_id': 'snapshot-1',
+          'practice_session_status': 'ended_early',
+          'session_version': 4,
+          'started_at': '2026-07-25T09:00:01Z',
+          'ended_at': '2026-07-25T09:10:00Z',
+          'end_reason': 'USER_ENDED',
+          'created_at': _timestamp,
+        }),
+      ),
+    ]);
+
+    final lifecycle = await _client(transport).endEarly(
+      sessionId: _sessionId,
+      expectedSessionVersion: 3,
+      idempotencyKey: 'end-practice-operation',
+    );
+
+    expect(lifecycle.sessionId, _sessionId);
+    expect(lifecycle.status, PracticeSessionLifecycleStatus.endedEarly);
+    expect(lifecycle.version, 4);
     transport.expectDone();
   });
 

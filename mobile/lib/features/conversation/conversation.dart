@@ -654,13 +654,14 @@ class _QuickActions extends StatelessWidget {
         compact: compact,
         onPressed: onCreatePlan,
       ),
-      _QuickActionButton(
-        actionKey: const Key('quick-action-continue-practice'),
-        icon: Icons.play_arrow_rounded,
-        label: '继续上次练习',
-        compact: compact,
-        onPressed: onContinuePractice,
-      ),
+      if (onContinuePractice != null)
+        _QuickActionButton(
+          actionKey: const Key('quick-action-continue-practice'),
+          icon: Icons.play_arrow_rounded,
+          label: '继续上次练习',
+          compact: compact,
+          onPressed: onContinuePractice,
+        ),
       _QuickActionButton(
         actionKey: const Key('quick-action-browse-scenes'),
         icon: Icons.grid_view_rounded,

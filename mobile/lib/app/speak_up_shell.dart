@@ -71,6 +71,8 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
   bool _reviewPresented = false;
+  bool _practiceRouteInFlight = false;
+  int _navigationGeneration = 0;
 
   @override
   void initState() {
@@ -102,10 +104,39 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _selectDestination(int index) {
+    unawaited(_selectDestinationAfterParking(index));
+  }
+
+  Future<void> _selectDestinationAfterParking(int index) async {
     if (_selectedIndex == index) {
       if (index == 2) {
         unawaited(widget.reviewHistoryController?.refresh());
       }
+      return;
+    }
+    if (_practiceRouteInFlight) {
+      _showMockNotice('正在恢复上次练习，请稍候');
+      return;
+    }
+    final navigationGeneration = ++_navigationGeneration;
+    if (_selectedIndex == 1 && index != 1) {
+      final launch = widget.preparationLaunchController;
+      if (launch?.isStarting ?? false) {
+        _showMockNotice('练习正在准备，请完成后再离开训练页');
+        return;
+      }
+      if (launch?.workspaceController?.currentLease != null) {
+        final parked = await launch!.parkCurrentPractice();
+        if (!mounted || navigationGeneration != _navigationGeneration) {
+          return;
+        }
+        if (!parked) {
+          _showMockNotice(launch.workspaceErrorMessage ?? '暂时无法安全离开训练页');
+          return;
+        }
+      }
+    }
+    if (!mounted || navigationGeneration != _navigationGeneration) {
       return;
     }
     unawaited(widget.agentController.stopPracticeAudio());
@@ -130,15 +161,56 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _openPractice() {
-    if (!widget.agentController.supportsPracticeFlow) {
-      _showMockNotice('场景、语音练习与复盘尚未开放，当前可以使用 Agent 文本对话');
+    unawaited(_openPracticeRoute());
+  }
+
+  Future<void> _openPracticeRoute() async {
+    if (_practiceRouteInFlight) {
       return;
     }
-    if (widget.agentController.review != null) {
-      _selectDestination(2);
-      return;
+    _practiceRouteInFlight = true;
+    final navigationGeneration = _navigationGeneration;
+    final selectedIndex = _selectedIndex;
+    try {
+      if (!widget.agentController.supportsPracticeFlow) {
+        _showMockNotice('场景、语音练习与复盘尚未开放，当前可以使用 Agent 文本对话');
+        return;
+      }
+      final launch = widget.preparationLaunchController;
+      if (launch?.hasResumablePractice ?? false) {
+        final resumed = await launch!.resumeCurrentPractice();
+        final navigationChanged =
+            !mounted ||
+            navigationGeneration != _navigationGeneration ||
+            selectedIndex != _selectedIndex;
+        if (navigationChanged) {
+          if (resumed) {
+            await launch.parkCurrentPractice();
+          }
+          return;
+        }
+        if (!resumed) {
+          if (mounted) {
+            _showMockNotice(launch.workspaceErrorMessage ?? '暂时无法继续上次练习');
+          }
+          return;
+        }
+      }
+      if (widget.agentController.review != null) {
+        _selectDestination(2);
+        return;
+      }
+      if (!widget.agentController.hasActivePractice) {
+        _showMockNotice('请先从训练页选择一项练习');
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      await Navigator.of(context).pushNamed(AppRoutes.practice);
+    } finally {
+      _practiceRouteInFlight = false;
     }
-    Navigator.of(context).pushNamed(AppRoutes.practice);
   }
 
   void _handleAgentState() {
@@ -169,6 +241,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   @override
   Widget build(BuildContext context) {
     final practiceAvailable = widget.agentController.supportsPracticeFlow;
+    final canContinuePractice =
+        widget.agentController.hasActivePractice ||
+        (widget.preparationLaunchController?.hasResumablePractice ?? false);
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final practiceSelected = _selectedIndex == 1;
     final safeBottom = math.max(
@@ -189,7 +264,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             ? () => Navigator.of(context).maybePop()
             : null,
         onCreatePlan: () => _selectDestination(1),
-        onContinuePractice: _openPractice,
+        onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
         onStartVoice: widget.agentController.supportsAgentVoice
             ? () => unawaited(widget.agentController.startAgentVoiceRecording())
@@ -264,6 +339,12 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       drawer: _ConversationDrawer(
         previewMode: widget.previewMode,
         controller: widget.agentController,
+        hiddenThreadIds: {
+          ?widget
+              .preparationLaunchController
+              ?.workspaceController
+              ?.currentPracticeThreadId,
+        },
       ),
       drawerScrimColor: const Color(0x330E1120),
       body: IndexedStack(index: _selectedIndex, children: pages),
@@ -283,10 +364,12 @@ class _ConversationDrawer extends StatelessWidget {
   const _ConversationDrawer({
     required this.previewMode,
     required this.controller,
+    this.hiddenThreadIds = const <String>{},
   });
 
   final bool previewMode;
   final AgentController controller;
+  final Set<String> hiddenThreadIds;
 
   @override
   Widget build(BuildContext context) {
@@ -294,7 +377,9 @@ class _ConversationDrawer extends StatelessWidget {
     final currentThreadId = controller.threadId;
     final recentThreads = <AgentThreadSummary>[
       for (final thread in controller.threads)
-        if (thread.id != currentThreadId) thread,
+        if (thread.id != currentThreadId &&
+            !hiddenThreadIds.contains(thread.id))
+          thread,
     ];
     return Drawer(
       width: 300,

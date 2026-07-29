@@ -30,6 +30,8 @@ const _hiddenCatalogScenarioIds = <String>{
 
 enum _PracticeHub { interview, ielts, roleplay }
 
+enum _ExistingPracticeAction { cancel, continuePractice, replace }
+
 class PreparationPage extends StatefulWidget {
   const PreparationPage({
     this.showBackButton = false,
@@ -141,6 +143,21 @@ class _PreparationPageState extends State<PreparationPage> {
     if (launch.backgroundSummary.trim().isEmpty) {
       launch.updateBackgroundSummary('默认示例：${config.prompt.publicSceneBrief}');
     }
+    var replaceCurrentPractice = false;
+    if (launch.hasResumablePractice) {
+      final action = await _chooseExistingPracticeAction(
+        currentTitle: launch.resumablePracticeTitle,
+        nextTitle: scenario.name,
+      );
+      if (!mounted || action == _ExistingPracticeAction.cancel) {
+        return;
+      }
+      if (action == _ExistingPracticeAction.continuePractice) {
+        await _continueCurrentPractice();
+        return;
+      }
+      replaceCurrentPractice = true;
+    }
     final started = await launch.start(
       PreparationLaunchSelection.fromCatalog(
         scenario: scenario,
@@ -148,8 +165,11 @@ class _PreparationPageState extends State<PreparationPage> {
         role: role,
         option: option,
       ),
+      replaceCurrentPractice: replaceCurrentPractice,
     );
     if (started && mounted) {
+      catalog.showScenarioList();
+      setState(() => _selectedHub = null);
       widget.onPracticeStarted?.call();
     }
   }
@@ -157,8 +177,47 @@ class _PreparationPageState extends State<PreparationPage> {
   Future<void> _retryLaunch() async {
     final started = await widget.launchController?.retry() ?? false;
     if (started && mounted) {
+      widget.preparationController?.showScenarioList();
+      setState(() => _selectedHub = null);
       widget.onPracticeStarted?.call();
     }
+  }
+
+  Future<_ExistingPracticeAction> _chooseExistingPracticeAction({
+    required String? currentTitle,
+    required String nextTitle,
+  }) async {
+    return await showDialog<_ExistingPracticeAction>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('你还有一项练习未完成'),
+            content: Text(
+              '当前练习：${currentTitle ?? '上次练习'}\n'
+              '如果开始“$nextTitle”，当前练习会提前结束。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () =>
+                    Navigator.of(context).pop(_ExistingPracticeAction.cancel),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                key: const Key('continue-existing-practice'),
+                onPressed: () => Navigator.of(
+                  context,
+                ).pop(_ExistingPracticeAction.continuePractice),
+                child: const Text('继续上次练习'),
+              ),
+              FilledButton(
+                key: const Key('replace-existing-practice'),
+                onPressed: () =>
+                    Navigator.of(context).pop(_ExistingPracticeAction.replace),
+                child: const Text('结束并开始新的'),
+              ),
+            ],
+          ),
+        ) ??
+        _ExistingPracticeAction.cancel;
   }
 
   Future<void> _selectPreviewScene(AgentScene scene) async {
@@ -195,7 +254,17 @@ class _PreparationPageState extends State<PreparationPage> {
     }
   }
 
-  void _continueCurrentPractice() {
+  Future<void> _continueCurrentPractice() async {
+    final launch = widget.launchController;
+    if (launch?.hasResumablePractice ?? false) {
+      final resumed = await launch!.resumeCurrentPractice();
+      if (resumed && mounted) {
+        widget.preparationController?.showScenarioList();
+        setState(() => _selectedHub = null);
+        widget.onPracticeStarted?.call();
+      }
+      return;
+    }
     final agent = widget.agentController;
     if (agent?.activeMatter == null) {
       return;
@@ -210,6 +279,9 @@ class _PreparationPageState extends State<PreparationPage> {
   }
 
   bool get _canContinueCurrentPractice {
+    if (widget.launchController?.hasResumablePractice ?? false) {
+      return widget.onPracticeStarted != null;
+    }
     final agent = widget.agentController;
     if (agent?.activeMatter == null) {
       return false;
@@ -291,7 +363,9 @@ class _PreparationPageState extends State<PreparationPage> {
             : _practiceHubLabel(_selectedHub!),
         launchController: widget.launchController,
         backgroundController: _backgroundController,
-        hasAgentContext: widget.agentController?.threadId != null,
+        hasAgentContext:
+            widget.launchController?.workspaceController != null ||
+            widget.agentController?.threadId != null,
         hasPrimaryNavigation: !widget.showBackButton,
         onStart: _startPractice,
         onRetry: _retryLaunch,
@@ -321,17 +395,44 @@ class _PreparationPageState extends State<PreparationPage> {
           key: Key('practice-hub-page-title'),
           style: PreparationDesign.body,
         ),
-        if (widget.agentController?.activeMatter != null) ...[
+        if ((widget.launchController?.hasResumablePractice ?? false) ||
+            widget.agentController?.activeMatter != null) ...[
           const SizedBox(height: 20),
           _PracticeContinuation(
-            sceneTitle: widget.agentController?.activeMatter?.scene.title,
+            sceneTitle:
+                widget.launchController?.resumablePracticeTitle ??
+                widget.agentController?.activeMatter?.scene.title,
             hasActivePractice:
-                widget.agentController?.hasActivePractice ?? false,
+                (widget.launchController?.hasResumablePractice ?? false) ||
+                (widget.agentController?.hasActivePractice ?? false),
             onPressed: _canContinueCurrentPractice
-                ? _continueCurrentPractice
+                ? () => unawaited(_continueCurrentPractice())
                 : null,
           ),
         ],
+        if (widget.launchController?.workspaceErrorMessage case final message?)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message,
+                  key: const Key('practice-workspace-error'),
+                  style: const TextStyle(color: Color(0xFF9A332A), height: 1.4),
+                ),
+                if (widget.launchController?.canRetryWorkspaceActivation ??
+                    false)
+                  TextButton(
+                    key: const Key('retry-practice-workspace-activation'),
+                    onPressed: () => unawaited(
+                      widget.launchController!.retryWorkspaceActivation(),
+                    ),
+                    child: const Text('重试读取练习记录'),
+                  ),
+              ],
+            ),
+          ),
         const SizedBox(height: 24),
         if (controller.isLoadingScenarios)
           const _CatalogLoading(key: Key('preparation-catalog-loading'))
@@ -2483,13 +2584,24 @@ class _LaunchSelectionCard extends StatelessWidget {
                 style: TextStyle(color: Color(0xFF6A5B38), height: 1.4),
               ),
             ],
-            if (controller.errorMessage case final message?) ...[
+            if (controller.errorMessage ?? controller.workspaceErrorMessage
+                case final message?) ...[
               const SizedBox(height: 8),
               Text(
                 message,
                 key: const Key('preparation-launch-error'),
                 style: const TextStyle(color: Color(0xFF9A332A), height: 1.4),
               ),
+              if (controller.canRetryWorkspaceActivation)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('retry-practice-workspace-detail'),
+                    onPressed: () =>
+                        unawaited(controller.retryWorkspaceActivation()),
+                    child: const Text('重试读取练习记录'),
+                  ),
+                ),
             ],
             if (controller.isStarting) ...[
               const SizedBox(height: 10),
@@ -2551,7 +2663,7 @@ class _LaunchUnavailableNotice extends StatelessWidget {
 
 String _launchStageLabel(PreparationLaunchStage? stage) {
   return switch (stage) {
-    PreparationLaunchStage.context => '正在确认 Agent 对话与事项',
+    PreparationLaunchStage.context => '正在准备独立练习空间',
     PreparationLaunchStage.matter => '正在创建或激活本次求职事项',
     PreparationLaunchStage.profile => '正在保存本次背景',
     PreparationLaunchStage.snapshot => '正在冻结练习背景',

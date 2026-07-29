@@ -95,6 +95,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool _threadTransitionInFlight = false;
   int _threadTransitionGeneration = 0;
   String? _practiceSessionId;
+  int? _practiceSessionVersion;
+  String? _endPracticeClientId;
   PracticeQuestion? _currentQuestion;
   TranscriptionCandidate? _candidate;
   String? _activeConfirmationId;
@@ -142,6 +144,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool get hasEarlierMessages => _nextMessageCursor != null;
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get practiceSessionId => _practiceSessionId;
+  int? get practiceSessionVersion => _practiceSessionVersion;
   String? get questionId => _currentQuestion?.id;
   String? get candidateId => _candidate?.id;
   AgentMatter? get activeMatter => _activeMatter;
@@ -347,15 +350,20 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (!_isOperationCurrent(fence)) {
       return;
     }
-    _threadId = thread.threadId;
-    _currentThreadSummary =
+    if (practice != null) {
+      _validatePracticeSnapshot(practice);
+    }
+    final messages = List<AgentMessage>.from(thread.messages);
+    final resolvedSummary =
         summary ?? _threadSummaryFromSnapshot(thread) ?? _currentThreadSummary;
-    _nextMessageCursor = thread.nextMessageCursor;
-    _messages = List<AgentMessage>.from(thread.messages);
-    await _voiceController?.bindThread(thread.threadId, messages: _messages);
+    await _voiceController?.bindThread(thread.threadId, messages: messages);
     if (!_isOperationCurrent(fence)) {
       return;
     }
+    _threadId = thread.threadId;
+    _currentThreadSummary = resolvedSummary;
+    _nextMessageCursor = thread.nextMessageCursor;
+    _messages = messages;
     _applyPracticeSnapshot(practice);
     if (practice == null) {
       _activeMatter = thread.activeMatter;
@@ -1178,6 +1186,93 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<bool> prepareToLeavePractice() async {
+    if (_disposed ||
+        _practiceRequestInFlight ||
+        _threadTransitionInFlight ||
+        (_voiceController?.hasActiveWorkflow ?? false)) {
+      return false;
+    }
+    final state = _recordingState;
+    if (state == PracticeRecordingState.starting ||
+        state == PracticeRecordingState.recording ||
+        state == PracticeRecordingState.awaitingConfirmation) {
+      _practiceGeneration++;
+      _cancelRecordingLimit();
+      await _recorderStartFuture;
+      if (_disposed || _practiceRequestInFlight) {
+        return false;
+      }
+      await recorder.discardCurrent();
+      _candidate = null;
+      _activeConfirmationId = null;
+      _activeTextAnswer = null;
+      _recordingState = PracticeRecordingState.idle;
+      _errorMessage = null;
+      notifyListeners();
+    }
+    await stopPracticeAudio();
+    return !_disposed && !_practiceRequestInFlight;
+  }
+
+  Future<bool> endActivePracticeEarly() async {
+    final practice = practiceClient;
+    final PracticeLifecycleClient? lifecycle =
+        practice is PracticeLifecycleClient
+        ? practice as PracticeLifecycleClient
+        : null;
+    final sessionId = _practiceSessionId;
+    final sessionVersion = _practiceSessionVersion;
+    if (lifecycle == null ||
+        sessionId == null ||
+        sessionVersion == null ||
+        !hasActivePractice ||
+        isBusy ||
+        _disposed) {
+      return false;
+    }
+    final fence = _captureOperationFence(
+      threadId: _threadId,
+      practiceSessionId: sessionId,
+    );
+    final operationId = _endPracticeClientId ??= _newClientId('practice-end');
+    _setBusy(true);
+    _errorMessage = null;
+    try {
+      await stopPracticeAudio();
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      final result = await lifecycle.endEarly(
+        sessionId: sessionId,
+        expectedSessionVersion: sessionVersion,
+        idempotencyKey: operationId,
+      );
+      if (!_isOperationCurrent(fence) ||
+          result.sessionId != sessionId ||
+          result.status != PracticeSessionLifecycleStatus.endedEarly ||
+          result.version <= sessionVersion) {
+        throw StateError('Practice end response did not match the session.');
+      }
+      _applyPracticeSnapshot(null);
+      _endPracticeClientId = null;
+      return true;
+    } catch (error) {
+      if (_isOperationCurrent(fence)) {
+        _errorMessage =
+            error is AgentClientException &&
+                error.kind == AgentClientFailureKind.authenticationRequired
+            ? '登录状态已失效，请重新登录后继续。'
+            : '暂时无法结束当前练习，进度仍已保留，可以重试。';
+      }
+      return false;
+    } finally {
+      if (_isCurrent(fence.epoch)) {
+        _setBusy(false);
+      }
+    }
+  }
+
   Future<void> _togglePracticeMedia({
     required String key,
     required _AgentOperationFence fence,
@@ -1582,6 +1677,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _completedTurns = confirmation.completedTurns;
     _turnLimit = confirmation.turnLimit;
     _sessionCompleted = confirmation.sessionCompleted;
+    _practiceSessionVersion =
+        confirmation.sessionVersion ?? _practiceSessionVersion;
+    _endPracticeClientId = null;
     _currentQuestion = confirmation.nextQuestion;
     _review = confirmation.review;
     final audioAssetId = confirmation.audioAssetId;
@@ -1684,6 +1782,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _threadTransitionGeneration++;
     _threadTransitionInFlight = false;
     _practiceSessionId = null;
+    _practiceSessionVersion = null;
+    _endPracticeClientId = null;
     _currentQuestion = null;
     _candidate = null;
     _activeConfirmationId = null;
@@ -1843,6 +1943,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(audioPlayer?.stop());
     if (snapshot == null) {
       _practiceSessionId = null;
+      _practiceSessionVersion = null;
+      _endPracticeClientId = null;
       _currentQuestion = null;
       _activeMatter = null;
       _completedTurns = 0;
@@ -1857,6 +1959,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final mayPreserveKnownRecordings =
         preserveKnownRecordings && snapshot.sessionId == _practiceSessionId;
     _practiceSessionId = snapshot.sessionId;
+    _practiceSessionVersion = snapshot.sessionVersion;
+    _endPracticeClientId = null;
     _currentQuestion = snapshot.currentQuestion;
     _activeMatter = snapshot.matter;
     _completedTurns = snapshot.completedTurns;
@@ -2256,6 +2360,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         snapshot.turnLimit < 1 ||
         snapshot.turnLimit > 6 ||
         snapshot.completedTurns > snapshot.turnLimit ||
+        (snapshot.sessionVersion != null && snapshot.sessionVersion! < 1) ||
         (!snapshot.sessionCompleted && snapshot.currentQuestion == null) ||
         (snapshot.currentQuestion != null &&
             snapshot.currentQuestion!.sessionId != snapshot.sessionId) ||
@@ -2312,6 +2417,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         confirmation.turnLimit < 1 ||
         confirmation.turnLimit > 6 ||
         confirmation.completedTurns > confirmation.turnLimit ||
+        (confirmation.sessionVersion != null &&
+            confirmation.sessionVersion! < 1) ||
         (!confirmation.sessionCompleted && confirmation.nextQuestion == null) ||
         (confirmation.nextQuestion != null &&
             confirmation.nextQuestion!.sessionId != confirmation.sessionId) ||

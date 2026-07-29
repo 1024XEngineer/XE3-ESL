@@ -137,7 +137,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     _agentController.initialize();
     final user = widget.user;
     if (user != null) {
-      unawaited(widget.jobPreparationController?.activateAccount(user.id));
+      unawaited(_activateAccount(user.id));
     }
   }
 
@@ -145,12 +145,22 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   void didUpdateWidget(covariant _AuthenticatedNavigator oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user?.id != widget.user?.id ||
-        oldWidget.jobPreparationController != widget.jobPreparationController) {
+        oldWidget.jobPreparationController != widget.jobPreparationController ||
+        oldWidget.preparationLaunchController !=
+            widget.preparationLaunchController) {
       final user = widget.user;
       if (user != null) {
-        unawaited(widget.jobPreparationController?.activateAccount(user.id));
+        unawaited(_activateAccount(user.id));
       }
     }
+  }
+
+  Future<void> _activateAccount(String accountId) async {
+    await widget.preparationLaunchController?.activateAccount(accountId);
+    if (!mounted || widget.user?.id != accountId) {
+      return;
+    }
+    await widget.jobPreparationController?.activateAccount(accountId);
   }
 
   @override
@@ -203,6 +213,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           AppRoutes.practice => PracticePage(
             previewMode: widget.allowFakePreview,
             agentController: _agentController,
+            onExitRequested:
+                widget.preparationLaunchController?.parkCurrentPractice,
           ),
           AppRoutes.conversation => SpeakUpShell(
             showBackButton: true,

@@ -12,11 +12,13 @@ class PracticePage extends StatefulWidget {
   const PracticePage({
     this.previewMode = false,
     this.agentController,
+    this.onExitRequested,
     super.key,
   });
 
   final bool previewMode;
   final AgentController? agentController;
+  final Future<bool> Function()? onExitRequested;
 
   @override
   State<PracticePage> createState() => _PracticePageState();
@@ -31,6 +33,8 @@ class _PracticePageState extends State<PracticePage> {
   Animation<double>? _observedSecondaryAnimation;
   AnimationStatusListener? _reviewRouteStatusListener;
   String? _expandedHintQuestionId;
+  bool _exitInFlight = false;
+  bool _exitApproved = false;
 
   @override
   void initState() {
@@ -208,106 +212,154 @@ class _PracticePageState extends State<PracticePage> {
     }
   }
 
+  Future<void> _requestExit() async {
+    if (!mounted || _exitInFlight || _exitApproved) {
+      return;
+    }
+    final callback = widget.onExitRequested;
+    if (callback == null) {
+      _exitApproved = true;
+    } else {
+      _exitInFlight = true;
+      bool approved;
+      try {
+        approved = await callback();
+      } on Object {
+        approved = false;
+      }
+      if (!mounted) {
+        return;
+      }
+      _exitInFlight = false;
+      if (!approved) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(const SnackBar(content: Text('当前练习正在保存，请稍后再返回。')));
+        setState(() {});
+        return;
+      }
+      _exitApproved = true;
+    }
+    if (mounted) {
+      setState(() {});
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    if (mounted) {
+      await Navigator.of(context).maybePop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.agentController;
     final scene = controller?.scene;
-    return Scaffold(
-      key: const Key('practice-page'),
-      backgroundColor: const Color(0xFFF3F3F0),
-      appBar: AppBar(
-        title: const Text('按轮练习'),
+    return PopScope<void>(
+      canPop: widget.onExitRequested == null || _exitApproved,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          unawaited(_requestExit());
+        }
+      },
+      child: Scaffold(
+        key: const Key('practice-page'),
         backgroundColor: const Color(0xFFF3F3F0),
-        surfaceTintColor: Colors.transparent,
-      ),
-      body: SafeArea(
-        child: controller == null || scene == null
-            ? const _NoScene()
-            : ListView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-                children: [
-                  Text(
-                    scene.title,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '一问一答，完成 ${controller.turnLimit} 轮有效回答后自动生成复盘。',
-                    style: TextStyle(color: Color(0xFF696B73), height: 1.4),
-                  ),
-                  const SizedBox(height: 22),
-                  _TurnProgress(
-                    completedTurns: controller.completedTurns,
-                    turnLimit: controller.turnLimit,
-                  ),
-                  const SizedBox(height: 22),
-                  _CurrentQuestion(
-                    controller: controller,
-                    expandedHintQuestionId: _expandedHintQuestionId,
-                    onToggleHint: _toggleHint,
-                  ),
-                  const SizedBox(height: 12),
-                  const _CorrectionIntegrationStatus(),
-                  if (controller.errorMessage case final message?) ...[
-                    const SizedBox(height: 14),
+        appBar: AppBar(
+          title: const Text('按轮练习'),
+          backgroundColor: const Color(0xFFF3F3F0),
+          surfaceTintColor: Colors.transparent,
+        ),
+        body: SafeArea(
+          child: controller == null || scene == null
+              ? const _NoScene()
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+                  children: [
                     Text(
-                      message,
-                      key: const Key('practice-error-message'),
-                      style: const TextStyle(color: Color(0xFF8B2E26)),
-                    ),
-                  ],
-                  if (controller.mediaErrorMessage case final message?) ...[
-                    const SizedBox(height: 14),
-                    Text(
-                      message,
-                      key: const Key('practice-media-error-message'),
-                      style: const TextStyle(color: Color(0xFF8B2E26)),
-                    ),
-                  ],
-                  const SizedBox(height: 18),
-                  _RecordingPanel(
-                    controller: controller,
-                    textController: _textAnswerController,
-                    onSubmitText: _submitTextAnswer,
-                  ),
-                  if (controller.recordings.isNotEmpty) ...[
-                    const SizedBox(height: 18),
-                    PracticeRecordingsCard(controller: controller),
-                  ],
-                  if (controller.messages.any(
-                    (message) => message.id != controller.questionId,
-                  )) ...[
-                    const SizedBox(height: 22),
-                    const Text(
-                      '本次对话记录',
-                      style: TextStyle(
-                        fontSize: 18,
+                      scene.title,
+                      style: const TextStyle(
+                        fontSize: 28,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    _ConversationHistory(
-                      messages: controller.messages
-                          .where(
-                            (message) => message.id != controller.questionId,
-                          )
-                          .toList(growable: false),
+                    const SizedBox(height: 8),
+                    Text(
+                      '一问一答，完成 ${controller.turnLimit} 轮有效回答后自动生成复盘。',
+                      style: TextStyle(color: Color(0xFF696B73), height: 1.4),
+                    ),
+                    const SizedBox(height: 22),
+                    _TurnProgress(
+                      completedTurns: controller.completedTurns,
+                      turnLimit: controller.turnLimit,
+                    ),
+                    const SizedBox(height: 22),
+                    _CurrentQuestion(
+                      controller: controller,
                       expandedHintQuestionId: _expandedHintQuestionId,
                       onToggleHint: _toggleHint,
                     ),
-                  ],
-                  const SizedBox(height: 18),
-                  if (widget.previewMode)
-                    const Text(
-                      '当前页面仅供显式 Fake 预览，不代表生产语音服务已经接入。',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Color(0xFF85878E), fontSize: 12),
+                    const SizedBox(height: 12),
+                    const _CorrectionIntegrationStatus(),
+                    if (controller.errorMessage case final message?) ...[
+                      const SizedBox(height: 14),
+                      Text(
+                        message,
+                        key: const Key('practice-error-message'),
+                        style: const TextStyle(color: Color(0xFF8B2E26)),
+                      ),
+                    ],
+                    if (controller.mediaErrorMessage case final message?) ...[
+                      const SizedBox(height: 14),
+                      Text(
+                        message,
+                        key: const Key('practice-media-error-message'),
+                        style: const TextStyle(color: Color(0xFF8B2E26)),
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    _RecordingPanel(
+                      controller: controller,
+                      textController: _textAnswerController,
+                      onSubmitText: _submitTextAnswer,
                     ),
-                ],
-              ),
+                    if (controller.recordings.isNotEmpty) ...[
+                      const SizedBox(height: 18),
+                      PracticeRecordingsCard(controller: controller),
+                    ],
+                    if (controller.messages.any(
+                      (message) => message.id != controller.questionId,
+                    )) ...[
+                      const SizedBox(height: 22),
+                      const Text(
+                        '本次对话记录',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _ConversationHistory(
+                        messages: controller.messages
+                            .where(
+                              (message) => message.id != controller.questionId,
+                            )
+                            .toList(growable: false),
+                        expandedHintQuestionId: _expandedHintQuestionId,
+                        onToggleHint: _toggleHint,
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    if (widget.previewMode)
+                      const Text(
+                        '当前页面仅供显式 Fake 预览，不代表生产语音服务已经接入。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFF85878E),
+                          fontSize: 12,
+                        ),
+                      ),
+                  ],
+                ),
+        ),
       ),
     );
   }

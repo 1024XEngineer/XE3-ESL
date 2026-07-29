@@ -25,7 +25,7 @@ void main() {
     expect(find.byKey(const Key('quick-action-create-plan')), findsOneWidget);
     expect(
       find.byKey(const Key('quick-action-continue-practice')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.byKey(const Key('quick-action-recent-review')), findsOneWidget);
     expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
@@ -352,7 +352,7 @@ void main() {
     },
   );
 
-  testWidgets('keeps all four Agent actions above the composer on iPhone', (
+  testWidgets('keeps available Agent actions above the composer on iPhone', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(402, 874);
@@ -365,7 +365,6 @@ void main() {
 
     const actionKeys = [
       'quick-action-create-plan',
-      'quick-action-continue-practice',
       'quick-action-browse-scenes',
       'quick-action-recent-review',
     ];
@@ -496,8 +495,10 @@ void main() {
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
-    await _tapVisible(tester, 'quick-action-continue-practice');
-    expect(find.byType(PracticePage), findsOneWidget);
+    expect(
+      find.byKey(const Key('quick-action-continue-practice')),
+      findsNothing,
+    );
   });
 
   testWidgets('keeps every formal feature route reachable', (tester) async {

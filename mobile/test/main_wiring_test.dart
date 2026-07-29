@@ -13,6 +13,7 @@ import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/preparation/wire_job_preparation_client.dart';
 import 'package:speakup/features/preparation/wire_preparation_client.dart';
 import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
@@ -136,6 +137,7 @@ void main() {
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
         jobPreparationDraftStore: MemoryJobPreparationDraftStore(),
+        practiceLaunchRecordStore: MemoryPracticeLaunchRecordStore(),
         sessionStore: _MemorySessionStore('sess_main-wiring'),
       );
       addTearDown(dependencies.agentController.dispose);
