@@ -2,14 +2,43 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/preparation/job_preparation_client.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
 import 'package:speakup/features/preparation/job_preparation_models.dart';
 import 'package:speakup/features/preparation/job_preparation_wizard.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
 void main() {
+  testWidgets('restorable draft actions fit the shared button theme', (
+    tester,
+  ) async {
+    final store = MemoryJobPreparationDraftStore();
+    final first = _controller(_WizardClient(), draftStore: store);
+    await first.activateAccount('user-1');
+    first.updateInput(_input);
+    await tester.pump();
+    first.dispose();
+
+    final restored = _controller(_WizardClient(), draftStore: store);
+    addTearDown(restored.dispose);
+    await restored.activateAccount('user-1');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: JobPreparationWizard(controller: restored),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('job-draft-card')), findsOneWidget);
+    expect(find.byKey(const Key('resume-job-draft-button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('starts with JD-first input and labels quick start honestly', (
     tester,
   ) async {
@@ -234,11 +263,13 @@ Future<void> _scrollTo(
 
 JobPreparationController _controller(
   _WizardClient client, {
+  JobPreparationDraftStore? draftStore,
   JobPreparationVoiceActivator? voiceActivator,
 }) {
   var sequence = 0;
   return JobPreparationController(
     client: client,
+    draftStore: draftStore,
     threadIdProvider: () => _threadId,
     matterActivator:
         ({
