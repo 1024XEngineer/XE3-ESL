@@ -14,7 +14,7 @@ import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/review/review.dart';
 
 void main() {
-  testWidgets('starts on the Agent home with four glass navigation entries', (
+  testWidgets('starts on the Agent home with four primary navigation entries', (
     tester,
   ) async {
     await tester.pumpWidget(const SpeakUpApp.preview());
@@ -39,7 +39,7 @@ void main() {
     expect(navigation, findsOneWidget);
     expect(
       find.ancestor(of: navigation, matching: find.byType(BackdropFilter)),
-      findsOneWidget,
+      findsNothing,
     );
     final composerRect = tester.getRect(
       find.byKey(const Key('agent-composer-surface')),
@@ -101,7 +101,7 @@ void main() {
       key: 'primary-tab-profile',
       expectedPageKey: 'profile-page',
     );
-    expect(find.text('当前账号与本机登录状态。'), findsOneWidget);
+    expect(find.text('管理账号与练习身份。'), findsOneWidget);
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-agent',
