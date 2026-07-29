@@ -86,7 +86,6 @@ components:
         region:
           type: string
           enum:
-            - cn-beijing
             - ap-northeast
             - us-west
         expires_at:

@@ -14,9 +14,9 @@ func TestLoadSpatiusUsesDisabledSafeDefaults(t *testing.T) {
 		t.Fatalf("LoadSpatius() error = %v", err)
 	}
 	if configuration.Enabled ||
-		configuration.Region != SpatiusRegionChinaBeijing ||
+		configuration.Region != SpatiusRegionAPNortheast ||
 		configuration.ConsoleBaseURL !=
-			"https://console.cn-beijing.spatialwalk.top/v1/console" ||
+			"https://console.ap-northeast.spatialwalk.cloud/v1/console" ||
 		configuration.TokenTTL != 10*time.Minute ||
 		configuration.Timeout != 5*time.Second ||
 		configuration.APIKey.Reveal() != "" {
@@ -30,7 +30,7 @@ func TestLoadSpatiusReadsEnabledConfiguration(t *testing.T) {
 	t.Setenv("SPATIUS_REGION", SpatiusRegionAPNortheast)
 	t.Setenv(
 		"SPATIUS_CONSOLE_BASE_URL",
-		"https://console.ap-northeast.spatius.ai/v1/console",
+		"https://console.ap-northeast.spatialwalk.cloud/v1/console",
 	)
 	t.Setenv("SPATIUS_APP_ID", "app-test_1")
 	t.Setenv("SPATIUS_AVATAR_ID", "avatar-test_1")
@@ -70,12 +70,12 @@ func TestLoadSpatiusRejectsUnsafeConfiguration(t *testing.T) {
 		{
 			name:  "region endpoint mismatch",
 			key:   "SPATIUS_CONSOLE_BASE_URL",
-			value: "https://console.us-west.spatius.ai/v1/console",
+			value: "https://console.us-west.spatialwalk.cloud/v1/console",
 		},
 		{
 			name:  "endpoint query",
 			key:   "SPATIUS_CONSOLE_BASE_URL",
-			value: "https://console.cn-beijing.spatialwalk.top/v1/console?redirect=1",
+			value: "https://console.ap-northeast.spatialwalk.cloud/v1/console?redirect=1",
 		},
 		{name: "short token ttl", key: "SPATIUS_TOKEN_TTL", value: "30s"},
 		{name: "long token ttl", key: "SPATIUS_TOKEN_TTL", value: "11m"},
@@ -109,7 +109,7 @@ func TestLoadSpatiusDisabledIgnoresStaleProviderOverrides(t *testing.T) {
 		t.Fatalf("LoadSpatius() error = %v", err)
 	}
 	if configuration.Enabled ||
-		configuration.Region != SpatiusRegionChinaBeijing ||
+		configuration.Region != SpatiusRegionAPNortheast ||
 		configuration.TokenTTL != defaultSpatiusTokenTTL ||
 		configuration.Timeout != defaultSpatiusTimeout ||
 		configuration.APIKey.Reveal() != "" {
@@ -137,10 +137,10 @@ func setRequiredSpatiusEnvironment(t *testing.T) {
 	t.Helper()
 	clearSpatiusEnvironment(t)
 	t.Setenv("SPATIUS_ENABLED", "true")
-	t.Setenv("SPATIUS_REGION", SpatiusRegionChinaBeijing)
+	t.Setenv("SPATIUS_REGION", SpatiusRegionAPNortheast)
 	t.Setenv(
 		"SPATIUS_CONSOLE_BASE_URL",
-		"https://console.cn-beijing.spatialwalk.top/v1/console",
+		"https://console.ap-northeast.spatialwalk.cloud/v1/console",
 	)
 	t.Setenv("SPATIUS_APP_ID", "app-test")
 	t.Setenv("SPATIUS_AVATAR_ID", "avatar-test")

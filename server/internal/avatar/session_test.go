@@ -39,7 +39,7 @@ func TestServiceIssuesFrozenClientContractForOwnedInteractiveSession(
 	if result.AppID != "app-1" ||
 		result.AvatarID != "avatar-1" ||
 		result.SessionToken != "provider-session-token" ||
-		result.Region != "cn-beijing" ||
+		result.Region != "ap-northeast" ||
 		result.ExpiresAt != "2026-07-29T10:10:00Z" ||
 		result.AudioFormat != (AudioFormat{
 			Encoding:     "PCM_S16LE",
@@ -191,7 +191,7 @@ func TestNewServiceRejectsTokenTTLAboveHardLimit(t *testing.T) {
 			Enabled:  true,
 			AppID:    "app-1",
 			AvatarID: "avatar-1",
-			Region:   "cn-beijing",
+			Region:   "ap-northeast",
 			TokenTTL: maximumSessionTokenTTL + time.Nanosecond,
 		},
 		contextSessionReaderStub{},
@@ -241,7 +241,7 @@ func newTestService(
 			Enabled:  true,
 			AppID:    "app-1",
 			AvatarID: "avatar-1",
-			Region:   "cn-beijing",
+			Region:   "ap-northeast",
 			TokenTTL: 10 * time.Minute,
 		},
 		sessions,

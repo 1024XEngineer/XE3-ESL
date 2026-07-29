@@ -297,7 +297,9 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
     _readinessTimer = null;
     var retry = false;
     try {
-      final connected = await controller.connect(practiceSessionId: sessionId);
+      final connected = await controller
+          .connect(practiceSessionId: sessionId)
+          .timeout(_avatarReadinessTimeout);
       if (!_connectionFenceMatches(
         controller: controller,
         operationId: operationId,
@@ -330,6 +332,14 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
           setState(() {});
         }
       });
+    } on TimeoutException {
+      if (_connectionFenceMatches(
+        controller: controller,
+        operationId: operationId,
+        sessionId: sessionId,
+      )) {
+        _readinessExpired = true;
+      }
     } catch (_) {
       if (_connectionFenceMatches(
         controller: controller,

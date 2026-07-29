@@ -165,6 +165,41 @@ void main() {
     expect(tokenClient.requestedSessionIds, hasLength(2));
   });
 
+  testWidgets('falls back when avatar preparation does not finish in time', (
+    tester,
+  ) async {
+    final agentController = await _immersiveAgentController();
+    addTearDown(agentController.dispose);
+    final prepareGate = Completer<void>();
+    final renderer = FakeAvatarRenderer(prepareGate: prepareGate);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ImmersiveRoleplaySession(
+          agentController: agentController,
+          avatarControllerFactory: () => AvatarController(
+            renderer: renderer,
+            tokenClient: FakeAvatarSessionTokenClient(),
+            fallbackPlayback: (_) async {},
+            fallbackStop: () async {},
+            delay: (_) async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('正在准备情景角色'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pump();
+
+    expect(find.text('画面暂不可用，语音仍可继续'), findsOneWidget);
+
+    prepareGate.complete();
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('waits for a retry before loading assistant fallback audio', (
     tester,
   ) async {

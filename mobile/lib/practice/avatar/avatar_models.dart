@@ -2,8 +2,7 @@ import 'dart:typed_data';
 
 enum AvatarRegion {
   usWest('us-west'),
-  apNortheast('ap-northeast'),
-  cnBeijing('cn-beijing');
+  apNortheast('ap-northeast');
 
   const AvatarRegion(this.wireName);
 

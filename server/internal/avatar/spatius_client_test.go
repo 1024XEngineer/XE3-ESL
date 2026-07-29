@@ -14,7 +14,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 
-func TestSpatiusClientSendsServerCredentialAndParsesNestedResponse(
+func TestSpatiusClientSendsServerCredentialAndParsesResponse(
 	t *testing.T,
 ) {
 	expiry := time.Now().UTC().Add(10 * time.Minute).Truncate(time.Second)
@@ -31,21 +31,23 @@ func TestSpatiusClientSendsServerCredentialAndParsesNestedResponse(
 			if err != nil {
 				t.Fatalf("read body: %v", err)
 			}
-			var payload struct {
-				AppID    string `json:"appId"`
-				ExpireAt int64  `json:"expireAt"`
-			}
+			var payload map[string]json.RawMessage
 			if err := json.Unmarshal(body, &payload); err != nil {
 				t.Fatalf("decode body: %v", err)
 			}
-			if payload.AppID != "app-1" ||
-				payload.ExpireAt != expiry.Unix() {
+			if len(payload) != 1 {
 				t.Fatalf("payload = %#v", payload)
+			}
+			var expireAt int64
+			if err := json.Unmarshal(payload["expireAt"], &expireAt); err != nil {
+				t.Fatalf("decode expireAt: %v", err)
+			}
+			if expireAt != expiry.Unix() {
+				t.Fatalf("expireAt = %d", expireAt)
 			}
 			response.Header().Set("Content-Type", "application/json")
 			_, _ = response.Write([]byte(
-				`{"data":{"sessionKey":"provider-session-token","expireAt":` +
-					jsonNumber(expiry.Unix()) + `}}`,
+				`{"sessionToken":"provider-session-token"}`,
 			))
 		},
 	))
@@ -136,6 +138,20 @@ func TestSpatiusClientRejectsUnsafeProviderResponses(t *testing.T) {
 			expected:    ErrInvalidProviderResponse,
 		},
 		{
+			name:        "provider error",
+			status:      http.StatusOK,
+			contentType: "application/json",
+			body:        `{"errors":[{"status":400,"detail":"invalid api key"}]}`,
+			expected:    ErrProviderUnavailable,
+		},
+		{
+			name:        "provider quota error",
+			status:      http.StatusOK,
+			contentType: "application/json",
+			body:        `{"errors":[{"status":429,"detail":"secret diagnostics"}]}`,
+			expected:    ErrProviderQuotaExhausted,
+		},
+		{
 			name:        "oversized",
 			status:      http.StatusOK,
 			contentType: "application/json",
@@ -185,7 +201,7 @@ func spatiusClientTestConfiguration(
 ) config.SpatiusConfig {
 	t.Helper()
 	t.Setenv("SPATIUS_ENABLED", "true")
-	t.Setenv("SPATIUS_REGION", "cn-beijing")
+	t.Setenv("SPATIUS_REGION", "ap-northeast")
 	t.Setenv("SPATIUS_CONSOLE_BASE_URL", "")
 	t.Setenv("SPATIUS_APP_ID", "app-1")
 	t.Setenv("SPATIUS_AVATAR_ID", "avatar-1")
@@ -197,18 +213,4 @@ func spatiusClientTestConfiguration(
 		t.Fatalf("LoadSpatius() error = %v", err)
 	}
 	return configuration
-}
-
-func jsonNumber(value int64) string {
-	return strings.TrimSpace(
-		string(mustJSONMarshal(value)),
-	)
-}
-
-func mustJSONMarshal(value any) []byte {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		panic(err)
-	}
-	return encoded
 }

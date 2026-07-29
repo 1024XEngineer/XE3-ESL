@@ -10,10 +10,9 @@ import (
 )
 
 const (
-	SpatiusRegionChinaBeijing = "cn-beijing"
 	SpatiusRegionAPNortheast  = "ap-northeast"
 	SpatiusRegionUSWest       = "us-west"
-	defaultSpatiusRegion      = SpatiusRegionChinaBeijing
+	defaultSpatiusRegion      = SpatiusRegionAPNortheast
 	defaultSpatiusTokenTTL    = 10 * time.Minute
 	defaultSpatiusTimeout     = 5 * time.Second
 	minimumSpatiusTokenTTL    = time.Minute
@@ -22,9 +21,8 @@ const (
 )
 
 var spatiusConsoleBaseURLs = map[string]string{
-	SpatiusRegionChinaBeijing: "https://console.cn-beijing.spatialwalk.top/v1/console",
-	SpatiusRegionAPNortheast:  "https://console.ap-northeast.spatius.ai/v1/console",
-	SpatiusRegionUSWest:       "https://console.us-west.spatius.ai/v1/console",
+	SpatiusRegionAPNortheast: "https://console.ap-northeast.spatialwalk.cloud/v1/console",
+	SpatiusRegionUSWest:      "https://console.us-west.spatialwalk.cloud/v1/console",
 }
 
 type SpatiusConfig struct {

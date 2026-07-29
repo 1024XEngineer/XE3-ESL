@@ -47,7 +47,7 @@ void main() {
       expect(grant.appId, 'app-1');
       expect(grant.avatarId, 'avatar-1');
       expect(grant.sessionToken, 'private-avatar-token');
-      expect(grant.region, AvatarRegion.cnBeijing);
+      expect(grant.region, AvatarRegion.apNortheast);
       expect(grant.audioFormat.isSupported, isTrue);
       expect(responseBody, everyElement(0));
       expect(grant.toString(), isNot(contains('private-avatar-token')));
@@ -337,7 +337,7 @@ Map<String, Object?> _grantJson(DateTime now, {DateTime? expiresAt}) {
     'app_id': 'app-1',
     'avatar_id': 'avatar-1',
     'session_token': 'private-avatar-token',
-    'region': 'cn-beijing',
+    'region': 'ap-northeast',
     'expires_at': (expiresAt ?? now.add(const Duration(minutes: 10)))
         .toIso8601String(),
     'audio_format': {

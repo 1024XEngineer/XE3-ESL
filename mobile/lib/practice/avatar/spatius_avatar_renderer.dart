@@ -17,6 +17,9 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
         sync: true,
       );
 
+  static const _avatarLoadTimeout = Duration(seconds: 15);
+  static const _cancelLoadingTimeout = Duration(seconds: 1);
+
   final StreamController<AvatarRendererState> _stateController;
 
   static int _nextTokenLease = 0;
@@ -70,9 +73,20 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
         await _clearSdkTokenIfOwned();
         throw const AvatarRendererException(AvatarRendererFailure.unavailable);
       }
-      _loadingAvatarId = grant.avatarId;
-      _avatar = await kit.AvatarManager.shared.load(id: grant.avatarId);
-      _loadingAvatarId = null;
+      final avatarId = grant.avatarId;
+      _loadingAvatarId = avatarId;
+      try {
+        _avatar = await kit.AvatarManager.shared
+            .load(id: avatarId)
+            .timeout(_avatarLoadTimeout);
+      } on TimeoutException {
+        await _cancelLoadingBestEffort(avatarId);
+        throw const AvatarRendererException(AvatarRendererFailure.network);
+      } finally {
+        if (_loadingAvatarId == avatarId) {
+          _loadingAvatarId = null;
+        }
+      }
       if (_closed) {
         await _clearSdkTokenIfOwned();
         throw const AvatarRendererException(AvatarRendererFailure.unavailable);
@@ -86,6 +100,11 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
       await _cleanupFailedPrepare();
       _fail(error.failure);
       rethrow;
+    } on kit.AvatarError catch (error) {
+      await _cleanupFailedPrepare();
+      final failure = _mapError(error);
+      _fail(failure);
+      throw AvatarRendererException(failure);
     } catch (_) {
       await _cleanupFailedPrepare();
       _fail(AvatarRendererFailure.unavailable);
@@ -266,11 +285,7 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
     final loadingAvatarId = _loadingAvatarId;
     _loadingAvatarId = null;
     if (loadingAvatarId != null) {
-      try {
-        await kit.AvatarManager.shared.cancelLoading(id: loadingAvatarId);
-      } catch (_) {
-        // Cancellation is best-effort during teardown.
-      }
+      await _cancelLoadingBestEffort(loadingAvatarId);
     }
     final controller = _controller;
     _controller = null;
@@ -321,9 +336,7 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
       await kit.AvatarSDK.initialize(
         appID: grant.appId,
         configuration: kit.Configuration(
-          environment: grant.region == AvatarRegion.cnBeijing
-              ? kit.Environment.cn
-              : kit.Environment.intl,
+          environment: kit.Environment.intl,
           audioFormat: kit.AudioFormat(
             sampleRate: grant.audioFormat.sampleRateHz,
           ),
@@ -348,14 +361,20 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
     final loadingAvatarId = _loadingAvatarId;
     _loadingAvatarId = null;
     if (loadingAvatarId != null) {
-      try {
-        await kit.AvatarManager.shared.cancelLoading(id: loadingAvatarId);
-      } catch (_) {
-        // Failed preparation still releases the session token below.
-      }
+      await _cancelLoadingBestEffort(loadingAvatarId);
     }
     _avatar = null;
     await _clearSdkTokenIfOwned();
+  }
+
+  Future<void> _cancelLoadingBestEffort(String avatarId) async {
+    try {
+      await kit.AvatarManager.shared
+          .cancelLoading(id: avatarId)
+          .timeout(_cancelLoadingTimeout);
+    } catch (_) {
+      // beta SDKs may cancel natively without completing the Flutter call.
+    }
   }
 
   Future<void> _clearSdkTokenIfOwned() async {

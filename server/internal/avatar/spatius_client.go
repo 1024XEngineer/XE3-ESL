@@ -9,7 +9,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -80,10 +79,8 @@ func (client *SpatiusClient) CreateSessionToken(
 		return ProviderSessionToken{}, ErrProviderUnavailable
 	}
 	payload, err := json.Marshal(struct {
-		AppID    string `json:"appId"`
-		ExpireAt int64  `json:"expireAt"`
+		ExpireAt int64 `json:"expireAt"`
 	}{
-		AppID:    appID,
 		ExpireAt: expiresAt.UTC().Unix(),
 	})
 	if err != nil {
@@ -132,99 +129,44 @@ func (client *SpatiusClient) CreateSessionToken(
 	if err != nil || len(body) == 0 || len(body) > maxSpatiusResponseBody {
 		return ProviderSessionToken{}, ErrInvalidProviderResponse
 	}
-	token, providerExpiry, err := decodeSpatiusSessionToken(body)
+	token, err := decodeSpatiusSessionToken(body)
 	if err != nil {
-		return ProviderSessionToken{}, ErrInvalidProviderResponse
-	}
-	if providerExpiry.IsZero() {
-		providerExpiry = expiresAt.UTC().Truncate(time.Second)
+		return ProviderSessionToken{}, err
 	}
 	return ProviderSessionToken{
 		Value:     token,
-		ExpiresAt: providerExpiry.UTC(),
+		ExpiresAt: expiresAt.UTC().Truncate(time.Second),
 	}, nil
 }
 
-func decodeSpatiusSessionToken(
-	body []byte,
-) (string, time.Time, error) {
+func decodeSpatiusSessionToken(body []byte) (string, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	var document map[string]any
+	var document struct {
+		SessionToken string `json:"sessionToken"`
+		Errors       []struct {
+			Status int `json:"status"`
+		} `json:"errors"`
+	}
 	if err := decoder.Decode(&document); err != nil {
-		return "", time.Time{}, err
+		return "", ErrInvalidProviderResponse
 	}
 	var trailing any
 	if !errors.Is(decoder.Decode(&trailing), io.EOF) {
-		return "", time.Time{}, ErrInvalidProviderResponse
+		return "", ErrInvalidProviderResponse
 	}
-	token := spatiusTokenValue(document)
-	if token != "" {
-		expiry, err := spatiusExpiryValue(document)
-		if err != nil || !validSessionToken(token) {
-			return "", time.Time{}, ErrInvalidProviderResponse
-		}
-		return token, expiry, nil
-	}
-	data, ok := document["data"].(map[string]any)
-	if !ok {
-		return "", time.Time{}, ErrInvalidProviderResponse
-	}
-	token = spatiusTokenValue(data)
-	if !validSessionToken(token) {
-		return "", time.Time{}, ErrInvalidProviderResponse
-	}
-	expiry, err := spatiusExpiryValue(data)
-	if err != nil {
-		return "", time.Time{}, ErrInvalidProviderResponse
-	}
-	if expiry.IsZero() {
-		expiry, err = spatiusExpiryValue(document)
-	}
-	return token, expiry, err
-}
-
-func spatiusTokenValue(document map[string]any) string {
-	for _, key := range []string{"sessionToken", "sessionKey", "token"} {
-		if value, ok := document[key].(string); ok {
-			return value
+	for _, providerError := range document.Errors {
+		if providerError.Status == http.StatusPaymentRequired ||
+			providerError.Status == http.StatusTooManyRequests {
+			return "", ErrProviderQuotaExhausted
 		}
 	}
-	return ""
-}
-
-func spatiusExpiryValue(document map[string]any) (time.Time, error) {
-	for _, key := range []string{
-		"expireAt",
-		"expiresAt",
-		"expires_at",
-	} {
-		value, exists := document[key]
-		if !exists {
-			continue
-		}
-		switch typed := value.(type) {
-		case json.Number:
-			seconds, err := typed.Int64()
-			if err != nil || seconds <= 0 {
-				return time.Time{}, ErrInvalidProviderResponse
-			}
-			return time.Unix(seconds, 0).UTC(), nil
-		case string:
-			if seconds, err := strconv.ParseInt(typed, 10, 64); err == nil &&
-				seconds > 0 {
-				return time.Unix(seconds, 0).UTC(), nil
-			}
-			parsed, err := time.Parse(time.RFC3339, typed)
-			if err != nil {
-				return time.Time{}, ErrInvalidProviderResponse
-			}
-			return parsed.UTC(), nil
-		default:
-			return time.Time{}, ErrInvalidProviderResponse
-		}
+	if len(document.Errors) > 0 {
+		return "", ErrProviderUnavailable
 	}
-	return time.Time{}, nil
+	if !validSessionToken(document.SessionToken) {
+		return "", ErrInvalidProviderResponse
+	}
+	return document.SessionToken, nil
 }
 
 func spatiusJSONContentType(raw string) bool {

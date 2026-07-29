@@ -5,10 +5,15 @@ import 'package:flutter/widgets.dart';
 import 'package:speakup/practice/avatar/avatar.dart';
 
 final class FakeAvatarRenderer implements AvatarRenderer {
-  FakeAvatarRenderer({this.connectOnPrepare = true, this.prepareFailure});
+  FakeAvatarRenderer({
+    this.connectOnPrepare = true,
+    this.prepareFailure,
+    this.prepareGate,
+  });
 
   final bool connectOnPrepare;
   final AvatarRendererFailure? prepareFailure;
+  final Completer<void>? prepareGate;
   final StreamController<AvatarRendererState> _states =
       StreamController<AvatarRendererState>.broadcast(sync: true);
 
@@ -36,6 +41,10 @@ final class FakeAvatarRenderer implements AvatarRenderer {
   @override
   Future<void> prepare(AvatarSessionGrant grant) async {
     preparedGrant = grant;
+    final gate = prepareGate;
+    if (gate != null) {
+      await gate.future;
+    }
     final failure = prepareFailure;
     if (failure != null) {
       emit(
@@ -154,7 +163,7 @@ final testAvatarGrant = AvatarSessionGrant(
   appId: 'app-1',
   avatarId: 'avatar-1',
   sessionToken: 'private-avatar-token',
-  region: AvatarRegion.cnBeijing,
+  region: AvatarRegion.apNortheast,
   expiresAt: DateTime.utc(2030),
   audioFormat: AvatarAudioFormat.pcmS16le24kMono,
 );
