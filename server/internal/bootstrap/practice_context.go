@@ -763,12 +763,18 @@ func mapPlanCatalogSelection(
 	}
 	return practice.PlanCatalogSelection{
 		ScenarioDefinition: practicepersistence.ScenarioDefinitionSnapshot{
-			ID:      snapshot.ScenarioDefinition.ID,
-			Type:    practicepersistence.ScenarioFamily(snapshot.ScenarioDefinition.Type),
-			Model:   practicepersistence.ScenarioModel(snapshot.ScenarioDefinition.Model),
-			Name:    snapshot.ScenarioDefinition.Name,
-			Version: snapshot.ScenarioDefinition.Version,
-			Status:  string(snapshot.ScenarioDefinition.Status),
+			ID: snapshot.ScenarioDefinition.ID,
+			Type: practicepersistence.ScenarioFamily(
+				snapshot.ScenarioDefinition.Type,
+			),
+			Model: practicepersistence.ScenarioModel(
+				snapshot.ScenarioDefinition.Model,
+			),
+			Name:             snapshot.ScenarioDefinition.Name,
+			Version:          snapshot.ScenarioDefinition.Version,
+			Status:           string(snapshot.ScenarioDefinition.Status),
+			TurnPolicyRef:    snapshot.ScenarioDefinition.TurnPolicyRef,
+			SessionPolicyRef: snapshot.ScenarioDefinition.SessionPolicyRef,
 		},
 		ScenarioConfig: practicepersistence.ScenarioConfigSnapshot{
 			ID: snapshot.ScenarioConfig.ID,

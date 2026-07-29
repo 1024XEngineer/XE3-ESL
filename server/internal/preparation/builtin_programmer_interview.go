@@ -34,13 +34,15 @@ func NewBuiltinCatalog() (*Catalog, error) {
 func programmerInterviewCatalogDefinition() catalogScenario {
 	return catalogScenario{
 		definition: ScenarioDefinition{
-			ID:           ProgrammerInterviewScenarioID,
-			Type:         ScenarioFamilyInterview,
-			Model:        ScenarioModelProjectExperienceDeepDive,
-			Name:         "项目经历深挖",
-			Version:      1,
-			Status:       ScenarioStatusActive,
-			DisplayOrder: 30,
+			ID:               ProgrammerInterviewScenarioID,
+			Type:             ScenarioFamilyInterview,
+			Model:            ScenarioModelProjectExperienceDeepDive,
+			Name:             "项目经历深挖",
+			Version:          1,
+			Status:           ScenarioStatusActive,
+			TurnPolicyRef:    "interview.project_deep_dive.turn.v1",
+			SessionPolicyRef: "interview.project_deep_dive.session.v1",
+			DisplayOrder:     30,
 		},
 		config: ScenarioConfig{
 			ID:                   BackendEngineerConfigID,

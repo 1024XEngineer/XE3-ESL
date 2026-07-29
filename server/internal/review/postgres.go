@@ -29,6 +29,16 @@ func (r *PostgresRepository) EnsurePending(
 	if err := command.validate(); err != nil {
 		return FormalReview{}, err
 	}
+	var contextJSON []byte
+	if command.ImplementationVersion == "qianwen-scenario-review-v2" {
+		var err error
+		contextJSON, err = command.EvaluationContext.CanonicalJSON(
+			DefaultPolicyRegistry(),
+		)
+		if err != nil {
+			return FormalReview{}, ErrInvalidReview
+		}
+	}
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -56,10 +66,11 @@ func (r *PostgresRepository) EnsurePending(
 			source_turn_id,
 			source_turn_version,
 			source_manifest_fingerprint,
+			evaluation_context,
 			deletion_generation,
 			status
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
 		ON CONFLICT (
 			owner_user_id,
 			practice_session_id
@@ -67,7 +78,7 @@ func (r *PostgresRepository) EnsurePending(
 	`, command.Actor.UserID, command.PracticeSessionID,
 		command.ImplementationVersion, command.SourceTurnID,
 		command.SourceTurnVersion, command.SourceManifestFingerprint,
-		command.Actor.DeletionGeneration)
+		contextJSON, command.Actor.DeletionGeneration)
 	if err != nil {
 		return FormalReview{}, err
 	}
@@ -88,7 +99,12 @@ func (r *PostgresRepository) EnsurePending(
 	}
 	if review.SourceTurnID != command.SourceTurnID ||
 		review.SourceTurnVersion != command.SourceTurnVersion ||
-		review.SourceManifestFingerprint != command.SourceManifestFingerprint {
+		review.SourceManifestFingerprint != command.SourceManifestFingerprint ||
+		(command.ImplementationVersion == "qianwen-scenario-review-v2" &&
+			!sameEvaluationContext(
+				review.EvaluationContext,
+				command.EvaluationContext,
+			)) {
 		return FormalReview{}, ErrReviewSourceConflict
 	}
 	if review.Status == FormalReviewCompleted {
@@ -356,6 +372,7 @@ func (r *PostgresRepository) CompleteGeneration(
 	}
 
 	for _, item := range evidence {
+		item = normalizeReviewEvidence(item)
 		var snapshot any
 		if len(item.Snapshot) > 0 {
 			if !json.Valid(item.Snapshot) {
@@ -367,24 +384,38 @@ func (r *PostgresRepository) CompleteGeneration(
 			INSERT INTO review_evidence (
 				review_id,
 				owner_user_id,
-				conclusion_key,
+				target_kind,
+				target_key,
 				source_type,
 				source_id,
 				source_version,
+				field,
+				anchor_kind,
+				quote,
+				start_utf8_byte,
+				end_utf8_byte,
 				source_checksum,
 				evidence_snapshot
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, nullif($7, ''), $8)
+			VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8, $9,
+				$10, $11, $12, nullif($13, ''), $14
+			)
 			ON CONFLICT (
 				review_id,
-				conclusion_key,
+				target_kind,
+				target_key,
 				source_type,
 				source_id,
-				source_version
+				source_version,
+				field,
+				anchor_kind,
+				quote
 			) DO NOTHING
-		`, claim.ReviewID, claim.OwnerUserID, item.ConclusionKey,
-			item.SourceType, item.SourceID, item.SourceVersion,
-			item.Checksum, snapshot)
+		`, claim.ReviewID, claim.OwnerUserID, item.TargetKind,
+			item.TargetKey, item.SourceType, item.SourceID,
+			item.SourceVersion, item.Field, item.AnchorKind, item.Quote,
+			item.StartUTF8Byte, item.EndUTF8Byte, item.Checksum, snapshot)
 		if err != nil {
 			return FormalReview{}, err
 		}
@@ -799,6 +830,7 @@ const reviewSelect = `
 		source_turn_id,
 		source_turn_version,
 		source_manifest_fingerprint,
+		evaluation_context,
 		deletion_generation,
 		status,
 		result,
@@ -821,6 +853,7 @@ type queryer interface {
 func scanReview(row rowScanner) (FormalReview, error) {
 	var review FormalReview
 	var resultJSON []byte
+	var contextJSON []byte
 	if err := row.Scan(
 		&review.ID,
 		&review.OwnerUserID,
@@ -829,6 +862,7 @@ func scanReview(row rowScanner) (FormalReview, error) {
 		&review.SourceTurnID,
 		&review.SourceTurnVersion,
 		&review.SourceManifestFingerprint,
+		&contextJSON,
 		&review.DeletionGeneration,
 		&review.Status,
 		&resultJSON,
@@ -838,6 +872,16 @@ func scanReview(row rowScanner) (FormalReview, error) {
 		&review.CompletedAt,
 	); err != nil {
 		return FormalReview{}, err
+	}
+	if len(contextJSON) > 0 {
+		if err := json.Unmarshal(contextJSON, &review.EvaluationContext); err != nil {
+			return FormalReview{}, ErrInvalidReview
+		}
+		if err := review.EvaluationContext.Validate(
+			DefaultPolicyRegistry(),
+		); err != nil {
+			return FormalReview{}, ErrInvalidReview
+		}
 	}
 	if len(resultJSON) > 0 {
 		var result ReviewResult
@@ -863,16 +907,23 @@ func listEvidence(
 			id::text,
 			review_id::text,
 			owner_user_id::text,
-			conclusion_key,
+			target_kind,
+			target_key,
 			source_type,
 			source_id,
 			source_version,
+			field,
+			anchor_kind,
+			coalesce(quote, ''),
+			start_utf8_byte,
+			end_utf8_byte,
 			coalesce(source_checksum, ''),
 			evidence_snapshot,
 			created_at
 		FROM review_evidence
 		WHERE review_id = $1 AND owner_user_id = $2
-		ORDER BY conclusion_key, source_type, source_id, source_version
+		ORDER BY target_kind, target_key, source_type, source_id,
+			source_version, start_utf8_byte
 	`, reviewID, ownerUserID)
 	if err != nil {
 		return nil, err
@@ -886,15 +937,24 @@ func listEvidence(
 			&item.ID,
 			&item.ReviewID,
 			&item.OwnerUserID,
-			&item.ConclusionKey,
+			&item.TargetKind,
+			&item.TargetKey,
 			&item.SourceType,
 			&item.SourceID,
 			&item.SourceVersion,
+			&item.Field,
+			&item.AnchorKind,
+			&item.Quote,
+			&item.StartUTF8Byte,
+			&item.EndUTF8Byte,
 			&item.Checksum,
 			&item.Snapshot,
 			&item.CreatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if item.TargetKind == EvidenceTargetConclusion {
+			item.ConclusionKey = item.TargetKey
 		}
 		evidence = append(evidence, item)
 	}
