@@ -42,10 +42,12 @@ func TestRegistryRejectsDuplicateTools(t *testing.T) {
 	}
 }
 
-func TestRegistryDefinitionsAreSorted(t *testing.T) {
+func TestRegistryDefinitionsAreCompleteSortedAndIsolated(t *testing.T) {
+	review := &stubTool{definition: readToolDefinition("review.search.v1")}
+	contextSearch := &stubTool{definition: readToolDefinition("context.search.v1")}
 	registry, err := NewRegistry(
-		&stubTool{definition: readToolDefinition("review.search.v1")},
-		&stubTool{definition: readToolDefinition("context.search.v1")},
+		review,
+		contextSearch,
 	)
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
@@ -56,6 +58,26 @@ func TestRegistryDefinitionsAreSorted(t *testing.T) {
 	}
 	if got, want := definitions[0].Name, "context.search.v1"; got != want {
 		t.Fatalf("Definitions()[0].Name = %q, want %q", got, want)
+	}
+	if got, want := definitions[1].Name, "review.search.v1"; got != want {
+		t.Fatalf("Definitions()[1].Name = %q, want %q", got, want)
+	}
+
+	definitions[0].InputSchema["type"] = "array"
+	properties := definitions[0].InputSchema["properties"].(map[string]any)
+	properties["query"].(map[string]any)["type"] = "integer"
+	definitions[0].InputSchema["required"].([]string)[0] = "changed"
+
+	fresh := registry.Definitions()
+	if got, want := fresh[0].InputSchema["type"], "object"; got != want {
+		t.Fatalf("fresh schema type = %v, want %v", got, want)
+	}
+	freshProperties := fresh[0].InputSchema["properties"].(map[string]any)
+	if got, want := freshProperties["query"].(map[string]any)["type"], "string"; got != want {
+		t.Fatalf("fresh query type = %v, want %v", got, want)
+	}
+	if got, want := fresh[0].InputSchema["required"].([]string)[0], "query"; got != want {
+		t.Fatalf("fresh required field = %v, want %v", got, want)
 	}
 }
 
@@ -156,6 +178,27 @@ func TestExecutorRejectsToolOutsidePolicy(t *testing.T) {
 	}
 	if tool.calls != 0 {
 		t.Fatalf("tool calls = %d, want 0", tool.calls)
+	}
+}
+
+func TestExecutorRejectsUnknownTool(t *testing.T) {
+	registry, err := NewRegistry(
+		&stubTool{definition: readToolDefinition("review.search.v1")},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	_, err = NewExecutor(registry).Execute(
+		context.Background(),
+		validCallContext(),
+		Invocation{
+			Name:  "missing.search.v1",
+			Input: json.RawMessage(`{"query":"last interview"}`),
+		},
+		Policy{AllowedNames: []string{"missing.search.v1"}},
+	)
+	if !errors.Is(err, ErrUnknownTool) {
+		t.Fatalf("Execute() error = %v, want %v", err, ErrUnknownTool)
 	}
 }
 

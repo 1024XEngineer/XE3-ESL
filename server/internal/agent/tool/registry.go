@@ -57,10 +57,43 @@ func (registry *Registry) Definitions() []Definition {
 	}
 	definitions := make([]Definition, 0, len(registry.tools))
 	for _, tool := range registry.tools {
-		definitions = append(definitions, tool.Definition())
+		definitions = append(definitions, cloneDefinition(tool.Definition()))
 	}
 	sort.Slice(definitions, func(left, right int) bool {
 		return definitions[left].Name < definitions[right].Name
 	})
 	return definitions
+}
+
+func cloneDefinition(definition Definition) Definition {
+	definition.InputSchema = cloneSchemaMap(definition.InputSchema)
+	return definition
+}
+
+func cloneSchemaMap(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(schema))
+	for key, value := range schema {
+		cloned[key] = cloneSchemaValue(value)
+	}
+	return cloned
+}
+
+func cloneSchemaValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneSchemaMap(typed)
+	case []any:
+		cloned := make([]any, len(typed))
+		for index, item := range typed {
+			cloned[index] = cloneSchemaValue(item)
+		}
+		return cloned
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return typed
+	}
 }

@@ -90,6 +90,72 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 	}
 }
 
+func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
+	generator := newScriptedGenerator(
+		ai.TextResult{
+			ID:           "fake-completion-tools",
+			Provider:     "fake",
+			Model:        "configured-model",
+			FinishReason: "tool_calls",
+			ToolCalls: []ai.ToolCall{
+				{
+					ID:        "call-review-1",
+					Name:      reviewtool.ReviewSearchToolName,
+					Arguments: json.RawMessage(`{"query":"first","limit":1}`),
+				},
+				{
+					ID:        "call-review-2",
+					Name:      reviewtool.ReviewSearchToolName,
+					Arguments: json.RawMessage(`{"query":"second","limit":1}`),
+				},
+			},
+			Usage: ai.TokenUsage{
+				InputTokens:  1,
+				OutputTokens: 1,
+				TotalTokens:  2,
+			},
+		},
+		finalLoopResult("I compared both reviews."),
+	)
+	service := newLoopTestService(t, generator)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		ContextManifest{},
+		loopRequest("比较我两次面试评价"),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if result.Content != "I compared both reviews." {
+		t.Fatalf("Content = %q", result.Content)
+	}
+
+	requests := generator.Requests()
+	if got, want := len(requests), 2; got != want {
+		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+	messages := requests[1].Messages
+	if got, want := len(messages), 5; got != want {
+		t.Fatalf("second request messages = %d, want %d", got, want)
+	}
+	assistant := messages[2]
+	if assistant.Role != ai.TextRoleAssistant ||
+		len(assistant.ToolCalls) != 2 {
+		t.Fatalf("assistant tool calls = %#v", assistant)
+	}
+	for index, callID := range []string{"call-review-1", "call-review-2"} {
+		message := messages[index+3]
+		if message.Role != ai.TextRoleTool ||
+			message.ToolCallID != callID ||
+			!strings.Contains(message.Content, `"reviews"`) {
+			t.Fatalf("tool message %d = %#v", index, message)
+		}
+	}
+}
+
 func TestRunLoopReturnsFallbackWhenSpecificToolChoiceIsIgnored(t *testing.T) {
 	generator := newScriptedGenerator(finalLoopResult("made-up review"))
 	service := newLoopTestService(t, generator)
@@ -340,6 +406,40 @@ func TestToolSourceRefsKeepsEmptySliceForPersistence(t *testing.T) {
 	}
 	if len(refs) != 0 {
 		t.Fatalf("len(refs) = %d, want 0", len(refs))
+	}
+}
+
+func TestValidLoopTextResultRejectsInvalidToolCalls(t *testing.T) {
+	tests := map[string]ai.ToolCall{
+		"invalid name": {
+			ID:        "call-1",
+			Name:      "review search",
+			Arguments: json.RawMessage(`{"query":"last interview"}`),
+		},
+		"non-object arguments": {
+			ID:        "call-1",
+			Name:      reviewtool.ReviewSearchToolName,
+			Arguments: json.RawMessage(`[]`),
+		},
+	}
+	for name, call := range tests {
+		t.Run(name, func(t *testing.T) {
+			result := ai.TextResult{
+				ID:           "fake-completion-tools",
+				Provider:     "fake",
+				Model:        "configured-model",
+				FinishReason: "tool_calls",
+				ToolCalls:    []ai.ToolCall{call},
+				Usage: ai.TokenUsage{
+					InputTokens:  1,
+					OutputTokens: 1,
+					TotalTokens:  2,
+				},
+			}
+			if validLoopTextResult(result) {
+				t.Fatal("invalid tool call accepted")
+			}
+		})
 	}
 }
 
