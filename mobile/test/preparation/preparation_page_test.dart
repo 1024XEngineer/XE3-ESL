@@ -530,42 +530,10 @@ void main() {
     await _openFamily(tester, 'INTERVIEW');
     await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
     await tester.pumpAndSettle();
-    final role = find.byKey(
-      const Key('preparation-role-role_technical_interviewer'),
-    );
-    await tester.scrollUntilVisible(role, 200);
-    await tester.pumpAndSettle();
-    await tester.tap(role);
-    await tester.pump();
-    final option = find.byKey(
-      const Key('preparation-option-option_full_simulation'),
-    );
-    await tester.scrollUntilVisible(option, 200);
-    await tester.tap(option);
-    await tester.pump();
-    final background = find.byKey(const Key('preparation-background-summary'));
-    await tester.scrollUntilVisible(
-      background,
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      background,
-      'Backend engineer preparing a technical interview.',
-    );
-    final start = find.byKey(const Key('preparation-start-practice'));
-    await tester.scrollUntilVisible(
-      start,
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(start);
-    await tester.pumpAndSettle();
 
     expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
     expect(navigations, 1);
+    expect(find.byKey(const Key('preparation-scenario-detail')), findsNothing);
     expect(agentController.threadId, isNotNull);
     expect(agentController.activeMatter, isNotNull);
     expect(launchController.bootstrap?.maxEffectiveTurns, 6);
@@ -718,49 +686,18 @@ void main() {
       await tester.pumpAndSettle();
       await _openFamily(tester, 'INTERVIEW');
       await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump();
 
       final role = find.byKey(
         const Key('preparation-role-role_technical_interviewer'),
       );
-      await tester.scrollUntilVisible(role, 200);
-      await tester.pumpAndSettle();
-      await tester.tap(role);
-      await tester.pump();
       final option = find.byKey(
-        const Key('preparation-option-option_full_simulation'),
+        const Key('preparation-option-option_technical_focus'),
       );
-      await tester.scrollUntilVisible(option, 200);
-      await tester.pumpAndSettle();
-      if (option.hitTestable().evaluate().isEmpty) {
-        await tester.drag(find.byType(Scrollable).first, const Offset(0, -80));
-        await tester.pumpAndSettle();
-      }
-      expect(option.hitTestable(), findsOneWidget);
-      await tester.tap(option);
-      await tester.pump();
       final background = find.byKey(
         const Key('preparation-background-summary'),
       );
-      await tester.scrollUntilVisible(
-        background,
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        background,
-        'Backend engineer preparing a technical interview.',
-      );
-      final start = find.byKey(const Key('preparation-start-practice'));
-      await tester.scrollUntilVisible(
-        start,
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(start);
-      await tester.pump();
 
       expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
       expect(launchController.isStarting, isTrue);
@@ -812,7 +749,7 @@ void main() {
       expect(preparationController.selectedRole?.id, _technicalRole.id);
       expect(
         preparationController.selectedOption?.id,
-        'option_full_simulation',
+        'option_technical_focus',
       );
 
       session.complete(

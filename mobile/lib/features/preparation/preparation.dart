@@ -183,6 +183,21 @@ class _PreparationPageState extends State<PreparationPage> {
     }
   }
 
+  Future<void> _startInterviewSpecialty(
+    PreparationController controller,
+    PreparationScenario scenario,
+  ) async {
+    await controller.selectScenario(scenario);
+    if (!mounted || controller.selectedScenario?.id != scenario.id) {
+      return;
+    }
+    final configured = controller.selectRecommendedConfiguration();
+    if (!configured || widget.launchController == null) {
+      return;
+    }
+    await _startPractice();
+  }
+
   Future<_ExistingPracticeAction> _chooseExistingPracticeAction({
     required String? currentTitle,
     required String nextTitle,
@@ -513,7 +528,8 @@ class _PreparationPageState extends State<PreparationPage> {
         if (hub == _PracticeHub.interview)
           _InterviewHub(
             scenarios: scenarios,
-            onScenarioPressed: controller.selectScenario,
+            onScenarioPressed: (scenario) =>
+                unawaited(_startInterviewSpecialty(controller, scenario)),
             onOpenJobPreparation: widget.onOpenJobPreparation,
           )
         else if (hub == _PracticeHub.ielts)
