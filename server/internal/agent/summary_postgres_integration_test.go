@@ -4,16 +4,21 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestPostgresSummaryCheckpointChainVisibilityAndOwnership(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	_, dataService, runService, repository := newAgentRunServices(
+	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
 		fake.NewTextGenerator(successfulTextResult()),
@@ -24,7 +29,12 @@ func TestPostgresSummaryCheckpointChainVisibilityAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	submitSummaryTestMessage(t, runService, thread.ID, "summary-message-1")
+	seedSummarySourceMessages(
+		t,
+		database.pool,
+		thread.ID,
+		"summary-message-1",
+	)
 
 	first, err := repository.CreateSummaryCheckpoint(
 		ctx,
@@ -45,7 +55,12 @@ func TestPostgresSummaryCheckpointChainVisibilityAndOwnership(t *testing.T) {
 		t.Fatalf("lookup before first coverage = %v, want not found", err)
 	}
 
-	submitSummaryTestMessage(t, runService, thread.ID, "summary-message-2")
+	seedSummarySourceMessages(
+		t,
+		database.pool,
+		thread.ID,
+		"summary-message-2",
+	)
 	second, err := repository.CreateSummaryCheckpoint(
 		ctx,
 		summaryCommand(thread.ID, first.ID, 3, 4, "second source"),
@@ -95,7 +110,7 @@ func TestPostgresSummaryCheckpointRejectsInvalidChainAndFutureCoverage(
 	t *testing.T,
 ) {
 	database := newAgentTestDatabase(t)
-	_, dataService, runService, repository := newAgentRunServices(
+	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
 		fake.NewTextGenerator(successfulTextResult()),
@@ -106,7 +121,12 @@ func TestPostgresSummaryCheckpointRejectsInvalidChainAndFutureCoverage(
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	submitSummaryTestMessage(t, runService, thread.ID, "summary-invalid-1")
+	seedSummarySourceMessages(
+		t,
+		database.pool,
+		thread.ID,
+		"summary-invalid-1",
+	)
 	first, err := repository.CreateSummaryCheckpoint(
 		ctx,
 		summaryCommand(thread.ID, "", 1, 2, "first source"),
@@ -122,7 +142,12 @@ func TestPostgresSummaryCheckpointRejectsInvalidChainAndFutureCoverage(
 	); !errors.Is(err, core.ErrInvalidRequest) {
 		t.Fatalf("future coverage error = %v, want invalid request", err)
 	}
-	submitSummaryTestMessage(t, runService, thread.ID, "summary-invalid-2")
+	seedSummarySourceMessages(
+		t,
+		database.pool,
+		thread.ID,
+		"summary-invalid-2",
+	)
 	wrongPrevious := summaryCommand(
 		thread.ID,
 		"50000000-0000-4000-8000-000000000001",
@@ -140,7 +165,7 @@ func TestPostgresSummaryCheckpointRejectsInvalidChainAndFutureCoverage(
 
 func TestPostgresSummaryCheckpointConcurrentCreateDoesNotFork(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	_, dataService, runService, repository := newAgentRunServices(
+	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
 		fake.NewTextGenerator(successfulTextResult()),
@@ -151,7 +176,12 @@ func TestPostgresSummaryCheckpointConcurrentCreateDoesNotFork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create thread: %v", err)
 	}
-	submitSummaryTestMessage(t, runService, thread.ID, "summary-race-1")
+	seedSummarySourceMessages(
+		t,
+		database.pool,
+		thread.ID,
+		"summary-race-1",
+	)
 	first, err := repository.CreateSummaryCheckpoint(
 		ctx,
 		summaryCommand(thread.ID, "", 1, 2, "race first"),
@@ -159,7 +189,12 @@ func TestPostgresSummaryCheckpointConcurrentCreateDoesNotFork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create first checkpoint: %v", err)
 	}
-	submitSummaryTestMessage(t, runService, thread.ID, "summary-race-2")
+	seedSummarySourceMessages(
+		t,
+		database.pool,
+		thread.ID,
+		"summary-race-2",
+	)
 	command := summaryCommand(thread.ID, first.ID, 3, 4, "race second")
 
 	start := make(chan struct{})
@@ -275,6 +310,180 @@ WHERE id = $1 AND owner_user_id = $2`,
 	}
 }
 
+func TestPostgresSummarySourceAndGenerationService(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	_, dataService, _, repository := newAgentRunServices(
+		t,
+		database.pool,
+		fake.NewTextGenerator(successfulTextResult()),
+		testRunConfiguration,
+	)
+	ctx := context.Background()
+	thread, err := dataService.CreateThread(ctx, testActorA(), "")
+	if err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+	seedSummarySourceMessages(
+		t,
+		database.pool,
+		thread.ID,
+		"summary-generate-1",
+	)
+
+	messages, err := repository.ListMessagesForSummary(
+		ctx,
+		agentTestUserA,
+		thread.ID,
+		1,
+		2,
+	)
+	if err != nil {
+		t.Fatalf("list first summary source: %v", err)
+	}
+	if len(messages) != 2 ||
+		messages[0].Sequence != 1 ||
+		messages[0].Role != MessageRoleUser ||
+		messages[1].Sequence != 2 ||
+		messages[1].Role != MessageRoleUser {
+		t.Fatalf("unexpected summary source: %#v", messages)
+	}
+	if _, err := repository.ListMessagesForSummary(
+		ctx,
+		agentTestUserB,
+		thread.ID,
+		1,
+		2,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner source error = %v, want not found", err)
+	}
+	if _, err := repository.ListMessagesForSummary(
+		ctx,
+		agentTestUserA,
+		thread.ID,
+		2,
+		3,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("future source error = %v, want not found", err)
+	}
+
+	generator := fake.NewTextGenerator(summaryGenerationResult())
+	service, err := NewSummaryService(
+		repository,
+		generator,
+		SummaryConfiguration{
+			PolicyVersion: "summary-policy-v1",
+			PromptVersion: "summary-prompt-v1",
+			Provider:      "qianwen",
+			Model:         "qwen-plus",
+		},
+	)
+	if err != nil {
+		t.Fatalf("new summary service: %v", err)
+	}
+	first, err := service.GenerateCheckpoint(
+		ctx,
+		GenerateSummaryCheckpointCommand{
+			OwnerID:                agentTestUserA,
+			ThreadID:               thread.ID,
+			CoveredThroughSequence: 2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("generate first checkpoint: %v", err)
+	}
+	if !first.Valid() ||
+		first.PreviousCheckpointID != "" ||
+		first.SourceFromSequence != 1 ||
+		first.CoveredThroughSequence != 2 {
+		t.Fatalf("unexpected first generated checkpoint: %#v", first)
+	}
+
+	seedSummarySourceMessages(
+		t,
+		database.pool,
+		thread.ID,
+		"summary-generate-2",
+	)
+	second, err := service.GenerateCheckpoint(
+		ctx,
+		GenerateSummaryCheckpointCommand{
+			OwnerID:                agentTestUserA,
+			ThreadID:               thread.ID,
+			CoveredThroughSequence: 4,
+		},
+	)
+	if err != nil {
+		t.Fatalf("generate rolling checkpoint: %v", err)
+	}
+	if !second.Valid() ||
+		second.PreviousCheckpointID != first.ID ||
+		second.SourceFromSequence != 3 ||
+		second.CoveredThroughSequence != 4 ||
+		second.SourceChecksum == first.SourceChecksum {
+		t.Fatalf("unexpected rolling checkpoint: %#v", second)
+	}
+}
+
+func TestPostgresSummarySourceRejectsCharacterOverflow(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	_, dataService := newAgentDataServices(t, database.pool)
+	repository, err := NewPostgresRepository(
+		database.pool,
+		identity.NewUUIDv4Generator(nil),
+	)
+	if err != nil {
+		t.Fatalf("new repository: %v", err)
+	}
+	ctx := context.Background()
+	thread, err := dataService.CreateThread(ctx, testActorA(), "")
+	if err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+	for sequence := 1; sequence <= 16; sequence++ {
+		if _, err := database.pool.Exec(ctx, `
+INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    client_message_id,
+    content,
+    modality
+) VALUES ($1, $2, $3, $4, 'user', $5, $6, 'text')`,
+			fmt.Sprintf(
+				"70000000-0000-4000-8000-%012d",
+				sequence,
+			),
+			agentTestUserA,
+			thread.ID,
+			sequence,
+			fmt.Sprintf("summary-large-%d", sequence),
+			strings.Repeat("界", 4096),
+		); err != nil {
+			t.Fatalf("insert source message %d: %v", sequence, err)
+		}
+	}
+	if _, err := repository.ListMessagesForSummary(
+		ctx,
+		agentTestUserA,
+		thread.ID,
+		1,
+		16,
+	); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("overflow source error = %v, want invalid request", err)
+	}
+	if _, err := repository.ListMessagesForSummary(
+		ctx,
+		agentTestUserA,
+		thread.ID,
+		1,
+		core.MaxSummarySourceMessages+1,
+	); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("row overflow error = %v, want invalid request", err)
+	}
+}
+
 func summaryCommand(
 	threadID string,
 	previousCheckpointID string,
@@ -304,20 +513,86 @@ func summaryCommand(
 	}
 }
 
-func submitSummaryTestMessage(
+func summaryGenerationResult() ai.TextResult {
+	return ai.TextResult{
+		ID:       "summary-completion-1",
+		Provider: "qianwen",
+		Model:    "qwen-plus",
+		Content: `{"goals":["Prepare for an English product interview"],` +
+			`"background":[],"progress":[],"decisions":[],` +
+			`"open_questions":[],"next_steps":["Practice a STAR answer"]}`,
+		FinishReason: "stop",
+	}
+}
+
+func seedSummarySourceMessages(
 	t *testing.T,
-	runService *RunService,
+	pool *pgxpool.Pool,
 	threadID string,
-	clientMessageID string,
+	clientMessageIDPrefix string,
 ) {
 	t.Helper()
-	if _, err := runService.SubmitText(
-		context.Background(),
-		testActorA(),
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin seed source transaction: %v", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+	var nextSequence int64
+	if err := tx.QueryRow(ctx, `
+SELECT next_message_sequence
+FROM agent_threads
+WHERE id = $1 AND owner_user_id = $2
+FOR UPDATE`,
 		threadID,
-		clientMessageID,
-		"Help me practice this answer.",
+		agentTestUserA,
+	).Scan(&nextSequence); err != nil {
+		t.Fatalf("lock source thread: %v", err)
+	}
+	ids := identity.NewUUIDv4Generator(nil)
+	for offset := range int64(2) {
+		messageID, err := ids.NewID()
+		if err != nil {
+			t.Fatalf("generate source message ID: %v", err)
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO agent_messages (
+    id,
+    owner_user_id,
+    thread_id,
+    sequence_no,
+    role,
+    client_message_id,
+    content,
+    modality
+) VALUES ($1, $2, $3, $4, 'user', $5, $6, 'text')`,
+			messageID,
+			agentTestUserA,
+			threadID,
+			nextSequence+offset,
+			fmt.Sprintf("%s-%d", clientMessageIDPrefix, offset+1),
+			fmt.Sprintf("Summary source message %d.", nextSequence+offset),
+		); err != nil {
+			t.Fatalf("insert summary source message: %v", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE agent_threads
+SET
+    next_message_sequence = next_message_sequence + 2,
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE id = $1 AND owner_user_id = $2`,
+		threadID,
+		agentTestUserA,
 	); err != nil {
-		t.Fatalf("submit summary source message: %v", err)
+		t.Fatalf("advance summary source thread: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit summary source messages: %v", err)
 	}
 }
