@@ -194,7 +194,7 @@ func buildIdentityAgentComposition(
 		agentRepository,
 		summaryService,
 		agentsummary.WorkerConfiguration{
-			TriggerPolicyVersion: agentsummary.TriggerPolicyV1,
+			TriggerPolicyVersion: agentsummary.TriggerPolicyV2,
 			TriggerMessages:      agentsummary.DefaultTriggerMessages,
 			RetainRecentMessages: agentsummary.DefaultRetainedMessages,
 			LeaseDuration:        2 * time.Minute,

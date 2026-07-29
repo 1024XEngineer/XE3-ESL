@@ -45,13 +45,13 @@ func TestWorkerRetainsRecentMessagesAndCompletes(t *testing.T) {
 	generator.generate = func(
 		command GenerateCheckpointCommand,
 	) (core.ThreadSummaryCheckpoint, error) {
-		if command.CoveredThroughSequence != 28 {
+		if command.CoveredThroughSequence != 20 {
 			t.Fatalf(
-				"covered through = %d, want 28",
+				"covered through = %d, want 20",
 				command.CoveredThroughSequence,
 			)
 		}
-		return checkpointForTarget(claim, 28), nil
+		return checkpointForTarget(claim, 20), nil
 	}
 	worker := newWorkerForTest(t, jobs, checkpoints, generator)
 
@@ -62,8 +62,8 @@ func TestWorkerRetainsRecentMessagesAndCompletes(t *testing.T) {
 	if result.Completed != 1 || generator.calls != 1 {
 		t.Fatalf("result = %#v generator calls = %d", result, generator.calls)
 	}
-	if jobs.completedTarget != 28 ||
-		jobs.completedCheckpoint.CoveredThroughSequence != 28 {
+	if jobs.completedTarget != 20 ||
+		jobs.completedCheckpoint.CoveredThroughSequence != 20 {
 		t.Fatalf("unexpected completion: %#v", jobs)
 	}
 }
@@ -223,7 +223,7 @@ func newWorkerForTest(
 
 func workerConfigurationFixture() WorkerConfiguration {
 	return WorkerConfiguration{
-		TriggerPolicyVersion: TriggerPolicyV1,
+		TriggerPolicyVersion: TriggerPolicyV2,
 		TriggerMessages:      DefaultTriggerMessages,
 		RetainRecentMessages: DefaultRetainedMessages,
 		LeaseDuration:        time.Minute,
@@ -248,7 +248,7 @@ func jobClaimFixture(observedThrough int64) JobClaim {
 		AttemptCount:            1,
 		LeaseToken:              "44444444-4444-4444-8444-444444444444",
 		LeaseExpiresAt:          time.Now().Add(time.Minute),
-		TriggerPolicyVersion:    TriggerPolicyV1,
+		TriggerPolicyVersion:    TriggerPolicyV2,
 		SummaryPolicyVersion:    "summary-policy-v1",
 		PromptVersion:           "summary-prompt-v1",
 		Provider:                "fake",

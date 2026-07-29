@@ -241,6 +241,8 @@ const (
 	RejectionInvalidCanonicalKey          CandidateRejectionReason = "invalid_canonical_key"
 	RejectionIncompatibleKey              CandidateRejectionReason = "incompatible_key"
 	RejectionEvidenceMismatch             CandidateRejectionReason = "evidence_mismatch"
+	RejectionContextualOrHypothetical     CandidateRejectionReason = "contextual_or_hypothetical"
+	RejectionInsufficientDurability       CandidateRejectionReason = "insufficient_durability"
 	RejectionSensitiveCandidate           CandidateRejectionReason = "sensitive_candidate"
 	RejectionGenderInteractionUseRequired CandidateRejectionReason = "gender_interaction_use_required"
 	RejectionMissingMatter                CandidateRejectionReason = "missing_matter"
@@ -258,6 +260,8 @@ func (reason CandidateRejectionReason) Valid() bool {
 		RejectionInvalidCanonicalKey,
 		RejectionIncompatibleKey,
 		RejectionEvidenceMismatch,
+		RejectionContextualOrHypothetical,
+		RejectionInsufficientDurability,
 		RejectionSensitiveCandidate,
 		RejectionGenderInteractionUseRequired,
 		RejectionMissingMatter,
