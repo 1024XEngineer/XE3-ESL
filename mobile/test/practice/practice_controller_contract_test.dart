@@ -267,6 +267,80 @@ void main() {
     expect(recorder.cleanupCount, 1);
   });
 
+  test('finishing a starting recording waits and stops exactly once', () async {
+    final recorder = _ControlledStartRecorder();
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: _TwoTurnPracticeClient(),
+      recorder: recorder,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+
+    final start = controller.startRecording();
+    final finish = controller.finishRecordingGesture();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.recordingState, PracticeRecordingState.starting);
+    expect(recorder.stopCount, 0);
+
+    recorder.startCompleter.complete();
+    await start;
+    await finish;
+
+    expect(recorder.stopCount, 1);
+    expect(
+      controller.recordingState,
+      PracticeRecordingState.awaitingConfirmation,
+    );
+  });
+
+  testWidgets(
+    'tap recording ignores duplicate finish on a narrow large-text screen',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 780);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final recorder = _ControlledStartRecorder();
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: _TwoTurnPracticeClient(),
+        recorder: recorder,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+          child: MaterialApp(home: PracticePage(agentController: controller)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('practice-record')));
+      await tester.pump();
+      expect(controller.recordingState, PracticeRecordingState.starting);
+      expect(
+        find.byKey(const Key('practice-cancel-tap-recording')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+
+      final stop = find.byKey(const Key('practice-stop-recording'));
+      await tester.tap(stop);
+      await tester.tap(stop);
+      recorder.startCompleter.complete();
+      await tester.pumpAndSettle();
+
+      expect(recorder.stopCount, 1);
+      expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   test(
     'logout during native stop deletes account A audio without a B upload',
     () async {
