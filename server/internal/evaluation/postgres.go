@@ -212,9 +212,28 @@ func (r *PostgresRepository) Reevaluate(
 		return evaluation, true, nil
 	}
 
+	if err := lockEvaluationRevisionRuntimeRows(
+		ctx,
+		tx,
+		command.OwnerUserID,
+		command.EvaluationID,
+		latestRevisionID,
+	); err != nil {
+		return Evaluation{}, false, err
+	}
+	if err := cancelSupersededEvaluationRuntime(
+		ctx,
+		tx,
+		command.OwnerUserID,
+		command.EvaluationID,
+		latestRevisionID,
+	); err != nil {
+		return Evaluation{}, false, err
+	}
 	_, err = tx.Exec(ctx, `
 		UPDATE evaluation_revision_states
 		SET evaluation_status = 'SUPERSEDED',
+		    is_final = false,
 		    updated_at = transaction_timestamp(),
 		    completed_at = transaction_timestamp()
 		WHERE revision_id = $1

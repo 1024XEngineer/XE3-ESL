@@ -19,6 +19,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	conversationpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
@@ -56,21 +57,22 @@ type VoicePorts struct {
 }
 
 type VoiceConfiguration struct {
-	Recognizer                ai.SpeechRecognizer
-	Synthesizer               ai.SpeechSynthesizer
-	TemporaryAudio            conversation.TemporaryAudioVault
-	Ports                     VoicePorts
-	Recordings                conversation.VoiceRecordingLifecycle
-	ObjectStore               objectstore.Store
-	AgentVoiceMessagesEnabled bool
-	ScratchDirectory          string
-	ObjectReadAllowedHosts    []string
-	AudioStagedTTL            time.Duration
-	AudioUploadLease          time.Duration
-	ASRLease                  time.Duration
-	ReviewGenerationTimeout   time.Duration
-	AudioReadTimeout          time.Duration
-	ReviewHistoryCursorKey    []byte
+	Recognizer                 ai.SpeechRecognizer
+	Synthesizer                ai.SpeechSynthesizer
+	TemporaryAudio             conversation.TemporaryAudioVault
+	Ports                      VoicePorts
+	Recordings                 conversation.VoiceRecordingLifecycle
+	ObjectStore                objectstore.Store
+	AgentVoiceMessagesEnabled  bool
+	ScratchDirectory           string
+	ObjectReadAllowedHosts     []string
+	AudioStagedTTL             time.Duration
+	AudioUploadLease           time.Duration
+	ASRLease                   time.Duration
+	ReviewGenerationTimeout    time.Duration
+	AudioReadTimeout           time.Duration
+	ReviewHistoryCursorKey     []byte
+	InterviewShadowCoordinator *evaluation.InterviewShadowCoordinator
 }
 
 // NewSpeechRecognizer is the server-side ASR registration boundary. Production
@@ -264,10 +266,15 @@ func buildProductionVoiceApplication(
 		sourceReader,
 		reviewGenerator,
 	)
+	var interviewShadowCoordinator interviewShadowCompletionCoordinator
+	if configuration.InterviewShadowCoordinator != nil {
+		interviewShadowCoordinator = configuration.InterviewShadowCoordinator
+	}
 	reviewAdapter := &voiceReviewAdapter{
-		service:      ensureReviews,
-		history:      reviewHistory,
-		sourceReader: sourceReader,
+		service:                    ensureReviews,
+		history:                    reviewHistory,
+		sourceReader:               sourceReader,
+		interviewShadowCoordinator: interviewShadowCoordinator,
 	}
 	orchestrator, err := agent.NewVoiceRoundOrchestrator(
 		conversationService,
@@ -1385,9 +1392,25 @@ func (adapter *voiceCheckpointAdapter) LatestTurn(
 }
 
 type voiceReviewAdapter struct {
-	service      *review.EnsureService
-	history      *review.HistoryService
-	sourceReader review.ReviewSourceReader
+	service                    voiceReviewEnsurer
+	history                    *review.HistoryService
+	sourceReader               review.ReviewSourceReader
+	interviewShadowCoordinator interviewShadowCompletionCoordinator
+}
+
+type voiceReviewEnsurer interface {
+	EnsureReview(
+		context.Context,
+		review.EnsureReviewCommand,
+	) (review.FormalReview, error)
+}
+
+type interviewShadowCompletionCoordinator interface {
+	EnsureForCompletedInterview(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (evaluation.Evaluation, bool, error)
 }
 
 func (adapter *voiceReviewAdapter) EnsureSessionReview(
@@ -1426,6 +1449,18 @@ func (adapter *voiceReviewAdapter) EnsureSessionReview(
 	)
 	if err != nil {
 		return agent.VoiceReviewCheckpoint{}, mapReviewError(err)
+	}
+	if snapshot.EvaluationContext.ContextType ==
+		review.ContextInterviewProjectDeepDive &&
+		adapter.interviewShadowCoordinator != nil {
+		if _, _, err := adapter.interviewShadowCoordinator.
+			EnsureForCompletedInterview(
+				ctx,
+				actor,
+				source.SessionID,
+			); err != nil {
+			return agent.VoiceReviewCheckpoint{}, err
+		}
 	}
 	return agent.VoiceReviewCheckpoint{
 		ID:           formalReview.ID,

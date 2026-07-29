@@ -356,6 +356,69 @@ func TestServiceReevaluateAndGetBindTrustedOwner(t *testing.T) {
 	}
 }
 
+func TestServiceReevaluateDomainSeparatesCreateAndIgnoresTraceAndOwner(t *testing.T) {
+	repository := &repositoryStub{evaluation: validEvaluation()}
+	service := NewService(repository, &evidenceSnapshotReaderStub{})
+	createRequest := validCreateRequest()
+	if _, _, err := service.Create(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		createRequest,
+	); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	request := ReevaluateRequest{
+		Channels:          createRequest.Channels,
+		SceneStrategyRef:  createRequest.SceneStrategyRef,
+		Core4DStrategyRef: createRequest.Core4DStrategyRef,
+		PipelineVersion:   createRequest.PipelineVersion,
+		ClientRequestID:   "reevaluate-first-trace",
+	}
+	if _, _, err := service.Reevaluate(
+		context.Background(),
+		testActor(testOwnerA),
+		testEvalID,
+		request,
+	); err != nil {
+		t.Fatalf("Reevaluate: %v", err)
+	}
+	createFingerprint := repository.ensureCommands[0].RevisionFingerprint
+	first := repository.reevaluateCommands[0]
+	if first.RevisionFingerprint == createFingerprint {
+		t.Fatal("Reevaluate fingerprint collided with Create fingerprint")
+	}
+
+	request.ClientRequestID = "reevaluate-retry-trace"
+	if _, _, err := service.Reevaluate(
+		context.Background(),
+		testActor(testOwnerA),
+		testEvalID,
+		request,
+	); err != nil {
+		t.Fatalf("retry Reevaluate: %v", err)
+	}
+	retry := repository.reevaluateCommands[1]
+	if retry.RevisionFingerprint != first.RevisionFingerprint {
+		t.Fatal("client request ID changed Reevaluate fingerprint")
+	}
+
+	if _, _, err := service.Reevaluate(
+		context.Background(),
+		testActor(testOwnerB),
+		testEvalID,
+		request,
+	); err != nil {
+		t.Fatalf("other-owner Reevaluate: %v", err)
+	}
+	otherOwner := repository.reevaluateCommands[2]
+	if otherOwner.OwnerUserID != testOwnerB {
+		t.Fatalf("other-owner command = %#v", otherOwner)
+	}
+	if otherOwner.RevisionFingerprint != first.RevisionFingerprint {
+		t.Fatal("owner changed Reevaluate revision intent fingerprint")
+	}
+}
+
 func TestChannelKeysAreRevisionChannelAndStrategyScoped(t *testing.T) {
 	var root [32]byte
 	root[0] = 1
