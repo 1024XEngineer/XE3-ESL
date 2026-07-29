@@ -43,6 +43,7 @@ void main() {
         authController: dependencies.authController,
         agentController: dependencies.agentController,
         preparationController: dependencies.preparationController,
+        jobPreparationController: dependencies.jobPreparationController,
         preparationLaunchController: dependencies.preparationLaunchController,
         reviewHistoryController: dependencies.reviewHistoryController,
       ),
@@ -156,6 +157,126 @@ void main() {
     await tester.pumpAndSettle();
     await _signOut(tester);
   });
+
+  testWidgets('real iOS three practice hubs stay focused and reachable', (
+    tester,
+  ) async {
+    const email = String.fromEnvironment('SPEAKUP_E2E_EMAIL');
+    const password = String.fromEnvironment('SPEAKUP_E2E_PASSWORD');
+    const apiBaseUrl = String.fromEnvironment(
+      'SPEAKUP_API_BASE_URL',
+      defaultValue: 'http://127.0.0.1:8080',
+    );
+    if (email.isEmpty || password.runes.length < 8) {
+      fail('A disposable E2E account with a valid password is required.');
+    }
+
+    final dependencies = app.createProductionAppDependencies(
+      baseUri: Uri.parse(apiBaseUrl),
+    );
+    runApp(
+      SpeakUpApp(
+        authController: dependencies.authController,
+        agentController: dependencies.agentController,
+        preparationController: dependencies.preparationController,
+        jobPreparationController: dependencies.jobPreparationController,
+        preparationLaunchController: dependencies.preparationLaunchController,
+        reviewHistoryController: dependencies.reviewHistoryController,
+      ),
+    );
+    await _waitUntil(
+      tester,
+      () =>
+          find.text('欢迎回来').evaluate().isNotEmpty ||
+          find.text('需要网络连接').evaluate().isNotEmpty ||
+          find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty,
+      const Duration(seconds: 15),
+    );
+    if (find.text('需要网络连接').evaluate().isNotEmpty) {
+      await tester.tap(find.text('重试'));
+      await tester.pump();
+    }
+    if (find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty) {
+      final sameAccount = await _signedInAccountMatches(tester, email);
+      if (!sameAccount) {
+        await _signOut(tester);
+        await _registerOrSignIn(tester, email: email, password: password);
+      }
+    } else {
+      await _registerOrSignIn(tester, email: email, password: password);
+    }
+
+    await tester.tap(find.byKey(const Key('primary-tab-scenes')));
+    await tester.pump();
+    final interviewHub = find.byKey(const Key('practice-hub-interview'));
+    await _waitForPreparationTarget(
+      tester,
+      target: interviewHub,
+      operation: 'load the three product practice hubs',
+      timeout: const Duration(seconds: 30),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('practice-hub-exam')), findsOneWidget);
+    expect(find.byKey(const Key('practice-hub-roleplay')), findsOneWidget);
+    await _expectRealUiScreenshot(tester, binding, 'scenes-home');
+
+    await _scrollPreparationIntoView(tester, interviewHub);
+    await tester.tap(interviewHub);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('practice-hub-title-interview')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('open-job-preparation')), findsOneWidget);
+    await _expectRealUiScreenshot(tester, binding, 'scenes-interview');
+
+    await tester.tap(find.byKey(const Key('preparation-back-to-families')));
+    await tester.pumpAndSettle();
+    final examHub = find.byKey(const Key('practice-hub-exam'));
+    await _scrollPreparationIntoView(tester, examHub);
+    await tester.tap(examHub);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('practice-hub-title-ielts')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mode-full')), findsOneWidget);
+    await _expectRealUiScreenshot(tester, binding, 'scenes-ielts');
+
+    await tester.tap(find.byKey(const Key('preparation-back-to-families')));
+    await tester.pumpAndSettle();
+    final roleplayHub = find.byKey(const Key('practice-hub-roleplay'));
+    await _scrollPreparationIntoView(tester, roleplayHub);
+    await tester.tap(roleplayHub);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('practice-hub-title-roleplay')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('roleplay-filter-recommended')),
+      findsOneWidget,
+    );
+    await _expectRealUiScreenshot(tester, binding, 'scenes-roleplay');
+
+    await tester.tap(find.byKey(const Key('roleplay-filter-travel')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('catalog-scenario-scn_daily_hotel_checkin_issue')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('preparation-back-to-families')));
+    await tester.pumpAndSettle();
+    await _signOut(tester);
+  });
+}
+
+Future<void> _expectRealUiScreenshot(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding,
+  String name,
+) async {
+  // Let the on-device test pointer fade before taking a product screenshot.
+  await tester.pump(const Duration(milliseconds: 600));
+  final bytes = await binding.takeScreenshot('ios-real-$name');
+  expect(bytes, isNotEmpty);
 }
 
 Future<void> _registerOrSignIn(
@@ -175,7 +296,9 @@ Future<void> _registerOrSignIn(
     const Duration(seconds: 5),
   );
   await tester.ensureVisible(openRegistration);
+  await tester.pumpAndSettle();
   await tester.tap(openRegistration);
+  await tester.pumpAndSettle();
   await _waitUntil(
     tester,
     () =>
@@ -183,8 +306,12 @@ Future<void> _registerOrSignIn(
         find.text('返回登录').evaluate().length == 1,
     const Duration(seconds: 5),
   );
-  await tester.enterText(find.byType(TextFormField).at(0), email);
-  await tester.enterText(find.byType(TextFormField).at(1), password);
+  await tester.enterText(
+    find.byKey(const Key('register-display-name')),
+    'Codex QA',
+  );
+  await tester.enterText(find.byType(TextFormField).at(1), email);
+  await tester.enterText(find.byType(TextFormField).at(2), password);
   await _tapAuthSubmit(tester, '创建账号');
   await _waitUntil(
     tester,
@@ -253,9 +380,33 @@ Future<void> _completeRealVoicePractice(
   FocusManager.instance.primaryFocus?.unfocus();
   await tester.tap(find.byKey(const Key('primary-tab-scenes')));
   await tester.pump();
+  final interviewHub = find.byKey(const Key('practice-hub-interview'));
+  await _waitForPreparationTarget(
+    tester,
+    target: interviewHub,
+    operation: 'load the three practice hubs',
+    timeout: const Duration(seconds: 30),
+  );
+  await _scrollPreparationIntoView(tester, interviewHub);
+  await tester.tap(interviewHub);
+  await tester.pump();
   final scenario = find.byKey(
     const Key('catalog-scenario-scn_programmer_interview'),
   );
+  if (scenario.evaluate().isEmpty) {
+    final professionalMode = find.byKey(
+      const Key('interview-mode-professional'),
+    );
+    await _waitForPreparationTarget(
+      tester,
+      target: professionalMode,
+      operation: 'load the direct professional interview entry',
+      timeout: const Duration(seconds: 30),
+    );
+    await _scrollPreparationIntoView(tester, professionalMode);
+    await tester.tap(professionalMode);
+    await tester.pumpAndSettle();
+  }
   await _waitForPreparationTarget(
     tester,
     target: scenario,

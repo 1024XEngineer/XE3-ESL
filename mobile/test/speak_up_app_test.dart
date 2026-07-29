@@ -25,7 +25,7 @@ void main() {
     expect(find.byKey(const Key('quick-action-create-plan')), findsOneWidget);
     expect(
       find.byKey(const Key('quick-action-continue-practice')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.byKey(const Key('quick-action-recent-review')), findsOneWidget);
     expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
@@ -73,6 +73,24 @@ void main() {
       key: 'primary-tab-scenes',
       expectedPageKey: 'scenes-page',
     );
+    final practiceNavigation = tester.widget<GlassNavigationBar>(
+      find.byType(GlassNavigationBar),
+    );
+    expect(practiceNavigation.solid, isTrue);
+    expect(
+      find.ancestor(
+        of: find.byKey(const Key('primary-navigation')),
+        matching: find.byType(BackdropFilter),
+      ),
+      findsNothing,
+    );
+    final shellScaffold = tester.widget<Scaffold>(
+      find.ancestor(
+        of: find.byKey(const Key('primary-navigation')),
+        matching: find.byType(Scaffold),
+      ),
+    );
+    expect(shellScaffold.extendBody, isFalse);
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-review',
@@ -334,7 +352,7 @@ void main() {
     },
   );
 
-  testWidgets('keeps all four Agent actions above the composer on iPhone', (
+  testWidgets('keeps available Agent actions above the composer on iPhone', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(402, 874);
@@ -347,7 +365,6 @@ void main() {
 
     const actionKeys = [
       'quick-action-create-plan',
-      'quick-action-continue-practice',
       'quick-action-browse-scenes',
       'quick-action-recent-review',
     ];
@@ -464,7 +481,11 @@ void main() {
 
     await _tapVisible(tester, 'quick-action-create-plan');
     expect(find.byKey(const Key('scenes-page')), findsOneWidget);
-    expect(find.text('预览练习专题与进入流程。'), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-availability-message')),
+      findsOneWidget,
+    );
+    expect(find.text('今天想练什么？'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
@@ -474,8 +495,10 @@ void main() {
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
-    await _tapVisible(tester, 'quick-action-continue-practice');
-    expect(find.byType(PracticePage), findsOneWidget);
+    expect(
+      find.byKey(const Key('quick-action-continue-practice')),
+      findsNothing,
+    );
   });
 
   testWidgets('keeps every formal feature route reachable', (tester) async {

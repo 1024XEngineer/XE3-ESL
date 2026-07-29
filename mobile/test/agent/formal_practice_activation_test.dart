@@ -301,6 +301,34 @@ void main() {
     expect(practice.startCalls, 1);
   });
 
+  test('ends the exact active formal Session with one stable intent', () async {
+    final practice = _ActivationPracticeClient(
+      snapshot: _snapshot(turnLimit: 6),
+    );
+    final controller = AgentController(
+      client: _ActivationAgentClient(),
+      practiceClient: practice,
+      clientIdFactory: (scope) => '$scope-stable-operation',
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.activateCreatedPractice(
+      threadId: _threadId,
+      matterId: _matterId,
+      sessionId: _sessionId,
+      turnLimit: 6,
+      clientOperationId: _voiceKey,
+    );
+
+    expect(await controller.endActivePracticeEarly(), isTrue);
+
+    expect(practice.endKeys, ['practice-end-stable-operation']);
+    expect(practice.endVersions, [1]);
+    expect(controller.hasActivePractice, isFalse);
+    expect(controller.practiceSessionId, isNull);
+    expect(controller.activeMatter, isNull);
+  });
+
   test(
     'treats server sessionCompleted as authoritative before max turns',
     () async {
@@ -350,6 +378,7 @@ PracticeSessionSnapshot _snapshot({required int turnLimit}) {
     sessionId: _sessionId,
     planId: 'plan-1',
     threadId: _threadId,
+    sessionVersion: 1,
     matter: _matter,
     completedTurns: 0,
     turnLimit: turnLimit,
@@ -362,7 +391,8 @@ PracticeSessionSnapshot _snapshot({required int turnLimit}) {
   );
 }
 
-final class _ActivationPracticeClient implements PracticeClient {
+final class _ActivationPracticeClient
+    implements PracticeClient, PracticeLifecycleClient {
   _ActivationPracticeClient({
     required this.snapshot,
     this.failFirstStart = false,
@@ -376,6 +406,8 @@ final class _ActivationPracticeClient implements PracticeClient {
   int startCalls = 0;
   int clearCalls = 0;
   final startKeys = <String>[];
+  final endKeys = <String>[];
+  final endVersions = <int>[];
 
   @override
   Future<void> clearAccountState() async {
@@ -439,6 +471,21 @@ final class _ActivationPracticeClient implements PracticeClient {
     required String idempotencyKey,
   }) {
     throw UnimplementedError();
+  }
+
+  @override
+  Future<PracticeSessionLifecycle> endEarly({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  }) async {
+    endKeys.add(idempotencyKey);
+    endVersions.add(expectedSessionVersion);
+    return PracticeSessionLifecycle(
+      sessionId: sessionId,
+      status: PracticeSessionLifecycleStatus.endedEarly,
+      version: expectedSessionVersion + 1,
+    );
   }
 }
 

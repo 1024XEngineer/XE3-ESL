@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/agent/agent_voice_recording.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test(
     'keeps one Thread through a scene and creates one Review after 3 turns',
     () async {
@@ -545,6 +549,33 @@ void main() {
       expect(client.createCalls, 1);
       expect(client.focusRequests, [_historyThreadThree, _historyThreadThree]);
       expect(controller.threadId, _historyThreadThree);
+    },
+  );
+
+  test(
+    'does not publish a selected Thread until its voice state is bound',
+    () async {
+      final client = FakeAgentClient();
+      final audioPlayer = _FailingBindAgentVoiceAudioPlayer();
+      final controller = AgentController(
+        client: client,
+        voiceRecorder: FakeAgentVoiceRecorder(),
+        voiceAudioPlayer: audioPlayer,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final homeThreadId = controller.threadId!;
+
+      expect(await controller.createThread(), isTrue);
+      final targetThreadId = controller.threadId!;
+      expect(await controller.selectThread(homeThreadId), isTrue);
+
+      audioPlayer.failOnStopCall = audioPlayer.stopCalls + 2;
+      expect(await controller.selectThread(targetThreadId), isFalse);
+
+      expect(controller.threadId, homeThreadId);
+      expect(await controller.selectThread(targetThreadId), isTrue);
+      expect(controller.threadId, targetThreadId);
     },
   );
 
@@ -1363,6 +1394,42 @@ final class _FailOnceRestoreAndSceneAgentClient extends _DelegatingAgentClient {
       clientOperationId: clientOperationId,
     );
   }
+}
+
+final class _FailingBindAgentVoiceAudioPlayer implements AgentVoiceAudioPlayer {
+  final FakeAgentVoiceAudioPlayer _delegate = FakeAgentVoiceAudioPlayer();
+
+  int stopCalls = 0;
+  int? failOnStopCall;
+
+  @override
+  Stream<Duration> get onPosition => _delegate.onPosition;
+
+  @override
+  Stream<void> get onComplete => _delegate.onComplete;
+
+  @override
+  Future<void> playFile(String path, {required double speed}) =>
+      _delegate.playFile(path, speed: speed);
+
+  @override
+  Future<void> playWav(Uint8List bytes, {required double speed}) =>
+      _delegate.playWav(bytes, speed: speed);
+
+  @override
+  Future<void> stop() {
+    stopCalls++;
+    if (stopCalls == failOnStopCall) {
+      throw StateError('Injected voice bind failure.');
+    }
+    return _delegate.stop();
+  }
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
+
+  @override
+  Future<void> dispose() => _delegate.dispose();
 }
 
 final class _ControlledTranscriptionAgentClient extends _DelegatingAgentClient {

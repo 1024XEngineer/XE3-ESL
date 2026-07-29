@@ -7,6 +7,7 @@ import 'package:speakup/features/preparation/job_preparation_client.dart';
 import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
 import 'package:speakup/features/preparation/job_preparation_models.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/preparation/practice_workspace_controller.dart';
 
 typedef JobPreparationIdFactory = String Function(String scope);
 typedef JobPreparationThreadIdProvider = String? Function();
@@ -33,6 +34,7 @@ final class JobPreparationController extends ChangeNotifier {
     required this.voiceActivator,
     JobPreparationDraftStore? draftStore,
     JobPreparationIdFactory? idFactory,
+    this.workspaceController,
     this.analysisPollInterval = const Duration(seconds: 1),
     this.maxAnalysisPollAttempts = 75,
   }) : draftStore = draftStore ?? const NullJobPreparationDraftStore(),
@@ -40,6 +42,7 @@ final class JobPreparationController extends ChangeNotifier {
     if (analysisPollInterval.isNegative || maxAnalysisPollAttempts < 1) {
       throw ArgumentError('Invalid JobTarget polling configuration.');
     }
+    workspaceController?.addListener(_handleWorkspaceState);
   }
 
   final JobPreparationClient client;
@@ -47,6 +50,7 @@ final class JobPreparationController extends ChangeNotifier {
   final JobPreparationThreadIdProvider threadIdProvider;
   final JobPreparationMatterActivator matterActivator;
   final JobPreparationVoiceActivator voiceActivator;
+  final PracticeWorkspaceController? workspaceController;
   final JobPreparationIdFactory _idFactory;
   final Duration analysisPollInterval;
   final int maxAnalysisPollAttempts;
@@ -85,6 +89,9 @@ final class JobPreparationController extends ChangeNotifier {
   String? _planRevisionKey;
   String? _sessionKey;
   String? _voiceKey;
+  String? _workspaceKey;
+  PracticeWorkspaceLease? _workspaceLease;
+  bool _workspaceReplaceRequested = false;
 
   JobTargetInput get input => _input;
   JobTarget? get target => _target;
@@ -93,13 +100,29 @@ final class JobPreparationController extends ChangeNotifier {
   PreparationPracticeBootstrap? get bootstrap => _bootstrap;
   JobPreparationStep get step => _step;
   JobPreparationOperationStage? get operationStage => _operationStage;
-  String? get errorMessage => _errorMessage;
-  bool get isBusy => _busy;
+  String? get errorMessage =>
+      _errorMessage ?? workspaceController?.errorMessage;
+  bool get isBusy => _busy || (workspaceController?.isBusy ?? false);
   bool get isInitializingDraft => _initializingDraft;
   bool get hasRestorableDraft => _restorableDraft != null;
-  bool get canRetry => _errorMessage != null && !_busy;
+  bool get canRetry => _errorMessage != null && !isBusy;
   bool get isQuickStart => _input.source == JobTargetSource.quickStart;
   String? get agentIntentPrefill => _agentIntentPrefill;
+  bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
+  String? get resumablePracticeTitle => workspaceController?.currentTitle;
+  String? get workspaceErrorMessage => workspaceController?.errorMessage;
+
+  Future<bool> resumeCurrentPractice() async {
+    final workspace = workspaceController;
+    return workspace != null && await workspace.resumeCurrentPractice();
+  }
+
+  Future<bool> parkCurrentPractice() async {
+    final workspace = workspaceController;
+    return workspace == null ||
+        workspace.currentLease == null ||
+        await workspace.parkCurrentPractice();
+  }
 
   void offerAgentIntent(String? value) {
     final normalized = value?.trim();
@@ -159,6 +182,10 @@ final class JobPreparationController extends ChangeNotifier {
     _initializingDraft = true;
     notifyListeners();
     try {
+      await workspaceController?.activateAccount(accountId);
+      if (!_isCurrentAccount(generation, accountId)) {
+        return;
+      }
       final encoded = await draftStore.read(accountId);
       if (!_isCurrentAccount(generation, accountId) || encoded == null) {
         return;
@@ -597,7 +624,7 @@ final class JobPreparationController extends ChangeNotifier {
     }
   }
 
-  Future<bool> createPreview() async {
+  Future<bool> createPreview({bool replaceCurrentPractice = false}) async {
     if (_disposed || _busy) {
       return false;
     }
@@ -605,7 +632,8 @@ final class JobPreparationController extends ChangeNotifier {
     final confirmation = target?.confirmation;
     final candidate = confirmation?.candidate;
     final background = _input.candidateBackground;
-    final threadId = threadIdProvider();
+    final workspace = workspaceController;
+    var threadId = workspace == null ? threadIdProvider() : null;
     if (target == null ||
         confirmation == null ||
         candidate == null ||
@@ -622,7 +650,8 @@ final class JobPreparationController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
-    if (threadId == null || !_validResourceId(threadId)) {
+    if (workspace == null &&
+        (threadId == null || !_validResourceId(threadId))) {
       _errorMessage = 'Agent 对话仍在恢复，请稍后重试。';
       _operationStage = JobPreparationOperationStage.matter;
       notifyListeners();
@@ -630,8 +659,46 @@ final class JobPreparationController extends ChangeNotifier {
     }
 
     final operationEpoch = _epoch;
+    String? workspaceOperationId;
+    var workspaceParked = false;
     _begin(JobPreparationOperationStage.matter);
     try {
+      if (workspace != null) {
+        if (replaceCurrentPractice) {
+          _workspaceReplaceRequested = true;
+        }
+        final operationId = _workspaceKey ??= _newId('job-target-workspace');
+        workspaceOperationId = operationId;
+        final previousLease = _workspaceLease;
+        final lease = previousLease == null && _workspaceReplaceRequested
+            ? await workspace.replaceCurrentPractice(operationId)
+            : await workspace.acquireThread(operationId);
+        if (lease == null ||
+            (previousLease != null &&
+                !_sameWorkspaceIdentity(lease, previousLease))) {
+          throw const JobPreparationException(
+            kind: JobPreparationFailureKind.conflict,
+            stage: JobPreparationOperationStage.matter,
+            retryable: true,
+          );
+        }
+        _workspaceLease = lease;
+        threadId = lease.practiceThreadId;
+        if (threadIdProvider() != threadId) {
+          throw const JobPreparationException(
+            kind: JobPreparationFailureKind.invalidResponse,
+            stage: JobPreparationOperationStage.matter,
+            retryable: true,
+          );
+        }
+      }
+      if (threadId == null || !_validResourceId(threadId)) {
+        throw const JobPreparationException(
+          kind: JobPreparationFailureKind.invalidResponse,
+          stage: JobPreparationOperationStage.matter,
+          retryable: true,
+        );
+      }
       final context = await matterActivator(
         threadId: threadId,
         candidate: candidate,
@@ -707,19 +774,38 @@ final class JobPreparationController extends ChangeNotifier {
       _voiceKey = null;
       _step = JobPreparationStep.preview;
       _errorMessage = null;
+      if (workspace != null) {
+        workspaceParked = await parkCurrentPractice();
+        if (!workspaceParked) {
+          throw const JobPreparationException(
+            kind: JobPreparationFailureKind.network,
+            stage: JobPreparationOperationStage.matter,
+            retryable: true,
+          );
+        }
+      }
       return true;
     } on JobPreparationException catch (error) {
       if (_isCurrent(operationEpoch)) {
         _operationStage = error.stage ?? _operationStage;
-        _errorMessage = _messageFor(error);
+        _errorMessage = workspace?.errorMessage ?? _messageFor(error);
       }
       return false;
     } on Object {
       if (_isCurrent(operationEpoch)) {
-        _errorMessage = '暂时无法生成练习预览，请稍后重试。';
+        _errorMessage = workspace?.errorMessage ?? '暂时无法生成练习预览，请稍后重试。';
       }
       return false;
     } finally {
+      if (!workspaceParked &&
+          _isCurrent(operationEpoch) &&
+          workspace != null &&
+          workspace.currentLease?.operationId == workspaceOperationId) {
+        final parked = await workspace.parkCurrentPractice();
+        if (!parked && _isCurrent(operationEpoch)) {
+          _errorMessage ??= workspace.errorMessage ?? '面试预览已保留，但暂时无法返回首页。';
+        }
+      }
       _finish(operationEpoch);
     }
   }
@@ -782,12 +868,38 @@ final class JobPreparationController extends ChangeNotifier {
       return false;
     }
     final operationEpoch = _epoch;
+    final workspace = workspaceController;
+    final workspaceOperationId = _workspaceLease?.operationId;
+    var practiceStarted = false;
     _begin(
       _bootstrap == null
           ? JobPreparationOperationStage.session
           : JobPreparationOperationStage.voice,
     );
     try {
+      if (workspace != null) {
+        final previousLease = _workspaceLease;
+        if (previousLease == null) {
+          throw const JobPreparationException(
+            kind: JobPreparationFailureKind.conflict,
+            stage: JobPreparationOperationStage.matter,
+            retryable: true,
+          );
+        }
+        final lease = await workspace.acquireThread(previousLease.operationId);
+        if (lease == null ||
+            !_sameWorkspaceIdentity(lease, previousLease) ||
+            lease.practiceThreadId != plan.context.threadId ||
+            threadIdProvider() != plan.context.threadId) {
+          throw const JobPreparationException(
+            kind: JobPreparationFailureKind.conflict,
+            stage: JobPreparationOperationStage.matter,
+            retryable: true,
+          );
+        }
+        _workspaceLease = lease;
+        _requireCurrent(operationEpoch, _input);
+      }
       final bootstrap =
           _bootstrap ??
           await client.createJobPracticeSession(
@@ -796,6 +908,29 @@ final class JobPreparationController extends ChangeNotifier {
           );
       _requireCurrent(operationEpoch, _input);
       _bootstrap = bootstrap;
+
+      if (workspace != null) {
+        _operationStage = JobPreparationOperationStage.session;
+        notifyListeners();
+        final lease = _workspaceLease;
+        final scenario = plan.catalog.scenario;
+        if (lease == null ||
+            lease.practiceThreadId != plan.context.threadId ||
+            !await workspace.commitSession(
+              lease: lease,
+              matterId: plan.context.matterId,
+              sessionId: bootstrap.session.id,
+              scenarioId: scenario.id,
+              scenarioTitle: scenario.name,
+            )) {
+          throw const JobPreparationException(
+            kind: JobPreparationFailureKind.network,
+            stage: JobPreparationOperationStage.session,
+            retryable: true,
+          );
+        }
+        _requireCurrent(operationEpoch, _input);
+      }
 
       _operationStage = JobPreparationOperationStage.voice;
       notifyListeners();
@@ -809,21 +944,33 @@ final class JobPreparationController extends ChangeNotifier {
       _draftCompleted = true;
       await _deleteActiveDraft();
       _requireCurrent(operationEpoch, _input);
+      practiceStarted = true;
       return true;
     } on JobPreparationException catch (error) {
       if (_isCurrent(operationEpoch)) {
         _operationStage = error.stage ?? _operationStage;
-        _errorMessage = _messageFor(error);
+        _errorMessage = workspaceController?.errorMessage ?? _messageFor(error);
       }
       return false;
     } on Object {
       if (_isCurrent(operationEpoch)) {
-        _errorMessage = _bootstrap == null
-            ? '暂时无法创建练习，本次预览已保留，可以重试。'
-            : '练习已创建，但语音题目暂时无法连接。请重试连接。';
+        _errorMessage =
+            workspaceController?.errorMessage ??
+            (_bootstrap == null
+                ? '暂时无法创建练习，本次预览已保留，可以重试。'
+                : '练习已创建，但语音题目暂时无法连接。请重试连接。');
       }
       return false;
     } finally {
+      if (!practiceStarted &&
+          _isCurrent(operationEpoch) &&
+          workspace != null &&
+          workspace.currentLease?.operationId == workspaceOperationId) {
+        final parked = await workspace.parkCurrentPractice();
+        if (!parked && _isCurrent(operationEpoch)) {
+          _errorMessage ??= workspace.errorMessage ?? '练习已保留，但暂时无法返回首页。';
+        }
+      }
       _finish(operationEpoch);
     }
   }
@@ -983,6 +1130,15 @@ final class JobPreparationController extends ChangeNotifier {
     _planRevisionKey = null;
     _sessionKey = null;
     _voiceKey = null;
+    _workspaceKey = null;
+    _workspaceLease = null;
+    _workspaceReplaceRequested = false;
+  }
+
+  void _handleWorkspaceState() {
+    if (!_disposed) {
+      notifyListeners();
+    }
   }
 
   void _begin(JobPreparationOperationStage stage) {
@@ -1033,6 +1189,7 @@ final class JobPreparationController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _epoch++;
+    workspaceController?.removeListener(_handleWorkspaceState);
     super.dispose();
   }
 }
@@ -1455,6 +1612,14 @@ bool _validJobTargetInput(JobTargetInput input) {
         JobTargetSource.quickStart =>
           input.jobTitle != null && input.jobDescription == null,
       };
+}
+
+bool _sameWorkspaceIdentity(
+  PracticeWorkspaceLease left,
+  PracticeWorkspaceLease right,
+) {
+  return left.operationId == right.operationId &&
+      left.practiceThreadId == right.practiceThreadId;
 }
 
 bool _validResourceId(String value) {

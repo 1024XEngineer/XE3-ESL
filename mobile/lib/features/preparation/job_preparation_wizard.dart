@@ -6,6 +6,8 @@ import 'package:speakup/features/preparation/job_preparation_models.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
+enum _JobExistingPracticeAction { cancel, continuePractice, replace }
+
 class JobPreparationWizard extends StatefulWidget {
   const JobPreparationWizard({
     required this.controller,
@@ -39,6 +41,8 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
   int? _shownPlanRevision;
   int? _selectedTurnLimit;
   bool _catalogSyncing = false;
+  bool _exitInFlight = false;
+  bool _exitApproved = false;
 
   @override
   void initState() {
@@ -258,11 +262,98 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     }
   }
 
+  Future<void> _createPreview() async {
+    var replaceCurrentPractice = false;
+    if (widget.controller.hasResumablePractice) {
+      final action =
+          await showDialog<_JobExistingPracticeAction>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('你还有一项练习未完成'),
+              content: Text(
+                '当前练习：${widget.controller.resumablePracticeTitle ?? '上次练习'}\n'
+                '如果继续生成本轮面试，当前练习会提前结束。',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).pop(_JobExistingPracticeAction.cancel),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  key: const Key('continue-existing-job-practice'),
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).pop(_JobExistingPracticeAction.continuePractice),
+                  child: const Text('继续上次练习'),
+                ),
+                FilledButton(
+                  key: const Key('replace-existing-job-practice'),
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).pop(_JobExistingPracticeAction.replace),
+                  child: const Text('结束并生成新的'),
+                ),
+              ],
+            ),
+          ) ??
+          _JobExistingPracticeAction.cancel;
+      if (!mounted || action == _JobExistingPracticeAction.cancel) {
+        return;
+      }
+      if (action == _JobExistingPracticeAction.continuePractice) {
+        final resumed = await widget.controller.resumeCurrentPractice();
+        if (resumed && mounted) {
+          widget.onPracticeStarted?.call();
+        }
+        return;
+      }
+      replaceCurrentPractice = true;
+    }
+    await widget.controller.createPreview(
+      replaceCurrentPractice: replaceCurrentPractice,
+    );
+  }
+
+  Future<void> _requestExit() async {
+    if (!mounted ||
+        widget.controller.isBusy ||
+        _exitInFlight ||
+        _exitApproved) {
+      return;
+    }
+    _exitInFlight = true;
+    final approved = await widget.controller.parkCurrentPractice();
+    if (!mounted) {
+      return;
+    }
+    _exitInFlight = false;
+    if (!approved) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('面试准备已保留，请稍后再返回。')));
+      setState(() {});
+      return;
+    }
+    _exitApproved = true;
+    setState(() {});
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) {
+      await Navigator.of(context).maybePop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
     return PopScope<void>(
-      canPop: !controller.isBusy,
+      canPop: !controller.isBusy && _exitApproved,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          unawaited(_requestExit());
+        }
+      },
       child: Scaffold(
         key: const Key('job-preparation-wizard'),
         backgroundColor: const Color(0xFFF3F3F0),
@@ -275,7 +366,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
             tooltip: '关闭准备流程',
             onPressed: controller.isBusy
                 ? null
-                : () => Navigator.of(context).maybePop(),
+                : () => unawaited(_requestExit()),
             icon: const Icon(Icons.close_rounded),
           ),
         ),
@@ -623,7 +714,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
           key: const Key('create-plan-preview-button'),
           onPressed: controller.isBusy
               ? null
-              : () => unawaited(controller.createPreview()),
+              : () => unawaited(_createPreview()),
           icon: const Icon(Icons.event_note_outlined),
           label: const Text('生成计划预览'),
           style: _primaryButtonStyle,

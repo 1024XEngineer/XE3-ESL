@@ -13,6 +13,7 @@ import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/preparation/wire_job_preparation_client.dart';
 import 'package:speakup/features/preparation/wire_preparation_client.dart';
 import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
@@ -109,6 +110,7 @@ void main() {
                 'scenario_type': 'INTERVIEW',
                 'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
                 'name': 'English interview for technical roles',
+                'summary': 'Discuss one backend project.',
                 'version': 1,
                 'status': 'active',
               },
@@ -135,6 +137,7 @@ void main() {
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
         jobPreparationDraftStore: MemoryJobPreparationDraftStore(),
+        practiceLaunchRecordStore: MemoryPracticeLaunchRecordStore(),
         sessionStore: _MemorySessionStore('sess_main-wiring'),
       );
       addTearDown(dependencies.agentController.dispose);
@@ -227,11 +230,16 @@ void main() {
       expect(agentVoiceRecorder.clearCount, 2);
       expect(agentVoiceAudioPlayer.clearCount, 2);
 
+      await dependencies.preparationController.loadIfNeeded();
+      expect(dependencies.preparationController.errorMessage, isNull);
+      expect(dependencies.preparationController.scenarios, isNotEmpty);
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('scenes-page')), findsOneWidget);
       expect(find.byKey(const Key('training-center-title')), findsOneWidget);
       expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('practice-hub-interview')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('open-job-preparation')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);

@@ -15,10 +15,38 @@ import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
 Future<void> _openFamily(WidgetTester tester, String family) async {
-  final familyCard = find.byKey(Key('preparation-family-$family'));
-  await tester.ensureVisible(familyCard);
+  final hubKey = switch (family) {
+    'INTERVIEW' => 'practice-hub-interview',
+    'EXAM' => 'practice-hub-exam',
+    'WORKPLACE' || 'DAILY' => 'practice-hub-roleplay',
+    _ => throw ArgumentError.value(family, 'family'),
+  };
+  final hub = find.byKey(Key(hubKey));
+  await tester.ensureVisible(hub);
   await tester.pumpAndSettle();
-  await tester.tap(familyCard);
+  await tester.tap(hub);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openInterviewScenario(
+  WidgetTester tester, {
+  required String scenarioId,
+  required String modeId,
+}) async {
+  final scenario = find.byKey(Key('catalog-scenario-$scenarioId'));
+  if (scenario.evaluate().isEmpty) {
+    final mode = find.byKey(Key('interview-mode-$modeId'));
+    await tester.scrollUntilVisible(
+      mode,
+      140,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(mode);
+    await tester.pumpAndSettle();
+  }
+  final revealedScenario = find.byKey(Key('catalog-scenario-$scenarioId'));
+  await tester.ensureVisible(revealedScenario);
+  await tester.tap(revealedScenario);
   await tester.pumpAndSettle();
 }
 
@@ -41,23 +69,22 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('training-center-title')), findsOneWidget);
-      expect(find.text('练习中心'), findsOneWidget);
-      expect(find.byKey(const Key('training-catalog-status')), findsOneWidget);
-      expect(find.text('求职面试'), findsOneWidget);
-      expect(
-        find.text('English interview for technical roles'),
-        findsOneWidget,
-      );
+      expect(find.text('场景练习'), findsOneWidget);
+      expect(find.text('今天想练什么？'), findsOneWidget);
+      expect(find.text('英文面试'), findsOneWidget);
 
+      await _openFamily(tester, 'INTERVIEW');
       await tester.tap(find.byKey(const Key('open-job-preparation')));
       await tester.pump();
 
       expect(opens, 1);
       expect(controller.selectedScenario, isNull);
 
-      await _openFamily(tester, 'INTERVIEW');
-      await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
-      await tester.pumpAndSettle();
+      await _openInterviewScenario(
+        tester,
+        scenarioId: _scenarioId,
+        modeId: 'professional',
+      );
 
       expect(controller.selectedScenario?.id, _scenarioId);
       expect(
@@ -120,23 +147,39 @@ void main() {
     await _openFamily(tester, 'INTERVIEW');
 
     expect(find.text('Discuss one backend project.'), findsOneWidget);
+    final hr = find.byKey(const Key('interview-mode-hr'));
     await tester.scrollUntilVisible(
-      find.byKey(
-        const Key('catalog-scenario-scn_interview_recruiter_screening'),
-      ),
-      160,
+      hr,
+      180,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
+    expect(hr.hitTestable(), findsOneWidget);
+    await tester.tap(hr);
+    await tester.pumpAndSettle();
+    final recruiter = find.byKey(
+      const Key('catalog-scenario-scn_interview_recruiter_screening'),
+      skipOffstage: false,
+    );
+    expect(recruiter, findsOneWidget);
+    await tester.ensureVisible(recruiter);
+    await tester.pumpAndSettle();
     expect(
-      find.text('Discuss motivation, role fit, and basic expectations.'),
+      find.descendant(
+        of: recruiter,
+        matching: find.text(
+          'Discuss motivation, role fit, and basic expectations.',
+          skipOffstage: false,
+        ),
+        skipOffstage: false,
+      ),
       findsOneWidget,
     );
     expect(find.text('围绕真实项目经历，练习结构化表达与追问应对'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('groups the four MVP scenarios by speaking context', (
+  testWidgets('groups the catalog into three product directions', (
     tester,
   ) async {
     final controller = PreparationController(client: _FourFamilyClient());
@@ -147,15 +190,19 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    for (final family in const ['INTERVIEW', 'EXAM', 'WORKPLACE', 'DAILY']) {
-      final heading = find.byKey(Key('preparation-family-$family'));
+    for (final hub in const [
+      'practice-hub-interview',
+      'practice-hub-exam',
+      'practice-hub-roleplay',
+    ]) {
+      final entry = find.byKey(Key(hub));
       await tester.scrollUntilVisible(
-        heading,
+        entry,
         160,
         scrollable: find.byType(Scrollable).first,
       );
       await tester.pumpAndSettle();
-      expect(heading, findsOneWidget);
+      expect(entry, findsOneWidget);
     }
   });
 
@@ -170,8 +217,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('练习中心'), findsOneWidget);
-      expect(find.textContaining('先选择一个使用场景'), findsOneWidget);
+      expect(find.text('场景练习'), findsOneWidget);
+      expect(find.text('今天想练什么？'), findsOneWidget);
       await _openFamily(tester, 'INTERVIEW');
       await tester.tap(find.byKey(const Key('catalog-scenario-$_scenarioId')));
       await tester.pumpAndSettle();
@@ -180,7 +227,6 @@ void main() {
         find.text('English interview for technical roles'),
         findsOneWidget,
       );
-      expect(find.text('AI 会按所选角色和场景目标推进对话。'), findsOneWidget);
       final technical = find.byKey(
         const Key('preparation-role-role_technical_interviewer'),
       );
@@ -189,6 +235,10 @@ void main() {
         'role_hr_interviewer',
       ]);
 
+      final guidance = find.byKey(const Key('preparation-role-guidance'));
+      await tester.scrollUntilVisible(guidance, 160);
+      await tester.pumpAndSettle();
+      expect(guidance, findsOneWidget);
       await tester.scrollUntilVisible(technical, 200);
       await tester.pumpAndSettle();
       await tester.tap(technical);
@@ -291,6 +341,7 @@ void main() {
         const Key('preparation-option-option_full_simulation'),
       );
       await tester.scrollUntilVisible(option, 200);
+      await tester.ensureVisible(option);
       await tester.pumpAndSettle();
       expect(
         tester.getSemantics(option),
@@ -573,6 +624,7 @@ void main() {
         const Key('preparation-option-option_full_simulation'),
       );
       await tester.scrollUntilVisible(option, 200);
+      await tester.pumpAndSettle();
       await tester.tap(option);
       await tester.pump();
 
@@ -679,6 +731,12 @@ void main() {
         const Key('preparation-option-option_full_simulation'),
       );
       await tester.scrollUntilVisible(option, 200);
+      await tester.pumpAndSettle();
+      if (option.hitTestable().evaluate().isEmpty) {
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, -80));
+        await tester.pumpAndSettle();
+      }
+      expect(option.hitTestable(), findsOneWidget);
       await tester.tap(option);
       await tester.pump();
       final background = find.byKey(
@@ -712,7 +770,7 @@ void main() {
         -200,
         scrollable: find.byType(Scrollable).first,
       );
-      expect(tester.widget<TextButton>(detailBack).onPressed, isNull);
+      expect(tester.widget<IconButton>(detailBack).onPressed, isNull);
       expect(
         tester
             .widget<IconButton>(
@@ -786,7 +844,7 @@ void main() {
         -200,
         scrollable: find.byType(Scrollable).first,
       );
-      expect(tester.widget<TextButton>(detailBack).onPressed, isNull);
+      expect(tester.widget<IconButton>(detailBack).onPressed, isNull);
       expect(
         tester
             .widget<IconButton>(
