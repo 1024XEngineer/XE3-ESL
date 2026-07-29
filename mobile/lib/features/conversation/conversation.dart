@@ -801,10 +801,12 @@ class _AgentComposer extends StatefulWidget {
 
 class _AgentComposerState extends State<_AgentComposer> {
   final _controller = TextEditingController();
+  final _focusNode = FocusNode();
   bool _suppressControllerNotifications = false;
   bool _textSubmissionInFlight = false;
   bool _draftMaterializationPending = false;
   bool _voiceMaterializationPending = false;
+  bool _textMode = false;
   String _draftBeforeVoice = '';
 
   @override
@@ -853,6 +855,7 @@ class _AgentComposerState extends State<_AgentComposer> {
     _controller
       ..removeListener(_handleTextChanged)
       ..dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -881,6 +884,14 @@ class _AgentComposerState extends State<_AgentComposer> {
         ),
       );
       _suppressControllerNotifications = false;
+    }
+    if (voice?.state == AgentVoiceComposerState.awaitingConfirmation) {
+      _textMode = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _focusNode.requestFocus();
+        }
+      });
     }
     setState(() {});
   }
@@ -946,7 +957,28 @@ class _AgentComposerState extends State<_AgentComposer> {
       selection: TextSelection.collapsed(offset: value.length),
     );
     _suppressControllerNotifications = false;
-    setState(() {});
+    setState(() => _textMode = value.isNotEmpty);
+    if (value.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _focusNode.requestFocus();
+        }
+      });
+    }
+  }
+
+  void _showTextComposer() {
+    setState(() => _textMode = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _focusNode.requestFocus();
+      }
+    });
+  }
+
+  void _showVoiceComposer() {
+    _focusNode.unfocus();
+    setState(() => _textMode = false);
   }
 
   Future<void> _submitConvertedText() async {
@@ -1007,16 +1039,13 @@ class _AgentComposerState extends State<_AgentComposer> {
   Widget build(BuildContext context) {
     final voice = widget.voiceController;
     final voiceState = voice?.state ?? AgentVoiceComposerState.idle;
+    final starting = voiceState == AgentVoiceComposerState.starting;
     final recording = voiceState == AgentVoiceComposerState.recording;
     final confirmingText =
         voiceState == AgentVoiceComposerState.awaitingConfirmation;
     final voiceProgress =
-        voiceState == AgentVoiceComposerState.starting ||
         voiceState == AgentVoiceComposerState.uploading ||
         voiceState == AgentVoiceComposerState.transcribing ||
-        voiceState == AgentVoiceComposerState.confirming ||
-        voiceState == AgentVoiceComposerState.awaitingAssistant;
-    final voiceSubmissionInFlight =
         voiceState == AgentVoiceComposerState.confirming ||
         voiceState == AgentVoiceComposerState.awaitingAssistant;
     final voiceFailure = voiceState == AgentVoiceComposerState.failed;
@@ -1033,416 +1062,467 @@ class _AgentComposerState extends State<_AgentComposer> {
       onFinish: _sendVoiceMessage,
       onConvertToText: _convertVoiceToText,
       onCancel: _cancelVoice,
-      overlayBuilder: (context, intent) => _AgentVoiceCaptureOverlay(
-        intent: intent,
-        duration: voice?.recordingElapsed ?? Duration.zero,
-      ),
-      builder: (context, capture) => AnimatedContainer(
+      builder: (context, capture) => Material(
         key: const Key('agent-composer-surface'),
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        constraints: BoxConstraints(
-          minHeight: widget.keyboardVisible ? 56 : 58,
+        color: SpeakUpDesign.surface,
+        shape: const Border(top: BorderSide(color: SpeakUpDesign.border)),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(0, 14, 0, 12),
+            child: voiceProgress || voiceFailure
+                ? _AgentVoiceStatusDock(
+                    label: voiceFailure
+                        ? voice?.errorMessage ?? '语音识别失败'
+                        : _composerVoiceStateLabel(voiceState),
+                    failed: voiceFailure,
+                    canCancel:
+                        voiceState != AgentVoiceComposerState.confirming &&
+                        voiceState != AgentVoiceComposerState.awaitingAssistant,
+                    onCancel: _cancelVoice,
+                    onRetry: voiceFailure && voice?.canRetry == true
+                        ? voice?.retry
+                        : null,
+                  )
+                : confirmingText || _textMode
+                ? _AgentTextDock(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    enabled:
+                        confirmingText || (widget.enabled && !widget.isBusy),
+                    confirmingText: confirmingText,
+                    keyboardVisible: widget.keyboardVisible,
+                    submissionInFlight: _textSubmissionInFlight,
+                    canSubmit:
+                        _controller.text.trim().isNotEmpty &&
+                        widget.enabled &&
+                        (!widget.isBusy || confirmingText) &&
+                        widget.onSubmitText != null &&
+                        (!confirmingText || voice?.canConfirm == true),
+                    onReturnToVoice: confirmingText
+                        ? _cancelVoice
+                        : _showVoiceComposer,
+                    onSubmit: confirmingText ? _submitConvertedText : _submit,
+                  )
+                : _AgentVoiceDock(
+                    capture: capture,
+                    enabled: widget.voiceEnabled && widget.onStartVoice != null,
+                    preparing: starting,
+                    recording: recording,
+                    elapsed: voice?.recordingElapsed ?? Duration.zero,
+                    onOpenKeyboard: _showTextComposer,
+                  ),
+          ),
         ),
-        padding: const EdgeInsets.fromLTRB(8, 7, 7, 7),
-        decoration: BoxDecoration(
-          color: SpeakUpDesign.surface,
-          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-          border: Border.all(color: SpeakUpDesign.border),
-        ),
-        child: recording || voiceProgress || voiceFailure
-            ? Row(
-                children: [
-                  if (!voiceSubmissionInFlight) ...[
-                    IconButton(
-                      key: const Key('agent-voice-cancel'),
-                      tooltip: '取消语音输入',
-                      onPressed: recording
-                          ? capture.cancelTapCapture
-                          : _cancelVoice,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 40,
-                        height: 40,
-                      ),
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(Icons.close_rounded, size: 21),
-                    ),
-                    const SizedBox(width: 4),
-                  ],
-                  if (recording) ...[
-                    const Icon(
-                      Icons.fiber_manual_record_rounded,
-                      size: 12,
-                      color: SpeakUpDesign.error,
-                    ),
-                    const SizedBox(width: 8),
-                  ] else if (voiceProgress) ...[
-                    const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  Expanded(
-                    child: recording
-                        ? Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                '正在录音',
-                                key: Key('agent-voice-state-label'),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: SpeakUpDesign.secondary,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.2,
-                                ),
-                              ),
-                              Text(
-                                _formatComposerDuration(
-                                  voice!.recordingElapsed,
-                                ),
-                                key: const Key(
-                                  'agent-voice-recording-duration',
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: SpeakUpDesign.secondary,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.2,
-                                ),
-                              ),
-                            ],
-                          )
-                        : Text(
-                            voiceFailure
-                                ? voice?.errorMessage ?? '语音识别失败'
-                                : _composerVoiceStateLabel(voiceState),
-                            key: const Key('agent-voice-state-label'),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: voiceFailure
-                                  ? SpeakUpDesign.error
-                                  : SpeakUpDesign.secondary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              height: 1.3,
-                            ),
-                          ),
-                  ),
-                  if (recording) ...[
-                    const SizedBox(width: 8),
-                    IconButton.outlined(
-                      key: const Key('agent-voice-stop'),
-                      tooltip: '结束并转成文字',
-                      onPressed: capture.convertTapCapture,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 40,
-                        height: 40,
-                      ),
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(Icons.text_fields_rounded, size: 19),
-                    ),
-                    const SizedBox(width: 4),
-                    IconButton.filled(
-                      key: const Key('agent-voice-send'),
-                      tooltip: '发送语音',
-                      onPressed: capture.finishTapCapture,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 40,
-                        height: 40,
-                      ),
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(Icons.arrow_upward_rounded, size: 20),
-                    ),
-                  ] else if (voiceFailure && voice?.canRetry == true)
-                    IconButton(
-                      key: const Key('agent-voice-retry'),
-                      tooltip: '重试',
-                      onPressed: voice?.retry,
-                      icon: const Icon(Icons.refresh_rounded),
-                    ),
-                ],
-              )
-            : Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (confirmingText)
-                    IconButton(
-                      key: const Key('agent-voice-cancel'),
-                      tooltip: '取消语音输入',
-                      onPressed: _cancelVoice,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 40,
-                        height: 40,
-                      ),
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(Icons.close_rounded, size: 21),
-                    ),
-                  Expanded(
-                    child: TextField(
-                      key: const Key('agent-composer-field'),
-                      controller: _controller,
-                      enabled:
-                          confirmingText || (widget.enabled && !widget.isBusy),
-                      minLines: 1,
-                      maxLines: widget.keyboardVisible ? 3 : 2,
-                      inputFormatters: <TextInputFormatter>[
-                        _agentContentFormatter,
-                      ],
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) =>
-                          confirmingText ? _submitConvertedText() : _submit(),
-                      style: const TextStyle(
-                        color: SpeakUpDesign.ink,
-                        fontSize: 15,
-                        height: 1.4,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: widget.enabled
-                            ? confirmingText
-                                  ? '检查识别文字'
-                                  : '问问 SpeakUp'
-                            : '暂时无法开始对话',
-                        hintStyle: const TextStyle(
-                          color: SpeakUpDesign.tertiary,
-                          fontSize: 15,
-                        ),
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: const EdgeInsets.fromLTRB(7, 9, 6, 8),
-                      ),
-                    ),
-                  ),
-                  if (!confirmingText && widget.onStartVoice != null) ...[
-                    capture.wrapTarget(
-                      key: const Key('agent-mic-placeholder'),
-                      semanticsLabel: '录制 Agent 语音消息',
-                      child: IconButton(
-                        tooltip: '录制 Agent 语音消息',
-                        onPressed: null,
-                        constraints: const BoxConstraints.tightFor(
-                          width: 40,
-                          height: 40,
-                        ),
-                        padding: EdgeInsets.zero,
-                        disabledColor: widget.voiceEnabled
-                            ? SpeakUpDesign.secondary
-                            : SpeakUpDesign.tertiary,
-                        icon: const Icon(Icons.mic_none_rounded, size: 21),
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                  ],
-                  IconButton.filled(
-                    key: Key(
-                      confirmingText
-                          ? 'agent-voice-confirm'
-                          : 'agent-send-button',
-                    ),
-                    tooltip: '发送',
-                    onPressed:
-                        _controller.text.trim().isEmpty ||
-                            (widget.isBusy && !confirmingText) ||
-                            !widget.enabled
-                        ? null
-                        : _textSubmissionInFlight
-                        ? null
-                        : confirmingText
-                        ? voice?.canConfirm == true
-                              ? _submitConvertedText
-                              : null
-                        : widget.onSubmitText == null
-                        ? null
-                        : _submit,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 40,
-                      height: 40,
-                    ),
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.arrow_upward_rounded, size: 20),
-                  ),
-                ],
-              ),
       ),
     );
   }
 }
 
-class _AgentVoiceCaptureOverlay extends StatelessWidget {
-  const _AgentVoiceCaptureOverlay({
-    required this.intent,
-    required this.duration,
+class _AgentVoiceDock extends StatelessWidget {
+  const _AgentVoiceDock({
+    required this.capture,
+    required this.enabled,
+    required this.preparing,
+    required this.recording,
+    required this.elapsed,
+    required this.onOpenKeyboard,
   });
 
-  final VoiceCaptureReleaseIntent intent;
-  final Duration duration;
+  final VoiceCaptureView capture;
+  final bool enabled;
+  final bool preparing;
+  final bool recording;
+  final Duration elapsed;
+  final VoidCallback onOpenKeyboard;
 
   @override
   Widget build(BuildContext context) {
-    final status = switch (intent) {
-      VoiceCaptureReleaseIntent.finish => '松开发送语音',
-      VoiceCaptureReleaseIntent.convertToText => '松开转成文字',
-      VoiceCaptureReleaseIntent.cancel => '松开取消',
-    };
-    final statusColor = switch (intent) {
-      VoiceCaptureReleaseIntent.finish => SpeakUpDesign.primary,
-      VoiceCaptureReleaseIntent.convertToText => const Color(0xFF3F6C91),
-      VoiceCaptureReleaseIntent.cancel => SpeakUpDesign.error,
-    };
-    return IgnorePointer(
-      child: Material(
-        key: const Key('agent-voice-capture-overlay'),
-        color: Colors.black.withValues(alpha: 0.64),
-        child: SafeArea(
-          minimum: const EdgeInsets.fromLTRB(20, 24, 20, 20),
-          child: Column(
-            children: [
-              const Spacer(flex: 3),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
-                width: 190,
-                constraints: const BoxConstraints(minHeight: 124),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 20,
-                ),
-                decoration: BoxDecoration(
-                  color: statusColor,
-                  borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x33000000),
-                      blurRadius: 24,
-                      offset: Offset(0, 10),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.graphic_eq_rounded,
-                      size: 52,
-                      color: Colors.white,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _formatComposerDuration(duration),
-                      key: const Key('agent-voice-overlay-duration'),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(flex: 2),
-              Row(
-                children: [
-                  Expanded(
-                    child: _target(
-                      key: const Key('agent-voice-overlay-cancel'),
-                      active: intent == VoiceCaptureReleaseIntent.cancel,
-                      icon: Icons.close_rounded,
-                      label: '左滑取消',
-                      activeColor: SpeakUpDesign.error,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: _target(
-                      key: const Key('agent-voice-overlay-convert'),
-                      active: intent == VoiceCaptureReleaseIntent.convertToText,
-                      icon: Icons.text_fields_rounded,
-                      label: '右滑转文字',
-                      activeColor: const Color(0xFF3F6C91),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              AnimatedContainer(
-                key: const Key('agent-voice-overlay-status'),
-                duration: const Duration(milliseconds: 120),
-                width: double.infinity,
-                constraints: const BoxConstraints(minHeight: 58),
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: statusColor,
-                  borderRadius: BorderRadius.circular(
-                    SpeakUpDesign.radiusControl,
-                  ),
-                ),
-                child: Text(
-                  status,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
+    final capturing = preparing || recording;
+    final showTargets = capture.holdStarted || (capture.tapMode && capturing);
+    final label = !capturing
+        ? '点击或按住说话'
+        : preparing
+        ? '正在打开麦克风…'
+        : capture.tapMode
+        ? '请选择发送方式'
+        : switch (capture.releaseIntent) {
+            VoiceCaptureReleaseIntent.finish => '松开发送语音',
+            VoiceCaptureReleaseIntent.convertToText => '松开转成文字',
+            VoiceCaptureReleaseIntent.cancel => '上滑选择发送方式',
+          };
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showTargets) ...[
+          _AgentVoiceTargets(
+            intent: capture.releaseIntent,
+            elapsed: elapsed,
+            interactive: capture.tapMode,
+            onSendVoice: capture.finishTapCapture,
+            onConvertToText: capture.convertTapCapture,
           ),
+          const SizedBox(height: 10),
+        ],
+        Row(
+          children: [
+            Expanded(
+              child: capture.wrapTarget(
+                key: const Key('agent-mic-placeholder'),
+                semanticsLabel: capturing ? label : '点击或按住说话',
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 100),
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: capturing || (enabled && capture.pressed)
+                        ? SpeakUpDesign.primary.withValues(alpha: 0.82)
+                        : enabled
+                        ? SpeakUpDesign.primary
+                        : SpeakUpDesign.tertiary,
+                    borderRadius: BorderRadius.circular(
+                      SpeakUpDesign.radiusControl,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        capturing
+                            ? Icons.graphic_eq_rounded
+                            : Icons.mic_rounded,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          label,
+                          key: const Key('agent-voice-state-label'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (recording && !showTargets) ...[
+                        const SizedBox(width: 10),
+                        Text(
+                          _formatComposerDuration(elapsed),
+                          key: const Key('agent-voice-recording-duration'),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            IconButton.outlined(
+              key: Key(
+                capturing ? 'agent-voice-cancel' : 'agent-open-keyboard',
+              ),
+              tooltip: capturing ? '取消录音' : '键盘输入',
+              onPressed: capturing ? capture.cancelTapCapture : onOpenKeyboard,
+              icon: Icon(
+                capturing ? Icons.close_rounded : Icons.keyboard_alt_outlined,
+              ),
+              style: IconButton.styleFrom(minimumSize: const Size.square(56)),
+            ),
+          ],
         ),
-      ),
+      ],
     );
   }
+}
 
-  Widget _target({
-    required Key key,
-    required bool active,
-    required IconData icon,
-    required String label,
-    required Color activeColor,
-  }) {
-    return AnimatedContainer(
-      key: key,
-      duration: const Duration(milliseconds: 120),
-      constraints: const BoxConstraints(minHeight: 74),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+class _AgentVoiceTargets extends StatelessWidget {
+  const _AgentVoiceTargets({
+    required this.intent,
+    required this.elapsed,
+    required this.interactive,
+    required this.onSendVoice,
+    required this.onConvertToText,
+  });
+
+  final VoiceCaptureReleaseIntent intent;
+  final Duration elapsed;
+  final bool interactive;
+  final VoidCallback onSendVoice;
+  final VoidCallback onConvertToText;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('agent-voice-targets'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          _formatComposerDuration(elapsed),
+          key: const Key('agent-voice-target-duration'),
+          style: SpeakUpDesign.meta.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _AgentVoiceTarget(
+                key: const Key('agent-voice-target-send'),
+                active: intent == VoiceCaptureReleaseIntent.finish,
+                icon: Icons.mic_rounded,
+                label: '发语音',
+                onPressed: interactive ? onSendVoice : null,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _AgentVoiceTarget(
+                key: const Key('agent-voice-target-convert'),
+                active: intent == VoiceCaptureReleaseIntent.convertToText,
+                icon: Icons.text_fields_rounded,
+                label: '转文字',
+                onPressed: interactive ? onConvertToText : null,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _AgentVoiceTarget extends StatelessWidget {
+  const _AgentVoiceTarget({
+    required this.active,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    super.key,
+  });
+
+  final bool active;
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = AnimatedContainer(
+      duration: const Duration(milliseconds: 100),
+      height: 64,
       decoration: BoxDecoration(
-        color: active ? activeColor : Colors.white.withValues(alpha: 0.13),
+        color: active ? SpeakUpDesign.primary : SpeakUpDesign.surfaceMuted,
         borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
         border: Border.all(
-          color: active
-              ? Colors.white.withValues(alpha: 0.72)
-              : Colors.white.withValues(alpha: 0.2),
+          color: active ? SpeakUpDesign.primary : SpeakUpDesign.border,
         ),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: Colors.white, size: 22),
+          Icon(
+            icon,
+            color: active ? Colors.white : SpeakUpDesign.ink,
+            size: 21,
+          ),
           const SizedBox(width: 8),
           Flexible(
             child: Text(
               label,
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: active ? Colors.white : SpeakUpDesign.ink,
                 fontSize: 15,
                 fontWeight: FontWeight.w700,
               ),
             ),
           ),
+        ],
+      ),
+    );
+    if (onPressed == null) {
+      return content;
+    }
+    return Semantics(
+      button: true,
+      label: label,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+        child: content,
+      ),
+    );
+  }
+}
+
+class _AgentTextDock extends StatelessWidget {
+  const _AgentTextDock({
+    required this.controller,
+    required this.focusNode,
+    required this.enabled,
+    required this.confirmingText,
+    required this.keyboardVisible,
+    required this.submissionInFlight,
+    required this.canSubmit,
+    required this.onReturnToVoice,
+    required this.onSubmit,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool enabled;
+  final bool confirmingText;
+  final bool keyboardVisible;
+  final bool submissionInFlight;
+  final bool canSubmit;
+  final VoidCallback onReturnToVoice;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: SpeakUpDesign.surface,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+        border: Border.all(color: SpeakUpDesign.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(7, 7, 7, 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            IconButton(
+              key: Key(
+                confirmingText ? 'agent-voice-cancel' : 'agent-return-to-voice',
+              ),
+              tooltip: confirmingText ? '取消语音输入' : '切换到语音',
+              onPressed: onReturnToVoice,
+              constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+              padding: EdgeInsets.zero,
+              icon: Icon(
+                confirmingText ? Icons.close_rounded : Icons.mic_none_rounded,
+                size: 21,
+              ),
+            ),
+            const SizedBox(width: 2),
+            Expanded(
+              child: TextField(
+                key: const Key('agent-composer-field'),
+                controller: controller,
+                focusNode: focusNode,
+                enabled: enabled,
+                minLines: 1,
+                maxLines: keyboardVisible ? 3 : 2,
+                inputFormatters: <TextInputFormatter>[_agentContentFormatter],
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => onSubmit(),
+                style: const TextStyle(
+                  color: SpeakUpDesign.ink,
+                  fontSize: 15,
+                  height: 1.4,
+                ),
+                decoration: InputDecoration(
+                  hintText: enabled
+                      ? confirmingText
+                            ? '检查识别文字'
+                            : '问问 SpeakUp'
+                      : '暂时无法开始对话',
+                  hintStyle: const TextStyle(
+                    color: SpeakUpDesign.tertiary,
+                    fontSize: 15,
+                  ),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.fromLTRB(7, 9, 6, 8),
+                ),
+              ),
+            ),
+            IconButton.filled(
+              key: Key(
+                confirmingText ? 'agent-voice-confirm' : 'agent-send-button',
+              ),
+              tooltip: '发送',
+              onPressed: canSubmit && !submissionInFlight ? onSubmit : null,
+              constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+              padding: EdgeInsets.zero,
+              icon: const Icon(Icons.arrow_upward_rounded, size: 20),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentVoiceStatusDock extends StatelessWidget {
+  const _AgentVoiceStatusDock({
+    required this.label,
+    required this.failed,
+    required this.canCancel,
+    required this.onCancel,
+    required this.onRetry,
+  });
+
+  final String label;
+  final bool failed;
+  final bool canCancel;
+  final VoidCallback onCancel;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 56),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: SpeakUpDesign.surface,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+        border: Border.all(color: SpeakUpDesign.border),
+      ),
+      child: Row(
+        children: [
+          if (canCancel)
+            IconButton(
+              key: const Key('agent-voice-cancel'),
+              tooltip: '取消语音输入',
+              onPressed: onCancel,
+              icon: const Icon(Icons.close_rounded, size: 21),
+            ),
+          if (!failed) ...[
+            const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 10),
+          ],
+          Expanded(
+            child: Text(
+              label,
+              key: const Key('agent-voice-state-label'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: failed ? SpeakUpDesign.error : SpeakUpDesign.secondary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                height: 1.3,
+              ),
+            ),
+          ),
+          if (onRetry != null)
+            IconButton(
+              key: const Key('agent-voice-retry'),
+              tooltip: '重试',
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
         ],
       ),
     );

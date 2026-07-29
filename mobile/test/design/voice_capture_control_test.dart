@@ -7,7 +7,9 @@ import 'package:speakup/design/voice_capture_control.dart';
 void main() {
   testWidgets('quick tap starts and second tap finishes once', (tester) async {
     final harness = GlobalKey<_VoiceCaptureHarnessState>();
-    await tester.pumpWidget(_VoiceCaptureHarness(key: harness));
+    await tester.pumpWidget(
+      _VoiceCaptureHarness(key: harness, dualTarget: true),
+    );
 
     await tester.tap(find.byKey(const Key('voice-capture-target')));
     await tester.pump();
@@ -41,33 +43,18 @@ void main() {
     expect(harness.currentState?.finishes, 1);
   });
 
-  testWidgets('three-way neutral release finishes the capture', (tester) async {
+  testWidgets('dual-target neutral release cancels the capture', (
+    tester,
+  ) async {
     final harness = GlobalKey<_VoiceCaptureHarnessState>();
-    await tester.pumpWidget(_VoiceCaptureHarness(key: harness, threeWay: true));
+    await tester.pumpWidget(
+      _VoiceCaptureHarness(key: harness, dualTarget: true),
+    );
 
     final gesture = await tester.startGesture(
       tester.getCenter(find.byKey(const Key('voice-capture-target'))),
     );
     await tester.pump(const Duration(milliseconds: 200));
-    await gesture.up();
-    await tester.pump();
-
-    expect(harness.currentState?.starts, 1);
-    expect(harness.currentState?.finishes, 1);
-    expect(harness.currentState?.converts, 0);
-    expect(harness.currentState?.cancels, 0);
-  });
-
-  testWidgets('three-way left release cancels the capture', (tester) async {
-    final harness = GlobalKey<_VoiceCaptureHarnessState>();
-    await tester.pumpWidget(_VoiceCaptureHarness(key: harness, threeWay: true));
-
-    final gesture = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('voice-capture-target'))),
-    );
-    await tester.pump(const Duration(milliseconds: 200));
-    await gesture.moveBy(const Offset(-80, 0));
-    await tester.pump();
 
     expect(find.text('cancel armed'), findsOneWidget);
 
@@ -80,17 +67,45 @@ void main() {
     expect(harness.currentState?.cancels, 1);
   });
 
-  testWidgets('three-way right release converts the capture to text', (
+  testWidgets('dual-target up-left release finishes the capture', (
     tester,
   ) async {
     final harness = GlobalKey<_VoiceCaptureHarnessState>();
-    await tester.pumpWidget(_VoiceCaptureHarness(key: harness, threeWay: true));
+    await tester.pumpWidget(
+      _VoiceCaptureHarness(key: harness, dualTarget: true),
+    );
 
     final gesture = await tester.startGesture(
       tester.getCenter(find.byKey(const Key('voice-capture-target'))),
     );
     await tester.pump(const Duration(milliseconds: 200));
-    await gesture.moveBy(const Offset(80, 0));
+    await gesture.moveBy(const Offset(-80, -80));
+    await tester.pump();
+
+    expect(find.text('finish armed'), findsOneWidget);
+
+    await gesture.up();
+    await tester.pump();
+
+    expect(harness.currentState?.starts, 1);
+    expect(harness.currentState?.finishes, 1);
+    expect(harness.currentState?.converts, 0);
+    expect(harness.currentState?.cancels, 0);
+  });
+
+  testWidgets('dual-target up-right release converts the capture to text', (
+    tester,
+  ) async {
+    final harness = GlobalKey<_VoiceCaptureHarnessState>();
+    await tester.pumpWidget(
+      _VoiceCaptureHarness(key: harness, dualTarget: true),
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('voice-capture-target'))),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.moveBy(const Offset(80, -80));
     await tester.pump();
 
     expect(find.text('convert armed'), findsOneWidget);
@@ -104,42 +119,46 @@ void main() {
     expect(harness.currentState?.cancels, 0);
   });
 
-  testWidgets('three-way drag returning to center finishes', (tester) async {
+  testWidgets('dual-target drag returning to neutral cancels', (tester) async {
     final harness = GlobalKey<_VoiceCaptureHarnessState>();
-    await tester.pumpWidget(_VoiceCaptureHarness(key: harness, threeWay: true));
+    await tester.pumpWidget(
+      _VoiceCaptureHarness(key: harness, dualTarget: true),
+    );
 
     final origin = tester.getCenter(
       find.byKey(const Key('voice-capture-target')),
     );
     final gesture = await tester.startGesture(origin);
     await tester.pump(const Duration(milliseconds: 200));
-    await gesture.moveBy(const Offset(80, 0));
+    await gesture.moveBy(const Offset(80, -80));
     await tester.pump();
     expect(find.text('convert armed'), findsOneWidget);
 
     await gesture.moveTo(origin);
     await tester.pump();
-    expect(find.text('voice capture'), findsOneWidget);
+    expect(find.text('cancel armed'), findsOneWidget);
 
     await gesture.up();
     await tester.pump();
 
-    expect(harness.currentState?.finishes, 1);
+    expect(harness.currentState?.finishes, 0);
     expect(harness.currentState?.converts, 0);
-    expect(harness.currentState?.cancels, 0);
+    expect(harness.currentState?.cancels, 1);
   });
 
   testWidgets('pointer cancel always cancels an armed conversion', (
     tester,
   ) async {
     final harness = GlobalKey<_VoiceCaptureHarnessState>();
-    await tester.pumpWidget(_VoiceCaptureHarness(key: harness, threeWay: true));
+    await tester.pumpWidget(
+      _VoiceCaptureHarness(key: harness, dualTarget: true),
+    );
 
     final gesture = await tester.startGesture(
       tester.getCenter(find.byKey(const Key('voice-capture-target'))),
     );
     await tester.pump(const Duration(milliseconds: 200));
-    await gesture.moveBy(const Offset(80, 0));
+    await gesture.moveBy(const Offset(80, -80));
     await tester.pump();
     await gesture.cancel();
     await tester.pump();
@@ -242,7 +261,7 @@ void main() {
       _VoiceCaptureHarness(
         key: harness,
         startCompleter: startCompleter,
-        threeWay: true,
+        dualTarget: true,
       ),
     );
 
@@ -250,7 +269,7 @@ void main() {
       tester.getCenter(find.byKey(const Key('voice-capture-target'))),
     );
     await tester.pump(const Duration(milliseconds: 200));
-    await gesture.moveBy(const Offset(80, 0));
+    await gesture.moveBy(const Offset(80, -80));
     await gesture.up();
     await tester.pump();
 
@@ -275,6 +294,7 @@ void main() {
       _VoiceCaptureHarness(
         key: harness,
         beforeStartCompleter: beforeStartCompleter,
+        dualTarget: true,
       ),
     );
 
@@ -282,7 +302,6 @@ void main() {
       tester.getCenter(find.byKey(const Key('voice-capture-target'))),
     );
     await tester.pump(const Duration(milliseconds: 200));
-    await gesture.moveBy(const Offset(0, -80));
     await gesture.up();
     await tester.pump();
 
@@ -299,7 +318,11 @@ void main() {
   ) async {
     final harness = GlobalKey<_VoiceCaptureHarnessState>();
     await tester.pumpWidget(
-      _VoiceCaptureHarness(key: harness, mode: VoiceCaptureMode.tapToToggle),
+      _VoiceCaptureHarness(
+        key: harness,
+        mode: VoiceCaptureMode.tapToToggle,
+        dualTarget: true,
+      ),
     );
 
     final gesture = await tester.startGesture(
@@ -313,16 +336,21 @@ void main() {
     await tester.pump();
 
     expect(harness.currentState?.starts, 1);
+
+    await tester.tap(find.byKey(const Key('voice-capture-target')));
+    await tester.pump();
+
+    expect(harness.currentState?.finishes, 1);
   });
 
-  testWidgets('convert tap action dispatches conversion in three-way mode', (
+  testWidgets('convert tap action dispatches conversion in dual-target mode', (
     tester,
   ) async {
     final harness = GlobalKey<_VoiceCaptureHarnessState>();
     await tester.pumpWidget(
       _VoiceCaptureHarness(
         key: harness,
-        threeWay: true,
+        dualTarget: true,
         showConvertButton: true,
       ),
     );
@@ -338,62 +366,33 @@ void main() {
     expect(harness.currentState?.cancels, 0);
   });
 
-  testWidgets('overlay follows intent and is removed for every lifecycle end', (
+  testWidgets('dual-target horizontal movement remains neutral cancellation', (
     tester,
   ) async {
     final harness = GlobalKey<_VoiceCaptureHarnessState>();
     await tester.pumpWidget(
-      _VoiceCaptureHarness(key: harness, threeWay: true, showOverlay: true),
+      _VoiceCaptureHarness(key: harness, dualTarget: true),
     );
 
-    var gesture = await tester.startGesture(
+    final gesture = await tester.startGesture(
       tester.getCenter(find.byKey(const Key('voice-capture-target'))),
     );
     await tester.pump(const Duration(milliseconds: 179));
-    expect(find.byKey(const Key('voice-capture-overlay')), findsNothing);
+    expect(find.text('voice capture'), findsOneWidget);
 
     await tester.pump(const Duration(milliseconds: 1));
-    expect(find.text('finish'), findsOneWidget);
+    expect(find.text('cancel armed'), findsOneWidget);
 
     await gesture.moveBy(const Offset(80, 0));
     await tester.pump();
-    expect(find.text('convertToText'), findsOneWidget);
-
-    await gesture.moveBy(const Offset(-160, 0));
-    await tester.pump();
-    expect(find.text('cancel'), findsOneWidget);
+    expect(find.text('cancel armed'), findsOneWidget);
 
     await gesture.up();
     await tester.pump();
-    expect(find.byKey(const Key('voice-capture-overlay')), findsNothing);
 
-    harness.currentState?.setIdle();
-    await tester.pump();
-    gesture = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('voice-capture-target'))),
-    );
-    await tester.pump(const Duration(milliseconds: 180));
-    expect(find.byKey(const Key('voice-capture-overlay')), findsOneWidget);
-
-    harness.currentState?.setBusy();
-    await tester.pump();
-    await tester.pump();
-    expect(find.byKey(const Key('voice-capture-overlay')), findsNothing);
-    await gesture.cancel();
-
-    harness.currentState?.setIdle();
-    await tester.pump();
-    gesture = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('voice-capture-target'))),
-    );
-    await tester.pump(const Duration(milliseconds: 180));
-    expect(find.byKey(const Key('voice-capture-overlay')), findsOneWidget);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-    expect(find.byKey(const Key('voice-capture-overlay')), findsNothing);
-    expect(tester.takeException(), isNull);
-    await gesture.cancel();
+    expect(harness.currentState?.finishes, 0);
+    expect(harness.currentState?.converts, 0);
+    expect(harness.currentState?.cancels, 1);
   });
 }
 
@@ -403,16 +402,14 @@ class _VoiceCaptureHarness extends StatefulWidget {
     this.startCompleter,
     this.beforeStartCompleter,
     this.mode = VoiceCaptureMode.pressAndHold,
-    this.threeWay = false,
-    this.showOverlay = false,
+    this.dualTarget = false,
     this.showConvertButton = false,
   });
 
   final Completer<void>? startCompleter;
   final Completer<void>? beforeStartCompleter;
   final VoiceCaptureMode mode;
-  final bool threeWay;
-  final bool showOverlay;
+  final bool dualTarget;
   final bool showConvertButton;
 
   @override
@@ -450,10 +447,6 @@ class _VoiceCaptureHarnessState extends State<_VoiceCaptureHarness> {
     setState(() => phase = VoiceCapturePhase.idle);
   }
 
-  void setIdle() => setState(() => phase = VoiceCapturePhase.idle);
-
-  void setBusy() => setState(() => phase = VoiceCapturePhase.busy);
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -467,16 +460,8 @@ class _VoiceCaptureHarnessState extends State<_VoiceCaptureHarness> {
             },
             onStart: _start,
             onFinish: _finish,
-            onConvertToText: widget.threeWay ? _convert : null,
+            onConvertToText: widget.dualTarget ? _convert : null,
             onCancel: _cancel,
-            overlayBuilder: widget.showOverlay
-                ? (context, intent) => Center(
-                    child: Material(
-                      key: const Key('voice-capture-overlay'),
-                      child: Text(intent.name),
-                    ),
-                  )
-                : null,
             builder: (context, view) {
               final target = view.wrapTarget(
                 key: const Key('voice-capture-target'),
@@ -492,6 +477,8 @@ class _VoiceCaptureHarnessState extends State<_VoiceCaptureHarness> {
                           ? 'cancel armed'
                           : view.convertArmed
                           ? 'convert armed'
+                          : view.holdStarted
+                          ? 'finish armed'
                           : 'voice capture',
                     ),
                   ),

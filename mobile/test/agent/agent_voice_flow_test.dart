@@ -23,6 +23,10 @@ void main() {
       await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
       await tester.pumpAndSettle();
 
+      expect(find.byKey(const Key('agent-mic-placeholder')), findsOneWidget);
+      expect(find.byKey(const Key('agent-open-keyboard')), findsOneWidget);
+      expect(find.byKey(const Key('agent-voice-targets')), findsNothing);
+
       await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
       await tester.pump();
       expect(
@@ -31,10 +35,21 @@ void main() {
       );
       expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
       expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
-      expect(find.byKey(const Key('agent-voice-stop')), findsOneWidget);
-      expect(find.byKey(const Key('agent-voice-send')), findsOneWidget);
+      expect(find.byKey(const Key('agent-voice-targets')), findsOneWidget);
+      expect(
+        find.byKey(const Key('agent-voice-target-send')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('agent-voice-target-convert')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('agent-voice-capture-overlay')),
+        findsNothing,
+      );
 
-      await tester.tap(find.byKey(const Key('agent-voice-send')));
+      await tester.tap(find.byKey(const Key('agent-voice-target-send')));
       await _pumpVoiceOperation(tester);
       expect(controller.voiceController?.state, AgentVoiceComposerState.idle);
 
@@ -190,8 +205,13 @@ void main() {
     await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
     await tester.pumpAndSettle();
     final voiceController = controller.voiceController!;
-    final field = find.byKey(const Key('agent-composer-field'));
+
+    await tester.tap(find.byKey(const Key('agent-open-keyboard')));
+    await tester.pump();
+    var field = find.byKey(const Key('agent-composer-field'));
     await tester.enterText(field, 'Keep this draft');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('agent-return-to-voice')));
     await tester.pump();
 
     final gesture = await tester.startGesture(
@@ -202,10 +222,12 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 1));
     expect(voiceController.state, AgentVoiceComposerState.recording);
-    expect(
-      find.byKey(const Key('agent-voice-capture-overlay')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('agent-voice-targets')), findsOneWidget);
+    expect(find.byKey(const Key('agent-voice-target-send')), findsOneWidget);
+    expect(find.byKey(const Key('agent-voice-target-convert')), findsOneWidget);
+    expect(find.byKey(const Key('agent-voice-capture-overlay')), findsNothing);
+    await gesture.moveBy(const Offset(-80, -80));
+    await tester.pump();
     expect(find.text('松开发送语音'), findsOneWidget);
 
     await gesture.up();
@@ -218,8 +240,10 @@ void main() {
       ),
       hasLength(1),
     );
+    field = find.byKey(const Key('agent-composer-field'));
+    expect(field, findsOneWidget);
     expect(tester.widget<TextField>(field).controller?.text, 'Keep this draft');
-    expect(find.byKey(const Key('agent-voice-capture-overlay')), findsNothing);
+    expect(find.byKey(const Key('agent-voice-targets')), findsNothing);
   });
 
   testWidgets('right release converts voice to editable text Message', (
@@ -237,7 +261,7 @@ void main() {
       tester.getCenter(find.byKey(const Key('agent-mic-placeholder'))),
     );
     await tester.pump(const Duration(milliseconds: 180));
-    await gesture.moveBy(const Offset(80, 0));
+    await gesture.moveBy(const Offset(80, -80));
     await tester.pump();
 
     expect(find.text('松开转成文字'), findsOneWidget);
@@ -264,7 +288,7 @@ void main() {
     expect(userMessages.single.text, 'Edited voice transcript');
   });
 
-  testWidgets('left release cancels Agent recording', (tester) async {
+  testWidgets('neutral release cancels Agent recording', (tester) async {
     final voiceController = AgentVoiceController(
       client: FakeAgentClient(),
       recorder: FakeAgentVoiceRecorder(),
@@ -291,15 +315,14 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 180));
     expect(voiceController.state, AgentVoiceComposerState.recording);
-
-    await gesture.moveBy(const Offset(-80, 0));
-    await tester.pump();
-    expect(find.text('松开取消'), findsOneWidget);
+    expect(find.byKey(const Key('agent-voice-targets')), findsOneWidget);
+    expect(find.text('上滑选择发送方式'), findsOneWidget);
     await gesture.up();
     await _pumpVoiceOperation(tester);
 
     expect(voiceController.state, AgentVoiceComposerState.idle);
-    expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
+    expect(find.byKey(const Key('agent-mic-placeholder')), findsOneWidget);
+    expect(find.byKey(const Key('agent-voice-targets')), findsNothing);
   });
 
   testWidgets('composer drafts cannot cross the Thread boundary', (
@@ -333,10 +356,14 @@ void main() {
         ),
       ),
     );
+    await tester.tap(find.byKey(const Key('agent-open-keyboard')));
+    await tester.pump();
     await tester.enterText(
       find.byKey(const Key('agent-composer-field')),
       'Thread A private draft',
     );
+    await tester.tap(find.byKey(const Key('agent-return-to-voice')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
     await tester.pump();
     expect(voiceController.state, AgentVoiceComposerState.recording);
@@ -350,6 +377,8 @@ void main() {
     await tester.tap(find.byKey(const Key('agent-voice-cancel')));
     await _pumpVoiceOperation(tester);
 
+    await tester.tap(find.byKey(const Key('agent-open-keyboard')));
+    await tester.pump();
     final field = find.byKey(const Key('agent-composer-field'));
     expect(field, findsOneWidget);
     expect(tester.widget<TextField>(field).controller?.text, isEmpty);
@@ -375,17 +404,17 @@ void main() {
         find.byKey(const Key('no-focused-conversation-home')),
         findsNothing,
       );
-      expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
-            .enabled,
-        isTrue,
-      );
+      expect(find.byKey(const Key('agent-mic-placeholder')), findsOneWidget);
+      expect(find.byKey(const Key('agent-open-keyboard')), findsOneWidget);
 
+      await tester.tap(find.byKey(const Key('agent-open-keyboard')));
+      await tester.pump();
       await tester.enterText(
         find.byKey(const Key('agent-composer-field')),
         'Keep this typed draft',
       );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-return-to-voice')));
       await tester.pump();
       await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
       await tester.pump();
@@ -397,6 +426,8 @@ void main() {
         AgentVoiceComposerState.recording,
       );
       await controller.voiceController?.cancel();
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-open-keyboard')));
       await tester.pump();
       expect(
         tester
@@ -431,30 +462,38 @@ void main() {
       await tester.pump();
 
       final surface = find.byKey(const Key('agent-composer-surface'));
+      final mic = find.byKey(const Key('agent-mic-placeholder'));
+      final targets = find.byKey(const Key('agent-voice-targets'));
       final stateLabel = find.byKey(const Key('agent-voice-state-label'));
       final duration = find.byKey(const Key('agent-voice-recording-duration'));
-      final stop = find.byKey(const Key('agent-voice-stop'));
-      final send = find.byKey(const Key('agent-voice-send'));
+      final send = find.byKey(const Key('agent-voice-target-send'));
+      final convert = find.byKey(const Key('agent-voice-target-convert'));
+      expect(mic, findsOneWidget);
+      expect(targets, findsOneWidget);
       expect(stateLabel, findsOneWidget);
       expect(duration, findsOneWidget);
-      expect(stop.hitTestable(), findsOneWidget);
       expect(send.hitTestable(), findsOneWidget);
+      expect(convert.hitTestable(), findsOneWidget);
       expect(tester.getRect(stateLabel).left, greaterThanOrEqualTo(0));
       expect(
         tester.getRect(duration).right,
         lessThanOrEqualTo(tester.getRect(surface).right),
       );
       expect(
-        tester.getRect(stop).right,
+        tester.getRect(send).left,
+        greaterThanOrEqualTo(tester.getRect(surface).left),
+      );
+      expect(
+        tester.getRect(convert).right,
         lessThanOrEqualTo(tester.getRect(surface).right),
       );
       expect(
-        tester.getRect(send).right,
-        lessThanOrEqualTo(tester.getRect(surface).right),
+        tester.getRect(targets).bottom,
+        lessThanOrEqualTo(tester.getRect(mic).top),
       );
       expect(tester.takeException(), isNull);
 
-      await tester.tap(find.byKey(const Key('agent-voice-stop')));
+      await tester.tap(find.byKey(const Key('agent-voice-target-convert')));
       await _pumpVoiceOperation(tester);
 
       expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
