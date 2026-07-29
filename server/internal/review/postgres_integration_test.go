@@ -2523,7 +2523,7 @@ func reviewDatabase(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("apply Review migration: %v", err)
 	}
 	scenarioUp, err := migrations.Files.ReadFile(
-		"000026_review_scenario_policies.up.sql",
+		"000028_review_scenario_policies.up.sql",
 	)
 	if err != nil {
 		t.Fatalf("read scenario Review migration: %v", err)

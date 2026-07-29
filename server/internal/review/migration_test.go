@@ -10,7 +10,7 @@ import (
 func TestScenarioReviewMigrationFreezesContextAndPreciseEvidence(t *testing.T) {
 	t.Parallel()
 	content, err := migrations.Files.ReadFile(
-		"000026_review_scenario_policies.up.sql",
+		"000028_review_scenario_policies.up.sql",
 	)
 	if err != nil {
 		t.Fatal(err)
