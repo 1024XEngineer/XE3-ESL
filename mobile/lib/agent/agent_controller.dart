@@ -7,6 +7,7 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_client.dart';
 import 'package:speakup/agent/agent_voice_controller.dart';
+import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_audio_player.dart';
@@ -101,6 +102,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   String? _endPracticeClientId;
   PracticeQuestion? _currentQuestion;
   TranscriptionCandidate? _candidate;
+  _PendingPracticeAudio? _pendingPracticeAudio;
   String? _activeConfirmationId;
   String? _activeTextAnswer;
   AgentMatter? _activeMatter;
@@ -154,6 +156,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   int? get practiceSessionVersion => _practiceSessionVersion;
   String? get questionId => _currentQuestion?.id;
   String? get candidateId => _candidate?.id;
+  bool get hasPendingPracticeAudio => _pendingPracticeAudio != null;
   AgentMatter? get activeMatter => _activeMatter;
   AgentScene? get scene => _activeMatter?.scene;
   List<AgentMessage> get messages => List.unmodifiable(_messages);
@@ -212,6 +215,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         supportsPracticeFlow &&
         _threadId != null &&
         !_busy &&
+        _pendingPracticeAudio == null &&
         switch (_recordingState) {
           PracticeRecordingState.idle ||
           PracticeRecordingState.reviewFailed ||
@@ -1325,6 +1329,29 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<bool> prepareToLeaveAgent() async {
+    if (_disposed || _threadTransitionInFlight) {
+      return false;
+    }
+    final voice = _voiceController;
+    if (voice != null) {
+      switch (voice.state) {
+        case AgentVoiceComposerState.confirming ||
+            AgentVoiceComposerState.awaitingAssistant:
+          return false;
+        case AgentVoiceComposerState.idle:
+          break;
+        default:
+          await voice.cancel();
+      }
+      if (_disposed || voice.hasActiveWorkflow) {
+        return false;
+      }
+    }
+    await stopPracticeAudio();
+    return !_disposed && !_threadTransitionInFlight;
+  }
+
   Future<bool> prepareToLeavePractice() async {
     if (_disposed ||
         _practiceRequestInFlight ||
@@ -1349,6 +1376,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _recordingState = PracticeRecordingState.idle;
       _errorMessage = null;
       notifyListeners();
+    }
+    if (_pendingPracticeAudio != null) {
+      await discardPendingPracticeAudio();
+      if (_pendingPracticeAudio != null) {
+        return false;
+      }
     }
     await stopPracticeAudio();
     return !_disposed && !_practiceRequestInFlight;
@@ -1531,6 +1564,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> startRecording({Duration? limit}) {
     if (!hasActivePractice ||
         isBusy ||
+        _pendingPracticeAudio != null ||
         _currentQuestion == null ||
         _recordingState != PracticeRecordingState.idle) {
       return Future<void>.value();
@@ -1689,23 +1723,19 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       if (!_isOperationCurrent(fence)) {
         return;
       }
-      final candidate = await practice.transcribe(
-        PracticeTranscriptionRequest(
-          sessionId: sessionId,
-          questionId: question.id,
-          clientTurnId: clientTurnId,
-          audio: audio,
-        ),
+      final pending = _PendingPracticeAudio(
+        audio: audio,
+        sessionId: sessionId,
+        questionId: question.id,
+        clientTurnId: clientTurnId,
       );
-      if (!_isOperationCurrent(fence)) {
-        return;
-      }
-      _validateCandidate(candidate, sessionId, question.id);
-      _candidate = candidate;
-      _activeConfirmationId = null;
-      _activeTextAnswer = null;
-      _recordingState = PracticeRecordingState.awaitingConfirmation;
-      _errorMessage = null;
+      _pendingPracticeAudio = pending;
+      audio = null;
+      await _transcribePendingPracticeAudio(
+        practice: practice,
+        pending: pending,
+        fence: fence,
+      );
     } catch (error) {
       if (_isOperationCurrent(fence)) {
         _candidate = null;
@@ -1719,6 +1749,146 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         } catch (_) {
           // Account cleanup retries deletion before another user can enter.
         }
+      }
+    }
+    if (_isOperationCurrent(fence)) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _transcribePendingPracticeAudio({
+    required PracticeClient practice,
+    required _PendingPracticeAudio pending,
+    required _AgentOperationFence fence,
+  }) async {
+    var discardAudio = false;
+    try {
+      final candidate = await practice.transcribe(
+        PracticeTranscriptionRequest(
+          sessionId: pending.sessionId,
+          questionId: pending.questionId,
+          clientTurnId: pending.clientTurnId,
+          audio: pending.audio,
+        ),
+      );
+      if (!_isOperationCurrent(fence) ||
+          !identical(_pendingPracticeAudio, pending)) {
+        return;
+      }
+      _validateCandidate(candidate, pending.sessionId, pending.questionId);
+      _candidate = candidate;
+      _pendingPracticeAudio = null;
+      discardAudio = true;
+      _activeConfirmationId = null;
+      _activeTextAnswer = null;
+      _recordingState = PracticeRecordingState.awaitingConfirmation;
+      _errorMessage = null;
+    } catch (error) {
+      if (_isOperationCurrent(fence) &&
+          identical(_pendingPracticeAudio, pending)) {
+        _candidate = null;
+        _recordingState = PracticeRecordingState.idle;
+        _errorMessage = _transcriptionFailureMessage(error);
+      }
+    } finally {
+      if (discardAudio ||
+          !_isOperationCurrent(fence) ||
+          !identical(_pendingPracticeAudio, pending)) {
+        if (identical(_pendingPracticeAudio, pending)) {
+          _pendingPracticeAudio = null;
+        }
+        try {
+          await recorder.discard(pending.audio);
+        } catch (_) {
+          // Account cleanup retries deletion before another user can enter.
+        }
+      }
+    }
+  }
+
+  Future<void> retryPracticeTranscription() {
+    final practice = practiceClient;
+    final pending = _pendingPracticeAudio;
+    final question = _currentQuestion;
+    final inFlight = _stopRecordingFuture;
+    if (inFlight != null) {
+      return inFlight;
+    }
+    if (practice == null ||
+        pending == null ||
+        question == null ||
+        _disposed ||
+        _recordingState != PracticeRecordingState.idle ||
+        pending.sessionId != _practiceSessionId ||
+        pending.questionId != question.id) {
+      return Future<void>.value();
+    }
+    final fence = _captureOperationFence(
+      threadId: _threadId,
+      practiceGeneration: _practiceGeneration,
+      practiceSessionId: pending.sessionId,
+      questionId: pending.questionId,
+    );
+    _recordingState = PracticeRecordingState.transcribing;
+    _errorMessage = null;
+    notifyListeners();
+    final operation = _transcribePendingPracticeAudio(
+      practice: practice,
+      pending: pending,
+      fence: fence,
+    );
+    _stopRecordingFuture = operation;
+    return operation.whenComplete(() {
+      if (identical(_stopRecordingFuture, operation)) {
+        _stopRecordingFuture = null;
+      }
+      if (_isOperationCurrent(fence)) {
+        notifyListeners();
+      }
+    });
+  }
+
+  Future<void> discardPendingPracticeAudio() {
+    final pending = _pendingPracticeAudio;
+    final inFlight = _stopRecordingFuture;
+    if (inFlight != null) {
+      return inFlight;
+    }
+    if (pending == null ||
+        _disposed ||
+        _recordingState != PracticeRecordingState.idle) {
+      return Future<void>.value();
+    }
+    final fence = _captureOperationFence(
+      threadId: _threadId,
+      practiceGeneration: _practiceGeneration,
+      practiceSessionId: pending.sessionId,
+      questionId: pending.questionId,
+    );
+    final operation = _discardPendingPracticeAudio(pending, fence);
+    _stopRecordingFuture = operation;
+    return operation.whenComplete(() {
+      if (identical(_stopRecordingFuture, operation)) {
+        _stopRecordingFuture = null;
+      }
+    });
+  }
+
+  Future<void> _discardPendingPracticeAudio(
+    _PendingPracticeAudio pending,
+    _AgentOperationFence fence,
+  ) async {
+    try {
+      await recorder.discard(pending.audio);
+      if (_isOperationCurrent(fence) &&
+          identical(_pendingPracticeAudio, pending)) {
+        _pendingPracticeAudio = null;
+        _errorMessage = null;
+      }
+    } catch (_) {
+      if (_isOperationCurrent(fence) &&
+          identical(_pendingPracticeAudio, pending)) {
+        _errorMessage = '暂时无法删除本地录音，请重试。';
       }
     }
     if (_isOperationCurrent(fence)) {
@@ -1799,6 +1969,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         question == null ||
         text.isEmpty ||
         text.length > 8000 ||
+        _pendingPracticeAudio != null ||
         _isSessionCompleted ||
         isBusy ||
         _recordingState != PracticeRecordingState.idle) {
@@ -1954,6 +2125,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _cancelRecordingLimit();
     _epoch++;
     _practiceGeneration++;
+    _pendingPracticeAudio = null;
     _initializationFuture = null;
     _threadId = null;
     _currentThreadSummary = null;
@@ -2033,6 +2205,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    final pendingPracticeAudio = _pendingPracticeAudio;
+    final practiceAudioOperation = _stopRecordingFuture;
+    _pendingPracticeAudio = null;
     _disposed = true;
     if (mediaClient != null) {
       WidgetsBinding.instance.removeObserver(this);
@@ -2046,7 +2221,20 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _initializationFuture = null;
     _voiceController?.removeListener(_handleVoiceState);
     _voiceController?.dispose();
-    unawaited(recorder.discardCurrent());
+    unawaited(
+      Future<void>.sync(() async {
+        await _recorderStartFuture;
+        await practiceAudioOperation;
+        if (practiceAudioOperation == null && pendingPracticeAudio != null) {
+          try {
+            await recorder.discard(pendingPracticeAudio.audio);
+          } catch (_) {
+            // The recorder owns its final account-scoped cleanup.
+          }
+        }
+        await recorder.discardCurrent();
+      }),
+    );
     unawaited(_mediaCompletionSubscription?.cancel());
     unawaited(mediaClient?.dispose());
     unawaited(audioPlayer?.dispose());
@@ -2119,6 +2307,11 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     PracticeSessionSnapshot? snapshot, {
     bool preserveKnownRecordings = false,
   }) {
+    if (_pendingPracticeAudio != null) {
+      throw StateError(
+        'Pending Practice audio must be resolved before replacing its snapshot.',
+      );
+    }
     final previousSessionId = _practiceSessionId;
     _cancelRecordingLimit();
     _practiceGeneration++;
@@ -2381,16 +2574,16 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   String _transcriptionFailureMessage(Object error) {
     if (error is AgentClientException) {
       if (_isFreeQuotaExhausted(error)) {
-        return '今日免费语音额度已用完，本轮未计入进度。';
+        return '今日免费语音额度已用完，录音已保留，本轮未计入进度。';
       }
       if (error.kind == AgentClientFailureKind.network) {
-        return '网络连接不稳定，未能转写；请重新录音。';
+        return '网络连接不稳定，录音已保留；可重试转写或删除。';
       }
       if (error.kind == AgentClientFailureKind.rateLimited) {
-        return '语音请求过于频繁，请稍后重新录音。';
+        return '语音请求过于频繁，录音已保留；请稍后重试转写。';
       }
     }
-    return '没有识别出这一轮，请重新录音。';
+    return '没有识别出这一轮，录音已保留；可重试转写或删除。';
   }
 
   String _confirmationFailureMessage(Object error) {
@@ -2449,7 +2642,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   int? _beginThreadTransition() {
-    if (_disposed || _threadTransitionInFlight) {
+    if (_disposed ||
+        _threadTransitionInFlight ||
+        _pendingPracticeAudio != null) {
       return null;
     }
     _threadTransitionInFlight = true;
@@ -2685,6 +2880,20 @@ final class _AgentOperationFence {
   final String? candidateId;
   final String? questionSpeechPath;
   final String? recordingAudioAssetId;
+}
+
+final class _PendingPracticeAudio {
+  const _PendingPracticeAudio({
+    required this.audio,
+    required this.sessionId,
+    required this.questionId,
+    required this.clientTurnId,
+  });
+
+  final RecordedPracticeAudio audio;
+  final String sessionId;
+  final String questionId;
+  final String clientTurnId;
 }
 
 sealed class _AgentRetry {

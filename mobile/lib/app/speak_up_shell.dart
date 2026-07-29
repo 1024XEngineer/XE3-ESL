@@ -123,6 +123,16 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     final navigationGeneration = ++_navigationGeneration;
+    if (_selectedIndex == 0 && index != 0) {
+      final parked = await widget.agentController.prepareToLeaveAgent();
+      if (!mounted || navigationGeneration != _navigationGeneration) {
+        return;
+      }
+      if (!parked) {
+        _showMockNotice('语音正在发送，请完成后再离开');
+        return;
+      }
+    }
     if (_selectedIndex == 1 && index != 1) {
       final launch = widget.preparationLaunchController;
       if (launch?.isStarting ?? false) {

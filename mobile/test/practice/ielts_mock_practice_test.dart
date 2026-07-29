@@ -123,6 +123,97 @@ void main() {
     expect(find.text('restored note'), findsOneWidget);
   });
 
+  testWidgets('Part 2 keeps failed audio reachable and retries in place', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 8)
+      ..transcribeFailure = StateError('transcription failed');
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-continue')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('ielts-mock-part-2-speaking')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mock-pending-audio')), findsOneWidget);
+    expect(controller.hasPendingPracticeAudio, isTrue);
+
+    practice.transcribeFailure = null;
+    await tester.tap(find.byKey(const Key('ielts-mock-retry-transcription')));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    expect(controller.completedTurns, 9);
+    expect(find.byKey(const Key('ielts-mock-part-2-complete')), findsOneWidget);
+  });
+
+  testWidgets(
+    'Part 1 right-swipe converts to an editable draft without auto-submit',
+    (tester) async {
+      final practice = _IeltsPracticeClient(initialCompleted: 0);
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(_ieltsScene);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: _MemoryProgressStore(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(const Key('ielts-mock-record'))),
+      );
+      await tester.pump(const Duration(milliseconds: 220));
+      await gesture.moveBy(const Offset(90, 0));
+      await tester.pump();
+      expect(find.text('Release to convert to text'), findsOneWidget);
+      await gesture.up();
+      await tester.pump();
+      await tester.pump();
+
+      final field = find.byKey(const Key('ielts-mock-converted-answer-field'));
+      expect(field, findsOneWidget);
+      expect(tester.widget<TextField>(field).controller?.text, 'Answer 1');
+      expect(controller.recordingState, PracticeRecordingState.idle);
+      expect(controller.completedTurns, 0);
+      expect(practice.confirmedQuestionIds, isEmpty);
+    },
+  );
+
   testWidgets('completed full mock remains on completion instead of report', (
     tester,
   ) async {
@@ -269,6 +360,7 @@ final class _IeltsPracticeClient implements PracticeClient {
 
   final int initialCompleted;
   final AgentScene? snapshotScene;
+  Object? transcribeFailure;
   int completed;
   final List<String> confirmedQuestionIds = [];
 
@@ -307,6 +399,10 @@ final class _IeltsPracticeClient implements PracticeClient {
   Future<TranscriptionCandidate> transcribe(
     PracticeTranscriptionRequest request,
   ) async {
+    final failure = transcribeFailure;
+    if (failure != null) {
+      throw failure;
+    }
     return TranscriptionCandidate(
       id: 'candidate-${completed + 1}',
       sessionId: request.sessionId,
