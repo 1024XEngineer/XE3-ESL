@@ -232,10 +232,20 @@ void main() {
       expect(agentController.threadId, homeThreadId);
 
       expect(find.byKey(const Key('practice-continuation')), findsOneWidget);
+      await _openScenario(tester, _progressScenario.id);
+
+      expect(find.byKey(const Key('practice-page')), findsOneWidget);
+      expect(find.text('开始新的练习？'), findsNothing);
+      expect(agentController.practiceSessionId, firstSessionId);
+      expect(agentController.completedTurns, 1);
+
+      await _leavePractice(tester);
+      expect(agentController.threadId, homeThreadId);
+
       await _openScenario(tester, _hotelScenario.id);
 
-      expect(find.text('你还有一项练习未完成'), findsOneWidget);
-      expect(find.text('结束并开始新的'), findsOneWidget);
+      expect(find.text('开始新的练习？'), findsOneWidget);
+      expect(find.text('开始“${_hotelScenario.name}”'), findsOneWidget);
       expect(practiceClient.endedSessionIds, isEmpty);
 
       final replace = find.byKey(const Key('replace-existing-practice'));

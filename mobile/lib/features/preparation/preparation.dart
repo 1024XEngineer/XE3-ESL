@@ -30,7 +30,7 @@ const _hiddenCatalogScenarioIds = <String>{
 
 enum _PracticeHub { interview, ielts, roleplay }
 
-enum _ExistingPracticeAction { cancel, continuePractice, replace }
+enum _ExistingPracticeAction { continuePractice, replace }
 
 class PreparationPage extends StatefulWidget {
   const PreparationPage({
@@ -125,7 +125,7 @@ class _PreparationPageState extends State<PreparationPage> {
         : TextEditingController(text: controller.backgroundSummary);
   }
 
-  Future<void> _startPractice() async {
+  Future<void> _startPractice({required bool replaceCurrentPractice}) async {
     final catalog = widget.preparationController;
     final launch = widget.launchController;
     final scenario = catalog?.selectedScenario;
@@ -142,21 +142,6 @@ class _PreparationPageState extends State<PreparationPage> {
     }
     if (launch.backgroundSummary.trim().isEmpty) {
       launch.updateBackgroundSummary('默认示例：${config.prompt.publicSceneBrief}');
-    }
-    var replaceCurrentPractice = false;
-    if (launch.hasResumablePractice) {
-      final action = await _chooseExistingPracticeAction(
-        currentTitle: launch.resumablePracticeTitle,
-        nextTitle: scenario.name,
-      );
-      if (!mounted || action == _ExistingPracticeAction.cancel) {
-        return;
-      }
-      if (action == _ExistingPracticeAction.continuePractice) {
-        await _continueCurrentPractice();
-        return;
-      }
-      replaceCurrentPractice = true;
     }
     final started = await launch.start(
       PreparationLaunchSelection.fromCatalog(
@@ -187,6 +172,26 @@ class _PreparationPageState extends State<PreparationPage> {
     PreparationController controller,
     PreparationScenario scenario,
   ) async {
+    var replaceCurrentPractice = false;
+    final launch = widget.launchController;
+    if (launch?.hasResumablePractice ?? false) {
+      if (launch?.resumableScenarioId == scenario.id) {
+        await _continueCurrentPractice();
+        return;
+      }
+      final action = await _chooseExistingPracticeAction(
+        currentTitle: launch?.resumablePracticeTitle,
+        nextTitle: scenario.name,
+      );
+      if (!mounted || action == null) {
+        return;
+      }
+      if (action == _ExistingPracticeAction.continuePractice) {
+        await _continueCurrentPractice();
+        return;
+      }
+      replaceCurrentPractice = true;
+    }
     await controller.selectScenario(scenario);
     if (!mounted || controller.selectedScenario?.id != scenario.id) {
       return;
@@ -199,44 +204,71 @@ class _PreparationPageState extends State<PreparationPage> {
       controller.showScenarioList();
       return;
     }
-    await _startPractice();
+    await _startPractice(replaceCurrentPractice: replaceCurrentPractice);
   }
 
-  Future<_ExistingPracticeAction> _chooseExistingPracticeAction({
+  Future<_ExistingPracticeAction?> _chooseExistingPracticeAction({
     required String? currentTitle,
     required String nextTitle,
   }) async {
-    return await showDialog<_ExistingPracticeAction>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('你还有一项练习未完成'),
-            content: Text(
-              '当前练习：${currentTitle ?? '上次练习'}\n'
-              '如果开始“$nextTitle”，当前练习会提前结束。',
+    final activeTitle = currentTitle ?? '上次练习';
+    return showModalBottomSheet<_ExistingPracticeAction>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '开始新的练习？',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '你正在练“$activeTitle”。开始“$nextTitle”后，'
+                        '当前进度将结束。',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                IconButton(
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () =>
-                    Navigator.of(context).pop(_ExistingPracticeAction.cancel),
-                child: const Text('取消'),
-              ),
-              TextButton(
-                key: const Key('continue-existing-practice'),
-                onPressed: () => Navigator.of(
-                  context,
-                ).pop(_ExistingPracticeAction.continuePractice),
-                child: const Text('继续上次练习'),
-              ),
-              FilledButton(
-                key: const Key('replace-existing-practice'),
-                onPressed: () =>
-                    Navigator.of(context).pop(_ExistingPracticeAction.replace),
-                child: const Text('结束并开始新的'),
-              ),
-            ],
-          ),
-        ) ??
-        _ExistingPracticeAction.cancel;
+            const SizedBox(height: 24),
+            FilledButton(
+              key: const Key('continue-existing-practice'),
+              onPressed: () => Navigator.of(
+                context,
+              ).pop(_ExistingPracticeAction.continuePractice),
+              child: Text('继续“$activeTitle”'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              key: const Key('replace-existing-practice'),
+              onPressed: () =>
+                  Navigator.of(context).pop(_ExistingPracticeAction.replace),
+              child: Text('开始“$nextTitle”'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _selectPreviewScene(AgentScene scene) async {
