@@ -2331,8 +2331,8 @@ String _ieltsPartNumber(String scenarioId) {
 String _ieltsPartLabel(String scenarioId) {
   return switch (scenarioId) {
     'scn_ielts_speaking_part_1' => '熟悉话题问答',
-    'scn_ielts_speaking_part_2' => '题卡陈述',
-    'scn_ielts_speaking_part_3' => '延伸讨论',
+    'scn_ielts_speaking_part_2' => '题卡陈述 · 可继续 Part 3',
+    'scn_ielts_speaking_part_3' => '承接 Part 2 主题讨论',
     _ => '专项练习',
   };
 }
