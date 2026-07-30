@@ -98,6 +98,81 @@ void main() {
     },
   );
 
+  test('sends the catalog-compatible IELTS plan turn budgets', () async {
+    const cases = <(String, int)>[
+      ('IELTS_SPEAKING_FULL_MOCK', 14),
+      ('IELTS_SPEAKING_PART_1', 8),
+      ('IELTS_SPEAKING_PART_2', 4),
+      ('IELTS_SPEAKING_PART_3', 5),
+    ];
+
+    for (final testCase in cases) {
+      final model = testCase.$1;
+      final expectedTurns = testCase.$2;
+      final scenarioId = 'scenario-${model.toLowerCase()}';
+      final configId = 'config-${model.toLowerCase()}';
+      final selection = PreparationLaunchSelection(
+        scenarioDefinitionId: scenarioId,
+        scenarioDefinitionVersion: 1,
+        scenarioType: 'EXAM',
+        scenarioModel: model,
+        scenarioDisplayName: model,
+        scenarioDescription: 'IELTS practice',
+        scenarioConfigId: configId,
+        scenarioConfigVersion: 1,
+        roleDefinitionId: _roleId,
+        roleDefinitionVersion: 1,
+        practiceOptionId: _fullOptionId,
+        practiceOptionType: PreparationOptionType.fullSimulation,
+        practiceOptionVersion: 1,
+      );
+      final response = _planJson()
+        ..['scenario_definition_id'] = scenarioId
+        ..['scenario_type'] = 'EXAM'
+        ..['scenario_model'] = model
+        ..['scenario_config_id'] = configId;
+      final transport = _QueueTransport([_response(response)]);
+      final client = _client(transport);
+
+      await client.createPlan(
+        input: CreatePreparationPlanInput(
+          context: _context,
+          selection: selection,
+          preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
+          preparationUserId: _userId,
+        ),
+        idempotencyKey: 'plan-$expectedTurns-key',
+      );
+
+      final body =
+          jsonDecode(transport.calls.single.body!) as Map<String, Object?>;
+      expect(body['max_effective_turns'], expectedTurns, reason: model);
+    }
+  });
+
+  test('accepts the configured preview fields in a created Plan', () async {
+    final response = _planJson()
+      ..['preparation_snapshot'] = <String, Object?>{}
+      ..['catalog_snapshot'] = <String, Object?>{}
+      ..['session_policy'] = <String, Object?>{}
+      ..['practice_focuses'] = <Object?>[];
+    final client = _client(_QueueTransport([_response(response)]));
+
+    final plan = await client.createPlan(
+      input: const CreatePreparationPlanInput(
+        context: _context,
+        selection: _selection,
+        preparationProfileId: _profileId,
+        preparationSnapshotId: _preparationSnapshotId,
+        preparationUserId: _userId,
+      ),
+      idempotencyKey: 'configured-plan-key',
+    );
+
+    expect(plan.id, _planId);
+  });
+
   test(
     'marks malformed 201 creates ambiguous and retries Session with one key',
     () async {
