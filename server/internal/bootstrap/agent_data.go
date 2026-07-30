@@ -325,12 +325,16 @@ func buildIdentityAgentComposition(
 			voiceHTTPOption,
 		)
 	}
+	var imageApplication agenttransport.ImageApplication
+	if agentImages != nil {
+		imageApplication = agentImages
+	}
 	handler, err := agenttransport.NewHTTPHandlerWithRunsVoiceAudioAndImages(
 		agentService,
 		runService,
 		voiceApplication,
 		audioAssets,
-		agentImages,
+		imageApplication,
 		matterService,
 		identityContext.service,
 		nil,
