@@ -20,9 +20,12 @@ import (
 )
 
 const (
-	interviewShadowAggregationVersion = "interview-shadow-aggregation/v1"
-	interviewShadowCalibrationVersion = "NOT_CONFIGURED"
-	interviewShadowGateVersion        = "interview-shadow-gate/v1"
+	interviewShadowAggregationVersion     = "interview-shadow-aggregation/v1"
+	interviewShadowCalibrationVersion     = "NOT_CONFIGURED"
+	interviewShadowGateVersion            = "interview-shadow-gate/v1"
+	ieltsSpeakingShadowAggregationVersion = "ielts-speaking-shadow-aggregation/v1"
+	ieltsSpeakingShadowCalibrationVersion = "NOT_CONFIGURED"
+	ieltsSpeakingShadowGateVersion        = "ielts-speaking-shadow-gate/v1"
 )
 
 type EvaluationConfiguration struct {
@@ -32,12 +35,14 @@ type EvaluationConfiguration struct {
 	GenerationTimeout time.Duration
 	LeaseDuration     time.Duration
 	MaxAttempts       int
+	CursorSigningKey  []byte
 }
 
 type EvaluationComposition struct {
-	coordinator *evaluation.InterviewShadowCoordinator
-	handler     *evaluationtransport.HTTPHandler
-	worker      *evaluation.InterviewShadowWorker
+	interviewCoordinator *evaluation.InterviewShadowCoordinator
+	ieltsCoordinator     *evaluation.IELTSSpeakingShadowCoordinator
+	handler              *evaluationtransport.HTTPHandler
+	worker               evaluationShadowProcessor
 }
 
 func NewEvaluationComposition(
@@ -56,7 +61,9 @@ func NewEvaluationComposition(
 		configuration.LeaseDuration < time.Second ||
 		configuration.LeaseDuration > 10*time.Minute ||
 		configuration.MaxAttempts < 1 ||
-		configuration.MaxAttempts > 10 {
+		configuration.MaxAttempts > 10 ||
+		len(configuration.CursorSigningKey) < 32 ||
+		len(configuration.CursorSigningKey) > 128 {
 		return nil, errors.New(
 			"bootstrap: Evaluation dependencies are required",
 		)
@@ -91,6 +98,14 @@ func NewEvaluationComposition(
 	if err != nil {
 		return nil, err
 	}
+	ieltsCoordinator, err :=
+		evaluation.NewIELTSSpeakingShadowCoordinator(
+			evidenceService,
+			evaluationService,
+		)
+	if err != nil {
+		return nil, err
+	}
 	provider, err := newInterviewShadowTextProvider(
 		textGenerator,
 		configuration.GenerationTimeout,
@@ -112,20 +127,53 @@ func NewEvaluationComposition(
 	if err != nil {
 		return nil, err
 	}
-	application := &evaluationHTTPApplication{
-		evaluations:   evaluationService,
-		runtime:       repository,
-		reports:       repository,
-		configuration: runtimeConfiguration,
+	ieltsProvider, err := newIELTSSpeakingShadowTextProvider(
+		textGenerator,
+		configuration.GenerationTimeout,
+	)
+	if err != nil {
+		return nil, err
 	}
-	handler, err := evaluationtransport.NewHTTPHandler(application)
+	ieltsRuntimeConfiguration, err :=
+		ieltsSpeakingShadowRuntimeConfiguration(configuration)
+	if err != nil {
+		return nil, err
+	}
+	ieltsWorker, err := evaluation.NewIELTSSpeakingShadowWorker(
+		repository,
+		evaluation.NewIELTSSpeakingShadowEngine(ieltsProvider),
+		ieltsRuntimeConfiguration,
+	)
+	if err != nil {
+		return nil, err
+	}
+	combinedWorker, err := newEvaluationShadowProcessor(
+		worker,
+		ieltsWorker,
+	)
+	if err != nil {
+		return nil, err
+	}
+	application := &evaluationHTTPApplication{
+		evaluations:        evaluationService,
+		runtime:            repository,
+		interviewReports:   repository,
+		ieltsReports:       repository,
+		configuration:      runtimeConfiguration,
+		ieltsConfiguration: ieltsRuntimeConfiguration,
+	}
+	handler, err := evaluationtransport.NewHTTPHandler(
+		application,
+		configuration.CursorSigningKey,
+	)
 	if err != nil {
 		return nil, err
 	}
 	return &EvaluationComposition{
-		coordinator: coordinator,
-		handler:     handler,
-		worker:      worker,
+		interviewCoordinator: coordinator,
+		ieltsCoordinator:     ieltsCoordinator,
+		handler:              handler,
+		worker:               combinedWorker,
 	}, nil
 }
 
@@ -133,7 +181,14 @@ func (composition *EvaluationComposition) InterviewShadowCoordinator() *evaluati
 	if composition == nil {
 		return nil
 	}
-	return composition.coordinator
+	return composition.interviewCoordinator
+}
+
+func (composition *EvaluationComposition) IELTSSpeakingShadowCoordinator() *evaluation.IELTSSpeakingShadowCoordinator {
+	if composition == nil {
+		return nil
+	}
+	return composition.ieltsCoordinator
 }
 
 func (composition *EvaluationComposition) HTTPHandler() *evaluationtransport.HTTPHandler {
@@ -143,7 +198,7 @@ func (composition *EvaluationComposition) HTTPHandler() *evaluationtransport.HTT
 	return composition.handler
 }
 
-func (composition *EvaluationComposition) Worker() *evaluation.InterviewShadowWorker {
+func (composition *EvaluationComposition) Worker() evaluationShadowProcessor {
 	if composition == nil {
 		return nil
 	}
@@ -210,6 +265,69 @@ func interviewShadowRuntimeConfiguration(
 	return result, nil
 }
 
+func ieltsSpeakingShadowRuntimeConfiguration(
+	configuration EvaluationConfiguration,
+) (evaluation.IELTSSpeakingShadowRuntimeConfiguration, error) {
+	if configuration.MaxOutputTokens < 1 ||
+		configuration.MaxOutputTokens > 1_000_000 {
+		return evaluation.IELTSSpeakingShadowRuntimeConfiguration{},
+			evaluation.ErrInvalidRequest
+	}
+	promptContractHash := sha256.Sum256(
+		[]byte(ieltsSpeakingShadowSystemContract),
+	)
+	manifest := struct {
+		SchemaVersion         string `json:"schema_version"`
+		StrategyRef           string `json:"strategy_ref"`
+		PipelineVersion       string `json:"pipeline_version"`
+		PromptVersion         string `json:"prompt_version"`
+		PromptContractHash    string `json:"prompt_contract_hash"`
+		ProviderSchemaVersion string `json:"provider_schema_version"`
+		RubricVersion         string `json:"rubric_version"`
+		GateVersion           string `json:"gate_version"`
+		AggregationVersion    string `json:"aggregation_version"`
+		CalibrationVersion    string `json:"calibration_version"`
+		Provider              string `json:"provider"`
+		Model                 string `json:"model"`
+		MaxOutputTokens       int    `json:"max_output_tokens"`
+	}{
+		SchemaVersion:   evaluation.SchemaVersion,
+		StrategyRef:     evaluation.IELTSSpeakingShadowStrategyRef,
+		PipelineVersion: evaluation.IELTSSpeakingShadowPipelineVersion,
+		PromptVersion:   evaluation.IELTSSpeakingShadowPromptVersion,
+		PromptContractHash: "sha256:" +
+			hex.EncodeToString(promptContractHash[:]),
+		ProviderSchemaVersion: evaluation.
+			IELTSSpeakingShadowProviderSchemaVersion,
+		RubricVersion:      evaluation.IELTSSpeakingShadowRubricVersion,
+		GateVersion:        ieltsSpeakingShadowGateVersion,
+		AggregationVersion: ieltsSpeakingShadowAggregationVersion,
+		CalibrationVersion: ieltsSpeakingShadowCalibrationVersion,
+		Provider:           configuration.Provider,
+		Model:              configuration.Model,
+		MaxOutputTokens:    configuration.MaxOutputTokens,
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return evaluation.IELTSSpeakingShadowRuntimeConfiguration{}, err
+	}
+	result := evaluation.IELTSSpeakingShadowRuntimeConfiguration{
+		MaxAttempts:     configuration.MaxAttempts,
+		LeaseDuration:   configuration.LeaseDuration,
+		StrategyRef:     evaluation.IELTSSpeakingShadowStrategyRef,
+		PipelineVersion: evaluation.IELTSSpeakingShadowPipelineVersion,
+		FullConfigHash:  sha256.Sum256(encoded),
+		PromptVersion:   evaluation.IELTSSpeakingShadowPromptVersion,
+		Provider:        configuration.Provider,
+		Model:           configuration.Model,
+	}
+	if !result.Valid() {
+		return evaluation.IELTSSpeakingShadowRuntimeConfiguration{},
+			evaluation.ErrInvalidRequest
+	}
+	return result, nil
+}
+
 type evaluationService interface {
 	Create(
 		context.Context,
@@ -246,11 +364,27 @@ type interviewReportReader interface {
 	) (evaluation.InterviewReportReadState, error)
 }
 
+type ieltsSpeakingReportReader interface {
+	GetCurrentIELTSSpeakingReportState(
+		context.Context,
+		string,
+		string,
+	) (evaluation.IELTSSpeakingReportReadState, error)
+	ListCurrentIELTSSpeakingReportIndex(
+		context.Context,
+		string,
+		*evaluation.IELTSSpeakingReportIndexBoundary,
+		int,
+	) (evaluation.IELTSSpeakingReportIndexPage, error)
+}
+
 type evaluationHTTPApplication struct {
-	evaluations   evaluationService
-	runtime       evaluationRuntimeReader
-	reports       interviewReportReader
-	configuration evaluation.InterviewShadowRuntimeConfiguration
+	evaluations        evaluationService
+	runtime            evaluationRuntimeReader
+	interviewReports   interviewReportReader
+	ieltsReports       ieltsSpeakingReportReader
+	configuration      evaluation.InterviewShadowRuntimeConfiguration
+	ieltsConfiguration evaluation.IELTSSpeakingShadowRuntimeConfiguration
 }
 
 func (application *evaluationHTTPApplication) Create(
@@ -361,7 +495,7 @@ func (application *evaluationHTTPApplication) GetInterviewReport(
 	actor requestcontext.Actor,
 	practiceSessionID string,
 ) (evaluationtransport.InterviewReportResource, error) {
-	if application == nil || application.reports == nil ||
+	if application == nil || application.interviewReports == nil ||
 		ctx == nil || !actor.Valid() ||
 		!application.configuration.Valid() {
 		return evaluationtransport.InterviewReportResource{},
@@ -372,7 +506,7 @@ func (application *evaluationHTTPApplication) GetInterviewReport(
 		return evaluationtransport.InterviewReportResource{},
 			evaluation.ErrInvalidRequest
 	}
-	state, err := application.reports.GetCurrentInterviewReportState(
+	state, err := application.interviewReports.GetCurrentInterviewReportState(
 		ctx,
 		actor.UserID,
 		practiceSessionID,
@@ -391,6 +525,115 @@ func (application *evaluationHTTPApplication) GetInterviewReport(
 		practiceSessionID,
 		state,
 	)
+}
+
+func (application *evaluationHTTPApplication) GetIELTSSpeakingReport(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	practiceSessionID string,
+) (evaluationtransport.IELTSSpeakingReportResource, error) {
+	if application == nil ||
+		application.ieltsReports == nil ||
+		ctx == nil ||
+		!actor.Valid() ||
+		!application.ieltsConfiguration.Valid() {
+		return evaluationtransport.IELTSSpeakingReportResource{},
+			evaluation.ErrInvalidRequest
+	}
+	trustedActor, ok := requestcontext.ActorFromContext(ctx)
+	if !ok || trustedActor != actor {
+		return evaluationtransport.IELTSSpeakingReportResource{},
+			evaluation.ErrInvalidRequest
+	}
+	state, err := application.ieltsReports.
+		GetCurrentIELTSSpeakingReportState(
+			ctx,
+			actor.UserID,
+			practiceSessionID,
+		)
+	if err != nil {
+		if errors.Is(
+			err,
+			evaluation.ErrIELTSSpeakingShadowConfigurationConflict,
+		) {
+			return evaluationtransport.IELTSSpeakingReportResource{},
+				interviewShadowVersionConflictError()
+		}
+		return evaluationtransport.IELTSSpeakingReportResource{}, err
+	}
+	return ieltsSpeakingReportResource(practiceSessionID, state)
+}
+
+func (application *evaluationHTTPApplication) ListIELTSSpeakingReports(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	query evaluationtransport.IELTSSpeakingReportIndexQuery,
+) (evaluationtransport.IELTSSpeakingReportIndexPageResource, error) {
+	if application == nil ||
+		application.ieltsReports == nil ||
+		ctx == nil ||
+		!actor.Valid() ||
+		!application.ieltsConfiguration.Valid() ||
+		query.Limit < 1 ||
+		query.Limit > 100 {
+		return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
+			evaluation.ErrInvalidRequest
+	}
+	trustedActor, ok := requestcontext.ActorFromContext(ctx)
+	if !ok || trustedActor != actor {
+		return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
+			evaluation.ErrInvalidRequest
+	}
+	var boundary *evaluation.IELTSSpeakingReportIndexBoundary
+	if query.Before != nil {
+		boundary = &evaluation.IELTSSpeakingReportIndexBoundary{
+			UpdatedAt:    query.Before.UpdatedAt,
+			EvaluationID: query.Before.EvaluationID,
+		}
+	}
+	page, err := application.ieltsReports.
+		ListCurrentIELTSSpeakingReportIndex(
+			ctx,
+			actor.UserID,
+			boundary,
+			query.Limit,
+		)
+	if err != nil {
+		if errors.Is(
+			err,
+			evaluation.ErrIELTSSpeakingShadowConfigurationConflict,
+		) {
+			return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
+				interviewShadowVersionConflictError()
+		}
+		return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
+			err
+	}
+	items := make(
+		[]evaluationtransport.IELTSSpeakingReportIndexEntryResource,
+		len(page.Items),
+	)
+	for index, item := range page.Items {
+		if !item.Valid() {
+			return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
+				evaluation.ErrInvalidRequest
+		}
+		items[index] =
+			evaluationtransport.IELTSSpeakingReportIndexEntryResource{
+				PracticeSessionID:    item.PracticeSessionID,
+				EvaluationID:         item.EvaluationID,
+				EvaluationRevisionID: item.EvaluationRevisionID,
+				Revision:             item.Revision,
+				EvaluationStatus:     item.EvaluationStatus,
+				IsFinal:              item.IsFinal,
+				CreatedAt:            item.CreatedAt,
+				UpdatedAt:            item.UpdatedAt,
+			}
+	}
+	return evaluationtransport.IELTSSpeakingReportIndexPageResource{
+		Items:   items,
+		HasMore: page.HasMore,
+	}, nil
 }
 
 func interviewShadowAccepted(
@@ -598,6 +841,102 @@ func interviewReportResource(
 		resource.StableFailure = &failure
 	default:
 		return evaluationtransport.InterviewReportResource{},
+			evaluation.ErrInvalidRequest
+	}
+	return resource, nil
+}
+
+func ieltsSpeakingShadowEvaluation(
+	value evaluation.Evaluation,
+) bool {
+	return value.Valid() &&
+		value.Scope == evaluation.ScopeSession &&
+		value.SceneType == evaluation.SceneIELTSSpeaking &&
+		len(value.Revision.Channels) == 1 &&
+		value.Revision.Channels[0] == evaluation.ChannelScene &&
+		value.Revision.SceneStrategyRef ==
+			evaluation.IELTSSpeakingShadowStrategyRef &&
+		value.Revision.Core4DStrategyRef == "" &&
+		value.Revision.PipelineVersion ==
+			evaluation.IELTSSpeakingShadowPipelineVersion
+}
+
+func ieltsSpeakingReportResource(
+	practiceSessionID string,
+	state evaluation.IELTSSpeakingReportReadState,
+) (evaluationtransport.IELTSSpeakingReportResource, error) {
+	value := state.Evaluation
+	if practiceSessionID == "" ||
+		value.PracticeSessionID != practiceSessionID ||
+		!ieltsSpeakingShadowEvaluation(value) ||
+		value.Revision.IsFinal {
+		return evaluationtransport.IELTSSpeakingReportResource{},
+			evaluation.ErrInvalidRequest
+	}
+	resource := evaluationtransport.IELTSSpeakingReportResource{
+		PracticeSessionID:    value.PracticeSessionID,
+		EvaluationID:         value.ID,
+		EvaluationRevisionID: value.Revision.ID,
+		Revision:             value.Revision.Number,
+		EvaluationStatus:     value.Revision.Status,
+		IsFinal:              false,
+	}
+	switch value.Revision.Status {
+	case evaluation.StatusQueued:
+		if state.Runtime.ModuleStatus !=
+			evaluation.IELTSSpeakingShadowRuntimePending ||
+			state.Runtime.Result != nil ||
+			state.Runtime.Failure != nil ||
+			state.Snapshot != nil {
+			return evaluationtransport.IELTSSpeakingReportResource{},
+				evaluation.ErrInvalidRequest
+		}
+	case evaluation.StatusRunning:
+		if (state.Runtime.ModuleStatus !=
+			evaluation.IELTSSpeakingShadowRuntimePending &&
+			state.Runtime.ModuleStatus !=
+				evaluation.IELTSSpeakingShadowRuntimeRunning) ||
+			state.Runtime.Result != nil ||
+			state.Runtime.Failure != nil ||
+			state.Snapshot != nil {
+			return evaluationtransport.IELTSSpeakingReportResource{},
+				evaluation.ErrInvalidRequest
+		}
+	case evaluation.StatusReady:
+		if state.Runtime.ModuleStatus !=
+			evaluation.IELTSSpeakingShadowRuntimeReady ||
+			state.Runtime.Result == nil ||
+			state.Runtime.Failure != nil ||
+			state.Snapshot == nil ||
+			state.Snapshot.ID != value.InputSnapshotID ||
+			state.Snapshot.OwnerUserID != value.OwnerUserID ||
+			state.Snapshot.PracticeSessionID !=
+				value.PracticeSessionID {
+			return evaluationtransport.IELTSSpeakingReportResource{},
+				evaluation.ErrInvalidRequest
+		}
+		report, err := evaluation.ProjectIELTSSpeakingReport(
+			*state.Snapshot,
+			*state.Runtime.Result,
+		)
+		if err != nil {
+			return evaluationtransport.IELTSSpeakingReportResource{},
+				err
+		}
+		resource.Report = &report
+	case evaluation.StatusFailed:
+		if state.Runtime.ModuleStatus !=
+			evaluation.IELTSSpeakingShadowRuntimeFailed ||
+			state.Runtime.Result != nil ||
+			state.Runtime.Failure == nil ||
+			state.Snapshot != nil {
+			return evaluationtransport.IELTSSpeakingReportResource{},
+				evaluation.ErrInvalidRequest
+		}
+		failure := interviewShadowFailure(state.Runtime.Failure.Code)
+		resource.StableFailure = &failure
+	default:
+		return evaluationtransport.IELTSSpeakingReportResource{},
 			evaluation.ErrInvalidRequest
 	}
 	return resource, nil

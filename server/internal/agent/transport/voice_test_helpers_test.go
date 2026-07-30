@@ -36,6 +36,7 @@ func newAgentVoiceOrchestrator(
 		conversations,
 		practice,
 		reviews,
+		agentVoiceCompletionEvaluation{},
 	)
 	if err != nil {
 		t.Fatalf("new orchestrator: %v", err)
@@ -351,6 +352,16 @@ type agentVoiceReview struct {
 	bySession       map[string]VoiceReviewCheckpoint
 	creations       int
 	failAfterCreate bool
+}
+
+type agentVoiceCompletionEvaluation struct{}
+
+func (agentVoiceCompletionEvaluation) EnsureCompletedSessionEvaluation(
+	context.Context,
+	requestcontext.Actor,
+	VoiceCompletionEvaluationSource,
+) error {
+	return nil
 }
 
 func newAgentVoiceReview() *agentVoiceReview {

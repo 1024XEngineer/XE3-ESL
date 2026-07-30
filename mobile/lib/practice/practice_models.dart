@@ -2,6 +2,44 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/review/formal_review.dart';
 
+const _practiceScenarioTypes = <String>{
+  'INTERVIEW',
+  'EXAM',
+  'WORKPLACE',
+  'DAILY',
+};
+
+const _practiceScenarioModels = <String>{
+  'PROJECT_EXPERIENCE_DEEP_DIVE',
+  'INTERVIEW_BASIC_DIALOGUE',
+  'IELTS_SPEAKING_PART_1',
+  'IELTS_SPEAKING_PART_2',
+  'IELTS_SPEAKING_PART_3',
+  'IELTS_SPEAKING_FULL_MOCK',
+  'EXAM_BASIC_DIALOGUE',
+  'PROGRESS_AND_RISK_UPDATE',
+  'WORKPLACE_BASIC_DIALOGUE',
+  'HOTEL_CHECKIN_AND_ISSUE_HANDLING',
+  'DAILY_BASIC_DIALOGUE',
+};
+
+bool validPracticeScenarioIdentity(
+  String? scenarioType,
+  String? scenarioModel, {
+  bool allowMissing = false,
+}) {
+  if (scenarioType == null || scenarioModel == null) {
+    return allowMissing && scenarioType == null && scenarioModel == null;
+  }
+  return _practiceScenarioTypes.contains(scenarioType) &&
+      _practiceScenarioModels.contains(scenarioModel);
+}
+
+bool isIeltsSpeakingFullMockScenario(
+  String? scenarioType,
+  String? scenarioModel,
+) => scenarioType == 'EXAM' && scenarioModel == 'IELTS_SPEAKING_FULL_MOCK';
+
 final class PracticeQuestion {
   const PracticeQuestion({
     required this.id,
@@ -33,6 +71,8 @@ final class PracticeSessionSnapshot {
     required this.sessionId,
     this.planId,
     this.threadId,
+    this.scenarioType,
+    this.scenarioModel,
     this.sessionVersion,
     required this.matter,
     required this.completedTurns,
@@ -47,6 +87,8 @@ final class PracticeSessionSnapshot {
   final String sessionId;
   final String? planId;
   final String? threadId;
+  final String? scenarioType;
+  final String? scenarioModel;
   final int? sessionVersion;
   final AgentMatter matter;
   final int completedTurns;
@@ -140,6 +182,8 @@ final class PracticeTurnConfirmation {
     required this.completedTurns,
     required this.turnLimit,
     required this.sessionCompleted,
+    this.scenarioType,
+    this.scenarioModel,
     this.sessionVersion,
     this.nextQuestion,
     this.review,
@@ -155,6 +199,8 @@ final class PracticeTurnConfirmation {
   final int completedTurns;
   final int turnLimit;
   final bool sessionCompleted;
+  final String? scenarioType;
+  final String? scenarioModel;
   final int? sessionVersion;
   final PracticeQuestion? nextQuestion;
   final AgentReview? review;

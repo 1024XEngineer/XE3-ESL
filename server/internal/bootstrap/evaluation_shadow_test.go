@@ -132,6 +132,103 @@ func TestInterviewShadowTextProviderPropagatesGenerationFailure(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
+	t.Parallel()
+	generator := &evaluationTextGenerator{
+		result: ai.TextResult{
+			ID:       "request-ielts-1",
+			Provider: "qianwen",
+			Model:    "qwen-plus",
+			Content:  `{"schema_version":"ielts-speaking-full-mock-shadow-provider/v1","criteria":[]}`,
+		},
+	}
+	provider, err := newIELTSSpeakingShadowTextProvider(
+		generator,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("newIELTSSpeakingShadowTextProvider: %v", err)
+	}
+	input := evaluation.IELTSSpeakingShadowProviderInput{
+		SchemaVersion: evaluation.IELTSSpeakingShadowProviderSchemaVersion,
+		PromptVersion: evaluation.IELTSSpeakingShadowPromptVersion,
+		RubricVersion: evaluation.IELTSSpeakingShadowRubricVersion,
+		SceneType:     evaluation.SceneIELTSSpeaking,
+		ScenarioModel: "IELTS_SPEAKING_FULL_MOCK",
+		AssessableCriteria: []evaluation.IELTSCriterion{
+			evaluation.IELTSCriterionFC,
+			evaluation.IELTSCriterionLR,
+			evaluation.IELTSCriterionGRA,
+		},
+		RubricDescriptors: []evaluation.IELTSRubricDescriptorSet{{
+			CriterionID: evaluation.IELTSCriterionLR,
+			Descriptors: []evaluation.IELTSRubricDescriptor{
+				"LR_PRACTICE_BAND_1",
+			},
+		}},
+		Questions: []evaluation.IELTSSpeakingProviderQuestion{{
+			QuestionID:   "question_1",
+			PartID:       evaluation.IELTSPart1,
+			Index:        1,
+			QuestionText: "Where do you live?",
+			Response: &evaluation.IELTSSpeakingProviderResponse{
+				TurnID:        "turn_1",
+				EvidenceRefID: "evidence_1",
+				Transcript:    "I live in Shanghai.",
+			},
+		}},
+	}
+	result, err := provider.AnalyzeIELTSSpeaking(
+		context.Background(),
+		input,
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeIELTSSpeaking: %v", err)
+	}
+	if result.Provider != generator.result.Provider ||
+		result.Model != generator.result.Model ||
+		result.RequestID != generator.result.ID ||
+		string(result.Payload) != generator.result.Content {
+		t.Fatalf("provider result = %#v", result)
+	}
+	if len(generator.requests) != 1 {
+		t.Fatalf("request count = %d", len(generator.requests))
+	}
+	request := generator.requests[0]
+	if err := ai.ValidateTextRequest(request); err != nil {
+		t.Fatalf("generated request is invalid: %v", err)
+	}
+	if request.ResponseFormat != ai.TextResponseFormatJSON ||
+		len(request.Messages) != 2 ||
+		request.Messages[0].Role != ai.TextRoleSystem ||
+		request.Messages[0].Content !=
+			ieltsSpeakingShadowSystemContract ||
+		request.Messages[1].Role != ai.TextRoleUser ||
+		request.Messages[1].Content == "" ||
+		request.Messages[1].Content ==
+			ieltsSpeakingShadowSystemContract {
+		t.Fatalf("request = %#v", request)
+	}
+}
+
+func TestIELTSSpeakingShadowTextProviderRejectsInvalidDependencies(
+	t *testing.T,
+) {
+	t.Parallel()
+	if _, err := newIELTSSpeakingShadowTextProvider(
+		nil,
+		time.Second,
+	); err == nil {
+		t.Fatal("nil generator was accepted")
+	}
+	if _, err := newIELTSSpeakingShadowTextProvider(
+		&evaluationTextGenerator{},
+		interviewShadowGenerationTimeout+time.Second,
+	); err == nil {
+		t.Fatal("timeout above bound was accepted")
+	}
+}
+
 type evaluationTextGenerator struct {
 	result   ai.TextResult
 	err      error

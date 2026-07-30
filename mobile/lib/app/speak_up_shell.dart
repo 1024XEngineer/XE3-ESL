@@ -18,6 +18,8 @@ import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/review/interview_report_controller.dart';
+import 'package:speakup/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
 class SpeakUpShell extends StatefulWidget {
@@ -31,6 +33,8 @@ class SpeakUpShell extends StatefulWidget {
     this.jobPreparationController,
     this.reviewHistoryController,
     this.interviewReportController,
+    this.ieltsSpeakingReportController,
+    this.ieltsSpeakingReportIndexController,
     required this.agentController,
     super.key,
   });
@@ -45,6 +49,8 @@ class SpeakUpShell extends StatefulWidget {
   final JobPreparationController? jobPreparationController;
   final ReviewHistoryController? reviewHistoryController;
   final InterviewReportController? interviewReportController;
+  final IeltsSpeakingReportController? ieltsSpeakingReportController;
+  final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -117,7 +123,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   Future<void> _selectDestinationAfterParking(int index) async {
     if (_selectedIndex == index) {
       if (index == 2) {
-        unawaited(widget.reviewHistoryController?.refresh());
+        _refreshReviewIndexes();
       }
       return;
     }
@@ -158,7 +164,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     }
     unawaited(widget.agentController.stopPracticeAudio());
     if (index == 2) {
-      unawaited(widget.reviewHistoryController?.refresh());
+      _refreshReviewIndexes();
     }
     setState(() => _selectedIndex = index);
   }
@@ -169,6 +175,11 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     Navigator.of(context).pushNamed(AppRoutes.jobPreparation);
+  }
+
+  void _refreshReviewIndexes() {
+    unawaited(widget.reviewHistoryController?.refresh());
+    unawaited(widget.ieltsSpeakingReportIndexController?.refresh());
   }
 
   void _showMockNotice(String message) {
@@ -274,7 +285,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     } else if (!_reviewPresented) {
       _reviewPresented = true;
       _selectedIndex = 2;
-      unawaited(widget.reviewHistoryController?.refresh());
+      _refreshReviewIndexes();
     }
     setState(() {});
   }
@@ -287,7 +298,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     }
     _reviewPresented = true;
     _selectedIndex = 2;
-    unawaited(widget.reviewHistoryController?.refresh());
+    _refreshReviewIndexes();
   }
 
   @override
@@ -371,6 +382,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         practiceAvailable: practiceAvailable,
         historyController: widget.reviewHistoryController,
         interviewReportController: widget.interviewReportController,
+        ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
+        ieltsSpeakingReportIndexController:
+            widget.ieltsSpeakingReportIndexController,
         agentController: widget.agentController,
         autoload: false,
       ),

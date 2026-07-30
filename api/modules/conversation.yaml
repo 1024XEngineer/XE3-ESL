@@ -108,7 +108,9 @@ paths:
         The request has no body. Confirmation creates or returns one immutable
         Conversation Turn, applies it exactly once to Practice, creates the next
         Question when Practice remains active, and on the authoritative
-        completion transition ensures one formal Review.
+        completion transition creates a legacy formal Review only when required
+        by the frozen Session policy before invoking the server-owned,
+        idempotent completion Evaluation hook.
       operationId: confirmVoiceTranscriptionCandidate
       parameters:
         - $ref: '#/components/parameters/CandidateId'
@@ -138,9 +140,11 @@ paths:
       description: |
         Creates an immutable text-backed Conversation candidate and confirmed
         Turn in one idempotent request. It applies the effective Turn exactly
-        once, returns the next Question when the Session remains active, and
-        ensures the formal Review on completion. No recording or ASR asset is
-        created for a text answer.
+        once, returns the next Question when the Session remains active, and on
+        completion creates a legacy formal Review only when required by the
+        frozen Session policy before invoking the server-owned, idempotent
+        completion Evaluation hook. No recording or ASR asset is created for a
+        text answer.
       operationId: submitPracticeTextAnswer
       parameters:
         - $ref: '#/components/parameters/PracticeSessionId'
@@ -694,6 +698,8 @@ components:
         - practice_session_id
         - practice_plan_id
         - thread_id
+        - scenario_type
+        - scenario_model
         - matter
         - session_version
         - effective_turns
@@ -706,6 +712,10 @@ components:
           $ref: '#/components/schemas/ResourceId'
         thread_id:
           $ref: '#/components/schemas/ResourceId'
+        scenario_type:
+          $ref: ./preparation.yaml#/components/schemas/ScenarioType
+        scenario_model:
+          $ref: ./preparation.yaml#/components/schemas/ScenarioModel
         matter:
           $ref: ./agent.yaml#/components/schemas/Matter
         session_version:

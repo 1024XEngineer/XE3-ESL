@@ -24,4 +24,5 @@ import "embed"
 //go:embed 000036_evaluation_evidence_snapshots.*.sql
 //go:embed 000037_evaluation_interview_shadow_runtime.*.sql
 //go:embed 000038_evaluation_practice_resource_ids.*.sql
+//go:embed 000039_evaluation_ielts_speaking_shadow_runtime.*.sql
 var Files embed.FS

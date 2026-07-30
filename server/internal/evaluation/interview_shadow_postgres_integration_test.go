@@ -751,6 +751,24 @@ func TestPostgresInterviewShadowDeletionWinsAgainstLateResult(
 func TestInterviewShadowRuntimeMigrationRoundTrip(t *testing.T) {
 	pool := evaluationDatabase(t)
 	ctx := context.Background()
+	ieltsDown, err := migrations.Files.ReadFile(
+		"000039_evaluation_ielts_speaking_shadow_runtime.down.sql",
+	)
+	if err != nil {
+		t.Fatalf("read IELTS Speaking Shadow down migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(ieltsDown)); err != nil {
+		t.Fatalf("apply IELTS Speaking Shadow down migration: %v", err)
+	}
+	resourceIDsDown, err := migrations.Files.ReadFile(
+		"000038_evaluation_practice_resource_ids.down.sql",
+	)
+	if err != nil {
+		t.Fatalf("read Practice resource IDs down migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(resourceIDsDown)); err != nil {
+		t.Fatalf("apply Practice resource IDs down migration: %v", err)
+	}
 	down, err := migrations.Files.ReadFile(
 		"000037_evaluation_interview_shadow_runtime.down.sql",
 	)
@@ -812,6 +830,24 @@ func TestInterviewShadowRuntimeMigrationRoundTrip(t *testing.T) {
 		if !exists {
 			t.Errorf("%s missing after migration reapply", table)
 		}
+	}
+	resourceIDsUp, err := migrations.Files.ReadFile(
+		"000038_evaluation_practice_resource_ids.up.sql",
+	)
+	if err != nil {
+		t.Fatalf("read Practice resource IDs up migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(resourceIDsUp)); err != nil {
+		t.Fatalf("reapply Practice resource IDs up migration: %v", err)
+	}
+	ieltsUp, err := migrations.Files.ReadFile(
+		"000039_evaluation_ielts_speaking_shadow_runtime.up.sql",
+	)
+	if err != nil {
+		t.Fatalf("read IELTS Speaking Shadow up migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(ieltsUp)); err != nil {
+		t.Fatalf("reapply IELTS Speaking Shadow up migration: %v", err)
 	}
 }
 

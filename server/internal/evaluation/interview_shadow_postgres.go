@@ -1,6 +1,7 @@
 package evaluation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,81 +13,174 @@ import (
 )
 
 var (
-	ErrInterviewShadowLeaseLost = errors.New(
-		"evaluation: Interview Shadow lease lost",
+	ErrDurableSceneJobLeaseLost = errors.New(
+		"evaluation: durable Scene job lease lost",
 	)
-	ErrInterviewShadowConfigurationConflict = errors.New(
-		"evaluation: Interview Shadow configuration conflict",
+	ErrDurableSceneJobConfigurationConflict = errors.New(
+		"evaluation: durable Scene job configuration conflict",
 	)
+	ErrInterviewShadowLeaseLost                 = ErrDurableSceneJobLeaseLost
+	ErrInterviewShadowConfigurationConflict     = ErrDurableSceneJobConfigurationConflict
+	ErrIELTSSpeakingShadowLeaseLost             = ErrDurableSceneJobLeaseLost
+	ErrIELTSSpeakingShadowConfigurationConflict = ErrDurableSceneJobConfigurationConflict
 )
 
 const (
-	interviewShadowConfigurationChangedCode = "runtime_configuration_changed"
-	interviewShadowRevisionSupersededCode   = "revision_superseded"
+	durableSceneJobConfigurationChangedCode = "runtime_configuration_changed"
+	durableSceneJobRevisionSupersededCode   = "revision_superseded"
+	interviewShadowConfigurationChangedCode = durableSceneJobConfigurationChangedCode
+	interviewShadowRevisionSupersededCode   = durableSceneJobRevisionSupersededCode
 )
 
 var _ InterviewShadowRuntimeRepository = (*PostgresRepository)(nil)
+
+var interviewDurableSceneJobSpec = durableSceneJobSpec{
+	sceneType:       SceneInterview,
+	strategyRef:     InterviewShadowStrategyRef,
+	pipelineVersion: InterviewShadowPipelineVersion,
+	promptVersion:   InterviewShadowPromptVersion,
+	resultTable:     "evaluation_interview_scene_results",
+}
+
+func durableConfigurationFromInterview(
+	source InterviewShadowRuntimeConfiguration,
+) durableSceneJobConfiguration {
+	return durableSceneJobConfiguration{
+		MaxAttempts:     source.MaxAttempts,
+		LeaseDuration:   source.LeaseDuration,
+		StrategyRef:     source.StrategyRef,
+		PipelineVersion: source.PipelineVersion,
+		FullConfigHash:  source.FullConfigHash,
+		PromptVersion:   source.PromptVersion,
+		Provider:        source.Provider,
+		Model:           source.Model,
+	}
+}
+
+func durableClaimFromInterview(
+	source InterviewShadowClaim,
+) durableSceneJobClaim {
+	return durableSceneJobClaim{
+		OutboxID:             source.OutboxID,
+		ModuleRunID:          source.ModuleRunID,
+		EvaluationID:         source.EvaluationID,
+		EvaluationRevisionID: source.EvaluationRevisionID,
+		OwnerUserID:          source.OwnerUserID,
+		Revision:             source.Revision,
+		StrategyRef:          source.StrategyRef,
+		PipelineVersion:      source.PipelineVersion,
+		AttemptCount:         source.AttemptCount,
+		FencingToken:         source.FencingToken,
+		LeaseExpiresAt:       source.LeaseExpiresAt,
+		FullConfigHash:       source.FullConfigHash,
+		PromptVersion:        source.PromptVersion,
+		Provider:             source.Provider,
+		Model:                source.Model,
+		Snapshot:             source.Snapshot,
+	}
+}
+
+func interviewClaimFromDurable(
+	source durableSceneJobClaim,
+) InterviewShadowClaim {
+	return InterviewShadowClaim{
+		OutboxID:             source.OutboxID,
+		ModuleRunID:          source.ModuleRunID,
+		EvaluationID:         source.EvaluationID,
+		EvaluationRevisionID: source.EvaluationRevisionID,
+		OwnerUserID:          source.OwnerUserID,
+		Revision:             source.Revision,
+		StrategyRef:          source.StrategyRef,
+		PipelineVersion:      source.PipelineVersion,
+		AttemptCount:         source.AttemptCount,
+		FencingToken:         source.FencingToken,
+		LeaseExpiresAt:       source.LeaseExpiresAt,
+		FullConfigHash:       source.FullConfigHash,
+		PromptVersion:        source.PromptVersion,
+		Provider:             source.Provider,
+		Model:                source.Model,
+		Snapshot:             source.Snapshot,
+	}
+}
 
 func (r *PostgresRepository) ClaimInterviewShadow(
 	ctx context.Context,
 	configuration InterviewShadowRuntimeConfiguration,
 ) (InterviewShadowClaim, bool, error) {
+	claim, acquired, err := r.claimDurableSceneJob(
+		ctx,
+		interviewDurableSceneJobSpec,
+		durableConfigurationFromInterview(configuration),
+	)
+	return interviewClaimFromDurable(claim), acquired, err
+}
+
+func (r *PostgresRepository) claimDurableSceneJob(
+	ctx context.Context,
+	spec durableSceneJobSpec,
+	configuration durableSceneJobConfiguration,
+) (durableSceneJobClaim, bool, error) {
 	if r == nil || r.pool == nil || ctx == nil ||
-		!configuration.Valid() {
-		return InterviewShadowClaim{}, false, ErrInvalidRequest
+		!configuration.valid(spec) {
+		return durableSceneJobClaim{}, false, ErrInvalidRequest
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"begin Interview Shadow claim: %w",
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"begin durable Scene job claim: %w",
 			err,
 		)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	exhausted, err := failOneExhaustedInterviewShadow(
+	exhausted, err := failOneExhaustedDurableSceneJob(
 		ctx,
 		tx,
+		spec,
 		configuration.MaxAttempts,
 	)
 	if err != nil {
-		return InterviewShadowClaim{}, false, err
+		return durableSceneJobClaim{}, false, err
 	}
 	if exhausted {
 		if err := tx.Commit(ctx); err != nil {
-			return InterviewShadowClaim{}, false, fmt.Errorf(
-				"commit exhausted Interview Shadow: %w",
+			return durableSceneJobClaim{}, false, fmt.Errorf(
+				"commit exhausted durable Scene job: %w",
 				err,
 			)
 		}
-		return InterviewShadowClaim{}, false, nil
+		return durableSceneJobClaim{}, false, nil
 	}
 
 	var ownerUserID string
 	var evaluationID string
 	var evaluationRevisionID string
 	var outboxID string
-	err = tx.QueryRow(ctx, interviewShadowCandidateOwnerSQL,
-		configuration.MaxAttempts).Scan(
+	err = tx.QueryRow(ctx, durableSceneJobCandidateOwnerSQL,
+		configuration.MaxAttempts,
+		spec.sceneType,
+		spec.strategyRef,
+		spec.pipelineVersion,
+		SchemaVersion).Scan(
 		&ownerUserID,
 		&evaluationID,
 		&evaluationRevisionID,
 		&outboxID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return InterviewShadowClaim{}, false, nil
+		return durableSceneJobClaim{}, false, nil
 	}
 	if err != nil {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"select Interview Shadow candidate owner: %w",
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"select durable Scene job candidate owner: %w",
 			err,
 		)
 	}
 	if err := lockActiveOwner(ctx, tx, ownerUserID); err != nil {
 		if errors.Is(err, ErrAccountUnavailable) {
-			return InterviewShadowClaim{}, false, nil
+			return durableSceneJobClaim{}, false, nil
 		}
-		return InterviewShadowClaim{}, false, err
+		return durableSceneJobClaim{}, false, err
 	}
 	if err := lockEvaluationLedgerAndRevisionRows(
 		ctx,
@@ -96,9 +190,9 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 		evaluationRevisionID,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return InterviewShadowClaim{}, false, nil
+			return durableSceneJobClaim{}, false, nil
 		}
-		return InterviewShadowClaim{}, false, err
+		return durableSceneJobClaim{}, false, err
 	}
 	if err := lockEvaluationRevisionRuntimeRows(
 		ctx,
@@ -108,12 +202,12 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 		evaluationRevisionID,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return InterviewShadowClaim{}, false, nil
+			return durableSceneJobClaim{}, false, nil
 		}
-		return InterviewShadowClaim{}, false, err
+		return durableSceneJobClaim{}, false, err
 	}
 
-	var claim InterviewShadowClaim
+	var claim durableSceneJobClaim
 	var leaseExpiresAt pgtype.Timestamptz
 	err = tx.QueryRow(ctx, `
 		UPDATE evaluation_outbox AS outbox
@@ -152,7 +246,7 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 		      WHERE ledger.id = outbox.evaluation_id
 		        AND ledger.owner_user_id = outbox.owner_user_id
 		        AND ledger.scope = 'SESSION'
-		        AND ledger.scene_type = 'INTERVIEW'
+			        AND ledger.scene_type = $10
 		        AND snapshot.practice_session_id =
 		            ledger.practice_session_id
 		        AND snapshot.scope = ledger.scope
@@ -179,14 +273,15 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 			outbox.attempt_count,
 			outbox.fencing_token,
 			outbox.lease_expires_at
-	`, ownerUserID, configuration.MaxAttempts,
-		InterviewShadowStrategyRef,
-		InterviewShadowPipelineVersion,
+		`, ownerUserID, configuration.MaxAttempts,
+		spec.strategyRef,
+		spec.pipelineVersion,
 		SchemaVersion,
 		configuration.LeaseDuration.Seconds(),
 		outboxID,
 		evaluationID,
-		evaluationRevisionID).Scan(
+		evaluationRevisionID,
+		spec.sceneType).Scan(
 		&claim.OutboxID,
 		&claim.EvaluationID,
 		&claim.EvaluationRevisionID,
@@ -196,17 +291,17 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 		&leaseExpiresAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return InterviewShadowClaim{}, false, nil
+		return durableSceneJobClaim{}, false, nil
 	}
 	if err != nil {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"claim Interview Shadow outbox: %w",
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"claim durable Scene job outbox: %w",
 			err,
 		)
 	}
 	if !leaseExpiresAt.Valid {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"claim Interview Shadow outbox: missing lease",
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"claim durable Scene job outbox: missing lease",
 		)
 	}
 	claim.LeaseExpiresAt = leaseExpiresAt.Time.UTC()
@@ -223,13 +318,13 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 	`, claim.EvaluationID, claim.EvaluationRevisionID,
 		claim.OwnerUserID)
 	if err != nil {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"mark Interview Shadow revision running: %w",
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"mark durable Scene job revision running: %w",
 			err,
 		)
 	}
 	if stateUpdate.RowsAffected() != 1 {
-		return InterviewShadowClaim{}, false,
+		return durableSceneJobClaim{}, false,
 			ErrInterviewShadowLeaseLost
 	}
 
@@ -241,13 +336,13 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 		  AND owner_user_id = $3
 		  AND scene_strategy_ref = $4
 		FOR SHARE
-	`, claim.EvaluationID, claim.EvaluationRevisionID,
-		claim.OwnerUserID, InterviewShadowStrategyRef).Scan(
+		`, claim.EvaluationID, claim.EvaluationRevisionID,
+		claim.OwnerUserID, spec.strategyRef).Scan(
 		&claim.Revision,
 		&claim.PipelineVersion,
 	); err != nil {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"read claimed Interview Shadow revision: %w",
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"read claimed durable Scene job revision: %w",
 			err,
 		)
 	}
@@ -271,7 +366,7 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 			  AND ledger.scope = snapshot.scope
 			  AND ledger.scene_type = snapshot.scene_type
 			  AND ledger.scope = 'SESSION'
-			  AND ledger.scene_type = 'INTERVIEW'
+			  AND ledger.scene_type = $7
 			  AND revision.channels = ARRAY['SCENE']::text[]
 			  AND revision.scene_strategy_ref = $4
 			  AND revision.pipeline_version = $5
@@ -287,18 +382,19 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 		claim.EvaluationID,
 		claim.EvaluationRevisionID,
 		claim.OwnerUserID,
-		InterviewShadowStrategyRef,
-		InterviewShadowPipelineVersion,
+		spec.strategyRef,
+		spec.pipelineVersion,
 		SchemaVersion,
+		spec.sceneType,
 	))
 	if err != nil {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"read claimed Interview Shadow snapshot: %w",
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"read claimed durable Scene job snapshot: %w",
 			err,
 		)
 	}
 
-	claim.StrategyRef = InterviewShadowStrategyRef
+	claim.StrategyRef = spec.strategyRef
 	claim.PromptVersion = configuration.PromptVersion
 	claim.Provider = configuration.Provider
 	claim.Model = configuration.Model
@@ -327,7 +423,7 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 		)
 		VALUES (
 			$1, $2, $3, $4, 'SCENE', $5, $6, $7, $8,
-			'SESSION', 'INTERVIEW', $9, $10, $11, $12, $13,
+			'SESSION', $16, $9, $10, $11, $12, $13,
 			$14, $15
 		)
 		ON CONFLICT (
@@ -370,41 +466,42 @@ func (r *PostgresRepository) ClaimInterviewShadow(
 		claim.Snapshot.ID, claim.Snapshot.InputRevision,
 		claim.Snapshot.SnapshotHash[:], claim.FullConfigHash[:],
 		claim.PromptVersion, claim.Provider, claim.Model,
-		claim.AttemptCount, claim.FencingToken).Scan(
+		claim.AttemptCount, claim.FencingToken,
+		spec.sceneType).Scan(
 		&claim.ModuleRunID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if failErr := failInterviewShadowConfigurationChange(
+		if failErr := failDurableSceneJobConfigurationChange(
 			ctx,
 			tx,
 			claim,
 		); failErr != nil {
-			return InterviewShadowClaim{}, false, failErr
+			return durableSceneJobClaim{}, false, failErr
 		}
 		if commitErr := tx.Commit(ctx); commitErr != nil {
-			return InterviewShadowClaim{}, false, fmt.Errorf(
-				"commit Interview Shadow configuration failure: %w",
+			return durableSceneJobClaim{}, false, fmt.Errorf(
+				"commit durable Scene job configuration failure: %w",
 				commitErr,
 			)
 		}
-		return InterviewShadowClaim{}, false,
+		return durableSceneJobClaim{}, false,
 			ErrInterviewShadowConfigurationConflict
 	}
 	if err != nil {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"upsert Interview Shadow module run: %w",
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"upsert durable Scene job module run: %w",
 			err,
 		)
 	}
-	if !claim.Valid() {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"validate claimed Interview Shadow: %w",
+	if !claim.valid(spec) {
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"validate claimed durable Scene job: %w",
 			ErrInvalidRequest,
 		)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return InterviewShadowClaim{}, false, fmt.Errorf(
-			"commit Interview Shadow claim: %w",
+		return durableSceneJobClaim{}, false, fmt.Errorf(
+			"commit durable Scene job claim: %w",
 			err,
 		)
 	}
@@ -416,7 +513,7 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 	claim InterviewShadowClaim,
 	result InterviewShadowResult,
 ) error {
-	if r == nil || r.pool == nil || ctx == nil || !claim.Valid() ||
+	if ctx == nil || !claim.Valid() ||
 		ValidateInterviewShadowResult(claim.Snapshot, result) != nil ||
 		!interviewShadowResultMatchesRuntime(claim, result) {
 		return ErrInvalidRequest
@@ -425,9 +522,33 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 	if err != nil {
 		return ErrInvalidRequest
 	}
+	var providerRequestID any
+	if result.Provider != nil {
+		providerRequestID = result.Provider.RequestID
+	}
+	return r.completeDurableSceneJob(
+		ctx,
+		interviewDurableSceneJobSpec,
+		durableClaimFromInterview(claim),
+		payload,
+		providerRequestID,
+	)
+}
+
+func (r *PostgresRepository) completeDurableSceneJob(
+	ctx context.Context,
+	spec durableSceneJobSpec,
+	claim durableSceneJobClaim,
+	payload []byte,
+	providerRequestID any,
+) error {
+	if r == nil || r.pool == nil || ctx == nil ||
+		!claim.valid(spec) || len(payload) == 0 {
+		return ErrInvalidRequest
+	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin Interview Shadow completion: %w", err)
+		return fmt.Errorf("begin durable Scene job completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockActiveOwner(ctx, tx, claim.OwnerUserID); err != nil {
@@ -514,7 +635,7 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 		      ledger.practice_session_id
 		  AND snapshot.input_revision = ledger.input_revision
 		  AND snapshot.scope = 'SESSION'
-		  AND snapshot.scene_type = 'INTERVIEW'
+		  AND snapshot.scene_type = $17
 		  AND revision.channels = ARRAY['SCENE']::text[]
 		  AND revision.scene_strategy_ref = $6
 		  AND revision.pipeline_version = $15
@@ -533,7 +654,8 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 		claim.Snapshot.InputRevision, claim.Snapshot.SnapshotHash[:],
 		claim.FullConfigHash[:], claim.PromptVersion,
 		claim.Provider, claim.Model,
-		InterviewShadowPipelineVersion, SchemaVersion).Scan(
+		spec.pipelineVersion, SchemaVersion,
+		spec.sceneType).Scan(
 		&deliveryStatus,
 		&persistedToken,
 		&leaseActive,
@@ -544,7 +666,7 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 		return ErrInterviewShadowLeaseLost
 	}
 	if err != nil {
-		return fmt.Errorf("lock Interview Shadow completion: %w", err)
+		return fmt.Errorf("lock durable Scene job completion: %w", err)
 	}
 	if persistedToken != claim.FencingToken {
 		return ErrInterviewShadowLeaseLost
@@ -552,11 +674,12 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 	if deliveryStatus == "DELIVERED" &&
 		runStatus == "READY" &&
 		revisionStatus == "READY" {
-		same, err := sameInterviewShadowResult(
+		same, err := sameDurableSceneJobResult(
 			ctx,
 			tx,
+			spec,
 			claim,
-			result,
+			providerRequestID,
 			payload,
 		)
 		if err != nil {
@@ -567,7 +690,7 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf(
-				"commit Interview Shadow completion replay: %w",
+				"commit durable Scene job completion replay: %w",
 				err,
 			)
 		}
@@ -580,12 +703,8 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 		return ErrInterviewShadowLeaseLost
 	}
 
-	var providerRequestID any
-	if result.Provider != nil {
-		providerRequestID = result.Provider.RequestID
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO evaluation_interview_scene_results (
+	insertResultSQL := fmt.Sprintf(`
+		INSERT INTO %s (
 			module_run_id,
 			evaluation_id,
 			evaluation_revision_id,
@@ -607,17 +726,20 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 		)
 		VALUES (
 			$1, $2, $3, $4, 'SCENE', $5, $6, $7, $8,
-			'INTERVIEW', $9, $10, $11, $12, $13, $14, $15,
+			$17, $9, $10, $11, $12, $13, $14, $15,
 			$16::jsonb
 		)
-	`, claim.ModuleRunID, claim.EvaluationID,
+	`, spec.resultTable)
+	if _, err := tx.Exec(ctx, insertResultSQL,
+		claim.ModuleRunID, claim.EvaluationID,
 		claim.EvaluationRevisionID, claim.OwnerUserID,
 		claim.StrategyRef, claim.Snapshot.PracticeSessionID,
 		claim.Snapshot.ID, claim.Snapshot.InputRevision,
 		claim.Snapshot.SnapshotHash[:], claim.FullConfigHash[:],
 		claim.PromptVersion, claim.Provider, claim.Model,
-		providerRequestID, claim.FencingToken, payload); err != nil {
-		return fmt.Errorf("insert Interview Shadow result: %w", err)
+		providerRequestID, claim.FencingToken, payload,
+		spec.sceneType); err != nil {
+		return fmt.Errorf("insert durable Scene job result: %w", err)
 	}
 	runUpdate, err := tx.Exec(ctx, `
 		UPDATE evaluation_module_runs
@@ -632,7 +754,7 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 	`, claim.ModuleRunID, claim.OwnerUserID,
 		claim.FencingToken)
 	if err != nil {
-		return fmt.Errorf("complete Interview Shadow run: %w", err)
+		return fmt.Errorf("complete durable Scene job run: %w", err)
 	}
 	if runUpdate.RowsAffected() != 1 {
 		return ErrInterviewShadowLeaseLost
@@ -651,7 +773,7 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 		  AND lease_expires_at > clock_timestamp()
 	`, claim.OutboxID, claim.OwnerUserID, claim.FencingToken)
 	if err != nil {
-		return fmt.Errorf("deliver Interview Shadow outbox: %w", err)
+		return fmt.Errorf("deliver durable Scene job outbox: %w", err)
 	}
 	if outboxUpdate.RowsAffected() != 1 {
 		return ErrInterviewShadowLeaseLost
@@ -670,13 +792,13 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 	`, claim.EvaluationID, claim.EvaluationRevisionID,
 		claim.OwnerUserID)
 	if err != nil {
-		return fmt.Errorf("ready Interview Shadow revision: %w", err)
+		return fmt.Errorf("ready durable Scene job revision: %w", err)
 	}
 	if stateUpdate.RowsAffected() != 1 {
 		return ErrInterviewShadowLeaseLost
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Interview Shadow completion: %w", err)
+		return fmt.Errorf("commit durable Scene job completion: %w", err)
 	}
 	return nil
 }
@@ -687,17 +809,41 @@ func (r *PostgresRepository) FailInterviewShadow(
 	failure InterviewShadowFailure,
 	configuration InterviewShadowRuntimeConfiguration,
 ) (InterviewShadowRuntimeStatus, error) {
-	if r == nil || r.pool == nil || ctx == nil || !claim.Valid() ||
-		!failure.Valid() || !configuration.Valid() ||
-		!claimMatchesRuntime(claim, configuration) {
+	status, err := r.failDurableSceneJob(
+		ctx,
+		interviewDurableSceneJobSpec,
+		durableClaimFromInterview(claim),
+		durableSceneJobFailure{
+			Code:      failure.Code,
+			Retryable: failure.Retryable,
+		},
+		durableConfigurationFromInterview(configuration),
+	)
+	return InterviewShadowRuntimeStatus(status), err
+}
+
+func (r *PostgresRepository) failDurableSceneJob(
+	ctx context.Context,
+	spec durableSceneJobSpec,
+	claim durableSceneJobClaim,
+	failure durableSceneJobFailure,
+	configuration durableSceneJobConfiguration,
+) (durableSceneJobStatus, error) {
+	if r == nil || r.pool == nil || ctx == nil ||
+		!failure.valid() ||
+		!durableSceneJobConfigurationMatchesClaim(
+			claim,
+			configuration,
+			spec,
+		) {
 		return "", ErrInvalidRequest
 	}
 	requeue := failure.Retryable &&
 		claim.AttemptCount < configuration.MaxAttempts
-	backoff := interviewShadowBackoff(claim.AttemptCount)
+	backoff := durableSceneJobBackoff(claim.AttemptCount)
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return "", fmt.Errorf("begin Interview Shadow failure: %w", err)
+		return "", fmt.Errorf("begin durable Scene job failure: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockActiveOwner(ctx, tx, claim.OwnerUserID); err != nil {
@@ -804,7 +950,7 @@ func (r *PostgresRepository) FailInterviewShadow(
 		return "", ErrInterviewShadowLeaseLost
 	}
 	if err != nil {
-		return "", fmt.Errorf("fail Interview Shadow outbox: %w", err)
+		return "", fmt.Errorf("fail durable Scene job outbox: %w", err)
 	}
 
 	runStatus := "RUNNING"
@@ -829,7 +975,7 @@ func (r *PostgresRepository) FailInterviewShadow(
 		claim.FencingToken, runStatus, failure.Code)
 	if err != nil {
 		return "", fmt.Errorf(
-			"fail Interview Shadow module run: %w",
+			"fail durable Scene job module run: %w",
 			err,
 		)
 	}
@@ -852,7 +998,7 @@ func (r *PostgresRepository) FailInterviewShadow(
 			claim.OwnerUserID)
 		if err != nil {
 			return "", fmt.Errorf(
-				"fail Interview Shadow revision: %w",
+				"fail durable Scene job revision: %w",
 				err,
 			)
 		}
@@ -862,14 +1008,14 @@ func (r *PostgresRepository) FailInterviewShadow(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", fmt.Errorf(
-			"commit Interview Shadow failure: %w",
+			"commit durable Scene job failure: %w",
 			err,
 		)
 	}
 	if requeue {
-		return InterviewShadowRuntimePending, nil
+		return durableSceneJobPending, nil
 	}
-	return InterviewShadowRuntimeFailed, nil
+	return durableSceneJobFailed, nil
 }
 
 func (r *PostgresRepository) GetInterviewShadowState(
@@ -901,6 +1047,62 @@ func getInterviewShadowState(
 	evaluationID string,
 	evaluationRevisionID string,
 ) (InterviewShadowReadState, *EvidenceSnapshot, error) {
+	raw, snapshot, err := getDurableSceneJobState(
+		ctx,
+		db,
+		interviewDurableSceneJobSpec,
+		ownerUserID,
+		evaluationID,
+		evaluationRevisionID,
+	)
+	if err != nil {
+		return InterviewShadowReadState{}, nil, err
+	}
+	state := InterviewShadowReadState{
+		ModuleStatus: InterviewShadowRuntimeStatus(
+			raw.ModuleStatus,
+		),
+		FullConfigHash: raw.FullConfigHash,
+	}
+	if raw.Failure != nil {
+		state.Failure = &InterviewShadowFailure{
+			Code:      raw.Failure.Code,
+			Retryable: raw.Failure.Retryable,
+		}
+	}
+	if raw.ModuleStatus == durableSceneJobReady {
+		if snapshot == nil {
+			return InterviewShadowReadState{}, nil,
+				ErrInterviewShadowConfigurationConflict
+		}
+		var result InterviewShadowResult
+		decoder := json.NewDecoder(bytes.NewReader(raw.ResultPayload))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&result) != nil ||
+			ensureJSONEOF(decoder) != nil ||
+			ValidateInterviewShadowResult(*snapshot, result) != nil {
+			return InterviewShadowReadState{}, nil,
+				ErrInterviewShadowConfigurationConflict
+		}
+		state.Result = &result
+	}
+	return state, snapshot, nil
+}
+
+func getDurableSceneJobState(
+	ctx context.Context,
+	db queryable,
+	spec durableSceneJobSpec,
+	ownerUserID string,
+	evaluationID string,
+	evaluationRevisionID string,
+) (durableSceneJobReadState, *EvidenceSnapshot, error) {
+	if ctx == nil || db == nil || !spec.valid() ||
+		!validUUID(ownerUserID) ||
+		!validUUID(evaluationID) ||
+		!validUUID(evaluationRevisionID) {
+		return durableSceneJobReadState{}, nil, ErrInvalidRequest
+	}
 	var deliveryStatus string
 	var leaseActive bool
 	var moduleStatus string
@@ -909,7 +1111,7 @@ func getInterviewShadowState(
 	var payload []byte
 	var inputSnapshotID string
 	var fullConfigHash []byte
-	err := db.QueryRow(ctx, `
+	query := fmt.Sprintf(`
 		SELECT
 			outbox.delivery_status,
 			coalesce(
@@ -945,7 +1147,7 @@ func getInterviewShadowState(
 		 AND run.evaluation_revision_id = revision.id
 		 AND run.owner_user_id = ledger.owner_user_id
 		 AND run.channel = outbox.channel
-		LEFT JOIN evaluation_interview_scene_results AS result
+		LEFT JOIN %s AS result
 		  ON result.module_run_id = run.id
 		 AND result.evaluation_id = ledger.id
 		 AND result.evaluation_revision_id = revision.id
@@ -957,10 +1159,14 @@ func getInterviewShadowState(
 		  AND revision.scene_strategy_ref = $4
 		  AND revision.pipeline_version = $5
 		  AND revision.schema_version = $6
-	`, ownerUserID, evaluationID, evaluationRevisionID,
-		InterviewShadowStrategyRef,
-		InterviewShadowPipelineVersion,
-		SchemaVersion).Scan(
+		  AND ledger.scene_type = $7
+	`, spec.resultTable)
+	err := db.QueryRow(ctx, query,
+		ownerUserID, evaluationID, evaluationRevisionID,
+		spec.strategyRef,
+		spec.pipelineVersion,
+		SchemaVersion,
+		spec.sceneType).Scan(
 		&deliveryStatus,
 		&leaseActive,
 		&moduleStatus,
@@ -971,18 +1177,18 @@ func getInterviewShadowState(
 		&inputSnapshotID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return InterviewShadowReadState{}, nil, ErrNotFound
+		return durableSceneJobReadState{}, nil, ErrNotFound
 	}
 	if err != nil {
-		return InterviewShadowReadState{}, nil, fmt.Errorf(
-			"read Interview Shadow state: %w",
+		return durableSceneJobReadState{}, nil, fmt.Errorf(
+			"read durable Scene job state: %w",
 			err,
 		)
 	}
 	var persistedConfigHash [32]byte
 	if len(fullConfigHash) != 0 {
 		if len(fullConfigHash) != len(persistedConfigHash) {
-			return InterviewShadowReadState{}, nil,
+			return durableSceneJobReadState{}, nil,
 				ErrInterviewShadowConfigurationConflict
 		}
 		copy(persistedConfigHash[:], fullConfigHash)
@@ -991,31 +1197,31 @@ func getInterviewShadowState(
 	case "PENDING":
 		if moduleStatus == "RUNNING" &&
 			leaseActive {
-			return InterviewShadowReadState{
-				ModuleStatus:   InterviewShadowRuntimeRunning,
+			return durableSceneJobReadState{
+				ModuleStatus:   durableSceneJobRunning,
 				FullConfigHash: persistedConfigHash,
 			}, nil, nil
 		}
 		if revisionStatus != "QUEUED" &&
 			revisionStatus != "RUNNING" {
-			return InterviewShadowReadState{}, nil,
+			return durableSceneJobReadState{}, nil,
 				ErrInterviewShadowConfigurationConflict
 		}
-		return InterviewShadowReadState{
-			ModuleStatus:   InterviewShadowRuntimePending,
+		return durableSceneJobReadState{
+			ModuleStatus:   durableSceneJobPending,
 			FullConfigHash: persistedConfigHash,
 		}, nil, nil
 	case "FAILED":
 		if moduleStatus != "FAILED" ||
 			revisionStatus != "FAILED" ||
-			!interviewShadowFailureCodePattern.MatchString(failureCode) {
-			return InterviewShadowReadState{}, nil,
+			!durableSceneJobFailureCodePattern.MatchString(failureCode) {
+			return durableSceneJobReadState{}, nil,
 				ErrInterviewShadowConfigurationConflict
 		}
-		return InterviewShadowReadState{
-			ModuleStatus:   InterviewShadowRuntimeFailed,
+		return durableSceneJobReadState{
+			ModuleStatus:   durableSceneJobFailed,
 			FullConfigHash: persistedConfigHash,
-			Failure: &InterviewShadowFailure{
+			Failure: &durableSceneJobFailure{
 				Code: failureCode,
 			},
 		}, nil, nil
@@ -1023,15 +1229,8 @@ func getInterviewShadowState(
 		if moduleStatus != "READY" ||
 			revisionStatus != "READY" ||
 			len(payload) == 0 {
-			return InterviewShadowReadState{}, nil,
+			return durableSceneJobReadState{}, nil,
 				ErrInterviewShadowConfigurationConflict
-		}
-		var result InterviewShadowResult
-		if err := json.Unmarshal(payload, &result); err != nil {
-			return InterviewShadowReadState{}, nil, fmt.Errorf(
-				"decode Interview Shadow result: %w",
-				err,
-			)
 		}
 		snapshot, err := selectEvidenceSnapshotByID(
 			ctx,
@@ -1040,22 +1239,15 @@ func getInterviewShadowState(
 			inputSnapshotID,
 		)
 		if err != nil {
-			return InterviewShadowReadState{}, nil, err
+			return durableSceneJobReadState{}, nil, err
 		}
-		if err := ValidateInterviewShadowResult(
-			snapshot,
-			result,
-		); err != nil {
-			return InterviewShadowReadState{}, nil,
-				ErrInterviewShadowConfigurationConflict
-		}
-		return InterviewShadowReadState{
-			ModuleStatus:   InterviewShadowRuntimeReady,
+		return durableSceneJobReadState{
+			ModuleStatus:   durableSceneJobReady,
 			FullConfigHash: persistedConfigHash,
-			Result:         &result,
+			ResultPayload:  payload,
 		}, &snapshot, nil
 	default:
-		return InterviewShadowReadState{}, nil,
+		return durableSceneJobReadState{}, nil,
 			ErrInterviewShadowConfigurationConflict
 	}
 }
@@ -1175,7 +1367,7 @@ func cancelSupersededEvaluationRuntime(
 		  AND owner_user_id = $3
 		  AND run_status = 'RUNNING'
 	`, evaluationID, evaluationRevisionID, ownerUserID,
-		interviewShadowRevisionSupersededCode); err != nil {
+		durableSceneJobRevisionSupersededCode); err != nil {
 		return fmt.Errorf(
 			"cancel superseded Evaluation module runtime: %w",
 			err,
@@ -1193,7 +1385,7 @@ func cancelSupersededEvaluationRuntime(
 		  AND owner_user_id = $3
 		  AND delivery_status = 'PENDING'
 	`, evaluationID, evaluationRevisionID, ownerUserID,
-		interviewShadowRevisionSupersededCode); err != nil {
+		durableSceneJobRevisionSupersededCode); err != nil {
 		return fmt.Errorf(
 			"cancel superseded Evaluation outbox runtime: %w",
 			err,
@@ -1202,10 +1394,10 @@ func cancelSupersededEvaluationRuntime(
 	return nil
 }
 
-func failInterviewShadowConfigurationChange(
+func failDurableSceneJobConfigurationChange(
 	ctx context.Context,
 	tx pgx.Tx,
-	claim InterviewShadowClaim,
+	claim durableSceneJobClaim,
 ) error {
 	runUpdate, err := tx.Exec(ctx, `
 		UPDATE evaluation_module_runs
@@ -1223,7 +1415,7 @@ func failInterviewShadowConfigurationChange(
 	`, claim.OutboxID, claim.EvaluationID,
 		claim.EvaluationRevisionID, claim.OwnerUserID,
 		claim.AttemptCount, claim.FencingToken,
-		interviewShadowConfigurationChangedCode)
+		durableSceneJobConfigurationChangedCode)
 	if err != nil {
 		return fmt.Errorf(
 			"fail configuration-drifted Interview Shadow run: %w",
@@ -1247,7 +1439,7 @@ func failInterviewShadowConfigurationChange(
 		  AND delivery_status = 'PENDING'
 	`, claim.OutboxID, claim.EvaluationID,
 		claim.EvaluationRevisionID, claim.OwnerUserID,
-		interviewShadowConfigurationChangedCode)
+		durableSceneJobConfigurationChangedCode)
 	if err != nil {
 		return fmt.Errorf(
 			"fail configuration-drifted Interview Shadow outbox: %w",
@@ -1282,7 +1474,7 @@ func failInterviewShadowConfigurationChange(
 	return nil
 }
 
-const interviewShadowCandidateOwnerSQL = `
+const durableSceneJobCandidateOwnerSQL = `
 	SELECT
 		outbox.owner_user_id::text,
 		outbox.evaluation_id::text,
@@ -1314,15 +1506,15 @@ const interviewShadowCandidateOwnerSQL = `
 	  )
 	  AND outbox.attempt_count < $1
 	  AND ledger.scope = 'SESSION'
-	  AND ledger.scene_type = 'INTERVIEW'
+	  AND ledger.scene_type = $2
 	  AND snapshot.practice_session_id = ledger.practice_session_id
 	  AND snapshot.scope = ledger.scope
 	  AND snapshot.scene_type = ledger.scene_type
 	  AND snapshot.input_revision = ledger.input_revision
 	  AND revision.channels = ARRAY['SCENE']::text[]
-	  AND revision.scene_strategy_ref = 'interview-scene-shadow/v1'
-	  AND revision.pipeline_version = 'evaluation-pipeline-shadow/v1'
-	  AND revision.schema_version = 'evaluation-schema/1.0.0'
+	  AND revision.scene_strategy_ref = $3
+	  AND revision.pipeline_version = $4
+	  AND revision.schema_version = $5
 	  AND state.evaluation_status IN ('QUEUED', 'RUNNING')
 	  AND owner.account_status = 'active'
 	  AND NOT EXISTS (
@@ -1347,9 +1539,10 @@ const interviewShadowCandidateOwnerSQL = `
 	LIMIT 1
 `
 
-func failOneExhaustedInterviewShadow(
+func failOneExhaustedDurableSceneJob(
 	ctx context.Context,
 	tx pgx.Tx,
+	spec durableSceneJobSpec,
 	maxAttempts int,
 ) (bool, error) {
 	var ownerUserID string
@@ -1381,7 +1574,7 @@ func failOneExhaustedInterviewShadow(
 		  AND outbox.lease_expires_at <= clock_timestamp()
 		  AND outbox.attempt_count >= $1
 		  AND ledger.scope = 'SESSION'
-		  AND ledger.scene_type = 'INTERVIEW'
+		  AND ledger.scene_type = $5
 		  AND revision.channels = ARRAY['SCENE']::text[]
 		  AND revision.scene_strategy_ref = $2
 		  AND revision.pipeline_version = $3
@@ -1401,8 +1594,9 @@ func failOneExhaustedInterviewShadow(
 		  )
 		ORDER BY outbox.lease_expires_at, outbox.created_at, outbox.id
 		LIMIT 1
-	`, maxAttempts, InterviewShadowStrategyRef,
-		InterviewShadowPipelineVersion, SchemaVersion).Scan(
+	`, maxAttempts, spec.strategyRef,
+		spec.pipelineVersion, SchemaVersion,
+		spec.sceneType).Scan(
 		&ownerUserID,
 		&evaluationID,
 		&revisionID,
@@ -1477,7 +1671,7 @@ func failOneExhaustedInterviewShadow(
 		      WHERE ledger.id = outbox.evaluation_id
 		        AND ledger.owner_user_id = outbox.owner_user_id
 		        AND ledger.scope = 'SESSION'
-		        AND ledger.scene_type = 'INTERVIEW'
+		        AND ledger.scene_type = $9
 		        AND revision.channels = ARRAY['SCENE']::text[]
 		        AND revision.scene_strategy_ref = $3
 		        AND revision.pipeline_version = $4
@@ -1495,9 +1689,10 @@ func failOneExhaustedInterviewShadow(
 			outbox.id::text,
 			outbox.evaluation_id::text,
 			outbox.evaluation_revision_id::text
-	`, ownerUserID, maxAttempts, InterviewShadowStrategyRef,
-		InterviewShadowPipelineVersion, SchemaVersion,
-		outboxID, evaluationID, revisionID).Scan(
+	`, ownerUserID, maxAttempts, spec.strategyRef,
+		spec.pipelineVersion, SchemaVersion,
+		outboxID, evaluationID, revisionID,
+		spec.sceneType).Scan(
 		&outboxID,
 		&evaluationID,
 		&revisionID,
@@ -1554,22 +1749,19 @@ func failOneExhaustedInterviewShadow(
 	return true, nil
 }
 
-func sameInterviewShadowResult(
+func sameDurableSceneJobResult(
 	ctx context.Context,
 	tx pgx.Tx,
-	claim InterviewShadowClaim,
-	result InterviewShadowResult,
+	spec durableSceneJobSpec,
+	claim durableSceneJobClaim,
+	providerRequestID any,
 	payload []byte,
 ) (bool, error) {
-	var providerRequestID any
-	if result.Provider != nil {
-		providerRequestID = result.Provider.RequestID
-	}
 	var same bool
-	if err := tx.QueryRow(ctx, `
+	query := fmt.Sprintf(`
 		SELECT EXISTS (
 			SELECT 1
-			FROM evaluation_interview_scene_results
+			FROM %s
 			WHERE module_run_id = $1
 			  AND evaluation_id = $2
 			  AND evaluation_revision_id = $3
@@ -1579,7 +1771,7 @@ func sameInterviewShadowResult(
 			  AND practice_session_id = $6
 			  AND input_snapshot_id = $7
 			  AND input_revision = $8
-			  AND scene_type = 'INTERVIEW'
+			  AND scene_type = $17
 			  AND snapshot_hash = $9
 			  AND full_config_hash = $10
 			  AND prompt_version = $11
@@ -1588,16 +1780,19 @@ func sameInterviewShadowResult(
 			  AND provider_request_id IS NOT DISTINCT FROM $14
 			  AND fencing_token = $15
 			  AND result_payload = $16::jsonb
-		)
-	`, claim.ModuleRunID, claim.EvaluationID,
+			)
+	`, spec.resultTable)
+	if err := tx.QueryRow(ctx, query,
+		claim.ModuleRunID, claim.EvaluationID,
 		claim.EvaluationRevisionID, claim.OwnerUserID,
 		claim.StrategyRef, claim.Snapshot.PracticeSessionID,
 		claim.Snapshot.ID, claim.Snapshot.InputRevision,
 		claim.Snapshot.SnapshotHash[:], claim.FullConfigHash[:],
 		claim.PromptVersion, claim.Provider, claim.Model,
-		providerRequestID, claim.FencingToken, payload).Scan(&same); err != nil {
+		providerRequestID, claim.FencingToken, payload,
+		spec.sceneType).Scan(&same); err != nil {
 		return false, fmt.Errorf(
-			"read Interview Shadow completion replay: %w",
+			"read durable Scene job completion replay: %w",
 			err,
 		)
 	}
@@ -1618,7 +1813,7 @@ func interviewShadowResultMatchesRuntime(
 			InterviewShadowProviderSchemaVersion
 }
 
-func interviewShadowBackoff(attempt int) time.Duration {
+func durableSceneJobBackoff(attempt int) time.Duration {
 	if attempt < 1 {
 		return time.Second
 	}

@@ -45,6 +45,16 @@ type VoiceReviewGateway interface {
 	agent.VoiceReviewReader
 }
 
+// IELTSSpeakingCompletionCoordinator is the narrow Evaluation capability used
+// after an IELTS full mock Session is durably completed.
+type IELTSSpeakingCompletionCoordinator interface {
+	EnsureForCompletedIELTSSpeaking(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (evaluation.Evaluation, bool, error)
+}
+
 // VoicePorts are application capabilities supplied by the owning modules.
 // Repository types remain confined to their module and the composition root.
 type VoicePorts struct {
@@ -54,25 +64,27 @@ type VoicePorts struct {
 	Questions         agent.VoiceQuestionPort
 	Checkpoints       agent.VoiceCheckpointPort
 	Reviews           VoiceReviewGateway
+	Completions       agent.VoiceCompletionEvaluationPort
 }
 
 type VoiceConfiguration struct {
-	Recognizer                 ai.SpeechRecognizer
-	Synthesizer                ai.SpeechSynthesizer
-	TemporaryAudio             conversation.TemporaryAudioVault
-	Ports                      VoicePorts
-	Recordings                 conversation.VoiceRecordingLifecycle
-	ObjectStore                objectstore.Store
-	AgentVoiceMessagesEnabled  bool
-	ScratchDirectory           string
-	ObjectReadAllowedHosts     []string
-	AudioStagedTTL             time.Duration
-	AudioUploadLease           time.Duration
-	ASRLease                   time.Duration
-	ReviewGenerationTimeout    time.Duration
-	AudioReadTimeout           time.Duration
-	ReviewHistoryCursorKey     []byte
-	InterviewShadowCoordinator *evaluation.InterviewShadowCoordinator
+	Recognizer                     ai.SpeechRecognizer
+	Synthesizer                    ai.SpeechSynthesizer
+	TemporaryAudio                 conversation.TemporaryAudioVault
+	Ports                          VoicePorts
+	Recordings                     conversation.VoiceRecordingLifecycle
+	ObjectStore                    objectstore.Store
+	AgentVoiceMessagesEnabled      bool
+	ScratchDirectory               string
+	ObjectReadAllowedHosts         []string
+	AudioStagedTTL                 time.Duration
+	AudioUploadLease               time.Duration
+	ASRLease                       time.Duration
+	ReviewGenerationTimeout        time.Duration
+	AudioReadTimeout               time.Duration
+	ReviewHistoryCursorKey         []byte
+	InterviewShadowCoordinator     *evaluation.InterviewShadowCoordinator
+	IELTSSpeakingShadowCoordinator IELTSSpeakingCompletionCoordinator
 }
 
 // NewSpeechRecognizer is the server-side ASR registration boundary. Production
@@ -131,7 +143,8 @@ func buildVoiceApplication(
 		ports.Sessions == nil ||
 		ports.Questions == nil ||
 		ports.Checkpoints == nil ||
-		ports.Reviews == nil {
+		ports.Reviews == nil ||
+		ports.Completions == nil {
 		return nil, errors.New("bootstrap: voice dependencies are required")
 	}
 	conversations, err := conversation.NewVoiceRoundServiceWithRecordings(
@@ -148,6 +161,7 @@ func buildVoiceApplication(
 		conversations,
 		ports.Practice,
 		ports.Reviews,
+		ports.Completions,
 	)
 	if err != nil {
 		return nil, err
@@ -276,10 +290,15 @@ func buildProductionVoiceApplication(
 		sourceReader:               sourceReader,
 		interviewShadowCoordinator: interviewShadowCoordinator,
 	}
+	completionAdapter := &voiceCompletionEvaluationAdapter{
+		sessions:    practiceAdapter,
+		ieltsShadow: configuration.IELTSSpeakingShadowCoordinator,
+	}
 	orchestrator, err := agent.NewVoiceRoundOrchestrator(
 		conversationService,
 		practiceProgressPort,
 		reviewAdapter,
+		completionAdapter,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -1398,6 +1417,56 @@ type voiceReviewAdapter struct {
 	interviewShadowCoordinator interviewShadowCompletionCoordinator
 }
 
+type voiceCompletionEvaluationAdapter struct {
+	sessions    agent.VoiceSessionPort
+	ieltsShadow IELTSSpeakingCompletionCoordinator
+}
+
+func (adapter *voiceCompletionEvaluationAdapter) EnsureCompletedSessionEvaluation(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	source agent.VoiceCompletionEvaluationSource,
+) error {
+	if adapter == nil || adapter.sessions == nil || ctx == nil ||
+		!actor.Valid() ||
+		strings.TrimSpace(source.SessionID) == "" ||
+		strings.TrimSpace(source.TurnID) == "" {
+		return agent.ErrInvalidRequest
+	}
+	session, err := adapter.sessions.GetByID(ctx, actor, source.SessionID)
+	if err != nil {
+		return err
+	}
+	if session.ID != source.SessionID ||
+		!session.Completed ||
+		session.Status != "completed" ||
+		session.EffectiveTurns < 1 ||
+		session.EffectiveTurns > session.TurnLimit {
+		return agent.ErrInvalidContext
+	}
+	if session.ScenarioType != string(
+		practicepersistence.ScenarioFamilyExam,
+	) || session.ScenarioModel != string(
+		practicepersistence.ScenarioModelIELTSSpeakingFullMock,
+	) {
+		return nil
+	}
+	if session.EffectiveTurns != 14 || session.TurnLimit != 14 {
+		return agent.ErrInvalidContext
+	}
+	if adapter.ieltsShadow == nil {
+		return errors.New(
+			"bootstrap: IELTS completion Evaluation is not configured",
+		)
+	}
+	_, _, err = adapter.ieltsShadow.EnsureForCompletedIELTSSpeaking(
+		ctx,
+		actor,
+		source.SessionID,
+	)
+	return err
+}
+
 type voiceReviewEnsurer interface {
 	EnsureReview(
 		context.Context,
@@ -2268,12 +2337,13 @@ func stripJSONFence(value string) string {
 }
 
 var (
-	_ agent.VoiceSessionPort       = (*voicePracticeAdapter)(nil)
-	_ conversation.VoiceRoundStore = (*voiceConversationStore)(nil)
-	_ agent.VoiceQuestionPort      = (*voiceQuestionAdapter)(nil)
-	_ agent.VoiceCheckpointPort    = (*voiceCheckpointAdapter)(nil)
-	_ agent.VoiceReviewPort        = (*voiceReviewAdapter)(nil)
-	_ agent.VoiceReviewReader      = (*voiceReviewAdapter)(nil)
-	_ review.ReviewSourceReader    = (*voiceReviewSourceReader)(nil)
-	_ review.ReviewGenerator       = (*voiceReviewGenerator)(nil)
+	_ agent.VoiceSessionPort              = (*voicePracticeAdapter)(nil)
+	_ conversation.VoiceRoundStore        = (*voiceConversationStore)(nil)
+	_ agent.VoiceQuestionPort             = (*voiceQuestionAdapter)(nil)
+	_ agent.VoiceCheckpointPort           = (*voiceCheckpointAdapter)(nil)
+	_ agent.VoiceReviewPort               = (*voiceReviewAdapter)(nil)
+	_ agent.VoiceReviewReader             = (*voiceReviewAdapter)(nil)
+	_ agent.VoiceCompletionEvaluationPort = (*voiceCompletionEvaluationAdapter)(nil)
+	_ review.ReviewSourceReader           = (*voiceReviewSourceReader)(nil)
+	_ review.ReviewGenerator              = (*voiceReviewGenerator)(nil)
 )

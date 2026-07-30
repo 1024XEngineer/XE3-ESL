@@ -76,12 +76,22 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 		t.Fatalf("start status = %d, body = %s", start.Code, start.Body)
 	}
 	started := decodeVoiceJSONObject(t, start)
+	if started["scenario_type"] != "INTERVIEW" ||
+		started["scenario_model"] != "PROJECT_EXPERIENCE_DEEP_DIVE" {
+		t.Fatalf(
+			"frozen scenario identity = %q/%q",
+			started["scenario_type"],
+			started["scenario_model"],
+		)
+	}
 	requireVoiceKeys(t, started,
 		"current_question",
 		"effective_turns",
 		"matter",
 		"practice_plan_id",
 		"practice_session_id",
+		"scenario_model",
+		"scenario_type",
 		"session_completed",
 		"session_version",
 		"thread_id",
@@ -168,6 +178,8 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 			"practice_plan_id",
 			"practice_session_id",
 			"review",
+			"scenario_model",
+			"scenario_type",
 			"session_completed",
 			"session_version",
 			"thread_id",
@@ -201,6 +213,21 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 			"status",
 			"updated_at",
 		)
+	}
+}
+
+func TestVoiceSessionStateResponseProjectsFullMockScenarioIdentity(
+	t *testing.T,
+) {
+	response := voiceSessionStateResponse(VoiceSessionState{
+		Session: VoicePracticeSession{
+			ScenarioType:  "EXAM",
+			ScenarioModel: "IELTS_SPEAKING_FULL_MOCK",
+		},
+	})
+	if response["scenario_type"] != "EXAM" ||
+		response["scenario_model"] != "IELTS_SPEAKING_FULL_MOCK" {
+		t.Fatalf("full mock identity = %#v", response)
 	}
 }
 
@@ -704,6 +731,7 @@ func TestVoiceHTTPReadDeadlineInterruptsStalledUpload(t *testing.T) {
 		reading,
 		practice,
 		reviews,
+		agentVoiceCompletionEvaluation{},
 	)
 	if err != nil {
 		t.Fatalf("new voice orchestrator: %v", err)

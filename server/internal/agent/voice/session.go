@@ -287,7 +287,7 @@ func (application *VoiceSessionApplication) Start(
 	if session.ThreadID != threadID {
 		return VoiceSessionState{}, ErrInvalidContext
 	}
-	return application.state(ctx, actor, session)
+	return application.state(ctx, actor, session, true)
 }
 
 func (application *VoiceSessionApplication) Resume(
@@ -313,7 +313,7 @@ func (application *VoiceSessionApplication) Resume(
 		(matterID != "" && session.MatterID != matterID) {
 		return VoiceSessionState{}, ErrInvalidContext
 	}
-	return application.state(ctx, actor, session)
+	return application.state(ctx, actor, session, true)
 }
 
 func (application *VoiceSessionApplication) Transcribe(
@@ -337,7 +337,7 @@ func (application *VoiceSessionApplication) Confirm(
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
-	state, err := application.state(ctx, actor, session)
+	state, err := application.state(ctx, actor, session, false)
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
@@ -358,7 +358,7 @@ func (application *VoiceSessionApplication) SubmitText(
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
-	state, err := application.state(ctx, actor, session)
+	state, err := application.state(ctx, actor, session, false)
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
@@ -479,6 +479,7 @@ func (application *VoiceSessionApplication) state(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	session VoicePracticeSession,
+	recoverCompletion bool,
 ) (VoiceSessionState, error) {
 	if session.ID == "" ||
 		session.PlanID == "" ||
@@ -527,7 +528,8 @@ func (application *VoiceSessionApplication) state(
 	}
 	if found && (latest.EffectiveTurns == 0 ||
 		(latest.SessionCompleted && latest.ReviewID == "" &&
-			requiresSynchronousSessionReview(session))) {
+			(requiresSynchronousSessionReview(session) ||
+				recoverCompletion))) {
 		recovered, recoveryErr := application.orchestrator.Confirm(
 			ctx,
 			actor,

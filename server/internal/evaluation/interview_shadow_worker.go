@@ -187,38 +187,46 @@ func (worker *InterviewShadowWorker) ProcessPending(
 		ctx == nil || limit < 1 || limit > maxInterviewShadowSweepLimit {
 		return InterviewShadowSweepResult{}, ErrInvalidRequest
 	}
-	var sweep InterviewShadowSweepResult
-	for sweep.Claimed < limit {
-		if err := ctx.Err(); err != nil {
-			return sweep, err
-		}
-		claim, acquired, err := worker.repository.ClaimInterviewShadow(
-			ctx,
-			worker.configuration,
-		)
-		if err != nil {
-			return sweep, err
-		}
-		if !acquired {
-			return sweep, nil
-		}
-		sweep.Claimed++
-		status, err := worker.processClaim(ctx, claim)
-		if err != nil {
-			return sweep, err
-		}
-		switch status {
-		case InterviewShadowRuntimeReady:
-			sweep.Completed++
-		case InterviewShadowRuntimePending:
-			sweep.Retried++
-		case InterviewShadowRuntimeFailed:
-			sweep.Failed++
-		default:
-			return sweep, ErrInvalidRequest
-		}
+	sweep, err := processDurableSceneJobs(
+		ctx,
+		limit,
+		func(
+			claimContext context.Context,
+		) (durableSceneJobClaim, bool, error) {
+			claim, acquired, claimErr :=
+				worker.repository.ClaimInterviewShadow(
+					claimContext,
+					worker.configuration,
+				)
+			return durableClaimFromInterview(claim),
+				acquired,
+				claimErr
+		},
+		func(
+			processContext context.Context,
+			claim durableSceneJobClaim,
+		) (durableSceneJobStatus, error) {
+			status, processErr := worker.processClaim(
+				processContext,
+				interviewClaimFromDurable(claim),
+			)
+			return durableSceneJobStatus(status), processErr
+		},
+	)
+	if err != nil {
+		return InterviewShadowSweepResult{
+			Claimed:   sweep.Claimed,
+			Completed: sweep.Completed,
+			Retried:   sweep.Retried,
+			Failed:    sweep.Failed,
+		}, err
 	}
-	return sweep, nil
+	return InterviewShadowSweepResult{
+		Claimed:   sweep.Claimed,
+		Completed: sweep.Completed,
+		Retried:   sweep.Retried,
+		Failed:    sweep.Failed,
+	}, nil
 }
 
 func (worker *InterviewShadowWorker) processClaim(
@@ -330,11 +338,4 @@ func classifyInterviewShadowFailure(cause error) InterviewShadowFailure {
 		Code:      "dependency_error",
 		Retryable: true,
 	}
-}
-
-func validRuntimeLineage(value string) bool {
-	return strings.TrimSpace(value) == value &&
-		value != "" &&
-		len(value) <= 128 &&
-		!strings.ContainsRune(value, '\x00')
 }
