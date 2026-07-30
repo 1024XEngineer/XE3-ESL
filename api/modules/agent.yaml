@@ -590,6 +590,57 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/runs/stream:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
+    post:
+      tags:
+        - Agent
+      summary: Submit one user Message and stream the text Agent response
+      description: |
+        Commits the same durable user Message and AgentRun as the non-streaming
+        endpoint, then returns a bounded UTF-8 Server-Sent Events stream.
+        Events are ordered as `input.committed`, `assistant.started`, zero or
+        more `assistant.delta`, and exactly one terminal `run.completed` or
+        `run.failed`. Deltas contain visible assistant text only; reasoning and
+        fragmented tool-call arguments are never exposed. Only the validated
+        canonical assistant Message is persisted. Replaying
+        `client_message_id` never creates a duplicate user Message.
+      operationId: streamAgentTextRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitAgentRunRequest'
+      responses:
+        '200':
+          description: |
+            Agent Run event stream. Each event has an `event` field followed by
+            one single-line JSON `data` field.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `no-cache, no-store`.
+            X-Accel-Buffering:
+              schema:
+                type: string
+              description: Always `no`.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-runs/{run_id}:
     parameters:
       - $ref: '#/components/parameters/AgentRunId'
@@ -641,6 +692,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentRun'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-runs/{run_id}/retries/stream:
+    parameters:
+      - $ref: '#/components/parameters/AgentRunId'
+    post:
+      tags:
+        - Agent
+      summary: Retry one failed AgentRun and stream the new attempt
+      description: |
+        Creates or replays an idempotent retry attempt and uses the same event
+        protocol as the initial streaming Run. It reuses the original durable
+        user Message and never creates a duplicate.
+      operationId: streamAgentRunRetry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetryAgentRunRequest'
+      responses:
+        '200':
+          description: Retry attempt event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':

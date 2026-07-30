@@ -77,6 +77,8 @@ class ConversationPage extends StatefulWidget {
     BuildContext context, {
     required ScrollController scrollController,
     required VoidCallback? onLoadEarlierMessages,
+    required bool showJumpToLatest,
+    required VoidCallback onJumpToLatest,
   }) {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
@@ -274,6 +276,19 @@ class ConversationPage extends StatefulWidget {
               ),
             ),
           ),
+          if (showJumpToLatest)
+            Positioned(
+              right: horizontalPadding,
+              bottom: composerBottom + 92,
+              child: FloatingActionButton.small(
+                key: const Key('agent-jump-to-latest'),
+                tooltip: '查看最新回复',
+                onPressed: onJumpToLatest,
+                backgroundColor: SpeakUpDesign.surface,
+                foregroundColor: SpeakUpDesign.primary,
+                child: const Icon(Icons.arrow_downward_rounded),
+              ),
+            ),
         ],
       ),
     );
@@ -284,10 +299,12 @@ class _ConversationPageState extends State<ConversationPage> {
   final ScrollController _scrollController = ScrollController();
   _ConversationScrollAnchor? _earlierMessagesAnchor;
   int _scrollRequestGeneration = 0;
+  bool _showJumpToLatest = false;
 
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_handleScroll);
     _scheduleThreadInitialPosition();
   }
 
@@ -308,10 +325,23 @@ class _ConversationPageState extends State<ConversationPage> {
           anchor.threadId == widget.threadId &&
           widget.messages.length > anchor.messageCount) {
         _schedulePreserveEarlierMessagesAnchor(anchor);
-      } else {
+      } else if (_isNearLatest()) {
         _scheduleScrollToLatest();
+      } else {
+        _setJumpToLatestVisible(true);
       }
       return;
+    }
+
+    final previousLast = oldWidget.messages.lastOrNull;
+    final currentLast = widget.messages.lastOrNull;
+    if (previousLast?.id == currentLast?.id &&
+        previousLast?.text != currentLast?.text) {
+      if (_isNearLatest()) {
+        _scheduleScrollToLatest();
+      } else {
+        _setJumpToLatestVisible(true);
+      }
     }
 
     if (oldWidget.isLoadingEarlierMessages &&
@@ -323,8 +353,30 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void dispose() {
     _scrollRequestGeneration++;
+    _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  bool _isNearLatest() {
+    if (!_scrollController.hasClients) {
+      return true;
+    }
+    final position = _scrollController.position;
+    return position.maxScrollExtent - position.pixels <= 120;
+  }
+
+  void _handleScroll() {
+    if (_showJumpToLatest && _isNearLatest()) {
+      setState(() => _showJumpToLatest = false);
+    }
+  }
+
+  void _setJumpToLatestVisible(bool value) {
+    if (_showJumpToLatest == value) {
+      return;
+    }
+    setState(() => _showJumpToLatest = value);
   }
 
   void _handleLoadEarlierMessages() {
@@ -352,6 +404,7 @@ class _ConversationPageState extends State<ConversationPage> {
       }
       final position = _scrollController.position;
       _scrollController.jumpTo(position.maxScrollExtent);
+      _setJumpToLatestVisible(false);
     });
   }
 
@@ -401,6 +454,8 @@ class _ConversationPageState extends State<ConversationPage> {
       onLoadEarlierMessages: widget.onLoadEarlierMessages == null
           ? null
           : _handleLoadEarlierMessages,
+      showJumpToLatest: _showJumpToLatest,
+      onJumpToLatest: _scheduleScrollToLatest,
     );
   }
 }
@@ -1088,8 +1143,7 @@ class _AgentComposerState extends State<_AgentComposer> {
                   child: TextField(
                     key: const Key('agent-composer-field'),
                     controller: _controller,
-                    enabled:
-                        confirmingText || (widget.enabled && !widget.isBusy),
+                    enabled: confirmingText || widget.enabled,
                     minLines: 1,
                     maxLines: widget.keyboardVisible ? 3 : 2,
                     inputFormatters: <TextInputFormatter>[

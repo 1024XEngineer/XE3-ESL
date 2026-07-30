@@ -48,6 +48,56 @@ abstract interface class AgentClient {
   });
 }
 
+abstract interface class AgentStreamingTextClient {
+  Stream<AgentTextStreamEvent> sendTextStream({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+  });
+}
+
+sealed class AgentTextStreamEvent {
+  const AgentTextStreamEvent({required this.runId});
+
+  final String runId;
+}
+
+final class AgentInputCommitted extends AgentTextStreamEvent {
+  const AgentInputCommitted({required super.runId, required this.userMessage});
+
+  final AgentMessage userMessage;
+}
+
+final class AgentAssistantStarted extends AgentTextStreamEvent {
+  const AgentAssistantStarted({required super.runId});
+}
+
+final class AgentAssistantDelta extends AgentTextStreamEvent {
+  const AgentAssistantDelta({required super.runId, required this.delta});
+
+  final String delta;
+}
+
+final class AgentRunCompleted extends AgentTextStreamEvent {
+  const AgentRunCompleted({
+    required super.runId,
+    required this.assistantMessageId,
+  });
+
+  final String assistantMessageId;
+}
+
+final class AgentRunFailed extends AgentTextStreamEvent {
+  const AgentRunFailed({
+    required super.runId,
+    required this.kind,
+    required this.retryable,
+  });
+
+  final String kind;
+  final bool retryable;
+}
+
 /// Optional bounded history and focused-Thread capability from Issue #102.
 ///
 /// Older preview/test clients can keep the original single-Thread contract.

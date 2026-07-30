@@ -135,6 +135,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   void didUpdateWidget(covariant _AuthenticatedNavigator oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user?.id != widget.user?.id ||
+        oldWidget.preparationController != widget.preparationController ||
         oldWidget.jobPreparationController != widget.jobPreparationController ||
         oldWidget.preparationLaunchController !=
             widget.preparationLaunchController) {
@@ -147,6 +148,10 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
 
   Future<void> _activateAccount(String accountId) async {
     await widget.preparationLaunchController?.activateAccount(accountId);
+    if (!mounted || widget.user?.id != accountId) {
+      return;
+    }
+    await widget.preparationController?.activateAccount(accountId);
     if (!mounted || widget.user?.id != accountId) {
       return;
     }
@@ -203,6 +208,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           AppRoutes.practice => PracticePage(
             previewMode: widget.allowFakePreview,
             agentController: _agentController,
+            preparationController: widget.preparationController,
             onExitRequested:
                 widget.preparationLaunchController?.parkCurrentPractice,
           ),
@@ -229,7 +235,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         if (page == null) {
           return null;
         }
-        return MaterialPageRoute<void>(
+        return MaterialPageRoute<Object?>(
           settings: settings,
           builder: (_) => page,
         );

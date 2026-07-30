@@ -28,6 +28,12 @@ func (h *CatalogHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 		"/v1/scenario-definitions/:scenario_definition_id/role-definitions",
 		h.listRoles,
 	)
+	if _, ok := h.catalog.(IELTSQuestionBankReader); ok {
+		routes.GET(
+			"/v1/ielts-speaking/question-bank",
+			h.getIELTSQuestionBank,
+		)
+	}
 }
 
 func (h *CatalogHTTPHandler) listScenarios(c *gin.Context) {
@@ -67,6 +73,20 @@ func (h *CatalogHTTPHandler) listRoles(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, RoleDefinitionList{Roles: roles})
+}
+
+func (h *CatalogHTTPHandler) getIELTSQuestionBank(c *gin.Context) {
+	reader, ok := h.catalog.(IELTSQuestionBankReader)
+	if !ok {
+		writeCatalogError(c, ErrIELTSQuestionBankUnavailable)
+		return
+	}
+	bank, err := reader.IELTSQuestionBank()
+	if err != nil {
+		writeCatalogError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, bank)
 }
 
 func writeCatalogError(c *gin.Context, err error) {

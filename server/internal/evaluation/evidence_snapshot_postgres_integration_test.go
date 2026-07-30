@@ -721,7 +721,7 @@ func TestPostgresEvidenceSnapshotFencesConcurrentQuestionInsert(
 func TestEvidenceSnapshotMigrationDownRemovesOwnedSchema(t *testing.T) {
 	pool := evidenceSnapshotDatabase(t)
 	down, err := migrations.Files.ReadFile(
-		"000035_evaluation_evidence_snapshots.down.sql",
+		"000036_evaluation_evidence_snapshots.down.sql",
 	)
 	if err != nil {
 		t.Fatalf("read EvidenceSnapshot down migration: %v", err)

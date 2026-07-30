@@ -117,6 +117,92 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 	}
 }
 
+func TestGenerateStreamEmitsCanonicalVisibleText(t *testing.T) {
+	t.Parallel()
+
+	var received chatCompletionRequest
+	doer := doerFunc(func(request *http.Request) (*http.Response, error) {
+		if got := request.Header.Get("Accept"); got != "text/event-stream" {
+			t.Errorf("accept = %q", got)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		return streamResponse(
+			`data: {"id":"chatcmpl-stream-1","model":"qwen3.5-flash","choices":[{"delta":{"role":"assistant","content":"  你"}}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-stream-1","model":"qwen3.5-flash","choices":[{"delta":{"content":"好，**小"}}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-stream-1","model":"qwen3.5-flash","choices":[{"delta":{"content":"花**。  "},"finish_reason":"stop"}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-stream-1","model":"qwen3.5-flash","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}` + "\n\n" +
+				"data: [DONE]\n\n",
+		), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+	var deltas []string
+	result, err := generator.GenerateStream(
+		context.Background(),
+		validRequest(),
+		ai.TextDeltaObserverFunc(func(_ context.Context, delta string) error {
+			deltas = append(deltas, delta)
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("generate stream: %v", err)
+	}
+	if !received.Stream || received.StreamOptions == nil ||
+		!received.StreamOptions.IncludeUsage {
+		t.Fatalf("stream options = %#v", received)
+	}
+	if got := strings.Join(deltas, ""); got != "你好，**小花**。" {
+		t.Fatalf("visible deltas = %q", got)
+	}
+	if result.Content != "你好，**小花**。" ||
+		result.FinishReason != "stop" ||
+		result.Usage.TotalTokens != 15 {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestGenerateStreamKeepsToolFragmentsPrivate(t *testing.T) {
+	t.Parallel()
+
+	doer := doerFunc(func(*http.Request) (*http.Response, error) {
+		return streamResponse(
+			`data: {"id":"chatcmpl-tools-stream","model":"qwen3.5-flash","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"scenario_create_v1","arguments":"{\"type\":"}}]}}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-tools-stream","model":"qwen3.5-flash","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"interview\"}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-tools-stream","model":"qwen3.5-flash","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":8,"total_tokens":28}}` + "\n\n" +
+				"data: [DONE]\n\n",
+		), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+	request := validRequest()
+	request.Tools = []ai.ToolDefinition{{
+		Name: "scenario.create.v1", Description: "Create a scenario.",
+		InputSchema: map[string]any{"type": "object"},
+	}}
+	request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
+	emitted := false
+	result, err := generator.GenerateStream(
+		context.Background(),
+		request,
+		ai.TextDeltaObserverFunc(func(context.Context, string) error {
+			emitted = true
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("generate tool stream: %v", err)
+	}
+	if emitted {
+		t.Fatal("tool-call stream leaked a visible delta")
+	}
+	if len(result.ToolCalls) != 1 ||
+		result.ToolCalls[0].Name != "scenario.create.v1" ||
+		string(result.ToolCalls[0].Arguments) != `{"type":"interview"}` {
+		t.Fatalf("tool calls = %#v", result.ToolCalls)
+	}
+}
+
 func TestGenerateRequestsJSONObjectResponse(t *testing.T) {
 	t.Parallel()
 
@@ -1133,6 +1219,16 @@ func jsonResponse(statusCode int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: statusCode,
 		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func streamResponse(body string) *http.Response {
+	header := make(http.Header)
+	header.Set("Content-Type", "text/event-stream; charset=utf-8")
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     header,
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }

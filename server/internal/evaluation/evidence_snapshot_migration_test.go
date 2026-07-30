@@ -11,7 +11,7 @@ func TestEvidenceSnapshotMigrationIsImmutableAndContainsNoStorageLocator(
 	t *testing.T,
 ) {
 	content, err := migrations.Files.ReadFile(
-		"000035_evaluation_evidence_snapshots.up.sql",
+		"000036_evaluation_evidence_snapshots.up.sql",
 	)
 	if err != nil {
 		t.Fatalf("read EvidenceSnapshot migration: %v", err)
