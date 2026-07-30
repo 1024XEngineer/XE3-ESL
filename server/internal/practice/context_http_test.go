@@ -1081,7 +1081,13 @@ func TestContextHTTPTrustedPracticeStartConfirmation(t *testing.T) {
 			if gotActor != actor || key != "start-confirmation-0001" ||
 				confirmation.AgentThreadID != "agent-thread-1" ||
 				confirmation.PracticePlanID != "practice-plan-1" ||
-				confirmation.ExpectedPlanRevision != 3 {
+				confirmation.ExpectedPlanRevision != 3 ||
+				confirmation.IELTSSelection == nil ||
+				*confirmation.IELTSSelection != (IELTSPracticeSelection{
+					Mode:         "FULL_MOCK",
+					Part1SetID:   "p1-002",
+					TopicGroupID: "p23-new-001",
+				}) {
 				t.Fatalf("trusted confirmation = %#v", confirmation)
 			}
 			return ConfirmAndStartResult{Bootstrap: want}, nil
@@ -1094,7 +1100,12 @@ func TestContextHTTPTrustedPracticeStartConfirmation(t *testing.T) {
 		body: `{
 			"practice_plan_id":"practice-plan-1",
 			"expected_plan_revision":3,
-			"user_confirmed":true
+			"user_confirmed":true,
+			"ielts_selection":{
+				"mode":"FULL_MOCK",
+				"part_1_set_id":"p1-002",
+				"topic_group_id":"p23-new-001"
+			}
 		}`,
 		contentType: "application/json",
 		keyValues:   []string{"start-confirmation-0001"},

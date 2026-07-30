@@ -67,6 +67,72 @@ void main() {
     },
   );
 
+  test('keeps IELTS section practice on its complete section option', () async {
+    const scenario = PreparationScenario(
+      id: 'scn_ielts_speaking_part_2',
+      type: 'EXAM',
+      model: 'IELTS_SPEAKING_PART_2',
+      name: 'IELTS Speaking Part 2',
+      summary: '完成一张题卡并可继续同主题 Part 3。',
+      version: 2,
+      status: 'active',
+    );
+    const role = PreparationRole(
+      id: 'role_ielts_part_2_examiner',
+      scenarioId: 'scn_ielts_speaking_part_2',
+      type: 'IELTS_EXAMINER',
+      displayName: 'IELTS 口语考官',
+      responsibilities: 'Run Part 2 and the bound Part 3.',
+      style: 'Neutral and concise.',
+      focusAreas: ['part_2', 'part_3'],
+      version: 2,
+    );
+    const full = PreparationOption(
+      id: 'option_ielts_part_2_full',
+      scenarioId: 'scn_ielts_speaking_part_2',
+      type: PreparationOptionType.fullSimulation,
+      displayName: '完整练习',
+      version: 2,
+    );
+    const focus = PreparationOption(
+      id: 'option_ielts_part_2_focus',
+      scenarioId: 'scn_ielts_speaking_part_2',
+      roleId: 'role_ielts_part_2_examiner',
+      type: PreparationOptionType.focus,
+      displayName: '短练习',
+      version: 2,
+    );
+    const detail = PreparationScenarioDetail(
+      scenario: scenario,
+      config: PreparationScenarioConfig(
+        id: 'scfg_ielts_part_2',
+        scenarioId: 'scn_ielts_speaking_part_2',
+        type: 'EXAM',
+        model: 'IELTS_SPEAKING_PART_2',
+        version: 2,
+        jobTitle: null,
+        jobDescription: null,
+        prompt: _prompt,
+      ),
+      options: [full, focus],
+    );
+    final controller = PreparationController(
+      client: _IeltsCatalogClient(
+        scenario: scenario,
+        detail: detail,
+        role: role,
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.loadIfNeeded();
+    await controller.selectScenario(scenario);
+
+    expect(controller.selectRecommendedConfiguration(), isTrue);
+    expect(controller.selectedRole, role);
+    expect(controller.selectedOption, full);
+  });
+
   test('retries the failed directory request', () async {
     final client = _FailOnceCatalogClient();
     final controller = PreparationController(client: client);
@@ -184,22 +250,28 @@ final class _ControlledCatalogClient implements PreparationCatalogClient {
 }
 
 final class _IeltsCatalogClient implements PreparationCatalogClient {
+  const _IeltsCatalogClient({
+    this.scenario = _ieltsScenario,
+    this.detail = _ieltsDetail,
+    this.role = _ieltsRole,
+  });
+
+  final PreparationScenario scenario;
+  final PreparationScenarioDetail detail;
+  final PreparationRole role;
+
   @override
   Future<void> clearAccountState() async {}
 
   @override
   Future<PreparationScenarioDetail> getScenario(String scenarioId) async =>
-      _ieltsDetail;
+      detail;
 
   @override
-  Future<List<PreparationScenario>> listScenarios() async => const [
-    _ieltsScenario,
-  ];
+  Future<List<PreparationScenario>> listScenarios() async => [scenario];
 
   @override
-  Future<List<PreparationRole>> listRoles(String scenarioId) async => const [
-    _ieltsRole,
-  ];
+  Future<List<PreparationRole>> listRoles(String scenarioId) async => [role];
 }
 
 const _scenarioId = 'scn_programmer_interview';

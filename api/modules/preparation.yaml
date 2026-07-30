@@ -58,6 +58,27 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/ielts-speaking/question-bank:
+    get:
+      tags:
+        - Preparation
+      summary: Get the published IELTS Speaking question bank
+      description: |
+        Returns the current published Part 1 sets and Part 2/Part 3 topic
+        groups. Hidden or incomplete topic groups are never exposed.
+      operationId: getIELTSSpeakingQuestionBank
+      security: []
+      responses:
+        '200':
+          description: Published IELTS Speaking sets in stable catalog order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IELTSQuestionBank'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/scenario-definitions/{scenario_definition_id}:
     get:
       tags:
@@ -554,7 +575,9 @@ components:
       enum:
         - PROJECT_EXPERIENCE_DEEP_DIVE
         - INTERVIEW_BASIC_DIALOGUE
+        - IELTS_SPEAKING_PART_1
         - IELTS_SPEAKING_PART_2
+        - IELTS_SPEAKING_PART_3
         - IELTS_SPEAKING_FULL_MOCK
         - EXAM_BASIC_DIALOGUE
         - PROGRESS_AND_RISK_UPDATE
@@ -642,6 +665,148 @@ components:
           $ref: '#/components/schemas/ResourceId'
         session_policy_ref:
           $ref: '#/components/schemas/ResourceId'
+    IELTSQuestionBank:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - bank_id
+        - season
+        - source_cutoff
+        - part1_sets
+        - topic_groups
+      properties:
+        schema_version:
+          type: integer
+          const: 1
+        bank_id:
+          $ref: '#/components/schemas/ResourceId'
+        season:
+          type: string
+          minLength: 1
+        source_cutoff:
+          type: string
+          format: date-time
+        part1_sets:
+          type: array
+          minItems: 20
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/IELTSPart1Set'
+        topic_groups:
+          type: array
+          minItems: 56
+          maxItems: 56
+          items:
+            $ref: '#/components/schemas/IELTSTopicGroup'
+    IELTSPart1Set:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - topics
+        - question_count
+        - published
+      properties:
+        id:
+          $ref: '#/components/schemas/ResourceId'
+        title:
+          type: string
+          minLength: 1
+        topics:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/IELTSPart1Topic'
+        question_count:
+          type: integer
+          const: 8
+        published:
+          type: boolean
+          const: true
+    IELTSPart1Topic:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+        - release
+        - questions
+      properties:
+        title:
+          type: string
+          minLength: 1
+        release:
+          type: string
+          enum:
+            - new
+            - carry_over
+            - evergreen
+        questions:
+          type: array
+          minItems: 2
+          items:
+            type: string
+            minLength: 1
+    IELTSTopicGroup:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title_zh
+        - release
+        - region
+        - part2
+        - part3_questions
+        - published
+        - supplemented_question_count
+      properties:
+        id:
+          $ref: '#/components/schemas/ResourceId'
+        title_zh:
+          type: string
+          minLength: 1
+        release:
+          type: string
+          enum:
+            - new
+            - carry_over
+        region:
+          type: string
+          const: mainland
+        part2:
+          $ref: '#/components/schemas/IELTSPart2CueCard'
+        part3_questions:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            type: string
+            minLength: 1
+        published:
+          type: boolean
+          const: true
+        supplemented_question_count:
+          type: integer
+          minimum: 0
+          maximum: 5
+    IELTSPart2CueCard:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+        - points
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+        points:
+          type: array
+          minItems: 3
+          items:
+            type: string
+            minLength: 1
     ScenarioConfig:
       type: object
       additionalProperties: false

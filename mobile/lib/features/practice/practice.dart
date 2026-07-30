@@ -9,6 +9,7 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
+import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_recordings.dart';
 
@@ -18,6 +19,7 @@ class PracticePage extends StatefulWidget {
     this.agentController,
     this.onExitRequested,
     this.ieltsMockProgressStore,
+    this.preparationController,
     super.key,
   });
 
@@ -25,6 +27,7 @@ class PracticePage extends StatefulWidget {
   final AgentController? agentController;
   final Future<bool> Function()? onExitRequested;
   final IeltsMockProgressStore? ieltsMockProgressStore;
+  final PreparationController? preparationController;
 
   @override
   State<PracticePage> createState() => _PracticePageState();
@@ -45,6 +48,7 @@ class _PracticePageState extends State<PracticePage>
   bool _exitApproved = false;
   bool _textAnswerMode = false;
   bool _stickToLatestMessage = true;
+  bool _ieltsRouteActive = false;
   int _messageCount = 0;
   String? _lastMessageId;
   PracticeRecordingState? _lastRecordingState;
@@ -58,6 +62,7 @@ class _PracticePageState extends State<PracticePage>
     WidgetsBinding.instance.addObserver(this);
     _messageScrollController.addListener(_handleMessageScroll);
     widget.agentController?.addListener(_handleState);
+    _ieltsRouteActive = _controllerIsIeltsSpeaking;
     _captureConversationState();
     _syncRecordingTimer();
     _scheduleReviewExitIfNeeded();
@@ -73,6 +78,7 @@ class _PracticePageState extends State<PracticePage>
     oldWidget.agentController?.removeListener(_handleState);
     _resetReviewExit();
     widget.agentController?.addListener(_handleState);
+    _ieltsRouteActive = _controllerIsIeltsSpeaking;
     _captureConversationState();
     _scheduleReviewExitIfNeeded();
     _scheduleScrollToLatest(animated: false);
@@ -103,6 +109,7 @@ class _PracticePageState extends State<PracticePage>
     final messages = controller?.practiceMessages ?? const <AgentMessage>[];
     final lastMessageId = messages.lastOrNull?.id;
     final recordingState = controller?.recordingState;
+    _ieltsRouteActive = _ieltsRouteActive || _controllerIsIeltsSpeaking;
     final conversationChanged =
         messages.length != _messageCount ||
         lastMessageId != _lastMessageId ||
@@ -115,7 +122,7 @@ class _PracticePageState extends State<PracticePage>
     if (conversationChanged && shouldScroll) {
       _scheduleScrollToLatest();
     }
-    if (_isIeltsSpeakingFullMock) {
+    if (_isIeltsSpeaking) {
       _resetReviewExit();
       return;
     }
@@ -201,7 +208,7 @@ class _PracticePageState extends State<PracticePage>
   }
 
   void _scheduleReviewExitIfNeeded() {
-    if (_isIeltsSpeakingFullMock ||
+    if (_isIeltsSpeaking ||
         widget.agentController?.review == null ||
         _scheduledReviewExit ||
         _reviewExitAttempts >= _maxReviewExitFrameAttempts) {
@@ -407,11 +414,12 @@ class _PracticePageState extends State<PracticePage>
   @override
   Widget build(BuildContext context) {
     final controller = widget.agentController;
-    if (controller != null && isIeltsSpeakingFullMockSession(controller)) {
+    if (controller != null && _isIeltsSpeaking) {
       return IeltsSpeakingMockPage(
         controller: controller,
         onExitRequested: widget.onExitRequested,
         progressStore: widget.ieltsMockProgressStore,
+        preparationController: widget.preparationController,
       );
     }
     final scene = controller?.scene;
@@ -470,9 +478,11 @@ class _PracticePageState extends State<PracticePage>
     );
   }
 
-  bool get _isIeltsSpeakingFullMock =>
+  bool get _controllerIsIeltsSpeaking =>
       widget.agentController != null &&
-      isIeltsSpeakingFullMockSession(widget.agentController!);
+      isIeltsSpeakingSession(widget.agentController!);
+
+  bool get _isIeltsSpeaking => _ieltsRouteActive || _controllerIsIeltsSpeaking;
 }
 
 class _NoScene extends StatelessWidget {

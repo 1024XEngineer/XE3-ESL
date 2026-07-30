@@ -248,6 +248,12 @@ type RunRetry struct {
 	Created bool
 }
 
+type RunStreamObserver interface {
+	OnInputCommitted(context.Context, RunSubmission) error
+	OnAssistantStarted(context.Context, Run) error
+	OnAssistantDelta(context.Context, string) error
+}
+
 type ThreadPageCursor struct {
 	UpdatedAt time.Time
 	ThreadID  string

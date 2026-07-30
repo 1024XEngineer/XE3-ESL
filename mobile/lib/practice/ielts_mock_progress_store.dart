@@ -10,6 +10,7 @@ enum IeltsMockPhase {
   part2Preparation,
   part2Speaking,
   part2Complete,
+  part3Intro,
   part3,
   complete,
 }

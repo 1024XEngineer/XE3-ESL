@@ -815,6 +815,93 @@ SELECT
 	}
 }
 
+func TestPostgresAgentRunStreamingReplayWaitsForOwnedRunTerminalState(
+	t *testing.T,
+) {
+	database := newAgentTestDatabase(t)
+	generator := newBlockingTextGenerator()
+	t.Cleanup(func() {
+		select {
+		case <-generator.release:
+		default:
+			close(generator.release)
+		}
+	})
+	_, dataService, runService, _ := newAgentRunServices(
+		t,
+		database.pool,
+		generator,
+		testRunConfiguration,
+	)
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+
+	type submitResult struct {
+		submission RunSubmission
+		err        error
+	}
+	firstResult := make(chan submitResult, 1)
+	go func() {
+		submission, submitErr := runService.SubmitText(
+			context.Background(),
+			actor,
+			thread.ID,
+			"streaming-concurrent-replay-message",
+			"Generate this exactly once for both requests.",
+		)
+		firstResult <- submitResult{submission: submission, err: submitErr}
+	}()
+	<-generator.started
+
+	replayResult := make(chan submitResult, 1)
+	observer := newReplayRunStreamObserver()
+	go func() {
+		submission, submitErr := runService.SubmitTextStream(
+			context.Background(),
+			actor,
+			thread.ID,
+			"streaming-concurrent-replay-message",
+			"Generate this exactly once for both requests.",
+			observer,
+		)
+		replayResult <- submitResult{submission: submission, err: submitErr}
+	}()
+	<-observer.committed
+
+	select {
+	case result := <-replayResult:
+		t.Fatalf(
+			"streaming replay returned before owner completed: %#v, %v",
+			result.submission,
+			result.err,
+		)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	close(generator.release)
+	first := <-firstResult
+	replayed := <-replayResult
+	if first.err != nil || first.submission.Run.Status != RunStatusCompleted {
+		t.Fatalf("first submission = %#v, %v", first.submission, first.err)
+	}
+	if replayed.err != nil ||
+		replayed.submission.Created ||
+		replayed.submission.Run.Status != RunStatusCompleted ||
+		replayed.submission.Run.ID != first.submission.Run.ID {
+		t.Fatalf(
+			"streaming replay did not restore terminal Run: %#v, %v",
+			replayed.submission,
+			replayed.err,
+		)
+	}
+	if generator.CallCount() != 1 {
+		t.Fatalf("provider calls = %d, want 1", generator.CallCount())
+	}
+}
+
 func TestPostgresAgentRunRejectsConcurrentDifferentInputOnThread(t *testing.T) {
 	database := newAgentTestDatabase(t)
 	generator := newBlockingTextGenerator()
@@ -3287,6 +3374,37 @@ type blockingTextGenerator struct {
 	once    sync.Once
 	mu      sync.Mutex
 	calls   int
+}
+
+type replayRunStreamObserver struct {
+	committed chan struct{}
+	once      sync.Once
+}
+
+func newReplayRunStreamObserver() *replayRunStreamObserver {
+	return &replayRunStreamObserver{committed: make(chan struct{})}
+}
+
+func (observer *replayRunStreamObserver) OnInputCommitted(
+	context.Context,
+	RunSubmission,
+) error {
+	observer.once.Do(func() { close(observer.committed) })
+	return nil
+}
+
+func (*replayRunStreamObserver) OnAssistantStarted(
+	context.Context,
+	Run,
+) error {
+	return nil
+}
+
+func (*replayRunStreamObserver) OnAssistantDelta(
+	context.Context,
+	string,
+) error {
+	return nil
 }
 
 func newBlockingTextGenerator() *blockingTextGenerator {

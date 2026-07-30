@@ -243,7 +243,18 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       if (!mounted) {
         return;
       }
-      await Navigator.of(context).pushNamed(AppRoutes.practice);
+      final result = await Navigator.of(
+        context,
+      ).pushNamed<Object?>(AppRoutes.practice);
+      if (mounted && result is IeltsPracticeRouteResult) {
+        setState(() => _selectedIndex = 1);
+        widget.preparationController?.requestIeltsNavigation(
+          IeltsPracticeNavigationRequest(
+            mode: result.mode,
+            selection: result.selection,
+          ),
+        );
+      }
     } finally {
       _practiceRouteInFlight = false;
     }
@@ -254,9 +265,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     final review = widget.agentController.review;
-    final suppressReview = isIeltsSpeakingFullMockSession(
-      widget.agentController,
-    );
+    final suppressReview = isIeltsSpeakingSession(widget.agentController);
     if (review == null || suppressReview) {
       _reviewPresented = false;
     } else if (!_reviewPresented) {
@@ -269,7 +278,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   void _restorePresentedReview() {
     if (widget.agentController.review == null ||
-        isIeltsSpeakingFullMockSession(widget.agentController)) {
+        isIeltsSpeakingSession(widget.agentController)) {
       _reviewPresented = false;
       return;
     }

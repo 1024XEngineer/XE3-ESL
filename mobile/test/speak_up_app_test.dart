@@ -427,7 +427,9 @@ void main() {
     expect(tester.widget<TextField>(composer).controller?.text, 'Send once');
   });
 
-  testWidgets('a busy empty draft keeps submission disabled', (tester) async {
+  testWidgets('a busy run keeps drafting enabled and submission disabled', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: ConversationPage(
@@ -441,7 +443,7 @@ void main() {
 
     await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
-    expect(tester.widget<TextField>(composer).enabled, isFalse);
+    expect(tester.widget<TextField>(composer).enabled, isTrue);
     expect(
       tester
           .widget<IconButton>(find.byKey(const Key('agent-send-button')))
