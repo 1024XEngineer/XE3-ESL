@@ -17,6 +17,7 @@ import 'package:speakup/features/preparation/preparation_launch_controller.dart'
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
+import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
 class SpeakUpShell extends StatefulWidget {
@@ -29,6 +30,7 @@ class SpeakUpShell extends StatefulWidget {
     this.preparationLaunchController,
     this.jobPreparationController,
     this.reviewHistoryController,
+    this.interviewReportController,
     required this.agentController,
     super.key,
   });
@@ -42,6 +44,7 @@ class SpeakUpShell extends StatefulWidget {
   final PreparationLaunchController? preparationLaunchController;
   final JobPreparationController? jobPreparationController;
   final ReviewHistoryController? reviewHistoryController;
+  final InterviewReportController? interviewReportController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -367,6 +370,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         historyController: widget.reviewHistoryController,
+        interviewReportController: widget.interviewReportController,
         agentController: widget.agentController,
         autoload: false,
       ),

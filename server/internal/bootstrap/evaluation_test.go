@@ -275,6 +275,214 @@ func TestEvaluationHTTPApplicationRejectsReevaluationBeforeMutation(
 	}
 }
 
+func TestEvaluationHTTPApplicationGetsOwnerScopedInterviewReport(
+	t *testing.T,
+) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	reader := &interviewReportReaderStub{
+		result: evaluation.InterviewReportReadState{
+			Evaluation: evaluationTestValue(evaluation.StatusQueued),
+			Runtime: evaluation.InterviewShadowReadState{
+				ModuleStatus: evaluation.InterviewShadowRuntimePending,
+			},
+		},
+	}
+	application := &evaluationHTTPApplication{
+		reports:       reader,
+		configuration: evaluationTestRuntimeConfiguration(t),
+	}
+	resource, err := application.GetInterviewReport(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		"session_demo_001",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader.ownerUserID != actor.UserID ||
+		reader.practiceSessionID != "session_demo_001" ||
+		resource.PracticeSessionID != "session_demo_001" ||
+		resource.EvaluationStatus != evaluation.StatusQueued ||
+		resource.Report != nil ||
+		resource.StableFailure != nil ||
+		resource.IsFinal {
+		t.Fatalf("reader=%#v resource=%#v", reader, resource)
+	}
+}
+
+func TestEvaluationHTTPApplicationMapsAmbiguousInterviewReportToConflict(
+	t *testing.T,
+) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "session-authenticated",
+	}
+	application := &evaluationHTTPApplication{
+		reports: &interviewReportReaderStub{
+			err: evaluation.ErrInterviewShadowConfigurationConflict,
+		},
+		configuration: evaluationTestRuntimeConfiguration(t),
+	}
+	_, err := application.GetInterviewReport(
+		requestcontext.WithActor(context.Background(), actor),
+		actor,
+		"session_demo_001",
+	)
+	appError, ok := apperror.From(err)
+	if !ok || appError.Code() != "evaluation_version_conflict" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		code          string
+		reason        evaluationtransport.ReasonCode
+		wantRetryable bool
+	}{
+		{
+			code:   "provider_invalid_response",
+			reason: evaluationtransport.ReasonPolicyViolation,
+		},
+		{
+			code:   "evidence_ref_invalid",
+			reason: evaluationtransport.ReasonEvidenceRefInvalid,
+		},
+		{
+			code:   "version_conflict",
+			reason: evaluationtransport.ReasonVersionConflict,
+		},
+		{
+			code:   "runtime_configuration_changed",
+			reason: evaluationtransport.ReasonVersionConflict,
+		},
+		{
+			code:          "provider_canceled",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
+		},
+		{
+			code:          "provider_timeout",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
+		},
+		{
+			code:          "rate_limited",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
+		},
+		{
+			code:          "timeout",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
+		},
+		{
+			code:          "provider_unavailable",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
+		},
+		{
+			code:          "invalid_response",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
+		},
+		{
+			code:          "cancelled",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
+		},
+		{
+			code:          "dependency_error",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
+		},
+		{
+			code:          "attempts_exhausted",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
+		},
+		{
+			code:   "authentication",
+			reason: evaluationtransport.ReasonInternalNonRetryable,
+		},
+		{
+			code:   "authorization",
+			reason: evaluationtransport.ReasonInternalNonRetryable,
+		},
+		{
+			code:   "configuration",
+			reason: evaluationtransport.ReasonInternalNonRetryable,
+		},
+		{
+			code:   "invalid_request",
+			reason: evaluationtransport.ReasonInternalNonRetryable,
+		},
+		{
+			code:   "quota_exhausted",
+			reason: evaluationtransport.ReasonInternalNonRetryable,
+		},
+		{
+			code:   "provider_error",
+			reason: evaluationtransport.ReasonInternalNonRetryable,
+		},
+		{
+			code:   "unknown_failure",
+			reason: evaluationtransport.ReasonInternalNonRetryable,
+		},
+	}
+	for _, test := range tests {
+		failure := interviewShadowFailure(test.code)
+		if failure.ReasonCode != test.reason ||
+			failure.Retryable != test.wantRetryable {
+			t.Errorf("%q failure = %#v", test.code, failure)
+		}
+	}
+	failed := evaluationTestValue(evaluation.StatusFailed)
+	resource, err := interviewReportResource(
+		failed.PracticeSessionID,
+		evaluation.InterviewReportReadState{
+			Evaluation: failed,
+			Runtime: evaluation.InterviewShadowReadState{
+				ModuleStatus: evaluation.InterviewShadowRuntimeFailed,
+				Failure: &evaluation.InterviewShadowFailure{
+					Code: "provider_timeout",
+				},
+			},
+		},
+	)
+	if err != nil ||
+		resource.StableFailure == nil ||
+		resource.StableFailure.ReasonCode !=
+			evaluationtransport.ReasonInternalRetryable ||
+		!resource.StableFailure.Retryable {
+		t.Fatalf("failed report resource = %#v, %v", resource, err)
+	}
+	genericResource, err := interviewShadowResource(
+		failed,
+		evaluation.InterviewShadowReadState{
+			ModuleStatus: evaluation.InterviewShadowRuntimeFailed,
+			Failure: &evaluation.InterviewShadowFailure{
+				Code:      "authentication",
+				Retryable: true,
+			},
+		},
+		evaluationTestRuntimeConfiguration(t),
+	)
+	if err != nil ||
+		genericResource.StableFailure == nil ||
+		genericResource.StableFailure.ReasonCode !=
+			evaluationtransport.ReasonInternalNonRetryable ||
+		genericResource.StableFailure.Retryable {
+		t.Fatalf("generic failed resource = %#v, %v", genericResource, err)
+	}
+}
+
 func evaluationTestRuntimeConfiguration(
 	t *testing.T,
 ) evaluation.InterviewShadowRuntimeConfiguration {
@@ -425,6 +633,23 @@ func (*evaluationRuntimeReaderStub) GetInterviewShadowState(
 	string,
 ) (evaluation.InterviewShadowReadState, error) {
 	return evaluation.InterviewShadowReadState{}, evaluation.ErrNotFound
+}
+
+type interviewReportReaderStub struct {
+	result            evaluation.InterviewReportReadState
+	err               error
+	ownerUserID       string
+	practiceSessionID string
+}
+
+func (stub *interviewReportReaderStub) GetCurrentInterviewReportState(
+	_ context.Context,
+	ownerUserID string,
+	practiceSessionID string,
+) (evaluation.InterviewReportReadState, error) {
+	stub.ownerUserID = ownerUserID
+	stub.practiceSessionID = practiceSessionID
+	return stub.result, stub.err
 }
 
 var _ evaluationtransport.Application = (*evaluationHTTPApplication)(nil)

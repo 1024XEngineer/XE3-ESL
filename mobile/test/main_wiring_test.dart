@@ -26,6 +26,7 @@ import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/practice/wire_practice_client.dart';
 import 'package:speakup/review/wire_review_history_client.dart';
+import 'package:speakup/review/wire_interview_report_client.dart';
 
 void main() {
   test('iOS allows local development traffic without a global ATS bypass', () {
@@ -100,6 +101,8 @@ void main() {
         ),
       ]);
       final reviewHistoryTransport = _ControlledReviewHistoryTransport();
+      final interviewReportTransport = _ControlledInterviewReportTransport();
+      final practiceLaunchRecordStore = _BlockingPracticeLaunchRecordStore();
       final preparationTransport = _Transport([
         _Response(
           method: 'GET',
@@ -123,6 +126,8 @@ void main() {
         ),
       ]);
       addTearDown(reviewHistoryTransport.completeEmptyIfPending);
+      addTearDown(interviewReportTransport.completeFailureIfPending);
+      addTearDown(practiceLaunchRecordStore.releaseDelete);
       final practiceRecorder = _TrackingPracticeRecorder();
       final practiceMediaClient = _TrackingPracticeMediaClient();
       final practiceAudioPlayer = _TrackingPracticeAudioPlayer();
@@ -134,6 +139,7 @@ void main() {
         agentTransport: agentTransport,
         preparationTransport: preparationTransport,
         reviewHistoryTransport: reviewHistoryTransport,
+        interviewReportTransport: interviewReportTransport,
         practiceTransport: _PracticeTransport(),
         practiceRecorder: practiceRecorder,
         agentVoiceRecorder: agentVoiceRecorder,
@@ -141,7 +147,7 @@ void main() {
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
         jobPreparationDraftStore: MemoryJobPreparationDraftStore(),
-        practiceLaunchRecordStore: MemoryPracticeLaunchRecordStore(),
+        practiceLaunchRecordStore: practiceLaunchRecordStore,
         sessionStore: _MemorySessionStore('sess_main-wiring'),
       );
       addTearDown(dependencies.agentController.dispose);
@@ -149,6 +155,7 @@ void main() {
       addTearDown(dependencies.preparationLaunchController.dispose);
       addTearDown(dependencies.jobPreparationController.dispose);
       addTearDown(dependencies.reviewHistoryController.dispose);
+      addTearDown(dependencies.interviewReportController.dispose);
 
       expect(dependencies.agentController.client, isA<WireAgentClient>());
       expect(
@@ -180,6 +187,10 @@ void main() {
         isA<WireReviewHistoryClient>(),
       );
       expect(
+        dependencies.interviewReportController.client,
+        isA<WireInterviewReportClient>(),
+      );
+      expect(
         dependencies.preparationController.client,
         isA<WirePreparationCatalogClient>(),
       );
@@ -200,6 +211,7 @@ void main() {
           jobPreparationController: dependencies.jobPreparationController,
           preparationLaunchController: dependencies.preparationLaunchController,
           reviewHistoryController: dependencies.reviewHistoryController,
+          interviewReportController: dependencies.interviewReportController,
         ),
       );
       for (var attempt = 0; attempt < 100; attempt++) {
@@ -269,14 +281,43 @@ void main() {
       expect(reviewHistoryTransport.calls, 1);
       expect(reviewHistoryTransport.authorization, 'Bearer sess_main-wiring');
 
+      await dependencies.preparationLaunchController.activateAccount(
+        'user_fixture',
+      );
+      final pendingReport = dependencies.interviewReportController.load(
+        'session_interview_report_wiring',
+      );
+      await interviewReportTransport.started.future;
+      expect(
+        dependencies.interviewReportController.practiceSessionId,
+        'session_interview_report_wiring',
+      );
+      expect(dependencies.interviewReportController.isLoading, isTrue);
+
       final logout = dependencies.authController.logout();
       await tester.pump();
+      await practiceLaunchRecordStore.deleteStarted.future.timeout(
+        const Duration(seconds: 1),
+      );
+
+      expect(dependencies.interviewReportController.envelope, isNull);
+      expect(dependencies.interviewReportController.practiceSessionId, isNull);
+      expect(dependencies.interviewReportController.isLoading, isFalse);
+
+      interviewReportTransport.completeFailureIfPending();
+      await pendingReport.timeout(const Duration(seconds: 1));
+      expect(dependencies.interviewReportController.envelope, isNull);
+      expect(dependencies.interviewReportController.practiceSessionId, isNull);
+
+      practiceLaunchRecordStore.releaseDelete();
       await logout.timeout(const Duration(seconds: 1));
       await tester.pump();
 
       expect(dependencies.reviewHistoryController.items, isEmpty);
       expect(dependencies.reviewHistoryController.errorMessage, isNull);
       expect(dependencies.reviewHistoryController.isLoading, isFalse);
+      expect(dependencies.interviewReportController.envelope, isNull);
+      expect(dependencies.interviewReportController.practiceSessionId, isNull);
       expect(dependencies.preparationController.scenarios, isEmpty);
       expect(dependencies.preparationController.selectedScenario, isNull);
       expect(dependencies.jobPreparationController.target, isNull);
@@ -568,6 +609,86 @@ final class _ControlledReviewHistoryTransport implements IdentityHttpTransport {
         body: jsonEncode({'items': <Object?>[]}),
       ),
     );
+  }
+}
+
+final class _ControlledInterviewReportTransport
+    implements IdentityHttpTransport {
+  final started = Completer<void>();
+  final _response = Completer<IdentityHttpResponse>();
+
+  @override
+  Future<IdentityHttpResponse> send({
+    required String method,
+    required Uri uri,
+    required Map<String, String> headers,
+    String? body,
+  }) {
+    expect(method, 'GET');
+    expect(
+      uri.path,
+      '/v1/practice-sessions/session_interview_report_wiring/interview-report',
+    );
+    expect(headers[HttpHeaders.authorizationHeader], 'Bearer sess_main-wiring');
+    if (!started.isCompleted) {
+      started.complete();
+    }
+    return _response.future;
+  }
+
+  void completeFailureIfPending() {
+    if (_response.isCompleted) {
+      return;
+    }
+    _response.complete(
+      IdentityHttpResponse(
+        statusCode: HttpStatus.ok,
+        body: jsonEncode({
+          'practice_session_id': 'session_interview_report_wiring',
+          'evaluation_id': '81000001-0000-4000-8000-000000000001',
+          'evaluation_revision_id': '82000001-0000-4000-8000-000000000001',
+          'revision': 1,
+          'evaluation_status': 'FAILED',
+          'is_final': false,
+          'status_url':
+              '/v1/practice-sessions/session_interview_report_wiring/interview-report',
+          'stable_failure': {
+            'reason_code': 'INTERNAL_RETRYABLE',
+            'retryable': true,
+          },
+        }),
+      ),
+    );
+  }
+}
+
+final class _BlockingPracticeLaunchRecordStore
+    implements PracticeLaunchRecordStore {
+  final deleteStarted = Completer<void>();
+  final _deleteRelease = Completer<void>();
+  final _values = <String, String>{};
+
+  @override
+  Future<String?> read(String accountId) async => _values[accountId];
+
+  @override
+  Future<void> write(String accountId, String value) async {
+    _values[accountId] = value;
+  }
+
+  @override
+  Future<void> delete(String accountId) async {
+    if (!deleteStarted.isCompleted) {
+      deleteStarted.complete();
+    }
+    await _deleteRelease.future;
+    _values.remove(accountId);
+  }
+
+  void releaseDelete() {
+    if (!_deleteRelease.isCompleted) {
+      _deleteRelease.complete();
+    }
   }
 }
 

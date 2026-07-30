@@ -37,6 +37,11 @@ type Application interface {
 		requestcontext.Actor,
 		string,
 	) (EvaluationResource, error)
+	GetInterviewReport(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (InterviewReportResource, error)
 	Reevaluate(
 		context.Context,
 		requestcontext.Actor,
@@ -98,6 +103,7 @@ const (
 	ReasonDuplicateRequest         ReasonCode = "DUPLICATE_REQUEST"
 	ReasonPolicyViolation          ReasonCode = "POLICY_VIOLATION"
 	ReasonInternalRetryable        ReasonCode = "INTERNAL_RETRYABLE"
+	ReasonInternalNonRetryable     ReasonCode = "INTERNAL_NON_RETRYABLE"
 	ReasonOpportunityNotProvided   ReasonCode = "OPPORTUNITY_NOT_PROVIDED"
 )
 
@@ -138,6 +144,17 @@ type EvaluationResource struct {
 	CompletedAt            *time.Time
 }
 
+type InterviewReportResource struct {
+	PracticeSessionID    string
+	EvaluationID         string
+	EvaluationRevisionID string
+	Revision             int
+	EvaluationStatus     evaluation.Status
+	IsFinal              bool
+	Report               *evaluation.InterviewReport
+	StableFailure        *EvaluationFailure
+}
+
 type HTTPHandler struct {
 	application Application
 	errors      *httpresponse.Renderer
@@ -157,6 +174,10 @@ func (h *HTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST("/v1/evaluations", h.create)
 	routes.GET("/v1/evaluations/:evaluation_id", h.get)
 	routes.POST("/v1/evaluations/:evaluation_id/re-evaluate", h.reevaluate)
+	routes.GET(
+		"/v1/practice-sessions/:practice_session_id/interview-report",
+		h.getInterviewReport,
+	)
 }
 
 func (h *HTTPHandler) create(c *gin.Context) {
@@ -251,6 +272,35 @@ func (h *HTTPHandler) reevaluate(c *gin.Context) {
 		return
 	}
 	c.JSON(accepted.responseStatus(), accepted.response())
+}
+
+func (h *HTTPHandler) getInterviewReport(c *gin.Context) {
+	setInterviewReportResponseHeaders(c)
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	practiceSessionID := c.Param("practice_session_id")
+	if !stableIdentifierPattern.MatchString(practiceSessionID) {
+		h.errors.Write(c, evaluationNotFoundError())
+		return
+	}
+	resource, err := h.application.GetInterviewReport(
+		c.Request.Context(),
+		actor,
+		practiceSessionID,
+	)
+	if err != nil {
+		h.writeApplicationError(c, err)
+		return
+	}
+	if !resource.valid() ||
+		resource.PracticeSessionID != practiceSessionID {
+		h.errors.Write(c, errInvalidApplicationProjection)
+		return
+	}
+	c.JSON(http.StatusOK, resource.response())
 }
 
 type optionalString struct {
@@ -422,6 +472,75 @@ type evaluationResponse struct {
 	CreatedAt              string                  `json:"created_at"`
 	UpdatedAt              string                  `json:"updated_at"`
 	CompletedAt            string                  `json:"completed_at,omitempty"`
+}
+
+type interviewReportResponse struct {
+	PracticeSessionID    string                      `json:"practice_session_id"`
+	EvaluationID         string                      `json:"evaluation_id"`
+	EvaluationRevisionID string                      `json:"evaluation_revision_id"`
+	Revision             int                         `json:"revision"`
+	EvaluationStatus     evaluation.Status           `json:"evaluation_status"`
+	IsFinal              bool                        `json:"is_final"`
+	StatusURL            string                      `json:"status_url"`
+	Report               *evaluation.InterviewReport `json:"report,omitempty"`
+	StableFailure        *EvaluationFailure          `json:"stable_failure,omitempty"`
+}
+
+func (resource InterviewReportResource) response() interviewReportResponse {
+	return interviewReportResponse{
+		PracticeSessionID:    resource.PracticeSessionID,
+		EvaluationID:         resource.EvaluationID,
+		EvaluationRevisionID: resource.EvaluationRevisionID,
+		Revision:             resource.Revision,
+		EvaluationStatus:     resource.EvaluationStatus,
+		IsFinal:              resource.IsFinal,
+		StatusURL: "/v1/practice-sessions/" +
+			resource.PracticeSessionID +
+			"/interview-report",
+		Report:        resource.Report,
+		StableFailure: resource.StableFailure,
+	}
+}
+
+func (resource InterviewReportResource) valid() bool {
+	if !stableIdentifierPattern.MatchString(resource.PracticeSessionID) ||
+		!validEvaluationID(resource.EvaluationID) ||
+		!validEvaluationID(resource.EvaluationRevisionID) ||
+		resource.Revision < 1 ||
+		resource.IsFinal {
+		return false
+	}
+	switch resource.EvaluationStatus {
+	case evaluation.StatusQueued, evaluation.StatusRunning:
+		return resource.Report == nil &&
+			resource.StableFailure == nil
+	case evaluation.StatusReady:
+		return resource.Report != nil &&
+			resource.Report.Valid() &&
+			resource.StableFailure == nil
+	case evaluation.StatusFailed:
+		return resource.Report == nil &&
+			validInterviewReportFailure(resource.StableFailure)
+	default:
+		return false
+	}
+}
+
+func validInterviewReportFailure(failure *EvaluationFailure) bool {
+	if failure == nil {
+		return false
+	}
+	switch failure.ReasonCode {
+	case ReasonPolicyViolation,
+		ReasonEvidenceRefInvalid,
+		ReasonVersionConflict,
+		ReasonInternalNonRetryable:
+		return !failure.Retryable
+	case ReasonInternalRetryable:
+		return failure.Retryable
+	default:
+		return false
+	}
 }
 
 func (resource EvaluationResource) response() evaluationResponse {
@@ -621,6 +740,7 @@ func validReasonCode(reason ReasonCode) bool {
 		ReasonDuplicateRequest,
 		ReasonPolicyViolation,
 		ReasonInternalRetryable,
+		ReasonInternalNonRetryable,
 		ReasonOpportunityNotProvided:
 		return true
 	default:
@@ -798,6 +918,11 @@ func validJSONContentType(value string) bool {
 
 func setPrivateResponseHeaders(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	c.Header("Pragma", "no-cache")
+}
+
+func setInterviewReportResponseHeaders(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
 	c.Header("Pragma", "no-cache")
 }
 

@@ -1024,6 +1024,42 @@ assert.equal(
 );
 assert.equal(websocketParameters.after_sequence?.in, 'query');
 
+const interviewReport = requireOperation(
+  'GET /v1/practice-sessions/{practice_session_id}/interview-report',
+);
+assert.equal(interviewReport.operationId, 'getInterviewReport');
+assert.deepEqual(
+  interviewReport.security ?? openApi.security,
+  bearerSecurity,
+  'Interview reports must derive the Actor from BearerSession.',
+);
+assert.ok(interviewReport.responses?.['200']);
+assert.ok(interviewReport.responses?.['401']);
+assert.ok(interviewReport.responses?.['404']);
+assert.ok(interviewReport.responses?.['409']);
+const interviewReportResponse = resolveLocalReference(
+  interviewReport.responses['200'],
+);
+assert.equal(
+  interviewReportResponse?.headers?.['Cache-Control']?.schema?.const,
+  'private, no-store',
+  'Interview reports must prohibit shared and private caching.',
+);
+assert.equal(
+  getJsonSchema(interviewReportResponse)?.$ref,
+  '#/components/schemas/InterviewReportEnvelope',
+);
+assert.ok(
+  schemas.InterviewReportEnvelope,
+  'The root contract must export InterviewReportEnvelope.',
+);
+assert.ok(
+  schemas.InterviewReport,
+  'The root contract must export InterviewReport.',
+);
+assert.match(interviewReport.description ?? '', /another Actor/i);
+assert.match(interviewReport.description ?? '', /must not log/i);
+
 const formalReviewHistory = requireOperation('GET /v1/formal-reviews');
 const formalReviewHistoryParameters = Object.fromEntries(
   (formalReviewHistory.parameters ?? []).map((parameterValue) => {
