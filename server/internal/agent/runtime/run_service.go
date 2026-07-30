@@ -460,14 +460,25 @@ func (service *RunService) process(
 		return failed, nil
 	}
 
-	result, err := service.generateObserved(
-		ctx,
-		actor,
-		claimed,
-		manifest,
-		request,
-		observer,
-	)
+	var result ai.TextResult
+	if observer == nil {
+		result, err = service.generate(
+			ctx,
+			actor,
+			claimed,
+			manifest,
+			request,
+		)
+	} else {
+		result, err = service.generateObserved(
+			ctx,
+			actor,
+			claimed,
+			manifest,
+			request,
+			observer,
+		)
+	}
 	if err != nil {
 		kind, retryable := generationFailure(err)
 		failed, failErr := service.persistFailure(
@@ -543,10 +554,14 @@ func (service *RunService) generateObserved(
 	run Run,
 	manifest ContextManifest,
 	request ai.TextRequest,
-	observer ai.TextDeltaObserver,
+	observer *countingDeltaObserver,
 ) (ai.TextResult, error) {
+	var deltaObserver ai.TextDeltaObserver
+	if observer != nil {
+		deltaObserver = observer
+	}
 	if service.registry == nil || service.executor == nil {
-		return service.generateModel(ctx, request, observer)
+		return service.generateModel(ctx, request, deltaObserver)
 	}
 	loopCtx, cancel := context.WithTimeout(ctx, service.loopLimits.LoopTimeout)
 	defer cancel()
@@ -611,7 +626,7 @@ func (service *RunService) generateObserved(
 	}
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
-		result, err := service.generateModel(loopCtx, request, observer)
+		result, err := service.generateModel(loopCtx, request, deltaObserver)
 		if err != nil {
 			return ai.TextResult{}, err
 		}

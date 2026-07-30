@@ -755,6 +755,14 @@ func (generator *scriptedGenerator) Generate(
 	return result, nil
 }
 
+func (generator *scriptedGenerator) GenerateStream(
+	context.Context,
+	ai.TextRequest,
+	ai.TextDeltaObserver,
+) (ai.TextResult, error) {
+	panic("non-streaming run unexpectedly selected GenerateStream")
+}
+
 func (generator *scriptedGenerator) Requests() []ai.TextRequest {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
