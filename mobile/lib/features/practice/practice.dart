@@ -604,7 +604,7 @@ class _PracticePageState extends State<PracticePage>
   bool get _isIeltsSpeaking => _ieltsRouteActive || _controllerIsIeltsSpeaking;
 
   bool _isInterview(AgentController controller) =>
-      controller.scene?.scenarioType == 'INTERVIEW';
+      controller.practiceScenarioType == 'INTERVIEW';
 }
 
 String _practiceFeedbackSourceKey(

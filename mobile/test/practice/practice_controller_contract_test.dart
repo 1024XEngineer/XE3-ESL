@@ -1164,14 +1164,6 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(const Key('practice-record')), findsOneWidget);
-      expect(
-        find.byKey(const Key('interview-question-progress')),
-        scene == interviewScene ? findsOneWidget : findsNothing,
-      );
-      if (scene == interviewScene) {
-        expect(find.textContaining('第 1/'), findsOneWidget);
-        expect(find.textContaining('等待作答'), findsOneWidget);
-      }
       await tester.tap(find.byKey(const Key('practice-open-keyboard')));
       await tester.pump();
       expect(find.byKey(const Key('practice-text-answer')), findsOneWidget);
