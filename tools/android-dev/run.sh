@@ -88,7 +88,7 @@ device_model="$(
 print "使用 Android 真机：$device_model"
 
 print "启动 PostgreSQL..."
-docker compose -f "$repo_dir/compose.yaml" up -d --wait postgres
+docker compose -p xe3-esl -f "$repo_dir/compose.yaml" up -d --wait postgres
 
 print "执行数据库迁移..."
 (cd "$server_dir" && go run ./cmd/migrate up)
