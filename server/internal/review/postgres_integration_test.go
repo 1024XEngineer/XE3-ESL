@@ -2617,6 +2617,24 @@ func reviewDatabase(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, string(scenarioUp)); err != nil {
 		t.Fatalf("apply scenario Review migration: %v", err)
 	}
+	if _, err := pool.Exec(
+		ctx,
+		speechFeedbackModulePrerequisiteSQL,
+	); err != nil {
+		t.Fatalf(
+			"create SpeechFeedback module prerequisites: %v",
+			err,
+		)
+	}
+	speechFeedbackUp, err := migrations.Files.ReadFile(
+		"000040_review_speech_feedback.up.sql",
+	)
+	if err != nil {
+		t.Fatalf("read SpeechFeedback migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(speechFeedbackUp)); err != nil {
+		t.Fatalf("apply SpeechFeedback migration: %v", err)
+	}
 	return pool
 }
 

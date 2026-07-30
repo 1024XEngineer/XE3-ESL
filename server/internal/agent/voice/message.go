@@ -44,6 +44,19 @@ type VoicePendingRunProcessor interface {
 	) (Run, error)
 }
 
+type VoiceMessageFeedbackReference struct {
+	StatusURL string
+}
+
+type VoiceMessageFeedbackPort interface {
+	EnsureAgentVoiceMessage(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+	) (VoiceMessageFeedbackReference, error)
+}
+
 type VoiceMessageConfig struct {
 	RunConfiguration RunConfiguration
 	ScratchDirectory string
@@ -110,6 +123,7 @@ type VoiceMessageService struct {
 	recognizer  ai.SpeechRecognizer
 	synthesizer ai.SpeechSynthesizer
 	runs        VoicePendingRunProcessor
+	feedback    VoiceMessageFeedbackPort
 	ids         IDGenerator
 	clock       func() time.Time
 	config      VoiceMessageConfig
@@ -124,6 +138,7 @@ func NewVoiceMessageService(
 	runs VoicePendingRunProcessor,
 	ids IDGenerator,
 	config VoiceMessageConfig,
+	feedbackPorts ...VoiceMessageFeedbackPort,
 ) (*VoiceMessageService, error) {
 	if nilVoiceDependency(repository) ||
 		nilVoiceDependency(store) ||
@@ -134,6 +149,13 @@ func NewVoiceMessageService(
 		nilVoiceDependency(ids) ||
 		!validRunConfiguration(config.RunConfiguration) {
 		return nil, errors.New("agent: voice message dependency is required")
+	}
+	if len(feedbackPorts) > 1 ||
+		(len(feedbackPorts) == 1 &&
+			nilVoiceDependency(feedbackPorts[0])) {
+		return nil, errors.New(
+			"agent: voice message feedback dependency is invalid",
+		)
 	}
 	if config.CandidateTTL <= 0 {
 		config.CandidateTTL = defaultVoiceCandidateTTL
@@ -154,7 +176,7 @@ func NewVoiceMessageService(
 	if config.PlaybackTTL > 2*time.Minute {
 		return nil, ErrInvalidRequest
 	}
-	return &VoiceMessageService{
+	service := &VoiceMessageService{
 		repository:  repository,
 		store:       store,
 		sources:     sources,
@@ -164,7 +186,11 @@ func NewVoiceMessageService(
 		ids:         ids,
 		clock:       func() time.Time { return time.Now().UTC() },
 		config:      config,
-	}, nil
+	}
+	if len(feedbackPorts) == 1 {
+		service.feedback = feedbackPorts[0]
+	}
+	return service, nil
 }
 
 func (service *VoiceMessageService) Upload(
@@ -443,6 +469,23 @@ func (service *VoiceMessageService) Confirm(
 	)
 	if err != nil {
 		return VoiceConfirmation{}, err
+	}
+	if service.feedback != nil {
+		reference, feedbackErr :=
+			service.feedback.EnsureAgentVoiceMessage(
+				ctx,
+				actor,
+				confirmation.Message.ThreadID,
+				confirmation.Message.ID,
+			)
+		if feedbackErr != nil {
+			return VoiceConfirmation{}, feedbackErr
+		}
+		if strings.TrimSpace(reference.StatusURL) == "" {
+			return VoiceConfirmation{}, ErrInvalidRequest
+		}
+		confirmation.Message.SpeechFeedbackStatusURL =
+			reference.StatusURL
 	}
 	if confirmation.Run.Status == RunStatusPending {
 		confirmation.Run, err = service.runs.ProcessPending(

@@ -62,10 +62,18 @@ type ConfirmedVoiceTurn struct {
 	CandidateID             string
 	TranscriptID            string
 	EvidenceVersion         int64
+	TurnKind                string
+	RetryRequestID          string
+	OriginalTurnID          string
+	CountsTowardTurnLimit   bool
+	InteractionMode         string
 	AnswerText              string
 	EffectiveTurns          int
 	SessionCompleted        bool
 	ReviewID                string
+	SpeechFeedbackStatusURL string
+	CreatedAt               time.Time
+	ConfirmedAt             time.Time
 }
 
 type SafeProcessingAttempt struct {
@@ -121,6 +129,7 @@ type FailTranscriptionCommand struct {
 type ReserveConfirmationCommand struct {
 	CandidateID    string
 	IdempotencyKey string
+	RetryTurnID    string
 }
 
 type VoiceTurnProgress struct {
@@ -612,6 +621,7 @@ func (service *VoiceRoundService) Transcribe(
 type ConfirmVoiceTurnCommand struct {
 	CandidateID    string
 	IdempotencyKey string
+	RetryTurnID    string
 }
 
 func (service *VoiceRoundService) Confirm(
@@ -658,6 +668,7 @@ func (service *VoiceRoundService) Confirm(
 		ReserveConfirmationCommand{
 			CandidateID:    candidate.ID,
 			IdempotencyKey: command.IdempotencyKey,
+			RetryTurnID:    command.RetryTurnID,
 		},
 	)
 	if err != nil {
@@ -690,6 +701,7 @@ func (service *VoiceRoundService) ConfirmText(
 		ReserveConfirmationCommand{
 			CandidateID:    candidate.ID,
 			IdempotencyKey: command.IdempotencyKey,
+			RetryTurnID:    command.RetryTurnID,
 		},
 	)
 	if err != nil {

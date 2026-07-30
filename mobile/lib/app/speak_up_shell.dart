@@ -21,6 +21,7 @@ import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
 import 'package:speakup/review/review_history_controller.dart';
+import 'package:speakup/review/turn_feedback_controller.dart';
 
 class SpeakUpShell extends StatefulWidget {
   const SpeakUpShell({
@@ -35,6 +36,7 @@ class SpeakUpShell extends StatefulWidget {
     this.interviewReportController,
     this.ieltsSpeakingReportController,
     this.ieltsSpeakingReportIndexController,
+    this.speechFeedbackController,
     required this.agentController,
     super.key,
   });
@@ -51,6 +53,7 @@ class SpeakUpShell extends StatefulWidget {
   final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
+  final SpeechFeedbackController? speechFeedbackController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -362,6 +365,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onLoadEarlierMessages: widget.agentController.hasEarlierMessages
             ? widget.agentController.loadEarlierMessages
             : null,
+        speechFeedbackController: widget.speechFeedbackController,
       ),
       PreparationPage(
         showBackButton: widget.showBackButton,

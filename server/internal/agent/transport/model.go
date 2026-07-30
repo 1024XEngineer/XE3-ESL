@@ -38,6 +38,7 @@ const (
 )
 
 type VoiceSessionApplication = agentvoice.VoiceSessionApplication
+type SameQuestionRetryApplication = agentvoice.SameQuestionRetryApplication
 type VoiceConversationPort = agentvoice.VoiceConversationPort
 type VoicePracticePort = agentvoice.VoicePracticePort
 type VoiceReviewPort = agentvoice.VoiceReviewPort

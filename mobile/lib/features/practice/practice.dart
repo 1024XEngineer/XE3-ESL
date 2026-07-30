@@ -13,6 +13,9 @@ import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_recordings.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/review/turn_feedback_disclosure.dart';
 
 class PracticePage extends StatefulWidget {
   const PracticePage({
@@ -22,6 +25,7 @@ class PracticePage extends StatefulWidget {
     this.ieltsMockProgressStore,
     this.preparationController,
     this.ieltsSpeakingReportController,
+    this.speechFeedbackController,
     super.key,
   });
 
@@ -31,6 +35,7 @@ class PracticePage extends StatefulWidget {
   final IeltsMockProgressStore? ieltsMockProgressStore;
   final PreparationController? preparationController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
+  final SpeechFeedbackController? speechFeedbackController;
 
   @override
   State<PracticePage> createState() => _PracticePageState();
@@ -43,6 +48,7 @@ class _PracticePageState extends State<PracticePage>
   final TextEditingController _textAnswerController = TextEditingController();
   final FocusNode _textAnswerFocusNode = FocusNode();
   final ScrollController _messageScrollController = ScrollController();
+  final Map<String, String> _feedbackSources = {};
   bool _scheduledReviewExit = false;
   int _reviewExitAttempts = 0;
   Animation<double>? _observedSecondaryAnimation;
@@ -55,6 +61,7 @@ class _PracticePageState extends State<PracticePage>
   int _messageCount = 0;
   String? _lastMessageId;
   PracticeRecordingState? _lastRecordingState;
+  int _speechFeedbackRetryCompletionCount = 0;
   Timer? _recordingTicker;
   DateTime? _recordingStartedAt;
   int _recordingSeconds = 0;
@@ -66,6 +73,8 @@ class _PracticePageState extends State<PracticePage>
     _messageScrollController.addListener(_handleMessageScroll);
     widget.agentController?.addListener(_handleState);
     _ieltsRouteActive = _controllerIsIeltsSpeaking;
+    _syncSpeechFeedbackSources();
+    widget.speechFeedbackController?.addListener(_handleSpeechFeedbackState);
     _captureConversationState();
     _syncRecordingTimer();
     _scheduleReviewExitIfNeeded();
@@ -75,7 +84,15 @@ class _PracticePageState extends State<PracticePage>
   @override
   void didUpdateWidget(covariant PracticePage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.speechFeedbackController != widget.speechFeedbackController) {
+      oldWidget.speechFeedbackController?.removeListener(
+        _handleSpeechFeedbackState,
+      );
+      _removeSpeechFeedbackSources(oldWidget.speechFeedbackController);
+      widget.speechFeedbackController?.addListener(_handleSpeechFeedbackState);
+    }
     if (oldWidget.agentController == widget.agentController) {
+      _syncSpeechFeedbackSources();
       return;
     }
     oldWidget.agentController?.removeListener(_handleState);
@@ -83,6 +100,7 @@ class _PracticePageState extends State<PracticePage>
     widget.agentController?.addListener(_handleState);
     _ieltsRouteActive = _controllerIsIeltsSpeaking;
     _captureConversationState();
+    _syncSpeechFeedbackSources();
     _scheduleReviewExitIfNeeded();
     _scheduleScrollToLatest(animated: false);
   }
@@ -91,6 +109,8 @@ class _PracticePageState extends State<PracticePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.agentController?.removeListener(_handleState);
+    widget.speechFeedbackController?.removeListener(_handleSpeechFeedbackState);
+    _removeSpeechFeedbackSources(widget.speechFeedbackController);
     _clearReviewRouteWait();
     _recordingTicker?.cancel();
     _messageScrollController
@@ -120,8 +140,24 @@ class _PracticePageState extends State<PracticePage>
     _messageCount = messages.length;
     _lastMessageId = lastMessageId;
     _lastRecordingState = recordingState;
+    final retryCompletionCount =
+        controller?.speechFeedbackRetryCompletionCount ?? 0;
+    final retryCompleted =
+        retryCompletionCount > _speechFeedbackRetryCompletionCount;
+    _speechFeedbackRetryCompletionCount = retryCompletionCount;
     _syncRecordingTimer();
+    _syncSpeechFeedbackSources();
     setState(() {});
+    if (retryCompleted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(const SnackBar(content: Text('同题复练已提交，不影响场景进度。')));
+      });
+    }
     if (conversationChanged && shouldScroll) {
       _scheduleScrollToLatest();
     }
@@ -134,6 +170,56 @@ class _PracticePageState extends State<PracticePage>
       return;
     }
     _scheduleReviewExitIfNeeded();
+  }
+
+  void _syncSpeechFeedbackSources() {
+    final controller = widget.speechFeedbackController;
+    final agentController = widget.agentController;
+    if (controller == null || agentController == null) {
+      if (controller != null) {
+        for (final sourceKey in _feedbackSources.keys) {
+          controller.removeSource(sourceKey);
+        }
+      }
+      _feedbackSources.clear();
+      return;
+    }
+    final current = <String, String>{};
+    for (final message in agentController.practiceMessages) {
+      final statusUrl = message.speechFeedbackStatusUrl;
+      if (statusUrl != null) {
+        current[_practiceFeedbackSourceKey(agentController, message)] =
+            statusUrl;
+      }
+    }
+    for (final entry in _feedbackSources.entries.toList()) {
+      if (current[entry.key] != entry.value) {
+        controller.removeSource(entry.key);
+        _feedbackSources.remove(entry.key);
+      }
+    }
+    for (final entry in current.entries) {
+      if (_feedbackSources[entry.key] == entry.value) {
+        continue;
+      }
+      _feedbackSources[entry.key] = entry.value;
+      unawaited(controller.load(sourceKey: entry.key, statusUrl: entry.value));
+    }
+  }
+
+  void _removeSpeechFeedbackSources(SpeechFeedbackController? controller) {
+    if (controller != null) {
+      for (final sourceKey in _feedbackSources.keys) {
+        controller.removeSource(sourceKey);
+      }
+    }
+    _feedbackSources.clear();
+  }
+
+  void _handleSpeechFeedbackState() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -149,6 +235,8 @@ class _PracticePageState extends State<PracticePage>
     _messageCount = messages.length;
     _lastMessageId = messages.lastOrNull?.id;
     _lastRecordingState = controller?.recordingState;
+    _speechFeedbackRetryCompletionCount =
+        controller?.speechFeedbackRetryCompletionCount ?? 0;
   }
 
   void _handleMessageScroll() {
@@ -355,6 +443,20 @@ class _PracticePageState extends State<PracticePage>
     });
   }
 
+  void _startSpeechFeedbackRetry(SpeechFeedbackItem item) {
+    final controller = widget.agentController;
+    if (controller == null) {
+      return;
+    }
+    _textAnswerFocusNode.unfocus();
+    if (_textAnswerMode) {
+      setState(() => _textAnswerMode = false);
+    }
+    _stickToLatestMessage = true;
+    _scheduleScrollToLatest();
+    unawaited(controller.startSpeechFeedbackRetry(item));
+  }
+
   void _showPracticeRecordings(AgentController controller) {
     showModalBottomSheet<void>(
       context: context,
@@ -464,6 +566,9 @@ class _PracticePageState extends State<PracticePage>
                         controller: controller,
                         scrollController: _messageScrollController,
                         previewMode: widget.previewMode,
+                        speechFeedbackController:
+                            widget.speechFeedbackController,
+                        onRepractice: _startSpeechFeedbackRetry,
                       ),
                     ),
                     _RecordingPanel(
@@ -489,6 +594,11 @@ class _PracticePageState extends State<PracticePage>
   bool get _isIeltsSpeaking => _ieltsRouteActive || _controllerIsIeltsSpeaking;
 }
 
+String _practiceFeedbackSourceKey(
+  AgentController controller,
+  AgentMessage message,
+) => 'practice:${controller.practiceSessionId}:${message.id}';
+
 class _NoScene extends StatelessWidget {
   const _NoScene();
 
@@ -508,11 +618,15 @@ class _SceneConversationMessageList extends StatelessWidget {
     required this.controller,
     required this.scrollController,
     required this.previewMode,
+    required this.onRepractice,
+    this.speechFeedbackController,
   });
 
   final AgentController controller;
   final ScrollController scrollController;
   final bool previewMode;
+  final SpeechFeedbackRepracticeCallback onRepractice;
+  final SpeechFeedbackController? speechFeedbackController;
 
   @override
   Widget build(BuildContext context) {
@@ -522,7 +636,8 @@ class _SceneConversationMessageList extends StatelessWidget {
         state == PracticeRecordingState.reviewFailed ||
         state == PracticeRecordingState.completed;
     final showThinking =
-        state == PracticeRecordingState.submitting ||
+        (state == PracticeRecordingState.submitting &&
+            !controller.isSpeechFeedbackRetryActive) ||
         (messages.isEmpty && !terminal);
 
     return SingleChildScrollView(
@@ -550,6 +665,31 @@ class _SceneConversationMessageList extends StatelessWidget {
                 key: ValueKey('practice-user-${message.id}'),
                 message: message,
               ),
+            if (_feedbackProjection(message) case final projection?) ...[
+              const SizedBox(height: SpeakUpDesign.space8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FractionallySizedBox(
+                  widthFactor: 0.78,
+                  child: SpeechFeedbackDisclosure(
+                    key: ValueKey(
+                      'practice-speech-feedback-${projection.sourceKey}',
+                    ),
+                    projection: projection,
+                    onRetry: projection.canRetry
+                        ? () => unawaited(
+                            speechFeedbackController!.retry(
+                              projection.sourceKey,
+                            ),
+                          )
+                        : null,
+                    onRepractice: controller.canStartSpeechFeedbackRetry
+                        ? onRepractice
+                        : null,
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 14),
           ],
           if (showThinking) ...[
@@ -582,6 +722,16 @@ class _SceneConversationMessageList extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+
+  SpeechFeedbackProjection? _feedbackProjection(AgentMessage message) {
+    if (message.speechFeedbackStatusUrl == null ||
+        speechFeedbackController == null) {
+      return null;
+    }
+    return speechFeedbackController!.projectionFor(
+      _practiceFeedbackSourceKey(controller, message),
     );
   }
 }
@@ -835,7 +985,6 @@ class _RecordingPanelState extends State<_RecordingPanel> {
         (state == PracticeRecordingState.idle ||
             state == PracticeRecordingState.starting ||
             state == PracticeRecordingState.recording);
-
     return VoiceCaptureControl(
       phase: capturePhase,
       enabled: captureEnabled,
@@ -885,8 +1034,10 @@ class _RecordingPanelState extends State<_RecordingPanel> {
           ),
           PracticeRecordingState.awaitingConfirmation =>
             _TranscriptConfirmation(controller: widget.controller),
-          PracticeRecordingState.submitting => const _WorkingState(
-            label: '回答已发送，正在准备下一题…',
+          PracticeRecordingState.submitting => _WorkingState(
+            label: widget.controller.isSpeechFeedbackRetryActive
+                ? '正在提交同题复练…'
+                : '回答已发送，正在准备下一题…',
           ),
           PracticeRecordingState.reviewFailed => _ReviewRetry(
             onPressed: widget.controller.retryReview,

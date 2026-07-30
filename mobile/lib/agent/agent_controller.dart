@@ -15,10 +15,14 @@ import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/review/formal_review.dart';
+import 'package:speakup/review/turn_feedback.dart';
 
 typedef AgentClientIdFactory = String Function(String scope);
 
 final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
+  static const _speechFeedbackRetryPollInterval = Duration(seconds: 2);
+  static const _speechFeedbackRetryMaximumPollAttempts = 8;
+
   AgentController({
     required this.client,
     PracticeClient? practiceClient,
@@ -111,6 +115,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   _PendingPracticeAudio? _pendingPracticeAudio;
   String? _activeConfirmationId;
   String? _activeTextAnswer;
+  _SpeechFeedbackRetryContext? _speechFeedbackRetry;
+  RetryTranscriptionCandidate? _speechFeedbackRetryCandidate;
+  int _speechFeedbackRetryCompletionCount = 0;
   AgentMatter? _activeMatter;
   List<AgentMessage> _messages = const <AgentMessage>[];
   List<AgentMessage> _practiceMessages = const <AgentMessage>[];
@@ -175,7 +182,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   AgentVoiceController? get voiceController => _voiceController;
   bool get supportsAgentVoice => _voiceController != null;
   PracticeRecordingState get recordingState => _recordingState;
-  String? get transcript => _candidate?.text;
+  String? get transcript =>
+      _speechFeedbackRetryCandidate?.text ?? _candidate?.text;
   AgentReview? get review => _review;
   FormalReview? get formalReview => _formalReview;
   String? get errorMessage => _errorMessage;
@@ -185,9 +193,33 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _busy ||
       _practiceRequestInFlight ||
       _threadTransitionInFlight ||
+      _speechFeedbackRetry != null ||
       (_voiceController?.hasActiveWorkflow ?? false);
   bool get canRetry => _retry != null;
   bool get supportsPracticeFlow => practiceClient != null;
+  bool get isSpeechFeedbackRetryActive => _speechFeedbackRetry != null;
+  int get speechFeedbackRetryCompletionCount =>
+      _speechFeedbackRetryCompletionCount;
+  bool get canStartSpeechFeedbackRetry =>
+      practiceClient is PracticeSpeechFeedbackRetryClient &&
+      _practiceSessionId != null &&
+      isTurnFeedbackEligiblePracticeScenario(
+        _practiceScenarioType,
+        _practiceScenarioModel,
+      ) &&
+      !_disposed &&
+      !isBusy &&
+      _speechFeedbackRetry == null &&
+      switch (_recordingState) {
+        PracticeRecordingState.idle ||
+        PracticeRecordingState.reviewFailed ||
+        PracticeRecordingState.completed => true,
+        PracticeRecordingState.starting ||
+        PracticeRecordingState.recording ||
+        PracticeRecordingState.transcribing ||
+        PracticeRecordingState.awaitingConfirmation ||
+        PracticeRecordingState.submitting => false,
+      };
   bool get supportsPracticeMedia => mediaClient != null && audioPlayer != null;
   List<PracticeRecordingReference> get recordings =>
       List<PracticeRecordingReference>.unmodifiable(_recordings);
@@ -1594,6 +1626,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (state == PracticeRecordingState.starting ||
         state == PracticeRecordingState.recording ||
         state == PracticeRecordingState.awaitingConfirmation) {
+      final speechFeedbackRetry = _speechFeedbackRetry;
       _practiceGeneration++;
       _cancelRecordingLimit();
       await _recorderStartFuture;
@@ -1604,8 +1637,13 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _candidate = null;
       _activeConfirmationId = null;
       _activeTextAnswer = null;
-      _recordingState = PracticeRecordingState.idle;
-      _errorMessage = null;
+      if (speechFeedbackRetry != null &&
+          identical(_speechFeedbackRetry, speechFeedbackRetry)) {
+        _restoreSpeechFeedbackRetryState(speechFeedbackRetry);
+      } else {
+        _recordingState = PracticeRecordingState.idle;
+        _errorMessage = null;
+      }
       notifyListeners();
     }
     await stopPracticeAudio();
@@ -1786,6 +1824,131 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<bool> startSpeechFeedbackRetry(SpeechFeedbackItem item) async {
+    final PracticeSpeechFeedbackRetryClient? practice =
+        switch (practiceClient) {
+          final PracticeSpeechFeedbackRetryClient client => client,
+          _ => null,
+        };
+    final sessionId = _practiceSessionId;
+    if (practice == null ||
+        sessionId == null ||
+        item.repracticeMode != SpeechFeedbackRepracticeMode.sameQuestion ||
+        item.anchor is! ConversationTranscriptFeedbackAnchor ||
+        !canStartSpeechFeedbackRetry) {
+      return false;
+    }
+    final generation = ++_practiceGeneration;
+    final context = _SpeechFeedbackRetryContext(
+      feedbackItemId: item.feedbackItemId,
+      originalTurnId:
+          (item.anchor as ConversationTranscriptFeedbackAnchor).turnId,
+      returnState: _recordingState,
+      returnErrorMessage: _errorMessage,
+      requestIdempotencyKey: _newClientId('feedback-retry'),
+    );
+    _speechFeedbackRetry = context;
+    _speechFeedbackRetryCandidate = null;
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+    _retry = null;
+    _errorMessage = null;
+    _cancelRecordingLimit();
+    _recordingState = PracticeRecordingState.submitting;
+    notifyListeners();
+    final fence = _captureOperationFence(
+      threadId: _threadId,
+      practiceGeneration: generation,
+      practiceSessionId: sessionId,
+    );
+    try {
+      var request = await practice.requestSameQuestionRetry(
+        feedbackItemId: item.feedbackItemId,
+        idempotencyKey: context.requestIdempotencyKey,
+      );
+      request = await _awaitSpeechFeedbackRetryTurn(
+        practice: practice,
+        request: request,
+        fence: fence,
+        context: context,
+      );
+      if (!_isOperationCurrent(fence) ||
+          !identical(_speechFeedbackRetry, context)) {
+        return false;
+      }
+      _validateSpeechFeedbackRetryRequest(
+        request,
+        context: context,
+        sessionId: sessionId,
+      );
+      if (request.retryStatus == PracticeRetryRequestStatus.failed) {
+        throw _SpeechFeedbackRetryCreationException(request.stableFailure);
+      }
+      if (request.retryStatus != PracticeRetryRequestStatus.turnCreated ||
+          request.newTurnId == null ||
+          request.answerPath == null) {
+        throw const _SpeechFeedbackRetryCreationException(null);
+      }
+      context.request = request;
+      _recordingState = PracticeRecordingState.starting;
+      notifyListeners();
+      final operation = _startRecorder(fence, _recordingLimit);
+      _recorderStartFuture = operation;
+      await operation.whenComplete(() {
+        if (identical(_recorderStartFuture, operation)) {
+          _recorderStartFuture = null;
+        }
+      });
+      return _isOperationCurrent(fence) &&
+          identical(_speechFeedbackRetry, context) &&
+          _recordingState == PracticeRecordingState.recording;
+    } catch (error) {
+      if (_isOperationCurrent(fence) &&
+          identical(_speechFeedbackRetry, context)) {
+        _restoreSpeechFeedbackRetryState(context);
+        _errorMessage = _speechFeedbackRetryFailureMessage(error);
+        notifyListeners();
+      }
+      return false;
+    }
+  }
+
+  Future<PracticeRetryRequest> _awaitSpeechFeedbackRetryTurn({
+    required PracticeSpeechFeedbackRetryClient practice,
+    required PracticeRetryRequest request,
+    required _AgentOperationFence fence,
+    required _SpeechFeedbackRetryContext context,
+  }) async {
+    var current = request;
+    for (
+      var attempt = 0;
+      attempt < _speechFeedbackRetryMaximumPollAttempts;
+      attempt++
+    ) {
+      _validateSpeechFeedbackRetryRequest(
+        current,
+        context: context,
+        sessionId: fence.practiceSessionId!,
+      );
+      if (current.retryStatus != PracticeRetryRequestStatus.pending) {
+        return current;
+      }
+      if (attempt + 1 == _speechFeedbackRetryMaximumPollAttempts) {
+        return current;
+      }
+      await Future<void>.delayed(_speechFeedbackRetryPollInterval);
+      if (!_isOperationCurrent(fence) ||
+          !identical(_speechFeedbackRetry, context)) {
+        throw const AgentClientOperationCancelled();
+      }
+      current = await practice.getSameQuestionRetryRequest(
+        retryRequestId: current.retryRequestId,
+      );
+    }
+    return current;
+  }
+
   Future<void> startRecording({Duration? limit}) {
     if (!hasActivePractice ||
         isBusy ||
@@ -1854,7 +2017,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       });
     } on PracticeRecordingException catch (error) {
       if (_isOperationCurrent(fence)) {
-        _recordingState = PracticeRecordingState.idle;
+        final retry = _speechFeedbackRetry;
+        if (retry == null) {
+          _recordingState = PracticeRecordingState.idle;
+        } else {
+          _restoreSpeechFeedbackRetryState(retry);
+        }
         _errorMessage =
             error.kind == PracticeRecordingFailureKind.permissionDenied
             ? '需要麦克风权限；请在 iOS“设置”中允许 SpeakUp 使用麦克风。'
@@ -1862,7 +2030,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       }
     } catch (_) {
       if (_isOperationCurrent(fence)) {
-        _recordingState = PracticeRecordingState.idle;
+        final retry = _speechFeedbackRetry;
+        if (retry == null) {
+          _recordingState = PracticeRecordingState.idle;
+        } else {
+          _restoreSpeechFeedbackRetryState(retry);
+        }
         _errorMessage = '暂时无法开始录音，请稍后重试。';
       }
     }
@@ -1872,6 +2045,33 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> stopRecording() {
+    final speechFeedbackRetry = _speechFeedbackRetry;
+    final PracticeSpeechFeedbackRetryClient? retryPractice =
+        switch (practiceClient) {
+          final PracticeSpeechFeedbackRetryClient client => client,
+          _ => null,
+        };
+    if (speechFeedbackRetry != null &&
+        retryPractice != null &&
+        _recordingState == PracticeRecordingState.recording) {
+      _cancelRecordingLimit();
+      final fence = _captureOperationFence(
+        threadId: _threadId,
+        practiceGeneration: _practiceGeneration,
+        practiceSessionId: _practiceSessionId,
+      );
+      final operation = _stopSpeechFeedbackRetryRecording(
+        practice: retryPractice,
+        context: speechFeedbackRetry,
+        fence: fence,
+      );
+      _stopRecordingFuture = operation;
+      return operation.whenComplete(() {
+        if (identical(_stopRecordingFuture, operation)) {
+          _stopRecordingFuture = null;
+        }
+      });
+    }
     final practice = practiceClient;
     final sessionId = _practiceSessionId;
     final question = _currentQuestion;
@@ -1919,6 +2119,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _practiceGeneration++;
+    final speechFeedbackRetry = _speechFeedbackRetry;
     _cancelRecordingLimit();
     await _recorderStartFuture;
     if (_disposed) {
@@ -1928,8 +2129,13 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _candidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
-    _recordingState = PracticeRecordingState.idle;
-    _errorMessage = null;
+    if (speechFeedbackRetry != null &&
+        identical(_speechFeedbackRetry, speechFeedbackRetry)) {
+      _restoreSpeechFeedbackRetryState(speechFeedbackRetry);
+    } else {
+      _recordingState = PracticeRecordingState.idle;
+      _errorMessage = null;
+    }
     notifyListeners();
   }
 
@@ -2024,6 +2230,69 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         }
         try {
           await recorder.discard(pending.audio);
+        } catch (_) {
+          // Account cleanup retries deletion before another user can enter.
+        }
+      }
+    }
+    if (_isOperationCurrent(fence)) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _stopSpeechFeedbackRetryRecording({
+    required PracticeSpeechFeedbackRetryClient practice,
+    required _SpeechFeedbackRetryContext context,
+    required _AgentOperationFence fence,
+  }) async {
+    final request = context.request;
+    final answerPath = request?.answerPath;
+    final retryTurnId = request?.newTurnId;
+    if (request == null || answerPath == null || retryTurnId == null) {
+      _restoreSpeechFeedbackRetryState(context);
+      _errorMessage = '同题复练草稿已失效，请重新发起。';
+      notifyListeners();
+      return;
+    }
+    RecordedPracticeAudio? audio;
+    _recordingState = PracticeRecordingState.transcribing;
+    notifyListeners();
+    try {
+      audio = await recorder.stop();
+      if (!_isOperationCurrent(fence) ||
+          !identical(_speechFeedbackRetry, context)) {
+        return;
+      }
+      final candidate = await practice.transcribeRetry(
+        answerPath: answerPath,
+        idempotencyKey: context.transcriptionIdempotencyKey ??= _newClientId(
+          'feedback-retry-audio',
+        ),
+        audio: audio,
+      );
+      if (!_isOperationCurrent(fence) ||
+          !identical(_speechFeedbackRetry, context)) {
+        return;
+      }
+      _validateSpeechFeedbackRetryCandidate(
+        candidate,
+        request: request,
+        retryTurnId: retryTurnId,
+      );
+      _speechFeedbackRetryCandidate = candidate;
+      _activeConfirmationId = null;
+      _recordingState = PracticeRecordingState.awaitingConfirmation;
+      _errorMessage = null;
+    } catch (error) {
+      if (_isOperationCurrent(fence) &&
+          identical(_speechFeedbackRetry, context)) {
+        _restoreSpeechFeedbackRetryState(context);
+        _errorMessage = _transcriptionFailureMessage(error);
+      }
+    } finally {
+      if (audio != null) {
+        try {
+          await recorder.discard(audio);
         } catch (_) {
           // Account cleanup retries deletion before another user can enter.
         }
@@ -2126,15 +2395,38 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _practiceGeneration++;
+    final speechFeedbackRetry = _speechFeedbackRetry;
     _candidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
-    _recordingState = PracticeRecordingState.idle;
-    _errorMessage = null;
+    if (speechFeedbackRetry != null) {
+      _restoreSpeechFeedbackRetryState(speechFeedbackRetry);
+    } else {
+      _recordingState = PracticeRecordingState.idle;
+      _errorMessage = null;
+    }
     notifyListeners();
   }
 
   Future<void> confirmTranscript() async {
+    final speechFeedbackRetry = _speechFeedbackRetry;
+    final speechFeedbackRetryCandidate = _speechFeedbackRetryCandidate;
+    final PracticeSpeechFeedbackRetryClient? retryPractice =
+        switch (practiceClient) {
+          final PracticeSpeechFeedbackRetryClient client => client,
+          _ => null,
+        };
+    if (speechFeedbackRetry != null &&
+        speechFeedbackRetryCandidate != null &&
+        retryPractice != null &&
+        _recordingState == PracticeRecordingState.awaitingConfirmation) {
+      await _confirmSpeechFeedbackRetry(
+        practice: retryPractice,
+        context: speechFeedbackRetry,
+        candidate: speechFeedbackRetryCandidate,
+      );
+      return;
+    }
     final practice = practiceClient;
     final sessionId = _practiceSessionId;
     final question = _currentQuestion;
@@ -2177,6 +2469,65 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       if (_isOperationCurrent(fence)) {
         _recordingState = PracticeRecordingState.awaitingConfirmation;
         _errorMessage = _confirmationFailureMessage(error);
+      }
+    }
+    if (_isCurrent(fence.epoch)) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _confirmSpeechFeedbackRetry({
+    required PracticeSpeechFeedbackRetryClient practice,
+    required _SpeechFeedbackRetryContext context,
+    required RetryTranscriptionCandidate candidate,
+  }) async {
+    final request = context.request;
+    final retryTurnId = request?.newTurnId;
+    if (request == null || retryTurnId == null) {
+      _restoreSpeechFeedbackRetryState(context);
+      _errorMessage = '同题复练草稿已失效，请重新发起。';
+      notifyListeners();
+      return;
+    }
+    final fence = _captureOperationFence(
+      threadId: _threadId,
+      practiceGeneration: _practiceGeneration,
+      practiceSessionId: request.sessionId,
+    );
+    _recordingState = PracticeRecordingState.submitting;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await stopPracticeAudio();
+      if (!_isOperationCurrent(fence) ||
+          !identical(_speechFeedbackRetry, context) ||
+          !identical(_speechFeedbackRetryCandidate, candidate)) {
+        return;
+      }
+      final confirmation = await practice.confirmRetry(
+        retryTurnId: retryTurnId,
+        candidateId: candidate.id,
+        idempotencyKey: _activeConfirmationId ??= _newClientId(
+          'feedback-retry-confirm',
+        ),
+      );
+      if (!_isOperationCurrent(fence) ||
+          !identical(_speechFeedbackRetry, context) ||
+          !identical(_speechFeedbackRetryCandidate, candidate)) {
+        return;
+      }
+      _validateSpeechFeedbackRetryConfirmation(
+        confirmation,
+        request: request,
+        candidate: candidate,
+      );
+      _restoreSpeechFeedbackRetryState(context);
+      _speechFeedbackRetryCompletionCount++;
+    } catch (error) {
+      if (_isOperationCurrent(fence) &&
+          identical(_speechFeedbackRetry, context)) {
+        _recordingState = PracticeRecordingState.awaitingConfirmation;
+        _errorMessage = _speechFeedbackRetryConfirmationFailureMessage(error);
       }
     }
     if (_isCurrent(fence.epoch)) {
@@ -2381,6 +2732,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _candidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
+    _speechFeedbackRetry = null;
+    _speechFeedbackRetryCandidate = null;
+    _speechFeedbackRetryCompletionCount = 0;
     _activeMatter = null;
     _messages = const <AgentMessage>[];
     _practiceMessages = const <AgentMessage>[];
@@ -2457,6 +2811,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _initializationFuture = null;
     _voiceController?.removeListener(_handleVoiceState);
     _voiceController?.dispose();
+    _speechFeedbackRetry = null;
+    _speechFeedbackRetryCandidate = null;
     unawaited(
       Future<void>.sync(() async {
         await _recorderStartFuture;
@@ -2554,6 +2910,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _candidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
+    _speechFeedbackRetry = null;
+    _speechFeedbackRetryCandidate = null;
     _playingMediaKey = null;
     _loadingMediaKey = null;
     _deletingAudioAssetId = null;
@@ -2599,18 +2957,38 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final currentTurn = snapshot.currentTurn;
     final audioAssetId = currentTurn?.audioAssetId;
     if (!mayPreserveKnownRecordings) {
-      _recordings = audioAssetId == null
-          ? const <PracticeRecordingReference>[]
-          : <PracticeRecordingReference>[
-              PracticeRecordingReference(
-                audioAssetId: audioAssetId,
-                effectiveTurn: currentTurn!.effectiveTurns,
-              ),
-            ];
+      _recordings = <PracticeRecordingReference>[
+        for (final exchange in snapshot.turnHistory)
+          if (exchange.turn.audioAssetId case final assetId?)
+            PracticeRecordingReference(
+              audioAssetId: assetId,
+              effectiveTurn: exchange.turn.effectiveTurns,
+            ),
+        if (snapshot.turnHistory.isEmpty && audioAssetId != null)
+          PracticeRecordingReference(
+            audioAssetId: audioAssetId,
+            effectiveTurn: currentTurn!.effectiveTurns,
+          ),
+      ];
     }
     final currentQuestion = snapshot.currentQuestion?.presentation;
     _appendMessages([?currentQuestion]);
-    _appendPracticeMessages([?currentQuestion]);
+    if (snapshot.turnHistory.isNotEmpty) {
+      _practiceMessages = <AgentMessage>[
+        for (final exchange in snapshot.turnHistory) ...[
+          exchange.question.presentation,
+          AgentMessage(
+            id: exchange.turn.id,
+            role: AgentMessageRole.user,
+            text: exchange.turn.answerText,
+            speechFeedbackStatusUrl: exchange.turn.speechFeedbackStatusUrl,
+          ),
+        ],
+        ?currentQuestion,
+      ];
+    } else {
+      _appendPracticeMessages([?currentQuestion]);
+    }
     final usesAsynchronousReport = isIeltsSpeakingFullMockScenario(
       snapshot.scenarioType,
       snapshot.scenarioModel,
@@ -2852,6 +3230,52 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     return '这一轮没有提交成功，请重试。';
   }
 
+  String _speechFeedbackRetryFailureMessage(Object error) {
+    if (error case _SpeechFeedbackRetryCreationException(:final failure)) {
+      if (failure?.reason ==
+          PracticeRetryFailureReason.sourceNoLongerAvailable) {
+        return '原题已经不可复练，请选择其他反馈继续练习。';
+      }
+      return '同题复练暂时无法准备，请重试。';
+    }
+    if (error is AgentClientException) {
+      if (error.kind == AgentClientFailureKind.authenticationRequired) {
+        return '登录状态已失效，请重新登录。';
+      }
+      if (error.kind == AgentClientFailureKind.notFound) {
+        return '这条反馈或原题已不可用。';
+      }
+      if (error.kind == AgentClientFailureKind.conflict) {
+        return '原题当前无法复练，请刷新后重试。';
+      }
+      if (error.kind == AgentClientFailureKind.network) {
+        return '网络连接不稳定，未能准备同题复练。';
+      }
+      if (error.kind == AgentClientFailureKind.rateLimited) {
+        return '同题复练请求过于频繁，请稍后重试。';
+      }
+    }
+    return '同题复练暂时无法准备，请重试。';
+  }
+
+  String _speechFeedbackRetryConfirmationFailureMessage(Object error) {
+    if (error is AgentClientException) {
+      if (error.kind == AgentClientFailureKind.authenticationRequired) {
+        return '登录状态已失效，请重新登录。';
+      }
+      if (error.kind == AgentClientFailureKind.conflict && !error.retryable) {
+        return '这次复练录音已失效，请重新发起。';
+      }
+      if (error.kind == AgentClientFailureKind.network) {
+        return '网络连接不稳定，复练尚未提交，请重试。';
+      }
+      if (error.kind == AgentClientFailureKind.rateLimited) {
+        return '提交过于频繁，请稍后重试；转写内容已保留。';
+      }
+    }
+    return '同题复练没有提交成功，请重试。';
+  }
+
   String _reviewFailureMessage(Object error) {
     if (error is AgentClientException) {
       if (_isFreeQuotaExhausted(error)) {
@@ -3053,6 +3477,100 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void _validateSpeechFeedbackRetryRequest(
+    PracticeRetryRequest request, {
+    required _SpeechFeedbackRetryContext context,
+    required String sessionId,
+  }) {
+    context.retryRequestId ??= request.retryRequestId;
+    final expectedStatusUrl = '/v1/retry-requests/${request.retryRequestId}';
+    final expectedAnswerPath = request.newTurnId == null
+        ? null
+        : '/v1/retry-turns/${request.newTurnId}/transcription-candidates';
+    final validStatusShape = switch (request.retryStatus) {
+      PracticeRetryRequestStatus.pending =>
+        request.newTurnId == null &&
+            request.answerPath == null &&
+            request.stableFailure == null &&
+            request.completedAt == null,
+      PracticeRetryRequestStatus.turnCreated =>
+        request.newTurnId != null &&
+            request.answerPath == expectedAnswerPath &&
+            request.stableFailure == null &&
+            request.completedAt != null,
+      PracticeRetryRequestStatus.failed =>
+        request.newTurnId == null &&
+            request.answerPath == null &&
+            request.stableFailure != null &&
+            request.completedAt != null,
+    };
+    if (request.retryRequestId.trim().isEmpty ||
+        request.retryRequestId != context.retryRequestId ||
+        request.feedbackItemId != context.feedbackItemId ||
+        request.sessionId != sessionId ||
+        request.originalTurnId != context.originalTurnId ||
+        request.questionId.trim().isEmpty ||
+        request.statusUrl != expectedStatusUrl ||
+        request.updatedAt.isBefore(request.createdAt) ||
+        (request.completedAt != null &&
+            request.completedAt!.isBefore(request.createdAt)) ||
+        !validStatusShape) {
+      throw StateError('Invalid same-question retry request.');
+    }
+  }
+
+  void _validateSpeechFeedbackRetryCandidate(
+    RetryTranscriptionCandidate candidate, {
+    required PracticeRetryRequest request,
+    required String retryTurnId,
+  }) {
+    if (candidate.id.trim().isEmpty ||
+        candidate.retryTurnId != retryTurnId ||
+        candidate.retryRequestId != request.retryRequestId ||
+        candidate.sessionId != request.sessionId ||
+        candidate.questionId != request.questionId ||
+        candidate.respondentParticipantId.trim().isEmpty ||
+        candidate.transcriptId.trim().isEmpty ||
+        candidate.evidenceVersion < 1 ||
+        candidate.text.trim().isEmpty) {
+      throw StateError('Invalid retry transcription candidate.');
+    }
+  }
+
+  void _validateSpeechFeedbackRetryConfirmation(
+    ConfirmedRetryTurn confirmation, {
+    required PracticeRetryRequest request,
+    required RetryTranscriptionCandidate candidate,
+  }) {
+    if (confirmation.turnId != request.newTurnId ||
+        confirmation.retryRequestId != request.retryRequestId ||
+        confirmation.originalTurnId != request.originalTurnId ||
+        confirmation.sessionId != request.sessionId ||
+        confirmation.questionId != request.questionId ||
+        confirmation.respondentParticipantId !=
+            candidate.respondentParticipantId ||
+        confirmation.candidateId != candidate.id ||
+        confirmation.answerText != candidate.text ||
+        confirmation.evidenceVersion != candidate.evidenceVersion ||
+        confirmation.countsTowardTurnLimit ||
+        confirmation.confirmedAt.isBefore(confirmation.createdAt)) {
+      throw StateError('Invalid retry Turn confirmation.');
+    }
+  }
+
+  void _restoreSpeechFeedbackRetryState(_SpeechFeedbackRetryContext context) {
+    if (!identical(_speechFeedbackRetry, context)) {
+      return;
+    }
+    _recordingState = context.returnState;
+    _errorMessage = context.returnErrorMessage;
+    _speechFeedbackRetry = null;
+    _speechFeedbackRetryCandidate = null;
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+  }
+
   void _validateConfirmation(
     PracticeTurnConfirmation confirmation,
     TranscriptionCandidate candidate,
@@ -3171,6 +3689,31 @@ final class _TextRetry extends _AgentRetry {
 
   final String text;
   final String clientMessageId;
+}
+
+final class _SpeechFeedbackRetryContext {
+  _SpeechFeedbackRetryContext({
+    required this.feedbackItemId,
+    required this.originalTurnId,
+    required this.returnState,
+    required this.returnErrorMessage,
+    required this.requestIdempotencyKey,
+  });
+
+  final String feedbackItemId;
+  final String originalTurnId;
+  final PracticeRecordingState returnState;
+  final String? returnErrorMessage;
+  final String requestIdempotencyKey;
+  PracticeRetryRequest? request;
+  String? retryRequestId;
+  String? transcriptionIdempotencyKey;
+}
+
+final class _SpeechFeedbackRetryCreationException implements Exception {
+  const _SpeechFeedbackRetryCreationException(this.failure);
+
+  final PracticeRetryFailure? failure;
 }
 
 final Random _clientIdRandom = Random.secure();

@@ -23,12 +23,6 @@
       "$ref": "#/$defs/AnswerProcessingFailedEvent"
     },
     {
-      "$ref": "#/$defs/TurnAnalysisCompletedEvent"
-    },
-    {
-      "$ref": "#/$defs/TurnAnalysisFailedEvent"
-    },
-    {
       "$ref": "#/$defs/PracticeSessionStartedEvent"
     },
     {
@@ -175,48 +169,6 @@
             },
             "payload": {
               "$ref": "#/$defs/AnswerProcessingFailurePayload"
-            }
-          }
-        }
-      ]
-    },
-    "TurnAnalysisCompletedEvent": {
-      "allOf": [
-        {
-          "$ref": "../common/event-envelope.schema.json"
-        },
-        {
-          "type": "object",
-          "properties": {
-            "event_type": {
-              "const": "turn_analysis.completed"
-            },
-            "replayable": {
-              "const": true
-            },
-            "payload": {
-              "$ref": "#/$defs/TurnAnalysisCompletedPayload"
-            }
-          }
-        }
-      ]
-    },
-    "TurnAnalysisFailedEvent": {
-      "allOf": [
-        {
-          "$ref": "../common/event-envelope.schema.json"
-        },
-        {
-          "type": "object",
-          "properties": {
-            "event_type": {
-              "const": "turn_analysis.failed"
-            },
-            "replayable": {
-              "const": true
-            },
-            "payload": {
-              "$ref": "#/$defs/TurnAnalysisFailedPayload"
             }
           }
         }
@@ -600,56 +552,6 @@
         },
         "retryable": {
           "type": "boolean"
-        }
-      }
-    },
-    "TurnAnalysisCompletedPayload": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "turn_analysis_id",
-        "turn_id",
-        "score",
-        "summary"
-      ],
-      "properties": {
-        "turn_analysis_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "turn_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "score": {
-          "type": "number"
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "TurnAnalysisFailedPayload": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "turn_analysis_id",
-        "turn_id",
-        "failure_reason"
-      ],
-      "properties": {
-        "turn_analysis_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "turn_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "failure_reason": {
-          "type": "string",
-          "minLength": 1
         }
       }
     },

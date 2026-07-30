@@ -44,23 +44,35 @@ const (
 
 type CorrelationIDGenerator func() string
 
+type SpeechFeedbackProjectionReader interface {
+	StatusURLForAgentVoiceMessage(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (string, bool, error)
+}
+
 type VoiceHTTPOptions struct {
 	AudioReadTimeout       time.Duration
 	ReviewHistoryCursorKey []byte
 	AgentMessages          VoiceMessageApplication
+	SpeechFeedback         SpeechFeedbackProjectionReader
+	SameQuestionRetry      *SameQuestionRetryApplication
 }
 
 type HTTPHandler struct {
-	application      Application
-	runs             RunApplication
-	voice            *VoiceSessionApplication
-	agentMessages    VoiceMessageApplication
-	audioAssets      conversation.AudioAssetHTTPService
-	matters          matter.Application
-	authenticator    identity.Authenticator
-	correlationID    CorrelationIDGenerator
-	voiceReadTimeout time.Duration
-	reviewCursorKey  []byte
+	application       Application
+	runs              RunApplication
+	voice             *VoiceSessionApplication
+	agentMessages     VoiceMessageApplication
+	audioAssets       conversation.AudioAssetHTTPService
+	matters           matter.Application
+	authenticator     identity.Authenticator
+	correlationID     CorrelationIDGenerator
+	voiceReadTimeout  time.Duration
+	reviewCursorKey   []byte
+	speechFeedback    SpeechFeedbackProjectionReader
+	sameQuestionRetry *SameQuestionRetryApplication
 }
 
 func NewHTTPHandler(
@@ -146,6 +158,8 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 		}
 	}
 	var reviewCursorKey []byte
+	var speechFeedback SpeechFeedbackProjectionReader
+	var sameQuestionRetry *SameQuestionRetryApplication
 	if voice != nil {
 		if len(voiceOptions) != 1 ||
 			len(voiceOptions[0].ReviewHistoryCursorKey) <
@@ -168,18 +182,27 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 			}
 			agentMessages = voiceOptions[0].AgentMessages
 		}
+		speechFeedback = voiceOptions[0].SpeechFeedback
+		sameQuestionRetry = voiceOptions[0].SameQuestionRetry
+		if sameQuestionRetry != nil && voice == nil {
+			return nil, errors.New(
+				"agent: retry voice session application is required",
+			)
+		}
 	}
 	return &HTTPHandler{
-		application:      application,
-		runs:             runs,
-		voice:            voice,
-		agentMessages:    agentMessages,
-		audioAssets:      audioAssets,
-		matters:          matters,
-		authenticator:    authenticator,
-		correlationID:    correlationID,
-		voiceReadTimeout: voiceReadTimeout,
-		reviewCursorKey:  reviewCursorKey,
+		application:       application,
+		runs:              runs,
+		voice:             voice,
+		agentMessages:     agentMessages,
+		audioAssets:       audioAssets,
+		matters:           matters,
+		authenticator:     authenticator,
+		correlationID:     correlationID,
+		voiceReadTimeout:  voiceReadTimeout,
+		reviewCursorKey:   reviewCursorKey,
+		speechFeedback:    speechFeedback,
+		sameQuestionRetry: sameQuestionRetry,
 	}, nil
 }
 
@@ -258,6 +281,16 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 		)
 		protected.GET("/v1/formal-reviews", h.listFormalReviews)
 		protected.GET("/v1/formal-reviews/:review_id", h.getFormalReview)
+	}
+	if h.sameQuestionRetry != nil {
+		protected.POST(
+			"/v1/retry-turns/:retry_turn_id/transcription-candidates",
+			h.transcribeRetryVoiceCandidate,
+		)
+		protected.POST(
+			"/v1/retry-turns/:retry_turn_id/transcription-candidates/:candidate_id/confirmations",
+			h.confirmRetryVoiceCandidate,
+		)
 	}
 	if h.agentMessages != nil {
 		protected.POST(
@@ -1787,6 +1820,16 @@ func voiceSessionStateResponse(state VoiceSessionState) gin.H {
 	if state.Turn != nil {
 		result["current_turn"] = confirmedVoiceTurnResponse(*state.Turn)
 	}
+	if len(state.TurnHistory) > 0 {
+		history := make([]gin.H, len(state.TurnHistory))
+		for index, exchange := range state.TurnHistory {
+			history[index] = gin.H{
+				"question": voiceQuestionResponse(exchange.Question),
+				"turn":     confirmedVoiceTurnResponse(exchange.Turn),
+			}
+		}
+		result["turn_history"] = history
+	}
 	if state.Review != nil {
 		result["review"] = formalReviewResponse(*state.Review)
 	}
@@ -1836,6 +1879,10 @@ func confirmedVoiceTurnResponse(turn conversation.ConfirmedVoiceTurn) gin.H {
 	}
 	if turn.AudioAssetID != "" {
 		result["audio_asset_id"] = turn.AudioAssetID
+	}
+	if turn.SpeechFeedbackStatusURL != "" {
+		result["speech_feedback_status_url"] =
+			turn.SpeechFeedbackStatusURL
 	}
 	return result
 }
@@ -2064,6 +2111,10 @@ func messageResponse(message Message) gin.H {
 		result["modality"] = MessageModalityVoice
 		result["audio"] = agentMessageAudioResponse(*message.Audio)
 	}
+	if message.SpeechFeedbackStatusURL != "" {
+		result["speech_feedback_status_url"] =
+			message.SpeechFeedbackStatusURL
+	}
 	return result
 }
 
@@ -2072,6 +2123,23 @@ func (h *HTTPHandler) messageResponseWithActions(
 	actor requestcontext.Actor,
 	message Message,
 ) (gin.H, error) {
+	if h.speechFeedback != nil &&
+		message.SpeechFeedbackStatusURL == "" &&
+		message.Role == MessageRoleUser &&
+		message.Audio != nil {
+		statusURL, found, err :=
+			h.speechFeedback.StatusURLForAgentVoiceMessage(
+				ctx,
+				actor,
+				message.ID,
+			)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			message.SpeechFeedbackStatusURL = statusURL
+		}
+	}
 	response := messageResponse(message)
 	if h.runs == nil || message.Role != MessageRoleAssistant ||
 		message.ProducedByRunID == "" {

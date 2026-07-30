@@ -1620,6 +1620,12 @@ func newIntegrationRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 			t.Fatalf("apply Conversation migration %s: %v", migrationName, err)
 		}
 	}
+	if _, err := pool.Exec(
+		context.Background(),
+		conversationRetryIntegrationSchema,
+	); err != nil {
+		t.Fatalf("apply Conversation retry integration schema: %v", err)
+	}
 	for _, userID := range []string{testUserA, testUserB} {
 		if _, err := pool.Exec(
 			context.Background(),

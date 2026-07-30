@@ -127,6 +127,10 @@ paths:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1voice-practice-session
   /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/transcription-candidates:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1transcription-candidates
+  /v1/retry-turns/{retry_turn_id}/transcription-candidates:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates
+  /v1/retry-turns/{retry_turn_id}/transcription-candidates/{candidate_id}/confirmations:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates~1{candidate_id}~1confirmations
   /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/text-answers:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1text-answers
   /v1/transcription-candidates/{candidate_id}/confirmations:
@@ -201,16 +205,12 @@ paths:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1audio-assets~1{audio_asset_id}~1playback
   /v1/practice-sessions/{practice_session_id}/events:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1events
-  /v1/turns/{turn_id}/turn-analyses:
-    $ref: ./modules/review.yaml#/paths/~1v1~1turns~1{turn_id}~1turn-analyses
-  /v1/turn-analyses/{turn_analysis_id}/feedback-items:
-    $ref: ./modules/review.yaml#/paths/~1v1~1turn-analyses~1{turn_analysis_id}~1feedback-items
+  /v1/speech-feedback/{speech_feedback_id}:
+    $ref: ./modules/review.yaml#/paths/~1v1~1speech-feedback~1{speech_feedback_id}
   /v1/feedback-items/{feedback_item_id}/retry-requests:
     $ref: ./modules/review.yaml#/paths/~1v1~1feedback-items~1{feedback_item_id}~1retry-requests
   /v1/retry-requests/{retry_request_id}:
     $ref: ./modules/review.yaml#/paths/~1v1~1retry-requests~1{retry_request_id}
-  /v1/history-records:
-    $ref: ./modules/review.yaml#/paths/~1v1~1history-records
 components:
   securitySchemes:
     BearerSession:
@@ -326,16 +326,22 @@ components:
       $ref: ./modules/conversation.yaml#/components/schemas/CreateRetryTurnCommand
     CreateRetryTurnResult:
       $ref: ./modules/conversation.yaml#/components/schemas/CreateRetryTurnResult
+    RetryTranscriptionCandidate:
+      $ref: ./modules/conversation.yaml#/components/schemas/RetryTranscriptionCandidate
+    ConfirmedRetryTurn:
+      $ref: ./modules/conversation.yaml#/components/schemas/ConfirmedRetryTurn
     ConversationBootstrap:
       $ref: ./modules/conversation.yaml#/components/schemas/ConversationBootstrap
-    TurnAnalysis:
-      $ref: ./modules/review.yaml#/components/schemas/TurnAnalysis
+    SpeechFeedback:
+      $ref: ./modules/review.yaml#/components/schemas/SpeechFeedback
+    SpeechFeedbackSource:
+      $ref: ./modules/review.yaml#/components/schemas/SpeechFeedbackSource
+    SpeechFeedbackAnchor:
+      $ref: ./modules/review.yaml#/components/schemas/SpeechFeedbackAnchor
     FeedbackItem:
       $ref: ./modules/review.yaml#/components/schemas/FeedbackItem
     RetryRequest:
       $ref: ./modules/review.yaml#/components/schemas/RetryRequest
-    HistoryRecord:
-      $ref: ./modules/review.yaml#/components/schemas/HistoryRecord
     CreateEvaluationRequest:
       $ref: ./modules/evaluation.yaml#/components/schemas/CreateEvaluationRequest
     ReevaluateEvaluationRequest:
@@ -368,8 +374,6 @@ components:
         - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnProcessingEvent
         - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnCompletedEvent
         - $ref: ./websocket/conversation-events.schema.json#/$defs/AnswerProcessingFailedEvent
-        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnAnalysisCompletedEvent
-        - $ref: ./websocket/conversation-events.schema.json#/$defs/TurnAnalysisFailedEvent
         - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionStartedEvent
         - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionPausedEvent
         - $ref: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionResumedEvent
@@ -387,8 +391,6 @@ components:
           turn.processing: ./websocket/conversation-events.schema.json#/$defs/TurnProcessingEvent
           turn.completed: ./websocket/conversation-events.schema.json#/$defs/TurnCompletedEvent
           answer.processing_failed: ./websocket/conversation-events.schema.json#/$defs/AnswerProcessingFailedEvent
-          turn_analysis.completed: ./websocket/conversation-events.schema.json#/$defs/TurnAnalysisCompletedEvent
-          turn_analysis.failed: ./websocket/conversation-events.schema.json#/$defs/TurnAnalysisFailedEvent
           practice_session.started: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionStartedEvent
           practice_session.paused: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionPausedEvent
           practice_session.resumed: ./websocket/conversation-events.schema.json#/$defs/PracticeSessionResumedEvent
@@ -413,7 +415,9 @@ x-module-commands:
     description: |
       Review invokes this command after durably saving a pending RetryRequest.
       Conversation validates that the original Turn is completed, reuses its
-      Session, Question, sequence, and respondent, and creates an `answering`
-      Turn. Replaying the same ID and payload returns the same `new_turn_id`;
-      changing `original_turn_id` for that ID is a conflict. This is an internal
-      modular-monolith contract and is never called by Flutter.
+      Session, immutable Question, sequence, and respondent, and creates a real
+      `ANSWERING` retry Turn. The result includes the server-authoritative
+      `answer_path` for that draft. Replaying the same ID and payload returns
+      the same `new_turn_id`; changing `original_turn_id` for that ID is a
+      conflict. This is an internal modular-monolith contract and is never
+      called by Flutter.

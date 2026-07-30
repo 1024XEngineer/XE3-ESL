@@ -105,6 +105,7 @@ final class AgentMessage {
     this.isStreaming = false,
     this.hasFailed = false,
     this.actions = const <AgentMessageAction>[],
+    this.speechFeedbackStatusUrl,
   }) : assert(
          (modality == AgentMessageModality.voice && audio != null) ||
              (modality == AgentMessageModality.text && audio == null),
@@ -120,6 +121,7 @@ final class AgentMessage {
   final bool isStreaming;
   final bool hasFailed;
   final List<AgentMessageAction> actions;
+  final String? speechFeedbackStatusUrl;
 
   AgentMessage copyWith({
     String? id,
@@ -128,6 +130,8 @@ final class AgentMessage {
     bool clearAudio = false,
     bool? isStreaming,
     bool? hasFailed,
+    String? speechFeedbackStatusUrl,
+    bool clearSpeechFeedbackStatusUrl = false,
   }) {
     return AgentMessage(
       id: id ?? this.id,
@@ -140,6 +144,9 @@ final class AgentMessage {
       isStreaming: isStreaming ?? this.isStreaming,
       hasFailed: hasFailed ?? this.hasFailed,
       actions: actions,
+      speechFeedbackStatusUrl: clearSpeechFeedbackStatusUrl
+          ? null
+          : speechFeedbackStatusUrl ?? this.speechFeedbackStatusUrl,
     );
   }
 }
