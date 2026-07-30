@@ -161,6 +161,73 @@ void main() {
       expect(find.text('同题复练已提交，不影响场景进度。'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'shared feedback controller does not rebuild another route mid-frame',
+    (tester) async {
+      final feedback = _agentFeedback();
+      final client = _Client(feedback);
+      final controller = SpeechFeedbackController(
+        client: client,
+        pollInterval: Duration.zero,
+        maximumPollAttempts: 1,
+      );
+      addTearDown(controller.dispose);
+      final navigatorKey = GlobalKey<NavigatorState>();
+      late StateSetter updateConversation;
+      var messages = <AgentMessage>[];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigatorKey,
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              updateConversation = setState;
+              return ConversationPage(
+                threadId: 'thread_001',
+                messages: messages,
+                speechFeedbackController: controller,
+              );
+            },
+          ),
+        ),
+      );
+      navigatorKey.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => PracticePage(speechFeedbackController: controller),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      updateConversation(() {
+        messages = [
+          AgentMessage(
+            id: 'message_001',
+            role: AgentMessageRole.user,
+            text: 'I manage the release.',
+            modality: AgentMessageModality.voice,
+            audio: const AgentMessageAudio(
+              id: 'audio_001',
+              status: AgentMessageAudioStatus.readable,
+              contentType: 'audio/mp4',
+              sizeBytes: 1024,
+              duration: Duration(seconds: 2),
+              playbackPath: '/v1/agent-audio/audio_001/playback',
+            ),
+            speechFeedbackStatusUrl: feedback.statusUrl,
+          ),
+        ];
+      });
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(client.calls, 1);
+      expect(
+        controller.projections.values.single.feedback?.speechFeedbackId,
+        feedback.speechFeedbackId,
+      );
+    },
+  );
 }
 
 SpeechFeedback _agentFeedback() {

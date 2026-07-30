@@ -65,6 +65,7 @@ class _PracticePageState extends State<PracticePage>
   Timer? _recordingTicker;
   DateTime? _recordingStartedAt;
   int _recordingSeconds = 0;
+  bool _speechFeedbackRebuildScheduled = false;
 
   @override
   void initState() {
@@ -217,9 +218,16 @@ class _PracticePageState extends State<PracticePage>
   }
 
   void _handleSpeechFeedbackState() {
-    if (mounted) {
-      setState(() {});
+    if (_speechFeedbackRebuildScheduled) {
+      return;
     }
+    _speechFeedbackRebuildScheduled = true;
+    scheduleMicrotask(() {
+      _speechFeedbackRebuildScheduled = false;
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 
   @override

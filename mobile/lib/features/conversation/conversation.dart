@@ -322,6 +322,7 @@ class _ConversationPageState extends State<ConversationPage> {
   _ConversationScrollAnchor? _earlierMessagesAnchor;
   int _scrollRequestGeneration = 0;
   bool _showJumpToLatest = false;
+  bool _feedbackRebuildScheduled = false;
 
   @override
   void initState() {
@@ -449,9 +450,16 @@ class _ConversationPageState extends State<ConversationPage> {
   }
 
   void _handleFeedbackState() {
-    if (mounted) {
-      setState(() {});
+    if (_feedbackRebuildScheduled) {
+      return;
     }
+    _feedbackRebuildScheduled = true;
+    scheduleMicrotask(() {
+      _feedbackRebuildScheduled = false;
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 
   void _handleLoadEarlierMessages() {
