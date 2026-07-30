@@ -6,6 +6,8 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/practice/immersive_roleplay.dart';
+import 'package:speakup/practice/practice_client.dart';
+import 'package:speakup/practice/practice_models.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -161,10 +163,104 @@ void main() {
     expect(controller.recordingState, PracticeRecordingState.recording);
     await hold.up();
     await tester.pumpAndSettle();
-    expect(
-      controller.recordingState,
-      PracticeRecordingState.awaitingConfirmation,
+    expect(controller.recordingState, PracticeRecordingState.idle);
+    expect(controller.completedTurns, 2);
+  });
+
+  testWidgets('supports send, left cancel, and right editable text release', (
+    tester,
+  ) async {
+    final controller = await _roleplayController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: ImmersiveRoleplayPage(agentController: controller)),
     );
+
+    final send = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('immersive-record'))),
+    );
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(find.byKey(const Key('immersive-voice-targets')), findsOneWidget);
+    await send.up();
+    await tester.pumpAndSettle();
+    expect(controller.completedTurns, 1);
+    expect(controller.recordingState, PracticeRecordingState.idle);
+
+    final userTurnsAfterSend = controller.messages
+        .where((message) => message.role == AgentMessageRole.user)
+        .length;
+    final cancel = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('immersive-record'))),
+    );
+    await tester.pump(const Duration(milliseconds: 220));
+    await cancel.moveBy(const Offset(-80, 0));
+    await tester.pump();
+    expect(find.text('松开取消'), findsWidgets);
+    await cancel.up();
+    await tester.pumpAndSettle();
+    expect(controller.completedTurns, 1);
+    expect(
+      controller.messages
+          .where((message) => message.role == AgentMessageRole.user)
+          .length,
+      userTurnsAfterSend,
+    );
+
+    final convert = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('immersive-record'))),
+    );
+    await tester.pump(const Duration(milliseconds: 220));
+    await convert.moveBy(const Offset(80, 0));
+    await tester.pump();
+    expect(find.text('松开转成文字'), findsWidgets);
+    await convert.up();
+    await tester.pumpAndSettle();
+
+    final textField = tester.widget<TextField>(
+      find.byKey(const Key('immersive-text-answer')),
+    );
+    expect(
+      textField.controller?.text,
+      'The main trade-off was delivery speed versus reliability, so I reduced the scope first.',
+    );
+    expect(controller.completedTurns, 1);
+    expect(controller.recordingState, PracticeRecordingState.idle);
+  });
+
+  testWidgets('keeps failed transcription audio for retry or deletion', (
+    tester,
+  ) async {
+    final practiceClient = _FailOncePracticeClient();
+    final controller = await _roleplayController(
+      practiceClient: practiceClient,
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: ImmersiveRoleplayPage(agentController: controller)),
+    );
+
+    final send = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('immersive-record'))),
+    );
+    await tester.pump(const Duration(milliseconds: 220));
+    await send.up();
+    await tester.pumpAndSettle();
+
+    expect(controller.hasPendingPracticeAudio, isTrue);
+    expect(find.byKey(const Key('immersive-pending-audio')), findsOneWidget);
+    expect(
+      find.byKey(const Key('immersive-retry-transcription')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('immersive-delete-pending-audio')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('immersive-delete-pending-audio')));
+    await tester.pumpAndSettle();
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    expect(find.byKey(const Key('immersive-record')), findsOneWidget);
   });
 
   testWidgets('prefers the injected avatar replay action over audio playback', (
@@ -251,8 +347,13 @@ void main() {
   });
 }
 
-Future<AgentController> _roleplayController() async {
-  final controller = AgentController(client: FakeAgentClient());
+Future<AgentController> _roleplayController({
+  PracticeClient? practiceClient,
+}) async {
+  final controller = AgentController(
+    client: FakeAgentClient(),
+    practiceClient: practiceClient,
+  );
   await controller.initialize();
   await controller.selectScene(
     const AgentScene(
@@ -264,4 +365,70 @@ Future<AgentController> _roleplayController() async {
     ),
   );
   return controller;
+}
+
+final class _FailOncePracticeClient implements PracticeClient {
+  final _delegate = FakePracticeClient();
+  bool _shouldFail = true;
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
+
+  @override
+  Future<PracticeSessionSnapshot?> restorePractice({
+    required String threadId,
+    AgentMatter? activeMatter,
+  }) =>
+      _delegate.restorePractice(threadId: threadId, activeMatter: activeMatter);
+
+  @override
+  Future<PracticeStartResult> startPractice({
+    required String threadId,
+    required AgentMatter activeMatter,
+    required String clientOperationId,
+  }) => _delegate.startPractice(
+    threadId: threadId,
+    activeMatter: activeMatter,
+    clientOperationId: clientOperationId,
+  );
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) {
+    if (_shouldFail) {
+      _shouldFail = false;
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    }
+    return _delegate.transcribe(request);
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) => _delegate.confirm(
+    sessionId: sessionId,
+    questionId: questionId,
+    candidateId: candidateId,
+    idempotencyKey: idempotencyKey,
+  );
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) => _delegate.submitText(
+    sessionId: sessionId,
+    questionId: questionId,
+    answerText: answerText,
+    idempotencyKey: idempotencyKey,
+  );
 }

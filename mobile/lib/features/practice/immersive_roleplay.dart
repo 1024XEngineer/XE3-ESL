@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/design/voice_capture_control.dart';
 
 /// A vendor-neutral surface used by the immersive roleplay shell.
 ///
@@ -733,213 +733,101 @@ class _ImmersiveComposer extends StatefulWidget {
 }
 
 class _ImmersiveComposerState extends State<_ImmersiveComposer> {
-  static const _holdDelay = Duration(milliseconds: 180);
-  static const _cancelDistance = 72.0;
-
-  Timer? _holdTimer;
-  Offset? _pointerOrigin;
-  bool _pointerActive = false;
-  bool _holdRecordingStarted = false;
-  bool _cancelArmed = false;
-  bool _tapRecordingActive = false;
-  bool _recordingStartInFlight = false;
-  int _recordingStartGeneration = 0;
-
-  @override
-  void dispose() {
-    _holdTimer?.cancel();
-    super.dispose();
+  Future<void> _sendVoice() async {
+    await widget.controller.finishRecordingGesture();
+    if (!mounted ||
+        widget.controller.recordingState !=
+            PracticeRecordingState.awaitingConfirmation) {
+      return;
+    }
+    await widget.controller.confirmTranscript();
   }
 
-  void _pointerDown(PointerDownEvent event) {
-    if (_pointerActive ||
-        _recordingStartInFlight ||
-        widget.textMode ||
-        widget.controller.recordingState != PracticeRecordingState.idle) {
+  Future<void> _convertToText() async {
+    await widget.controller.finishRecordingGesture();
+    if (!mounted ||
+        widget.controller.recordingState !=
+            PracticeRecordingState.awaitingConfirmation) {
       return;
     }
-    _holdTimer?.cancel();
-    setState(() {
-      _pointerActive = true;
-      _holdRecordingStarted = false;
-      _cancelArmed = false;
-      _pointerOrigin = event.position;
-    });
-    _holdTimer = Timer(_holdDelay, () {
-      if (!mounted || !_pointerActive) {
-        return;
-      }
-      setState(() => _holdRecordingStarted = true);
-      unawaited(HapticFeedback.mediumImpact());
-      unawaited(_beginRecording(tapMode: false));
-    });
-  }
-
-  void _pointerMove(PointerMoveEvent event) {
-    final origin = _pointerOrigin;
-    if (!_pointerActive || origin == null) {
-      return;
-    }
-    final cancelArmed = event.position.dy <= origin.dy - _cancelDistance;
-    if (cancelArmed == _cancelArmed) {
-      return;
-    }
-    setState(() => _cancelArmed = cancelArmed);
-    unawaited(HapticFeedback.selectionClick());
-  }
-
-  void _pointerUp(PointerUpEvent event) => _finishPointer(cancel: _cancelArmed);
-
-  void _pointerCancel(PointerCancelEvent event) => _finishPointer(cancel: true);
-
-  void _finishPointer({required bool cancel}) {
-    if (!_pointerActive) {
-      return;
-    }
-    _holdTimer?.cancel();
-    final started = _holdRecordingStarted;
-    if (started) {
-      _recordingStartGeneration++;
-      _recordingStartInFlight = false;
-    }
-    setState(() {
-      _pointerActive = false;
-      _holdRecordingStarted = false;
-      _cancelArmed = false;
-      _pointerOrigin = null;
-    });
-    if (!started) {
-      if (!cancel) {
-        _startTapRecording();
-      }
-      return;
-    }
-    unawaited(
-      cancel
-          ? widget.controller.cancelRecording()
-          : widget.controller.finishRecordingGesture(),
+    final transcript = widget.controller.transcript?.trim() ?? '';
+    widget.controller.rerecord();
+    widget.textController.value = TextEditingValue(
+      text: transcript,
+      selection: TextSelection.collapsed(offset: transcript.length),
     );
-  }
-
-  void _startTapRecording() {
-    if (widget.textMode ||
-        _recordingStartInFlight ||
-        widget.controller.recordingState != PracticeRecordingState.idle) {
-      return;
+    if (!widget.textMode) {
+      widget.onToggleTextMode();
     }
-    setState(() => _tapRecordingActive = true);
-    unawaited(HapticFeedback.mediumImpact());
-    unawaited(_beginRecording(tapMode: true));
-  }
-
-  Future<void> _beginRecording({required bool tapMode}) async {
-    final generation = ++_recordingStartGeneration;
-    setState(() => _recordingStartInFlight = true);
-    try {
-      try {
-        await widget.onBeforeStartRecording?.call();
-      } on Object {
-        // Avatar interruption is best-effort; microphone access must remain
-        // available when the visual provider is degraded.
-      }
-      final intentStillActive = tapMode ? _tapRecordingActive : _pointerActive;
-      if (!mounted ||
-          generation != _recordingStartGeneration ||
-          !intentStillActive ||
-          widget.controller.recordingState != PracticeRecordingState.idle) {
-        return;
-      }
-      await widget.controller.startRecording();
-    } finally {
-      if (mounted && generation == _recordingStartGeneration) {
-        setState(() => _recordingStartInFlight = false);
-      }
-    }
-  }
-
-  void _finishTapRecording() {
-    final state = widget.controller.recordingState;
-    if (state != PracticeRecordingState.starting &&
-        state != PracticeRecordingState.recording) {
-      return;
-    }
-    setState(() => _tapRecordingActive = false);
-    _recordingStartGeneration++;
-    _recordingStartInFlight = false;
-    unawaited(widget.controller.finishRecordingGesture());
-  }
-
-  void _cancelTapRecording() {
-    final state = widget.controller.recordingState;
-    if (state != PracticeRecordingState.starting &&
-        state != PracticeRecordingState.recording) {
-      return;
-    }
-    setState(() => _tapRecordingActive = false);
-    _recordingStartGeneration++;
-    _recordingStartInFlight = false;
-    unawaited(widget.controller.cancelRecording());
   }
 
   @override
   Widget build(BuildContext context) {
     final state = widget.controller.recordingState;
-    final tapRecording =
-        _tapRecordingActive &&
-        (state == PracticeRecordingState.starting ||
+    final capturePhase = switch (state) {
+      PracticeRecordingState.idle => VoiceCapturePhase.idle,
+      PracticeRecordingState.starting => VoiceCapturePhase.starting,
+      PracticeRecordingState.recording => VoiceCapturePhase.recording,
+      _ => VoiceCapturePhase.busy,
+    };
+    final captureEnabled =
+        !widget.textMode &&
+        !widget.controller.hasPendingPracticeAudio &&
+        (state == PracticeRecordingState.idle ||
+            state == PracticeRecordingState.starting ||
             state == PracticeRecordingState.recording);
-    return Material(
-      color: SpeakUpDesign.surface,
-      shape: const Border(top: BorderSide(color: SpeakUpDesign.border)),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-          child: switch (state) {
-            PracticeRecordingState.idle => _IdleComposer(
-              textController: widget.textController,
-              textFocusNode: widget.textFocusNode,
-              textMode: widget.textMode,
-              pressed: _pointerActive,
-              onToggleTextMode: widget.onToggleTextMode,
-              onSubmitText: widget.onSubmitText,
-              onPointerDown: _pointerDown,
-              onPointerMove: _pointerMove,
-              onPointerUp: _pointerUp,
-              onPointerCancel: _pointerCancel,
-              onSemanticTap: _startTapRecording,
-            ),
-            PracticeRecordingState.starting ||
-            PracticeRecordingState.recording => _RecordingComposer(
-              preparing: state == PracticeRecordingState.starting,
-              tapMode: tapRecording,
-              cancelArmed: _cancelArmed,
-              seconds: widget.recordingSeconds,
-              onFinish: _finishTapRecording,
-              onCancel: _cancelTapRecording,
-              onPointerMove: _pointerMove,
-              onPointerUp: _pointerUp,
-              onPointerCancel: _pointerCancel,
-            ),
-            PracticeRecordingState.transcribing => const _ComposerProgress(
-              label: '正在识别你的回答…',
-            ),
-            PracticeRecordingState.awaitingConfirmation => _TranscriptComposer(
-              controller: widget.controller,
-            ),
-            PracticeRecordingState.submitting => const _ComposerProgress(
-              label: '正在发送并准备下一轮…',
-            ),
-            PracticeRecordingState.reviewFailed => _ComposerAction(
-              label: '本轮已完成，暂时无法保存结果。',
-              actionLabel: '重试',
-              onPressed: widget.controller.retryReview,
-            ),
-            PracticeRecordingState.completed => const _ComposerProgress(
-              label: '本轮对话已完成',
-              showProgress: false,
-            ),
-          },
+    return VoiceCaptureControl(
+      phase: capturePhase,
+      enabled: captureEnabled,
+      onBeforeStart: widget.onBeforeStartRecording,
+      onStart: widget.controller.startRecording,
+      onSendVoice: _sendVoice,
+      onConvertToText: _convertToText,
+      onCancel: widget.controller.cancelRecording,
+      builder: (context, capture) => Material(
+        color: SpeakUpDesign.surface,
+        shape: const Border(top: BorderSide(color: SpeakUpDesign.border)),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: switch (state) {
+              PracticeRecordingState.idle =>
+                widget.controller.hasPendingPracticeAudio
+                    ? _PendingImmersiveAudio(controller: widget.controller)
+                    : _IdleComposer(
+                        textController: widget.textController,
+                        textFocusNode: widget.textFocusNode,
+                        textMode: widget.textMode,
+                        onToggleTextMode: widget.onToggleTextMode,
+                        onSubmitText: widget.onSubmitText,
+                        capture: capture,
+                      ),
+              PracticeRecordingState.starting ||
+              PracticeRecordingState.recording => _RecordingComposer(
+                preparing: state == PracticeRecordingState.starting,
+                seconds: widget.recordingSeconds,
+                capture: capture,
+              ),
+              PracticeRecordingState.transcribing => const _ComposerProgress(
+                label: '正在识别你的回答…',
+              ),
+              PracticeRecordingState.awaitingConfirmation =>
+                _TranscriptComposer(controller: widget.controller),
+              PracticeRecordingState.submitting => const _ComposerProgress(
+                label: '正在发送并准备下一轮…',
+              ),
+              PracticeRecordingState.reviewFailed => _ComposerAction(
+                label: '本轮已完成，暂时无法保存结果。',
+                actionLabel: '重试',
+                onPressed: widget.controller.retryReview,
+              ),
+              PracticeRecordingState.completed => const _ComposerProgress(
+                label: '本轮对话已完成',
+                showProgress: false,
+              ),
+            },
+          ),
         ),
       ),
     );
@@ -951,27 +839,17 @@ class _IdleComposer extends StatelessWidget {
     required this.textController,
     required this.textFocusNode,
     required this.textMode,
-    required this.pressed,
     required this.onToggleTextMode,
     required this.onSubmitText,
-    required this.onPointerDown,
-    required this.onPointerMove,
-    required this.onPointerUp,
-    required this.onPointerCancel,
-    required this.onSemanticTap,
+    required this.capture,
   });
 
   final TextEditingController textController;
   final FocusNode textFocusNode;
   final bool textMode;
-  final bool pressed;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
-  final PointerDownEventListener onPointerDown;
-  final PointerMoveEventListener onPointerMove;
-  final PointerUpEventListener onPointerUp;
-  final PointerCancelEventListener onPointerCancel;
-  final VoidCallback onSemanticTap;
+  final VoiceCaptureView capture;
 
   @override
   Widget build(BuildContext context) {
@@ -1014,47 +892,38 @@ class _IdleComposer extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: Semantics(
-            button: true,
-            label: '点击或按住说话',
-            onTap: onSemanticTap,
-            child: Listener(
-              key: const Key('immersive-record'),
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: onPointerDown,
-              onPointerMove: onPointerMove,
-              onPointerUp: onPointerUp,
-              onPointerCancel: onPointerCancel,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 100),
-                height: 52,
-                decoration: BoxDecoration(
-                  color: pressed
-                      ? SpeakUpDesign.primary.withValues(alpha: 0.82)
-                      : SpeakUpDesign.primary,
-                  borderRadius: BorderRadius.circular(
-                    SpeakUpDesign.radiusControl,
-                  ),
+          child: capture.wrapTarget(
+            key: const Key('immersive-record'),
+            semanticsLabel: '点击或按住说话',
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 100),
+              height: 52,
+              decoration: BoxDecoration(
+                color: capture.pressed
+                    ? SpeakUpDesign.primary.withValues(alpha: 0.82)
+                    : SpeakUpDesign.primary,
+                borderRadius: BorderRadius.circular(
+                  SpeakUpDesign.radiusControl,
                 ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.mic_rounded, color: Colors.white),
-                    SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        '点击或按住说话',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.mic_rounded, color: Colors.white),
+                  SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      '点击或按住说话',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1075,95 +944,126 @@ class _IdleComposer extends StatelessWidget {
 class _RecordingComposer extends StatelessWidget {
   const _RecordingComposer({
     required this.preparing,
-    required this.tapMode,
-    required this.cancelArmed,
     required this.seconds,
-    required this.onFinish,
-    required this.onCancel,
-    required this.onPointerMove,
-    required this.onPointerUp,
-    required this.onPointerCancel,
+    required this.capture,
   });
 
   final bool preparing;
-  final bool tapMode;
-  final bool cancelArmed;
   final int seconds;
-  final VoidCallback onFinish;
-  final VoidCallback onCancel;
-  final PointerMoveEventListener onPointerMove;
-  final PointerUpEventListener onPointerUp;
-  final PointerCancelEventListener onPointerCancel;
+  final VoiceCaptureView capture;
 
   @override
   Widget build(BuildContext context) {
     final minutesText = (seconds ~/ 60).toString().padLeft(2, '0');
     final secondsText = (seconds % 60).toString().padLeft(2, '0');
-    final control = Container(
-      key: const Key('immersive-stop-recording'),
-      height: 58,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: cancelArmed
-            ? SpeakUpDesign.errorMuted
-            : SpeakUpDesign.primaryMuted,
-        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            cancelArmed ? Icons.delete_outline_rounded : Icons.mic_rounded,
-            color: cancelArmed ? SpeakUpDesign.error : SpeakUpDesign.primary,
+    final cancelArmed =
+        capture.releaseIntent == VoiceCaptureReleaseIntent.cancel;
+    final convertArmed =
+        capture.releaseIntent == VoiceCaptureReleaseIntent.convertToText;
+    final accent = cancelArmed ? SpeakUpDesign.error : SpeakUpDesign.primary;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        VoiceCaptureIntentTargets(
+          capture: capture,
+          elapsed: Duration(seconds: seconds),
+          keyPrefix: 'immersive',
+        ),
+        const SizedBox(height: 10),
+        capture.wrapTarget(
+          key: const Key('immersive-record'),
+          semanticsLabel: capture.tapMode ? '发送语音回答' : '录音中，左滑取消，右滑转文字，松开发送',
+          child: AnimatedContainer(
+            key: const Key('immersive-stop-recording'),
+            duration: const Duration(milliseconds: 120),
+            constraints: const BoxConstraints(minHeight: 58),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: cancelArmed
+                  ? SpeakUpDesign.errorMuted
+                  : SpeakUpDesign.primaryMuted,
+              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+              border: Border.all(color: accent),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  cancelArmed
+                      ? Icons.delete_outline_rounded
+                      : convertArmed
+                      ? Icons.text_fields_rounded
+                      : Icons.graphic_eq_rounded,
+                  color: accent,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    cancelArmed
+                        ? '松开取消'
+                        : convertArmed
+                        ? '松开转成文字'
+                        : preparing
+                        ? '正在打开麦克风…'
+                        : capture.tapMode
+                        ? '点击发送语音 · $minutesText:$secondsText'
+                        : '松开发送语音 · $minutesText:$secondsText',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: SpeakUpDesign.label.copyWith(color: accent),
+                  ),
+                ),
+                if (!cancelArmed && !convertArmed)
+                  Icon(
+                    capture.tapMode
+                        ? Icons.send_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: accent,
+                  ),
+              ],
+            ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              cancelArmed
-                  ? '松开取消'
-                  : preparing
-                  ? '正在打开麦克风…'
-                  : tapMode
-                  ? '再次点击结束 · $minutesText:$secondsText'
-                  : '松开发送 · $minutesText:$secondsText',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: SpeakUpDesign.label.copyWith(
-                color: cancelArmed
-                    ? SpeakUpDesign.error
-                    : SpeakUpDesign.primary,
+        ),
+      ],
+    );
+  }
+}
+
+class _PendingImmersiveAudio extends StatelessWidget {
+  const _PendingImmersiveAudio({required this.controller});
+
+  final AgentController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('immersive-pending-audio'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('这段录音已保留', style: SpeakUpDesign.cardTitle),
+        const SizedBox(height: 4),
+        const Text('刚才没有识别成功，可以重试转文字，或删除后重新录音。', style: SpeakUpDesign.body),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                key: const Key('immersive-delete-pending-audio'),
+                onPressed: controller.discardPendingPracticeAudio,
+                child: const Text('删除录音'),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-    if (tapMode) {
-      return Row(
-        children: [
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: onFinish,
-              child: control,
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                key: const Key('immersive-retry-transcription'),
+                onPressed: controller.retryPracticeTranscription,
+                child: const Text('重试转文字'),
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          IconButton.outlined(
-            key: const Key('immersive-cancel-tap-recording'),
-            tooltip: '取消录音',
-            onPressed: onCancel,
-            icon: const Icon(Icons.close_rounded),
-            style: IconButton.styleFrom(minimumSize: const Size.square(52)),
-          ),
-        ],
-      );
-    }
-    return Listener(
-      behavior: HitTestBehavior.opaque,
-      onPointerMove: onPointerMove,
-      onPointerUp: onPointerUp,
-      onPointerCancel: onPointerCancel,
-      child: control,
+          ],
+        ),
+      ],
     );
   }
 }
