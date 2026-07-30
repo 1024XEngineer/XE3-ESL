@@ -1,0 +1,22 @@
+PODS:
+  - avatar_kit (1.0.0-beta.44):
+    - Flutter
+  - Flutter (1.0.0)
+
+DEPENDENCIES:
+  - avatar_kit (from `.symlinks/plugins/avatar_kit/ios`)
+  - Flutter (from `Flutter`)
+
+EXTERNAL SOURCES:
+  avatar_kit:
+    :path: ".symlinks/plugins/avatar_kit/ios"
+  Flutter:
+    :path: Flutter
+
+SPEC CHECKSUMS:
+  avatar_kit: 78d33738d6a8bb5180c7a99a9c4aa7b22b4d1c23
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+
+PODFILE CHECKSUM: bd29822c3d5baf6b44b726f00ea3293a19339ef2
+
+COCOAPODS: 1.17.0

@@ -4,4 +4,7 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- Local API traffic is carried through adb reverse during development. -->
+    <application android:usesCleartextTraffic="true"/>
 </manifest>

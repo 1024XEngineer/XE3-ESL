@@ -139,6 +139,13 @@ func (r *ReviewResult) UnmarshalJSON(encoded []byte) error {
 	if legacyFormat && wire.OverallScore == nil {
 		return ErrInvalidReview
 	}
+	if !legacyFormat {
+		for _, conclusion := range wire.Conclusions {
+			if !conclusion.ScorePresent {
+				return ErrInvalidReview
+			}
+		}
+	}
 	*r = ReviewResult{
 		SummaryEligibility:          wire.SummaryEligibility,
 		Summary:                     wire.Summary,
@@ -164,11 +171,59 @@ const (
 )
 
 type ReviewConclusion struct {
-	Key        string `json:"key"`
-	Category   string `json:"category"`
-	Score      int    `json:"score,omitempty"`
-	Message    string `json:"message"`
-	Suggestion string `json:"suggestion,omitempty"`
+	Key          string `json:"key"`
+	Category     string `json:"category"`
+	Score        int    `json:"score,omitempty"`
+	ScorePresent bool   `json:"-"`
+	Message      string `json:"message"`
+	Suggestion   string `json:"suggestion,omitempty"`
+}
+
+func (c ReviewConclusion) MarshalJSON() ([]byte, error) {
+	type wireConclusion struct {
+		Key        string `json:"key"`
+		Category   string `json:"category"`
+		Score      *int   `json:"score,omitempty"`
+		Message    string `json:"message"`
+		Suggestion string `json:"suggestion,omitempty"`
+	}
+	var score *int
+	if c.ScorePresent || c.Score != 0 {
+		value := c.Score
+		score = &value
+	}
+	return json.Marshal(wireConclusion{
+		Key:        c.Key,
+		Category:   c.Category,
+		Score:      score,
+		Message:    c.Message,
+		Suggestion: c.Suggestion,
+	})
+}
+
+func (c *ReviewConclusion) UnmarshalJSON(encoded []byte) error {
+	type wireConclusion struct {
+		Key        string `json:"key"`
+		Category   string `json:"category"`
+		Score      *int   `json:"score"`
+		Message    string `json:"message"`
+		Suggestion string `json:"suggestion"`
+	}
+	var wire wireConclusion
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		return err
+	}
+	*c = ReviewConclusion{
+		Key:          wire.Key,
+		Category:     wire.Category,
+		ScorePresent: wire.Score != nil,
+		Message:      wire.Message,
+		Suggestion:   wire.Suggestion,
+	}
+	if wire.Score != nil {
+		c.Score = *wire.Score
+	}
+	return nil
 }
 
 type FeedbackKind string
@@ -742,7 +797,11 @@ func validateReviewResult(result ReviewResult) error {
 				maxReviewConclusionTextBytes,
 			) ||
 			conclusion.Score < 0 ||
-			conclusion.Score > 100 {
+			conclusion.Score > 100 ||
+			(!result.legacyFormat &&
+				result.SummaryEligibility != "" &&
+				conclusion.Score == 0 &&
+				!conclusion.ScorePresent) {
 			return ErrInvalidReview
 		}
 	}
@@ -855,9 +914,13 @@ func validatePolicyConclusions(
 	ordered := make([]ReviewConclusion, 0, len(policy.Dimensions))
 	for _, dimension := range policy.Dimensions {
 		conclusion, exists := byDimension[dimension.Key]
-		if !exists || conclusion.Score < 0 || conclusion.Score > 100 {
+		if !exists ||
+			conclusion.Score < 0 ||
+			conclusion.Score > 100 ||
+			(conclusion.Score == 0 && !conclusion.ScorePresent) {
 			return ErrInvalidReview
 		}
+		conclusion.ScorePresent = true
 		weighted += conclusion.Score * dimension.Weight
 		ordered = append(ordered, conclusion)
 	}

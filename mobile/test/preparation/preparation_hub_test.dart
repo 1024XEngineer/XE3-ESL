@@ -163,7 +163,7 @@ void main() {
 
     await _openModule(tester, const Key('practice-hub-roleplay'));
 
-    expect(find.text('AI 数字人陪练'), findsOneWidget);
+    expect(find.text('情景对话'), findsOneWidget);
     expect(find.text('进度与风险汇报'), findsOneWidget);
     expect(find.text('酒店入住与问题处理'), findsOneWidget);
     expect(find.byKey(const Key('roleplay-filter-workplace')), findsOneWidget);
@@ -191,7 +191,7 @@ void main() {
     for (final entryData in const [
       (key: Key('practice-hub-interview'), title: '英文面试'),
       (key: Key('practice-hub-exam'), title: 'IELTS 口语'),
-      (key: Key('practice-hub-roleplay'), title: 'AI 数字人陪练'),
+      (key: Key('practice-hub-roleplay'), title: '情景对话'),
     ]) {
       final entry = find.byKey(entryData.key);
       await tester.scrollUntilVisible(
@@ -355,7 +355,7 @@ void main() {
       for (final entryData in const [
         (key: Key('practice-hub-interview'), label: '英文面试。模拟面试与轮次专项练习'),
         (key: Key('practice-hub-exam'), label: 'IELTS 口语。Part 1、2、3 与完整模考'),
-        (key: Key('practice-hub-roleplay'), label: 'AI 数字人陪练。工作、旅行与日常真实对话'),
+        (key: Key('practice-hub-roleplay'), label: '情景对话。工作、旅行与日常英语实战'),
       ]) {
         final entry = find.byKey(entryData.key);
         await tester.scrollUntilVisible(

@@ -275,6 +275,25 @@ void main() {
     );
   });
 
+  test('rejects an unknown Plan response field', () async {
+    final response = _planJson()..['unexpected_field'] = true;
+    final client = _client(_QueueTransport([_response(response)]));
+
+    await expectLater(
+      client.createPlan(
+        input: const CreatePreparationPlanInput(
+          context: _context,
+          selection: _selection,
+          preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
+          preparationUserId: _userId,
+        ),
+        idempotencyKey: 'plan-key-123456',
+      ),
+      throwsA(_invalidResponse),
+    );
+  });
+
   group('rejects cross-resource Session bootstrap data', () {
     final cases = <String, void Function(Map<String, Object?>)>{
       'role version': (root) {
@@ -595,24 +614,38 @@ Map<String, Object?> _snapshotJson() => {
   'created_at': _time,
 };
 
-Map<String, Object?> _planJson() => {
-  'practice_plan_id': _planId,
-  'user_id': _userId,
-  'agent_thread_id': _threadId,
-  'matter_id': _matterId,
-  'scenario_definition_id': _scenarioId,
-  'scenario_definition_version': 1,
-  'scenario_type': 'INTERVIEW',
-  'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
-  'scenario_config_id': _configId,
-  'scenario_config_version': 1,
-  'preparation_profile_id': _profileId,
-  'selected_role_ids': [_roleId],
-  'plan_revision': 1,
-  'practice_plan_status': 'ready',
-  'created_at': _time,
-  'updated_at': _time,
-};
+Map<String, Object?> _planJson() {
+  final snapshot = _bootstrapJson()['snapshot']! as Map<String, Object?>;
+  final participants = snapshot['participants']! as List<Object?>;
+  final facilitator = participants.first as Map<String, Object?>;
+  return {
+    'practice_plan_id': _planId,
+    'user_id': _userId,
+    'agent_thread_id': _threadId,
+    'matter_id': _matterId,
+    'scenario_definition_id': _scenarioId,
+    'scenario_definition_version': 1,
+    'scenario_type': 'INTERVIEW',
+    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+    'scenario_config_id': _configId,
+    'scenario_config_version': 1,
+    'preparation_profile_id': _profileId,
+    'selected_role_ids': [_roleId],
+    'preparation_snapshot': snapshot['preparation_snapshot'],
+    'catalog_snapshot': {
+      'scenario_definition': snapshot['scenario_definition_snapshot'],
+      'scenario_config': snapshot['scenario_config_snapshot'],
+      'selected_roles': [facilitator['role_snapshot']],
+      'practice_option': snapshot['practice_option'],
+    },
+    'session_policy': snapshot['session_policy'],
+    'practice_focuses': snapshot['practice_focuses'],
+    'plan_revision': 1,
+    'practice_plan_status': 'ready',
+    'created_at': _time,
+    'updated_at': _time,
+  };
+}
 
 Map<String, Object?> _bootstrapJson() => {
   'practice_session': {

@@ -559,6 +559,79 @@ func TestConcurrentConfirmationCreatesExactlyOneTurn(t *testing.T) {
 	}
 }
 
+func TestConfirmTurnWaitsForEvidenceSnapshotSourceFence(t *testing.T) {
+	repository, pool := newIntegrationRepository(t)
+	actor := testActor(testUserA)
+	question := saveTestQuestion(
+		t,
+		repository,
+		actor,
+		"question-evidence-fence",
+		"session-evidence-fence",
+	)
+	reservation := reserveTestTranscription(
+		t,
+		repository,
+		actor,
+		question,
+		"reserve-evidence-fence",
+	)
+	candidate := completeTestTranscription(
+		t,
+		repository,
+		reservation,
+		"transcript-evidence-fence",
+	)
+	ctx := context.Background()
+	fence, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin EvidenceSnapshot source fence: %v", err)
+	}
+	defer func() { _ = fence.Rollback(ctx) }()
+	if err := lockEvidenceSourceSession(
+		ctx,
+		fence,
+		actor.UserID,
+		question.SessionID,
+	); err != nil {
+		t.Fatalf("lock EvidenceSnapshot source set: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, confirmErr := repository.ConfirmTurn(
+			context.Background(),
+			actor,
+			conversation.ConfirmTurnCommand{
+				CandidateID:     candidate.ID,
+				EvidenceVersion: candidate.EvidenceVersion,
+				ConfirmedText:   "I fenced the source write.",
+				IdempotencyKey:  "confirm-evidence-fence",
+			},
+		)
+		result <- confirmErr
+	}()
+	select {
+	case confirmErr := <-result:
+		t.Fatalf(
+			"ConfirmTurn bypassed EvidenceSnapshot source fence: %v",
+			confirmErr,
+		)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := fence.Commit(ctx); err != nil {
+		t.Fatalf("commit EvidenceSnapshot source fence: %v", err)
+	}
+	select {
+	case confirmErr := <-result:
+		if confirmErr != nil {
+			t.Fatalf("ConfirmTurn after source fence commit: %v", confirmErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ConfirmTurn did not resume after source fence commit")
+	}
+}
+
 func TestConcurrentCandidatesForOneQuestionCreateOneFormalTurn(t *testing.T) {
 	repository, pool := newIntegrationRepository(t)
 	actor := testActor(testUserA)
@@ -689,6 +762,89 @@ func TestConcurrentCandidatesForOneQuestionCreateOneFormalTurn(t *testing.T) {
 	}
 }
 
+func TestListSessionQuestionsIsOwnerScopedAndStable(t *testing.T) {
+	repository, _ := newIntegrationRepository(t)
+	actorA := testActor(testUserA)
+	actorB := testActor(testUserB)
+	createdAt := time.Date(2026, time.July, 30, 10, 0, 0, 0, time.UTC)
+
+	questions := []conversation.PersistentQuestion{
+		testQuestion("question-third", "session-list-questions"),
+		testQuestion("question-first", "session-list-questions"),
+		testQuestion("question-second", "session-list-questions"),
+	}
+	questions[0].Sequence = 3
+	questions[0].CreatedAt = createdAt.Add(-time.Hour)
+	questions[1].Sequence = 1
+	questions[1].CreatedAt = createdAt.Add(time.Hour)
+	questions[2].Sequence = 2
+	questions[2].CreatedAt = createdAt
+	for _, question := range questions {
+		if _, err := repository.SaveQuestion(
+			context.Background(),
+			actorA,
+			question,
+		); err != nil {
+			t.Fatalf("save %s: %v", question.ID, err)
+		}
+	}
+
+	otherSession := testQuestion("question-other-session", "session-other")
+	if _, err := repository.SaveQuestion(
+		context.Background(),
+		actorA,
+		otherSession,
+	); err != nil {
+		t.Fatalf("save other-session question: %v", err)
+	}
+	otherOwner := testQuestion("question-other-owner", "session-list-questions")
+	if _, err := repository.SaveQuestion(
+		context.Background(),
+		actorB,
+		otherOwner,
+	); err != nil {
+		t.Fatalf("save other-owner question: %v", err)
+	}
+
+	got, err := repository.ListSessionQuestions(
+		context.Background(),
+		actorA,
+		"session-list-questions",
+	)
+	if err != nil {
+		t.Fatalf("list session questions: %v", err)
+	}
+	gotIDs := make([]string, 0, len(got))
+	for _, question := range got {
+		gotIDs = append(gotIDs, question.ID)
+	}
+	wantIDs := []string{"question-first", "question-second", "question-third"}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("question IDs = %#v, want %#v", gotIDs, wantIDs)
+	}
+
+	otherOwnerQuestions, err := repository.ListSessionQuestions(
+		context.Background(),
+		actorB,
+		"session-list-questions",
+	)
+	if err != nil {
+		t.Fatalf("list other-owner questions: %v", err)
+	}
+	if len(otherOwnerQuestions) != 1 ||
+		otherOwnerQuestions[0].ID != otherOwner.ID {
+		t.Fatalf("other-owner questions = %#v", otherOwnerQuestions)
+	}
+	empty, err := repository.ListSessionQuestions(
+		context.Background(),
+		actorA,
+		"session-without-questions",
+	)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty session questions = %#v, %v", empty, err)
+	}
+}
+
 func TestInvalidOwnerAndDuplicateAddresseesAreRejected(t *testing.T) {
 	repository, pool := newIntegrationRepository(t)
 	invalidActor := conversation.Actor{
@@ -701,6 +857,13 @@ func TestInvalidOwnerAndDuplicateAddresseesAreRejected(t *testing.T) {
 		"question",
 	); !errors.Is(err, conversation.ErrPersistenceInvalid) {
 		t.Fatalf("invalid Actor owner error = %v", err)
+	}
+	if _, err := repository.ListSessionQuestions(
+		context.Background(),
+		invalidActor,
+		"session",
+	); !errors.Is(err, conversation.ErrPersistenceInvalid) {
+		t.Fatalf("invalid Actor question list error = %v", err)
 	}
 	if _, err := repository.CompleteTranscription(
 		context.Background(),
@@ -1044,6 +1207,12 @@ func TestActorIsolationDeletionAndGenerationFence(t *testing.T) {
 	)
 	staleReadErrors = append(staleReadErrors, err)
 	_, err = repository.ListSessionTurns(
+		context.Background(),
+		actorB,
+		questionB.SessionID,
+	)
+	staleReadErrors = append(staleReadErrors, err)
+	_, err = repository.ListSessionQuestions(
 		context.Background(),
 		actorB,
 		questionB.SessionID,

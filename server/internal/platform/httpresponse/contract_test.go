@@ -27,6 +27,7 @@ func TestStatusForCategoryMapsEveryCategoryExplicitly(t *testing.T) {
 		{apperror.AlreadyExists, http.StatusConflict},
 		{apperror.Conflict, http.StatusConflict},
 		{apperror.FailedPrecondition, http.StatusPreconditionFailed},
+		{apperror.UnprocessableEntity, http.StatusUnprocessableEntity},
 		{apperror.ResourceExhausted, http.StatusTooManyRequests},
 		{apperror.DeadlineExceeded, http.StatusGatewayTimeout},
 		{apperror.Unimplemented, http.StatusNotImplemented},

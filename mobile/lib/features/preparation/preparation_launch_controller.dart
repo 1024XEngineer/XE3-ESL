@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/preparation/preparation_launch_client.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/practice_workspace_controller.dart';
@@ -70,6 +71,10 @@ final class PreparationLaunchController extends ChangeNotifier {
   bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
   String? get resumablePracticeTitle => workspaceController?.currentTitle;
   String? get resumableScenarioId => workspaceController?.currentScenarioId;
+  String? get resumableScenarioType => workspaceController?.currentScenarioType;
+  AgentScenePresentationMode get resumablePresentationMode =>
+      workspaceController?.currentPresentationMode ??
+      AgentScenePresentationMode.standard;
   String? get resumableSessionId => workspaceController?.currentSessionId;
   String? get workspaceErrorMessage => workspaceController?.errorMessage;
   bool get canRetryWorkspaceActivation =>
@@ -329,6 +334,12 @@ final class PreparationLaunchController extends ChangeNotifier {
           sessionId: bootstrap.session.id,
           scenarioId: activeAttempt.selection.scenarioDefinitionId,
           scenarioTitle: activeAttempt.selection.scenarioDisplayName,
+          scenarioType: activeAttempt.selection.scenarioType,
+          presentationMode:
+              activeAttempt.selection.scenarioType == 'WORKPLACE' ||
+                  activeAttempt.selection.scenarioType == 'DAILY'
+              ? AgentScenePresentationMode.immersiveRoleplay
+              : AgentScenePresentationMode.standard,
         );
         if (!committed) {
           throw const PreparationLaunchException(

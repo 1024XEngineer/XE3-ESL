@@ -1,0 +1,113 @@
+paths:
+  /v1/practice-sessions/{practice_session_id}/avatar-session-token:
+    post:
+      tags:
+        - Avatar
+      summary: Mint a short-lived avatar provider Session Token
+      description: |
+        Verifies that the current Bearer actor owns the requested formal
+        Practice Session and that it is a starting or in-progress WORKPLACE or
+        DAILY session. The server exchanges its private provider API key for a
+        short-lived Session Token. The API key is never returned to the client.
+
+        The operation accepts an empty request body. Paused, terminal, and
+        unsupported scenario sessions must resume or continue without avatar
+        rendering before another Token can be requested.
+      operationId: createAvatarSessionToken
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+      responses:
+        '200':
+          description: |
+            Short-lived provider credentials and the exact audio contract
+            required by the configured avatar renderer.
+          headers:
+            Cache-Control:
+              description: Prevents storage of the short-lived credential.
+              required: true
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvatarSessionToken'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        '503':
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  parameters:
+    PracticeSessionId:
+      name: practice_session_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  schemas:
+    AvatarSessionToken:
+      type: object
+      additionalProperties: false
+      required:
+        - app_id
+        - avatar_id
+        - session_token
+        - region
+        - expires_at
+        - audio_format
+      properties:
+        app_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        avatar_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        session_token:
+          type: string
+          minLength: 8
+          maxLength: 8192
+          pattern: '^[\x21-\x7E]+$'
+          readOnly: true
+          description: |
+            Short-lived provider Session Token. Keep it only in process memory;
+            never persist it or place it in URLs, logs, or telemetry.
+        region:
+          type: string
+          enum:
+            - ap-northeast
+            - us-west
+        expires_at:
+          type: string
+          format: date-time
+          description: RFC 3339 UTC expiration instant.
+        audio_format:
+          $ref: '#/components/schemas/AvatarAudioFormat'
+    AvatarAudioFormat:
+      type: object
+      additionalProperties: false
+      required:
+        - encoding
+        - sample_rate_hz
+        - channels
+      properties:
+        encoding:
+          type: string
+          const: PCM_S16LE
+        sample_rate_hz:
+          type: integer
+          const: 24000
+        channels:
+          type: integer
+          const: 1

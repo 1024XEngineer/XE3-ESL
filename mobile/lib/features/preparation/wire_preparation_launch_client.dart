@@ -424,6 +424,10 @@ PreparationPracticePlan _plan(
       'scenario_config_version',
       'preparation_profile_id',
       'selected_role_ids',
+      'preparation_snapshot',
+      'catalog_snapshot',
+      'session_policy',
+      'practice_focuses',
       'plan_revision',
       'practice_plan_status',
       'created_at',
@@ -454,6 +458,12 @@ PreparationPracticePlan _plan(
           expected.preparationProfileId ||
       roles.length != 1 ||
       roles.single != expected.selection.roleDefinitionId) {
+    throw _invalidResponse();
+  }
+  if (object['preparation_snapshot'] is! Map<String, Object?> ||
+      object['catalog_snapshot'] is! Map<String, Object?> ||
+      object['session_policy'] is! Map<String, Object?> ||
+      object['practice_focuses'] is! List<Object?>) {
     throw _invalidResponse();
   }
   _dateTime(object['created_at']);

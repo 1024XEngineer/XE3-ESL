@@ -12,15 +12,15 @@
     "client_request_id": "trace_eval_001"
   },
   "queued": {
-    "evaluation_id": "evaluation_001",
-    "evaluation_revision_id": "evaluation_revision_001",
+    "evaluation_id": "7b000001-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "a1000001-0000-4000-8000-000000000001",
     "revision": 1,
     "evaluation_status": "QUEUED",
-    "status_url": "/v1/evaluations/evaluation_001"
+    "status_url": "/v1/evaluations/7b000001-0000-4000-8000-000000000001"
   },
   "core_4d_ready": {
-    "evaluation_id": "evaluation_002",
-    "evaluation_revision_id": "evaluation_revision_002",
+    "evaluation_id": "b2000002-0000-4000-8000-000000000002",
+    "evaluation_revision_id": "a2000002-0000-4000-8000-000000000002",
     "revision": 1,
     "practice_session_id": "session_eval_002",
     "input_snapshot_id": "snapshot_eval_002",
@@ -197,8 +197,8 @@
     "completed_at": "2026-07-28T12:00:10Z"
   },
   "short_sample_blocked": {
-    "evaluation_id": "evaluation_003",
-    "evaluation_revision_id": "evaluation_revision_003",
+    "evaluation_id": "c3000003-0000-4000-8000-000000000003",
+    "evaluation_revision_id": "a3000003-0000-4000-8000-000000000003",
     "revision": 1,
     "practice_session_id": "session_eval_003",
     "input_snapshot_id": "snapshot_eval_003",
@@ -239,8 +239,8 @@
     "completed_at": "2026-07-28T12:01:01Z"
   },
   "low_asr_feedback_only": {
-    "evaluation_id": "evaluation_004",
-    "evaluation_revision_id": "evaluation_revision_004",
+    "evaluation_id": "d4000004-0000-4000-8000-000000000004",
+    "evaluation_revision_id": "a4000004-0000-4000-8000-000000000004",
     "revision": 1,
     "practice_session_id": "session_eval_004",
     "input_snapshot_id": "snapshot_eval_004",
@@ -281,8 +281,8 @@
     "completed_at": "2026-07-28T12:02:01Z"
   },
   "ielts_ready": {
-    "evaluation_id": "evaluation_005",
-    "evaluation_revision_id": "evaluation_revision_005",
+    "evaluation_id": "e5000005-0000-4000-8000-000000000005",
+    "evaluation_revision_id": "a5000005-0000-4000-8000-000000000005",
     "revision": 1,
     "practice_session_id": "session_eval_005",
     "input_snapshot_id": "snapshot_eval_005",
@@ -439,8 +439,8 @@
     "completed_at": "2026-07-28T12:03:10Z"
   },
   "interview_missing_opportunity": {
-    "evaluation_id": "evaluation_006",
-    "evaluation_revision_id": "evaluation_revision_006",
+    "evaluation_id": "f6000006-0000-4000-8000-000000000006",
+    "evaluation_revision_id": "a6000006-0000-4000-8000-000000000006",
     "revision": 1,
     "practice_session_id": "session_eval_006",
     "input_snapshot_id": "snapshot_eval_006",
@@ -645,8 +645,8 @@
     "completed_at": "2026-07-28T12:04:10Z"
   },
   "failed": {
-    "evaluation_id": "evaluation_007",
-    "evaluation_revision_id": "evaluation_revision_007",
+    "evaluation_id": "17000007-0000-4000-8000-000000000007",
+    "evaluation_revision_id": "a7000007-0000-4000-8000-000000000007",
     "revision": 1,
     "practice_session_id": "session_eval_007",
     "input_snapshot_id": "snapshot_eval_007",
@@ -673,11 +673,11 @@
     "completed_at": "2026-07-28T12:05:01Z"
   },
   "revision_queued": {
-    "evaluation_id": "evaluation_001",
-    "evaluation_revision_id": "evaluation_revision_008",
+    "evaluation_id": "7b000001-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "a8000008-0000-4000-8000-000000000008",
     "revision": 2,
-    "supersedes_revision_id": "evaluation_revision_001",
+    "supersedes_revision_id": "a1000001-0000-4000-8000-000000000001",
     "evaluation_status": "QUEUED",
-    "status_url": "/v1/evaluations/evaluation_001"
+    "status_url": "/v1/evaluations/7b000001-0000-4000-8000-000000000001"
   }
 }

@@ -11,9 +11,13 @@ import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
+import 'package:speakup/review/formal_review.dart';
+import 'package:speakup/review/formal_review_presentation.dart';
 import 'package:speakup/review/review_history_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
 import 'package:speakup/review/wire_review_history_client.dart';
+
+import 'formal_review_fixture.dart';
 
 void main() {
   test('wire client sends Bearer and decodes a bounded stable page', () async {
@@ -56,6 +60,11 @@ void main() {
 
     expect(page.items.map((item) => item.review.id), [_newerId, _olderId]);
     expect(page.items.first.review.title, '本次练习 · 91 分');
+    expect(
+      page.items.first.formalReview.schema,
+      FormalReviewSchema.legacyVoiceV1,
+    );
+    expect(page.items.first.formalReview.result?.overallScore, 91);
     expect(page.nextCursor, cursor);
     expect(transport.uri.path, '/v1/formal-reviews');
     expect(transport.uri.queryParameters, {'limit': '2'});
@@ -1142,6 +1151,150 @@ void main() {
     expect(find.byKey(const Key('review-detail-page')), findsNothing);
   });
 
+  testWidgets(
+    'scenario v2 detail renders dimensions and corrections without a total',
+    (tester) async {
+      final item = _scenarioItem(
+        id: 'review-v2-interview',
+        contextType: FormalReviewContextType.interviewProjectDeepDive,
+        eligibility: FormalReviewSummaryEligibility.eligible,
+        dimensions: const <FormalReviewDimension>[
+          FormalReviewDimension(
+            key: 'structure',
+            category: 'relevance_structure',
+            score: 82,
+            message: '回答紧扣问题，并按背景、行动、结果展开。',
+            suggestion: '开场先用一句话说明最终结果。',
+          ),
+          FormalReviewDimension(
+            key: 'evidence',
+            category: 'evidence_impact',
+            score: 76,
+            message: '给出了结果，但影响范围还不够具体。',
+          ),
+        ],
+        feedbackItems: const <FormalReviewFeedbackItem>[
+          FormalReviewFeedbackItem(
+            key: 'correction-1',
+            kind: FormalReviewFeedbackKind.correction,
+            message: 'I responsible for the migration.',
+            suggestion: 'I was responsible for the migration.',
+          ),
+          FormalReviewFeedbackItem(
+            key: 'strength-1',
+            kind: FormalReviewFeedbackKind.strength,
+            message: '用具体故障数量解释了项目影响。',
+          ),
+        ],
+        repracticeSuggestionRefs: const <String>['correction-1'],
+      );
+      final controller = ReviewHistoryController(
+        client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReviewPage(historyController: controller)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(Key('review-history-select-${item.review.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('面试复盘'), findsOneWidget);
+      expect(find.byKey(const Key('review-detail-dimensions')), findsOneWidget);
+      expect(find.text('回答相关性与结构'), findsOneWidget);
+      expect(find.text('82 / 100'), findsOneWidget);
+      expect(find.byKey(const Key('review-detail-feedback')), findsOneWidget);
+      expect(find.text('纠错'), findsOneWidget);
+      expect(find.text('优先练习'), findsOneWidget);
+      expect(
+        find.textContaining('I was responsible for the migration.'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('review-detail-strength')), findsNothing);
+      expect(find.byKey(const Key('review-detail-focus')), findsNothing);
+      expect(find.textContaining('面试复盘 ·'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'provisional IELTS explains the missing pronunciation and Overall',
+    (tester) async {
+      final item = _scenarioItem(
+        id: 'review-v2-ielts',
+        contextType: FormalReviewContextType.ieltsSpeakingPart2,
+        eligibility: FormalReviewSummaryEligibility.provisional,
+        dimensions: const <FormalReviewDimension>[
+          FormalReviewDimension(
+            key: 'coverage',
+            category: 'task_coverage_development',
+            score: 74,
+            message: '覆盖了题卡的主要提示点。',
+          ),
+        ],
+        insufficientEvidenceReasons: const <String>[
+          'pronunciation_audio_evidence_unavailable',
+        ],
+      );
+      final controller = ReviewHistoryController(
+        client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReviewPage(historyController: controller)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('暂定文本反馈'), findsOneWidget);
+      await tester.tap(
+        find.byKey(Key('review-history-select-${item.review.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('review-detail-status-notice')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('发音尚未评估'), findsOneWidget);
+      expect(find.textContaining('不是 IELTS 官方成绩'), findsOneWidget);
+      expect(find.textContaining('Overall'), findsOneWidget);
+      expect(find.text('74 / 100'), findsOneWidget);
+    },
+  );
+
+  testWidgets('insufficient evidence never renders a zero score', (
+    tester,
+  ) async {
+    final item = _scenarioItem(
+      id: 'review-v2-insufficient',
+      contextType: FormalReviewContextType.workplaceProgressRiskUpdate,
+      eligibility: FormalReviewSummaryEligibility.insufficientEvidence,
+      dimensions: const <FormalReviewDimension>[],
+      insufficientEvidenceReasons: const <String>['confirmed_answer_too_short'],
+    );
+    final controller = ReviewHistoryController(
+      client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: controller)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(Key('review-history-select-${item.review.id}')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('本次暂不评分'), findsOneWidget);
+    expect(find.textContaining('有效回答太短'), findsOneWidget);
+    expect(find.textContaining('0 / 100'), findsNothing);
+    expect(find.byKey(const Key('review-detail-dimensions')), findsNothing);
+    expect(find.byKey(const Key('review-detail-feedback')), findsNothing);
+  });
+
   testWidgets('history card exposes one consolidated semantics node', (
     tester,
   ) async {
@@ -1683,17 +1836,73 @@ final class _ReviewAgentClient implements AgentClient {
 
 ReviewHistoryItem _item(String id, {required int score}) {
   final createdAt = DateTime.utc(2026, 7, 26, 10, score % 60);
+  final completedAt = createdAt.add(const Duration(minutes: 1));
+  final review = AgentReview(
+    id: id,
+    title: '本次练习 · $score 分',
+    summary: 'summary-$score',
+    strength: 'strength-$score',
+    nextFocus: 'focus-$score',
+  );
   return ReviewHistoryItem(
-    review: AgentReview(
-      id: id,
-      title: '本次练习 · $score 分',
-      summary: 'summary-$score',
-      strength: 'strength-$score',
-      nextFocus: 'focus-$score',
+    review: review,
+    formalReview: legacyFormalReviewFixture(
+      review: review,
+      practiceSessionId: 'session-$score',
+      createdAt: createdAt,
+      completedAt: completedAt,
+      overallScore: score,
     ),
     practiceSessionId: 'session-$score',
     createdAt: createdAt,
-    completedAt: createdAt.add(const Duration(minutes: 1)),
+    completedAt: completedAt,
+  );
+}
+
+ReviewHistoryItem _scenarioItem({
+  required String id,
+  required FormalReviewContextType contextType,
+  required FormalReviewSummaryEligibility eligibility,
+  required List<FormalReviewDimension> dimensions,
+  List<FormalReviewFeedbackItem> feedbackItems =
+      const <FormalReviewFeedbackItem>[],
+  List<String> repracticeSuggestionRefs = const <String>[],
+  List<String> insufficientEvidenceReasons = const <String>[],
+  int? overallScore,
+}) {
+  final createdAt = DateTime.utc(2026, 7, 30, 3);
+  final completedAt = createdAt.add(const Duration(minutes: 2));
+  final formalReview = FormalReview(
+    id: id,
+    practiceSessionId: 'session-$id',
+    status: FormalReviewStatus.completed,
+    schema: FormalReviewSchema.scenarioV2,
+    implementationVersion: 'qianwen-scenario-review-v2',
+    sourceTurnId: 'turn-$id',
+    sourceTurnVersion: 'conversation-turn:evidence-v1',
+    contextType: contextType,
+    result: FormalReviewResult(
+      eligibility: eligibility,
+      overallScore: overallScore,
+      summary:
+          eligibility == FormalReviewSummaryEligibility.insufficientEvidence
+          ? '当前回答不足以形成可靠结论。'
+          : '本次回答已经形成可复盘的文本反馈。',
+      dimensions: dimensions,
+      feedbackItems: feedbackItems,
+      repracticeSuggestionRefs: repracticeSuggestionRefs,
+      insufficientEvidenceReasons: insufficientEvidenceReasons,
+    ),
+    createdAt: createdAt,
+    updatedAt: completedAt,
+    completedAt: completedAt,
+  );
+  return ReviewHistoryItem(
+    review: presentFormalReview(formalReview),
+    formalReview: formalReview,
+    practiceSessionId: formalReview.practiceSessionId,
+    createdAt: createdAt,
+    completedAt: completedAt,
   );
 }
 
@@ -1706,16 +1915,25 @@ ReviewHistoryItem _fixtureItem({
   String? nextFocus,
 }) {
   final completed = completedAt ?? DateTime(2026, 7, 26, 12, index);
+  final created = completed.subtract(const Duration(minutes: 16));
+  final review = AgentReview(
+    id: 'review-fixture-$index',
+    title: title ?? '英文面试练习 · ${90 - index} 分',
+    summary: summary ?? 'fixture-summary-$index',
+    strength: strength ?? 'fixture-strength-$index',
+    nextFocus: nextFocus ?? 'fixture-focus-$index',
+  );
   return ReviewHistoryItem(
-    review: AgentReview(
-      id: 'review-fixture-$index',
-      title: title ?? '英文面试练习 · ${90 - index} 分',
-      summary: summary ?? 'fixture-summary-$index',
-      strength: strength ?? 'fixture-strength-$index',
-      nextFocus: nextFocus ?? 'fixture-focus-$index',
+    review: review,
+    formalReview: legacyFormalReviewFixture(
+      review: review,
+      practiceSessionId: 'session-fixture-$index',
+      createdAt: created,
+      completedAt: completed,
+      overallScore: 90 - index,
     ),
     practiceSessionId: 'session-fixture-$index',
-    createdAt: completed.subtract(const Duration(minutes: 16)),
+    createdAt: created,
     completedAt: completed,
   );
 }
@@ -1740,6 +1958,7 @@ Map<String, Object?> _wireItem({
     'result':
         result ??
         {
+          'summary_eligibility': 'eligible',
           'overall_score': score,
           'summary': 'summary-$score',
           'conclusions': [

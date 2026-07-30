@@ -14,6 +14,7 @@ import 'package:speakup/practice/practice_audio_player.dart';
 import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/review/formal_review.dart';
 
 typedef AgentClientIdFactory = String Function(String scope);
 
@@ -113,6 +114,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   List<AgentMessage> _practiceMessages = const <AgentMessage>[];
   PracticeRecordingState _recordingState = PracticeRecordingState.idle;
   AgentReview? _review;
+  FormalReview? _formalReview;
   String? _errorMessage;
   _AgentRetry? _retry;
   int _completedTurns = 0;
@@ -157,6 +159,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get practiceSessionId => _practiceSessionId;
   int? get practiceSessionVersion => _practiceSessionVersion;
+  PracticeQuestion? get currentQuestion => _currentQuestion;
   String? get questionId => _currentQuestion?.id;
   String? get candidateId => _candidate?.id;
   bool get hasPendingPracticeAudio => _pendingPracticeAudio != null;
@@ -170,6 +173,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   PracticeRecordingState get recordingState => _recordingState;
   String? get transcript => _candidate?.text;
   AgentReview? get review => _review;
+  FormalReview? get formalReview => _formalReview;
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
@@ -2251,6 +2255,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _endPracticeClientId = null;
     _currentQuestion = confirmation.nextQuestion;
     _review = confirmation.review;
+    _formalReview = confirmation.formalReview;
     final audioAssetId = confirmation.audioAssetId;
     if (audioAssetId != null &&
         !_recordings.any(
@@ -2369,6 +2374,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _practiceMessages = const <AgentMessage>[];
     _recordingState = PracticeRecordingState.idle;
     _review = null;
+    _formalReview = null;
     _errorMessage = null;
     _retry = null;
     _completedTurns = 0;
@@ -2552,6 +2558,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _turnLimit = 0;
       _sessionCompleted = false;
       _review = null;
+      _formalReview = null;
       _recordings = const <PracticeRecordingReference>[];
       _practiceMessages = const <AgentMessage>[];
       _recordingState = PracticeRecordingState.idle;
@@ -2572,6 +2579,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _turnLimit = snapshot.turnLimit;
     _sessionCompleted = snapshot.sessionCompleted;
     _review = snapshot.review;
+    _formalReview = snapshot.formalReview;
     final currentTurn = snapshot.currentTurn;
     final audioAssetId = currentTurn?.audioAssetId;
     if (!mayPreserveKnownRecordings) {

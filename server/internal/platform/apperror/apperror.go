@@ -11,18 +11,19 @@ import "errors"
 type Category string
 
 const (
-	InvalidArgument    Category = "invalid_argument"
-	Unauthenticated    Category = "unauthenticated"
-	PermissionDenied   Category = "permission_denied"
-	NotFound           Category = "not_found"
-	AlreadyExists      Category = "already_exists"
-	Conflict           Category = "conflict"
-	FailedPrecondition Category = "failed_precondition"
-	ResourceExhausted  Category = "resource_exhausted"
-	DeadlineExceeded   Category = "deadline_exceeded"
-	Unimplemented      Category = "unimplemented"
-	Unavailable        Category = "unavailable"
-	Internal           Category = "internal"
+	InvalidArgument     Category = "invalid_argument"
+	Unauthenticated     Category = "unauthenticated"
+	PermissionDenied    Category = "permission_denied"
+	NotFound            Category = "not_found"
+	AlreadyExists       Category = "already_exists"
+	Conflict            Category = "conflict"
+	FailedPrecondition  Category = "failed_precondition"
+	UnprocessableEntity Category = "unprocessable_entity"
+	ResourceExhausted   Category = "resource_exhausted"
+	DeadlineExceeded    Category = "deadline_exceeded"
+	Unimplemented       Category = "unimplemented"
+	Unavailable         Category = "unavailable"
+	Internal            Category = "internal"
 )
 
 // Valid reports whether category is one of the common categories owned by this
@@ -36,6 +37,7 @@ func (category Category) Valid() bool {
 		AlreadyExists,
 		Conflict,
 		FailedPrecondition,
+		UnprocessableEntity,
 		ResourceExhausted,
 		DeadlineExceeded,
 		Unimplemented,

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
@@ -94,6 +95,14 @@ func run() int {
 	reviewHistoryConfig, err := config.LoadReviewHistory()
 	if err != nil {
 		logger.Error("Review history configuration failed")
+		return 1
+	}
+	spatiusConfig, err := config.LoadSpatius()
+	if err != nil {
+		logger.Error(
+			"avatar provider configuration failed",
+			slog.String("error_kind", "configuration"),
+		)
 		return 1
 	}
 	audioVault, err := platformmedia.NewTemporaryAudioVault(
@@ -238,7 +247,44 @@ func run() int {
 		)
 		return 1
 	}
-	contextRoutes, err := applicationComposition.ProtectedRoutes()
+	var avatarProvider avatar.TokenProvider
+	if spatiusConfig.Enabled {
+		avatarProvider, err = avatar.NewSpatiusClient(spatiusConfig)
+		if err != nil {
+			logger.Error(
+				"avatar provider startup failed",
+				slog.String("error_kind", "dependency"),
+			)
+			return 1
+		}
+	}
+	avatarService, err := avatar.NewService(
+		avatar.ServiceConfiguration{
+			Enabled:  spatiusConfig.Enabled,
+			AppID:    spatiusConfig.AppID,
+			AvatarID: spatiusConfig.AvatarID,
+			Region:   spatiusConfig.Region,
+			TokenTTL: spatiusConfig.TokenTTL,
+		},
+		applicationComposition.PracticeApplication(),
+		avatarProvider,
+	)
+	if err != nil {
+		logger.Error(
+			"avatar service startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	avatarHTTP, err := avatar.NewHTTPHandler(avatarService)
+	if err != nil {
+		logger.Error(
+			"avatar HTTP startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	contextRoutes, err := applicationComposition.ProtectedRoutes(avatarHTTP)
 	if err != nil {
 		logger.Error("context route startup failed", slog.Any("error", err))
 		return 1
