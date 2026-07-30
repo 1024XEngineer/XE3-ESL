@@ -21,4 +21,5 @@ import "embed"
 //go:embed 000033_matter_agent_tools.*.sql
 //go:embed 000034_practice_optional_preview_snapshot.*.sql
 //go:embed 000035_ielts_speaking_section_models.*.sql
+//go:embed 000036_evaluation_evidence_snapshots.*.sql
 var Files embed.FS

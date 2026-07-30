@@ -13,10 +13,13 @@ import (
 const SchemaVersion = "evaluation-schema/1.0.0"
 
 var (
-	ErrInvalidRequest      = errors.New("evaluation: invalid request")
-	ErrNotFound            = errors.New("evaluation: not found")
-	ErrIdempotencyConflict = errors.New("evaluation: idempotency conflict")
-	ErrAccountUnavailable  = errors.New("evaluation: account unavailable")
+	ErrInvalidRequest          = errors.New("evaluation: invalid request")
+	ErrNotFound                = errors.New("evaluation: not found")
+	ErrIdempotencyConflict     = errors.New("evaluation: idempotency conflict")
+	ErrAccountUnavailable      = errors.New("evaluation: account unavailable")
+	ErrDeletionGenerationStale = errors.New(
+		"evaluation: deletion generation stale",
+	)
 )
 
 type Channel string

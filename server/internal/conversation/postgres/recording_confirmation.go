@@ -40,6 +40,15 @@ func (r *Repository) ConfirmTurnWithRecording(
 		return conversation.RecordingConfirmation{}, err
 	}
 	r.reachedWriteFence()
+	sourceSessionID, err := lockCandidateEvidenceSourceSession(
+		ctx,
+		tx,
+		actor.UserID,
+		command.CandidateID,
+	)
+	if err != nil {
+		return conversation.RecordingConfirmation{}, err
+	}
 
 	record, err := lockRecordingByUploadRequest(
 		ctx,
@@ -54,7 +63,13 @@ func (r *Repository) ConfirmTurnWithRecording(
 	if r.afterRecordingLock != nil {
 		r.afterRecordingLock()
 	}
-	turn, err := r.confirmTurnInTransaction(ctx, tx, actor, command)
+	turn, err := r.confirmTurnInTransaction(
+		ctx,
+		tx,
+		actor,
+		command,
+		sourceSessionID,
+	)
 	if err != nil {
 		return conversation.RecordingConfirmation{}, err
 	}

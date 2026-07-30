@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
@@ -22,10 +23,9 @@ const integrationOwnerB = "20000000-0000-4000-8000-000000000002"
 func TestPostgresLedgerRevisionIdempotencyAndIsolation(t *testing.T) {
 	pool := evaluationDatabase(t)
 	insertEvaluationUsers(t, pool, testOwnerA, integrationOwnerB)
-	service := NewService(NewPostgresRepository(pool))
-	ctx := context.Background()
+	service, request := serviceWithEvidenceSnapshot(t, pool, testOwnerA)
+	ctx := testActorContext(testOwnerA)
 
-	request := validCreateRequest()
 	request.Channels = []Channel{ChannelScene, ChannelCore4D}
 	request.Core4DStrategyRef = "core4d/v1"
 	created, replayed, err := service.Create(
@@ -188,11 +188,15 @@ func TestPostgresLedgerRevisionIdempotencyAndIsolation(t *testing.T) {
 func TestPostgresConcurrentReevaluationCreatesOneRevision(t *testing.T) {
 	pool := evaluationDatabase(t)
 	insertEvaluationUsers(t, pool, testOwnerA)
-	service := NewService(NewPostgresRepository(pool))
+	service, createRequest := serviceWithEvidenceSnapshot(
+		t,
+		pool,
+		testOwnerA,
+	)
 	created, _, err := service.Create(
-		context.Background(),
+		testActorContext(testOwnerA),
 		testActor(testOwnerA),
-		validCreateRequest(),
+		createRequest,
 	)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -251,11 +255,15 @@ func TestPostgresConcurrentReevaluationCreatesOneRevision(t *testing.T) {
 func TestPostgresOutboxFailureRollsBackRevisionAndSupersede(t *testing.T) {
 	pool := evaluationDatabase(t)
 	insertEvaluationUsers(t, pool, testOwnerA)
-	service := NewService(NewPostgresRepository(pool))
+	service, createRequest := serviceWithEvidenceSnapshot(
+		t,
+		pool,
+		testOwnerA,
+	)
 	created, _, err := service.Create(
-		context.Background(),
+		testActorContext(testOwnerA),
 		testActor(testOwnerA),
-		validCreateRequest(),
+		createRequest,
 	)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -377,22 +385,47 @@ func evaluationDatabase(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("open isolated Evaluation pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE identity_users (
-			id uuid PRIMARY KEY,
-			account_status text NOT NULL DEFAULT 'active'
-		)
-	`); err != nil {
-		t.Fatalf("create Identity prerequisite: %v", err)
-	}
-	up, err := migrations.Files.ReadFile("000024_evaluation_ledger.up.sql")
+	upMigrations, err := fs.Glob(migrations.Files, "*.up.sql")
 	if err != nil {
-		t.Fatalf("read Evaluation migration: %v", err)
+		t.Fatalf("enumerate migrations: %v", err)
 	}
-	if _, err := pool.Exec(ctx, string(up)); err != nil {
-		t.Fatalf("apply Evaluation migration: %v", err)
+	for _, migration := range upMigrations {
+		up, readErr := migrations.Files.ReadFile(migration)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", migration, readErr)
+		}
+		if _, applyErr := pool.Exec(ctx, string(up)); applyErr != nil {
+			t.Fatalf("apply %s: %v", migration, applyErr)
+		}
 	}
 	return pool
+}
+
+func serviceWithEvidenceSnapshot(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	ownerUserID string,
+) (*Service, CreateRequest) {
+	t.Helper()
+	repository := NewPostgresRepository(pool)
+	command := validEvidenceCommand(
+		ownerUserID,
+		"session-1",
+		ScopeSession,
+		SceneInterview,
+	)
+	installEvidenceAuthorities(t, pool, command)
+	snapshot, _, err := repository.EnsureEvidenceSnapshot(
+		context.Background(),
+		command,
+	)
+	if err != nil {
+		t.Fatalf("prepare EvidenceSnapshot: %v", err)
+	}
+	request := validCreateRequest()
+	request.InputSnapshotID = snapshot.ID
+	request.InputRevision = snapshot.InputRevision
+	return NewService(repository, repository), request
 }
 
 func insertEvaluationUsers(
@@ -403,8 +436,9 @@ func insertEvaluationUsers(
 	t.Helper()
 	for _, userID := range userIDs {
 		if _, err := pool.Exec(context.Background(), `
-			INSERT INTO identity_users (id) VALUES ($1)
-		`, userID); err != nil {
+			INSERT INTO identity_users (id, canonical_email)
+			VALUES ($1, $2)
+		`, userID, "evaluation-"+userID+"@example.test"); err != nil {
 			t.Fatalf("insert Identity user %s: %v", userID, err)
 		}
 	}
