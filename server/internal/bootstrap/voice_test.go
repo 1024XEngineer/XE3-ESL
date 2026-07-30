@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -106,6 +107,45 @@ func TestLegacyReviewSnapshotKeepsV1Compatibility(t *testing.T) {
 	}
 }
 
+func TestMapVoiceSessionReviewMarksOnlyScenarioScoresPresent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                  string
+		implementationVersion string
+		wantPresent           bool
+	}{
+		{
+			name:                  "scenario v2",
+			implementationVersion: voiceReviewImplementation,
+			wantPresent:           true,
+		},
+		{
+			name:                  "legacy v1",
+			implementationVersion: legacyVoiceReviewImplementation,
+			wantPresent:           false,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			item := mapVoiceSessionReview(review.FormalReview{
+				ImplementationVersion: test.implementationVersion,
+				Result: &review.ReviewResult{
+					Conclusions: []review.ReviewConclusion{{Score: 0}},
+				},
+			})
+			if got := item.Result.Conclusions[0].ScorePresent; got != test.wantPresent {
+				t.Fatalf(
+					"score presence=%t, want %t",
+					got,
+					test.wantPresent,
+				)
+			}
+		})
+	}
+}
+
 func TestLegacyReviewManifestFingerprintRemainsStable(t *testing.T) {
 	t.Parallel()
 	source := bootstrapReviewSource(t)
@@ -154,6 +194,12 @@ func TestVoiceReviewGeneratorBuildsCanonicalPolicyPrompt(t *testing.T) {
 	if len(provider.requests) != 2 ||
 		!reflect.DeepEqual(provider.requests[0], provider.requests[1]) {
 		t.Fatal("identical context and evidence produced different prompts")
+	}
+	if provider.requests[0].ResponseFormat != ai.TextResponseFormatJSON {
+		t.Fatalf(
+			"response format=%q, want JSON",
+			provider.requests[0].ResponseFormat,
+		)
 	}
 	prompt := provider.requests[0].Messages[1].Content
 	for _, expected := range []string{
@@ -221,12 +267,43 @@ func TestVoiceReviewParserRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 	t.Parallel()
 	for _, content := range []string{
 		`{"summary":"x","conclusions":[],"feedback_items":[],"repractice_suggestion_refs":[],"overall_score":100}`,
+		strings.Replace(
+			validGeneratedReviewJSON(),
+			`"score":80,`,
+			"",
+			1,
+		),
 		validGeneratedReviewJSON() + `{}`,
 		"```json\n" + validGeneratedReviewJSON() + "\n```",
 	} {
 		if _, err := parseVoiceReviewResult(content); err == nil {
 			t.Fatalf("invalid provider payload was accepted: %s", content)
 		}
+	}
+}
+
+func TestVoiceReviewParserPreservesExplicitZeroScore(t *testing.T) {
+	t.Parallel()
+	content := strings.Replace(
+		validGeneratedReviewJSON(),
+		`"score":80`,
+		`"score":0`,
+		1,
+	)
+	generated, err := parseVoiceReviewResult(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conclusion := generated.Result.Conclusions[0]
+	if conclusion.Score != 0 || !conclusion.ScorePresent {
+		t.Fatalf("explicit zero score presence lost: %+v", conclusion)
+	}
+	encoded, err := json.Marshal(generated.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"score":0`) {
+		t.Fatalf("explicit zero score omitted from persistence JSON: %s", encoded)
 	}
 }
 

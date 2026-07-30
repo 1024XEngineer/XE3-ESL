@@ -16,6 +16,8 @@ import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/review/review_history_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
+import '../review/formal_review_fixture.dart';
+
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -556,6 +558,12 @@ void main() {
       client: _SingleReviewClient(
         ReviewHistoryItem(
           review: firstSnapshot.review!,
+          formalReview: legacyFormalReviewFixture(
+            review: firstSnapshot.review!,
+            practiceSessionId: firstSnapshot.sessionId,
+            createdAt: DateTime.utc(2026, 7, 26, 9),
+            completedAt: DateTime.utc(2026, 7, 26, 9, 12),
+          ),
           practiceSessionId: firstSnapshot.sessionId,
           createdAt: DateTime.utc(2026, 7, 26, 9),
           completedAt: DateTime.utc(2026, 7, 26, 9, 12),

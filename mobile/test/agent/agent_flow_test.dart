@@ -17,6 +17,8 @@ import 'package:speakup/identity/session_store.dart';
 import 'package:speakup/review/review_history_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
+import '../review/formal_review_fixture.dart';
+
 void main() {
   testWidgets('uses one Agent Thread for text, 3 Practice turns, and Review', (
     tester,
@@ -515,12 +517,19 @@ final class _CurrentReviewHistoryClient implements ReviewHistoryClient {
       throw StateError('Review history refreshed before Practice completed.');
     }
     final completedAt = DateTime.utc(2026, 7, 26, 12);
+    final createdAt = completedAt.subtract(const Duration(minutes: 5));
     return ReviewHistoryPage(
       items: <ReviewHistoryItem>[
         ReviewHistoryItem(
           review: review,
+          formalReview: legacyFormalReviewFixture(
+            review: review,
+            practiceSessionId: practiceSessionId,
+            createdAt: createdAt,
+            completedAt: completedAt,
+          ),
           practiceSessionId: practiceSessionId,
-          createdAt: completedAt.subtract(const Duration(minutes: 5)),
+          createdAt: createdAt,
           completedAt: completedAt,
         ),
       ],

@@ -10,6 +10,9 @@ import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/review/formal_review.dart';
+import 'package:speakup/review/formal_review_decoder.dart';
+import 'package:speakup/review/formal_review_presentation.dart';
 
 /// The single replaceable location for the frozen #87 voice-practice routes.
 ///
@@ -665,6 +668,7 @@ PracticeSessionSnapshot _decodeSessionState(
     currentQuestion: question,
     currentTurn: turn,
     review: formalReview?.presentation,
+    formalReview: formalReview?.formalReview,
   );
 }
 
@@ -794,6 +798,7 @@ PracticeTurnConfirmation _confirmationFromState(
     sessionVersion: state.sessionVersion,
     nextQuestion: state.currentQuestion,
     review: state.review,
+    formalReview: state.formalReview,
     audioAssetId: turn.audioAssetId,
   );
 }
@@ -906,6 +911,7 @@ final class _FormalReviewProjection {
     required this.status,
     required this.sourceTurnId,
     required this.sourceTurnVersion,
+    required this.formalReview,
     this.presentation,
   });
 
@@ -914,130 +920,27 @@ final class _FormalReviewProjection {
   final String status;
   final String sourceTurnId;
   final String sourceTurnVersion;
+  final FormalReview formalReview;
   final AgentReview? presentation;
 }
 
 _FormalReviewProjection _decodeFormalReview(Map<String, Object?> value) {
-  final root = _exactObject(
-    value,
-    required: const {
-      'review_id',
-      'practice_session_id',
-      'status',
-      'implementation_version',
-      'source_turn_id',
-      'source_turn_version',
-      'created_at',
-      'updated_at',
-    },
-    optional: const {'result', 'completed_at'},
-  );
-  final id = _string(root, 'review_id');
-  final sessionId = _string(root, 'practice_session_id');
-  final status = _string(root, 'status', maxLength: 16);
-  final sourceTurnVersion = _string(
-    root,
-    'source_turn_version',
-    maxLength: 128,
-  );
-  if (!const {
-        'pending',
-        'generating',
-        'completed',
-        'failed',
-      }.contains(status) ||
-      !RegExp(
-        r'^conversation-turn:evidence-v[1-9][0-9]*$',
-      ).hasMatch(sourceTurnVersion)) {
-    throw _invalidResponse();
-  }
-  _string(root, 'implementation_version', maxLength: 128);
-  final sourceTurnId = _string(root, 'source_turn_id');
-  final createdAt = _dateTime(root, 'created_at');
-  final updatedAt = _dateTime(root, 'updated_at');
-  if (updatedAt.isBefore(createdAt)) {
-    throw _invalidResponse();
-  }
-  final result = root['result'];
-  final completedAt = root['completed_at'];
-  if ((root.containsKey('result') && result == null) ||
-      (root.containsKey('completed_at') && completedAt == null)) {
-    throw _invalidResponse();
-  }
-  AgentReview? presentation;
-  if (status == 'completed') {
-    if (result == null || completedAt == null) {
-      throw _invalidResponse();
-    }
-    final completion = _dateTime(root, 'completed_at');
-    if (completion.isBefore(createdAt)) {
-      throw _invalidResponse();
-    }
-    presentation = _decodeReviewResult(id, _object(result));
-  } else if (result != null || completedAt != null) {
+  late final FormalReview formalReview;
+  try {
+    formalReview = decodeFormalReview(value);
+  } on FormalReviewDecodeException {
     throw _invalidResponse();
   }
   return _FormalReviewProjection(
-    id: id,
-    sessionId: sessionId,
-    status: status,
-    sourceTurnId: sourceTurnId,
-    sourceTurnVersion: sourceTurnVersion,
-    presentation: presentation,
-  );
-}
-
-AgentReview _decodeReviewResult(String reviewId, Map<String, Object?> value) {
-  final root = _exactObject(
-    value,
-    required: const {'overall_score', 'summary', 'conclusions'},
-  );
-  final score = _integer(root, 'overall_score');
-  final summary = _string(root, 'summary');
-  final conclusions = _objectList(
-    root,
-    'conclusions',
-  ).map(_decodeConclusion).toList(growable: false);
-  if (score < 0 || score > 100) {
-    throw _invalidResponse();
-  }
-  final strength = conclusions.firstOrNull?.message ?? summary;
-  final nextFocus =
-      conclusions
-          .where((item) => item.suggestion != null)
-          .map((item) => item.suggestion!)
-          .firstOrNull ??
-      conclusions.lastOrNull?.message ??
-      summary;
-  return AgentReview(
-    id: reviewId,
-    title: '本次练习 · $score 分',
-    summary: summary,
-    strength: strength,
-    nextFocus: nextFocus,
-  );
-}
-
-final class _ReviewConclusion {
-  const _ReviewConclusion({required this.message, this.suggestion});
-
-  final String message;
-  final String? suggestion;
-}
-
-_ReviewConclusion _decodeConclusion(Map<String, Object?> value) {
-  final root = _exactObject(
-    value,
-    required: const {'key', 'category', 'message'},
-    optional: const {'suggestion'},
-  );
-  _string(root, 'key', maxLength: 128);
-  _string(root, 'category', maxLength: 128);
-  return _ReviewConclusion(
-    message: _string(root, 'message'),
-    suggestion: root.containsKey('suggestion')
-        ? _string(root, 'suggestion')
-        : null,
+    id: formalReview.id,
+    sessionId: formalReview.practiceSessionId,
+    status: formalReview.status.name,
+    sourceTurnId: formalReview.sourceTurnId,
+    sourceTurnVersion: formalReview.sourceTurnVersion,
+    formalReview: formalReview,
+    presentation: formalReview.result == null
+        ? null
+        : presentFormalReview(formalReview),
   );
 }
 
@@ -1106,14 +1009,6 @@ List<String> _stringList(Map<String, Object?> value, String key) {
     for (final item in list)
       _string(<String, Object?>{'value': item}, 'value', maxLength: 256),
   ];
-}
-
-List<Map<String, Object?>> _objectList(Map<String, Object?> value, String key) {
-  final list = value[key];
-  if (list is! List<Object?> || list.length > 100) {
-    throw _invalidResponse();
-  }
-  return [for (final item in list) _object(item)];
 }
 
 AgentClientException _invalidResponse() {

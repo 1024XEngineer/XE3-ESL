@@ -778,6 +778,63 @@ type voiceSessionTestReviews struct {
 	history []VoiceSessionReview
 }
 
+func TestVoiceReviewConclusionJSONPreservesScorePresence(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		conclusion  VoiceReviewConclusion
+		wantPresent bool
+		wantScore   float64
+	}{
+		{
+			name: "explicit zero",
+			conclusion: VoiceReviewConclusion{
+				Score:        0,
+				ScorePresent: true,
+			},
+			wantPresent: true,
+			wantScore:   0,
+		},
+		{
+			name:        "legacy zero",
+			conclusion:  VoiceReviewConclusion{Score: 0},
+			wantPresent: false,
+		},
+		{
+			name:        "legacy nonzero",
+			conclusion:  VoiceReviewConclusion{Score: 72},
+			wantPresent: true,
+			wantScore:   72,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			encoded, err := json.Marshal(test.conclusion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]any
+			if err := json.Unmarshal(encoded, &wire); err != nil {
+				t.Fatal(err)
+			}
+			score, present := wire["score"]
+			if present != test.wantPresent {
+				t.Fatalf(
+					"score presence=%t, want %t; JSON=%s",
+					present,
+					test.wantPresent,
+					encoded,
+				)
+			}
+			if test.wantPresent && score != test.wantScore {
+				t.Fatalf("score=%v, want %v", score, test.wantScore)
+			}
+		})
+	}
+}
+
 func (reader voiceSessionTestReviews) GetReview(
 	_ context.Context,
 	_ requestcontext.Actor,
