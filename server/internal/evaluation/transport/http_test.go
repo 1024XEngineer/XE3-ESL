@@ -144,6 +144,39 @@ func TestCreateUsesTrustedActorAndReturnsQueuedIdentity(t *testing.T) {
 	})
 }
 
+func TestCreateAcceptsDigitLeadingPracticeSessionIdentifier(t *testing.T) {
+	const practiceSessionID = "20000000-0000-4000-8000-000000000001"
+	router := newTestRouter(t, applicationStub{
+		create: func(
+			_ context.Context,
+			_ requestcontext.Actor,
+			request evaluation.CreateRequest,
+		) (EvaluationAccepted, error) {
+			if request.PracticeSessionID != practiceSessionID ||
+				request.InputSnapshotID != "snapshot_demo_001" {
+				t.Fatalf("request = %#v", request)
+			}
+			return queuedAccepted(), nil
+		},
+	}, &testActor)
+	body := strings.Replace(
+		validCreateBody(),
+		"session_demo_001",
+		practiceSessionID,
+		1,
+	)
+	response := performRequest(
+		router,
+		http.MethodPost,
+		"/v1/evaluations",
+		body,
+		"application/json",
+	)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+	}
+}
+
 func TestReevaluateUsesTrustedActorAndReturnsReplacementIdentity(t *testing.T) {
 	expectedRequest := evaluation.ReevaluateRequest{
 		Channels:         []evaluation.Channel{evaluation.ChannelScene},

@@ -182,6 +182,16 @@ assertValid(
   'CreateEvaluationRequest',
   fixture.create_dual_channel,
 );
+const digitLeadingPracticeCreate = structuredClone(
+  fixture.create_dual_channel,
+);
+digitLeadingPracticeCreate.practice_session_id =
+  '20000000-0000-4000-8000-000000000001';
+assertValid(
+  'digit-leading Practice session create',
+  'CreateEvaluationRequest',
+  digitLeadingPracticeCreate,
+);
 assertValid('queued create response', 'EvaluationAccepted', fixture.queued);
 assert.match(
   fixture.queued.evaluation_id,
