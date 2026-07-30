@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/preparation/ielts_question_bank.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
@@ -77,12 +78,18 @@ class IeltsSpeakingMockPage extends StatefulWidget {
 class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   late final IeltsMockProgressStore _progressStore;
   final TextEditingController _notesController = TextEditingController();
+  final TextEditingController _convertedAnswerController =
+      TextEditingController();
+  final FocusNode _convertedAnswerFocusNode = FocusNode();
 
   IeltsMockProgress? _progress;
   Timer? _ticker;
   DateTime _now = DateTime.now().toUtc();
   bool _loading = true;
   bool _confirming = false;
+  bool _conversionRequested = false;
+  bool _convertedAnswerMode = false;
+  bool _convertedAnswerSubmitting = false;
   bool _startingPart2Recording = false;
   bool _finishingPart2Recording = false;
   bool _exitApproved = false;
@@ -134,8 +141,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   @override
   void dispose() {
     widget.controller.removeListener(_handleControllerState);
+    unawaited(widget.controller.cancelRecording());
     _notesController.removeListener(_saveNotes);
     _notesController.dispose();
+    _convertedAnswerController.dispose();
+    _convertedAnswerFocusNode.dispose();
     _ticker?.cancel();
     super.dispose();
   }
@@ -266,7 +276,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         IeltsMockPhase.part1Complete ||
         IeltsMockPhase.part2Intro ||
         IeltsMockPhase.part2Preparation => value.phase,
-        IeltsMockPhase.part2Speaking => IeltsMockPhase.part2Speaking,
+        IeltsMockPhase.part2Speaking
+            when widget.controller.errorMessage != null ||
+                widget.controller.hasPendingPracticeAudio ||
+                widget.controller.recordingState !=
+                    PracticeRecordingState.idle =>
+          IeltsMockPhase.part2Speaking,
+        IeltsMockPhase.part2Speaking => IeltsMockPhase.part2Intro,
         _ => IeltsMockPhase.part1Complete,
       };
       return value.copyWith(
@@ -347,6 +363,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   void _confirmPendingTranscript() {
     if (!mounted ||
         _confirming ||
+        _conversionRequested ||
+        _convertedAnswerMode ||
         widget.controller.recordingState !=
             PracticeRecordingState.awaitingConfirmation) {
       return;
@@ -416,7 +434,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     if (progress.phase == IeltsMockPhase.part2Speaking &&
-        _secondsUntil(progress.speakingDeadline) <= 0) {
+        _secondsUntil(progress.speakingDeadline) <= 0 &&
+        !widget.controller.hasPendingPracticeAudio) {
       unawaited(_finishPart2Speaking());
     }
   }
@@ -488,6 +507,12 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   Future<void> _handlePart2SpeakingAction() async {
     if (widget.controller.recordingState == PracticeRecordingState.idle) {
+      if (widget.controller.hasPendingPracticeAudio) {
+        await widget.controller.discardPendingPracticeAudio();
+        if (widget.controller.hasPendingPracticeAudio) {
+          return;
+        }
+      }
       await _startPart2Speaking(restart: true);
       return;
     }
@@ -523,20 +548,83 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
   }
 
-  Future<void> _toggleShortRecording() async {
-    final state = widget.controller.recordingState;
-    if (state == PracticeRecordingState.idle) {
-      await widget.controller.startRecording();
+  Future<void> _startShortRecording() {
+    _conversionRequested = false;
+    return widget.controller.startRecording();
+  }
+
+  Future<void> _sendShortVoice() async {
+    _conversionRequested = false;
+    await widget.controller.finishRecordingGesture();
+    _confirmPendingTranscript();
+  }
+
+  Future<void> _convertShortVoice() async {
+    _conversionRequested = true;
+    await widget.controller.finishRecordingGesture();
+    if (!mounted) {
       return;
     }
-    if (state == PracticeRecordingState.starting ||
-        state == PracticeRecordingState.recording) {
-      await widget.controller.finishRecordingGesture();
+    if (widget.controller.recordingState !=
+        PracticeRecordingState.awaitingConfirmation) {
+      setState(() => _conversionRequested = false);
       return;
     }
-    if (state == PracticeRecordingState.awaitingConfirmation) {
-      _confirmPendingTranscript();
+    final transcript = widget.controller.transcript?.trim() ?? '';
+    widget.controller.rerecord();
+    _convertedAnswerController.value = TextEditingValue(
+      text: transcript,
+      selection: TextSelection.collapsed(offset: transcript.length),
+    );
+    setState(() {
+      _conversionRequested = false;
+      _convertedAnswerMode = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _convertedAnswerFocusNode.requestFocus();
+      }
+    });
+  }
+
+  Future<void> _cancelShortVoice() async {
+    _conversionRequested = false;
+    await widget.controller.cancelRecording();
+  }
+
+  Future<void> _submitConvertedAnswer() async {
+    final text = _convertedAnswerController.text.trim();
+    if (text.isEmpty || _convertedAnswerSubmitting) {
+      return;
     }
+    setState(() => _convertedAnswerSubmitting = true);
+    final submitted = await widget.controller.submitPracticeText(text);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _convertedAnswerSubmitting = false;
+      if (submitted) {
+        _convertedAnswerMode = false;
+        _convertedAnswerController.clear();
+        _convertedAnswerFocusNode.unfocus();
+      }
+    });
+  }
+
+  void _cancelConvertedAnswer() {
+    _convertedAnswerController.clear();
+    _convertedAnswerFocusNode.unfocus();
+    setState(() => _convertedAnswerMode = false);
+  }
+
+  void _openTextAnswer() {
+    setState(() => _convertedAnswerMode = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _convertedAnswerFocusNode.requestFocus();
+      }
+    });
   }
 
   Future<void> _beginPart3() async {
@@ -705,7 +793,17 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                 progress.phase == IeltsMockPhase.part3
             ? _RecorderDock(
                 controller: widget.controller,
-                onTap: _toggleShortRecording,
+                convertedAnswerController: _convertedAnswerController,
+                convertedAnswerFocusNode: _convertedAnswerFocusNode,
+                convertedAnswerMode: _convertedAnswerMode,
+                convertedAnswerSubmitting: _convertedAnswerSubmitting,
+                onStart: _startShortRecording,
+                onSendVoice: _sendShortVoice,
+                onConvertToText: _convertShortVoice,
+                onCancelRecording: _cancelShortVoice,
+                onSubmitConvertedAnswer: _submitConvertedAnswer,
+                onCancelConvertedAnswer: _cancelConvertedAnswer,
+                onOpenTextAnswer: _openTextAnswer,
               )
             : null,
       ),
@@ -768,6 +866,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         onPressed: _startPart2Speaking,
       ),
       IeltsMockPhase.part2Speaking => _Part2Speaking(
+        controller: widget.controller,
         secondsRemaining: _secondsUntil(progress.speakingDeadline),
         notes: progress.notes,
         recordingState: widget.controller.recordingState,
@@ -1079,81 +1178,345 @@ class _ExamConversation extends StatelessWidget {
 }
 
 class _RecorderDock extends StatelessWidget {
-  const _RecorderDock({required this.controller, required this.onTap});
+  const _RecorderDock({
+    required this.controller,
+    required this.convertedAnswerController,
+    required this.convertedAnswerFocusNode,
+    required this.convertedAnswerMode,
+    required this.convertedAnswerSubmitting,
+    required this.onStart,
+    required this.onSendVoice,
+    required this.onConvertToText,
+    required this.onCancelRecording,
+    required this.onSubmitConvertedAnswer,
+    required this.onCancelConvertedAnswer,
+    required this.onOpenTextAnswer,
+  });
 
   final AgentController controller;
-  final VoidCallback onTap;
+  final TextEditingController convertedAnswerController;
+  final FocusNode convertedAnswerFocusNode;
+  final bool convertedAnswerMode;
+  final bool convertedAnswerSubmitting;
+  final FutureOr<void> Function() onStart;
+  final FutureOr<void> Function() onSendVoice;
+  final FutureOr<void> Function() onConvertToText;
+  final FutureOr<void> Function() onCancelRecording;
+  final FutureOr<void> Function() onSubmitConvertedAnswer;
+  final VoidCallback onCancelConvertedAnswer;
+  final VoidCallback onOpenTextAnswer;
 
   @override
   Widget build(BuildContext context) {
     final state = controller.recordingState;
-    final recording =
-        state == PracticeRecordingState.starting ||
-        state == PracticeRecordingState.recording;
+    final phase = switch (state) {
+      PracticeRecordingState.idle => VoiceCapturePhase.idle,
+      PracticeRecordingState.starting => VoiceCapturePhase.starting,
+      PracticeRecordingState.recording => VoiceCapturePhase.recording,
+      _ => VoiceCapturePhase.busy,
+    };
     final working =
         state == PracticeRecordingState.transcribing ||
+        state == PracticeRecordingState.awaitingConfirmation ||
         state == PracticeRecordingState.submitting;
+    return VoiceCaptureControl(
+      phase: phase,
+      enabled:
+          !convertedAnswerMode &&
+          !controller.hasPendingPracticeAudio &&
+          !working,
+      onStart: onStart,
+      onSendVoice: onSendVoice,
+      onConvertToText: onConvertToText,
+      onCancel: onCancelRecording,
+      builder: (context, capture) {
+        final content = convertedAnswerMode
+            ? _IeltsConvertedAnswerDock(
+                controller: convertedAnswerController,
+                focusNode: convertedAnswerFocusNode,
+                submitting: convertedAnswerSubmitting,
+                onSubmit: onSubmitConvertedAnswer,
+                onCancel: onCancelConvertedAnswer,
+              )
+            : controller.hasPendingPracticeAudio
+            ? _IeltsPendingAudioDock(controller: controller)
+            : working
+            ? _IeltsRecorderWorkingState(state: state)
+            : _IeltsVoiceCaptureDock(
+                phase: phase,
+                capture: capture,
+                onShowText: onOpenTextAnswer,
+              );
+        return Material(
+          color: SpeakUpDesign.surface,
+          child: SafeArea(
+            top: false,
+            minimum: const EdgeInsets.fromLTRB(20, 12, 20, 14),
+            child: content,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _IeltsVoiceCaptureDock extends StatelessWidget {
+  const _IeltsVoiceCaptureDock({
+    required this.phase,
+    required this.capture,
+    required this.onShowText,
+  });
+
+  final VoiceCapturePhase phase;
+  final VoiceCaptureView capture;
+  final VoidCallback onShowText;
+
+  @override
+  Widget build(BuildContext context) {
+    final recording =
+        phase == VoiceCapturePhase.starting ||
+        phase == VoiceCapturePhase.recording;
+    final showTargets = recording;
+    final label = switch ((phase, capture.releaseIntent, capture.tapMode)) {
+      (VoiceCapturePhase.starting, _, _) => 'Opening microphone…',
+      (_, VoiceCaptureReleaseIntent.cancel, _) => 'Release to cancel',
+      (_, VoiceCaptureReleaseIntent.convertToText, _) =>
+        'Release to convert to text',
+      (VoiceCapturePhase.recording, _, true) => 'Tap to send voice',
+      (VoiceCapturePhase.recording, _, false) => 'Release to send voice',
+      _ => 'Tap or hold to speak',
+    };
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showTargets) ...[
+          VoiceCaptureIntentTargets(
+            capture: capture,
+            elapsed: Duration.zero,
+            keyPrefix: 'ielts-mock',
+            cancelLabel: 'Cancel',
+            convertLabel: 'Convert to text',
+          ),
+          const SizedBox(height: 10),
+        ],
+        Row(
+          children: [
+            Expanded(
+              child: capture.wrapTarget(
+                key: const Key('ielts-mock-record'),
+                semanticsLabel: recording
+                    ? 'Send voice answer'
+                    : 'Start recording',
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 100),
+                  constraints: const BoxConstraints(minHeight: 64),
+                  decoration: BoxDecoration(
+                    color: capture.cancelArmed
+                        ? SpeakUpDesign.errorMuted
+                        : capture.convertArmed
+                        ? SpeakUpDesign.primaryMuted
+                        : recording
+                        ? const Color(0xFFE2F2F2)
+                        : SpeakUpDesign.ink,
+                    borderRadius: BorderRadius.circular(
+                      SpeakUpDesign.radiusControl,
+                    ),
+                    border: Border.all(
+                      color: capture.cancelArmed
+                          ? SpeakUpDesign.error
+                          : capture.convertArmed
+                          ? SpeakUpDesign.primary
+                          : recording
+                          ? const Color(0xFF197782)
+                          : SpeakUpDesign.ink,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        recording
+                            ? Icons.graphic_eq_rounded
+                            : Icons.mic_none_rounded,
+                        color: recording
+                            ? const Color(0xFF197782)
+                            : Colors.white,
+                        size: 27,
+                      ),
+                      const SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          label,
+                          key: const Key('ielts-mock-recorder-state'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: SpeakUpDesign.cardTitle.copyWith(
+                            color: recording
+                                ? const Color(0xFF197782)
+                                : Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (!recording) ...[
+              const SizedBox(width: 10),
+              IconButton.outlined(
+                key: const Key('ielts-mock-open-keyboard'),
+                onPressed: onShowText,
+                tooltip: 'Type answer',
+                icon: const Icon(Icons.keyboard_alt_outlined),
+                style: IconButton.styleFrom(minimumSize: const Size.square(56)),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _IeltsRecorderWorkingState extends StatelessWidget {
+  const _IeltsRecorderWorkingState({required this.state});
+
+  final PracticeRecordingState state;
+
+  @override
+  Widget build(BuildContext context) {
     final label = switch (state) {
-      PracticeRecordingState.starting => 'Opening microphone…',
-      PracticeRecordingState.recording => 'Listening',
       PracticeRecordingState.transcribing => 'Transcribing your answer…',
       PracticeRecordingState.awaitingConfirmation => 'Submitting your answer…',
       PracticeRecordingState.submitting => 'Preparing the next question…',
-      _ => 'Ready to speak',
+      _ => 'Working…',
     };
-    return Material(
-      color: SpeakUpDesign.surface,
-      child: SafeArea(
-        top: false,
-        minimum: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Row(
+      key: const Key('ielts-mock-recorder-working'),
+      children: [
+        const SizedBox.square(
+          dimension: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            label,
+            key: const Key('ielts-mock-recorder-state'),
+            style: SpeakUpDesign.body,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _IeltsConvertedAnswerDock extends StatelessWidget {
+  const _IeltsConvertedAnswerDock({
+    required this.controller,
+    required this.focusNode,
+    required this.submitting,
+    required this.onSubmit,
+    required this.onCancel,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool submitting;
+  final FutureOr<void> Function() onSubmit;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      key: const Key('ielts-mock-converted-answer'),
+      children: [
+        IconButton.outlined(
+          key: const Key('ielts-mock-cancel-converted-answer'),
+          onPressed: submitting ? null : onCancel,
+          tooltip: 'Cancel text draft',
+          icon: const Icon(Icons.close_rounded),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: TextField(
+            key: const Key('ielts-mock-converted-answer-field'),
+            controller: controller,
+            focusNode: focusNode,
+            enabled: !submitting,
+            minLines: 1,
+            maxLines: 3,
+            maxLength: 8000,
+            textInputAction: TextInputAction.newline,
+            decoration: const InputDecoration(
+              hintText: 'Edit the transcript before sending…',
+              counterText: '',
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: controller,
+          builder: (context, value, _) => IconButton.filled(
+            key: const Key('ielts-mock-submit-converted-answer'),
+            onPressed: submitting || value.text.trim().isEmpty
+                ? null
+                : () => onSubmit(),
+            tooltip: 'Send text answer',
+            icon: submitting
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.arrow_upward_rounded),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _IeltsPendingAudioDock extends StatelessWidget {
+  const _IeltsPendingAudioDock({required this.controller});
+
+  final AgentController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('ielts-mock-pending-audio'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Recording kept after transcription failed.',
+          style: SpeakUpDesign.cardTitle,
+        ),
+        const SizedBox(height: 10),
+        Row(
           children: [
-            Text(
-              label,
-              key: const Key('ielts-mock-recorder-state'),
-              style: SpeakUpDesign.cardTitle.copyWith(
-                color: recording ? const Color(0xFF197782) : SpeakUpDesign.ink,
+            Expanded(
+              child: OutlinedButton(
+                key: const Key('ielts-mock-delete-pending-audio'),
+                onPressed: controller.discardPendingPracticeAudio,
+                child: const Text('Delete'),
               ),
             ),
-            const SizedBox(height: 12),
-            Semantics(
-              button: true,
-              label: recording ? 'Submit answer' : 'Start recording',
-              child: IconButton.filled(
-                key: const Key('ielts-mock-record'),
-                onPressed: working ? null : onTap,
-                style: IconButton.styleFrom(
-                  fixedSize: const Size.square(76),
-                  backgroundColor: recording
-                      ? const Color(0xFF197782)
-                      : SpeakUpDesign.ink,
-                  foregroundColor: Colors.white,
-                ),
-                icon: working
-                    ? const SizedBox.square(
-                        dimension: 25,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: Colors.white,
-                        ),
-                      )
-                    : Icon(
-                        recording ? Icons.stop_rounded : Icons.mic_none_rounded,
-                        size: 32,
-                      ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                key: const Key('ielts-mock-retry-transcription'),
+                onPressed: controller.retryPracticeTranscription,
+                child: const Text('Retry transcript'),
               ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              recording
-                  ? 'Tap again to submit your answer'
-                  : 'Tap to start recording your answer',
-              style: SpeakUpDesign.body.copyWith(fontSize: 13),
             ),
           ],
         ),
-      ),
+      ],
     );
   }
 }
@@ -1529,6 +1892,7 @@ class _Part2Preparation extends StatelessWidget {
 
 class _Part2Speaking extends StatelessWidget {
   const _Part2Speaking({
+    required this.controller,
     required this.secondsRemaining,
     required this.notes,
     required this.recordingState,
@@ -1537,6 +1901,7 @@ class _Part2Speaking extends StatelessWidget {
     required this.onPressed,
   });
 
+  final AgentController controller;
   final int secondsRemaining;
   final String notes;
   final PracticeRecordingState recordingState;
@@ -1601,32 +1966,51 @@ class _Part2Speaking extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 26),
-          FilledButton(
-            key: const Key('ielts-mock-finish-speaking'),
-            onPressed: busy ? null : onPressed,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(58),
-              backgroundColor: SpeakUpDesign.ink,
-              foregroundColor: Colors.white,
+          if (controller.hasPendingPracticeAudio)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _IeltsPendingAudioDock(controller: controller),
+                const SizedBox(height: 12),
+                FilledButton(
+                  key: const Key('ielts-mock-finish-speaking'),
+                  onPressed: busy ? null : onPressed,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(58),
+                    backgroundColor: SpeakUpDesign.ink,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Record Again →'),
+                ),
+              ],
+            )
+          else
+            FilledButton(
+              key: const Key('ielts-mock-finish-speaking'),
+              onPressed: busy ? null : onPressed,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(58),
+                backgroundColor: SpeakUpDesign.ink,
+                foregroundColor: Colors.white,
+              ),
+              child: busy
+                  ? const SizedBox.square(
+                      dimension: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(switch (recordingState) {
+                      PracticeRecordingState.idle =>
+                        errorMessage == null
+                            ? 'Start Speaking →'
+                            : 'Record Again →',
+                      PracticeRecordingState.awaitingConfirmation =>
+                        'Submit Answer →',
+                      _ => 'Finish Speaking →',
+                    }),
             ),
-            child: busy
-                ? const SizedBox.square(
-                    dimension: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.4,
-                      color: Colors.white,
-                    ),
-                  )
-                : Text(switch (recordingState) {
-                    PracticeRecordingState.idle =>
-                      errorMessage == null
-                          ? 'Start Speaking →'
-                          : 'Record Again →',
-                    PracticeRecordingState.awaitingConfirmation =>
-                      'Submit Answer →',
-                    _ => 'Finish Speaking →',
-                  }),
-          ),
         ],
       ),
     );

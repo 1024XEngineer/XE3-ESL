@@ -41,6 +41,8 @@ void main() {
     expect(find.text('英文自我介绍'), findsOneWidget);
 
     const textMessage = 'Please help me make this answer more specific.';
+    await tester.tap(find.byKey(const Key('agent-show-text-composer')));
+    await tester.pump();
     await tester.enterText(
       find.byKey(const Key('agent-composer-field')),
       textMessage,
@@ -74,24 +76,31 @@ void main() {
     await tester.tap(find.byKey(const Key('practice-record')));
     await tester.pumpAndSettle();
     expect(agentController.recordingState, PracticeRecordingState.recording);
-    expect(find.text('再次点击结束'), findsOneWidget);
+    expect(find.text('点击发送语音'), findsOneWidget);
     expect(
-      find.byKey(const Key('practice-cancel-tap-recording')),
+      find.byKey(const Key('practice-voice-target-cancel')),
       findsOneWidget,
     );
 
-    await tester.tap(find.byKey(const Key('practice-cancel-tap-recording')));
+    await tester.tap(find.byKey(const Key('practice-voice-target-cancel')));
     await tester.pumpAndSettle();
     expect(agentController.recordingState, PracticeRecordingState.idle);
     expect(find.byKey(const Key('practice-transcript')), findsNothing);
 
     await tester.tap(find.byKey(const Key('practice-record')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('practice-stop-recording')));
+    await tester.tap(find.byKey(const Key('practice-voice-target-convert')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('practice-rerecord')));
+    expect(find.byKey(const Key('practice-text-answer')), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('practice-text-answer')))
+          .controller
+          ?.text,
+      isNotEmpty,
+    );
+    expect(agentController.recordingState, PracticeRecordingState.idle);
+    await tester.tap(find.byKey(const Key('practice-return-to-voice')));
     await tester.pumpAndSettle();
     expect(agentController.recordingState, PracticeRecordingState.idle);
 
@@ -99,7 +108,7 @@ void main() {
       tester.getCenter(find.byKey(const Key('practice-record'))),
     );
     await tester.pump(const Duration(milliseconds: 220));
-    await cancelledGesture.moveBy(const Offset(0, -90));
+    await cancelledGesture.moveBy(const Offset(-90, 0));
     await tester.pump();
     expect(find.text('松开取消'), findsOneWidget);
     await cancelledGesture.up();
@@ -108,27 +117,16 @@ void main() {
     expect(agentController.recordingState, PracticeRecordingState.idle);
 
     for (var turn = 1; turn <= 3; turn++) {
-      await _holdAndReleaseAnswer(tester);
-      expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
-      expect(find.text('取消'), findsOneWidget);
       expect(
         find
             .byKey(Key('practice-ai-message-${agentController.questionId}'))
             .hitTestable(),
         findsOneWidget,
       );
-
-      if (turn == 1) {
-        await tester.tap(find.byKey(const Key('practice-rerecord')));
-        await tester.pumpAndSettle();
-        expect(agentController.practiceMessages, hasLength(1));
-        await _holdAndReleaseAnswer(tester);
-      }
-
-      await tester.tap(find.byKey(const Key('practice-confirm-turn')));
-      await tester.pumpAndSettle();
+      await _holdAndReleaseAnswer(tester);
       if (turn < 3) {
         expect(agentController.practiceMessages, hasLength(turn * 2 + 1));
+        expect(agentController.recordingState, PracticeRecordingState.idle);
       }
     }
 

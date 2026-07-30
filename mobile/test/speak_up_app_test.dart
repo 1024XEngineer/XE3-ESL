@@ -30,7 +30,8 @@ void main() {
       findsNothing,
     );
     expect(find.byKey(const Key('quick-action-recent-review')), findsOneWidget);
-    expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
+    expect(find.byKey(const Key('agent-mic-placeholder')), findsOneWidget);
+    expect(find.byKey(const Key('agent-show-text-composer')), findsOneWidget);
     expect(find.byKey(const Key('agent-preview-label')), findsOneWidget);
 
     for (final key in _primaryTabKeys) {
@@ -131,6 +132,7 @@ void main() {
       ),
     );
 
+    await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     await tester.enterText(composer, 'retry this retained text');
     expect(tester.widget<TextField>(composer).controller?.text, isNotEmpty);
@@ -168,6 +170,7 @@ void main() {
       ),
     );
 
+    await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     await tester.enterText(composer, 'a newer draft');
     update(() {
@@ -209,6 +212,7 @@ void main() {
 
     expect(find.byKey(const Key('no-focused-conversation-home')), findsNothing);
     expect(find.text('你好，今天想练什么？'), findsOneWidget);
+    await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     expect(tester.widget<TextField>(composer).enabled, isTrue);
 
@@ -240,6 +244,7 @@ void main() {
     await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
     await tester.pumpAndSettle();
 
+    await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     await tester.enterText(composer, 'Show the failure');
     await tester.pump();
@@ -277,6 +282,7 @@ void main() {
         ),
       );
 
+      await _openAgentTextInput(tester);
       final composer = find.byKey(const Key('agent-composer-field'));
       await tester.enterText(composer, 'Keep this draft');
       await tester.pump();
@@ -314,6 +320,7 @@ void main() {
       ),
     );
 
+    await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     await tester.enterText(composer, 'Recover this draft');
     update(() {
@@ -349,11 +356,13 @@ void main() {
       ),
     );
 
+    await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     await tester.enterText(composer, 'Private empty-page draft');
     update(() => threadId = 'existing-history-thread');
     await tester.pump();
 
+    await _openAgentTextInput(tester);
     expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
   });
 
@@ -376,11 +385,13 @@ void main() {
       ),
     );
 
+    await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     await tester.enterText(composer, 'Thread A private draft');
     update(() => threadId = 'thread-b');
     await tester.pump();
 
+    await _openAgentTextInput(tester);
     expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
   });
 
@@ -401,6 +412,7 @@ void main() {
       ),
     );
 
+    await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     await tester.enterText(composer, 'Send once');
     await tester.pump();
@@ -429,6 +441,7 @@ void main() {
       ),
     );
 
+    await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     expect(tester.widget<TextField>(composer).enabled, isTrue);
     expect(
@@ -775,6 +788,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('primary-tab-agent')));
     await tester.pumpAndSettle();
+    await _openAgentTextInput(tester);
     tester.view.viewInsets = const FakeViewPadding(bottom: 240);
     await tester.showKeyboard(find.byKey(const Key('agent-composer-field')));
     await tester.pumpAndSettle();
@@ -888,6 +902,11 @@ const _primaryTabKeys = [
   'primary-tab-review',
   'primary-tab-profile',
 ];
+
+Future<void> _openAgentTextInput(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('agent-show-text-composer')));
+  await tester.pump();
+}
 
 Future<void> _tapPrimaryDestination(
   WidgetTester tester, {
