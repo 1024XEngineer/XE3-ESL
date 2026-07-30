@@ -882,6 +882,21 @@ func (r *PostgresRepository) DeleteUserData(
 	}
 	if _, err := tx.Exec(
 		ctx,
+		`DELETE FROM review_speech_feedbacks WHERE owner_user_id = $1`,
+		command.UserID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`DELETE FROM review_speech_feedback_turn_snapshots
+		 WHERE owner_user_id = $1`,
+		command.UserID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		ctx,
 		`DELETE FROM reviews WHERE owner_user_id = $1`,
 		command.UserID,
 	); err != nil {

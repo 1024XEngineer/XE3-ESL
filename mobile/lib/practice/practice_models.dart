@@ -40,6 +40,17 @@ bool isIeltsSpeakingFullMockScenario(
   String? scenarioModel,
 ) => scenarioType == 'EXAM' && scenarioModel == 'IELTS_SPEAKING_FULL_MOCK';
 
+bool isTurnFeedbackEligiblePracticeScenario(
+  String? scenarioType,
+  String? scenarioModel,
+) =>
+    (scenarioType == 'WORKPLACE' &&
+        (scenarioModel == 'PROGRESS_AND_RISK_UPDATE' ||
+            scenarioModel == 'WORKPLACE_BASIC_DIALOGUE')) ||
+    (scenarioType == 'DAILY' &&
+        (scenarioModel == 'HOTEL_CHECKIN_AND_ISSUE_HANDLING' ||
+            scenarioModel == 'DAILY_BASIC_DIALOGUE'));
+
 final class PracticeQuestion {
   const PracticeQuestion({
     required this.id,
@@ -80,6 +91,7 @@ final class PracticeSessionSnapshot {
     required this.sessionCompleted,
     this.currentQuestion,
     this.currentTurn,
+    this.turnHistory = const <PracticeTurnExchange>[],
     this.review,
     this.formalReview,
   });
@@ -96,8 +108,16 @@ final class PracticeSessionSnapshot {
   final bool sessionCompleted;
   final PracticeQuestion? currentQuestion;
   final PracticeTurnSnapshot? currentTurn;
+  final List<PracticeTurnExchange> turnHistory;
   final AgentReview? review;
   final FormalReview? formalReview;
+}
+
+final class PracticeTurnExchange {
+  const PracticeTurnExchange({required this.question, required this.turn});
+
+  final PracticeQuestion question;
+  final PracticeTurnSnapshot turn;
 }
 
 final class PracticeTurnSnapshot {
@@ -113,6 +133,7 @@ final class PracticeTurnSnapshot {
     required this.sessionCompleted,
     this.reviewId,
     this.audioAssetId,
+    this.speechFeedbackStatusUrl,
   });
 
   final String id;
@@ -126,6 +147,7 @@ final class PracticeTurnSnapshot {
   final bool sessionCompleted;
   final String? reviewId;
   final String? audioAssetId;
+  final String? speechFeedbackStatusUrl;
 }
 
 final class PracticeStartResult {
@@ -189,6 +211,7 @@ final class PracticeTurnConfirmation {
     this.review,
     this.formalReview,
     this.audioAssetId,
+    this.speechFeedbackStatusUrl,
   });
 
   final String turnId;
@@ -206,6 +229,114 @@ final class PracticeTurnConfirmation {
   final AgentReview? review;
   final FormalReview? formalReview;
   final String? audioAssetId;
+  final String? speechFeedbackStatusUrl;
+}
+
+enum PracticeRetryRequestStatus { pending, turnCreated, failed }
+
+enum PracticeRetryFailureReason {
+  sourceNoLongerAvailable,
+  retryTurnCreationFailed,
+}
+
+final class PracticeRetryFailure {
+  const PracticeRetryFailure({required this.reason, required this.retryable});
+
+  final PracticeRetryFailureReason reason;
+  final bool retryable;
+}
+
+/// Review-owned creation state for one same-question retry Turn.
+final class PracticeRetryRequest {
+  const PracticeRetryRequest({
+    required this.retryRequestId,
+    required this.feedbackItemId,
+    required this.sessionId,
+    required this.originalTurnId,
+    required this.questionId,
+    required this.retryStatus,
+    required this.statusUrl,
+    required this.createdAt,
+    required this.updatedAt,
+    this.newTurnId,
+    this.answerPath,
+    this.stableFailure,
+    this.completedAt,
+  });
+
+  final String retryRequestId;
+  final String feedbackItemId;
+  final String sessionId;
+  final String originalTurnId;
+  final String questionId;
+  final PracticeRetryRequestStatus retryStatus;
+  final String statusUrl;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final String? newTurnId;
+  final String? answerPath;
+  final PracticeRetryFailure? stableFailure;
+  final DateTime? completedAt;
+}
+
+/// Ready ASR text bound to a server-created retry Turn draft.
+final class RetryTranscriptionCandidate {
+  const RetryTranscriptionCandidate({
+    required this.id,
+    required this.retryTurnId,
+    required this.retryRequestId,
+    required this.sessionId,
+    required this.questionId,
+    required this.respondentParticipantId,
+    required this.transcriptId,
+    required this.evidenceVersion,
+    required this.text,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String retryTurnId;
+  final String retryRequestId;
+  final String sessionId;
+  final String questionId;
+  final String respondentParticipantId;
+  final String transcriptId;
+  final int evidenceVersion;
+  final String text;
+  final DateTime createdAt;
+}
+
+/// Confirmation of a retry Turn that never advances Practice progress.
+final class ConfirmedRetryTurn {
+  const ConfirmedRetryTurn({
+    required this.turnId,
+    required this.retryRequestId,
+    required this.originalTurnId,
+    required this.sessionId,
+    required this.questionId,
+    required this.respondentParticipantId,
+    required this.candidateId,
+    required this.answerText,
+    required this.evidenceVersion,
+    required this.countsTowardTurnLimit,
+    required this.createdAt,
+    required this.confirmedAt,
+    this.audioAssetId,
+  });
+
+  final String turnId;
+  final String retryRequestId;
+  final String originalTurnId;
+  final String sessionId;
+  final String questionId;
+  final String respondentParticipantId;
+  final String candidateId;
+  final String answerText;
+  final int evidenceVersion;
+  final bool countsTowardTurnLimit;
+  final String? audioAssetId;
+  final DateTime createdAt;
+  final DateTime confirmedAt;
 }
 
 enum PracticeSessionLifecycleStatus {

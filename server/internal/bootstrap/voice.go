@@ -65,6 +65,7 @@ type VoicePorts struct {
 	Checkpoints       agent.VoiceCheckpointPort
 	Reviews           VoiceReviewGateway
 	Completions       agent.VoiceCompletionEvaluationPort
+	SpeechFeedback    agent.VoiceTurnFeedbackPort
 }
 
 type VoiceConfiguration struct {
@@ -85,6 +86,7 @@ type VoiceConfiguration struct {
 	ReviewHistoryCursorKey         []byte
 	InterviewShadowCoordinator     *evaluation.InterviewShadowCoordinator
 	IELTSSpeakingShadowCoordinator IELTSSpeakingCompletionCoordinator
+	SpeechFeedbackCoordinator      *review.SpeechFeedbackCoordinator
 }
 
 // NewSpeechRecognizer is the server-side ASR registration boundary. Production
@@ -157,11 +159,16 @@ func buildVoiceApplication(
 	if err != nil {
 		return nil, err
 	}
+	feedbackPorts := make([]agent.VoiceTurnFeedbackPort, 0, 1)
+	if ports.SpeechFeedback != nil {
+		feedbackPorts = append(feedbackPorts, ports.SpeechFeedback)
+	}
 	orchestrator, err := agent.NewVoiceRoundOrchestrator(
 		conversations,
 		ports.Practice,
 		ports.Reviews,
 		ports.Completions,
+		feedbackPorts...,
 	)
 	if err != nil {
 		return nil, err
@@ -185,6 +192,7 @@ func buildProductionVoiceApplication(
 	configuration VoiceConfiguration,
 ) (
 	*agent.VoiceSessionApplication,
+	*agent.SameQuestionRetryApplication,
 	*conversation.AudioAssetService,
 	error,
 ) {
@@ -196,7 +204,7 @@ func buildProductionVoiceApplication(
 		configuration.ASRLease <= 0 ||
 		configuration.ReviewGenerationTimeout <= 0 ||
 		configuration.ReviewGenerationTimeout > voiceReviewMaxGeneration {
-		return nil, nil,
+		return nil, nil, nil,
 			errors.New("bootstrap: voice dependencies are required")
 	}
 
@@ -206,15 +214,15 @@ func buildProductionVoiceApplication(
 		"speakup.user",
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	practiceProgressPort, err := NewPracticeVoicePort(practiceApplication)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	conversationRepository, err := conversationpostgres.New(database)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	conversationStore := &voiceConversationStore{
 		repository: conversationRepository,
@@ -226,7 +234,7 @@ func buildProductionVoiceApplication(
 		audioRepository, repositoryErr :=
 			conversationpostgres.NewAudioAssetRepository(database)
 		if repositoryErr != nil {
-			return nil, nil, repositoryErr
+			return nil, nil, nil, repositoryErr
 		}
 		audioAssets, err = conversation.NewAudioAssetService(
 			audioRepository,
@@ -237,7 +245,7 @@ func buildProductionVoiceApplication(
 			configuration.AudioStagedTTL,
 		)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 	var recordingLifecycle conversation.VoiceRecordingLifecycle
@@ -253,7 +261,30 @@ func buildProductionVoiceApplication(
 			recordingLifecycle,
 		)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	retryTurnService, err := conversation.NewRetryTurnService(
+		conversationRepository,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	retryPracticeApplication, err := practice.NewRetryTurnApplication(
+		practiceRepository,
+		"speakup.user",
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	retryApplication, err := agent.NewSameQuestionRetryApplication(
+		&voiceRetryTurnAdapter{service: retryTurnService},
+		&voiceRetryPracticeAdapter{
+			application: retryPracticeApplication,
+		},
+		conversationService,
+	)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	practiceAdapter := &voicePracticeAdapter{
 		repository: practiceRepository,
@@ -266,6 +297,9 @@ func buildProductionVoiceApplication(
 	checkpointAdapter := &voiceCheckpointAdapter{
 		repository:  conversationRepository,
 		audioAssets: audioAssets,
+	}
+	if configuration.SpeechFeedbackCoordinator != nil {
+		checkpointAdapter.feedback = configuration.SpeechFeedbackCoordinator
 	}
 	sourceReader := &voiceReviewSourceReader{
 		conversations: conversationRepository,
@@ -294,14 +328,24 @@ func buildProductionVoiceApplication(
 		sessions:    practiceAdapter,
 		ieltsShadow: configuration.IELTSSpeakingShadowCoordinator,
 	}
+	feedbackPorts := make([]agent.VoiceTurnFeedbackPort, 0, 1)
+	if configuration.SpeechFeedbackCoordinator != nil {
+		feedbackPorts = append(
+			feedbackPorts,
+			&voiceSpeechFeedbackAdapter{
+				coordinator: configuration.SpeechFeedbackCoordinator,
+			},
+		)
+	}
 	orchestrator, err := agent.NewVoiceRoundOrchestrator(
 		conversationService,
 		practiceProgressPort,
 		reviewAdapter,
 		completionAdapter,
+		feedbackPorts...,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	application, err := agent.NewVoiceSessionApplication(
 		practiceAdapter,
@@ -312,9 +356,9 @@ func buildProductionVoiceApplication(
 		matters,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return application, audioAssets, nil
+	return application, retryApplication, audioAssets, nil
 }
 
 type voicePracticeAdapter struct {
@@ -696,6 +740,61 @@ func mapPracticeError(err error) error {
 	}
 }
 
+type voiceRetryTurnAdapter struct {
+	service *conversation.RetryTurnService
+}
+
+func (adapter *voiceRetryTurnAdapter) Get(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	retryTurnID string,
+) (conversation.RetryTurnDraft, error) {
+	if adapter == nil || adapter.service == nil {
+		return conversation.RetryTurnDraft{}, agent.ErrInvalidContext
+	}
+	draft, err := adapter.service.Get(ctx, actor, retryTurnID)
+	switch {
+	case errors.Is(err, conversation.ErrRetryTurnInvalid):
+		return conversation.RetryTurnDraft{}, agent.ErrInvalidRequest
+	case errors.Is(err, conversation.ErrRetryTurnNotFound):
+		return conversation.RetryTurnDraft{}, agent.ErrNotFound
+	case errors.Is(err, conversation.ErrRetryTurnConflict),
+		errors.Is(err, conversation.ErrRetryTurnNotReady):
+		return conversation.RetryTurnDraft{}, agent.ErrConflict
+	default:
+		return draft, err
+	}
+}
+
+type voiceRetryPracticeAdapter struct {
+	application *practice.RetryTurnApplication
+}
+
+func (adapter *voiceRetryPracticeAdapter) ResolveAuthorizedParticipant(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	retryRequestID string,
+) (string, error) {
+	if adapter == nil || adapter.application == nil {
+		return "", agent.ErrInvalidContext
+	}
+	participantID, err := adapter.application.ResolveAuthorizedParticipant(
+		ctx,
+		actor,
+		retryRequestID,
+	)
+	switch {
+	case errors.Is(err, practice.ErrRetryTurnInvalid):
+		return "", agent.ErrInvalidRequest
+	case errors.Is(err, practice.ErrRetryTurnNotAvailable):
+		return "", agent.ErrNotFound
+	case errors.Is(err, practice.ErrRetryTurnConflict):
+		return "", agent.ErrConflict
+	default:
+		return participantID, err
+	}
+}
+
 type voiceConversationStore struct {
 	repository conversationpersistence.PersistenceStore
 	recordings conversationpersistence.RecordingConfirmationStore
@@ -941,6 +1040,7 @@ func (store *voiceConversationStore) ReserveConfirmation(
 			EvidenceVersion: candidate.EvidenceVersion,
 			ConfirmedText:   candidate.Text,
 			IdempotencyKey:  command.IdempotencyKey,
+			RetryTurnID:     command.RetryTurnID,
 		},
 	)
 	if err != nil {
@@ -977,6 +1077,7 @@ func (store *voiceConversationStore) ReserveRecordingConfirmation(
 				EvidenceVersion: candidate.EvidenceVersion,
 				ConfirmedText:   candidate.Text,
 				IdempotencyKey:  command.IdempotencyKey,
+				RetryTurnID:     command.RetryTurnID,
 			},
 			uploadRequestID,
 		)
@@ -1120,6 +1221,10 @@ func mapVoiceTurn(
 		RespondentParticipantID: turn.RespondentParticipantID,
 		CandidateID:             turn.CandidateID,
 		EvidenceVersion:         turn.EvidenceVersion,
+		TurnKind:                string(turn.Kind),
+		RetryRequestID:          turn.RetryRequestID,
+		OriginalTurnID:          turn.OriginalTurnID,
+		CountsTowardTurnLimit:   turn.CountsTowardTurnLimit,
 		AnswerText:              turn.AnswerText,
 		EffectiveTurns:          turn.Progress.EffectiveTurns,
 		SessionCompleted:        turn.Progress.SessionCompleted,
@@ -1358,6 +1463,69 @@ func (adapter *voiceQuestionAdapter) SynthesizeQuestion(
 type voiceCheckpointAdapter struct {
 	repository  conversationpersistence.PersistenceStore
 	audioAssets *conversation.AudioAssetService
+	feedback    review.SpeechFeedbackReader
+}
+
+func (adapter *voiceCheckpointAdapter) ListTurnHistory(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) ([]agent.VoiceTurnExchange, error) {
+	turns, err := adapter.repository.ListSessionTurns(
+		ctx,
+		conversationActor(actor),
+		sessionID,
+	)
+	if err != nil {
+		return nil, mapConversationError(err)
+	}
+	history := make([]agent.VoiceTurnExchange, 0, len(turns))
+	for _, persistedTurn := range turns {
+		candidate, candidateErr := adapter.repository.GetCandidate(
+			ctx,
+			conversationActor(actor),
+			persistedTurn.CandidateID,
+		)
+		if candidateErr != nil {
+			return nil, mapConversationError(candidateErr)
+		}
+		turn, turnErr := mapVoiceTurnWithCandidate(
+			persistedTurn,
+			candidate,
+		)
+		if turnErr != nil {
+			return nil, turnErr
+		}
+		turn, turnErr = adapter.withReadableRecording(
+			ctx,
+			actor,
+			turn,
+		)
+		if turnErr != nil {
+			return nil, turnErr
+		}
+		turn, turnErr = adapter.withSpeechFeedback(
+			ctx,
+			actor,
+			turn,
+		)
+		if turnErr != nil {
+			return nil, turnErr
+		}
+		question, questionErr := adapter.repository.GetQuestion(
+			ctx,
+			conversationActor(actor),
+			turn.QuestionID,
+		)
+		if questionErr != nil {
+			return nil, mapConversationError(questionErr)
+		}
+		history = append(history, agent.VoiceTurnExchange{
+			Question: mapVoiceQuestion(question),
+			Turn:     turn,
+		})
+	}
+	return history, nil
 }
 
 func (adapter *voiceCheckpointAdapter) LatestTurn(
@@ -1391,8 +1559,24 @@ func (adapter *voiceCheckpointAdapter) LatestTurn(
 	if err != nil {
 		return conversation.ConfirmedVoiceTurn{}, false, err
 	}
+	turn, err = adapter.withReadableRecording(ctx, actor, turn)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, false, err
+	}
+	turn, err = adapter.withSpeechFeedback(ctx, actor, turn)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, false, err
+	}
+	return turn, true, nil
+}
+
+func (adapter *voiceCheckpointAdapter) withReadableRecording(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	turn conversation.ConfirmedVoiceTurn,
+) (conversation.ConfirmedVoiceTurn, error) {
 	if adapter.audioAssets == nil {
-		return turn, true, nil
+		return turn, nil
 	}
 	asset, err := adapter.audioAssets.GetReadableByTurn(
 		ctx,
@@ -1401,13 +1585,92 @@ func (adapter *voiceCheckpointAdapter) LatestTurn(
 	)
 	if errors.Is(err, conversation.ErrAudioAssetNotFound) ||
 		errors.Is(err, conversation.ErrAudioAssetInvalidTransition) {
-		return turn, true, nil
+		return turn, nil
 	}
 	if err != nil {
-		return conversation.ConfirmedVoiceTurn{}, false, err
+		return conversation.ConfirmedVoiceTurn{}, err
 	}
 	turn.AudioAssetID = asset.ID
-	return turn, true, nil
+	return turn, nil
+}
+
+func (adapter *voiceCheckpointAdapter) withSpeechFeedback(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	turn conversation.ConfirmedVoiceTurn,
+) (conversation.ConfirmedVoiceTurn, error) {
+	if adapter.feedback == nil {
+		return turn, nil
+	}
+	statusURL, found, err :=
+		adapter.feedback.StatusURLForConversationTurn(
+			ctx,
+			actor,
+			turn.ID,
+		)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	if found {
+		turn.SpeechFeedbackStatusURL = statusURL
+	}
+	return turn, nil
+}
+
+type voiceSpeechFeedbackAdapter struct {
+	coordinator *review.SpeechFeedbackCoordinator
+}
+
+func (adapter *voiceSpeechFeedbackAdapter) EnsureAgentVoiceMessage(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+	messageID string,
+) (agent.VoiceMessageFeedbackReference, error) {
+	if adapter == nil || adapter.coordinator == nil {
+		return agent.VoiceMessageFeedbackReference{},
+			agent.ErrInvalidContext
+	}
+	reference, err := adapter.coordinator.EnsureAgentVoiceMessage(
+		ctx,
+		actor,
+		threadID,
+		messageID,
+	)
+	if err != nil {
+		return agent.VoiceMessageFeedbackReference{}, err
+	}
+	return agent.VoiceMessageFeedbackReference{
+		StatusURL: reference.StatusURL,
+	}, nil
+}
+
+func (adapter *voiceSpeechFeedbackAdapter) EnsureConversationTurn(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+	turnID string,
+) (agent.VoiceTurnFeedbackReference, error) {
+	if adapter == nil || adapter.coordinator == nil {
+		return agent.VoiceTurnFeedbackReference{},
+			agent.ErrInvalidContext
+	}
+	reference, err := adapter.coordinator.EnsureConversationTurn(
+		ctx,
+		actor,
+		sessionID,
+		turnID,
+	)
+	if errors.Is(err, review.ErrSpeechFeedbackNotApplicable) {
+		return agent.VoiceTurnFeedbackReference{}, nil
+	}
+	if err != nil {
+		return agent.VoiceTurnFeedbackReference{}, err
+	}
+	return agent.VoiceTurnFeedbackReference{
+		StatusURL:  reference.StatusURL,
+		Applicable: true,
+	}, nil
 }
 
 type voiceReviewAdapter struct {

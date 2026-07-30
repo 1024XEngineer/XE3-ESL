@@ -103,6 +103,12 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
   @override
   void didUpdateWidget(covariant VoiceCaptureControl oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.phase == VoiceCapturePhase.idle &&
+        _isCapturing &&
+        !_pointerActive &&
+        !_startInFlight) {
+      _tapMode = true;
+    }
     if (widget.phase == VoiceCapturePhase.busy ||
         (oldWidget.phase != VoiceCapturePhase.idle &&
             widget.phase == VoiceCapturePhase.idle &&

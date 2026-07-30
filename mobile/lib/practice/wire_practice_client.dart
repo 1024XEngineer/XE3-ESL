@@ -10,9 +10,11 @@ import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/review/formal_review.dart';
 import 'package:speakup/review/formal_review_decoder.dart';
 import 'package:speakup/review/formal_review_presentation.dart';
+import 'package:speakup/review/turn_feedback.dart';
 
 /// The single replaceable location for the frozen #87 voice-practice routes.
 ///
@@ -31,6 +33,11 @@ final class PracticeWireEndpoints {
         '{question_id}/text-answers',
     this.confirm = '/v1/transcription-candidates/{candidate_id}/confirmations',
     this.endEarly = '/v1/practice-sessions/{practice_session_id}/end-early',
+    this.retryRequest = '/v1/feedback-items/{feedback_item_id}/retry-requests',
+    this.retryRequestStatus = '/v1/retry-requests/{retry_request_id}',
+    this.retryConfirmation =
+        '/v1/retry-turns/{retry_turn_id}/transcription-candidates/'
+        '{candidate_id}/confirmations',
   });
 
   final String restoreByThread;
@@ -39,6 +46,9 @@ final class PracticeWireEndpoints {
   final String submitText;
   final String confirm;
   final String endEarly;
+  final String retryRequest;
+  final String retryRequestStatus;
+  final String retryConfirmation;
 
   String restorePath(String threadId) =>
       restoreByThread.replaceAll('{thread_id}', _pathSegment(threadId));
@@ -59,9 +69,29 @@ final class PracticeWireEndpoints {
 
   String endEarlyPath(String sessionId) =>
       endEarly.replaceAll('{practice_session_id}', _pathSegment(sessionId));
+
+  String retryRequestPath(String feedbackItemId) => retryRequest.replaceAll(
+    '{feedback_item_id}',
+    _pathSegment(feedbackItemId),
+  );
+
+  String retryRequestStatusPath(String retryRequestId) => retryRequestStatus
+      .replaceAll('{retry_request_id}', _pathSegment(retryRequestId));
+
+  String retryConfirmationPath(String retryTurnId, String candidateId) =>
+      retryConfirmation
+          .replaceAll('{retry_turn_id}', _pathSegment(retryTurnId))
+          .replaceAll('{candidate_id}', _pathSegment(candidateId));
 }
 
 String _pathSegment(String value) => Uri.encodeComponent(value);
+
+final _retryRequestStatusPathPattern = RegExp(
+  r'^/v1/retry-requests/([A-Za-z0-9._~-]{1,128})$',
+);
+final _retryAnswerPathPattern = RegExp(
+  r'^/v1/retry-turns/([A-Za-z0-9._~-]{1,128})/transcription-candidates$',
+);
 
 final class PracticeWireRequest {
   const PracticeWireRequest({
@@ -98,7 +128,10 @@ abstract interface class PracticeWireTransport {
 }
 
 final class WirePracticeClient
-    implements PracticeClient, PracticeLifecycleClient {
+    implements
+        PracticeClient,
+        PracticeLifecycleClient,
+        PracticeSpeechFeedbackRetryClient {
   factory WirePracticeClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -228,26 +261,7 @@ final class WirePracticeClient
       _requireOpaqueId(request.questionId);
       _requireClientId(request.clientTurnId);
       final audio = request.audio;
-      if (audio.contentType != 'audio/wav' ||
-          audio.sizeBytes < 45 ||
-          audio.sizeBytes > _maximumAudioBytes) {
-        throw const AgentClientException(
-          kind: AgentClientFailureKind.invalidRequest,
-          errorCode: 'invalid_audio',
-        );
-      }
-      final audioType = await FileSystemEntity.type(
-        audio.path,
-        followLinks: false,
-      );
-      final file = File(audio.path);
-      if (audioType != FileSystemEntityType.file ||
-          await file.length() != audio.sizeBytes) {
-        throw const AgentClientException(
-          kind: AgentClientFailureKind.invalidRequest,
-          errorCode: 'invalid_audio',
-        );
-      }
+      await _validateAudio(audio);
       final response = await _send(
         generation: generation,
         timeout: _transcriptionTimeout,
@@ -264,6 +278,103 @@ final class WirePracticeClient
         response.body,
         expectedSessionId: request.sessionId,
         expectedQuestionId: request.questionId,
+      );
+    });
+  }
+
+  @override
+  Future<PracticeRetryRequest> requestSameQuestionRetry({
+    required String feedbackItemId,
+    required String idempotencyKey,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(feedbackItemId);
+      _requireClientId(idempotencyKey);
+      final response = await _send(
+        generation: generation,
+        timeout: _jsonTimeout,
+        method: 'POST',
+        path: _endpoints.retryRequestPath(feedbackItemId),
+        extraHeaders: <String, String>{'Idempotency-Key': idempotencyKey},
+      );
+      _requireStatus(response, const {HttpStatus.created, HttpStatus.ok});
+      return _decodeRetryRequest(
+        response.body,
+        expectedFeedbackItemId: feedbackItemId,
+      );
+    });
+  }
+
+  @override
+  Future<PracticeRetryRequest> getSameQuestionRetryRequest({
+    required String retryRequestId,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(retryRequestId);
+      final response = await _sendJson(
+        generation: generation,
+        method: 'GET',
+        path: _endpoints.retryRequestStatusPath(retryRequestId),
+      );
+      _requireStatus(response, const {HttpStatus.ok});
+      return _decodeRetryRequest(
+        response.body,
+        expectedRetryRequestId: retryRequestId,
+      );
+    });
+  }
+
+  @override
+  Future<RetryTranscriptionCandidate> transcribeRetry({
+    required String answerPath,
+    required String idempotencyKey,
+    required RecordedPracticeAudio audio,
+  }) {
+    return _run((generation) async {
+      final retryTurnId = _requireRetryAnswerPath(answerPath);
+      _requireClientId(idempotencyKey);
+      await _validateAudio(audio);
+      final response = await _send(
+        generation: generation,
+        timeout: _transcriptionTimeout,
+        method: 'POST',
+        path: answerPath,
+        extraHeaders: <String, String>{
+          'Idempotency-Key': idempotencyKey,
+          HttpHeaders.contentTypeHeader: 'audio/wav',
+        },
+        rawFilePath: audio.path,
+      );
+      _requireStatus(response, const {HttpStatus.created});
+      return _decodeRetryCandidate(
+        response.body,
+        expectedRetryTurnId: retryTurnId,
+      );
+    });
+  }
+
+  @override
+  Future<ConfirmedRetryTurn> confirmRetry({
+    required String retryTurnId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(retryTurnId);
+      _requireOpaqueId(candidateId);
+      _requireClientId(idempotencyKey);
+      final response = await _send(
+        generation: generation,
+        timeout: _jsonTimeout,
+        method: 'POST',
+        path: _endpoints.retryConfirmationPath(retryTurnId, candidateId),
+        extraHeaders: <String, String>{'Idempotency-Key': idempotencyKey},
+      );
+      _requireStatus(response, const {HttpStatus.ok});
+      return _decodeConfirmedRetryTurn(
+        response.body,
+        expectedRetryTurnId: retryTurnId,
+        expectedCandidateId: candidateId,
       );
     });
   }
@@ -392,6 +503,28 @@ final class WirePracticeClient
       jsonBody: body == null ? null : jsonEncode(body),
       extraHeaders: extraHeaders,
     );
+  }
+
+  Future<void> _validateAudio(RecordedPracticeAudio audio) async {
+    if (audio.contentType != 'audio/wav' ||
+        audio.sizeBytes < 45 ||
+        audio.sizeBytes > _maximumAudioBytes) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidRequest,
+        errorCode: 'invalid_audio',
+      );
+    }
+    final audioType = await FileSystemEntity.type(
+      audio.path,
+      followLinks: false,
+    );
+    if (audioType != FileSystemEntityType.file ||
+        await File(audio.path).length() != audio.sizeBytes) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidRequest,
+        errorCode: 'invalid_audio',
+      );
+    }
   }
 
   Future<PracticeWireResponse> _send({
@@ -608,7 +741,12 @@ PracticeSessionSnapshot _decodeSessionState(
       'turn_limit',
       'session_completed',
     },
-    optional: const {'current_question', 'current_turn', 'review'},
+    optional: const {
+      'current_question',
+      'current_turn',
+      'turn_history',
+      'review',
+    },
   );
   final sessionId = _string(root, 'practice_session_id');
   final planId = _string(root, 'practice_plan_id');
@@ -623,6 +761,7 @@ PracticeSessionSnapshot _decodeSessionState(
   if (const {
     'current_question',
     'current_turn',
+    'turn_history',
     'review',
   }.any((key) => root.containsKey(key) && root[key] == null)) {
     throw _invalidResponse();
@@ -633,6 +772,9 @@ PracticeSessionSnapshot _decodeSessionState(
   final turn = root['current_turn'] == null
       ? null
       : _decodeTurn(_object(root['current_turn']));
+  final turnHistory = root['turn_history'] == null
+      ? const <PracticeTurnExchange>[]
+      : _decodeTurnHistory(root['turn_history']);
   final formalReview = root['review'] == null
       ? null
       : _decodeFormalReview(_object(root['review']));
@@ -652,6 +794,18 @@ PracticeSessionSnapshot _decodeSessionState(
           (turn.sessionId != sessionId ||
               turn.effectiveTurns != effectiveTurns ||
               turn.sessionCompleted != completed)) ||
+      (isTurnFeedbackEligiblePracticeScenario(scenarioType, scenarioModel) &&
+          effectiveTurns > 0 &&
+          !root.containsKey('turn_history')) ||
+      (turnHistory.isNotEmpty &&
+          (turnHistory.length != effectiveTurns ||
+              turnHistory.last.turn.id != turn?.id ||
+              turnHistory.any(
+                (exchange) =>
+                    exchange.question.sessionId != sessionId ||
+                    exchange.turn.sessionId != sessionId ||
+                    exchange.question.id != exchange.turn.questionId,
+              ))) ||
       (formalReview != null &&
           (formalReview.sessionId != sessionId ||
               (turn != null && formalReview.sourceTurnId != turn.id) ||
@@ -674,9 +828,35 @@ PracticeSessionSnapshot _decodeSessionState(
     sessionCompleted: completed,
     currentQuestion: question,
     currentTurn: turn,
+    turnHistory: turnHistory,
     review: formalReview?.presentation,
     formalReview: formalReview?.formalReview,
   );
+}
+
+List<PracticeTurnExchange> _decodeTurnHistory(Object? value) {
+  if (value is! List<Object?> || value.isEmpty || value.length > 14) {
+    throw _invalidResponse();
+  }
+  final exchanges = <PracticeTurnExchange>[];
+  final questionIds = <String>{};
+  final turnIds = <String>{};
+  for (var index = 0; index < value.length; index++) {
+    final root = _exactObject(
+      value[index],
+      required: const {'question', 'turn'},
+    );
+    final question = _decodeQuestion(_object(root['question']));
+    final turn = _decodeTurn(_object(root['turn']));
+    if (!questionIds.add(question.id) ||
+        !turnIds.add(turn.id) ||
+        turn.effectiveTurns != index + 1 ||
+        question.id != turn.questionId) {
+      throw _invalidResponse();
+    }
+    exchanges.add(PracticeTurnExchange(question: question, turn: turn));
+  }
+  return List<PracticeTurnExchange>.unmodifiable(exchanges);
 }
 
 PracticeSessionLifecycle _decodeSessionLifecycle(
@@ -777,6 +957,252 @@ TranscriptionCandidate _decodeCandidate(
   return candidate;
 }
 
+PracticeRetryRequest _decodeRetryRequest(
+  String body, {
+  String? expectedRetryRequestId,
+  String? expectedFeedbackItemId,
+}) {
+  final root = _exactObject(
+    jsonDecode(body),
+    required: const {
+      'retry_request_id',
+      'feedback_item_id',
+      'practice_session_id',
+      'original_turn_id',
+      'question_id',
+      'retry_status',
+      'status_url',
+      'created_at',
+      'updated_at',
+    },
+    optional: const {
+      'new_turn_id',
+      'new_turn_status',
+      'answer_path',
+      'stable_failure',
+      'completed_at',
+    },
+  );
+  final retryRequestId = _string(root, 'retry_request_id', maxLength: 128);
+  final feedbackItemId = _string(root, 'feedback_item_id', maxLength: 128);
+  final sessionId = _string(root, 'practice_session_id', maxLength: 128);
+  final originalTurnId = _string(root, 'original_turn_id', maxLength: 128);
+  final questionId = _string(root, 'question_id', maxLength: 128);
+  final retryStatus = switch (_string(root, 'retry_status', maxLength: 32)) {
+    'PENDING' => PracticeRetryRequestStatus.pending,
+    'TURN_CREATED' => PracticeRetryRequestStatus.turnCreated,
+    'FAILED' => PracticeRetryRequestStatus.failed,
+    _ => throw _invalidResponse(),
+  };
+  final statusUrl = _string(root, 'status_url', maxLength: 256);
+  final createdAt = _dateTime(root, 'created_at');
+  final updatedAt = _dateTime(root, 'updated_at');
+  final newTurnId = root.containsKey('new_turn_id')
+      ? _string(root, 'new_turn_id', maxLength: 128)
+      : null;
+  final newTurnStatus = root.containsKey('new_turn_status')
+      ? _string(root, 'new_turn_status', maxLength: 32)
+      : null;
+  final answerPath = root.containsKey('answer_path')
+      ? _string(root, 'answer_path', maxLength: 512)
+      : null;
+  final stableFailure = root.containsKey('stable_failure')
+      ? _decodePracticeRetryFailure(root['stable_failure'])
+      : null;
+  final completedAt = root.containsKey('completed_at')
+      ? _dateTime(root, 'completed_at')
+      : null;
+
+  final statusUrlId = _retryRequestIdFromStatusUrl(statusUrl);
+  final answerPathTurnId = answerPath == null
+      ? null
+      : _retryTurnIdFromAnswerPath(answerPath);
+  final validShape = switch (retryStatus) {
+    PracticeRetryRequestStatus.pending =>
+      newTurnId == null &&
+          newTurnStatus == null &&
+          answerPath == null &&
+          stableFailure == null &&
+          completedAt == null,
+    PracticeRetryRequestStatus.turnCreated =>
+      newTurnId != null &&
+          newTurnStatus == 'ANSWERING' &&
+          answerPath != null &&
+          answerPathTurnId == newTurnId &&
+          stableFailure == null &&
+          completedAt != null,
+    PracticeRetryRequestStatus.failed =>
+      newTurnId == null &&
+          newTurnStatus == null &&
+          answerPath == null &&
+          stableFailure != null &&
+          completedAt != null,
+  };
+  if ((expectedRetryRequestId != null &&
+          retryRequestId != expectedRetryRequestId) ||
+      (expectedFeedbackItemId != null &&
+          feedbackItemId != expectedFeedbackItemId) ||
+      statusUrlId != retryRequestId ||
+      updatedAt.isBefore(createdAt) ||
+      (completedAt != null && completedAt.isBefore(createdAt)) ||
+      !validShape) {
+    throw _invalidResponse();
+  }
+  return PracticeRetryRequest(
+    retryRequestId: retryRequestId,
+    feedbackItemId: feedbackItemId,
+    sessionId: sessionId,
+    originalTurnId: originalTurnId,
+    questionId: questionId,
+    retryStatus: retryStatus,
+    statusUrl: statusUrl,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+    newTurnId: newTurnId,
+    answerPath: answerPath,
+    stableFailure: stableFailure,
+    completedAt: completedAt,
+  );
+}
+
+PracticeRetryFailure _decodePracticeRetryFailure(Object? value) {
+  final root = _exactObject(
+    value,
+    required: const {'reason_code', 'retryable'},
+  );
+  final reason = switch (_string(root, 'reason_code', maxLength: 64)) {
+    'SOURCE_NO_LONGER_AVAILABLE' =>
+      PracticeRetryFailureReason.sourceNoLongerAvailable,
+    'RETRY_TURN_CREATION_FAILED' =>
+      PracticeRetryFailureReason.retryTurnCreationFailed,
+    _ => throw _invalidResponse(),
+  };
+  final retryable = _boolean(root, 'retryable');
+  if ((reason == PracticeRetryFailureReason.sourceNoLongerAvailable &&
+          retryable) ||
+      (reason == PracticeRetryFailureReason.retryTurnCreationFailed &&
+          !retryable)) {
+    throw _invalidResponse();
+  }
+  return PracticeRetryFailure(reason: reason, retryable: retryable);
+}
+
+RetryTranscriptionCandidate _decodeRetryCandidate(
+  String body, {
+  required String expectedRetryTurnId,
+}) {
+  final root = _exactObject(
+    jsonDecode(body),
+    required: const {
+      'candidate_id',
+      'retry_turn_id',
+      'retry_request_id',
+      'practice_session_id',
+      'question_id',
+      'respondent_participant_id',
+      'candidate_status',
+      'transcript_id',
+      'evidence_version',
+      'transcript',
+      'created_at',
+    },
+  );
+  final retryTurnId = _string(root, 'retry_turn_id', maxLength: 128);
+  final candidateStatus = _string(root, 'candidate_status', maxLength: 32);
+  final evidenceVersion = _integer(root, 'evidence_version');
+  if (retryTurnId != expectedRetryTurnId ||
+      candidateStatus != 'READY' ||
+      evidenceVersion < 1) {
+    throw _invalidResponse();
+  }
+  return RetryTranscriptionCandidate(
+    id: _string(root, 'candidate_id', maxLength: 128),
+    retryTurnId: retryTurnId,
+    retryRequestId: _string(root, 'retry_request_id', maxLength: 128),
+    sessionId: _string(root, 'practice_session_id', maxLength: 128),
+    questionId: _string(root, 'question_id', maxLength: 128),
+    respondentParticipantId: _string(
+      root,
+      'respondent_participant_id',
+      maxLength: 128,
+    ),
+    transcriptId: _string(root, 'transcript_id', maxLength: 128),
+    evidenceVersion: evidenceVersion,
+    text: _utf8String(root, 'transcript', maxLength: 4096, maxBytes: 16384),
+    createdAt: _dateTime(root, 'created_at'),
+  );
+}
+
+ConfirmedRetryTurn _decodeConfirmedRetryTurn(
+  String body, {
+  required String expectedRetryTurnId,
+  required String expectedCandidateId,
+}) {
+  final root = _exactObject(
+    jsonDecode(body),
+    required: const {
+      'turn_id',
+      'retry_request_id',
+      'original_turn_id',
+      'practice_session_id',
+      'question_id',
+      'respondent_participant_id',
+      'candidate_id',
+      'interaction_mode',
+      'answer_text',
+      'evidence_version',
+      'turn_kind',
+      'turn_status',
+      'counts_toward_turn_limit',
+      'created_at',
+      'confirmed_at',
+    },
+    optional: const {'audio_asset_id'},
+  );
+  final turnId = _string(root, 'turn_id', maxLength: 128);
+  final candidateId = _string(root, 'candidate_id', maxLength: 128);
+  final evidenceVersion = _integer(root, 'evidence_version');
+  final createdAt = _dateTime(root, 'created_at');
+  final confirmedAt = _dateTime(root, 'confirmed_at');
+  final countsTowardTurnLimit = _boolean(root, 'counts_toward_turn_limit');
+  if (turnId != expectedRetryTurnId ||
+      candidateId != expectedCandidateId ||
+      _string(root, 'interaction_mode', maxLength: 32) != 'PUSH_TO_TALK' ||
+      _string(root, 'turn_kind', maxLength: 32) != 'RETRY' ||
+      _string(root, 'turn_status', maxLength: 32) != 'CONFIRMED' ||
+      countsTowardTurnLimit ||
+      evidenceVersion < 1 ||
+      confirmedAt.isBefore(createdAt)) {
+    throw _invalidResponse();
+  }
+  return ConfirmedRetryTurn(
+    turnId: turnId,
+    retryRequestId: _string(root, 'retry_request_id', maxLength: 128),
+    originalTurnId: _string(root, 'original_turn_id', maxLength: 128),
+    sessionId: _string(root, 'practice_session_id', maxLength: 128),
+    questionId: _string(root, 'question_id', maxLength: 128),
+    respondentParticipantId: _string(
+      root,
+      'respondent_participant_id',
+      maxLength: 128,
+    ),
+    candidateId: candidateId,
+    answerText: _utf8String(
+      root,
+      'answer_text',
+      maxLength: 4096,
+      maxBytes: 16384,
+    ),
+    evidenceVersion: evidenceVersion,
+    countsTowardTurnLimit: countsTowardTurnLimit,
+    audioAssetId: root.containsKey('audio_asset_id')
+        ? _string(root, 'audio_asset_id', maxLength: 128)
+        : null,
+    createdAt: createdAt,
+    confirmedAt: confirmedAt,
+  );
+}
+
 PracticeTurnConfirmation _confirmationFromState(
   PracticeSessionSnapshot state, {
   required String expectedQuestionId,
@@ -798,6 +1224,7 @@ PracticeTurnConfirmation _confirmationFromState(
       id: turn.id,
       role: AgentMessageRole.user,
       text: turn.answerText,
+      speechFeedbackStatusUrl: turn.speechFeedbackStatusUrl,
     ),
     completedTurns: state.completedTurns,
     turnLimit: state.turnLimit,
@@ -809,6 +1236,7 @@ PracticeTurnConfirmation _confirmationFromState(
     review: state.review,
     formalReview: state.formalReview,
     audioAssetId: turn.audioAssetId,
+    speechFeedbackStatusUrl: turn.speechFeedbackStatusUrl,
   );
 }
 
@@ -886,13 +1314,20 @@ PracticeTurnSnapshot _decodeTurn(Map<String, Object?> value) {
       'effective_turns',
       'session_completed',
     },
-    optional: const {'review_id', 'audio_asset_id'},
+    optional: const {
+      'review_id',
+      'audio_asset_id',
+      'speech_feedback_status_url',
+    },
   );
   if (root.containsKey('audio_asset_id') && root['audio_asset_id'] == null) {
     throw _invalidResponse();
   }
   final audioAssetId = root.containsKey('audio_asset_id')
       ? _string(root, 'audio_asset_id', maxLength: 128)
+      : null;
+  final speechFeedbackStatusUrl = root.containsKey('speech_feedback_status_url')
+      ? _string(root, 'speech_feedback_status_url', maxLength: 160)
       : null;
   final turn = PracticeTurnSnapshot(
     id: _string(root, 'turn_id'),
@@ -906,8 +1341,12 @@ PracticeTurnSnapshot _decodeTurn(Map<String, Object?> value) {
     sessionCompleted: _boolean(root, 'session_completed'),
     reviewId: root.containsKey('review_id') ? _string(root, 'review_id') : null,
     audioAssetId: audioAssetId,
+    speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
-  if (turn.evidenceVersion < 1 || turn.effectiveTurns < 1) {
+  if (turn.evidenceVersion < 1 ||
+      turn.effectiveTurns < 1 ||
+      (speechFeedbackStatusUrl != null &&
+          !validSpeechFeedbackStatusUrl(speechFeedbackStatusUrl))) {
     throw _invalidResponse();
   }
   return turn;
@@ -980,6 +1419,19 @@ String _string(Map<String, Object?> value, String key, {int maxLength = 4096}) {
       item.trim().isEmpty ||
       item.length > maxLength ||
       item.contains('\u0000')) {
+    throw _invalidResponse();
+  }
+  return item;
+}
+
+String _utf8String(
+  Map<String, Object?> value,
+  String key, {
+  required int maxLength,
+  required int maxBytes,
+}) {
+  final item = _string(value, key, maxLength: maxLength);
+  if (utf8.encode(item).length > maxBytes) {
     throw _invalidResponse();
   }
   return item;
@@ -1063,4 +1515,39 @@ void _requireClientId(String value) {
     throw ArgumentError.value(value, 'value', 'Invalid Idempotency-Key.');
   }
   _requireOpaqueId(value);
+}
+
+String _requireRetryAnswerPath(String value) {
+  final retryTurnId = _retryTurnIdInAnswerPath(value);
+  if (retryTurnId == null) {
+    throw ArgumentError.value(
+      value,
+      'answerPath',
+      'Invalid server retry answer path.',
+    );
+  }
+  return retryTurnId;
+}
+
+String _retryRequestIdFromStatusUrl(String value) {
+  final match = _retryRequestStatusPathPattern.firstMatch(value);
+  final id = match?.group(1);
+  if (id == null || id == '.' || id == '..') {
+    throw _invalidResponse();
+  }
+  return id;
+}
+
+String _retryTurnIdFromAnswerPath(String value) {
+  final retryTurnId = _retryTurnIdInAnswerPath(value);
+  if (retryTurnId == null) {
+    throw _invalidResponse();
+  }
+  return retryTurnId;
+}
+
+String? _retryTurnIdInAnswerPath(String value) {
+  final match = _retryAnswerPathPattern.firstMatch(value);
+  final id = match?.group(1);
+  return id == null || id == '.' || id == '..' ? null : id;
 }

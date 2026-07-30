@@ -25,4 +25,6 @@ import "embed"
 //go:embed 000037_evaluation_interview_shadow_runtime.*.sql
 //go:embed 000038_evaluation_practice_resource_ids.*.sql
 //go:embed 000039_evaluation_ielts_speaking_shadow_runtime.*.sql
+//go:embed 000040_review_speech_feedback.*.sql
+//go:embed 000041_speech_feedback_retry_turns.*.sql
 var Files embed.FS

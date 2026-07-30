@@ -34,8 +34,10 @@ import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_wire_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
+import 'package:speakup/review/turn_feedback_controller.dart';
 import 'package:speakup/review/wire_interview_report_client.dart';
 import 'package:speakup/review/wire_review_history_client.dart';
+import 'package:speakup/review/wire_turn_feedback_client.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,6 +61,7 @@ void main() {
       ieltsSpeakingReportController: dependencies.ieltsSpeakingReportController,
       ieltsSpeakingReportIndexController:
           dependencies.ieltsSpeakingReportIndexController,
+      speechFeedbackController: dependencies.speechFeedbackController,
     ),
   );
 }
@@ -75,6 +78,7 @@ final class ProductionAppDependencies {
     required this.interviewReportController,
     required this.ieltsSpeakingReportController,
     required this.ieltsSpeakingReportIndexController,
+    required this.speechFeedbackController,
   });
 
   final AuthController authController;
@@ -87,6 +91,7 @@ final class ProductionAppDependencies {
   final InterviewReportController interviewReportController;
   final IeltsSpeakingReportController ieltsSpeakingReportController;
   final IeltsSpeakingReportIndexController ieltsSpeakingReportIndexController;
+  final SpeechFeedbackController speechFeedbackController;
 }
 
 ProductionAppDependencies createProductionAppDependencies({
@@ -101,6 +106,7 @@ ProductionAppDependencies createProductionAppDependencies({
   IdentityHttpTransport? reviewHistoryTransport,
   IdentityHttpTransport? interviewReportTransport,
   IdentityHttpTransport? ieltsSpeakingReportTransport,
+  IdentityHttpTransport? speechFeedbackTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
   PracticeMediaWireTransport? signedAudioTransport,
@@ -270,6 +276,20 @@ ProductionAppDependencies createProductionAppDependencies({
   final ieltsSpeakingReportIndexController = IeltsSpeakingReportIndexController(
     client: ieltsSpeakingReportClient,
   );
+  final speechFeedbackController = SpeechFeedbackController(
+    client: WireSpeechFeedbackClient(
+      baseUri: baseUri,
+      credentialProvider: () => authController.currentCredential,
+      invalidateSession:
+          ({required expectedSessionToken, required expectedGeneration}) {
+            return authController.invalidateSession(
+              expectedSessionToken: expectedSessionToken,
+              expectedGeneration: expectedGeneration,
+            );
+          },
+      transport: speechFeedbackTransport,
+    ),
+  );
   final preparationController = PreparationController(
     client: preparationCatalogClient,
     ieltsQuestionBankClient: preparationCatalogClient,
@@ -406,6 +426,8 @@ ProductionAppDependencies createProductionAppDependencies({
           .clearPrivateState();
       final ieltsSpeakingReportIndexCleanup = ieltsSpeakingReportIndexController
           .clearPrivateState();
+      final speechFeedbackCleanup = speechFeedbackController
+          .clearPrivateState();
       try {
         await preparationLaunchController.clearPrivateState();
         await clearAvatarPrivateState();
@@ -420,6 +442,7 @@ ProductionAppDependencies createProductionAppDependencies({
           interviewReportCleanup,
           ieltsSpeakingReportCleanup,
           ieltsSpeakingReportIndexCleanup,
+          speechFeedbackCleanup,
         ]);
       }
     },
@@ -435,5 +458,6 @@ ProductionAppDependencies createProductionAppDependencies({
     interviewReportController: interviewReportController,
     ieltsSpeakingReportController: ieltsSpeakingReportController,
     ieltsSpeakingReportIndexController: ieltsSpeakingReportIndexController,
+    speechFeedbackController: speechFeedbackController,
   );
 }

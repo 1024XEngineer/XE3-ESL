@@ -456,11 +456,30 @@ for (const { key, operation } of operations) {
     operation.responses?.['401'],
     `${key} must document an Unauthorized response.`,
   );
-  assert.equal(
-    operation.responses['401'].$ref,
-    '#/components/responses/Unauthorized',
-    `${key} must reuse the common Unauthorized response.`,
+  const unauthorizedReference = operation.responses['401'].$ref;
+  assert.ok(
+    unauthorizedReference === '#/components/responses/Unauthorized' ||
+      unauthorizedReference === '#/components/responses/PrivateUnauthorized' ||
+      unauthorizedReference ===
+        '#/components/responses/RetryPrivateUnauthorized',
+    `${key} must reuse an approved Unauthorized response.`,
   );
+  if (
+    unauthorizedReference === '#/components/responses/PrivateUnauthorized' ||
+    unauthorizedReference ===
+      '#/components/responses/RetryPrivateUnauthorized'
+  ) {
+    const privateUnauthorized = resolveLocalReference(
+      operation.responses['401'],
+    );
+    assert.equal(
+      resolveLocalReference(
+        privateUnauthorized?.headers?.['Cache-Control'],
+      )?.schema?.const,
+      'private, no-store',
+      `${key} private Unauthorized response must prohibit caching.`,
+    );
+  }
 }
 assert.deepEqual(
   sorted(actualPublicOperations),
@@ -1160,6 +1179,380 @@ assert.match(
   'signed_payload.signed_mac',
   new RegExp(formalReviewCursorPattern, 'u'),
 );
+
+for (const retiredOperation of [
+  'POST /v1/turns/{turn_id}/turn-analyses',
+  'GET /v1/turns/{turn_id}/turn-analyses',
+  'GET /v1/turn-analyses/{turn_analysis_id}/feedback-items',
+  'GET /v1/history-records',
+]) {
+  assert.ok(
+    !operationByKey.has(retiredOperation),
+    `${retiredOperation} is a retired score-bearing smoke contract.`,
+  );
+}
+assert.equal(
+  schemas.TurnAnalysis,
+  undefined,
+  'The score-bearing TurnAnalysis schema must not remain public.',
+);
+assert.equal(
+  schemas.HistoryRecord,
+  undefined,
+  'The score-bearing HistoryRecord schema must not remain public.',
+);
+for (const schemaName of [
+  'SpeechFeedback',
+  'SpeechFeedbackSource',
+  'SpeechFeedbackAnchor',
+  'FeedbackItem',
+  'RetryRequest',
+  'RetryTranscriptionCandidate',
+  'ConfirmedRetryTurn',
+]) {
+  assert.ok(schemas[schemaName], `The root contract must export ${schemaName}.`);
+}
+
+const assertPrivateNoStoreResponses = (operation, statuses, label) => {
+  for (const status of statuses) {
+    const response = resolveLocalReference(operation.responses?.[status]);
+    assert.ok(response, `${label} must declare ${status}.`);
+    assert.equal(
+      resolveLocalReference(response.headers?.['Cache-Control'])?.schema?.const,
+      'private, no-store',
+      `${label} ${status} must prohibit shared and private caching.`,
+    );
+  }
+};
+
+const getSpeechFeedback = requireOperation(
+  'GET /v1/speech-feedback/{speech_feedback_id}',
+);
+assert.equal(getSpeechFeedback.operationId, 'getSpeechFeedback');
+assert.deepEqual(
+  getSpeechFeedback.security ?? openApi.security,
+  bearerSecurity,
+  'Speech feedback must derive the Actor from BearerSession.',
+);
+assertPrivateNoStoreResponses(
+  getSpeechFeedback,
+  ['200', '401', '404', 'default'],
+  'Speech feedback',
+);
+assert.equal(
+  getJsonSchema(resolveLocalReference(getSpeechFeedback.responses['200']))
+    ?.$ref,
+  '#/components/schemas/SpeechFeedback',
+);
+assert.equal(schemas.SpeechFeedback?.['x-max-json-bytes'], 524288);
+assert.match(getSpeechFeedback.description ?? '', /Another Actor/i);
+assert.match(getSpeechFeedback.description ?? '', /must not persist/i);
+
+const createRetryRequest = requireOperation(
+  'POST /v1/feedback-items/{feedback_item_id}/retry-requests',
+);
+assert.equal(createRetryRequest.operationId, 'requestRetry');
+assert.equal(
+  createRetryRequest.requestBody,
+  undefined,
+  'Retry creation has no client-controlled body.',
+);
+assertPrivateNoStoreResponses(
+  createRetryRequest,
+  ['200', '201', '400', '401', '404', '409', 'default'],
+  'Retry creation',
+);
+const retryCreationParameters = (createRetryRequest.parameters ?? []).map(
+  resolveLocalReference,
+);
+assert.ok(
+  retryCreationParameters.some(
+    (parameter) =>
+      parameter.name === 'Idempotency-Key' &&
+      parameter.in === 'header' &&
+      parameter.required === true,
+  ),
+  'Retry creation must require Idempotency-Key.',
+);
+
+const getRetryRequest = requireOperation(
+  'GET /v1/retry-requests/{retry_request_id}',
+);
+assert.equal(getRetryRequest.operationId, 'getRetryRequest');
+assertPrivateNoStoreResponses(
+  getRetryRequest,
+  ['200', '401', '404', 'default'],
+  'Retry lookup',
+);
+const retryRequestSchema = resolveLocalReference(schemas.RetryRequest);
+assert.equal(
+  retryRequestSchema?.properties?.new_turn_status?.const,
+  'ANSWERING',
+);
+assert.equal(
+  retryRequestSchema?.properties?.answer_path?.pattern,
+  '^/v1/retry-turns/[A-Za-z0-9._~-]{1,128}/transcription-candidates$',
+);
+const createRetryTurnCommand = resolveLocalReference(
+  schemas.CreateRetryTurnCommand,
+);
+assert.deepEqual(
+  createRetryTurnCommand?.required,
+  [
+    'retry_request_id',
+    'practice_session_id',
+    'original_turn_id',
+    'question_id',
+  ],
+  'CreateRetryTurnCommand must match the production Review-to-Conversation command.',
+);
+assert.equal(
+  createRetryTurnCommand?.properties?.reason,
+  undefined,
+  'CreateRetryTurnCommand must not retain the retired smoke-only reason field.',
+);
+const createRetryTurnResult = resolveLocalReference(
+  schemas.CreateRetryTurnResult,
+);
+for (const requiredProperty of [
+  'retry_request_id',
+  'question_id',
+  'new_turn_id',
+  'new_turn_status',
+  'answer_path',
+]) {
+  assert.ok(
+    createRetryTurnResult?.required?.includes(requiredProperty),
+    `CreateRetryTurnResult must require ${requiredProperty}.`,
+  );
+}
+assert.equal(
+  createRetryTurnResult?.properties?.new_turn_status?.const,
+  'ANSWERING',
+);
+assert.equal(
+  createRetryTurnResult?.properties?.answer_path?.pattern,
+  '^/v1/retry-turns/[A-Za-z0-9._~-]{1,128}/transcription-candidates$',
+);
+
+const assertRequiredIdempotencyKey = (operation, label) => {
+  const parameters = (operation.parameters ?? []).map(resolveLocalReference);
+  assert.ok(
+    parameters.some(
+      (parameter) =>
+        parameter.name === 'Idempotency-Key' &&
+        parameter.in === 'header' &&
+        parameter.required === true,
+    ),
+    `${label} must require Idempotency-Key.`,
+  );
+};
+
+const createRetryCandidate = requireOperation(
+  'POST /v1/retry-turns/{retry_turn_id}/transcription-candidates',
+);
+assert.equal(
+  createRetryCandidate.operationId,
+  'createRetryTurnTranscriptionCandidate',
+);
+assertRequiredIdempotencyKey(createRetryCandidate, 'Retry candidate creation');
+const retryCandidateRequestBody = resolveLocalReference(
+  createRetryCandidate.requestBody,
+);
+assert.deepEqual(
+  Object.keys(retryCandidateRequestBody?.content ?? {}),
+  ['audio/wav'],
+  'Retry candidate creation must accept raw WAV only.',
+);
+assert.equal(
+  resolveLocalReference(
+    retryCandidateRequestBody.content['audio/wav']?.schema,
+  )?.format,
+  'binary',
+);
+assertPrivateNoStoreResponses(
+  createRetryCandidate,
+  ['201', '400', '401', '404', '409', 'default'],
+  'Retry candidate creation',
+);
+assert.equal(
+  createRetryCandidate.responses['200'],
+  undefined,
+  'Retry candidate creation must use 201 for both creation and idempotent restore.',
+);
+assert.equal(
+  getJsonSchema(
+    resolveLocalReference(createRetryCandidate.responses['201']),
+  )?.$ref,
+  '#/components/schemas/RetryTranscriptionCandidate',
+);
+assert.match(
+  resolveLocalReference(createRetryCandidate.responses['201'])?.description ??
+    '',
+  /newly created.*idempotent replay/is,
+);
+assert.match(
+  createRetryCandidate.description ?? '',
+  /derives|resolves/i,
+);
+assert.match(
+  createRetryCandidate.description ?? '',
+  /never.*VoiceSessionState/is,
+);
+
+const confirmRetryCandidate = requireOperation(
+  'POST /v1/retry-turns/{retry_turn_id}/transcription-candidates/{candidate_id}/confirmations',
+);
+assert.equal(
+  confirmRetryCandidate.operationId,
+  'confirmRetryTurnTranscriptionCandidate',
+);
+assert.equal(
+  confirmRetryCandidate.requestBody,
+  undefined,
+  'Retry confirmation must not accept a client-controlled body.',
+);
+assertRequiredIdempotencyKey(confirmRetryCandidate, 'Retry confirmation');
+assertPrivateNoStoreResponses(
+  confirmRetryCandidate,
+  ['200', '400', '401', '404', '409', 'default'],
+  'Retry confirmation',
+);
+assert.equal(
+  getJsonSchema(
+    resolveLocalReference(confirmRetryCandidate.responses['200']),
+  )?.$ref,
+  '#/components/schemas/ConfirmedRetryTurn',
+);
+assert.doesNotMatch(
+  JSON.stringify(confirmRetryCandidate.responses['200']),
+  /VoiceSessionState/,
+  'Retry confirmation must not reuse VoiceSessionState.',
+);
+
+const retryCandidateSchema = resolveLocalReference(
+  schemas.RetryTranscriptionCandidate,
+);
+for (const requiredProperty of [
+  'candidate_id',
+  'retry_turn_id',
+  'retry_request_id',
+  'practice_session_id',
+  'question_id',
+  'respondent_participant_id',
+  'transcript_id',
+  'evidence_version',
+  'transcript',
+]) {
+  assert.ok(
+    retryCandidateSchema?.required?.includes(requiredProperty),
+    `RetryTranscriptionCandidate must require ${requiredProperty}.`,
+  );
+}
+
+const confirmedRetryTurnSchema = resolveLocalReference(
+  schemas.ConfirmedRetryTurn,
+);
+assert.equal(
+  confirmedRetryTurnSchema?.properties?.turn_kind?.const,
+  'RETRY',
+);
+assert.equal(
+  confirmedRetryTurnSchema?.properties?.turn_status?.const,
+  'CONFIRMED',
+);
+assert.equal(
+  confirmedRetryTurnSchema?.properties?.counts_toward_turn_limit?.const,
+  false,
+);
+for (const forbiddenProperty of [
+  'effective_turns',
+  'session_completed',
+  'session_version',
+  'turn_limit',
+  'current_question',
+  'current_turn',
+  'turn_history',
+  'review_id',
+  'speech_feedback_status_url',
+]) {
+  assert.equal(
+    confirmedRetryTurnSchema?.properties?.[forbiddenProperty],
+    undefined,
+    `ConfirmedRetryTurn must not expose ${forbiddenProperty}.`,
+  );
+}
+
+const normalConfirmation = requireOperation(
+  'POST /v1/transcription-candidates/{candidate_id}/confirmations',
+);
+assert.equal(
+  normalConfirmation.requestBody,
+  undefined,
+  'Ordinary confirmation must not accept retry identity in a body.',
+);
+assert.doesNotMatch(
+  normalConfirmation.description ?? '',
+  /retry[_ -]?turn/i,
+  'Ordinary confirmation must not promise retry behavior.',
+);
+assert.equal(
+  resolveLocalReference(schemas.SubmitTurnRequest)?.properties
+    ?.retry_request_id,
+  undefined,
+  'The legacy Mock submit contract must not accept retry_request_id.',
+);
+
+for (const [schemaName, propertyName] of [
+  ['AgentMessage', 'speech_feedback_status_url'],
+  ['ConfirmedVoiceTurn', 'speech_feedback_status_url'],
+]) {
+  const schema = resolveLocalReference(schemas[schemaName]);
+  assert.ok(
+    schema?.properties?.[propertyName],
+    `${schemaName} must project ${propertyName}.`,
+  );
+  assert.ok(
+    !(schema.required ?? []).includes(propertyName),
+    `${schemaName}.${propertyName} must be absent rather than null when hidden.`,
+  );
+}
+const voiceSessionState = resolveLocalReference(schemas.VoiceSessionState);
+assert.ok(
+  voiceSessionState?.properties?.turn_history,
+  'VoiceSessionState must expose the bounded cold-start Turn history.',
+);
+assert.equal(voiceSessionState.properties.turn_history.maxItems, 14);
+assert.ok(
+  !(voiceSessionState.required ?? []).includes('turn_history'),
+  'turn_history must remain an optional projection.',
+);
+assert.match(
+  voiceSessionState.properties.turn_history.description ?? '',
+  /EFFECTIVE/,
+);
+const voiceTurnHistoryEntry = resolveLocalReference(
+  voiceSessionState.properties.turn_history.items,
+);
+assert.equal(
+  voiceTurnHistoryEntry?.properties?.turn?.$ref,
+  '#/components/schemas/ConfirmedVoiceTurn',
+);
+const ordinaryConfirmedTurn = resolveLocalReference(
+  voiceTurnHistoryEntry.properties.turn,
+);
+for (const retryOnlyProperty of [
+  'retry_request_id',
+  'retry_turn_id',
+  'original_turn_id',
+  'counts_toward_turn_limit',
+]) {
+  assert.equal(
+    ordinaryConfirmedTurn?.properties?.[retryOnlyProperty],
+    undefined,
+    `Ordinary ConfirmedVoiceTurn must not expose ${retryOnlyProperty}.`,
+  );
+}
 
 console.log(
   `Validated ${operations.length} operations: ` +

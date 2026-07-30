@@ -99,6 +99,101 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/retry-turns/{retry_turn_id}/transcription-candidates:
+    post:
+      tags:
+        - Conversation
+      summary: Transcribe one bounded WAV answer for an ANSWERING retry Turn
+      description: |
+        This is the only voice-answer entry for a same-question retry created
+        by Review. The Actor supplies the exact `answer_path` returned by the
+        owning RetryRequest and a raw `audio/wav` body. Conversation resolves
+        the retry draft, original Question, Practice Session, and respondent
+        entirely from `retry_turn_id`; the client cannot select or replace any
+        of those trusted bindings.
+
+        Replaying the same Actor, path, Idempotency-Key, and recording checksum
+        restores the same completed candidate. A failed or expired ASR lease
+        may be retried by repeating that identical request; different audio for
+        the same idempotency scope is a conflict. This operation never submits
+        the draft, advances `effective_turns`, replaces the ordinary current
+        Question, or returns a VoiceSessionState.
+      operationId: createRetryTurnTranscriptionCandidate
+      parameters:
+        - $ref: '#/components/parameters/RetryTurnId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: |
+            Completed retry transcription candidate, whether newly created or
+            restored by an idempotent replay.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryTranscriptionCandidate'
+        '400':
+          $ref: '#/components/responses/RetryPrivateBadRequest'
+        '401':
+          $ref: '#/components/responses/RetryPrivateUnauthorized'
+        '404':
+          $ref: '#/components/responses/RetryPrivateNotFound'
+        '409':
+          $ref: '#/components/responses/RetryPrivateConflict'
+        default:
+          $ref: '#/components/responses/RetryPrivateDefaultError'
+  /v1/retry-turns/{retry_turn_id}/transcription-candidates/{candidate_id}/confirmations:
+    post:
+      tags:
+        - Conversation
+      summary: Confirm a candidate against its exact retry Turn draft
+      description: |
+        The request has no body. Conversation verifies that both path IDs belong
+        to the current Actor, then compares the candidate's persisted Session
+        and Question with this exact `ANSWERING` retry draft. The confirmation
+        transaction atomically binds the matching candidate and confirms the
+        pre-created `retry_turn_id`; it never mints a different Turn and never
+        routes the candidate through the ordinary effective-Turn confirmation
+        Saga.
+
+        The response is a ConfirmedRetryTurn only. It deliberately omits
+        `effective_turns`, Session version/completion state, current Question,
+        and turn history. Replaying the same Idempotency-Key restores the same
+        confirmed retry Turn.
+      operationId: confirmRetryTurnTranscriptionCandidate
+      parameters:
+        - $ref: '#/components/parameters/RetryTurnId'
+        - $ref: '#/components/parameters/CandidateId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The original or replayed confirmed retry Turn.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmedRetryTurn'
+        '400':
+          $ref: '#/components/responses/RetryPrivateBadRequest'
+        '401':
+          $ref: '#/components/responses/RetryPrivateUnauthorized'
+        '404':
+          $ref: '#/components/responses/RetryPrivateNotFound'
+        '409':
+          $ref: '#/components/responses/RetryPrivateConflict'
+        default:
+          $ref: '#/components/responses/RetryPrivateDefaultError'
   /v1/transcription-candidates/{candidate_id}/confirmations:
     post:
       tags:
@@ -302,19 +397,15 @@ paths:
       description: |
         This is the only MS1 client write entry for a final answer. Empty,
         invalid, or technically incomplete input is rejected before a normal
-        Turn is created or a pre-created retry Turn advances. The server resolves
-        `respondent_participant_id` from actor context and verifies it is one of
-        the Question addressees.
+        Turn is created. The server resolves `respondent_participant_id` from
+        actor context and verifies it is one of the Question addressees.
 
         The deterministic Mock supplies final transcript text while preserving
         the accepted `PUSH_TO_TALK` interaction mode. This legacy Mock endpoint
         does not accept audio; production voice rounds use the separate bounded
-        WAV candidate and confirmation operations. When
-        `retry_request_id` is present, Review and Conversation must already have
-        created an `answering` Turn for the original Question. This request
-        advances that same Turn to `submitted`; it never creates a second Turn.
-        After completion, Conversation submits TurnOutcome to Practice, which
-        alone decides the progress effect from the immutable Session policy.
+        WAV candidate and confirmation operations. It does not accept or
+        advance Review retry drafts. Production same-question retries use only
+        the server-returned RetryRequest `answer_path`.
       operationId: submitTurn
       parameters:
         - $ref: '#/components/parameters/QuestionId'
@@ -333,14 +424,6 @@ paths:
                     I led a Go API reliability project. I introduced request
                     tracing, defined an error budget, and reduced incident recovery
                     time by coordinating a staged rollout with two teams.
-              same_question_retry:
-                value:
-                  interaction_mode: PUSH_TO_TALK
-                  answer_text: |
-                    I chose tracing because the existing logs could not connect
-                    failures across services, then used the error budget to
-                    validate the rollout.
-                  retry_request_id: retry_demo_001
       responses:
         '202':
           description: A valid Turn was saved and accepted for processing.
@@ -364,21 +447,6 @@ paths:
                     turn_status: submitted
                     submitted_at: '2026-07-23T10:05:00Z'
                     created_at: '2026-07-23T10:05:00Z'
-                same_question_retry_submission:
-                  value:
-                    turn_id: turn_retry_demo_001
-                    practice_session_id: session_demo_001
-                    question_id: question_demo_001
-                    respondent_participant_id: participant_candidate_001
-                    sequence: 1
-                    interaction_mode: PUSH_TO_TALK
-                    answer_text: |
-                      I chose tracing because the existing logs could not connect
-                      failures across services, then used the error budget to
-                      validate the rollout.
-                    turn_status: submitted
-                    submitted_at: '2026-07-23T10:07:00Z'
-                    created_at: '2026-07-23T10:06:01Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
@@ -658,6 +726,16 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/ResourceId'
+    RetryTurnId:
+      name: retry_turn_id
+      in: path
+      required: true
+      description: |
+        Opaque Actor-owned Conversation Turn ID returned as `new_turn_id` by a
+        successful RetryRequest. It must currently identify an `ANSWERING`
+        same-question retry draft.
+      schema:
+        $ref: '#/components/schemas/ResourceId'
     ReviewId:
       name: review_id
       in: path
@@ -676,6 +754,79 @@ components:
         $ref: '#/components/schemas/ResourceId'
     IdempotencyKey:
       $ref: ../common/parameters.yaml#/components/parameters/IdempotencyKey
+  headers:
+    PrivateNoStore:
+      description: Prohibits shared and private storage of Actor-owned data.
+      required: true
+      schema:
+        type: string
+        const: private, no-store
+  responses:
+    RetryPrivateBadRequest:
+      description: The retry voice request is malformed.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+    RetryPrivateUnauthorized:
+      description: A valid Bearer Session is required for this operation.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        WWW-Authenticate:
+          description: Authentication scheme required by the API.
+          required: true
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+    RetryPrivateNotFound:
+      description: |
+        The draft or candidate is unknown, hidden, deleted, or unavailable to
+        the current Actor. These cases are intentionally indistinguishable.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+    RetryPrivateConflict:
+      description: |
+        The retry draft, candidate, recording checksum, or idempotency scope
+        conflicts with the current durable state.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Retry-After:
+          description: Optional delay while an existing ASR lease is active.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+    RetryPrivateDefaultError:
+      description: A stable private retry voice error response.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Retry-After:
+          description: Optional minimum delay for a retryable service failure.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
   schemas:
     ResourceId:
       type: string
@@ -733,6 +884,19 @@ components:
           $ref: '#/components/schemas/VoiceQuestion'
         current_turn:
           $ref: '#/components/schemas/ConfirmedVoiceTurn'
+        turn_history:
+          type: array
+          maxItems: 14
+          description: |
+            Confirmed `EFFECTIVE` turns ordered by effective Turn sequence.
+            `RETRY` turns are intentionally excluded so same-question practice
+            cannot change the Session's current Question, latest effective
+            checkpoint, or `effective_turns` history invariant. This projection
+            lets clients restore feedback beside its original effective message
+            after a cold start. It is absent when no history projection is
+            available.
+          items:
+            $ref: '#/components/schemas/VoiceTurnHistoryEntry'
         review:
           $ref: '#/components/schemas/FormalReview'
       allOf:
@@ -783,6 +947,17 @@ components:
         speech_path:
           type: string
           pattern: '^/v1/'
+    VoiceTurnHistoryEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - question
+        - turn
+      properties:
+        question:
+          $ref: '#/components/schemas/VoiceQuestion'
+        turn:
+          $ref: '#/components/schemas/ConfirmedVoiceTurn'
     TranscriptionCandidate:
       type: object
       additionalProperties: false
@@ -814,6 +989,140 @@ components:
           type: string
           minLength: 1
         created_at:
+          type: string
+          format: date-time
+    RetryTranscriptionCandidate:
+      type: object
+      additionalProperties: false
+      description: |
+        Ready ASR candidate projected in the context of one pre-created
+        same-question retry Turn. The create handler derives Session, Question,
+        and respondent from the Actor-owned draft. Candidate persistence remains
+        keyed by its canonical Session and Question; the later retry confirmation
+        transaction verifies those fields against the draft before atomically
+        binding it. This DTO cannot be passed to the ordinary effective-Turn
+        confirmation operation.
+      x-invariants:
+        - retry_turn_id is the ANSWERING draft used to derive this response projection
+        - practice_session_id and question_id equal the immutable retry draft bindings
+      required:
+        - candidate_id
+        - retry_turn_id
+        - retry_request_id
+        - practice_session_id
+        - question_id
+        - respondent_participant_id
+        - candidate_status
+        - transcript_id
+        - evidence_version
+        - transcript
+        - created_at
+      properties:
+        candidate_id:
+          $ref: '#/components/schemas/ResourceId'
+        retry_turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        retry_request_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        respondent_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        candidate_status:
+          type: string
+          const: READY
+          readOnly: true
+        transcript_id:
+          $ref: '#/components/schemas/ResourceId'
+        evidence_version:
+          type: integer
+          format: int64
+          minimum: 1
+        transcript:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
+          x-max-utf8-bytes: 16384
+        created_at:
+          type: string
+          format: date-time
+    ConfirmedRetryTurn:
+      type: object
+      additionalProperties: false
+      description: |
+        Immutable confirmation of the exact retry Turn draft. This is not a
+        VoiceSessionState and deliberately contains no `effective_turns`,
+        Session version, completion state, current Question, turn history,
+        formal Review, or SpeechFeedback projection.
+      x-invariants:
+        - turn_id equals the retry_turn_id used by the confirmation path
+        - question_id equals the immutable Question referenced by original_turn_id
+        - retry_request_id owns turn_id
+      required:
+        - turn_id
+        - retry_request_id
+        - original_turn_id
+        - practice_session_id
+        - question_id
+        - respondent_participant_id
+        - candidate_id
+        - interaction_mode
+        - answer_text
+        - evidence_version
+        - turn_kind
+        - turn_status
+        - counts_toward_turn_limit
+        - created_at
+        - confirmed_at
+      properties:
+        turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        retry_request_id:
+          $ref: '#/components/schemas/ResourceId'
+        original_turn_id:
+          $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
+        respondent_participant_id:
+          $ref: '#/components/schemas/ResourceId'
+        candidate_id:
+          $ref: '#/components/schemas/ResourceId'
+        interaction_mode:
+          type: string
+          const: PUSH_TO_TALK
+        answer_text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
+          x-max-utf8-bytes: 16384
+        evidence_version:
+          type: integer
+          format: int64
+          minimum: 1
+        turn_kind:
+          type: string
+          const: RETRY
+        turn_status:
+          type: string
+          const: CONFIRMED
+        counts_toward_turn_limit:
+          type: boolean
+          const: false
+          description: |
+            Frozen Practice policy decision for the current Daily/Workplace
+            same-question retry. This is not the Session's progress value.
+        audio_asset_id:
+          $ref: '#/components/schemas/ResourceId'
+        created_at:
+          type: string
+          format: date-time
+        confirmed_at:
           type: string
           format: date-time
     ConfirmedVoiceTurn:
@@ -856,6 +1165,16 @@ components:
           $ref: '#/components/schemas/ResourceId'
         audio_asset_id:
           $ref: '#/components/schemas/ResourceId'
+        speech_feedback_status_url:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^/v1/speech-feedback/[A-Za-z0-9._~-]{1,128}$'
+          readOnly: true
+          description: |
+            Present only for an eligible confirmed Daily or Workplace voice
+            Turn. It is absent, never null, for text, Interview, IELTS,
+            assistant, unconfirmed, hidden, or deleted sources.
     FormalReview:
       type: object
       additionalProperties: false
@@ -1326,23 +1645,15 @@ components:
           minLength: 1
         audio_asset_id:
           $ref: '#/components/schemas/ResourceId'
-        retry_request_id:
-          $ref: '#/components/schemas/ResourceId'
     Turn:
       type: object
       additionalProperties: false
       description: |
         One answer lifecycle resource. For a normal answer, the server resolves
         respondent_participant_id from actor context and verifies that it
-        belongs to the Question addressees in the same Session. For an
-        authorized same-question retry, Conversation reuses the original Turn's
-        respondent. The client never supplies this trusted field.
-
-        The one exception to final-answer creation timing is a same-question
-        retry: Conversation pre-creates an `answering` Turn from Review's
-        internal CreateRetryTurn command. That resource has no final answer yet
-        and becomes effective only after a valid submission advances it to
-        `submitted`.
+        belongs to the Question addressees in the same Session. The client never
+        supplies this trusted field. This legacy MS1 DTO is not the production
+        `ConfirmedRetryTurn` contract and never accepts a Review retry identity.
       required:
         - turn_id
         - practice_session_id
@@ -1376,9 +1687,9 @@ components:
         turn_status:
           type: string
           description: |
-            `answering` is the pre-submission capture state, including a retry
-            Turn pre-created by the internal module command. The final-answer
-            REST write returns the same or newly created resource at `submitted`.
+            `answering` is the legacy Mock pre-submission capture state. The
+            final-answer REST write returns the same or newly created resource
+            at `submitted`. Production Review retry drafts are separate.
           enum:
             - answering
             - submitted
@@ -1559,28 +1870,43 @@ components:
         owns the new Turn and the idempotent retry-request-to-Turn mapping.
       required:
         - retry_request_id
+        - practice_session_id
         - original_turn_id
-        - reason
+        - question_id
       properties:
         retry_request_id:
           $ref: '#/components/schemas/ResourceId'
+        practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
         original_turn_id:
           $ref: '#/components/schemas/ResourceId'
-        reason:
-          type: string
-          const: review_retry
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
     CreateRetryTurnResult:
       type: object
       additionalProperties: false
       x-internal: true
       required:
         - retry_request_id
+        - question_id
         - new_turn_id
+        - new_turn_status
+        - answer_path
       properties:
         retry_request_id:
           $ref: '#/components/schemas/ResourceId'
+        question_id:
+          $ref: '#/components/schemas/ResourceId'
         new_turn_id:
           $ref: '#/components/schemas/ResourceId'
+        new_turn_status:
+          type: string
+          const: ANSWERING
+        answer_path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: '^/v1/retry-turns/[A-Za-z0-9._~-]{1,128}/transcription-candidates$'
     ConversationBootstrap:
       type: object
       additionalProperties: false

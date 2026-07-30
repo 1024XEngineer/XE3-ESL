@@ -9,6 +9,7 @@ import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
+import 'package:speakup/review/turn_feedback.dart';
 
 final class WireAgentClient
     implements
@@ -1626,6 +1627,7 @@ final class _WireMessage {
     this.producedByRunId,
     this.audio,
     this.actions = const <AgentMessageAction>[],
+    this.speechFeedbackStatusUrl,
   });
 
   final String id;
@@ -1638,6 +1640,7 @@ final class _WireMessage {
   final String? producedByRunId;
   final AgentMessageAudio? audio;
   final List<AgentMessageAction> actions;
+  final String? speechFeedbackStatusUrl;
 
   AgentMessage get presentation => AgentMessage(
     id: id,
@@ -1648,6 +1651,7 @@ final class _WireMessage {
     modality: modality,
     audio: audio,
     actions: actions,
+    speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
 
@@ -1921,6 +1925,7 @@ _WireMessage _decodeMessageObject(
       'content',
       'audio',
       'actions',
+      'speech_feedback_status_url',
       'created_at',
     },
     required: const <String>{
@@ -1975,6 +1980,17 @@ _WireMessage _decodeMessageObject(
   final actions =
       _absentOnlyOptional(object, 'actions', _decodeMessageActions) ??
       const <AgentMessageAction>[];
+  final speechFeedbackStatusUrl = _absentOnlyOptional(
+    object,
+    'speech_feedback_status_url',
+    (value) {
+      final path = _strictString(value, minLength: 1, maxLength: 160);
+      if (!validSpeechFeedbackStatusUrl(path)) {
+        throw const _InvalidAgentResponse();
+      }
+      return path;
+    },
+  );
   if ((role == AgentMessageRole.user &&
           (clientMessageId == null ||
               producedByRunId != null ||
@@ -1984,7 +2000,10 @@ _WireMessage _decodeMessageObject(
       (effectiveModality == AgentMessageModality.voice && audio == null) ||
       (effectiveModality == AgentMessageModality.text && audio != null) ||
       (effectiveModality == AgentMessageModality.voice &&
-          role != AgentMessageRole.user)) {
+          role != AgentMessageRole.user) ||
+      (speechFeedbackStatusUrl != null &&
+          (role != AgentMessageRole.user ||
+              effectiveModality != AgentMessageModality.voice))) {
     throw const _InvalidAgentResponse();
   }
   return _WireMessage(
@@ -1998,6 +2017,7 @@ _WireMessage _decodeMessageObject(
     producedByRunId: producedByRunId,
     audio: audio,
     actions: actions,
+    speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
 
