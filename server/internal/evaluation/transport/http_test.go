@@ -194,6 +194,83 @@ func TestReevaluateUsesTrustedActorAndReturnsReplacementIdentity(t *testing.T) {
 	})
 }
 
+func TestWriteEndpointsReturnIdempotentReplayStateHonestly(t *testing.T) {
+	statuses := []struct {
+		status     evaluation.Status
+		wantStatus int
+	}{
+		{status: evaluation.StatusQueued, wantStatus: http.StatusAccepted},
+		{status: evaluation.StatusRunning, wantStatus: http.StatusOK},
+		{status: evaluation.StatusReady, wantStatus: http.StatusOK},
+		{status: evaluation.StatusFailed, wantStatus: http.StatusOK},
+	}
+
+	for _, endpoint := range []string{"create", "re-evaluate"} {
+		for _, status := range statuses {
+			t.Run(endpoint+" "+string(status.status), func(t *testing.T) {
+				var (
+					accepted EvaluationAccepted
+					path     string
+					body     string
+					app      applicationStub
+				)
+				if endpoint == "create" {
+					accepted = queuedAccepted()
+					// A create replay may expose a later current revision
+					// after the logical Evaluation has been re-evaluated.
+					accepted.EvaluationRevisionID = testOtherID
+					accepted.Revision = 3
+					accepted.SupersedesRevisionID = testNextRevision
+					path = "/v1/evaluations"
+					body = validCreateBody()
+				} else {
+					accepted = queuedReevaluation()
+					path = "/v1/evaluations/" + testEvaluationID +
+						"/re-evaluate"
+					body = validReevaluateBody()
+				}
+				accepted.EvaluationStatus = status.status
+				accepted.Replayed = true
+				if endpoint == "create" {
+					app.create = fixedCreate(accepted)
+				} else {
+					app.reevaluate = fixedReevaluation(accepted)
+				}
+
+				router := newTestRouter(t, app, &testActor)
+				response := performRequest(
+					router,
+					http.MethodPost,
+					path,
+					body,
+					"application/json",
+				)
+
+				if response.Code != status.wantStatus {
+					t.Fatalf(
+						"status = %d, want %d, body = %s",
+						response.Code,
+						status.wantStatus,
+						response.Body,
+					)
+				}
+				assertPrivateResponse(t, response)
+				assertJSONEquals(t, response.Body.String(), map[string]any{
+					"evaluation_id": accepted.EvaluationID,
+					"evaluation_revision_id": accepted.
+						EvaluationRevisionID,
+					"revision": float64(accepted.Revision),
+					"supersedes_revision_id": accepted.
+						SupersedesRevisionID,
+					"evaluation_status": string(status.status),
+					"status_url": "/v1/evaluations/" +
+						accepted.EvaluationID,
+				})
+			})
+		}
+	}
+}
+
 func TestGetPublishesEveryLifecycleStateHonestly(t *testing.T) {
 	statuses := []evaluation.Status{
 		evaluation.StatusReceived,
@@ -943,16 +1020,28 @@ func TestInvalidApplicationResourceProjectionsFailClosed(t *testing.T) {
 	}
 }
 
-func TestWriteEndpointsAcceptOnlyFreshQueuedLineage(t *testing.T) {
+func TestWriteEndpointsRejectInvalidFreshAndReplayProjections(t *testing.T) {
 	createRunning := queuedAccepted()
 	createRunning.EvaluationStatus = evaluation.StatusRunning
 
 	createRevisionTwo := queuedAccepted()
+	createRevisionTwo.EvaluationRevisionID = testNextRevision
 	createRevisionTwo.Revision = 2
 	createRevisionTwo.SupersedesRevisionID = testRevisionID
 
+	createReplayMissingParent := createRevisionTwo
+	createReplayMissingParent.Replayed = true
+	createReplayMissingParent.SupersedesRevisionID = ""
+
+	createReplaySupersedesItself := createRevisionTwo
+	createReplaySupersedesItself.Replayed = true
+	createReplaySupersedesItself.SupersedesRevisionID =
+		createReplaySupersedesItself.EvaluationRevisionID
+
 	reevaluateRunning := queuedReevaluation()
 	reevaluateRunning.EvaluationStatus = evaluation.StatusRunning
+
+	reevaluateRevisionOne := queuedAccepted()
 
 	reevaluateMissingParent := queuedReevaluation()
 	reevaluateMissingParent.SupersedesRevisionID = ""
@@ -963,6 +1052,18 @@ func TestWriteEndpointsAcceptOnlyFreshQueuedLineage(t *testing.T) {
 	reevaluateSupersedesItself := queuedReevaluation()
 	reevaluateSupersedesItself.SupersedesRevisionID =
 		reevaluateSupersedesItself.EvaluationRevisionID
+
+	reevaluateReplayRevisionOne := reevaluateRevisionOne
+	reevaluateReplayRevisionOne.Replayed = true
+
+	reevaluateReplayMissingParent := reevaluateMissingParent
+	reevaluateReplayMissingParent.Replayed = true
+
+	reevaluateReplayWrongID := reevaluateWrongID
+	reevaluateReplayWrongID.Replayed = true
+
+	reevaluateReplaySupersedesItself := reevaluateSupersedesItself
+	reevaluateReplaySupersedesItself.Replayed = true
 
 	tests := []struct {
 		name        string
@@ -987,11 +1088,35 @@ func TestWriteEndpointsAcceptOnlyFreshQueuedLineage(t *testing.T) {
 			},
 		},
 		{
+			name: "create replay omitted immutable lineage",
+			path: "/v1/evaluations",
+			body: validCreateBody(),
+			application: applicationStub{
+				create: fixedCreate(createReplayMissingParent),
+			},
+		},
+		{
+			name: "create replay revision supersedes itself",
+			path: "/v1/evaluations",
+			body: validCreateBody(),
+			application: applicationStub{
+				create: fixedCreate(createReplaySupersedesItself),
+			},
+		},
+		{
 			name: "re-evaluate returned RUNNING",
 			path: "/v1/evaluations/" + testEvaluationID + "/re-evaluate",
 			body: validReevaluateBody(),
 			application: applicationStub{
 				reevaluate: fixedReevaluation(reevaluateRunning),
+			},
+		},
+		{
+			name: "re-evaluate returned revision one",
+			path: "/v1/evaluations/" + testEvaluationID + "/re-evaluate",
+			body: validReevaluateBody(),
+			application: applicationStub{
+				reevaluate: fixedReevaluation(reevaluateRevisionOne),
 			},
 		},
 		{
@@ -1016,6 +1141,46 @@ func TestWriteEndpointsAcceptOnlyFreshQueuedLineage(t *testing.T) {
 			body: validReevaluateBody(),
 			application: applicationStub{
 				reevaluate: fixedReevaluation(reevaluateSupersedesItself),
+			},
+		},
+		{
+			name: "re-evaluate replay returned revision one",
+			path: "/v1/evaluations/" + testEvaluationID + "/re-evaluate",
+			body: validReevaluateBody(),
+			application: applicationStub{
+				reevaluate: fixedReevaluation(
+					reevaluateReplayRevisionOne,
+				),
+			},
+		},
+		{
+			name: "re-evaluate replay omitted immutable lineage",
+			path: "/v1/evaluations/" + testEvaluationID + "/re-evaluate",
+			body: validReevaluateBody(),
+			application: applicationStub{
+				reevaluate: fixedReevaluation(
+					reevaluateReplayMissingParent,
+				),
+			},
+		},
+		{
+			name: "re-evaluate replay returned another evaluation",
+			path: "/v1/evaluations/" + testEvaluationID + "/re-evaluate",
+			body: validReevaluateBody(),
+			application: applicationStub{
+				reevaluate: fixedReevaluation(
+					reevaluateReplayWrongID,
+				),
+			},
+		},
+		{
+			name: "re-evaluate replay revision supersedes itself",
+			path: "/v1/evaluations/" + testEvaluationID + "/re-evaluate",
+			body: validReevaluateBody(),
+			application: applicationStub{
+				reevaluate: fixedReevaluation(
+					reevaluateReplaySupersedesItself,
+				),
 			},
 		},
 	}

@@ -132,6 +132,26 @@ func TestPostgresLedgerRevisionIdempotencyAndIsolation(t *testing.T) {
 		)
 	}
 
+	request.ClientRequestID = "create-retry-after-reevaluation"
+	createReplayAfterReevaluation, replayed, err := service.Create(
+		ctx,
+		testActor(testOwnerA),
+		request,
+	)
+	if err != nil {
+		t.Fatalf("replay Create after re-evaluation: %v", err)
+	}
+	if !replayed ||
+		createReplayAfterReevaluation.ID != created.ID ||
+		createReplayAfterReevaluation.Revision.ID != revisionTwo.Revision.ID ||
+		createReplayAfterReevaluation.Revision.Number != 2 {
+		t.Fatalf(
+			"create replay after re-evaluation = %#v, replayed = %v",
+			createReplayAfterReevaluation,
+			replayed,
+		)
+	}
+
 	assertEvaluationCounts(t, pool, created.ID, 2, 4)
 	var oldStatus string
 	if err := pool.QueryRow(ctx, `

@@ -202,6 +202,17 @@ for (const status of ['RUNNING', 'READY', 'FAILED']) {
     replay,
   );
 }
+const laterRevisionReplay = structuredClone(fixture.ready_replay);
+laterRevisionReplay.evaluation_revision_id =
+  'a1000002-0000-4000-8000-000000000002';
+laterRevisionReplay.revision = 2;
+laterRevisionReplay.supersedes_revision_id =
+  'a1000001-0000-4000-8000-000000000001';
+assertValid(
+  'later current revision idempotent replay',
+  'EvaluationReplay',
+  laterRevisionReplay,
+);
 assertValid('Core 4D ready', 'Evaluation', fixture.core_4d_ready);
 assert.match(
   fixture.core_4d_ready.evaluation_id,
