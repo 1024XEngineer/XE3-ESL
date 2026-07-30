@@ -138,11 +138,7 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
         'selected_role_ids': <String>[input.selection.roleDefinitionId],
         'practice_option_id': input.selection.practiceOptionId,
         'practice_option_version': input.selection.practiceOptionVersion,
-        'max_effective_turns':
-            input.selection.practiceOptionType ==
-                PreparationOptionType.fullSimulation
-            ? 6
-            : 3,
+        'max_effective_turns': _planMaxEffectiveTurns(input.selection),
       },
       stage: PreparationLaunchStage.plan,
     );
@@ -432,6 +428,12 @@ PreparationPracticePlan _plan(
       'practice_plan_status',
       'created_at',
       'updated_at',
+    },
+    optional: const <String>{
+      'preparation_snapshot',
+      'catalog_snapshot',
+      'session_policy',
+      'practice_focuses',
     },
   );
   final context = AgentPracticeContext(
@@ -846,6 +848,22 @@ void _validatePracticeOption(
     throw _invalidResponse();
   }
   _text(object['display_name']);
+}
+
+int _planMaxEffectiveTurns(PreparationLaunchSelection selection) {
+  if (selection.practiceOptionType == PreparationOptionType.focus) {
+    return 3;
+  }
+  return switch (selection.scenarioModel) {
+    'IELTS_SPEAKING_FULL_MOCK' => 14,
+    'IELTS_SPEAKING_PART_1' => 8,
+    // The Part 2 catalog preview has four frozen blueprints. The selected
+    // question group replaces this preview with its exact turn count when the
+    // Session is created.
+    'IELTS_SPEAKING_PART_2' => 4,
+    'IELTS_SPEAKING_PART_3' => 5,
+    _ => 6,
+  };
 }
 
 int _validateSessionPolicy(

@@ -2084,24 +2084,35 @@ func contextSnapshotMatchesPlan(
 		return false
 	}
 	if plan.PreparationSnapshot != nil {
-		if plan.CatalogSnapshot == nil || plan.SessionPolicy == nil ||
-			!equalPreparationSnapshot(
-				*plan.PreparationSnapshot,
-				snapshot.Preparation,
-			) ||
+		if plan.CatalogSnapshot == nil || plan.SessionPolicy == nil {
+			return false
+		}
+		configMatches := reflect.DeepEqual(
+			plan.CatalogSnapshot.ScenarioConfig,
+			snapshot.ScenarioConfig,
+		)
+		policyMatches := reflect.DeepEqual(
+			*plan.SessionPolicy,
+			snapshot.SessionPolicy,
+		)
+		if snapshot.IELTSAssignment != nil {
+			configMatches, policyMatches =
+				dynamicIELTSPreviewMatchesPlan(snapshot, plan)
+		}
+		if !equalPreparationSnapshot(
+			*plan.PreparationSnapshot,
+			snapshot.Preparation,
+		) ||
 			!reflect.DeepEqual(
 				plan.CatalogSnapshot.ScenarioDefinition,
 				snapshot.ScenarioDefinition,
 			) ||
-			!reflect.DeepEqual(
-				plan.CatalogSnapshot.ScenarioConfig,
-				snapshot.ScenarioConfig,
-			) ||
+			!configMatches ||
 			!reflect.DeepEqual(
 				plan.CatalogSnapshot.PracticeOption,
 				snapshot.PracticeOption,
 			) ||
-			!reflect.DeepEqual(*plan.SessionPolicy, snapshot.SessionPolicy) ||
+			!policyMatches ||
 			!reflect.DeepEqual(
 				plan.PracticeFocuses,
 				snapshot.PracticeFocuses,
@@ -2187,6 +2198,49 @@ func contextSnapshotMatchesPlan(
 			selectedFacilitatorRole
 	}
 	return snapshot.PracticeOption.RoleDefinitionID == ""
+}
+
+func dynamicIELTSPreviewMatchesPlan(
+	snapshot persistence.ContextSessionSnapshot,
+	plan persistence.Plan,
+) (bool, bool) {
+	if snapshot.IELTSAssignment == nil ||
+		plan.CatalogSnapshot == nil ||
+		plan.SessionPolicy == nil {
+		return false, false
+	}
+
+	planConfig := plan.CatalogSnapshot.ScenarioConfig
+	normalizedConfig := snapshot.ScenarioConfig
+	normalizedConfig.PromptModel.PublicSceneBrief =
+		planConfig.PromptModel.PublicSceneBrief
+	normalizedConfig.PromptModel.TurnBlueprints =
+		planConfig.PromptModel.TurnBlueprints
+	normalizedConfig.PromptModel.SuggestedDurationSeconds =
+		planConfig.PromptModel.SuggestedDurationSeconds
+	configMatches := reflect.DeepEqual(planConfig, normalizedConfig)
+
+	turns := len(snapshot.IELTSAssignment.TurnBlueprints)
+	policy := snapshot.SessionPolicy
+	dynamicPolicyValid :=
+		policy.SuggestedDurationSeconds ==
+			snapshot.ScenarioConfig.PromptModel.SuggestedDurationSeconds &&
+			policy.MinEffectiveTurns == turns &&
+			policy.MaxEffectiveTurns == turns &&
+			policy.CoverageCheckpointTurn == turns
+	normalizedPolicy := policy
+	normalizedPolicy.SuggestedDurationSeconds =
+		plan.SessionPolicy.SuggestedDurationSeconds
+	normalizedPolicy.MinEffectiveTurns =
+		plan.SessionPolicy.MinEffectiveTurns
+	normalizedPolicy.MaxEffectiveTurns =
+		plan.SessionPolicy.MaxEffectiveTurns
+	normalizedPolicy.CoverageCheckpointTurn =
+		plan.SessionPolicy.CoverageCheckpointTurn
+	policyMatches := dynamicPolicyValid &&
+		reflect.DeepEqual(*plan.SessionPolicy, normalizedPolicy)
+
+	return configMatches, policyMatches
 }
 
 func completeStoredPlanPreview(plan persistence.Plan) bool {
