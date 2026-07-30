@@ -43,6 +43,16 @@ func TestBuiltinCatalogExposesAllMVPScenariosAcrossFourFamilies(t *testing.T) {
 			ScenarioModelIELTSSpeakingPart2,
 			1,
 		},
+		IELTSSpeakingPart1ScenarioID: {
+			ScenarioFamilyExam,
+			ScenarioModelIELTSSpeakingPart1,
+			1,
+		},
+		IELTSSpeakingPart3ScenarioID: {
+			ScenarioFamilyExam,
+			ScenarioModelIELTSSpeakingPart3,
+			1,
+		},
 		IELTSSpeakingFullMockScenarioID: {
 			ScenarioFamilyExam,
 			ScenarioModelIELTSSpeakingFullMock,
@@ -123,8 +133,13 @@ func TestBuiltinCatalogExposesAllMVPScenariosAcrossFourFamilies(t *testing.T) {
 		}
 		config := detail.ScenarioConfig
 		wantBlueprints := 4
-		if scenario.Model == ScenarioModelIELTSSpeakingFullMock {
+		switch scenario.Model {
+		case ScenarioModelIELTSSpeakingFullMock:
 			wantBlueprints = 14
+		case ScenarioModelIELTSSpeakingPart1:
+			wantBlueprints = 8
+		case ScenarioModelIELTSSpeakingPart3:
+			wantBlueprints = 5
 		}
 		if config.Type != scenario.Type ||
 			config.Model != scenario.Model ||

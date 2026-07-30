@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/features/preparation/ielts_question_bank.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
@@ -236,7 +237,8 @@ void main() {
 
   test('rejects a Plan owned by a different user', () async {
     final response = _planJson()..['user_id'] = 'user-other';
-    final client = _client(_QueueTransport([_response(response)]));
+    final transport = _QueueTransport([_response(response)]);
+    final client = _client(transport);
 
     await expectLater(
       client.createPlan(
@@ -255,7 +257,8 @@ void main() {
 
   test('rejects a Plan bound to a different Agent Matter', () async {
     final response = _planJson()..['matter_id'] = 'matter-other';
-    final client = _client(_QueueTransport([_response(response)]));
+    final transport = _QueueTransport([_response(response)]);
+    final client = _client(transport);
 
     await expectLater(
       client.createPlan(
@@ -433,7 +436,24 @@ void main() {
       ..['max_effective_turns'] = 14
       ..['coverage_checkpoint_turn'] = 14
       ..['max_follow_ups_per_question'] = 0;
-    final client = _client(_QueueTransport([_response(response)]));
+    snapshot['ielts_assignment'] = {
+      'bank_id': 'ielts-2026-05-08',
+      'season': '2026-05-08',
+      'mode': 'FULL_MOCK',
+      'part_1_set_id': 'p1-002',
+      'topic_group_id': 'p23-new-001',
+      'topic_title': '语言学习',
+      'part_2_cue_card': 'Describe a language you would like to learn',
+      'part_1_questions': 8,
+      'part_2_questions': 1,
+      'part_3_questions': 5,
+      'turn_blueprints': List<String>.generate(
+        14,
+        (index) => 'Question ${index + 1}',
+      ),
+    };
+    final transport = _QueueTransport([_response(response)]);
+    final client = _client(transport);
 
     final bootstrap = await client.createSession(
       planId: _planId,
@@ -452,6 +472,16 @@ void main() {
 
     expect(bootstrap.maxEffectiveTurns, 14);
     expect(bootstrap.session.scenarioModel, 'IELTS_SPEAKING_FULL_MOCK');
+    expect(jsonDecode(transport.calls.single.body!), {
+      'practice_plan_id': _planId,
+      'expected_plan_revision': 1,
+      'user_confirmed': true,
+      'ielts_selection': {
+        'mode': 'FULL_MOCK',
+        'part_1_set_id': 'p1-002',
+        'topic_group_id': 'p23-new-001',
+      },
+    });
   });
 
   test('fences a response that completes after account cleanup', () async {
@@ -822,4 +852,9 @@ const _ieltsFullSelection = PreparationLaunchSelection(
   practiceOptionId: _ieltsFullOptionId,
   practiceOptionType: PreparationOptionType.fullSimulation,
   practiceOptionVersion: 2,
+  ieltsSelection: IeltsPracticeSelection(
+    mode: IeltsPracticeMode.fullMock,
+    part1SetId: 'p1-002',
+    topicGroupId: 'p23-new-001',
+  ),
 );

@@ -595,7 +595,15 @@ func (application *VoiceSessionApplication) state(
 }
 
 func requiresSynchronousSessionReview(session VoicePracticeSession) bool {
-	return session.ScenarioModel != ieltsSpeakingFullMockModel
+	switch session.ScenarioModel {
+	case "IELTS_SPEAKING_PART_1",
+		"IELTS_SPEAKING_PART_2",
+		"IELTS_SPEAKING_PART_3",
+		"IELTS_SPEAKING_FULL_MOCK":
+		return false
+	default:
+		return true
+	}
 }
 
 func validVoiceScenarioPrompt(session VoicePracticeSession) bool {

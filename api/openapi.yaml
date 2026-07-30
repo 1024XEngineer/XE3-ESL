@@ -79,6 +79,8 @@ paths:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me~1profile
   /v1/scenario-definitions:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions
+  /v1/ielts-speaking/question-bank:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1ielts-speaking~1question-bank
   /v1/matters:
     $ref: ./modules/agent.yaml#/paths/~1v1~1matters
   /v1/matters/{matter_id}:
@@ -109,10 +111,14 @@ paths:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-messages~1{message_id}~1speech
   /v1/agent-threads/{thread_id}/runs:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1runs
+  /v1/agent-threads/{thread_id}/runs/stream:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1runs~1stream
   /v1/agent-runs/{run_id}:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}
   /v1/agent-runs/{run_id}/retries:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1retries
+  /v1/agent-runs/{run_id}/retries/stream:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1retries~1stream
   /v1/agent-runs/{run_id}/context-manifest:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1context-manifest
   /v1/agent-threads/{thread_id}/voice-practice-sessions:

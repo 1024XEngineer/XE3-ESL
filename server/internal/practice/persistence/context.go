@@ -29,7 +29,9 @@ type ScenarioModel string
 const (
 	ScenarioModelProjectExperienceDeepDive    ScenarioModel = "PROJECT_EXPERIENCE_DEEP_DIVE"
 	ScenarioModelInterviewBasicDialogue       ScenarioModel = "INTERVIEW_BASIC_DIALOGUE"
+	ScenarioModelIELTSSpeakingPart1           ScenarioModel = "IELTS_SPEAKING_PART_1"
 	ScenarioModelIELTSSpeakingPart2           ScenarioModel = "IELTS_SPEAKING_PART_2"
+	ScenarioModelIELTSSpeakingPart3           ScenarioModel = "IELTS_SPEAKING_PART_3"
 	ScenarioModelIELTSSpeakingFullMock        ScenarioModel = "IELTS_SPEAKING_FULL_MOCK"
 	ScenarioModelExamBasicDialogue            ScenarioModel = "EXAM_BASIC_DIALOGUE"
 	ScenarioModelProgressAndRiskUpdate        ScenarioModel = "PROGRESS_AND_RISK_UPDATE"
@@ -271,7 +273,22 @@ type ContextSessionSnapshot struct {
 	PracticeOption     PracticeOptionSnapshot     `json:"practice_option"`
 	SessionPolicy      ContextSessionPolicy       `json:"session_policy"`
 	PracticeFocuses    []PracticeObjective        `json:"practice_focuses"`
+	IELTSAssignment    *IELTSPracticeAssignment   `json:"ielts_assignment,omitempty"`
 	CreatedAt          time.Time                  `json:"created_at"`
+}
+
+type IELTSPracticeAssignment struct {
+	BankID         string   `json:"bank_id"`
+	Season         string   `json:"season"`
+	Mode           string   `json:"mode"`
+	Part1SetID     string   `json:"part_1_set_id,omitempty"`
+	TopicGroupID   string   `json:"topic_group_id,omitempty"`
+	TopicTitle     string   `json:"topic_title,omitempty"`
+	Part2CueCard   string   `json:"part_2_cue_card,omitempty"`
+	Part1Questions int      `json:"part_1_questions"`
+	Part2Questions int      `json:"part_2_questions"`
+	Part3Questions int      `json:"part_3_questions"`
+	TurnBlueprints []string `json:"turn_blueprints"`
 }
 
 type ContextSessionBootstrap struct {

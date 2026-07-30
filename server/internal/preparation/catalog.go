@@ -42,7 +42,8 @@ type catalogScenario struct {
 
 // Catalog is an immutable in-process collection of versioned definitions.
 type Catalog struct {
-	scenarios []catalogScenario
+	scenarios         []catalogScenario
+	ieltsQuestionBank *IELTSQuestionBank
 }
 
 func newCatalog(definitions []catalogScenario) (*Catalog, error) {
@@ -89,6 +90,22 @@ func newCatalog(definitions []catalogScenario) (*Catalog, error) {
 		return left.DisplayOrder < right.DisplayOrder
 	})
 	return &Catalog{scenarios: scenarios}, nil
+}
+
+func (c *Catalog) IELTSQuestionBank() (IELTSQuestionBank, error) {
+	if c == nil || c.ieltsQuestionBank == nil {
+		return IELTSQuestionBank{}, ErrIELTSQuestionBankUnavailable
+	}
+	return publishedIELTSQuestionBank(*c.ieltsQuestionBank), nil
+}
+
+func (c *Catalog) ResolveIELTSQuestionSet(
+	selection IELTSQuestionSetSelection,
+) (IELTSResolvedQuestionSet, error) {
+	if c == nil || c.ieltsQuestionBank == nil {
+		return IELTSResolvedQuestionSet{}, ErrIELTSQuestionBankUnavailable
+	}
+	return resolveIELTSQuestionSet(*c.ieltsQuestionBank, selection)
 }
 
 // ListActiveScenarios returns independent copies in stable display order.
@@ -354,7 +371,9 @@ func validScenarioFamilyModel(family ScenarioFamily, model ScenarioModel) bool {
 		return model == ScenarioModelProjectExperienceDeepDive ||
 			model == ScenarioModelInterviewBasicDialogue
 	case ScenarioFamilyExam:
-		return model == ScenarioModelIELTSSpeakingPart2 ||
+		return model == ScenarioModelIELTSSpeakingPart1 ||
+			model == ScenarioModelIELTSSpeakingPart2 ||
+			model == ScenarioModelIELTSSpeakingPart3 ||
 			model == ScenarioModelIELTSSpeakingFullMock ||
 			model == ScenarioModelExamBasicDialogue
 	case ScenarioFamilyWorkplace:

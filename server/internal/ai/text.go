@@ -15,6 +15,26 @@ type TextGenerator interface {
 	Generate(context.Context, TextRequest) (TextResult, error)
 }
 
+// StreamingTextGenerator emits only user-visible assistant text. Provider
+// reasoning and fragmented tool-call arguments are never exposed through the
+// observer; they are returned only in the validated final TextResult.
+type StreamingTextGenerator interface {
+	GenerateStream(context.Context, TextRequest, TextDeltaObserver) (TextResult, error)
+}
+
+type TextDeltaObserver interface {
+	OnTextDelta(context.Context, string) error
+}
+
+type TextDeltaObserverFunc func(context.Context, string) error
+
+func (observe TextDeltaObserverFunc) OnTextDelta(
+	ctx context.Context,
+	delta string,
+) error {
+	return observe(ctx, delta)
+}
+
 type TextRole string
 
 const (

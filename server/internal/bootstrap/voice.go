@@ -1155,7 +1155,7 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		return conversation.VoiceQuestion{}, err
 	}
 	content := ""
-	if session.ScenarioModel == "IELTS_SPEAKING_FULL_MOCK" {
+	if isFrozenIELTSSpeakingModel(session.ScenarioModel) {
 		content, err = frozenIELTSFullMockQuestion(session, sequence)
 	} else {
 		var generated ai.TextResult
@@ -1198,6 +1198,18 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		return conversation.VoiceQuestion{}, mapConversationError(err)
 	}
 	return mapVoiceQuestion(saved), nil
+}
+
+func isFrozenIELTSSpeakingModel(model string) bool {
+	switch model {
+	case "IELTS_SPEAKING_PART_1",
+		"IELTS_SPEAKING_PART_2",
+		"IELTS_SPEAKING_PART_3",
+		"IELTS_SPEAKING_FULL_MOCK":
+		return true
+	default:
+		return false
+	}
 }
 
 func frozenIELTSFullMockQuestion(

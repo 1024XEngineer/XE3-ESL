@@ -7,6 +7,7 @@ import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/preparation/preparation_client.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
+import 'package:speakup/features/preparation/ielts_question_bank.dart';
 
 void main() {
   testWidgets('shows exactly the three product-level practice entries', (
@@ -128,6 +129,30 @@ void main() {
       expect(find.text('英文自我介绍'), findsNothing);
     },
   );
+
+  testWidgets('opens IELTS section cards before starting practice', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _HubFixtureClient());
+    addTearDown(controller.dispose);
+    await _pumpHub(tester, controller);
+    await _openModule(tester, const Key('practice-hub-exam'));
+
+    await tester.tap(
+      find.byKey(const Key('catalog-scenario-scn_ielts_speaking_part_2')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Part 2 题卡'), findsOneWidget);
+    expect(find.text('已完成 0 / 1 套'), findsOneWidget);
+    expect(
+      find.text('Describe a skill you would like to learn'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('可继续对应 Part 3'), findsOneWidget);
+    expect(find.textContaining('Part 2 未练习'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-part2-set-p23-001')), findsOneWidget);
+  });
 
   testWidgets('combines workplace and daily templates in AI roleplay', (
     tester,
@@ -377,7 +402,8 @@ Future<void> _openModule(WidgetTester tester, Key key) async {
   await tester.pumpAndSettle();
 }
 
-final class _HubFixtureClient implements PreparationCatalogClient {
+final class _HubFixtureClient
+    implements PreparationCatalogClient, IeltsQuestionBankClient {
   @override
   Future<void> clearAccountState() async {}
 
@@ -393,7 +419,53 @@ final class _HubFixtureClient implements PreparationCatalogClient {
   Future<List<PreparationRole>> listRoles(String scenarioId) {
     throw UnimplementedError('The hub test does not open scenario details.');
   }
+
+  @override
+  Future<IeltsQuestionBank> getIeltsQuestionBank() async => _ieltsBank;
 }
+
+final _ieltsBank = IeltsQuestionBank(
+  bankId: 'ielts-bank-1',
+  season: '2026-05-08',
+  sourceCutoff: DateTime.utc(2026, 6, 18),
+  part1Sets: const [
+    IeltsPart1Set(
+      id: 'p1-001',
+      title: 'Part 1 套题 01',
+      topics: [
+        IeltsPart1Topic(
+          title: 'Hometown',
+          release: 'carry_over',
+          questions: ['Q1', 'Q2'],
+        ),
+        IeltsPart1Topic(
+          title: 'Music',
+          release: 'new',
+          questions: ['Q3', 'Q4', 'Q5'],
+        ),
+        IeltsPart1Topic(
+          title: 'Parks',
+          release: 'new',
+          questions: ['Q6', 'Q7', 'Q8'],
+        ),
+      ],
+      questionCount: 8,
+    ),
+  ],
+  topicGroups: const [
+    IeltsTopicGroup(
+      id: 'p23-001',
+      title: '学习技能',
+      release: 'new',
+      cueCard: IeltsCueCard(
+        prompt: 'Describe a skill you would like to learn',
+        points: ['What', 'Why', 'How', 'Benefit'],
+      ),
+      part3Questions: ['Q1', 'Q2', 'Q3', 'Q4', 'Q5'],
+      supplementedQuestionCount: 0,
+    ),
+  ],
+);
 
 const _hubScenarios = <PreparationScenario>[
   PreparationScenario(

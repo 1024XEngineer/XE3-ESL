@@ -1064,6 +1064,38 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _retry = null;
     _errorMessage = null;
     _setBusy(true);
+    if (client case final AgentStreamingTextClient streamingClient) {
+      final localUserID = 'pending-user-${operation.clientMessageId}';
+      final localAssistantID = 'pending-assistant-${operation.clientMessageId}';
+      _appendMessages([
+        AgentMessage(
+          id: localUserID,
+          role: AgentMessageRole.user,
+          text: operation.text,
+        ),
+        AgentMessage(
+          id: localAssistantID,
+          role: AgentMessageRole.assistant,
+          text: '',
+          isStreaming: true,
+        ),
+      ]);
+      notifyListeners();
+      unawaited(
+        _consumeTextStream(
+          streamingClient.sendTextStream(
+            threadId: threadId,
+            text: operation.text,
+            clientMessageId: operation.clientMessageId,
+          ),
+          operation: operation,
+          fence: fence,
+          localUserID: localUserID,
+          localAssistantID: localAssistantID,
+        ),
+      );
+      return true;
+    }
     try {
       final exchange = await client.sendText(
         threadId: threadId,
@@ -1100,6 +1132,150 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       }
       return false;
     } finally {
+      if (_isOperationCurrent(fence)) {
+        _setBusy(false);
+      }
+    }
+  }
+
+  Future<void> _consumeTextStream(
+    Stream<AgentTextStreamEvent> stream, {
+    required _TextRetry operation,
+    required _AgentOperationFence fence,
+    required String localUserID,
+    required String localAssistantID,
+  }) async {
+    var assistantID = localAssistantID;
+    var assistantText = '';
+    final pending = StringBuffer();
+    Timer? frameTimer;
+
+    void replaceMessage(String id, AgentMessage replacement) {
+      final index = _messages.indexWhere((message) => message.id == id);
+      if (index < 0) {
+        return;
+      }
+      final next = List<AgentMessage>.from(_messages);
+      next[index] = replacement;
+      _messages = next;
+    }
+
+    void flushDelta() {
+      frameTimer = null;
+      if (!_isOperationCurrent(fence) || pending.isEmpty) {
+        pending.clear();
+        return;
+      }
+      assistantText += pending.toString();
+      pending.clear();
+      final current = _messages
+          .where((message) => message.id == assistantID)
+          .firstOrNull;
+      if (current != null) {
+        replaceMessage(
+          assistantID,
+          current.copyWith(text: assistantText, isStreaming: true),
+        );
+        notifyListeners();
+      }
+    }
+
+    try {
+      await for (final event in stream) {
+        if (!_isOperationCurrent(fence)) {
+          break;
+        }
+        switch (event) {
+          case AgentInputCommitted(:final userMessage):
+            final pendingUser = _messages
+                .where((message) => message.id == localUserID)
+                .firstOrNull;
+            if (pendingUser != null) {
+              replaceMessage(localUserID, userMessage);
+            }
+          case AgentAssistantStarted(:final runId):
+            final current = _messages
+                .where((message) => message.id == assistantID)
+                .firstOrNull;
+            if (current != null && assistantID != 'stream-$runId') {
+              final canonicalTransientID = 'stream-$runId';
+              replaceMessage(
+                assistantID,
+                current.copyWith(
+                  id: canonicalTransientID,
+                  text: '',
+                  isStreaming: true,
+                  hasFailed: false,
+                ),
+              );
+              assistantID = canonicalTransientID;
+              assistantText = '';
+            }
+          case AgentAssistantDelta(:final delta):
+            pending.write(delta);
+            frameTimer ??= Timer(const Duration(milliseconds: 16), flushDelta);
+          case AgentRunCompleted(:final assistantMessageId):
+            frameTimer?.cancel();
+            flushDelta();
+            final current = _messages
+                .where((message) => message.id == assistantID)
+                .firstOrNull;
+            if (current != null) {
+              replaceMessage(
+                assistantID,
+                current.copyWith(
+                  id: assistantMessageId,
+                  text: assistantText,
+                  isStreaming: false,
+                  hasFailed: false,
+                ),
+              );
+            }
+          case AgentRunFailed(:final kind, :final retryable):
+            throw AgentClientException(
+              kind: AgentClientFailureKind.runFailed,
+              errorCode: kind,
+              retryable: retryable,
+            );
+        }
+        notifyListeners();
+      }
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
+      _retry = null;
+      _errorMessage = null;
+      if (client case final AgentThreadHistoryClient historyClient) {
+        await _refreshAuthoritativeThreadPage(
+          historyClient,
+          fence: fence,
+          failureMessage: '消息已发送，但对话顺序暂时无法刷新。请重试。',
+        );
+      }
+    } catch (error) {
+      if (_isOperationCurrent(fence)) {
+        frameTimer?.cancel();
+        flushDelta();
+        final current = _messages
+            .where((message) => message.id == assistantID)
+            .firstOrNull;
+        if (current != null) {
+          replaceMessage(
+            assistantID,
+            current.copyWith(
+              text: assistantText,
+              isStreaming: false,
+              hasFailed: true,
+            ),
+          );
+        }
+        _retry = _canRetry(error) ? operation : null;
+        _errorMessage = error is AgentClientException && !error.retryable
+            ? '这次 Agent 运行未能完成，服务端不允许重试。'
+            : '回复中断了，可以重试。';
+      }
+    } finally {
+      frameTimer?.cancel();
       if (_isOperationCurrent(fence)) {
         _setBusy(false);
       }

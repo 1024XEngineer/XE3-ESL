@@ -141,13 +141,16 @@ func (h *ContextHTTPHandler) confirmAndStartPractice(c *gin.Context) {
 		return
 	}
 	var request struct {
-		PracticePlanID       string `json:"practice_plan_id"`
-		ExpectedPlanRevision int    `json:"expected_plan_revision"`
-		UserConfirmed        bool   `json:"user_confirmed"`
+		PracticePlanID       string                  `json:"practice_plan_id"`
+		ExpectedPlanRevision int                     `json:"expected_plan_revision"`
+		UserConfirmed        bool                    `json:"user_confirmed"`
+		IELTSSelection       *IELTSPracticeSelection `json:"ielts_selection,omitempty"`
 	}
 	if !decodePracticeContextJSONObject(c, &request) ||
 		!validContextResourceID(request.PracticePlanID) ||
-		request.ExpectedPlanRevision < 1 {
+		request.ExpectedPlanRevision < 1 ||
+		(request.IELTSSelection != nil &&
+			!validIELTSPracticeSelectionInput(*request.IELTSSelection)) {
 		writePracticeContextHTTPError(c, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -167,6 +170,7 @@ func (h *ContextHTTPHandler) confirmAndStartPractice(c *gin.Context) {
 			AgentThreadID:        threadID,
 			PracticePlanID:       request.PracticePlanID,
 			ExpectedPlanRevision: request.ExpectedPlanRevision,
+			IELTSSelection:       request.IELTSSelection,
 		},
 	)
 	if err != nil {

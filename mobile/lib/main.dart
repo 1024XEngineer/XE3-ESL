@@ -9,6 +9,7 @@ import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/practice/immersive_roleplay_session.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/ielts_practice_history_store.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
 import 'package:speakup/features/preparation/preparation_launch_controller.dart';
@@ -216,11 +217,14 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: reviewHistoryTransport,
     ),
   );
+  final preparationCatalogClient = WirePreparationCatalogClient(
+    baseUri: baseUri,
+    transport: preparationTransport,
+  );
   final preparationController = PreparationController(
-    client: WirePreparationCatalogClient(
-      baseUri: baseUri,
-      transport: preparationTransport,
-    ),
+    client: preparationCatalogClient,
+    ieltsQuestionBankClient: preparationCatalogClient,
+    ieltsHistoryStore: const SecureIeltsPracticeHistoryStore(),
   );
   final practiceWorkspaceController = PracticeWorkspaceController(
     agentController: agentController,

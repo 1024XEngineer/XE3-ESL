@@ -20,7 +20,9 @@ const (
 func NewBuiltinCatalog() (*Catalog, error) {
 	scenarios := []catalogScenario{
 		programmerInterviewCatalogDefinition(),
+		ieltsSpeakingPart1CatalogDefinition(),
 		ieltsSpeakingPart2CatalogDefinition(),
+		ieltsSpeakingPart3CatalogDefinition(),
 		ieltsSpeakingFullMockCatalogDefinition(),
 		workplaceProgressRiskCatalogDefinition(),
 		dailyHotelCheckinCatalogDefinition(),
@@ -29,7 +31,16 @@ func NewBuiltinCatalog() (*Catalog, error) {
 	scenarios = append(scenarios, basicExamCatalogDefinitions()...)
 	scenarios = append(scenarios, basicWorkplaceCatalogDefinitions()...)
 	scenarios = append(scenarios, basicDailyCatalogDefinitions()...)
-	return newCatalog(scenarios)
+	catalog, err := newCatalog(scenarios)
+	if err != nil {
+		return nil, err
+	}
+	bank, err := loadEmbeddedIELTSQuestionBank()
+	if err != nil {
+		return nil, err
+	}
+	catalog.ieltsQuestionBank = &bank
+	return catalog, nil
 }
 
 func programmerInterviewCatalogDefinition() catalogScenario {

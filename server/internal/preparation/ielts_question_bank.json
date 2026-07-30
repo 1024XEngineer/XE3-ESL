@@ -1,0 +1,2833 @@
+{
+  "schema_version": 1,
+  "bank_id": "ielts-speaking-2026-05-08-mainland",
+  "season": "2026-05-08",
+  "source_cutoff": "2026-06-18T18:00:00+08:00",
+  "part1_sets": [
+    {
+      "id": "p1-001",
+      "title": "Part 1 套题 01",
+      "topics": [
+        {
+          "title": "Music",
+          "release": "new",
+          "questions": [
+            "Do you prefer sad or happy music?",
+            "Does happy music make you feel more excited?",
+            "Have you taken any music classes?"
+          ]
+        },
+        {
+          "title": "Public gardens and parks",
+          "release": "new",
+          "questions": [
+            "Did you like going to parks as a child?",
+            "Do you still like going to parks now?",
+            "Would you like to see more parks in your city?"
+          ]
+        },
+        {
+          "title": "Work or studies",
+          "release": "carry_over",
+          "questions": [
+            "What subjects are you studying?",
+            "Do you like your subject?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-002",
+      "title": "Part 1 套题 02",
+      "topics": [
+        {
+          "title": "Teachers",
+          "release": "new",
+          "questions": [
+            "Do you have a favorite teacher?",
+            "Do you want to be a teacher in the future?",
+            "Do you have a teacher from your past that you still remember?"
+          ]
+        },
+        {
+          "title": "Shopping",
+          "release": "new",
+          "questions": [
+            "Do you like shopping?",
+            "How often do you go shopping?",
+            "Do you prefer online shopping or in-store shopping?"
+          ]
+        },
+        {
+          "title": "Hometown",
+          "release": "carry_over",
+          "questions": [
+            "Where is your hometown?",
+            "Is that a big city or a small place?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-003",
+      "title": "Part 1 套题 03",
+      "topics": [
+        {
+          "title": "Social media",
+          "release": "new",
+          "questions": [
+            "Have you ever posted anything on social media?",
+            "When did you start using social media?",
+            "Do you think you spend too much time on social media?"
+          ]
+        },
+        {
+          "title": "Food",
+          "release": "carry_over",
+          "questions": [
+            "What is your favourite food?",
+            "What kind of food did you like when you were young?",
+            "Do you eat different foods at different times of the year?"
+          ]
+        },
+        {
+          "title": "Memory",
+          "release": "carry_over",
+          "questions": [
+            "Are you good at memorising things?",
+            "Have you ever forgotten something important?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-004",
+      "title": "Part 1 套题 04",
+      "topics": [
+        {
+          "title": "Tidiness",
+          "release": "new",
+          "questions": [
+            "Do you like to keep things tidy?",
+            "Did you keep your room tidy as a child?",
+            "How do you keep your work or study space tidy?"
+          ]
+        },
+        {
+          "title": "Cars",
+          "release": "new",
+          "questions": [
+            "Did you enjoy traveling by car when you were a kid?",
+            "What types of cars do you like?",
+            "Do you prefer to be a driver or a passenger?"
+          ]
+        },
+        {
+          "title": "Home/accommodation",
+          "release": "carry_over",
+          "questions": [
+            "What kind of house or apartment do you want to live in in the future?",
+            "Are the transport facilities to your home very good?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-005",
+      "title": "Part 1 套题 05",
+      "topics": [
+        {
+          "title": "Websites",
+          "release": "new",
+          "questions": [
+            "What kinds of websites do you often visit?",
+            "What is your favourite website?",
+            "Are there any changes to the websites you often visit?"
+          ]
+        },
+        {
+          "title": "Pets and Animals",
+          "release": "carry_over",
+          "questions": [
+            "What's your favourite animal? Why?",
+            "Where do you prefer to keep your pet, indoors or outdoors?",
+            "Have you ever had a pet before?"
+          ]
+        },
+        {
+          "title": "Spare time",
+          "release": "carry_over",
+          "questions": [
+            "Do you often have free time?",
+            "What do you usually do in your spare time?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-006",
+      "title": "Part 1 套题 06",
+      "topics": [
+        {
+          "title": "Watch",
+          "release": "new",
+          "questions": [
+            "Do you wear a watch?",
+            "Have you ever got a watch as a gift?",
+            "Why do some people wear expensive watches?"
+          ]
+        },
+        {
+          "title": "Sports team",
+          "release": "carry_over",
+          "questions": [
+            "Have you ever been part of a sports team?",
+            "Is team sports popular in your culture?",
+            "Do you like watching team games? Why?"
+          ]
+        },
+        {
+          "title": "The area you live in",
+          "release": "carry_over",
+          "questions": [
+            "Do you like the area that you live in?",
+            "Where do you like to go in that area?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-007",
+      "title": "Part 1 套题 07",
+      "topics": [
+        {
+          "title": "Science",
+          "release": "new",
+          "questions": [
+            "Do you like science?",
+            "When did you start to learn about science?",
+            "Which science subject is interesting to you?"
+          ]
+        },
+        {
+          "title": "Hobby",
+          "release": "carry_over",
+          "questions": [
+            "Do you have any hobbies?",
+            "Did you have any hobbies when you were a child?",
+            "Do you have a hobby that you've had since childhood?"
+          ]
+        },
+        {
+          "title": "Gifts",
+          "release": "carry_over",
+          "questions": [
+            "Have you ever sent handmade gifts to others?",
+            "Have you ever received a great gift?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-008",
+      "title": "Part 1 套题 08",
+      "topics": [
+        {
+          "title": "Mirrors",
+          "release": "new",
+          "questions": [
+            "Do you like looking at yourself in the mirror? How often?",
+            "Have you ever bought mirrors?",
+            "Do you usually take a mirror with you?"
+          ]
+        },
+        {
+          "title": "Morning time",
+          "release": "carry_over",
+          "questions": [
+            "Do you like getting up early in the morning?",
+            "What do you usually do in the morning?",
+            "What did you do in the morning when you were little? Why?"
+          ]
+        },
+        {
+          "title": "Reading",
+          "release": "carry_over",
+          "questions": [
+            "Do you like reading?",
+            "Do you prefer to read on paper or on a screen?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-009",
+      "title": "Part 1 套题 09",
+      "topics": [
+        {
+          "title": "Outer space and stars",
+          "release": "new",
+          "questions": [
+            "Have you ever learnt about outer space and stars?",
+            "Do you like science fiction movies? Why?",
+            "Do you want to know more about outer space?"
+          ]
+        },
+        {
+          "title": "Walking",
+          "release": "carry_over",
+          "questions": [
+            "Do you walk a lot?",
+            "Did you often go outside to have a walk when you were a child?",
+            "Why do people like to walk in parks?"
+          ]
+        },
+        {
+          "title": "Clothing",
+          "release": "new",
+          "questions": [
+            "What kind of clothes do you like to wear?",
+            "Do you prefer to wear comfortable and casual clothes or smart clothes?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-010",
+      "title": "Part 1 套题 10",
+      "topics": [
+        {
+          "title": "Singing",
+          "release": "new",
+          "questions": [
+            "Do you like singing? Why?",
+            "Have you ever learnt how to sing?",
+            "Who do you want to sing for?",
+            "Do you think singing can bring happiness to people?"
+          ]
+        },
+        {
+          "title": "Typing",
+          "release": "carry_over",
+          "questions": [
+            "Do you prefer typing or handwriting?",
+            "Do you type on a desktop or laptop keyboard every day?"
+          ]
+        },
+        {
+          "title": "Crowded place",
+          "release": "carry_over",
+          "questions": [
+            "Is the city where you live crowded?",
+            "Is there a crowded place near where you live?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-011",
+      "title": "Part 1 套题 11",
+      "topics": [
+        {
+          "title": "Jokes & Comedies",
+          "release": "new",
+          "questions": [
+            "Are you good at telling jokes?",
+            "Do your friends like to tell jokes?",
+            "Do you like to watch comedies?"
+          ]
+        },
+        {
+          "title": "Scenery",
+          "release": "carry_over",
+          "questions": [
+            "Do you look out the window at the scenery when travelling by bus or car?",
+            "Do you prefer the mountains or the sea?",
+            "Do you like to take scenery pictures?"
+          ]
+        },
+        {
+          "title": "Work or studies",
+          "release": "carry_over",
+          "questions": [
+            "What subjects are you studying?",
+            "Do you like your subject?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-012",
+      "title": "Part 1 套题 12",
+      "topics": [
+        {
+          "title": "Headphones",
+          "release": "new",
+          "questions": [
+            "Do you use headphones?",
+            "What type of headphones do you use?",
+            "When would you use headphones?"
+          ]
+        },
+        {
+          "title": "Building",
+          "release": "carry_over",
+          "questions": [
+            "Are there tall buildings near your home?",
+            "Do you take photos of buildings?",
+            "Is there a building that you would like to visit?"
+          ]
+        },
+        {
+          "title": "Hometown",
+          "release": "carry_over",
+          "questions": [
+            "Where is your hometown?",
+            "Is that a big city or a small place?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-013",
+      "title": "Part 1 套题 13",
+      "topics": [
+        {
+          "title": "Food",
+          "release": "carry_over",
+          "questions": [
+            "What is your favourite food?",
+            "What kind of food did you like when you were young?",
+            "Do you eat different foods at different times of the year?"
+          ]
+        },
+        {
+          "title": "Childhood activities",
+          "release": "carry_over",
+          "questions": [
+            "What are your favourite activities?",
+            "What were your favourite activities when you were a child?",
+            "Did you prefer to do activities alone or with a group of people when you were a child?"
+          ]
+        },
+        {
+          "title": "Social media",
+          "release": "new",
+          "questions": [
+            "Have you ever posted anything on social media?",
+            "When did you start using social media?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-014",
+      "title": "Part 1 套题 14",
+      "topics": [
+        {
+          "title": "Pets and Animals",
+          "release": "carry_over",
+          "questions": [
+            "What's your favourite animal? Why?",
+            "Where do you prefer to keep your pet, indoors or outdoors?",
+            "Have you ever had a pet before?"
+          ]
+        },
+        {
+          "title": "Views",
+          "release": "carry_over",
+          "questions": [
+            "Do you like taking pictures of different views?",
+            "Do you prefer views in urban areas or rural areas?",
+            "Do you prefer views in your own country or in other countries?"
+          ]
+        },
+        {
+          "title": "Tidiness",
+          "release": "new",
+          "questions": [
+            "Do you like to keep things tidy?",
+            "Did you keep your room tidy as a child?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-015",
+      "title": "Part 1 套题 15",
+      "topics": [
+        {
+          "title": "Sports team",
+          "release": "carry_over",
+          "questions": [
+            "Have you ever been part of a sports team?",
+            "Is team sports popular in your culture?",
+            "Do you like watching team games? Why?"
+          ]
+        },
+        {
+          "title": "Life stages",
+          "release": "carry_over",
+          "questions": [
+            "What did you often do with your friends in your childhood?",
+            "What do you think is the most important at the moment?",
+            "Do you have any plans for the next five years?"
+          ]
+        },
+        {
+          "title": "Websites",
+          "release": "new",
+          "questions": [
+            "What kinds of websites do you often visit?",
+            "What is your favourite website?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-016",
+      "title": "Part 1 套题 16",
+      "topics": [
+        {
+          "title": "Hobby",
+          "release": "carry_over",
+          "questions": [
+            "Do you have any hobbies?",
+            "Did you have any hobbies when you were a child?",
+            "Do you have a hobby that you've had since childhood?"
+          ]
+        },
+        {
+          "title": "Spare time",
+          "release": "carry_over",
+          "questions": [
+            "Do you often have free time?",
+            "What do you usually do in your spare time?",
+            "Which day do you have more free time on, Saturday or Sunday?"
+          ]
+        },
+        {
+          "title": "Cars",
+          "release": "new",
+          "questions": [
+            "Did you enjoy traveling by car when you were a kid?",
+            "What do you usually do when there is a traffic jam?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-017",
+      "title": "Part 1 套题 17",
+      "topics": [
+        {
+          "title": "Morning time",
+          "release": "carry_over",
+          "questions": [
+            "Do you like getting up early in the morning?",
+            "What do you usually do in the morning?",
+            "What did you do in the morning when you were little? Why?"
+          ]
+        },
+        {
+          "title": "Memory",
+          "release": "carry_over",
+          "questions": [
+            "Are you good at memorising things?",
+            "Have you ever forgotten something important?",
+            "What do you need to remember in your daily life?"
+          ]
+        },
+        {
+          "title": "Public gardens and parks",
+          "release": "new",
+          "questions": [
+            "Did you like going to parks as a child?",
+            "Do you still like going to parks now?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-018",
+      "title": "Part 1 套题 18",
+      "topics": [
+        {
+          "title": "Gifts",
+          "release": "carry_over",
+          "questions": [
+            "Have you ever sent handmade gifts to others?",
+            "Have you ever received a great gift?",
+            "What do you consider when choosing a gift?"
+          ]
+        },
+        {
+          "title": "Crowded place",
+          "release": "carry_over",
+          "questions": [
+            "Is the city where you live crowded?",
+            "Is there a crowded place near where you live?",
+            "Do you like crowded places?"
+          ]
+        },
+        {
+          "title": "Science",
+          "release": "new",
+          "questions": [
+            "Do you like science?",
+            "What kinds of interesting things have you done with science?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-019",
+      "title": "Part 1 套题 19",
+      "topics": [
+        {
+          "title": "Reading",
+          "release": "carry_over",
+          "questions": [
+            "Do you like reading?",
+            "Do you prefer to read on paper or on a screen?",
+            "When do you need to read carefully, and when not?"
+          ]
+        },
+        {
+          "title": "Home/accommodation",
+          "release": "carry_over",
+          "questions": [
+            "What kind of house or apartment do you want to live in in the future?",
+            "Are the transport facilities to your home very good?",
+            "Do you prefer living in a house or an apartment?"
+          ]
+        },
+        {
+          "title": "Clothing",
+          "release": "new",
+          "questions": [
+            "What kind of clothes do you like to wear?",
+            "Do you prefer to wear comfortable and casual clothes or smart clothes?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-020",
+      "title": "Part 1 套题 20",
+      "topics": [
+        {
+          "title": "Walking",
+          "release": "carry_over",
+          "questions": [
+            "Do you walk a lot?",
+            "Did you often go outside to have a walk when you were a child?",
+            "Why do people like to walk in parks?"
+          ]
+        },
+        {
+          "title": "The city you live in",
+          "release": "carry_over",
+          "questions": [
+            "What city do you live in?",
+            "Do you like this city? Why?",
+            "How long have you lived in this city?"
+          ]
+        },
+        {
+          "title": "Music",
+          "release": "new",
+          "questions": [
+            "Do you prefer sad or happy music?",
+            "Does happy music make you feel more excited?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-021",
+      "title": "Part 1 套题 21",
+      "topics": [
+        {
+          "title": "Work or studies",
+          "release": "carry_over",
+          "questions": [
+            "Why did you choose to study that subject?",
+            "Do you think that your subject is popular in your country?",
+            "Do you have any plans for your studies in the next five years?",
+            "What are the benefits of being your age?"
+          ]
+        },
+        {
+          "title": "Building",
+          "release": "carry_over",
+          "questions": [
+            "Do you want to live in a tall building?",
+            "Are there tall buildings near your home?"
+          ]
+        },
+        {
+          "title": "Mirrors",
+          "release": "new",
+          "questions": [
+            "Would you use mirrors to decorate your room?",
+            "Do you like looking at yourself in the mirror? How often?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-022",
+      "title": "Part 1 套题 22",
+      "topics": [
+        {
+          "title": "Work or studies",
+          "release": "carry_over",
+          "questions": [
+            "Do you want to change your major?",
+            "Do you prefer to study in the mornings or in the afternoons?",
+            "How much time do you spend on your studies each week?",
+            "Are you looking forward to working?"
+          ]
+        },
+        {
+          "title": "Food",
+          "release": "carry_over",
+          "questions": [
+            "Has your favourite food changed since you were a child?",
+            "What is your favourite food?"
+          ]
+        },
+        {
+          "title": "Memory",
+          "release": "carry_over",
+          "questions": [
+            "How do you remember important things?",
+            "Are you good at memorising things?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-023",
+      "title": "Part 1 套题 23",
+      "topics": [
+        {
+          "title": "Work or studies",
+          "release": "carry_over",
+          "questions": [
+            "What technology do you use when you study?",
+            "What changes would you like to see in your school?",
+            "What work do you do?",
+            "Why did you choose to do that type of work (or that job)?"
+          ]
+        },
+        {
+          "title": "Gifts",
+          "release": "carry_over",
+          "questions": [
+            "Do you think you are good at choosing gifts?",
+            "What gift have you received recently?"
+          ]
+        },
+        {
+          "title": "Life stages",
+          "release": "carry_over",
+          "questions": [
+            "At what age do you think people are the happiest?",
+            "What did you often do with your friends in your childhood?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-024",
+      "title": "Part 1 套题 24",
+      "topics": [
+        {
+          "title": "Work or studies",
+          "release": "carry_over",
+          "questions": [
+            "Do you like your job?",
+            "What requirements did you need to meet to get your current job?",
+            "Do you have any plans for your work in the next five years?",
+            "What do you think is the most important at the moment?"
+          ]
+        },
+        {
+          "title": "Singing",
+          "release": "new",
+          "questions": [
+            "Do you like listening to others singing?",
+            "Have you ever taken a singing class?"
+          ]
+        },
+        {
+          "title": "Outer space and stars",
+          "release": "new",
+          "questions": [
+            "Do you want to go into outer space in the future?",
+            "Have you ever learnt about outer space and stars?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-025",
+      "title": "Part 1 套题 25",
+      "topics": [
+        {
+          "title": "Work or studies",
+          "release": "carry_over",
+          "questions": [
+            "Do you want to change to another job?",
+            "Do you miss being a student?",
+            "What technology do you use at work?",
+            "Who helps you the most? And how?"
+          ]
+        },
+        {
+          "title": "Science",
+          "release": "new",
+          "questions": [
+            "Do you like watching science TV programs?",
+            "Do Chinese people often visit science museums?"
+          ]
+        },
+        {
+          "title": "Teachers",
+          "release": "new",
+          "questions": [
+            "Do you like your primary school teachers more than your high school teachers?",
+            "Do you have a favorite teacher?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-026",
+      "title": "Part 1 套题 26",
+      "topics": [
+        {
+          "title": "Home/accommodation",
+          "release": "carry_over",
+          "questions": [
+            "Please describe the room you live in.",
+            "What part of your home do you like the most?",
+            "How long have you lived there?",
+            "Do you plan to live there for a long time?"
+          ]
+        },
+        {
+          "title": "Social media",
+          "release": "new",
+          "questions": [
+            "Do your friends use social media?",
+            "What do people often do on social media?"
+          ]
+        },
+        {
+          "title": "Spare time",
+          "release": "carry_over",
+          "questions": [
+            "Would you like to have more free time in the future?",
+            "Do you often have free time?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-027",
+      "title": "Part 1 套题 27",
+      "topics": [
+        {
+          "title": "Home/accommodation",
+          "release": "carry_over",
+          "questions": [
+            "What's the difference between where you are living now and where you have lived in the past?",
+            "Can you describe the place where you live?",
+            "What room does your family spend most of the time in?",
+            "What's your favorite room in your apartment or house?"
+          ]
+        },
+        {
+          "title": "Jokes & Comedies",
+          "release": "new",
+          "questions": [
+            "Have you ever watched a live show?",
+            "Are comedy shows popular in your country?"
+          ]
+        },
+        {
+          "title": "Public gardens and parks",
+          "release": "new",
+          "questions": [
+            "Would you like to play in a public garden or park?",
+            "Did you like going to parks as a child?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-028",
+      "title": "Part 1 套题 28",
+      "topics": [
+        {
+          "title": "Home/accommodation",
+          "release": "carry_over",
+          "questions": [
+            "What makes you feel pleasant in your home?",
+            "Do you think it is important to live in a comfortable environment?",
+            "Do you live in an apartment or a house?",
+            "Who do you live with?"
+          ]
+        },
+        {
+          "title": "Shopping",
+          "release": "new",
+          "questions": [
+            "Have you ever returned anything you bought online?",
+            "Do you like shopping?"
+          ]
+        },
+        {
+          "title": "Views",
+          "release": "carry_over",
+          "questions": [
+            "Have you seen an unforgettable and beautiful view or scenery?",
+            "Do you like taking pictures of different views?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-029",
+      "title": "Part 1 套题 29",
+      "topics": [
+        {
+          "title": "Hometown",
+          "release": "carry_over",
+          "questions": [
+            "Please describe your hometown a little.",
+            "How long have you been living there?",
+            "Do you think you will continue living there for a long time?",
+            "Do you like your hometown?"
+          ]
+        },
+        {
+          "title": "Cars",
+          "release": "new",
+          "questions": [
+            "Do you think car colours are important?",
+            "Will you buy an expensive car in the future?"
+          ]
+        },
+        {
+          "title": "Crowded place",
+          "release": "carry_over",
+          "questions": [
+            "Do most people like crowded places?",
+            "When was the last time you were in a crowded place?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-030",
+      "title": "Part 1 套题 30",
+      "topics": [
+        {
+          "title": "Hometown",
+          "release": "carry_over",
+          "questions": [
+            "Do you like living there?",
+            "What do you like (most) about your hometown?",
+            "Is there anything you dislike about it?",
+            "What's your hometown famous for?"
+          ]
+        },
+        {
+          "title": "Morning time",
+          "release": "carry_over",
+          "questions": [
+            "Are there any differences between what you do in the morning now and what you did in the past?",
+            "Do you spend your mornings doing the same things on both weekends and weekdays? Why?"
+          ]
+        },
+        {
+          "title": "Hobby",
+          "release": "carry_over",
+          "questions": [
+            "Do you have the same hobbies as your family members?",
+            "Do you have any hobbies?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-031",
+      "title": "Part 1 套题 31",
+      "topics": [
+        {
+          "title": "Hometown",
+          "release": "carry_over",
+          "questions": [
+            "Did you learn about the history of your hometown at school?",
+            "Are there many young people in your hometown?",
+            "Is your hometown a good place for young people to pursue their careers?",
+            "Have you learned anything about the history of your hometown?"
+          ]
+        },
+        {
+          "title": "Reading",
+          "release": "carry_over",
+          "questions": [
+            "Do you prefer scanning or detailed reading?",
+            "Do you like reading?"
+          ]
+        },
+        {
+          "title": "Scenery",
+          "release": "carry_over",
+          "questions": [
+            "What are the most beautiful sights you have seen while traveling?",
+            "Do you look out the window at the scenery when travelling by bus or car?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-032",
+      "title": "Part 1 套题 32",
+      "topics": [
+        {
+          "title": "The city you live in",
+          "release": "carry_over",
+          "questions": [
+            "Are there big changes in this city?",
+            "Is this city your permanent residence?",
+            "Are there people of different ages living in this city?",
+            "Are the people friendly in the city?"
+          ]
+        },
+        {
+          "title": "Teachers",
+          "release": "new",
+          "questions": [
+            "Are you still in touch with your primary school teachers?",
+            "In what way has your favourite teacher helped you?"
+          ]
+        },
+        {
+          "title": "Music",
+          "release": "new",
+          "questions": [
+            "Do you listen to music while doing other things?",
+            "Do you prefer sad or happy music?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-033",
+      "title": "Part 1 套题 33",
+      "topics": [
+        {
+          "title": "The city you live in",
+          "release": "carry_over",
+          "questions": [
+            "Is the city friendly to children and old people?",
+            "Do you often see your neighbors?",
+            "What's the weather like where you live?",
+            "Would you recommend your city to others?"
+          ]
+        },
+        {
+          "title": "Life stages",
+          "release": "carry_over",
+          "questions": [
+            "How do people remember each stage of their lives?",
+            "Do you enjoy being the age you are now?"
+          ]
+        },
+        {
+          "title": "Tidiness",
+          "release": "new",
+          "questions": [
+            "Do you think that it is necessary to be tidy?",
+            "Do you like to keep things tidy?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-034",
+      "title": "Part 1 套题 34",
+      "topics": [
+        {
+          "title": "Pets and Animals",
+          "release": "carry_over",
+          "questions": [
+            "What is the most popular animal in China?",
+            "Have you ever visited a zoo?",
+            "How often do you visit a zoo?",
+            "Are there many people keeping pets in your country?"
+          ]
+        },
+        {
+          "title": "Home/accommodation",
+          "release": "carry_over",
+          "questions": [
+            "What do you usually do in your apartment?",
+            "What kinds of accommodation do you live in?"
+          ]
+        },
+        {
+          "title": "Sports team",
+          "release": "carry_over",
+          "questions": [
+            "What are the differences between team sports and individual sports?",
+            "Have you ever been part of a sports team?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-035",
+      "title": "Part 1 套题 35",
+      "topics": [
+        {
+          "title": "Public gardens and parks",
+          "release": "new",
+          "questions": [
+            "Are there any parks you want to go to in the future?",
+            "Would you prefer to play in a personal garden or public garden?",
+            "How are the parks today different from those you visited as a kid?",
+            "What do you like to do when visiting a park?"
+          ]
+        },
+        {
+          "title": "Hometown",
+          "release": "carry_over",
+          "questions": [
+            "Did you learn about the culture of your hometown in your childhood?",
+            "Where is your hometown?"
+          ]
+        },
+        {
+          "title": "Watch",
+          "release": "new",
+          "questions": [
+            "Do you think it is important to wear a watch? Why?",
+            "Do you wear a watch?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-036",
+      "title": "Part 1 套题 36",
+      "topics": [
+        {
+          "title": "The area you live in",
+          "release": "carry_over",
+          "questions": [
+            "Do you know any famous people in your area?",
+            "What are some changes in the area recently?",
+            "Do you know any of your neighbors?",
+            "Are the people in your neighborhood nice and friendly?"
+          ]
+        },
+        {
+          "title": "Headphones",
+          "release": "new",
+          "questions": [
+            "In what conditions would you not use headphones?",
+            "Is wearing headphones comfortable?"
+          ]
+        },
+        {
+          "title": "Childhood activities",
+          "release": "carry_over",
+          "questions": [
+            "Are there any differences between the activities you liked when you were a child and those you like now?",
+            "What are your favourite activities?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-037",
+      "title": "Part 1 套题 37",
+      "topics": [
+        {
+          "title": "Clothing",
+          "release": "new",
+          "questions": [
+            "Do you like wearing T-shirts?",
+            "Do you spend a lot of time choosing clothes?",
+            "Do you wear different styles of clothes on weekdays and weekends?",
+            "What colour clothes do you like?"
+          ]
+        },
+        {
+          "title": "Walking",
+          "release": "carry_over",
+          "questions": [
+            "Where would you like to take a long walk if you had the chance?",
+            "Where did you go for a walk lately?"
+          ]
+        },
+        {
+          "title": "Pets and Animals",
+          "release": "carry_over",
+          "questions": [
+            "Should schools teach students knowledge about pets or animals?",
+            "What's your favourite animal? Why?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    },
+    {
+      "id": "p1-038",
+      "title": "Part 1 套题 38",
+      "topics": [
+        {
+          "title": "Websites",
+          "release": "new",
+          "questions": [
+            "What kinds of websites are popular in your country?",
+            "Do you prefer getting information from websites or books?",
+            "Would you like to have your own website?",
+            "What have you learned from websites that help with your life or studies?"
+          ]
+        },
+        {
+          "title": "Typing",
+          "release": "carry_over",
+          "questions": [
+            "When did you learn how to type on a keyboard?",
+            "How do you improve your typing?"
+          ]
+        },
+        {
+          "title": "The area you live in",
+          "release": "carry_over",
+          "questions": [
+            "Do you live in a noisy or a quiet area?",
+            "Do you like the area that you live in?"
+          ]
+        }
+      ],
+      "question_count": 8,
+      "published": true
+    }
+  ],
+  "topic_groups": [
+    {
+      "id": "p23-new-001",
+      "title_zh": "喜欢或不喜欢的高建筑",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a tall building you like or dislike",
+        "points": [
+          "What it is used for",
+          "Where it is",
+          "What it looks like",
+          "And explain why you like/dislike it"
+        ]
+      },
+      "part3_questions": [
+        "Are there many tall buildings in your country?",
+        "What are the differences between those tall buildings in your country?",
+        "Why are different places laid out and designed differently?",
+        "What are the advantages of living in tall buildings?",
+        "Why do some people like to remodel and decorate their homes themselves?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-002",
+      "title_zh": "有趣视频",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe an interesting video",
+        "points": [
+          "When and where you watched it",
+          "What it is about",
+          "Why you watched it",
+          "And explain how you feel about it"
+        ]
+      },
+      "part3_questions": [
+        "What kind of videos do people in your country like to watch?",
+        "Which is more helpful, watching videos or reading books?",
+        "What skills can people learn from watching videos?",
+        "Are there any differences between the videos that young people and old people like to watch?",
+        "Are there any differences between the videos that young men and young women like to watch?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-003",
+      "title_zh": "去过的无聊地方",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a boring place",
+        "points": [
+          "Where it is",
+          "Who you went there with",
+          "What you did there",
+          "And explain why you think it is a boring place"
+        ]
+      },
+      "part3_questions": [
+        "Why do most children think education is boring?",
+        "Why aren't young people willing to listen to the experiences of older people?",
+        "What can people do when they feel bored?",
+        "Why are some teachers' classes boring? Are there any solutions?",
+        "Why do some young people feel bored when talking with old people?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-004",
+      "title_zh": "早起经历",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a time when you got up early",
+        "points": [
+          "When it was",
+          "What you did",
+          "Why you got up early",
+          "And how you felt about it"
+        ]
+      },
+      "part3_questions": [
+        "Do you know anyone who likes to get up early?",
+        "Why do people get up early?",
+        "What kinds of occasions need people to arrive early?",
+        "Why do some people like to stay up late?",
+        "Is it good to arrive early in any situation?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-005",
+      "title_zh": "喜欢在家/花园种菜的人",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a person who loves to grow plants (e.g. vegetables, flowers) at home or in the garden",
+        "points": [
+          "Who this person is",
+          "What plants he/she grows",
+          "How he/she grows the plants",
+          "And explain why he/she loves growing plants"
+        ]
+      },
+      "part3_questions": [
+        "What are the advantages of growing vegetables or flowers at home?",
+        "Do many people grow vegetables or flowers at home in your country?",
+        "Is it easy to grow plants at home?",
+        "Why do some people like to grow plants?",
+        "Why do some people prefer to grow their own fruits and vegetables instead of buying them from the market?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-006",
+      "title_zh": "想颁布的新法律",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a new law you would like to introduce in your country",
+        "points": [
+          "What law it is",
+          "What changes this law brings",
+          "Whether this new law will be popular",
+          "How you came up with the new law",
+          "And explain how you feel about this new law"
+        ]
+      },
+      "part3_questions": [
+        "What rules should students follow at school?",
+        "Do people in your country usually obey the law?",
+        "What kinds of behavior are considered as good behavior?",
+        "Do you think children can learn about the law outside of school?",
+        "What are the benefits for people to obey rules?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-007",
+      "title_zh": "发小",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a friend from your childhood",
+        "points": [
+          "Who he/she is",
+          "Where and how you met each other",
+          "What you often did together",
+          "And explain what made you like him/her"
+        ]
+      },
+      "part3_questions": [
+        "Do you still keep in touch with your friends from childhood? Why or why not?",
+        "How important is childhood friendship to children?",
+        "What do you think of communicating via social media?",
+        "Do you think online communication through social media will replace face-to-face communication?",
+        "What's the difference between having younger friends and older friends?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-008",
+      "title_zh": "想从事医疗行业的人",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a person you know who would like to choose a career in the medical field (e.g. a doctor, a nurse)",
+        "points": [
+          "When you knew him/her",
+          "When he/she started to think about that",
+          "What he/she would like to do",
+          "And explain why he/she would like to choose this career"
+        ]
+      },
+      "part3_questions": [
+        "Do you think being a doctor is easy or difficult?",
+        "Do you think learning biology is interesting for children?",
+        "Why do some children want to become doctors?",
+        "Do you think governments should put a large amount of money into medical research?",
+        "Why is some doctors' pay high and others' low?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-009",
+      "title_zh": "拥有成功商业的人",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a person you know who has a successful business",
+        "points": [
+          "Who this person is",
+          "How you got to know him/her",
+          "Why and how he/she started the business",
+          "What business he/she does",
+          "And explain why you think the business is successful"
+        ]
+      },
+      "part3_questions": [
+        "Why do some people start their own business?",
+        "Should governments provide financial support to start-ups?",
+        "Do most people prefer shopping at big stores or small stores?",
+        "What makes a business successful?",
+        "What makes a business fail?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-010",
+      "title_zh": "近期改变的计划",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a plan that you had to change recently",
+        "points": [
+          "When this happened",
+          "What made you change the plan",
+          "What the new plan was",
+          "And how you felt about the change"
+        ]
+      },
+      "part3_questions": [
+        "Do people often change their plans?",
+        "Would you tell others if you change your plan?",
+        "Why do you think parents still make plans for their children nowadays?",
+        "How does technology help people make plans?",
+        "What kind of plans do people often make?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-011",
+      "title_zh": "在团队中工作",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a time when you worked in a group",
+        "points": [
+          "What you did",
+          "Who you worked with",
+          "What problems you faced",
+          "And explain why you worked in the group"
+        ]
+      },
+      "part3_questions": [
+        "Why do some people prefer to work by themselves?",
+        "What should a leader do to make team members want to follow him or her?",
+        "Should students learn to do group work?",
+        "What group tasks are there in schools?",
+        "What advantages are there for students experiencing teamwork at school?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-012",
+      "title_zh": "重要决定",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe an important decision that you made",
+        "points": [
+          "What the decision was",
+          "How you made your decision",
+          "What the results of the decision were",
+          "And explain why it was important"
+        ]
+      },
+      "part3_questions": [
+        "Do you think children sometimes have to make important decisions?",
+        "What important decisions do teenagers need to make after graduation?",
+        "Who can children turn to for help when making a decision?",
+        "Do you think advertisements can influence our decisions when shopping?",
+        "Do you think the influence of advertising is good?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-013",
+      "title_zh": "喜欢的现场体育赛事",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a live sports event you watched and liked",
+        "points": [
+          "What it was",
+          "When and where you watched it",
+          "Who you watched it with",
+          "And explain why you liked it"
+        ]
+      },
+      "part3_questions": [
+        "Why do some people like to watch sports events?",
+        "Where do people normally watch sports events?",
+        "What are the advantages of watching sports events online?",
+        "What sports matches are suitable for children to attend?",
+        "Why do some people spend a lot going to other countries to watch sports events?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-014",
+      "title_zh": "特别场合的食物",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a food that people eat on special occasions/events",
+        "points": [
+          "What it is",
+          "What the special event/occasion is",
+          "How it is cooked/made",
+          "And explain why people eat it on that special occasion/event"
+        ]
+      },
+      "part3_questions": [
+        "Why are there special foods on special occasions or events?",
+        "What are the differences between everyday food and festival food?",
+        "Are there any differences between the food people eat today and the food people ate in the past?",
+        "Do people today prefer eating at home or in a restaurant?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-015",
+      "title_zh": "擅长学习和说语言的人",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a person who is good at learning and speaking new languages",
+        "points": [
+          "How you got to know him/her",
+          "How he/she learns a new language",
+          "What languages he/she can speak",
+          "And explain how you feel about him/her"
+        ]
+      },
+      "part3_questions": [
+        "Are there many people who can speak foreign languages in your country?",
+        "Does speaking other languages help at work?",
+        "Do people learn any languages other than English?",
+        "Why is it easier for children to learn new things than for adults?",
+        "How do people learn new things?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-016",
+      "title_zh": "遇到的科技问题",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a challenging technological problem you faced",
+        "points": [
+          "What the problem was",
+          "When and where you faced it",
+          "How challenging it was",
+          "And explain how you solved it"
+        ]
+      },
+      "part3_questions": [
+        "What are the advantages and disadvantages of AI?",
+        "Do you think people today should learn about AI technology?",
+        "Should children learn to use AI?",
+        "How can AI help in our lives?",
+        "Do you think students are overly reliant on AI?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-017",
+      "title_zh": "名人出演的广告",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe an advertisement with a famous person in it",
+        "points": [
+          "Who the person is",
+          "Where you can see it",
+          "What the advertisement is about",
+          "And explain how you feel about the advertisement"
+        ]
+      },
+      "part3_questions": [
+        "What are the advantages and disadvantages of advertisements?",
+        "Why are many advertisements endorsed by celebrities? How useful are they?",
+        "What is the most important factor in an advertisement?",
+        "Why are some advertisements boring?",
+        "Is advertising important for a company? Why?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-018",
+      "title_zh": "推荐旅行过的地方",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a place you have travelled to that you would like to recommend to others",
+        "points": [
+          "What it is",
+          "Where it is",
+          "What you saw and did there",
+          "And explain why you would like to recommend it to others"
+        ]
+      },
+      "part3_questions": [
+        "Where do people in your country often go for holidays?",
+        "What is the ideal length for a holiday?",
+        "How do people usually plan holidays?",
+        "Is it important to plan a holiday ahead?",
+        "Why do many countries try to attract people to visit?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-019",
+      "title_zh": "喜欢拜访但不想住的家",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a home that you like to visit but do not want to live in",
+        "points": [
+          "Where it is",
+          "What it is like",
+          "Why you like to visit it",
+          "And explain why you would not like to live there"
+        ]
+      },
+      "part3_questions": [
+        "Do Chinese people like to visit others' homes?",
+        "What do Chinese people do when they visit others?",
+        "What kind of place do people in your country like to live in?",
+        "What's the difference between homes in cities and those in the countryside?",
+        "What kind of gifts do people usually bring when they visit others?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-020",
+      "title_zh": "包含动物的故事或书",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a story/book with animals in it",
+        "points": [
+          "What animals are in it",
+          "What the story/book is about",
+          "Why you read the story/book",
+          "And explain what you think of this story/book"
+        ]
+      },
+      "part3_questions": [
+        "Should schools teach children about animals?",
+        "Some people think pets should not be kept in cities. What do you think?",
+        "Many people regard pets as members of their family. What do you think?",
+        "Do many people keep pets in your country?",
+        "What are the advantages of keeping a pet?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-021",
+      "title_zh": "别人帮助解决问题",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a time when a person did something to help you solve a problem",
+        "points": [
+          "Who the person is",
+          "What the problem was",
+          "How he/she helped you",
+          "And explain how you felt about the experience"
+        ]
+      },
+      "part3_questions": [
+        "How important is it for schools to help children become smarter?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-022",
+      "title_zh": "保护环境的法律",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a law on environmental protection",
+        "points": [
+          "What it is",
+          "How you first learned about it",
+          "Who benefits from it",
+          "And explain how you feel about this law"
+        ]
+      },
+      "part3_questions": [
+        "What kinds of rules do schools in China have?",
+        "Do you think school rules are important?",
+        "Are children unhappy with the school rules?",
+        "How can parents and teachers help children understand and follow rules?",
+        "What are the rules people should obey at work?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-023",
+      "title_zh": "很久没收到回复的信息",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a time when you sent a message or an email to someone but received no reply for a long time",
+        "points": [
+          "Who you sent it to",
+          "What the message/email was about",
+          "Whether you finally received the reply",
+          "And explain how you felt about the experience"
+        ]
+      },
+      "part3_questions": [
+        "In what situations do people spend a long time responding to others' messages?",
+        "In what situations do people not respond to messages at all?",
+        "What would you do if you did not receive a reply after sending out a message?",
+        "Why do some people prefer sending a message instead of making a call?",
+        "How do you show your respect in your messages?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-024",
+      "title_zh": "长久目标/抱负",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a long-term goal/ambition you would like to achieve",
+        "points": [
+          "How long you have had this goal/ambition",
+          "What it is",
+          "How you will achieve it",
+          "And explain why you set it"
+        ]
+      },
+      "part3_questions": [
+        "Why should children have ambitions?",
+        "What do you think of people going after high positions?",
+        "Why are some young people keen on being fans of superstars?",
+        "Is it good for a person to be ambitious?",
+        "Do you think it is necessary to be ambitious when working in a team in a company?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-025",
+      "title_zh": "遇到困难终成功的人",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a person who met difficulties but succeeded",
+        "points": [
+          "Who this person is",
+          "What difficulties he met",
+          "How he overcame the difficulties",
+          "And explain how you feel about him"
+        ]
+      },
+      "part3_questions": [
+        "In your country, what industry is it easier to be successful in?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-026",
+      "title_zh": "改变重要想法",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a time when you changed an important opinion of yours",
+        "points": [
+          "When you changed your opinion",
+          "What the original opinion was",
+          "Why you changed it",
+          "And explain how you felt about the experience"
+        ]
+      },
+      "part3_questions": [
+        "When do most children begin to have their own opinions?",
+        "Whose opinions are more important to children, their parents' or teachers'?",
+        "Do children communicate more with teachers or with parents?",
+        "Who do young people like to share opinions with?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-027",
+      "title_zh": "想要颁布的环保法律",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe an environmental law you would like your country to introduce",
+        "points": [
+          "What law it should be",
+          "Why people should follow the law",
+          "Whether the law will be popular",
+          "And explain how you feel about this law"
+        ]
+      },
+      "part3_questions": [
+        "How does technology affect the law?",
+        "What kinds of rules do schools in China have?",
+        "Will there be a law that is universally accepted?",
+        "What environmental laws does your country already have?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-028",
+      "title_zh": "当地新闻",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a piece of local news that people are interested in",
+        "points": [
+          "What it was about",
+          "Where you saw/heard it",
+          "Who was involved",
+          "And explain why people were interested in it"
+        ]
+      },
+      "part3_questions": [
+        "Do people read the newspaper where you live?",
+        "Do people prefer local or international news?",
+        "Do you think it's important to have a national identity?",
+        "How can people develop their national identity?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-new-029",
+      "title_zh": "近期改变",
+      "release": "new",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a change that you made recently",
+        "points": [
+          "What the change was",
+          "What caused the change",
+          "What you did for the change",
+          "And explain how you feel about the change"
+        ]
+      },
+      "part3_questions": [
+        "Do you think it is good to change one's daily routine?",
+        "Do you think it is good to change jobs?",
+        "Is it good for people to get a job promotion?",
+        "Do people often make plans around their regular routines?",
+        "Who tend to change their daily routine more, young people or old people?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-001",
+      "title_zh": "完美工作",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a perfect job you would like to have in the future",
+        "points": [
+          "What it is",
+          "How you knew it",
+          "What you need to learn to get this job",
+          "And explain why you think it is a perfect job for you"
+        ]
+      },
+      "part3_questions": [
+        "What kind of job can be called a 'dream job'?",
+        "What jobs do children want to do when they grow up?",
+        "Do people's ideal jobs change as they grow up?",
+        "What should people consider when choosing jobs?",
+        "Is salary the main reason why people choose a certain job?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-002",
+      "title_zh": "想见的名人",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a famous person you would like to meet",
+        "points": [
+          "Who he/she is",
+          "How you knew him/her",
+          "How/where you would like to meet him/her",
+          "And explain why you would like to meet him/her"
+        ]
+      },
+      "part3_questions": [
+        "What are the advantages and disadvantages of being a famous child?",
+        "What can today's children do to become famous?",
+        "What can children do with their fame?",
+        "Do people become famous because of their talent?",
+        "Is it easy to become famous in your country?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-003",
+      "title_zh": "禁用手机的场合",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe an occasion when you were not allowed to use your mobile phone",
+        "points": [
+          "When it was",
+          "Where it was",
+          "Why you were not allowed to use your mobile phone",
+          "And how you felt about it"
+        ]
+      },
+      "part3_questions": [
+        "How do young and old people use mobile phones differently?",
+        "What positive and negative impact do mobile phones have on friendship?",
+        "Is it a waste of time to take pictures with mobile phones?",
+        "Do you think it is necessary to have laws on the use of mobile phones?",
+        "What are examples of good and poor phone manners?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-004",
+      "title_zh": "给别人建议",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a time when you gave advice to others",
+        "points": [
+          "When it was",
+          "To whom you gave the advice",
+          "What the advice was",
+          "And explain why you gave the advice"
+        ]
+      },
+      "part3_questions": [
+        "Should people prepare before giving advice?",
+        "Is it good to ask advice from strangers online?",
+        "What are the personalities of people whose job is to give advice to others?",
+        "What are the problems if you ask too many people for advice?",
+        "Why do some people think it is better to ask for advice from friends than from parents?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-005",
+      "title_zh": "想拥有的科技产品",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a piece of technology (not a phone) that you would like to own",
+        "points": [
+          "What it is",
+          "How much it costs",
+          "How you knew it",
+          "And explain why you would like to own it"
+        ]
+      },
+      "part3_questions": [
+        "What are the differences between the technology of the past and that of today?",
+        "What technology do young people like to use?",
+        "What are the differences between online and face-to-face communication?",
+        "Do you think technology has changed the way people communicate?",
+        "What negative effects does technology have on people's relationships?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-006",
+      "title_zh": "擅长做计划的人",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a person who makes plans a lot and is good at planning",
+        "points": [
+          "Who he/she is",
+          "How you knew him/her",
+          "What plans he/she makes",
+          "And explain how you feel about this person"
+        ]
+      },
+      "part3_questions": [
+        "Do you think it's important to plan ahead?",
+        "What activities do we need to plan ahead?",
+        "Do you think children should plan their future careers?",
+        "Should children ask their teachers or parents for advice when making plans?",
+        "Is making study plans popular among young people?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-007",
+      "title_zh": "喜欢画画的孩子",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a child who loves drawing/painting",
+        "points": [
+          "Who he/she is",
+          "How/when you knew him/her",
+          "How often he/she draws/paints",
+          "And explain why you think he/she loves drawing/painting"
+        ]
+      },
+      "part3_questions": [
+        "What is the right age for a child to learn drawing?",
+        "Why do most children draw more often than adults do?",
+        "Why do some people visit galleries or museums instead of viewing artworks online?",
+        "Do you think galleries and museums should be free of charge?",
+        "How do artworks inspire people?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-008",
+      "title_zh": "App/程序",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a program or app on your computer or phone",
+        "points": [
+          "What it is",
+          "How often you use it",
+          "When/how you use it",
+          "When/how you found it",
+          "And explain how you feel about it"
+        ]
+      },
+      "part3_questions": [
+        "What are the differences between old and young people when using apps?",
+        "Why do some people not like using apps?",
+        "What apps are popular in your country? Why?",
+        "Should parents limit their children's use of computer programs and computer games? Why and how?",
+        "Do you think young people are more and more reliant on these programs?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-009",
+      "title_zh": "微笑的场合",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe an occasion when many people were smiling",
+        "points": [
+          "When it happened",
+          "Who you were with",
+          "What happened",
+          "And explain why most people were smiling"
+        ]
+      },
+      "part3_questions": [
+        "Do you think people who like to smile are more friendly?",
+        "Why do most people smile in photographs?",
+        "Do women smile more than men? Why?",
+        "Do people smile more when they are younger or older?",
+        "Is smiling important in your culture?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-010",
+      "title_zh": "为家人骄傲",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a time when you felt proud of a family member",
+        "points": [
+          "When it happened",
+          "Who the person is",
+          "What the person did",
+          "And explain why you felt proud of him/her"
+        ]
+      },
+      "part3_questions": [
+        "When would parents feel proud of their children?",
+        "Should parents reward children? Why and how?",
+        "Is it good to reward children too often? Why?",
+        "On what occasions would adults be proud of themselves?",
+        "Do rewards help a child become better?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-011",
+      "title_zh": "对家庭重要的东西",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe something important that has been kept in your family for a long time",
+        "points": [
+          "What it is",
+          "When your family had it",
+          "How your family got it",
+          "And explain why it is important to your family"
+        ]
+      },
+      "part3_questions": [
+        "What things do families keep for a long time?",
+        "What's the difference between things valued by people in the past and today?",
+        "What kinds of things are kept in museums?",
+        "What's the influence of technology on museums?",
+        "What are the benefits of technology for learning history?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-012",
+      "title_zh": "自行车/摩托车/汽车旅行",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a bicycle/motorcycle/car trip you would like to go",
+        "points": [
+          "Who you would like to go with",
+          "Where you would like to go",
+          "When you would like to go",
+          "And explain why you would like to go by bicycle/motorcycle/car"
+        ]
+      },
+      "part3_questions": [
+        "Which form of vehicle is more popular in your country, bikes, cars or motorcycles?",
+        "Do you think air pollution comes mostly from mobile vehicles?",
+        "Do you think people need to change the way of transportation drastically to protect the environment?",
+        "How are the transportation systems in urban areas and rural areas different?",
+        "Why do more people own and drive private vehicles now?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-013",
+      "title_zh": "机智解决问题的人",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a person who solved a problem in a smart way",
+        "points": [
+          "Who this person is",
+          "What the problem was",
+          "How he/she solved it",
+          "And explain why you think he/she did it in a smart way"
+        ]
+      },
+      "part3_questions": [
+        "Do you think children are born smart or they learn to become smart?",
+        "How do children become smart at school?",
+        "Why are some people well-rounded and others only good at one thing?",
+        "Why does modern society need talents of all kinds?",
+        "Do you think smart children are happier than other children?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-014",
+      "title_zh": "朋友自学",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe one of your friends who learned something without a teacher",
+        "points": [
+          "Who he/she is",
+          "What he/she learned",
+          "Why he/she learned this",
+          "And explain whether it would be easier to learn from a teacher"
+        ]
+      },
+      "part3_questions": [
+        "Is it necessary to keep learning after graduating from school?",
+        "Should teachers make learning in their classes fun?",
+        "Do you think there are too many subjects for students to learn?",
+        "Is it better to focus on a few subjects or to learn many subjects?",
+        "Do you think enterprises should provide training for their employees?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-015",
+      "title_zh": "不享受的音乐活动",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe an event you attended in which you didn't enjoy the music played",
+        "points": [
+          "What it was",
+          "Who you went with",
+          "Why you decided to go there",
+          "And explain why you didn't enjoy it"
+        ]
+      },
+      "part3_questions": [
+        "What kind of music events do people like today?",
+        "Do you think children should receive some musical education?",
+        "What are the differences between old and young people's music preferences?",
+        "What kind of music events are there in your country?",
+        "Why do many people like listening to music while doing sports?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-016",
+      "title_zh": "近期看过且享受的电影",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a movie you watched and enjoyed recently",
+        "points": [
+          "When and where you watched it",
+          "Who you watched it with",
+          "What it was about",
+          "And explain why you watched this movie"
+        ]
+      },
+      "part3_questions": [
+        "What kinds of movies do you think are successful in your country?",
+        "What are the factors that make a successful movie?",
+        "Do Chinese people prefer to watch domestic movies or foreign movies?",
+        "Do you think only well-known directors can create the best movies?",
+        "Do you think successful movies should have well-known actors or actresses in leading roles?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-017",
+      "title_zh": "有趣的建筑",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe an interesting building",
+        "points": [
+          "Where it is",
+          "What it looks like",
+          "What function it has",
+          "And explain why you think it is interesting"
+        ]
+      },
+      "part3_questions": [
+        "What types of buildings are popular in your country?",
+        "Is it worth spending a lot of money on the exterior appearance of a building?",
+        "Is it more important for a building to look good on the outside or on the inside?",
+        "Why do people like to visit historical sites?",
+        "Do you think it's reasonable to charge an entry fee for visiting interesting buildings?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-018",
+      "title_zh": "发挥想象力",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a time you needed to use your imagination",
+        "points": [
+          "When it was",
+          "Why you needed to use imagination",
+          "How difficult or easy it was",
+          "And explain how you felt about it"
+        ]
+      },
+      "part3_questions": [
+        "Do you think adults can have lots of imagination?",
+        "Do you think imagination is essential for scientists?",
+        "What kinds of jobs need imagination?",
+        "What subjects are helpful for children's imagination?",
+        "What games help develop children's imagination?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-019",
+      "title_zh": "乐于助人的人",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a person who often helps others",
+        "points": [
+          "Who this person is",
+          "How often he/she helps others",
+          "How/why he/she helps others",
+          "And how you feel about this person"
+        ]
+      },
+      "part3_questions": [
+        "What can children do to help their parents?",
+        "Should children help their parents with household chores?",
+        "What kind of help do people need when looking for a new job?",
+        "Who should people ask for help, colleagues or family members?",
+        "Do you think schools should teach children to do household chores?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-020",
+      "title_zh": "花费超过预期的物品",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe an item on which you spent more than expected",
+        "points": [
+          "What it is",
+          "How much you spent on it",
+          "Why you bought it",
+          "And explain why you think you spent more than expected"
+        ]
+      },
+      "part3_questions": [
+        "Do you often buy more than you expected?",
+        "What do you think young people spend most of their money on?",
+        "Do you think it is important to save money? Why?",
+        "Do people buy things they don't need?",
+        "Do you think it is the rich people's responsibility to donate money to people in need?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-021",
+      "title_zh": "鼓励别人做不愿做的事",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a time when you encouraged someone to do something that he/she didn't want to do",
+        "points": [
+          "Who he or she is",
+          "What you encouraged him/her to do",
+          "How he/she reacted",
+          "And explain why you encouraged him/her to do it"
+        ]
+      },
+      "part3_questions": [
+        "How can leaders encourage their employees?",
+        "When should parents encourage their children?",
+        "What kind of encouragement should parents give?",
+        "Do you think some people are better than others at persuading?",
+        "Should children do everything their parents ask them to do?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-022",
+      "title_zh": "想从事的短期海外工作",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a short-term job you want to have in a foreign country",
+        "points": [
+          "Where it is",
+          "How you know of it",
+          "What the job is",
+          "And explain why you want to do it"
+        ]
+      },
+      "part3_questions": [
+        "What short-term jobs do young people do in other countries?",
+        "What challenges do young people face when working abroad?",
+        "What are the benefits of working for an international company?",
+        "What personal skills are required to work in an international company?",
+        "What kind of work can young people do in foreign countries?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-023",
+      "title_zh": "爱护自然之人",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a person who likes to look after the natural world",
+        "points": [
+          "Who this person is",
+          "What he or she does",
+          "How he or she does it",
+          "How often he or she does it",
+          "And explain how you feel about this person"
+        ]
+      },
+      "part3_questions": [
+        "Do you think parents should teach their children how to protect the environment?",
+        "What laws about the environment are effective in your country?",
+        "Which do you think people prefer, rewards or punishment, when it comes to government intervention in environmental protection?",
+        "Is it easy for children in cities to get close to the natural world?",
+        "What can people do to protect the natural world?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-024",
+      "title_zh": "商店",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a shop/store you enjoy visiting",
+        "points": [
+          "What the shop's name is",
+          "Where it is",
+          "How often you visit it",
+          "And explain why you like to visit it"
+        ]
+      },
+      "part3_questions": [
+        "Do people in your country go to the shopping mall frequently?",
+        "How have people's shopping habits changed in recent decades?",
+        "Do you think shops and shopping malls will disappear in the future?",
+        "What are the differences between shopping in street markets and big shopping malls?",
+        "What are the differences in the shopping habits of different age groups?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-025",
+      "title_zh": "去过且喜欢的城市",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a city you enjoyed visiting",
+        "points": [
+          "Where it is",
+          "When you visited it",
+          "How long you stayed there",
+          "What you did there",
+          "And explain why you enjoyed visiting it"
+        ]
+      },
+      "part3_questions": [
+        "What kinds of facilities do big cities have?",
+        "Do you think modern cities are suitable for young people or old people?",
+        "Before you travel to a city, what factors would you consider?",
+        "What are the disadvantages of living in a very famous city?",
+        "Do you prefer to visit well-developed cities or cities with a long history?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-026",
+      "title_zh": "安静的地方",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a quiet place you like to go",
+        "points": [
+          "Where it is",
+          "How you knew it",
+          "How often you go there",
+          "What you do there",
+          "And explain how you feel about the place"
+        ]
+      },
+      "part3_questions": [
+        "Is it easy to find quiet places in your country? Why?",
+        "How do people spend their leisure time in your country?",
+        "How does technology affect the way people spend their leisure time?",
+        "Do you think only old people have time for leisure?",
+        "Why do old people prefer to live in quiet places?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-old-027",
+      "title_zh": "喜欢的电视/网络节目",
+      "release": "carry_over",
+      "region": "mainland",
+      "part2": {
+        "prompt": "Describe a TV or online program you like to watch",
+        "points": [
+          "What it is",
+          "What it is about",
+          "Who you watch it with",
+          "And explain why you like to watch it"
+        ]
+      },
+      "part3_questions": [
+        "What programs do people like to watch in your country?",
+        "Do people in your country like to watch foreign TV programs?",
+        "What's the benefit of letting kids watch animal videos than visiting zoos?",
+        "Do teachers play videos in class in your country?",
+        "Do you think watching talk shows is a waste of time?"
+      ],
+      "published": true,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-intl-001",
+      "title_zh": "想有空时去旅游的地方",
+      "release": "international_new",
+      "region": "international",
+      "part2": {
+        "prompt": "Describe a place you would like to visit in your free time",
+        "points": [
+          "Where it is",
+          "What you will do there",
+          "How long you will stay there",
+          "And explain why you would like to visit it"
+        ]
+      },
+      "part3_questions": [
+        "Why do you think some people choose not to travel abroad?",
+        "Do you think a gap period in life is important?"
+      ],
+      "published": false,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-intl-002",
+      "title_zh": "收到特殊蛋糕",
+      "release": "international_new",
+      "region": "international",
+      "part2": {
+        "prompt": "Describe a special cake you received from others",
+        "points": [
+          "When it happened",
+          "Where it happened",
+          "Who you got the cake from",
+          "And explain why it's a special cake"
+        ]
+      },
+      "part3_questions": [
+        "What are the differences between special food in China and other countries?",
+        "Is there any food in your country that is eaten at special times or on special occasions?",
+        "Why are some people willing to spend a lot of money on meals on special days?",
+        "Do you think it's good to communicate when eating with your family?",
+        "In your country, do people nowadays cook at home as frequently as people did in the past?",
+        "What do you think of people using their mobile phones during a meal?"
+      ],
+      "published": false,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-intl-003",
+      "title_zh": "在成功公司工作的人",
+      "release": "international_new",
+      "region": "international",
+      "part2": {
+        "prompt": "Describe a person who works in a successful company",
+        "points": [
+          "Who he/she is",
+          "What he/she does in the company",
+          "What business the company does",
+          "And explain why you think it is a successful company"
+        ]
+      },
+      "part3_questions": [
+        "Do you think governments should provide financial support to companies?",
+        "Do you think companies should donate money to help society?",
+        "Do you think customer satisfaction is important for a company?"
+      ],
+      "published": false,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-intl-004",
+      "title_zh": "语言学习",
+      "release": "international_new",
+      "region": "international",
+      "part2": {
+        "prompt": "Describe a thing you did to learn another language",
+        "points": [
+          "What language you learned",
+          "What you did",
+          "How it helped you learn the language",
+          "And how you felt about it"
+        ]
+      },
+      "part3_questions": [
+        "What difficulties do people face when learning a language?",
+        "Do you think language learning is important? Why?",
+        "Which is better, to study a language alone or to study it in a group? Why?",
+        "What's the best way to learn a language?",
+        "What are the advantages and disadvantages of learning a language?",
+        "Some people think that technology has made it unnecessary to learn languages. What do you think?"
+      ],
+      "published": false,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-intl-005",
+      "title_zh": "重要河流/湖泊",
+      "release": "international_new",
+      "region": "international",
+      "part2": {
+        "prompt": "Describe an important river/lake in your country",
+        "points": [
+          "Where it is located",
+          "How big/long it is",
+          "What it looks like",
+          "And explain why it is important"
+        ]
+      },
+      "part3_questions": [
+        "Are rivers and lakes important to a country?",
+        "What are the popular water sports in your country?",
+        "Are rivers and lakes good for transport? Why?",
+        "How do rivers and lakes affect local tourism?",
+        "Do you think rivers and lakes attract tourists?",
+        "How can rivers and lakes benefit local people?"
+      ],
+      "published": false,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-intl-006",
+      "title_zh": "花费甚少的外出日",
+      "release": "international_new",
+      "region": "international",
+      "part2": {
+        "prompt": "Describe a special day out that cost you little money/didn't cost you much",
+        "points": [
+          "When the day was",
+          "Where you went",
+          "How much you spent",
+          "And explain how you feel about the day"
+        ]
+      },
+      "part3_questions": [
+        "Do people like to spend their leisure time out in your country?",
+        "How do people spend their leisure time in your country?",
+        "How does technology affect the way people spend their leisure time?",
+        "Do you think only old people have time for leisure?",
+        "Why do people like to have days off?",
+        "Going out to have holidays is tiring. Why do people still want to do it?"
+      ],
+      "published": false,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-intl-007",
+      "title_zh": "组织快乐活动",
+      "release": "international_new",
+      "region": "international",
+      "part2": {
+        "prompt": "Describe a time when you organized a happy event successfully",
+        "points": [
+          "What the event was",
+          "How you prepared for it",
+          "Who helped you to organize it",
+          "And explain why you think it was a successful event"
+        ]
+      },
+      "part3_questions": [
+        "How can parents help children to be organized?",
+        "On what occasions do people need to be organized?",
+        "Does everything need to be well prepared?",
+        "Do people need others' help when organizing things?",
+        "How would you feel when you were not well prepared for something?",
+        "Do you prefer to prepare and organize an activity or just take part in an activity?"
+      ],
+      "published": false,
+      "supplemented_question_count": 0
+    },
+    {
+      "id": "p23-intl-008",
+      "title_zh": "交通拥堵",
+      "release": "international_new",
+      "region": "international",
+      "part2": {
+        "prompt": "Describe a time when you were stuck in a traffic jam for a very long time",
+        "points": [
+          "When it happened",
+          "Where you were stuck",
+          "What you did while waiting",
+          "And explain how you felt in the traffic jam"
+        ]
+      },
+      "part3_questions": [
+        "How can we solve the traffic jam problem?",
+        "Do you think developing public transport can solve traffic jam problems?",
+        "Do you think the high ways will help reduce traffic jams?",
+        "What are good ways to manage traffic?",
+        "Do you like to use public transport?",
+        "Would you rather be in a car or a bus in a traffic jam?"
+      ],
+      "published": false,
+      "supplemented_question_count": 0
+    }
+  ]
+}

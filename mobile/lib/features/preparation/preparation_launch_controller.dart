@@ -75,6 +75,7 @@ final class PreparationLaunchController extends ChangeNotifier {
   AgentScenePresentationMode get resumablePresentationMode =>
       workspaceController?.currentPresentationMode ??
       AgentScenePresentationMode.standard;
+  String? get resumableSessionId => workspaceController?.currentSessionId;
   String? get workspaceErrorMessage => workspaceController?.errorMessage;
   bool get canRetryWorkspaceActivation =>
       workspaceController?.canRetryActivation ?? false;
