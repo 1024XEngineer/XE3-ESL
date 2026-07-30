@@ -12,6 +12,7 @@ func TestLoadObjectStorageUsesSafeDefaultsWhenDisabled(t *testing.T) {
 	t.Setenv("OSS_ENDPOINT", "")
 	t.Setenv("OSS_BUCKET", "")
 	t.Setenv("OSS_AUDIO_PREFIX", "")
+	t.Setenv("OSS_IMAGE_PREFIX", "")
 	t.Setenv("OSS_SIGNED_URL_TTL", "")
 	t.Setenv("OSS_CREDENTIALS_PROVIDER", "")
 	t.Setenv("OSS_RAM_ROLE_NAME", "")
@@ -22,6 +23,7 @@ func TestLoadObjectStorageUsesSafeDefaultsWhenDisabled(t *testing.T) {
 	}
 	if config.Enabled ||
 		config.AudioPrefix != "audio/v1" ||
+		config.ImagePrefix != "image/v1" ||
 		config.SignedURLTTL != 2*time.Minute ||
 		config.CredentialsProvider != ObjectStorageCredentialsECSRole ||
 		config.RAMRoleName != "" {
@@ -35,6 +37,7 @@ func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) 
 	t.Setenv("OSS_ENDPOINT", "https://oss-cn-shanghai.aliyuncs.com")
 	t.Setenv("OSS_BUCKET", "example-private-audio-bucket")
 	t.Setenv("OSS_AUDIO_PREFIX", "audio/v1/")
+	t.Setenv("OSS_IMAGE_PREFIX", "image/v1/")
 	t.Setenv("OSS_SIGNED_URL_TTL", "90s")
 	t.Setenv("OSS_CREDENTIALS_PROVIDER", "environment")
 	t.Setenv("OSS_RAM_ROLE_NAME", "")
@@ -50,6 +53,7 @@ func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) 
 		config.Endpoint != "https://oss-cn-shanghai.aliyuncs.com" ||
 		config.Bucket != "example-private-audio-bucket" ||
 		config.AudioPrefix != "audio/v1" ||
+		config.ImagePrefix != "image/v1" ||
 		config.SignedURLTTL != 90*time.Second ||
 		config.CredentialsProvider != ObjectStorageCredentialsEnvironment {
 		t.Fatalf("unexpected enabled config: %#v", config)
@@ -112,6 +116,18 @@ func TestLoadObjectStorageRejectsUnsafeValues(t *testing.T) {
 			expected: ErrObjectStoragePrefix,
 		},
 		{
+			name:     "image prefix traversal",
+			key:      "OSS_IMAGE_PREFIX",
+			value:    "../image/v1",
+			expected: ErrObjectStoragePrefix,
+		},
+		{
+			name:     "unsupported image prefix",
+			key:      "OSS_IMAGE_PREFIX",
+			value:    "custom/image",
+			expected: ErrObjectStoragePrefix,
+		},
+		{
 			name:     "ttl above product limit",
 			key:      "OSS_SIGNED_URL_TTL",
 			value:    "3m",
@@ -138,6 +154,7 @@ func TestLoadObjectStorageRejectsUnsafeValues(t *testing.T) {
 			t.Setenv("OSS_ENDPOINT", "https://oss-cn-shanghai.aliyuncs.com")
 			t.Setenv("OSS_BUCKET", "example-bucket")
 			t.Setenv("OSS_AUDIO_PREFIX", "audio/v1")
+			t.Setenv("OSS_IMAGE_PREFIX", "image/v1")
 			t.Setenv("OSS_SIGNED_URL_TTL", "2m")
 			t.Setenv("OSS_CREDENTIALS_PROVIDER", "ecs_role")
 			t.Setenv("OSS_RAM_ROLE_NAME", "")

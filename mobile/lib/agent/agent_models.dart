@@ -1,6 +1,6 @@
 enum AgentMessageRole { user, assistant }
 
-enum AgentMessageModality { text, voice }
+enum AgentMessageModality { text, voice, multimodal }
 
 enum AgentMessageAudioStatus { readable, deleting, deleted }
 
@@ -62,6 +62,61 @@ final class AgentMessageAudio {
   }
 }
 
+enum AgentImageAssetStatus { staged, attached, deleting, deleted }
+
+final class AgentImageAsset {
+  const AgentImageAsset({
+    required this.id,
+    required this.threadId,
+    required this.contentType,
+    required this.sizeBytes,
+    required this.width,
+    required this.height,
+    required this.status,
+    required this.createdAt,
+    this.attachedAt,
+    this.contentUrl,
+    this.contentExpiresAt,
+  });
+
+  final String id;
+  final String threadId;
+  final String contentType;
+  final int sizeBytes;
+  final int width;
+  final int height;
+  final AgentImageAssetStatus status;
+  final DateTime createdAt;
+  final DateTime? attachedAt;
+  final Uri? contentUrl;
+  final DateTime? contentExpiresAt;
+
+  bool get isReadable =>
+      (status == AgentImageAssetStatus.staged ||
+          status == AgentImageAssetStatus.attached) &&
+      contentUrl != null &&
+      contentExpiresAt?.isAfter(DateTime.now().toUtc()) == true;
+
+  AgentImageAsset withContent({
+    required Uri contentUrl,
+    required DateTime expiresAt,
+  }) {
+    return AgentImageAsset(
+      id: id,
+      threadId: threadId,
+      contentType: contentType,
+      sizeBytes: sizeBytes,
+      width: width,
+      height: height,
+      status: status,
+      createdAt: createdAt,
+      attachedAt: attachedAt,
+      contentUrl: contentUrl,
+      contentExpiresAt: expiresAt,
+    );
+  }
+}
+
 enum PracticeRecordingState {
   idle,
   starting,
@@ -102,13 +157,14 @@ final class AgentMessage {
     this.createdAt,
     this.modality = AgentMessageModality.text,
     this.audio,
+    this.images = const <AgentImageAsset>[],
     this.isStreaming = false,
     this.hasFailed = false,
     this.actions = const <AgentMessageAction>[],
     this.speechFeedbackStatusUrl,
   }) : assert(
          (modality == AgentMessageModality.voice && audio != null) ||
-             (modality == AgentMessageModality.text && audio == null),
+             (modality != AgentMessageModality.voice && audio == null),
        );
 
   final String id;
@@ -118,6 +174,7 @@ final class AgentMessage {
   final DateTime? createdAt;
   final AgentMessageModality modality;
   final AgentMessageAudio? audio;
+  final List<AgentImageAsset> images;
   final bool isStreaming;
   final bool hasFailed;
   final List<AgentMessageAction> actions;
@@ -128,6 +185,7 @@ final class AgentMessage {
     String? text,
     AgentMessageAudio? audio,
     bool clearAudio = false,
+    List<AgentImageAsset>? images,
     bool? isStreaming,
     bool? hasFailed,
     String? speechFeedbackStatusUrl,
@@ -141,6 +199,7 @@ final class AgentMessage {
       createdAt: createdAt,
       modality: clearAudio ? AgentMessageModality.text : modality,
       audio: clearAudio ? null : audio ?? this.audio,
+      images: images ?? this.images,
       isStreaming: isStreaming ?? this.isStreaming,
       hasFailed: hasFailed ?? this.hasFailed,
       actions: actions,
@@ -272,12 +331,14 @@ final class AgentTextRecovery {
     required this.clientMessageId,
     required this.failureKind,
     required this.retryable,
+    this.imageAssetIds = const <String>[],
   });
 
   final String text;
   final String clientMessageId;
   final String failureKind;
   final bool retryable;
+  final List<String> imageAssetIds;
 }
 
 final class AgentSceneStart {

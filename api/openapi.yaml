@@ -95,6 +95,12 @@ paths:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1active-matter
   /v1/agent-threads/{thread_id}/messages:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1messages
+  /v1/agent-threads/{thread_id}/image-assets:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1image-assets
+  /v1/agent-image-assets/{image_asset_id}/content:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-image-assets~1{image_asset_id}~1content
+  /v1/agent-image-assets/{image_asset_id}:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-image-assets~1{image_asset_id}
   /v1/agent-threads/{thread_id}/voice-message-candidates:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1voice-message-candidates
   /v1/agent-voice-message-candidates/{candidate_id}:

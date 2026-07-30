@@ -3,6 +3,7 @@ package transport
 import (
 	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/image"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 )
 
@@ -21,20 +22,26 @@ type RunRetry = core.RunRetry
 type RunStreamObserver = core.RunStreamObserver
 type Application = core.Application
 type RunApplication = core.RunApplication
+type MultimodalRunApplication = core.MultimodalRunApplication
 type Service = agentapp.Service
+type ImageApplication = agentimage.Application
+type ImageAsset = agentimage.Asset
+type ImageContent = agentimage.Content
+type UploadImageRequest = agentimage.UploadRequest
 
 const (
-	MessageRoleUser      = core.MessageRoleUser
-	MessageRoleAssistant = core.MessageRoleAssistant
-	MessageModalityText  = core.MessageModalityText
-	MessageModalityVoice = core.MessageModalityVoice
-	MessageAudioReadable = core.MessageAudioReadable
-	MessageAudioDeleting = core.MessageAudioDeleting
-	MessageAudioDeleted  = core.MessageAudioDeleted
-	RunStatusPending     = core.RunStatusPending
-	RunStatusRunning     = core.RunStatusRunning
-	RunStatusCompleted   = core.RunStatusCompleted
-	RunStatusFailed      = core.RunStatusFailed
+	MessageRoleUser           = core.MessageRoleUser
+	MessageRoleAssistant      = core.MessageRoleAssistant
+	MessageModalityText       = core.MessageModalityText
+	MessageModalityVoice      = core.MessageModalityVoice
+	MessageModalityMultimodal = core.MessageModalityMultimodal
+	MessageAudioReadable      = core.MessageAudioReadable
+	MessageAudioDeleting      = core.MessageAudioDeleting
+	MessageAudioDeleted       = core.MessageAudioDeleted
+	RunStatusPending          = core.RunStatusPending
+	RunStatusRunning          = core.RunStatusRunning
+	RunStatusCompleted        = core.RunStatusCompleted
+	RunStatusFailed           = core.RunStatusFailed
 )
 
 type VoiceSessionApplication = agentvoice.VoiceSessionApplication
@@ -82,6 +89,7 @@ var (
 	ErrConflict                 = core.ErrConflict
 	ErrIdempotencyConflict      = core.ErrIdempotencyConflict
 	ErrInvalidContext           = core.ErrInvalidContext
+	ErrRepository               = core.ErrRepository
 	ErrVoiceCandidateProcessing = core.ErrVoiceCandidateProcessing
 	ErrVoiceCandidateStale      = core.ErrVoiceCandidateStale
 	ErrVoiceCleanupPending      = core.ErrVoiceCleanupPending

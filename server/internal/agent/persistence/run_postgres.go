@@ -424,6 +424,7 @@ WITH recent AS (
         role,
         client_message_id,
         produced_by_run_id,
+        modality,
         content,
         created_at
     FROM agent_messages
@@ -456,6 +457,7 @@ SELECT
     role,
     COALESCE(client_message_id, ''),
     COALESCE(produced_by_run_id::text, ''),
+    modality,
     content,
     created_at
 FROM selected
@@ -475,6 +477,7 @@ ORDER BY sequence_no ASC`,
 	for rows.Next() {
 		var item Message
 		var role string
+		var modality string
 		if err := rows.Scan(
 			&item.ID,
 			&item.OwnerID,
@@ -483,12 +486,14 @@ ORDER BY sequence_no ASC`,
 			&role,
 			&item.ClientMessageID,
 			&item.ProducedByRunID,
+			&modality,
 			&item.Content,
 			&item.CreatedAt,
 		); err != nil {
 			return nil, 0, ErrRepository
 		}
 		item.Role = MessageRole(role)
+		item.Modality = MessageModality(modality)
 		result = append(result, item)
 	}
 	if rows.Err() != nil {

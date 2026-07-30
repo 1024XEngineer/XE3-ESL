@@ -50,6 +50,9 @@ components:
       description: Stable machine-readable Delivery error code.
       enum:
         - invalid_request
+        - invalid_image
+        - unsupported_image_format
+        - image_too_large
         - authentication_required
         - invalid_credentials
         - account_registration_unavailable
@@ -106,6 +109,9 @@ components:
         - internal_error
       x-http-status-map:
         invalid_request: 400
+        invalid_image: 400
+        unsupported_image_format: 400
+        image_too_large: 413
         answer_invalid: 400
         unsupported_message: 400
         authentication_required: 401
@@ -176,6 +182,18 @@ components:
               details:
                 - field: body
                   reason: One or more fields are invalid.
+    PayloadTooLarge:
+      description: The uploaded payload exceeds an endpoint limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: image_too_large
+              message: The image exceeds the allowed limits.
+              retryable: false
+              correlation_id: corr_image_too_large
     Unauthorized:
       description: A valid Bearer Session is required for this operation.
       headers:

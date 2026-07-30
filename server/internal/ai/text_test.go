@@ -50,6 +50,131 @@ func TestValidateTextRequest(t *testing.T) {
 	}
 }
 
+func TestValidateTextRequestSupportsMultimodalUserContent(t *testing.T) {
+	t.Parallel()
+
+	request := TextRequest{
+		Messages: []TextMessage{{
+			Role: TextRoleUser,
+			ContentParts: []ContentPart{
+				{Kind: ContentPartText, Text: "Describe this screenshot."},
+				{
+					Kind: ContentPartImageURL,
+					ImageURL: "https://private.example.test/image.png" +
+						"?Expires=60&Signature=redacted",
+				},
+			},
+		}},
+		Tools: []ToolDefinition{validToolDefinition()},
+		ToolChoice: ToolChoice{
+			Mode: ToolChoiceAuto,
+		},
+	}
+
+	if err := ValidateTextRequest(request); err != nil {
+		t.Fatalf("valid multimodal request rejected: %v", err)
+	}
+}
+
+func TestValidateTextRequestRejectsInvalidMultimodalContent(t *testing.T) {
+	t.Parallel()
+
+	validParts := []ContentPart{
+		{Kind: ContentPartText, Text: "Describe this screenshot."},
+		{
+			Kind:     ContentPartImageURL,
+			ImageURL: "https://private.example.test/image.png?signature=redacted",
+		},
+	}
+	tests := map[string]TextMessage{
+		"system parts": {
+			Role:         TextRoleSystem,
+			ContentParts: validParts,
+		},
+		"assistant parts": {
+			Role:         TextRoleAssistant,
+			ContentParts: validParts,
+		},
+		"tool parts": {
+			Role:         TextRoleTool,
+			ContentParts: validParts,
+			ToolCallID:   "call-1",
+		},
+		"ambiguous content": {
+			Role:         TextRoleUser,
+			Content:      "duplicate text",
+			ContentParts: validParts,
+		},
+		"missing text": {
+			Role: TextRoleUser,
+			ContentParts: []ContentPart{{
+				Kind:     ContentPartImageURL,
+				ImageURL: "https://private.example.test/image.png",
+			}},
+		},
+		"duplicate text": {
+			Role: TextRoleUser,
+			ContentParts: append(
+				[]ContentPart{{Kind: ContentPartText, Text: "first"}},
+				validParts...,
+			),
+		},
+		"missing image": {
+			Role: TextRoleUser,
+			ContentParts: []ContentPart{{
+				Kind: ContentPartText,
+				Text: "text only belongs in Content",
+			}},
+		},
+		"insecure image URL": {
+			Role: TextRoleUser,
+			ContentParts: []ContentPart{
+				{Kind: ContentPartText, Text: "describe"},
+				{Kind: ContentPartImageURL, ImageURL: "http://example.test/image.png"},
+			},
+		},
+		"credentialed image URL": {
+			Role: TextRoleUser,
+			ContentParts: []ContentPart{
+				{Kind: ContentPartText, Text: "describe"},
+				{
+					Kind:     ContentPartImageURL,
+					ImageURL: "https://user:pass@example.test/image.png",
+				},
+			},
+		},
+		"unknown part": {
+			Role: TextRoleUser,
+			ContentParts: []ContentPart{
+				{Kind: ContentPartText, Text: "describe"},
+				{Kind: "input_file", ImageURL: "https://example.test/resume.pdf"},
+			},
+		},
+		"too many images": {
+			Role: TextRoleUser,
+			ContentParts: []ContentPart{
+				{Kind: ContentPartText, Text: "compare"},
+				{Kind: ContentPartImageURL, ImageURL: "https://example.test/1.png"},
+				{Kind: ContentPartImageURL, ImageURL: "https://example.test/2.png"},
+				{Kind: ContentPartImageURL, ImageURL: "https://example.test/3.png"},
+				{Kind: ContentPartImageURL, ImageURL: "https://example.test/4.png"},
+				{Kind: ContentPartImageURL, ImageURL: "https://example.test/5.png"},
+			},
+		},
+	}
+
+	for name, message := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := ValidateTextRequest(TextRequest{
+				Messages: []TextMessage{message},
+			}); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
 func TestValidateTextRequestSupportsToolRoundTrip(t *testing.T) {
 	t.Parallel()
 

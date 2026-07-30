@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:speakup/agent/agent_image_client.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_controller.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
@@ -16,6 +17,9 @@ import 'package:speakup/review/turn_feedback_controller.dart';
 import 'package:speakup/review/turn_feedback_disclosure.dart';
 
 typedef ConversationVoiceStarter = FutureOr<void> Function();
+typedef ConversationPendingImageAction = FutureOr<void> Function(String);
+typedef ConversationMessageImageAction =
+    FutureOr<void> Function(String messageId, String imageAssetId);
 
 class ConversationPage extends StatefulWidget {
   const ConversationPage({
@@ -45,6 +49,14 @@ class ConversationPage extends StatefulWidget {
     this.onRetryOperation,
     this.onLoadEarlierMessages,
     this.voiceController,
+    this.pendingImages = const <AgentPendingImage>[],
+    this.imageErrorMessage,
+    this.imageSelectionInFlight = false,
+    this.onPickImages,
+    this.onTakePhoto,
+    this.onRemovePendingImage,
+    this.onRetryPendingImage,
+    this.onRefreshMessageImage,
     this.speechFeedbackController,
     super.key,
   }) : onStartVoice = onStartVoice ?? onVoicePlaceholder;
@@ -74,6 +86,14 @@ class ConversationPage extends StatefulWidget {
   final VoidCallback? onRetryOperation;
   final VoidCallback? onLoadEarlierMessages;
   final AgentVoiceController? voiceController;
+  final List<AgentPendingImage> pendingImages;
+  final String? imageErrorMessage;
+  final bool imageSelectionInFlight;
+  final ConversationVoiceStarter? onPickImages;
+  final ConversationVoiceStarter? onTakePhoto;
+  final ConversationPendingImageAction? onRemovePendingImage;
+  final ConversationPendingImageAction? onRetryPendingImage;
+  final ConversationMessageImageAction? onRefreshMessageImage;
   final SpeechFeedbackController? speechFeedbackController;
 
   @override
@@ -235,6 +255,7 @@ class ConversationPage extends StatefulWidget {
                                 messages: messages,
                                 voiceController: voiceController,
                                 onAction: onMessageAction,
+                                onRefreshImage: onRefreshMessageImage,
                                 speechFeedbackController:
                                     speechFeedbackController,
                                 feedbackSourceKey: (message) =>
@@ -290,6 +311,13 @@ class ConversationPage extends StatefulWidget {
                         onSubmitText: onSubmitText,
                         enabled: canCompose,
                         isBusy: isBusy,
+                        pendingImages: pendingImages,
+                        imageErrorMessage: imageErrorMessage,
+                        imageSelectionInFlight: imageSelectionInFlight,
+                        onPickImages: onPickImages,
+                        onTakePhoto: onTakePhoto,
+                        onRemovePendingImage: onRemovePendingImage,
+                        onRetryPendingImage: onRetryPendingImage,
                       ),
                     ),
                   ],
@@ -851,6 +879,7 @@ class _MessageList extends StatelessWidget {
     required this.messages,
     this.voiceController,
     this.onAction,
+    this.onRefreshImage,
     this.speechFeedbackController,
     this.feedbackSourceKey,
     this.onRepractice,
@@ -859,6 +888,7 @@ class _MessageList extends StatelessWidget {
   final List<AgentMessage> messages;
   final AgentVoiceController? voiceController;
   final ValueChanged<AgentMessageAction>? onAction;
+  final ConversationMessageImageAction? onRefreshImage;
   final SpeechFeedbackController? speechFeedbackController;
   final String Function(AgentMessage message)? feedbackSourceKey;
   final SpeechFeedbackRepracticeCallback? onRepractice;
@@ -873,6 +903,7 @@ class _MessageList extends StatelessWidget {
             message: message,
             voiceController: voiceController,
             onAction: onAction,
+            onRefreshImage: onRefreshImage,
           ),
           if (_feedbackProjection(message) case final projection?) ...[
             const SizedBox(height: SpeakUpDesign.space8),
@@ -958,6 +989,13 @@ class _AgentComposer extends StatefulWidget {
     required this.onSubmitText,
     required this.enabled,
     required this.isBusy,
+    required this.pendingImages,
+    required this.imageErrorMessage,
+    required this.imageSelectionInFlight,
+    required this.onPickImages,
+    required this.onTakePhoto,
+    required this.onRemovePendingImage,
+    required this.onRetryPendingImage,
   });
 
   final String? threadId;
@@ -971,6 +1009,13 @@ class _AgentComposer extends StatefulWidget {
   final Future<bool> Function(String)? onSubmitText;
   final bool enabled;
   final bool isBusy;
+  final List<AgentPendingImage> pendingImages;
+  final String? imageErrorMessage;
+  final bool imageSelectionInFlight;
+  final ConversationVoiceStarter? onPickImages;
+  final ConversationVoiceStarter? onTakePhoto;
+  final ConversationPendingImageAction? onRemovePendingImage;
+  final ConversationPendingImageAction? onRetryPendingImage;
 
   @override
   State<_AgentComposer> createState() => _AgentComposerState();
@@ -1186,8 +1231,16 @@ class _AgentComposerState extends State<_AgentComposer> {
 
   Future<void> _submit() async {
     final text = _controller.text.trim();
+    final imageUploadPending = widget.pendingImages.any(
+      (image) => image.state == AgentPendingImageState.uploading,
+    );
+    final imageUploadFailed = widget.pendingImages.any(
+      (image) => image.state == AgentPendingImageState.failed,
+    );
     if (!widget.enabled ||
         text.isEmpty ||
+        imageUploadPending ||
+        imageUploadFailed ||
         widget.isBusy ||
         _textSubmissionInFlight ||
         widget.onSubmitText == null) {
@@ -1211,6 +1264,50 @@ class _AgentComposerState extends State<_AgentComposer> {
           });
         }
       }
+    }
+  }
+
+  Future<void> _showImageSource() async {
+    if (widget.onPickImages == null && widget.onTakePhoto == null) {
+      return;
+    }
+    final source = await showModalBottomSheet<_AgentImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.onPickImages != null)
+              ListTile(
+                key: const Key('agent-image-source-gallery'),
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('从相册选择'),
+                onTap: () =>
+                    Navigator.of(context).pop(_AgentImageSource.gallery),
+              ),
+            if (widget.onTakePhoto != null)
+              ListTile(
+                key: const Key('agent-image-source-camera'),
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('拍照'),
+                onTap: () =>
+                    Navigator.of(context).pop(_AgentImageSource.camera),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) {
+      return;
+    }
+    switch (source) {
+      case _AgentImageSource.gallery:
+        await widget.onPickImages?.call();
+      case _AgentImageSource.camera:
+        await widget.onTakePhoto?.call();
+      case null:
+        return;
     }
   }
 
@@ -1251,67 +1348,105 @@ class _AgentComposerState extends State<_AgentComposer> {
             !recording &&
             !voiceProgress &&
             !voiceFailure);
+    final imageUploadPending = widget.pendingImages.any(
+      (image) => image.state == AgentPendingImageState.uploading,
+    );
+    final imageUploadFailed = widget.pendingImages.any(
+      (image) => image.state == AgentPendingImageState.failed,
+    );
 
-    return VoiceCaptureControl(
-      phase: capturePhase,
-      enabled: voiceCaptureEnabled,
-      onStart: _startVoice,
-      onSendVoice: _sendVoiceMessage,
-      onConvertToText: _convertVoiceToText,
-      onCancel: _cancelVoice,
-      builder: (context, capture) {
-        return AnimatedContainer(
-          key: const Key('agent-composer-surface'),
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          constraints: BoxConstraints(
-            minHeight: widget.keyboardVisible ? 56 : 58,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.pendingImages.isNotEmpty) ...[
+          _PendingAgentImages(
+            images: widget.pendingImages,
+            onRemove: widget.onRemovePendingImage,
+            onRetry: widget.onRetryPendingImage,
           ),
-          padding: const EdgeInsets.fromLTRB(8, 7, 7, 7),
-          decoration: BoxDecoration(
-            color: SpeakUpDesign.surface,
-            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-            border: Border.all(color: SpeakUpDesign.border),
+          const SizedBox(height: 8),
+        ],
+        if (widget.imageErrorMessage case final error?) ...[
+          Text(
+            error,
+            key: const Key('agent-image-error'),
+            style: const TextStyle(
+              color: SpeakUpDesign.error,
+              fontSize: 12,
+              height: 1.35,
+            ),
           ),
-          child: voiceProgress || voiceFailure
-              ? _AgentVoiceStatusDock(
-                  state: voiceState,
-                  message: voiceFailure
-                      ? voice?.errorMessage ?? '语音识别失败'
-                      : _composerVoiceStateLabel(voiceState),
-                  canCancel: !voiceSubmissionInFlight,
-                  canRetry: voiceFailure && voice?.canRetry == true,
-                  onCancel: _cancelVoice,
-                  onRetry: voice?.retry,
-                )
-              : showTextComposer
-              ? _AgentTextDock(
-                  controller: _controller,
-                  focusNode: _focusNode,
-                  keyboardVisible: widget.keyboardVisible,
-                  enabled: confirmingText || widget.enabled,
-                  confirmingConvertedText: confirmingText,
-                  submitting: _textSubmissionInFlight,
-                  canSubmitConvertedText: voice?.canConfirm == true,
-                  canSubmitText:
-                      widget.onSubmitText != null &&
-                      widget.enabled &&
-                      !widget.isBusy,
-                  onReturnToVoice: confirmingText
-                      ? _cancelVoice
-                      : _showVoiceComposer,
-                  onSubmit: confirmingText ? _submitConvertedText : _submit,
-                )
-              : _AgentVoiceDock(
-                  capture: capture,
-                  phase: capturePhase,
-                  elapsed: voice?.recordingElapsed ?? Duration.zero,
-                  enabled: voiceCaptureEnabled,
-                  textEnabled: widget.enabled,
-                  onShowText: _showTextComposer,
-                ),
-        );
-      },
+          const SizedBox(height: 8),
+        ],
+        VoiceCaptureControl(
+          phase: capturePhase,
+          enabled: voiceCaptureEnabled,
+          onStart: _startVoice,
+          onSendVoice: _sendVoiceMessage,
+          onConvertToText: _convertVoiceToText,
+          onCancel: _cancelVoice,
+          builder: (context, capture) => AnimatedContainer(
+            key: const Key('agent-composer-surface'),
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            constraints: BoxConstraints(
+              minHeight: widget.keyboardVisible ? 56 : 58,
+            ),
+            padding: const EdgeInsets.fromLTRB(8, 7, 7, 7),
+            decoration: BoxDecoration(
+              color: SpeakUpDesign.surface,
+              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+              border: Border.all(color: SpeakUpDesign.border),
+            ),
+            child: voiceProgress || voiceFailure
+                ? _AgentVoiceStatusDock(
+                    state: voiceState,
+                    message: voiceFailure
+                        ? voice?.errorMessage ?? '语音识别失败'
+                        : _composerVoiceStateLabel(voiceState),
+                    canCancel: !voiceSubmissionInFlight,
+                    canRetry: voiceFailure && voice?.canRetry == true,
+                    onCancel: _cancelVoice,
+                    onRetry: voice?.retry,
+                  )
+                : showTextComposer
+                ? _AgentTextDock(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    keyboardVisible: widget.keyboardVisible,
+                    enabled: confirmingText || widget.enabled,
+                    confirmingConvertedText: confirmingText,
+                    submitting: _textSubmissionInFlight,
+                    canSubmitConvertedText: voice?.canConfirm == true,
+                    canSubmitText:
+                        widget.onSubmitText != null &&
+                        widget.enabled &&
+                        !widget.isBusy &&
+                        !imageUploadPending &&
+                        !imageUploadFailed,
+                    imageSelectionInFlight: widget.imageSelectionInFlight,
+                    canAddImages:
+                        !confirmingText &&
+                        (widget.onPickImages != null ||
+                            widget.onTakePhoto != null),
+                    onAddImages: _showImageSource,
+                    onReturnToVoice: confirmingText
+                        ? _cancelVoice
+                        : _showVoiceComposer,
+                    onSubmit: confirmingText ? _submitConvertedText : _submit,
+                  )
+                : _AgentVoiceDock(
+                    capture: capture,
+                    phase: capturePhase,
+                    elapsed: voice?.recordingElapsed ?? Duration.zero,
+                    enabled: voiceCaptureEnabled,
+                    textEnabled: widget.enabled,
+                    onShowText: _showTextComposer,
+                  ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1456,6 +1591,9 @@ class _AgentTextDock extends StatelessWidget {
     required this.submitting,
     required this.canSubmitConvertedText,
     required this.canSubmitText,
+    required this.imageSelectionInFlight,
+    required this.canAddImages,
+    required this.onAddImages,
     required this.onReturnToVoice,
     required this.onSubmit,
   });
@@ -1468,6 +1606,9 @@ class _AgentTextDock extends StatelessWidget {
   final bool submitting;
   final bool canSubmitConvertedText;
   final bool canSubmitText;
+  final bool imageSelectionInFlight;
+  final bool canAddImages;
+  final FutureOr<void> Function() onAddImages;
   final FutureOr<void> Function() onReturnToVoice;
   final FutureOr<void> Function() onSubmit;
 
@@ -1534,6 +1675,22 @@ class _AgentTextDock extends StatelessWidget {
             ),
           ),
         ),
+        if (!confirmingConvertedText)
+          IconButton(
+            key: const Key('agent-image-picker-button'),
+            tooltip: '添加图片',
+            onPressed: enabled && canAddImages && !imageSelectionInFlight
+                ? () => onAddImages()
+                : null,
+            constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+            padding: EdgeInsets.zero,
+            icon: imageSelectionInFlight
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.add_photo_alternate_outlined, size: 21),
+          ),
         IconButton.filled(
           key: Key(
             confirmingConvertedText
@@ -1547,6 +1704,104 @@ class _AgentTextDock extends StatelessWidget {
           icon: const Icon(Icons.arrow_upward_rounded, size: 20),
         ),
       ],
+    );
+  }
+}
+
+enum _AgentImageSource { gallery, camera }
+
+class _PendingAgentImages extends StatelessWidget {
+  const _PendingAgentImages({
+    required this.images,
+    required this.onRemove,
+    required this.onRetry,
+  });
+
+  final List<AgentPendingImage> images;
+  final ConversationPendingImageAction? onRemove;
+  final ConversationPendingImageAction? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 82,
+      child: ListView.separated(
+        key: const Key('agent-pending-images'),
+        scrollDirection: Axis.horizontal,
+        itemCount: images.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final pending = images[index];
+          return Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.memory(
+                  pending.image.bytes,
+                  key: Key('agent-pending-image-${pending.localId}'),
+                  width: 82,
+                  height: 82,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                ),
+              ),
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: pending.state == AgentPendingImageState.ready
+                        ? Colors.transparent
+                        : const Color(0x66000000),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: switch (pending.state) {
+                    AgentPendingImageState.uploading => const Center(
+                      child: SizedBox.square(
+                        dimension: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    AgentPendingImageState.failed => Center(
+                      child: IconButton.filled(
+                        key: Key('agent-retry-image-${pending.localId}'),
+                        tooltip: '重试上传',
+                        onPressed: onRetry == null
+                            ? null
+                            : () => onRetry!(pending.localId),
+                        icon: const Icon(Icons.refresh_rounded, size: 18),
+                      ),
+                    ),
+                    AgentPendingImageState.ready => const SizedBox.shrink(),
+                  },
+                ),
+              ),
+              Positioned(
+                right: 2,
+                top: 2,
+                child: IconButton.filled(
+                  key: Key('agent-remove-image-${pending.localId}'),
+                  tooltip: '移除图片',
+                  onPressed: onRemove == null
+                      ? null
+                      : () => onRemove!(pending.localId),
+                  constraints: const BoxConstraints.tightFor(
+                    width: 28,
+                    height: 28,
+                  ),
+                  padding: EdgeInsets.zero,
+                  style: IconButton.styleFrom(
+                    backgroundColor: const Color(0x99000000),
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.close_rounded, size: 16),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 }

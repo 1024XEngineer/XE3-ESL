@@ -69,7 +69,7 @@ func TestServiceGeneratesFirstCheckpointFromDeterministicPayload(t *testing.T) {
 	if repository.created.SourceChecksum != expectedChecksum {
 		t.Fatal("source checksum does not cover the exact user payload")
 	}
-	expectedPayload := `{"previous_summary":null,"messages":[{"sequence":1,"role":"user","content":"Help me prepare."},{"sequence":2,"role":"assistant","content":"Which interview?"}]}`
+	expectedPayload := `{"previous_summary":null,"messages":[{"sequence":1,"role":"user","modality":"text","content":"Help me prepare."},{"sequence":2,"role":"assistant","modality":"text","content":"Which interview?"}]}`
 	if request.Messages[1].Content != expectedPayload {
 		t.Fatalf(
 			"payload = %s, want %s",

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'agent_models.dart';
+import 'agent_image_client.dart';
 import 'agent_voice_client.dart';
 import 'agent_voice_models.dart';
 
@@ -185,7 +186,12 @@ final class AgentClientOperationCancelled implements Exception {
 }
 
 final class FakeAgentClient
-    implements AgentClient, AgentThreadHistoryClient, AgentVoiceClient {
+    implements
+        AgentClient,
+        AgentThreadHistoryClient,
+        AgentVoiceClient,
+        AgentImageClient,
+        AgentMultimodalClient {
   FakeAgentClient({this.delay = Duration.zero});
 
   final Duration delay;
@@ -206,6 +212,8 @@ final class FakeAgentClient
   final Map<String, AgentVoiceConfirmation> _voiceConfirmations = {};
   final Map<String, AgentVoiceRun> _voiceRuns = {};
   final Map<String, ({String threadId, String messageId})> _voiceAudios = {};
+  final Map<String, AgentImageAsset> _imageAssets = {};
+  int _imageAssetSequence = 0;
   int _voiceCandidateSequence = 0;
   final Set<Future<void>> _inFlightOperations = <Future<void>>{};
 
@@ -229,6 +237,8 @@ final class FakeAgentClient
     _voiceConfirmations.clear();
     _voiceRuns.clear();
     _voiceAudios.clear();
+    _imageAssets.clear();
+    _imageAssetSequence = 0;
     _voiceCandidateSequence = 0;
     await Future.wait(staleOperations);
   }
@@ -399,16 +409,68 @@ final class FakeAgentClient
     required String text,
     required String clientMessageId,
   }) {
+    return _sendMessage(
+      threadId: threadId,
+      text: text,
+      clientMessageId: clientMessageId,
+    );
+  }
+
+  @override
+  Future<AgentExchange> sendMultimodal({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+    required List<String> imageAssetIds,
+  }) {
+    return _sendMessage(
+      threadId: threadId,
+      text: text,
+      clientMessageId: clientMessageId,
+      imageAssetIds: imageAssetIds,
+    );
+  }
+
+  Future<AgentExchange> _sendMessage({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+    List<String> imageAssetIds = const <String>[],
+  }) {
     return _runAccountOperation((generation) async {
       final key = _operationKey(threadId, clientMessageId);
       await _wait(generation);
       _requireCurrentGeneration(generation);
       return _textExchanges.putIfAbsent(key, () {
+        final images = <AgentImageAsset>[
+          for (final id in imageAssetIds)
+            if (_imageAssets[id] case final asset?)
+              AgentImageAsset(
+                id: asset.id,
+                threadId: asset.threadId,
+                contentType: asset.contentType,
+                sizeBytes: asset.sizeBytes,
+                width: asset.width,
+                height: asset.height,
+                status: AgentImageAssetStatus.attached,
+                createdAt: asset.createdAt,
+                attachedAt: DateTime.now().toUtc(),
+              ),
+        ];
+        if (images.length != imageAssetIds.length) {
+          throw const AgentClientException(
+            kind: AgentClientFailureKind.invalidRequest,
+          );
+        }
         final exchange = AgentExchange(
           userMessage: AgentMessage(
             id: _nextMessageId(),
             role: AgentMessageRole.user,
             text: text,
+            modality: images.isEmpty
+                ? AgentMessageModality.text
+                : AgentMessageModality.multimodal,
+            images: images,
           ),
           assistantMessage: AgentMessage(
             id: _nextMessageId(),
@@ -422,6 +484,62 @@ final class FakeAgentClient
         ]);
         return exchange;
       });
+    });
+  }
+
+  @override
+  Future<AgentImageAsset> uploadImage({
+    required String threadId,
+    required AgentLocalImage image,
+    required String idempotencyKey,
+  }) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      if (image.sizeBytes < 1 ||
+          image.sizeBytes > agentMaximumImageBytes ||
+          !_threadMessages.containsKey(threadId)) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidRequest,
+        );
+      }
+      final id = 'image_local_${generation}_${++_imageAssetSequence}';
+      final asset = AgentImageAsset(
+        id: id,
+        threadId: threadId,
+        contentType: image.contentType,
+        sizeBytes: image.sizeBytes,
+        width: 1,
+        height: 1,
+        status: AgentImageAssetStatus.staged,
+        createdAt: DateTime.now().toUtc(),
+      );
+      _imageAssets[id] = asset;
+      return asset;
+    });
+  }
+
+  @override
+  Future<AgentImageContent> getImageContent({required String imageAssetId}) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      if (!_imageAssets.containsKey(imageAssetId)) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      return AgentImageContent(
+        url: Uri.parse('https://example.invalid/$imageAssetId'),
+        expiresAt: DateTime.now().toUtc().add(const Duration(minutes: 2)),
+      );
+    });
+  }
+
+  @override
+  Future<void> deleteImage({required String imageAssetId}) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      _imageAssets.remove(imageAssetId);
     });
   }
 

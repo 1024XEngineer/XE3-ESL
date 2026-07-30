@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/agent/agent_image_client.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
@@ -16,7 +17,8 @@ final class WireAgentClient
         AgentClient,
         AgentStreamingTextClient,
         AgentThreadHistoryClient,
-        AgentPracticeAvailability {
+        AgentPracticeAvailability,
+        AgentMultimodalClient {
   factory WireAgentClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -289,6 +291,9 @@ final class WireAgentClient
       return const _RestoredTextRun();
     }
     final userMessage = messages.last;
+    final imageAssetIds = <String>[
+      for (final image in userMessage.images) image.id,
+    ];
     final clientMessageId = userMessage.clientMessageId;
     if (clientMessageId == null) {
       throw const AgentClientException(
@@ -304,6 +309,7 @@ final class WireAgentClient
         threadId: threadId,
         text: userMessage.content,
         clientMessageId: clientMessageId,
+        imageAssetIds: imageAssetIds,
       ),
     );
     _requireCurrentGeneration(generation);
@@ -320,6 +326,7 @@ final class WireAgentClient
         run: terminalRun,
         expectedUserContent: userMessage.content,
         expectedClientMessageId: clientMessageId,
+        expectedImageAssetIds: imageAssetIds,
       );
       if (exchange.userMessage.id != userMessage.id ||
           exchange.assistantMessage == null) {
@@ -344,6 +351,7 @@ final class WireAgentClient
         threadId: threadId,
         inputMessageId: terminalRun.inputMessageId,
         content: userMessage.content,
+        imageAssetIds: imageAssetIds,
       );
     } else {
       _failedRuns.remove(operationKey);
@@ -354,6 +362,7 @@ final class WireAgentClient
         clientMessageId: clientMessageId,
         failureKind: failureKind,
         retryable: terminalRun.failureRetryable,
+        imageAssetIds: imageAssetIds,
       ),
     );
   }
@@ -475,13 +484,44 @@ final class WireAgentClient
     required String text,
     required String clientMessageId,
   }) {
+    return _sendMessage(
+      threadId: threadId,
+      text: text,
+      clientMessageId: clientMessageId,
+    );
+  }
+
+  @override
+  Future<AgentExchange> sendMultimodal({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+    required List<String> imageAssetIds,
+  }) {
+    return _sendMessage(
+      threadId: threadId,
+      text: text,
+      clientMessageId: clientMessageId,
+      imageAssetIds: imageAssetIds,
+    );
+  }
+
+  Future<AgentExchange> _sendMessage({
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+    List<String> imageAssetIds = const <String>[],
+  }) {
     return _runAccountOperation((generation) async {
       _requireUuid(threadId);
       _requireClientIdentity(clientMessageId);
       _requireContent(text);
+      _requireImageAssetIds(imageAssetIds);
       final operationKey = '$threadId\u{0}$clientMessageId';
       final failedRun = _failedRuns[operationKey];
-      if (failedRun != null && failedRun.content != text) {
+      if (failedRun != null &&
+          (failedRun.content != text ||
+              !_sameStrings(failedRun.imageAssetIds, imageAssetIds))) {
         throw const AgentClientException(
           kind: AgentClientFailureKind.conflict,
           errorCode: 'idempotency_key_conflict',
@@ -501,6 +541,7 @@ final class WireAgentClient
             threadId: threadId,
             text: text,
             clientMessageId: clientMessageId,
+            imageAssetIds: imageAssetIds,
           );
         } on AgentClientException catch (error) {
           if (error.kind == AgentClientFailureKind.network) {
@@ -518,6 +559,7 @@ final class WireAgentClient
               threadId: threadId,
               inputMessageId: initialRun.inputMessageId,
               content: text,
+              imageAssetIds: imageAssetIds,
             );
             _failedRuns[operationKey] = recoveredFailure;
             initialRun = await _retryRun(
@@ -543,6 +585,7 @@ final class WireAgentClient
           threadId: threadId,
           inputMessageId: resolvedRun.inputMessageId,
           content: text,
+          imageAssetIds: imageAssetIds,
         );
         _failedRuns[operationKey] = recoveredFailure;
         resolvedRun = await _pollUntilTerminal(
@@ -563,6 +606,7 @@ final class WireAgentClient
             threadId: threadId,
             inputMessageId: resolvedRun.inputMessageId,
             content: text,
+            imageAssetIds: imageAssetIds,
           );
         } else {
           _failedRuns.remove(operationKey);
@@ -580,6 +624,7 @@ final class WireAgentClient
         run: resolvedRun,
         expectedUserContent: text,
         expectedClientMessageId: clientMessageId,
+        expectedImageAssetIds: imageAssetIds,
       );
     });
   }
@@ -867,6 +912,7 @@ final class WireAgentClient
     required String threadId,
     required String text,
     required String clientMessageId,
+    List<String> imageAssetIds = const <String>[],
   }) async {
     final response = await _send(
       generation: generation,
@@ -875,6 +921,7 @@ final class WireAgentClient
       body: <String, Object?>{
         'client_message_id': clientMessageId,
         'content': text,
+        if (imageAssetIds.isNotEmpty) 'image_asset_ids': imageAssetIds,
       },
     );
     _requireStatus(response, const <int>{
@@ -963,6 +1010,7 @@ final class WireAgentClient
     required _WireRun run,
     required String expectedUserContent,
     required String expectedClientMessageId,
+    List<String> expectedImageAssetIds = const <String>[],
   }) async {
     final assistantMessageId = run.assistantMessageId;
     if (assistantMessageId == null) {
@@ -990,6 +1038,9 @@ final class WireAgentClient
           userMessage.role == AgentMessageRole.user &&
           userMessage.content == expectedUserContent &&
           userMessage.clientMessageId == expectedClientMessageId &&
+          _sameStrings(<String>[
+            for (final image in userMessage.images) image.id,
+          ], expectedImageAssetIds) &&
           assistantMessage != null &&
           assistantMessage.role == AgentMessageRole.assistant &&
           assistantMessage.sequence > userMessage.sequence &&
@@ -1528,12 +1579,14 @@ final class _FailedRun {
     required this.threadId,
     required this.inputMessageId,
     required this.content,
+    this.imageAssetIds = const <String>[],
   });
 
   final String runId;
   final String threadId;
   final String inputMessageId;
   final String content;
+  final List<String> imageAssetIds;
 }
 
 typedef _MatterActivationKey = ({
@@ -1626,6 +1679,7 @@ final class _WireMessage {
     this.clientMessageId,
     this.producedByRunId,
     this.audio,
+    this.images = const <AgentImageAsset>[],
     this.actions = const <AgentMessageAction>[],
     this.speechFeedbackStatusUrl,
   });
@@ -1639,6 +1693,7 @@ final class _WireMessage {
   final String? clientMessageId;
   final String? producedByRunId;
   final AgentMessageAudio? audio;
+  final List<AgentImageAsset> images;
   final List<AgentMessageAction> actions;
   final String? speechFeedbackStatusUrl;
 
@@ -1650,6 +1705,7 @@ final class _WireMessage {
     createdAt: createdAt,
     modality: modality,
     audio: audio,
+    images: images,
     actions: actions,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
@@ -1924,6 +1980,7 @@ _WireMessage _decodeMessageObject(
       'modality',
       'content',
       'audio',
+      'images',
       'actions',
       'speech_feedback_status_url',
       'created_at',
@@ -1962,10 +2019,18 @@ _WireMessage _decodeMessageObject(
     'modality',
     (value) => switch (_strictString(value, minLength: 1, maxLength: 16)) {
       'voice' => AgentMessageModality.voice,
+      'multimodal' => AgentMessageModality.multimodal,
       _ => throw const _InvalidAgentResponse(),
     },
   );
   final audio = _absentOnlyOptional(object, 'audio', _decodeMessageAudio);
+  final images =
+      _absentOnlyOptional(
+        object,
+        'images',
+        (value) => _decodeMessageImages(value, expectedThreadId),
+      ) ??
+      const <AgentImageAsset>[];
   final effectiveModality = modality ?? AgentMessageModality.text;
   final clientMessageId = _absentOnlyOptional(
     object,
@@ -1999,6 +2064,10 @@ _WireMessage _decodeMessageObject(
           (clientMessageId != null || producedByRunId == null)) ||
       (effectiveModality == AgentMessageModality.voice && audio == null) ||
       (effectiveModality == AgentMessageModality.text && audio != null) ||
+      (effectiveModality == AgentMessageModality.multimodal &&
+          (role != AgentMessageRole.user || audio != null || images.isEmpty)) ||
+      (effectiveModality != AgentMessageModality.multimodal &&
+          images.isNotEmpty) ||
       (effectiveModality == AgentMessageModality.voice &&
           role != AgentMessageRole.user) ||
       (speechFeedbackStatusUrl != null &&
@@ -2016,8 +2085,88 @@ _WireMessage _decodeMessageObject(
     clientMessageId: clientMessageId,
     producedByRunId: producedByRunId,
     audio: audio,
+    images: images,
     actions: actions,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
+  );
+}
+
+List<AgentImageAsset> _decodeMessageImages(
+  Object? value,
+  String expectedThreadId,
+) {
+  final values = _strictList(value, maxLength: agentMaximumImagesPerMessage);
+  if (values.isEmpty) {
+    throw const _InvalidAgentResponse();
+  }
+  final ids = <String>{};
+  return List<AgentImageAsset>.unmodifiable(
+    values.map((item) {
+      final object = _strictObject(
+        item,
+        allowed: const <String>{
+          'image_asset_id',
+          'thread_id',
+          'content_type',
+          'size_bytes',
+          'width',
+          'height',
+          'status',
+          'created_at',
+          'attached_at',
+        },
+        required: const <String>{
+          'image_asset_id',
+          'thread_id',
+          'content_type',
+          'size_bytes',
+          'width',
+          'height',
+          'status',
+          'created_at',
+        },
+      );
+      final id = _strictUuid(object['image_asset_id']);
+      final threadId = _strictUuid(object['thread_id']);
+      final contentType = _strictString(
+        object['content_type'],
+        minLength: 1,
+        maxLength: 32,
+      );
+      final status = switch (_strictString(
+        object['status'],
+        minLength: 1,
+        maxLength: 16,
+      )) {
+        'staged' => AgentImageAssetStatus.staged,
+        'attached' => AgentImageAssetStatus.attached,
+        'deleting' => AgentImageAssetStatus.deleting,
+        'deleted' => AgentImageAssetStatus.deleted,
+        _ => throw const _InvalidAgentResponse(),
+      };
+      if (!ids.add(id) ||
+          threadId != expectedThreadId ||
+          (contentType != 'image/jpeg' &&
+              contentType != 'image/png' &&
+              contentType != 'image/webp')) {
+        throw const _InvalidAgentResponse();
+      }
+      return AgentImageAsset(
+        id: id,
+        threadId: threadId,
+        contentType: contentType,
+        sizeBytes: _strictInt(
+          object['size_bytes'],
+          minimum: 1,
+          maximum: agentMaximumImageBytes,
+        ),
+        width: _strictInt(object['width'], minimum: 1, maximum: 16384),
+        height: _strictInt(object['height'], minimum: 1, maximum: 16384),
+        status: status,
+        createdAt: _strictDateTime(object['created_at']),
+        attachedAt: _absentOnlyOptional(object, 'attached_at', _strictDateTime),
+      );
+    }),
   );
 }
 
@@ -2474,6 +2623,30 @@ void _requireContent(String value) {
       kind: AgentClientFailureKind.invalidRequest,
     );
   }
+}
+
+void _requireImageAssetIds(List<String> values) {
+  if (values.length > agentMaximumImagesPerMessage ||
+      values.toSet().length != values.length) {
+    throw const AgentClientException(
+      kind: AgentClientFailureKind.invalidRequest,
+    );
+  }
+  for (final value in values) {
+    _requireUuid(value);
+  }
+}
+
+bool _sameStrings(List<String> left, List<String> right) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 final RegExp _uuidPattern = RegExp(

@@ -701,6 +701,79 @@ void main() {
     );
 
     test(
+      'submits ordered image asset IDs and decodes multimodal Message',
+      () async {
+        const text = 'What is shown in this image?';
+        const imageId = '70000000-0000-4000-8000-000000000001';
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'POST',
+            path: '/v1/agent-threads/$_threadId/runs',
+            verify: (call) {
+              expect(jsonDecode(call.body!), {
+                'client_message_id': 'message_image_201',
+                'content': text,
+                'image_asset_ids': [imageId],
+              });
+            },
+            response: _jsonResponse(
+              HttpStatus.created,
+              _runJson(status: 'completed'),
+            ),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads/$_threadId/messages',
+            response: _jsonResponse(HttpStatus.ok, {
+              'messages': [
+                _messageJson(
+                  id: _userMessageId,
+                  sequence: 1,
+                  role: 'user',
+                  content: text,
+                  clientMessageId: 'message_image_201',
+                  modality: 'multimodal',
+                  images: [
+                    {
+                      'image_asset_id': imageId,
+                      'thread_id': _threadId,
+                      'content_type': 'image/png',
+                      'size_bytes': 128,
+                      'width': 32,
+                      'height': 24,
+                      'status': 'attached',
+                      'created_at': _createdAt,
+                      'attached_at': _createdAt,
+                    },
+                  ],
+                ),
+                _messageJson(
+                  id: _assistantMessageId,
+                  sequence: 2,
+                  role: 'assistant',
+                  content: 'It contains a simple test pattern.',
+                  producedByRunId: _runId,
+                ),
+              ],
+            }),
+          ),
+        ]);
+        final harness = _Harness(transport);
+
+        final exchange = await harness.client.sendMultimodal(
+          threadId: _threadId,
+          text: text,
+          clientMessageId: 'message_image_201',
+          imageAssetIds: const <String>[imageId],
+        );
+
+        expect(exchange.userMessage.modality, AgentMessageModality.multimodal);
+        expect(exchange.userMessage.images.single.id, imageId);
+        transport.expectDone();
+      },
+    );
+
+    test(
       'rejects completed Messages that do not match the submitted request',
       () async {
         const text = 'Keep this request paired.';
@@ -2216,6 +2289,8 @@ Map<String, Object?> _messageJson({
   String? clientMessageId,
   String? producedByRunId,
   List<Object?>? actions,
+  String? modality,
+  List<Object?>? images,
 }) {
   return {
     'message_id': id,
@@ -2225,6 +2300,8 @@ Map<String, Object?> _messageJson({
     'client_message_id': ?clientMessageId,
     'produced_by_run_id': ?producedByRunId,
     'actions': ?actions,
+    'modality': ?modality,
+    'images': ?images,
     'content': content,
     'created_at': _createdAt,
   };

@@ -383,8 +383,10 @@ func TestClientCredentialValidationHonorsContext(t *testing.T) {
 			Endpoint:     "https://oss-cn-shanghai.aliyuncs.com",
 			Bucket:       "speakup-test",
 			AudioPrefix:  "audio/v1",
+			ImagePrefix:  "image/v1",
 			SignedURLTTL: 2 * time.Minute,
 		},
+		"audio/v1",
 		credentials.CredentialsProviderFunc(func(ctx context.Context) (credentials.Credentials, error) {
 			<-ctx.Done()
 			return credentials.Credentials{}, ctx.Err()
@@ -475,6 +477,27 @@ func TestClientRejectsCrossPrefixKeyWithoutProviderCall(t *testing.T) {
 	}
 }
 
+func TestImageClientIsolatedFromAudioPrefix(t *testing.T) {
+	called := false
+	client := newTestClientForPrefix(t, &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			called = true
+			return response(http.StatusOK, nil, ""), nil
+		}),
+	}, "image/v1")
+
+	err := client.Delete(
+		context.Background(),
+		"audio/v1/agent/private.wav",
+	)
+	if !errors.Is(err, objectstore.ErrInvalidKey) {
+		t.Fatalf("Delete() error = %v, want ErrInvalidKey", err)
+	}
+	if called {
+		t.Fatal("image client called provider for an audio key")
+	}
+}
+
 func TestClientSanitizesProviderErrors(t *testing.T) {
 	client := newTestClient(t, &http.Client{
 		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -498,6 +521,14 @@ func TestClientSanitizesProviderErrors(t *testing.T) {
 }
 
 func newTestClient(t *testing.T, httpClient *http.Client) *Client {
+	return newTestClientForPrefix(t, httpClient, "audio/v1")
+}
+
+func newTestClientForPrefix(
+	t *testing.T,
+	httpClient *http.Client,
+	prefix string,
+) *Client {
 	t.Helper()
 	t.Setenv("OSS_ACCESS_KEY_ID", "LTAI-test-access-key")
 	t.Setenv("OSS_ACCESS_KEY_SECRET", "test-secret-never-log")
@@ -508,8 +539,9 @@ func newTestClient(t *testing.T, httpClient *http.Client) *Client {
 		Endpoint:     "https://oss-cn-shanghai.aliyuncs.com",
 		Bucket:       "speakup-test",
 		AudioPrefix:  "audio/v1",
+		ImagePrefix:  "image/v1",
 		SignedURLTTL: 2 * time.Minute,
-	}, credentials.NewEnvironmentVariableCredentialsProvider(), httpClient, false)
+	}, prefix, credentials.NewEnvironmentVariableCredentialsProvider(), httpClient, false)
 	if err != nil {
 		t.Fatalf("newClient() error = %v", err)
 	}

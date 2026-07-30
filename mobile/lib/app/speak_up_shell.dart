@@ -338,6 +338,18 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             ? widget.agentController.startAgentVoiceRecording
             : null,
         voiceController: widget.agentController.voiceController,
+        pendingImages: widget.agentController.pendingImages,
+        imageErrorMessage: widget.agentController.imageErrorMessage,
+        imageSelectionInFlight: widget.agentController.isImageSelectionInFlight,
+        onPickImages: widget.agentController.supportsAgentImages
+            ? widget.agentController.pickAgentImages
+            : null,
+        onTakePhoto: widget.agentController.supportsAgentImages
+            ? widget.agentController.takeAgentPhoto
+            : null,
+        onRemovePendingImage: widget.agentController.removePendingImage,
+        onRetryPendingImage: widget.agentController.retryPendingImage,
+        onRefreshMessageImage: widget.agentController.refreshMessageImage,
         onCreateConversation: widget.agentController.supportsThreadHistory
             ? () => unawaited(widget.agentController.createThread())
             : null,

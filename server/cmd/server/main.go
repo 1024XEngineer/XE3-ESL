@@ -220,6 +220,8 @@ func run() int {
 	threadSummaryWakeup := newWorkerWakeup()
 
 	var recordingStore objectstore.Store
+	var imageStore objectstore.Store
+	var agentImageConfig *bootstrap.AgentImageConfiguration
 	if storageConfig.Enabled {
 		recordingStore, err = productionAudioCleanupFactories.newStore(
 			ctx,
@@ -232,10 +234,23 @@ func run() int {
 			)
 			return 1
 		}
+		imageStore, err = newAgentImageStore(ctx, storageConfig)
+		if err != nil {
+			logger.Error(
+				"image object storage startup failed",
+				slog.String("error_kind", "dependency"),
+			)
+			return 1
+		}
+		agentImageConfig = &bootstrap.AgentImageConfiguration{
+			ObjectStore: imageStore,
+			StagedTTL:   24 * time.Hour,
+			UploadLease: 2 * time.Minute,
+		}
 	}
 
 	applicationComposition, err :=
-		bootstrap.NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
+		bootstrap.NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 			ctx,
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
@@ -253,6 +268,7 @@ func run() int {
 				MemoryExtraction: memoryExtractionWakeup,
 				ThreadSummary:    threadSummaryWakeup,
 			},
+			agentImageConfig,
 			bootstrap.VoiceConfiguration{
 				Recognizer:                recognizer,
 				Synthesizer:               synthesizer,
@@ -376,6 +392,18 @@ func run() int {
 		)
 		return 1
 	}
+	agentImageCleanup, err := buildAgentImageCleanupWorker(
+		storageConfig,
+		applicationComposition.AgentImageReclaimer(),
+		logger,
+	)
+	if err != nil {
+		logger.Error(
+			"agent image cleanup startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
 	memoryExtraction, err := buildMemoryExtractionWorker(
 		applicationComposition.MemoryExtractionProcessor(),
 		logger,
@@ -430,6 +458,14 @@ func run() int {
 		go func() {
 			defer close(agentVoiceCleanupDone)
 			agentVoiceCleanup.Run(ctx)
+		}()
+	}
+	var agentImageCleanupDone chan struct{}
+	if agentImageCleanup != nil {
+		agentImageCleanupDone = make(chan struct{})
+		go func() {
+			defer close(agentImageCleanupDone)
+			agentImageCleanup.Run(ctx)
 		}()
 	}
 	memoryExtractionDone := make(chan struct{})
@@ -520,6 +556,17 @@ func run() int {
 		case <-shutdownCtx.Done():
 			logger.Error(
 				"agent voice cleanup shutdown failed",
+				slog.String("error_kind", "timeout"),
+			)
+			exitCode = 1
+		}
+	}
+	if agentImageCleanupDone != nil {
+		select {
+		case <-agentImageCleanupDone:
+		case <-shutdownCtx.Done():
+			logger.Error(
+				"agent image cleanup shutdown failed",
 				slog.String("error_kind", "timeout"),
 			)
 			exitCode = 1

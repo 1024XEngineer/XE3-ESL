@@ -19,8 +19,9 @@ const (
 type MessageModality string
 
 const (
-	MessageModalityText  MessageModality = "text"
-	MessageModalityVoice MessageModality = "voice"
+	MessageModalityText       MessageModality = "text"
+	MessageModalityVoice      MessageModality = "voice"
+	MessageModalityMultimodal MessageModality = "multimodal"
 )
 
 type MessageAudioStatus string
@@ -480,6 +481,18 @@ type RunRepository interface {
 	RecoverInterruptedRuns(ctx context.Context) (int64, error)
 }
 
+type MultimodalRunRepository interface {
+	CreateInitialMultimodalRun(
+		ctx context.Context,
+		ownerID string,
+		threadID string,
+		clientMessageID string,
+		content string,
+		imageAssetIDs []string,
+		configuration RunConfiguration,
+	) (RunSubmission, error)
+}
+
 type RunApplication interface {
 	SubmitText(
 		ctx context.Context,
@@ -509,6 +522,17 @@ type RunApplication interface {
 		actor requestcontext.Actor,
 		runID string,
 	) ([]ToolCallRecord, error)
+}
+
+type MultimodalRunApplication interface {
+	SubmitMultimodal(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		threadID string,
+		clientMessageID string,
+		content string,
+		imageAssetIDs []string,
+	) (RunSubmission, error)
 }
 
 type IDGenerator interface {

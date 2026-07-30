@@ -102,6 +102,46 @@ void main() {
     expect(find.text('[图片：private diagram]'), findsOneWidget);
   });
 
+  testWidgets('renders multimodal image metadata with a safe reload action', (
+    tester,
+  ) async {
+    var refreshCalls = 0;
+    final message = AgentMessage(
+      id: 'user-image',
+      role: AgentMessageRole.user,
+      text: 'Please explain this.',
+      modality: AgentMessageModality.multimodal,
+      images: <AgentImageAsset>[
+        AgentImageAsset(
+          id: 'image-1',
+          threadId: 'thread-1',
+          contentType: 'image/png',
+          sizeBytes: 128,
+          width: 32,
+          height: 24,
+          status: AgentImageAssetStatus.attached,
+          createdAt: DateTime.utc(2026, 7, 30),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentMessageBubble(
+            message: message,
+            onRefreshImage: (_, _) async => refreshCalls++,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Please explain this.'), findsOneWidget);
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.broken_image_outlined));
+    await tester.pump();
+    expect(refreshCalls, 1);
+  });
+
   testWidgets('renders and dispatches an interview preparation action', (
     tester,
   ) async {

@@ -302,6 +302,112 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/image-assets:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
+    post:
+      tags:
+        - Agent
+      summary: Upload one private image asset for an Agent Thread
+      description: |
+        The body is one raw JPEG, PNG, or WebP image. The server verifies the
+        decoded format, byte and pixel limits, Actor ownership, and Thread
+        binding before storing it under the private `image/v1` namespace.
+        Uploading an image does not create a Message or Run.
+      operationId: createAgentImageAsset
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+          image/png:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+          image/webp:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+      responses:
+        '201':
+          description: The original or idempotently restored image asset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentImageAsset'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        '413':
+          $ref: ../common/errors.yaml#/components/responses/PayloadTooLarge
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-image-assets/{image_asset_id}/content:
+    parameters:
+      - $ref: '#/components/parameters/AgentImageAssetId'
+    get:
+      tags:
+        - Agent
+      summary: Issue a short-lived read capability for an owned image
+      description: |
+        Returns a newly signed private-object URL. The URL is never persisted
+        and is unavailable after the image enters deleting or deleted state.
+      operationId: getAgentImageAssetContent
+      responses:
+        '200':
+          description: Ephemeral image content capability.
+          headers:
+            Cache-Control:
+              description: Prevent storage of the signed capability response.
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentImageContent'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-image-assets/{image_asset_id}:
+    parameters:
+      - $ref: '#/components/parameters/AgentImageAssetId'
+    delete:
+      tags:
+        - Agent
+      summary: Delete one owned Agent image asset
+      description: |
+        Durable deleting state is committed before the private object is
+        removed. A completed deletion is idempotent.
+      operationId: deleteAgentImageAsset
+      responses:
+        '204':
+          description: Image object deletion completed.
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-threads/{thread_id}/voice-message-candidates:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'
@@ -553,13 +659,15 @@ paths:
     post:
       tags:
         - Agent
-      summary: Submit one user Message and run the text Agent
+      summary: Submit one text or multimodal user Message and run the Agent
       description: |
         The user Message and its initial pending AgentRun are committed in one
         transaction. `client_message_id` is scoped to the trusted Actor and
         Thread. Replaying the same ID and content restores the original Run;
-        changing the content returns 409. Provider failures are represented by
-        a durable `failed` Run so clients can inspect stable retry semantics.
+        changing the content or ordered image set returns 409. Attached images
+        must already belong to the same Actor and Thread. Provider failures are
+        represented by a durable `failed` Run so clients can inspect stable
+        retry semantics.
       operationId: submitAgentTextRun
       requestBody:
         required: true
@@ -801,6 +909,13 @@ components:
         format: uuid
     AgentMessageId:
       name: message_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AgentImageAssetId:
+      name: image_asset_id
       in: path
       required: true
       schema:
@@ -1074,6 +1189,14 @@ components:
           x-max-utf8-bytes: 16384
         audio:
           $ref: '#/components/schemas/AgentMessageAudio'
+        images:
+          type: array
+          minItems: 1
+          maxItems: 4
+          readOnly: true
+          description: Present only for a multimodal user Message.
+          items:
+            $ref: '#/components/schemas/AgentImageAsset'
         speech_feedback_status_url:
           type: string
           minLength: 1
@@ -1094,6 +1217,82 @@ components:
           items:
             $ref: '#/components/schemas/AgentMessageAction'
         created_at:
+          type: string
+          format: date-time
+          readOnly: true
+    AgentImageAsset:
+      type: object
+      additionalProperties: false
+      required:
+        - image_asset_id
+        - thread_id
+        - content_type
+        - size_bytes
+        - width
+        - height
+        - status
+        - created_at
+      properties:
+        image_asset_id:
+          type: string
+          format: uuid
+          readOnly: true
+        thread_id:
+          type: string
+          format: uuid
+          readOnly: true
+        content_type:
+          type: string
+          enum:
+            - image/jpeg
+            - image/png
+            - image/webp
+          readOnly: true
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 10485760
+          readOnly: true
+        width:
+          type: integer
+          minimum: 1
+          maximum: 16384
+          readOnly: true
+        height:
+          type: integer
+          minimum: 1
+          maximum: 16384
+          readOnly: true
+        status:
+          type: string
+          enum:
+            - staged
+            - attached
+            - deleting
+            - deleted
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        attached_at:
+          type: string
+          format: date-time
+          readOnly: true
+    AgentImageContent:
+      type: object
+      additionalProperties: false
+      required:
+        - content_url
+        - expires_at
+      properties:
+        content_url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          readOnly: true
+        expires_at:
           type: string
           format: date-time
           readOnly: true
@@ -1129,6 +1328,7 @@ components:
       enum:
         - text
         - voice
+        - multimodal
       readOnly: true
     AgentMessageAudioStatus:
       type: string
@@ -1845,3 +2045,13 @@ components:
           maxLength: 4096
           pattern: '^[^\u0000]*$'
           x-max-utf8-bytes: 16384
+        image_asset_ids:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+          description: |
+            Ordered private image assets previously uploaded to this Thread.
+            Omit this property or send an empty array for a plain text Message.
