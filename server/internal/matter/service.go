@@ -3,6 +3,7 @@ package matter
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -10,9 +11,15 @@ import (
 )
 
 const (
-	maxMatterTitleRunes = 200
-	maxMatterTitleBytes = 512
+	maxMatterTitleRunes       = 200
+	maxMatterTitleBytes       = 512
+	maxMatterSearchQueryRunes = 500
+	maxMatterSearchQueryBytes = 2000
+	defaultMatterSearchLimit  = 10
+	MaxMatterSearchLimit      = 20
 )
+
+var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`)
 
 type Service struct {
 	repository Repository
@@ -40,6 +47,27 @@ func (s *Service) Create(
 	return s.repository.Create(ctx, actor.UserID, normalizedTitle)
 }
 
+func (s *Service) CreateIdempotent(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	requestID string,
+	title string,
+) (Matter, error) {
+	if !actor.Valid() || !requestIDPattern.MatchString(requestID) {
+		return Matter{}, ErrInvalidRequest
+	}
+	normalizedTitle, ok := normalizeTitle(title)
+	if !ok {
+		return Matter{}, ErrInvalidRequest
+	}
+	return s.repository.CreateIdempotent(
+		ctx,
+		actor.UserID,
+		requestID,
+		normalizedTitle,
+	)
+}
+
 func (s *Service) List(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -48,6 +76,31 @@ func (s *Service) List(
 		return nil, ErrInvalidRequest
 	}
 	return s.repository.ListOwned(ctx, actor.UserID)
+}
+
+func (s *Service) Search(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	query SearchQuery,
+) ([]Matter, error) {
+	if !actor.Valid() {
+		return nil, ErrInvalidRequest
+	}
+	normalizedQuery, ok := normalizeSearchQuery(query.Query)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	limit := query.Limit
+	if limit == 0 {
+		limit = defaultMatterSearchLimit
+	}
+	if limit < 1 || limit > MaxMatterSearchLimit {
+		return nil, ErrInvalidRequest
+	}
+	return s.repository.SearchOwned(ctx, actor.UserID, SearchQuery{
+		Query: normalizedQuery,
+		Limit: limit,
+	})
 }
 
 func (s *Service) ReadOwned(
@@ -106,6 +159,20 @@ func normalizeTitle(title string) (string, bool) {
 		return "", false
 	}
 	return title, true
+}
+
+func normalizeSearchQuery(query string) (string, bool) {
+	if !utf8.ValidString(query) {
+		return "", false
+	}
+	query = strings.TrimSpace(query)
+	if query == "" ||
+		strings.ContainsRune(query, '\x00') ||
+		utf8.RuneCountInString(query) > maxMatterSearchQueryRunes ||
+		len(query) > maxMatterSearchQueryBytes {
+		return "", false
+	}
+	return query, true
 }
 
 func validStatus(status Status) bool {

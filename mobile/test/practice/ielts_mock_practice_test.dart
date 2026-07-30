@@ -152,6 +152,92 @@ void main() {
     expect(find.textContaining('OVERALL BAND'), findsNothing);
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
+
+  testWidgets('restored matter identity still opens the three-part mock flow', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(
+      initialCompleted: 8,
+      snapshotScene: const AgentScene(
+        id: 'matter-restored',
+        title: 'IELTS 口语完整模拟',
+        description: '恢复的练习场景',
+      ),
+    );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PracticePage(
+          agentController: controller,
+          ieltsMockProgressStore: _MemoryProgressStore(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('ielts-mock-part-1-complete')), findsOneWidget);
+    expect(find.byKey(const Key('practice-page')), findsNothing);
+  });
+
+  testWidgets('save and exit returns from an in-progress full mock', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 0);
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsScene);
+    var parkCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              key: const Key('open-mock'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => IeltsSpeakingMockPage(
+                    controller: controller,
+                    progressStore: _MemoryProgressStore(),
+                    onExitRequested: () async {
+                      parkCalls++;
+                      return true;
+                    },
+                  ),
+                ),
+              ),
+              child: const Text('Open mock'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('open-mock')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('ielts-mock-exit')));
+    await tester.pumpAndSettle();
+    expect(find.text('Exit mock test?'), findsOneWidget);
+    await tester.tap(find.text('Save & exit'));
+    await tester.pumpAndSettle();
+
+    expect(parkCalls, 1);
+    expect(find.byKey(const Key('open-mock')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mock-page')), findsNothing);
+  });
 }
 
 final class _MemoryProgressStore implements IeltsMockProgressStore {
@@ -178,10 +264,11 @@ final class _MemoryProgressStore implements IeltsMockProgressStore {
 }
 
 final class _IeltsPracticeClient implements PracticeClient {
-  _IeltsPracticeClient({required this.initialCompleted})
+  _IeltsPracticeClient({required this.initialCompleted, this.snapshotScene})
     : completed = initialCompleted;
 
   final int initialCompleted;
+  final AgentScene? snapshotScene;
   int completed;
   final List<String> confirmedQuestionIds = [];
 
@@ -204,7 +291,9 @@ final class _IeltsPracticeClient implements PracticeClient {
     return PracticeStartResult(
       snapshot: PracticeSessionSnapshot(
         sessionId: _sessionId,
-        matter: activeMatter,
+        matter: snapshotScene == null
+            ? activeMatter
+            : AgentMatter(id: activeMatter.id, scene: snapshotScene!),
         completedTurns: completed,
         turnLimit: 14,
         sessionCompleted: done,

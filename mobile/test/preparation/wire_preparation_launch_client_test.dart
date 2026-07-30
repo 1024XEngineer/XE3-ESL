@@ -37,6 +37,7 @@ void main() {
           context: _context,
           selection: _selection,
           preparationProfileId: profile.id,
+          preparationSnapshotId: snapshot.id,
           preparationUserId: profile.userId,
         ),
         idempotencyKey: 'plan-key-123456',
@@ -44,6 +45,7 @@ void main() {
       final bootstrap = await client.createSession(
         planId: plan.id,
         input: CreatePreparationSessionInput(
+          agentThreadId: _threadId,
           expectedPlanRevision: plan.revision,
           preparationSnapshotId: snapshot.id,
           preparationProfileId: profile.id,
@@ -60,7 +62,7 @@ void main() {
         '/v1/preparation-profiles',
         '/v1/preparation-profiles/$_profileId/snapshots',
         '/v1/practice-plans',
-        '/v1/practice-plans/$_planId/practice-sessions',
+        '/v1/agent-threads/$_threadId/practice-start-confirmations',
       ]);
       expect(jsonDecode(transport.calls.first.body!), {
         'background_summary': _background,
@@ -73,14 +75,16 @@ void main() {
         'scenario_config_id': _configId,
         'scenario_config_version': 1,
         'preparation_profile_id': _profileId,
+        'preparation_snapshot_id': _preparationSnapshotId,
         'selected_role_ids': [_roleId],
+        'practice_option_id': _optionId,
+        'practice_option_version': 1,
+        'max_effective_turns': 3,
       });
       expect(jsonDecode(transport.calls.last.body!), {
         'expected_plan_revision': 1,
         'user_confirmed': true,
-        'preparation_snapshot_id': _preparationSnapshotId,
-        'practice_option_id': _optionId,
-        'role_definition_ids': [_roleId],
+        'practice_plan_id': _planId,
       });
       for (final call in transport.calls) {
         expect(
@@ -105,6 +109,7 @@ void main() {
       ]);
       final client = _client(transport);
       const sessionInput = CreatePreparationSessionInput(
+        agentThreadId: _threadId,
         expectedPlanRevision: 1,
         preparationSnapshotId: _preparationSnapshotId,
         preparationProfileId: _profileId,
@@ -139,6 +144,7 @@ void main() {
                   context: _context,
                   selection: _selection,
                   preparationProfileId: _profileId,
+                  preparationSnapshotId: _preparationSnapshotId,
                   preparationUserId: _userId,
                 ),
                 idempotencyKey: 'plan-malformed-key',
@@ -183,7 +189,7 @@ void main() {
 
       expect(bootstrap.session.id, _sessionId);
       final sessionCalls = transport.calls.where(
-        (call) => call.uri.path.endsWith('/practice-sessions'),
+        (call) => call.uri.path.endsWith('/practice-start-confirmations'),
       );
       expect(sessionCalls, hasLength(2));
       expect(
@@ -238,6 +244,7 @@ void main() {
           context: _context,
           selection: _selection,
           preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
           preparationUserId: _userId,
         ),
         idempotencyKey: 'plan-key-123456',
@@ -256,6 +263,7 @@ void main() {
           context: _context,
           selection: _selection,
           preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
           preparationUserId: _userId,
         ),
         idempotencyKey: 'plan-key-123456',
@@ -308,6 +316,7 @@ void main() {
           client.createSession(
             planId: _planId,
             input: const CreatePreparationSessionInput(
+              agentThreadId: _threadId,
               expectedPlanRevision: 1,
               preparationSnapshotId: _preparationSnapshotId,
               preparationProfileId: _profileId,
@@ -343,6 +352,7 @@ void main() {
     final bootstrap = await client.createSession(
       planId: _planId,
       input: const CreatePreparationSessionInput(
+        agentThreadId: _threadId,
         expectedPlanRevision: 1,
         preparationSnapshotId: _preparationSnapshotId,
         preparationProfileId: _profileId,
@@ -409,6 +419,7 @@ void main() {
     final bootstrap = await client.createSession(
       planId: _planId,
       input: const CreatePreparationSessionInput(
+        agentThreadId: _threadId,
         expectedPlanRevision: 1,
         preparationSnapshotId: _preparationSnapshotId,
         preparationProfileId: _profileId,

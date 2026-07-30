@@ -330,7 +330,10 @@ PreparationScenarioPrompt _scenarioPrompt(Object? value) {
     aiRole: _string(object['ai_role']),
     personaSummary: _string(object['persona_summary']),
     focusAreas: _stringList(object['focus_areas']),
-    turnBlueprints: _stringList(object['turn_blueprints']),
+    turnBlueprints: _stringList(
+      object['turn_blueprints'],
+      maximumItemBytes: 4096,
+    ),
     suggestedDurationSeconds: duration,
   );
 }
@@ -441,14 +444,14 @@ String _string(Object? value, {int maximumBytes = 4096}) {
   return value;
 }
 
-List<String> _stringList(Object? value) {
+List<String> _stringList(Object? value, {int maximumItemBytes = 128}) {
   if (value is! List<Object?> || value.isEmpty || value.length > 50) {
     throw _invalidResponse();
   }
   final seen = <String>{};
   final result = <String>[];
   for (final item in value) {
-    final text = _string(item, maximumBytes: 128);
+    final text = _string(item, maximumBytes: maximumItemBytes);
     if (!seen.add(text)) {
       throw _invalidResponse();
     }

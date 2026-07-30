@@ -1625,6 +1625,7 @@ final class _WireMessage {
     this.clientMessageId,
     this.producedByRunId,
     this.audio,
+    this.actions = const <AgentMessageAction>[],
   });
 
   final String id;
@@ -1636,6 +1637,7 @@ final class _WireMessage {
   final String? clientMessageId;
   final String? producedByRunId;
   final AgentMessageAudio? audio;
+  final List<AgentMessageAction> actions;
 
   AgentMessage get presentation => AgentMessage(
     id: id,
@@ -1645,6 +1647,7 @@ final class _WireMessage {
     createdAt: createdAt,
     modality: modality,
     audio: audio,
+    actions: actions,
   );
 }
 
@@ -1917,6 +1920,7 @@ _WireMessage _decodeMessageObject(
       'modality',
       'content',
       'audio',
+      'actions',
       'created_at',
     },
     required: const <String>{
@@ -1968,8 +1972,13 @@ _WireMessage _decodeMessageObject(
     'produced_by_run_id',
     _strictUuid,
   );
+  final actions =
+      _absentOnlyOptional(object, 'actions', _decodeMessageActions) ??
+      const <AgentMessageAction>[];
   if ((role == AgentMessageRole.user &&
-          (clientMessageId == null || producedByRunId != null)) ||
+          (clientMessageId == null ||
+              producedByRunId != null ||
+              actions.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientMessageId != null || producedByRunId == null)) ||
       (effectiveModality == AgentMessageModality.voice && audio == null) ||
@@ -1988,6 +1997,35 @@ _WireMessage _decodeMessageObject(
     clientMessageId: clientMessageId,
     producedByRunId: producedByRunId,
     audio: audio,
+    actions: actions,
+  );
+}
+
+List<AgentMessageAction> _decodeMessageActions(Object? value) {
+  final values = _strictList(value, maxLength: 4);
+  return List<AgentMessageAction>.unmodifiable(
+    values.map((item) {
+      final object = _strictObject(
+        item,
+        allowed: const <String>{'type', 'label', 'matter_id', 'title'},
+        required: const <String>{'type', 'label', 'matter_id', 'title'},
+      );
+      final type = switch (_strictString(
+        object['type'],
+        minLength: 1,
+        maxLength: 64,
+      )) {
+        'open_interview_preparation' =>
+          AgentMessageActionType.openInterviewPreparation,
+        _ => throw const _InvalidAgentResponse(),
+      };
+      return AgentMessageAction(
+        type: type,
+        label: _strictString(object['label'], minLength: 1, maxLength: 64),
+        matterId: _strictUuid(object['matter_id']),
+        title: _strictString(object['title'], minLength: 1, maxLength: 200),
+      );
+    }),
   );
 }
 

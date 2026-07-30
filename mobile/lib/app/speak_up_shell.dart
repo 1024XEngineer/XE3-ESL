@@ -76,6 +76,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   bool _reviewPresented = false;
   bool _practiceRouteInFlight = false;
   int _navigationGeneration = 0;
+  int _openInterviewRequestGeneration = 0;
 
   @override
   void initState() {
@@ -165,6 +166,28 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   void _openPractice() {
     unawaited(_openPracticeRoute());
+  }
+
+  Future<void> _openAgentCreatedInterview(AgentMessageAction action) async {
+    if (action.type != AgentMessageActionType.openInterviewPreparation ||
+        widget.agentController.isBusy) {
+      return;
+    }
+    final reloaded = await widget.agentController.reloadCurrentThread();
+    if (!mounted) {
+      return;
+    }
+    if (!reloaded ||
+        !widget.agentController.prepareActiveMatterForScenario(
+          action.matterId,
+        )) {
+      _showMockNotice('这场面试暂时无法打开，请稍后重试');
+      return;
+    }
+    setState(() {
+      _selectedIndex = 1;
+      _openInterviewRequestGeneration++;
+    });
   }
 
   Future<void> _openPracticeRoute() async {
@@ -273,6 +296,8 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onCreatePlan: () => _selectDestination(1),
         onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
+        onMessageAction: (action) =>
+            unawaited(_openAgentCreatedInterview(action)),
         onStartVoice: widget.agentController.supportsAgentVoice
             ? widget.agentController.startAgentVoiceRecording
             : null,
@@ -316,6 +341,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             : _openJobPreparation,
         onSceneSelected: () => _selectDestination(0),
         onPracticeStarted: _openPractice,
+        openInterviewRequestGeneration: _openInterviewRequestGeneration,
       ),
       ReviewPage(
         showBackButton: widget.showBackButton,

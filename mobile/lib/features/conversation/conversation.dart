@@ -25,6 +25,7 @@ class ConversationPage extends StatefulWidget {
     this.onCreatePlan,
     this.onContinuePractice,
     this.onOpenReview,
+    this.onMessageAction,
     ConversationVoiceStarter? onStartVoice,
     ConversationVoiceStarter? onVoicePlaceholder,
     this.onCreateConversation,
@@ -53,6 +54,7 @@ class ConversationPage extends StatefulWidget {
   final VoidCallback? onCreatePlan;
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
+  final ValueChanged<AgentMessageAction>? onMessageAction;
   final ConversationVoiceStarter? onStartVoice;
   final VoidCallback? onCreateConversation;
   final int draftThreadRecoveryGeneration;
@@ -226,6 +228,7 @@ class ConversationPage extends StatefulWidget {
                               _MessageList(
                                 messages: messages,
                                 voiceController: voiceController,
+                                onAction: onMessageAction,
                               ),
                             ],
                             if (isBusy) ...[
@@ -758,10 +761,15 @@ class _QuickActionButton extends StatelessWidget {
 }
 
 class _MessageList extends StatelessWidget {
-  const _MessageList({required this.messages, this.voiceController});
+  const _MessageList({
+    required this.messages,
+    this.voiceController,
+    this.onAction,
+  });
 
   final List<AgentMessage> messages;
   final AgentVoiceController? voiceController;
+  final ValueChanged<AgentMessageAction>? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -772,6 +780,7 @@ class _MessageList extends StatelessWidget {
           AgentMessageBubble(
             message: message,
             voiceController: voiceController,
+            onAction: onAction,
           ),
       ],
     );

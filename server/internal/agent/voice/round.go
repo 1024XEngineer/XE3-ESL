@@ -76,6 +76,11 @@ type VoicePracticePort interface {
 		string,
 		string,
 	) (VoiceTurnProgress, error)
+	RequiresSessionReview(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (bool, error)
 }
 
 type VoiceTurnProgress struct {
@@ -270,6 +275,17 @@ func (orchestrator *VoiceRoundOrchestrator) finishTurn(
 		}
 	}
 	if !turn.SessionCompleted {
+		return turn, nil
+	}
+	reviewRequired, err := orchestrator.practice.RequiresSessionReview(
+		ctx,
+		actor,
+		turn.SessionID,
+	)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	if !reviewRequired {
 		return turn, nil
 	}
 

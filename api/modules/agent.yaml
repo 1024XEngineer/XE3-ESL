@@ -1074,9 +1074,45 @@ components:
           x-max-utf8-bytes: 16384
         audio:
           $ref: '#/components/schemas/AgentMessageAudio'
+        actions:
+          type: array
+          maxItems: 4
+          description: |
+            Server-derived actions backed by succeeded ToolCalls. The client
+            must use these opaque resource identities instead of parsing
+            assistant prose.
+          items:
+            $ref: '#/components/schemas/AgentMessageAction'
         created_at:
           type: string
           format: date-time
+          readOnly: true
+    AgentMessageAction:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - label
+        - matter_id
+        - title
+      properties:
+        type:
+          type: string
+          const: open_interview_preparation
+          readOnly: true
+        label:
+          type: string
+          minLength: 1
+          maxLength: 64
+          readOnly: true
+        matter_id:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
           readOnly: true
     AgentMessageModality:
       type: string

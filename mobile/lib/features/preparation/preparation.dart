@@ -42,6 +42,7 @@ class PreparationPage extends StatefulWidget {
     this.onOpenJobPreparation,
     this.onSceneSelected,
     this.onPracticeStarted,
+    this.openInterviewRequestGeneration = 0,
     super.key,
   });
 
@@ -53,6 +54,7 @@ class PreparationPage extends StatefulWidget {
   final VoidCallback? onOpenJobPreparation;
   final VoidCallback? onSceneSelected;
   final VoidCallback? onPracticeStarted;
+  final int openInterviewRequestGeneration;
 
   @override
   State<PreparationPage> createState() => _PreparationPageState();
@@ -69,6 +71,9 @@ class _PreparationPageState extends State<PreparationPage> {
     widget.preparationController?.addListener(_rebuild);
     widget.launchController?.addListener(_rebuild);
     _backgroundController = _newBackgroundController(widget.launchController);
+    if (widget.openInterviewRequestGeneration > 0) {
+      _selectedHub = _PracticeHub.interview;
+    }
     unawaited(widget.preparationController?.loadIfNeeded());
   }
 
@@ -89,6 +94,11 @@ class _PreparationPageState extends State<PreparationPage> {
       widget.launchController?.addListener(_rebuild);
       _backgroundController?.dispose();
       _backgroundController = _newBackgroundController(widget.launchController);
+    }
+    if (oldWidget.openInterviewRequestGeneration !=
+        widget.openInterviewRequestGeneration) {
+      _selectedHub = _PracticeHub.interview;
+      unawaited(widget.preparationController?.loadIfNeeded());
     }
   }
 
@@ -2321,8 +2331,8 @@ String _ieltsPartNumber(String scenarioId) {
 String _ieltsPartLabel(String scenarioId) {
   return switch (scenarioId) {
     'scn_ielts_speaking_part_1' => '熟悉话题问答',
-    'scn_ielts_speaking_part_2' => '题卡陈述',
-    'scn_ielts_speaking_part_3' => '延伸讨论',
+    'scn_ielts_speaking_part_2' => '题卡陈述 · 可继续 Part 3',
+    'scn_ielts_speaking_part_3' => '承接 Part 2 主题讨论',
     _ => '专项练习',
   };
 }

@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -38,6 +39,7 @@ const (
 	reviewCursorVersion     = 1
 	reviewCursorKind        = "formal_reviews"
 	minReviewCursorKeyBytes = 32
+	scenarioCreateToolName  = "scenario.create.v1"
 )
 
 type CorrelationIDGenerator func() string
@@ -619,7 +621,16 @@ func (h *HTTPHandler) listMessages(c *gin.Context) {
 	}
 	messages := make([]gin.H, 0, len(page.Messages))
 	for _, message := range page.Messages {
-		messages = append(messages, messageResponse(message))
+		response, err := h.messageResponseWithActions(
+			c.Request.Context(),
+			actor,
+			message,
+		)
+		if err != nil {
+			h.writeAgentError(c, err)
+			return
+		}
+		messages = append(messages, response)
 	}
 	result := gin.H{"messages": messages}
 	if page.NextCursor != "" {
@@ -2052,6 +2063,74 @@ func messageResponse(message Message) gin.H {
 		result["audio"] = agentMessageAudioResponse(*message.Audio)
 	}
 	return result
+}
+
+func (h *HTTPHandler) messageResponseWithActions(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	message Message,
+) (gin.H, error) {
+	response := messageResponse(message)
+	if h.runs == nil || message.Role != MessageRoleAssistant ||
+		message.ProducedByRunID == "" {
+		return response, nil
+	}
+	records, err := h.runs.GetToolCalls(
+		ctx,
+		actor,
+		message.ProducedByRunID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	actions := interviewPreparationActions(records)
+	if len(actions) > 0 {
+		response["actions"] = actions
+	}
+	return response, nil
+}
+
+func interviewPreparationActions(
+	records []core.ToolCallRecord,
+) []gin.H {
+	actions := make([]gin.H, 0, 1)
+	for _, record := range records {
+		if record.Name != scenarioCreateToolName ||
+			record.Status != core.ToolCallStatusSucceeded {
+			continue
+		}
+		var result struct {
+			Content struct {
+				Matter struct {
+					ID    string `json:"matter_id"`
+					Title string `json:"title"`
+				} `json:"matter"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(record.Result, &result) != nil ||
+			!core.ValidUUID(result.Content.Matter.ID) ||
+			strings.TrimSpace(result.Content.Matter.Title) == "" {
+			continue
+		}
+		hasMatterSource := false
+		for _, source := range record.SourceRefs {
+			if source.Type == "matter" &&
+				source.ID == result.Content.Matter.ID {
+				hasMatterSource = true
+				break
+			}
+		}
+		if !hasMatterSource {
+			continue
+		}
+		actions = append(actions, gin.H{
+			"type":      "open_interview_preparation",
+			"label":     "配置并开始面试",
+			"matter_id": result.Content.Matter.ID,
+			"title":     result.Content.Matter.Title,
+		})
+	}
+	return actions
 }
 
 func agentVoiceCandidateResponse(candidate VoiceCandidate) gin.H {

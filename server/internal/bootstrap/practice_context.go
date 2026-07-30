@@ -7,12 +7,14 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
+	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
@@ -43,6 +45,7 @@ type IdentityAgentPracticeComposition struct {
 	jobTargetHTTP          *preparation.JobTargetHTTPHandler
 	practiceApplication    *practice.ContextApplication
 	practiceHTTP           *practice.ContextHTTPHandler
+	productionTools        *tool.Registry
 }
 
 // NewIdentityAgentAndPracticeComposition builds the production Identity,
@@ -231,8 +234,40 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
+	if base.productionTools != nil {
+		previewCatalog, err := preparation.NewCatalogPreviewResolver(catalog)
+		if err != nil {
+			return nil, err
+		}
+		previewPort, err := practiceagenttool.NewServicePort(
+			practiceApplication,
+			previewCatalog,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if err := base.productionTools.Register(
+			practiceagenttool.NewPreviewTool(previewPort),
+		); err != nil {
+			return nil, err
+		}
+		startPort, err := practiceagenttool.NewStartServicePort(
+			practiceApplication,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if err := base.productionTools.Register(
+			practiceagenttool.NewStartTool(startPort),
+		); err != nil {
+			return nil, err
+		}
+	}
 	practiceHTTP, err := practice.NewContextHTTPHandler(practiceApplication)
 	if err != nil {
+		return nil, err
+	}
+	if err := base.recoverInterruptedRuns(ctx); err != nil {
 		return nil, err
 	}
 
@@ -249,6 +284,7 @@ func newIdentityAgentAndPracticeComposition(
 		jobTargetHTTP:          jobTargetHTTP,
 		practiceApplication:    practiceApplication,
 		practiceHTTP:           practiceHTTP,
+		productionTools:        base.productionTools,
 	}, nil
 }
 

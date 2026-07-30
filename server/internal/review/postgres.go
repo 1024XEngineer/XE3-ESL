@@ -703,6 +703,75 @@ func (r *PostgresRepository) ListCompletedHistory(
 	return page, nil
 }
 
+func (r *PostgresRepository) SearchCompletedHistory(
+	ctx context.Context,
+	actor Actor,
+	query HistorySearchQuery,
+) ([]FormalReview, error) {
+	query.Query = strings.TrimSpace(query.Query)
+	query.PracticeSessionID = strings.TrimSpace(query.PracticeSessionID)
+	if r == nil || r.pool == nil || actor.validate() != nil ||
+		!validHistorySearchQuery(query) {
+		return nil, ErrInvalidReview
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockReviewUser(ctx, tx, actor.UserID); err != nil {
+		return nil, err
+	}
+	if err := lockActiveIdentityUser(
+		ctx,
+		tx,
+		actor.UserID,
+		actor.DeletionGeneration,
+	); err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.Query(ctx, reviewSelect+`
+		WHERE owner_user_id = $1
+		  AND deletion_generation = $2
+		  AND status = 'completed'
+		  AND (
+		      strpos(lower(coalesce(result->>'summary', '')), lower($3)) > 0
+		      OR strpos(lower(practice_session_id), lower($3)) > 0
+		      OR strpos(
+		          lower(coalesce(evaluation_context->>'scenario_definition_id', '')),
+		          lower($3)
+		      ) > 0
+		  )
+		  AND ($4 = '' OR practice_session_id = $4)
+		ORDER BY completed_at DESC, id DESC
+		LIMIT $5
+	`, actor.UserID, actor.DeletionGeneration, query.Query,
+		query.PracticeSessionID, query.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]FormalReview, 0, query.Limit)
+	for rows.Next() {
+		item, scanErr := scanReview(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *PostgresRepository) ListAttempts(
 	ctx context.Context,
 	actor Actor,

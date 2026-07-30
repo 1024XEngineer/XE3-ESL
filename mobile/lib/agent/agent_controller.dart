@@ -105,6 +105,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   String? _activeTextAnswer;
   AgentMatter? _activeMatter;
   List<AgentMessage> _messages = const <AgentMessage>[];
+  List<AgentMessage> _practiceMessages = const <AgentMessage>[];
   PracticeRecordingState _recordingState = PracticeRecordingState.idle;
   AgentReview? _review;
   String? _errorMessage;
@@ -156,6 +157,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   AgentMatter? get activeMatter => _activeMatter;
   AgentScene? get scene => _activeMatter?.scene;
   List<AgentMessage> get messages => List.unmodifiable(_messages);
+  List<AgentMessage> get practiceMessages =>
+      List.unmodifiable(_practiceMessages);
   AgentVoiceController? get voiceController => _voiceController;
   bool get supportsAgentVoice => _voiceController != null;
   PracticeRecordingState get recordingState => _recordingState;
@@ -462,6 +465,34 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       return await _transitionThread(
         historyClient,
         selectedThreadId: threadId,
+        createNew: false,
+      );
+    } finally {
+      _finishThreadTransition(transitionGeneration);
+    }
+  }
+
+  Future<bool> reloadCurrentThread() async {
+    final currentThreadId = _threadId;
+    if (client is! AgentThreadHistoryClient ||
+        _disposed ||
+        currentThreadId == null) {
+      return false;
+    }
+    final accountEpoch = _epoch;
+    final transitionGeneration = _beginThreadTransition();
+    if (transitionGeneration == null) {
+      return false;
+    }
+    final historyClient = client as AgentThreadHistoryClient;
+    try {
+      await _ensureInitialized();
+      if (!_isCurrent(accountEpoch)) {
+        return false;
+      }
+      return await _transitionThread(
+        historyClient,
+        selectedThreadId: currentThreadId,
         createNew: false,
       );
     } finally {
@@ -814,6 +845,21 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
     final current = _activeMatter;
     if (current != null &&
+        current.scene.id == 'matter-${current.id}' &&
+        current.status == 'active') {
+      final adopted = AgentMatter(
+        id: current.id,
+        scene: scene,
+        status: current.status,
+        version: current.version,
+        createdAt: current.createdAt,
+        updatedAt: current.updatedAt,
+      );
+      _activeMatter = adopted;
+      notifyListeners();
+      return adopted;
+    }
+    if (current != null &&
         current.scene.id == scene.id &&
         current.scene.title == scene.title) {
       return current;
@@ -844,6 +890,30 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         _setBusy(false);
       }
     }
+  }
+
+  bool prepareActiveMatterForScenario(String matterId) {
+    final current = _activeMatter;
+    if (current == null ||
+        current.id != matterId ||
+        current.status != 'active' ||
+        _disposed) {
+      return false;
+    }
+    _activeMatter = AgentMatter(
+      id: current.id,
+      scene: AgentScene(
+        id: 'matter-${current.id}',
+        title: current.scene.title,
+        description: current.scene.description,
+      ),
+      status: current.status,
+      version: current.version,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+    );
+    notifyListeners();
+    return true;
   }
 
   /// Adopts the exact Session created by the Preparation launch chain.
@@ -1989,6 +2059,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       confirmation.answer,
       ?confirmation.nextQuestion?.presentation,
     ]);
+    _appendPracticeMessages([
+      confirmation.answer,
+      ?confirmation.nextQuestion?.presentation,
+    ]);
     if (confirmation.sessionCompleted) {
       _recordingState = confirmation.review == null
           ? PracticeRecordingState.reviewFailed
@@ -2079,6 +2153,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _activeTextAnswer = null;
     _activeMatter = null;
     _messages = const <AgentMessage>[];
+    _practiceMessages = const <AgentMessage>[];
     _recordingState = PracticeRecordingState.idle;
     _review = null;
     _errorMessage = null;
@@ -2220,6 +2295,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     PracticeSessionSnapshot? snapshot, {
     bool preserveKnownRecordings = false,
   }) {
+    final previousSessionId = _practiceSessionId;
     _cancelRecordingLimit();
     _practiceGeneration++;
     _candidate = null;
@@ -2242,10 +2318,14 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _sessionCompleted = false;
       _review = null;
       _recordings = const <PracticeRecordingReference>[];
+      _practiceMessages = const <AgentMessage>[];
       _recordingState = PracticeRecordingState.idle;
       return;
     }
     _validatePracticeSnapshot(snapshot);
+    if (snapshot.sessionId != previousSessionId) {
+      _practiceMessages = const <AgentMessage>[];
+    }
     final mayPreserveKnownRecordings =
         preserveKnownRecordings && snapshot.sessionId == _practiceSessionId;
     _practiceSessionId = snapshot.sessionId;
@@ -2269,7 +2349,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
               ),
             ];
     }
-    _appendMessages([?snapshot.currentQuestion?.presentation]);
+    final currentQuestion = snapshot.currentQuestion?.presentation;
+    _appendMessages([?currentQuestion]);
+    _appendPracticeMessages([?currentQuestion]);
     _recordingState = snapshot.sessionCompleted
         ? snapshot.review == null
               ? PracticeRecordingState.reviewFailed
@@ -2287,6 +2369,17 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
     _messages = messages;
     _voiceController?.syncMessages(_messages);
+  }
+
+  void _appendPracticeMessages(Iterable<AgentMessage> values) {
+    final messages = List<AgentMessage>.from(_practiceMessages);
+    final ids = {for (final message in messages) message.id};
+    for (final message in values) {
+      if (ids.add(message.id)) {
+        messages.add(message);
+      }
+    }
+    _practiceMessages = messages;
   }
 
   void _commitVoiceMessages(Iterable<AgentMessage> values) {
