@@ -1,19 +1,25 @@
 package preparation
 
 const (
+	IELTSSpeakingPart1ScenarioID    = "scn_ielts_speaking_part_1"
 	IELTSSpeakingPart2ScenarioID    = "scn_ielts_speaking_part_2"
+	IELTSSpeakingPart3ScenarioID    = "scn_ielts_speaking_part_3"
 	IELTSSpeakingFullMockScenarioID = "scn_ielts_speaking_full"
 	WorkplaceProgressRiskScenarioID = "scn_workplace_progress_risk_update"
 	DailyHotelCheckinScenarioID     = "scn_daily_hotel_checkin_issue"
 
+	IELTSSpeakingPart1ConfigID    = "scfg_ielts_speaking_part_1"
 	IELTSSpeakingPart2ConfigID    = "scfg_ielts_speaking_part_2"
+	IELTSSpeakingPart3ConfigID    = "scfg_ielts_speaking_part_3"
 	IELTSSpeakingFullMockConfigID = "scfg_ielts_speaking_full"
 	WorkplaceProgressRiskConfigID = "scfg_workplace_progress_risk_update"
 	DailyHotelCheckinConfigID     = "scfg_daily_hotel_checkin_issue"
 
-	IELTSExaminerRoleID  = "role_ielts_examiner"
-	DirectManagerRoleID  = "role_direct_manager"
-	HotelFrontDeskRoleID = "role_hotel_front_desk"
+	IELTSExaminerRoleID      = "role_ielts_examiner"
+	IELTSPart1ExaminerRoleID = "role_ielts_part1_examiner"
+	IELTSPart3ExaminerRoleID = "role_ielts_part3_examiner"
+	DirectManagerRoleID      = "role_direct_manager"
+	HotelFrontDeskRoleID     = "role_hotel_front_desk"
 
 	IELTSFullSimulationOptionID     = "option_ielts_full_simulation"
 	IELTSExaminerFocusOptionID      = "option_ielts_examiner_focus"
@@ -22,6 +28,66 @@ const (
 	HotelFullSimulationOptionID     = "option_hotel_full_simulation"
 	HotelFrontDeskFocusOptionID     = "option_hotel_front_desk_focus"
 )
+
+func ieltsSpeakingPart1CatalogDefinition() catalogScenario {
+	const scenarioID = IELTSSpeakingPart1ScenarioID
+	return singleRoleScenario(
+		ScenarioDefinition{
+			ID:               scenarioID,
+			Type:             ScenarioFamilyExam,
+			Model:            ScenarioModelIELTSSpeakingPart1,
+			Name:             "IELTS Speaking Part 1",
+			Version:          1,
+			Status:           ScenarioStatusActive,
+			TurnPolicyRef:    "ielts.speaking_part1.turn.v1",
+			SessionPolicyRef: "ielts.speaking_part1.session.v1",
+			DisplayOrder:     10,
+		},
+		ScenarioConfig{
+			ID:                   IELTSSpeakingPart1ConfigID,
+			ScenarioDefinitionID: scenarioID,
+			Type:                 ScenarioFamilyExam,
+			Model:                ScenarioModelIELTSSpeakingPart1,
+			Version:              1,
+			PromptModel: ScenarioPromptModel{
+				PublicSceneBrief: "连续回答三个熟悉话题中的八道 Part 1 问题。",
+				PracticeGoal:     "在正式 Part 1 节奏中自然、直接并适度展开回答。",
+				UserRole:         "考生",
+				AIRole:           "IELTS 口语考官",
+				PersonaSummary:   "A neutral IELTS speaking examiner who asks the frozen Part 1 questions one at a time without coaching or scoring.",
+				FocusAreas: []string{
+					"part_1_familiar_topics",
+					"direct_answer",
+					"natural_extension",
+				},
+				TurnBlueprints: []string{
+					"Part 1 question 1",
+					"Part 1 question 2",
+					"Part 1 question 3",
+					"Part 1 question 4",
+					"Part 1 question 5",
+					"Part 1 question 6",
+					"Part 1 question 7",
+					"Part 1 question 8",
+				},
+				SuggestedDurationSeconds: 300,
+			},
+		},
+		RoleDefinition{
+			ID:                   IELTSPart1ExaminerRoleID,
+			ScenarioDefinitionID: scenarioID,
+			Type:                 "IELTS_EXAMINER",
+			DisplayName:          "IELTS 口语考官",
+			Responsibilities:     "Ask the frozen familiar-topic questions in order.",
+			Style:                "Neutral, concise, and exam appropriate.",
+			FocusAreas:           []string{"part_1_familiar_topics", "natural_extension"},
+			Version:              1,
+			DisplayOrder:         10,
+		},
+		"option_ielts_speaking_part_1_full",
+		"option_ielts_speaking_part_1_focus",
+	)
+}
 
 func ieltsSpeakingFullMockCatalogDefinition() catalogScenario {
 	const roleID = "role_ielts_speaking_full_counterpart"
@@ -147,6 +213,63 @@ func ieltsSpeakingPart2CatalogDefinition() catalogScenario {
 		},
 		IELTSFullSimulationOptionID,
 		IELTSExaminerFocusOptionID,
+	)
+}
+
+func ieltsSpeakingPart3CatalogDefinition() catalogScenario {
+	const scenarioID = IELTSSpeakingPart3ScenarioID
+	return singleRoleScenario(
+		ScenarioDefinition{
+			ID:               scenarioID,
+			Type:             ScenarioFamilyExam,
+			Model:            ScenarioModelIELTSSpeakingPart3,
+			Name:             "IELTS Speaking Part 3",
+			Version:          1,
+			Status:           ScenarioStatusActive,
+			TurnPolicyRef:    "ielts.speaking_part3.turn.v1",
+			SessionPolicyRef: "ielts.speaking_part3.session.v1",
+			DisplayOrder:     30,
+		},
+		ScenarioConfig{
+			ID:                   IELTSSpeakingPart3ConfigID,
+			ScenarioDefinitionID: scenarioID,
+			Type:                 ScenarioFamilyExam,
+			Model:                ScenarioModelIELTSSpeakingPart3,
+			Version:              1,
+			PromptModel: ScenarioPromptModel{
+				PublicSceneBrief: "围绕对应 Part 2 主题完成五道深入讨论题。",
+				PracticeGoal:     "解释观点，并从更一般和抽象的角度分析、讨论和推测。",
+				UserRole:         "考生",
+				AIRole:           "IELTS 口语考官",
+				PersonaSummary:   "A neutral IELTS speaking examiner who keeps every Part 3 question bound to the selected Part 2 topic.",
+				FocusAreas: []string{
+					"part_3_discussion",
+					"opinion_and_reason",
+					"analysis_and_speculation",
+				},
+				TurnBlueprints: []string{
+					"Part 3 question 1",
+					"Part 3 question 2",
+					"Part 3 question 3",
+					"Part 3 question 4",
+					"Part 3 question 5",
+				},
+				SuggestedDurationSeconds: 300,
+			},
+		},
+		RoleDefinition{
+			ID:                   IELTSPart3ExaminerRoleID,
+			ScenarioDefinitionID: scenarioID,
+			Type:                 "IELTS_EXAMINER",
+			DisplayName:          "IELTS 口语考官",
+			Responsibilities:     "Discuss only the issues bound to the selected Part 2 topic.",
+			Style:                "Neutral, concise, and exam appropriate.",
+			FocusAreas:           []string{"part_3_discussion", "analysis_and_speculation"},
+			Version:              1,
+			DisplayOrder:         10,
+		},
+		"option_ielts_speaking_part_3_full",
+		"option_ielts_speaking_part_3_focus",
 	)
 }
 
@@ -466,54 +589,6 @@ func basicExamCatalogDefinitions() []catalogScenario {
 		ScenarioFamilyExam,
 		ScenarioModelExamBasicDialogue,
 		[]basicScenarioSpec{
-			{
-				slug:     "ielts_speaking_part_1",
-				name:     "IELTS Speaking Part 1",
-				scene:    "围绕个人经历和熟悉话题进行简短、自然的口语问答。",
-				goal:     "直接回答问题，并用理由或细节自然展开。",
-				userRole: "考生",
-				aiRole:   "IELTS 口语考官",
-				roleType: "IELTS_EXAMINER",
-				persona:  "A neutral IELTS speaking examiner who asks short personal-topic questions and does not teach or score during the simulation.",
-				focusAreas: []string{
-					"direct_answer",
-					"reason",
-					"detail",
-					"natural_extension",
-				},
-				blueprints: []string{
-					"提出一个简短的熟悉话题问题",
-					"根据回答追问一个理由",
-					"追问一个具体细节或例子",
-					"自然切换到相邻话题",
-				},
-				duration:     480,
-				displayOrder: 10,
-			},
-			{
-				slug:     "ielts_speaking_part_3",
-				name:     "IELTS Speaking Part 3",
-				scene:    "围绕一个社会性话题讨论观点、原因、例子、比较和影响。",
-				goal:     "清楚表达抽象观点，并用理由和例子支持。",
-				userRole: "考生",
-				aiRole:   "IELTS 口语考官",
-				roleType: "IELTS_EXAMINER",
-				persona:  "A neutral IELTS speaking examiner who explores one abstract idea at a time and requests reasons, examples, or comparisons.",
-				focusAreas: []string{
-					"opinion",
-					"reason",
-					"example",
-					"comparison",
-				},
-				blueprints: []string{
-					"提出一个清楚的社会性观点问题",
-					"追问观点背后的原因",
-					"邀请考生给出例子或比较",
-					"讨论可能的影响",
-				},
-				duration:     600,
-				displayOrder: 30,
-			},
 			{
 				slug:     "speaking_exam_custom",
 				name:     "自定义口语考试",

@@ -214,6 +214,47 @@ void main() {
     );
   });
 
+  test('decodes the published IELTS set catalog without credentials', () async {
+    final transport = _QueueTransport([_response(_ieltsQuestionBankJson())]);
+    final client = WirePreparationCatalogClient(
+      baseUri: Uri.parse('https://api.speak-up.test'),
+      transport: transport,
+    );
+
+    final bank = await client.getIeltsQuestionBank();
+
+    expect(bank.part1Sets, hasLength(38));
+    expect(bank.part1Sets.first.questionCount, 8);
+    expect(bank.part1Sets.first.topics, hasLength(3));
+    expect(bank.topicGroups, hasLength(56));
+    expect(bank.topicGroups.first.part3Questions, hasLength(5));
+    expect(bank.topicGroups.first.cueCard.points, hasLength(4));
+    expect(transport.calls.single.path, '/v1/ielts-speaking/question-bank');
+    expect(transport.calls.single.authorization, isNull);
+  });
+
+  test(
+    'preserves a published IELTS topic with one original Part 3 question',
+    () async {
+      final response = _ieltsQuestionBankJson();
+      final groups = response['topic_groups']! as List<Object?>;
+      final shortGroup = groups.first as Map<String, Object?>;
+      shortGroup['part3_questions'] = <Object?>[
+        'How important is it for schools to help children become smarter?',
+      ];
+      final transport = _QueueTransport([_response(response)]);
+      final client = WirePreparationCatalogClient(
+        baseUri: Uri.parse('https://api.speak-up.test'),
+        transport: transport,
+      );
+
+      final bank = await client.getIeltsQuestionBank();
+
+      expect(bank.topicGroups.first.part3Questions, hasLength(1));
+      expect(bank.topicGroups.first.supplementedQuestionCount, 0);
+    },
+  );
+
   test('account cleanup fences a late catalog response', () async {
     final transport = _ControlledTransport();
     final client = WirePreparationCatalogClient(
@@ -296,6 +337,66 @@ final class _ControlledTransport implements IdentityHttpTransport {
 
 IdentityHttpResponse _response(Object body) =>
     IdentityHttpResponse(statusCode: HttpStatus.ok, body: jsonEncode(body));
+
+Map<String, Object?> _ieltsQuestionBankJson() => <String, Object?>{
+  'schema_version': 1,
+  'bank_id': 'ielts-speaking-2026-season',
+  'season': '2026-05-08',
+  'source_cutoff': '2026-06-18T10:00:00Z',
+  'part1_sets': List<Object?>.generate(
+    38,
+    (index) => <String, Object?>{
+      'id': 'p1-${index + 1}',
+      'title': 'Part 1 Set ${index + 1}',
+      'topics': [
+        <String, Object?>{
+          'title': 'Topic A ${index + 1}',
+          'release': 'new',
+          'questions': ['A${index + 1}-1', 'A${index + 1}-2'],
+        },
+        <String, Object?>{
+          'title': 'Topic B ${index + 1}',
+          'release': 'carry_over',
+          'questions': [
+            'B${index + 1}-1',
+            'B${index + 1}-2',
+            'B${index + 1}-3',
+          ],
+        },
+        <String, Object?>{
+          'title': 'Topic C ${index + 1}',
+          'release': 'evergreen',
+          'questions': [
+            'C${index + 1}-1',
+            'C${index + 1}-2',
+            'C${index + 1}-3',
+          ],
+        },
+      ],
+      'question_count': 8,
+      'published': true,
+    },
+  ),
+  'topic_groups': List<Object?>.generate(
+    56,
+    (index) => <String, Object?>{
+      'id': 'p23-${index + 1}',
+      'title_zh': '主题 ${index + 1}',
+      'release': index.isEven ? 'new' : 'carry_over',
+      'region': 'mainland',
+      'part2': <String, Object?>{
+        'prompt': 'Describe topic ${index + 1}',
+        'points': ['What', 'Where', 'Who', 'Why'],
+      },
+      'part3_questions': List<Object?>.generate(
+        5,
+        (question) => 'Question ${index + 1}-${question + 1}',
+      ),
+      'published': true,
+      'supplemented_question_count': 0,
+    },
+  ),
+};
 
 const _scenarioId = 'scn_programmer_interview';
 

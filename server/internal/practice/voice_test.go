@@ -191,6 +191,73 @@ func TestVoiceApplicationRejectsIncompleteProgressEvidence(t *testing.T) {
 	}
 }
 
+func TestVoiceApplicationDoesNotRequireSynchronousIELTSReview(t *testing.T) {
+	actor := persistence.Actor{
+		UserID:    "10000000-0000-4000-8000-000000000006",
+		SessionID: "20000000-0000-4000-8000-000000000006",
+	}
+	for _, model := range []persistence.ScenarioModel{
+		persistence.ScenarioModelIELTSSpeakingFullMock,
+		persistence.ScenarioModelIELTSSpeakingPart1,
+		persistence.ScenarioModelIELTSSpeakingPart2,
+		persistence.ScenarioModelIELTSSpeakingPart3,
+	} {
+		t.Run(string(model), func(t *testing.T) {
+			application, err := NewVoiceApplication(
+				&voiceRepositoryStub{session: persistence.ContextSession{
+					ID:            "practice-session",
+					ScenarioModel: model,
+				}},
+				"speakup.user",
+			)
+			if err != nil {
+				t.Fatalf("NewVoiceApplication: %v", err)
+			}
+
+			required, err := application.RequiresSessionReview(
+				context.Background(),
+				actor,
+				"practice-session",
+			)
+			if err != nil {
+				t.Fatalf("RequiresSessionReview: %v", err)
+			}
+			if required {
+				t.Fatalf("IELTS model %q unexpectedly requires review", model)
+			}
+		})
+	}
+}
+
+func TestVoiceApplicationRequiresReviewForOtherModels(t *testing.T) {
+	actor := persistence.Actor{
+		UserID:    "10000000-0000-4000-8000-000000000007",
+		SessionID: "20000000-0000-4000-8000-000000000007",
+	}
+	application, err := NewVoiceApplication(
+		&voiceRepositoryStub{session: persistence.ContextSession{
+			ID:            "practice-session",
+			ScenarioModel: persistence.ScenarioModelProjectExperienceDeepDive,
+		}},
+		"speakup.user",
+	)
+	if err != nil {
+		t.Fatalf("NewVoiceApplication: %v", err)
+	}
+
+	required, err := application.RequiresSessionReview(
+		context.Background(),
+		actor,
+		"practice-session",
+	)
+	if err != nil {
+		t.Fatalf("RequiresSessionReview: %v", err)
+	}
+	if !required {
+		t.Fatal("non-IELTS model must keep synchronous review")
+	}
+}
+
 type voiceRepositoryStub struct {
 	session    persistence.ContextSession
 	snapshot   persistence.ContextSessionSnapshot
