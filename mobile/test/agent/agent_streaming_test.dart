@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/agent/wire_agent_client.dart';
+import 'package:speakup/identity/auth_state.dart';
 
 void main() {
   test(
@@ -58,6 +62,118 @@ void main() {
       expect(controller.messages.last.isStreaming, isFalse);
     },
   );
+
+  test('sends Unicode stream input as UTF-8 and preserves retry', () async {
+    const threadId = '11111111-1111-4111-8111-111111111111';
+    const runId = '22222222-2222-4222-8222-222222222222';
+    const retryRunId = '33333333-3333-4333-8333-333333333333';
+    const userMessageId = '44444444-4444-4444-8444-444444444444';
+    const assistantMessageId = '55555555-5555-4555-8555-555555555555';
+    const clientMessageId = 'unicode-message';
+    const content = '你好，小花';
+    const createdAt = '2026-07-30T03:00:00Z';
+    final requests = <({String path, Map<String, dynamic> body})>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      final bodyBytes = await request.fold<List<int>>(
+        <int>[],
+        (buffer, chunk) => buffer..addAll(chunk),
+      );
+      requests.add((
+        path: request.uri.path,
+        body: jsonDecode(utf8.decode(bodyBytes)) as Map<String, dynamic>,
+      ));
+      final isRetry = requests.length == 2;
+      final effectiveRunId = isRetry ? retryRunId : runId;
+      final events = <String>[
+        _sse('input.committed', {
+          'run_id': effectiveRunId,
+          'message': <String, Object?>{
+            'message_id': userMessageId,
+            'thread_id': threadId,
+            'sequence': 1,
+            'role': 'user',
+            'client_message_id': clientMessageId,
+            'content': content,
+            'created_at': createdAt,
+          },
+        }),
+        if (!isRetry)
+          _sse('run.failed', {
+            'run_id': runId,
+            'kind': 'provider_unavailable',
+            'retryable': true,
+          })
+        else ...[
+          _sse('assistant.started', {'run_id': retryRunId}),
+          _sse('assistant.delta', {'run_id': retryRunId, 'delta': '你好，小花。'}),
+          _sse('run.completed', {
+            'run': <String, Object?>{
+              'run_id': retryRunId,
+              'assistant_message_id': assistantMessageId,
+            },
+          }),
+        ],
+      ];
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..headers.set(
+          HttpHeaders.contentTypeHeader,
+          'text/event-stream; charset=utf-8',
+        )
+        ..add(utf8.encode(events.join()));
+      await request.response.close();
+    });
+    addTearDown(() async {
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    const credential = AuthSessionCredential(
+      sessionToken: 'sess_unicode',
+      generation: 1,
+    );
+    final client = WireAgentClient(
+      baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+      credentialProvider: () => credential,
+      invalidateSession:
+          ({
+            required expectedSessionToken,
+            required expectedGeneration,
+          }) async {},
+    );
+    addTearDown(client.clearAccountState);
+
+    final firstEvents = await client
+        .sendTextStream(
+          threadId: threadId,
+          text: content,
+          clientMessageId: clientMessageId,
+        )
+        .toList();
+    final retryEvents = await client
+        .sendTextStream(
+          threadId: threadId,
+          text: content,
+          clientMessageId: clientMessageId,
+        )
+        .toList();
+
+    expect(firstEvents.last, isA<AgentRunFailed>());
+    expect(retryEvents.last, isA<AgentRunCompleted>());
+    expect(requests.map((request) => request.path), [
+      '/v1/agent-threads/$threadId/runs/stream',
+      '/v1/agent-runs/$runId/retries/stream',
+    ]);
+    expect(requests[0].body, {
+      'client_message_id': clientMessageId,
+      'content': content,
+    });
+    expect(requests[1].body, {'client_retry_id': 'retry:$runId'});
+  });
+}
+
+String _sse(String event, Map<String, Object?> data) {
+  return 'event: $event\ndata: ${jsonEncode(data)}\n\n';
 }
 
 final class _StreamingAgentClient

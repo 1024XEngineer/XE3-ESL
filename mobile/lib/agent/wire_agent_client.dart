@@ -620,6 +620,16 @@ final class WireAgentClient
       uri,
       sessionToken: credential.sessionToken,
     );
+    final requestBody = utf8.encode(
+      jsonEncode(
+        failedRun == null
+            ? <String, Object?>{
+                'client_message_id': clientMessageId,
+                'content': text,
+              }
+            : <String, Object?>{'client_retry_id': 'retry:${failedRun.runId}'},
+      ),
+    );
     final httpClient = HttpClient()..connectionTimeout = _requestTimeout;
     try {
       final request = await httpClient.postUrl(uri).timeout(_requestTimeout);
@@ -631,18 +641,8 @@ final class WireAgentClient
           HttpHeaders.authorizationHeader,
           bearerAuthorizationValue(credential.sessionToken),
         )
-        ..write(
-          jsonEncode(
-            failedRun == null
-                ? <String, Object?>{
-                    'client_message_id': clientMessageId,
-                    'content': text,
-                  }
-                : <String, Object?>{
-                    'client_retry_id': 'retry:${failedRun.runId}',
-                  },
-          ),
-        );
+        ..contentLength = requestBody.length
+        ..add(requestBody);
       final response = await request.close().timeout(_requestTimeout);
       _requireCurrentGeneration(generation);
       if (!isSameAuthSessionCredential(_credentialProvider(), credential)) {
