@@ -76,6 +76,7 @@ void main() {
     );
 
     expect(find.byKey(const Key('job-wizard-input-step')), findsOneWidget);
+    expect(find.text('第 1/4 步 · 岗位信息'), findsOneWidget);
     expect(find.byKey(const Key('job-description-field')), findsOneWidget);
     expect(find.byKey(const Key('job-title-field')), findsNothing);
 
@@ -84,6 +85,7 @@ void main() {
 
     expect(find.byKey(const Key('job-title-field')), findsOneWidget);
     expect(find.text('快速开始不会基于真实 JD，只会提供通用岗位建议。'), findsOneWidget);
+    expect(find.text('你的相关背景（可选）'), findsOneWidget);
   });
 
   testWidgets('runs confirmation and preview before one explicit start', (

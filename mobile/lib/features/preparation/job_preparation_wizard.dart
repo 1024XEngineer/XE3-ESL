@@ -496,7 +496,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
         _Field(
           key: const Key('job-background-field'),
           controller: _background,
-          label: '你的相关背景',
+          label: '你的相关背景（可选）',
           hint: '简要描述经历、项目和想重点表达的成果',
           maxLines: 4,
           onChanged: (_) => _commitInput(),
@@ -918,27 +918,47 @@ class _StepProgress extends StatelessWidget {
       JobPreparationStep.setup => 2,
       JobPreparationStep.preview => 3,
     };
+    final title = switch (step) {
+      JobPreparationStep.input => '岗位信息',
+      JobPreparationStep.confirmation => '确认分析',
+      JobPreparationStep.setup => '练习设置',
+      JobPreparationStep.preview => '开始前确认',
+    };
     return Semantics(
       label: '准备进度，第 ${index + 1} 步，共 4 步',
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-        child: Row(
-          children: List.generate(
-            4,
-            (item) => Expanded(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                height: 4,
-                margin: EdgeInsets.only(right: item == 3 ? 0 : 6),
-                decoration: BoxDecoration(
-                  color: item <= index
-                      ? SpeakUpDesign.primary
-                      : SpeakUpDesign.border,
-                  borderRadius: BorderRadius.circular(99),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '第 ${index + 1}/4 步 · $title',
+              key: const Key('job-wizard-step-label'),
+              style: SpeakUpDesign.meta.copyWith(
+                color: SpeakUpDesign.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: List.generate(
+                4,
+                (item) => Expanded(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    height: 4,
+                    margin: EdgeInsets.only(right: item == 3 ? 0 : 6),
+                    decoration: BoxDecoration(
+                      color: item <= index
+                          ? SpeakUpDesign.primary
+                          : SpeakUpDesign.border,
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );

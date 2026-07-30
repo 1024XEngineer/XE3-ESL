@@ -569,6 +569,8 @@ class _PracticePageState extends State<PracticePage>
               ? const _NoScene()
               : Column(
                   children: [
+                    if (_isInterview(controller))
+                      _InterviewProgress(controller: controller),
                     Expanded(
                       child: _SceneConversationMessageList(
                         controller: controller,
@@ -600,6 +602,9 @@ class _PracticePageState extends State<PracticePage>
       isIeltsSpeakingSession(widget.agentController!);
 
   bool get _isIeltsSpeaking => _ieltsRouteActive || _controllerIsIeltsSpeaking;
+
+  bool _isInterview(AgentController controller) =>
+      controller.scene?.scenarioType == 'INTERVIEW';
 }
 
 String _practiceFeedbackSourceKey(
@@ -616,6 +621,46 @@ class _NoScene extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.all(24),
         child: Text('请先从“场景”选择本次练习内容。', textAlign: TextAlign.center),
+      ),
+    );
+  }
+}
+
+class _InterviewProgress extends StatelessWidget {
+  const _InterviewProgress({required this.controller});
+
+  final AgentController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = controller.turnLimit;
+    final current = total < 1
+        ? 1
+        : (controller.completedTurns + 1).clamp(1, total);
+    final state = switch (controller.recordingState) {
+      PracticeRecordingState.starting ||
+      PracticeRecordingState.recording => '正在作答',
+      PracticeRecordingState.transcribing ||
+      PracticeRecordingState.awaitingConfirmation => '正在识别',
+      PracticeRecordingState.submitting => '正在生成下一题',
+      PracticeRecordingState.completed => '面试已完成',
+      PracticeRecordingState.reviewFailed => '等待重试',
+      PracticeRecordingState.idle => '等待作答',
+    };
+    return Container(
+      key: const Key('interview-question-progress'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+      decoration: const BoxDecoration(
+        color: SpeakUpDesign.surfaceMuted,
+        border: Border(bottom: BorderSide(color: SpeakUpDesign.border)),
+      ),
+      child: Text(
+        total < 1 ? state : '第 $current/$total 题 · $state',
+        style: SpeakUpDesign.meta.copyWith(
+          color: SpeakUpDesign.primary,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }

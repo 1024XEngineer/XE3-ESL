@@ -1133,13 +1133,19 @@ void main() {
   testWidgets('interview and daily scenes share the conversation page', (
     tester,
   ) async {
+    const interviewScene = AgentScene(
+      id: 'behavioral-interview',
+      title: '行为面试',
+      description: '使用具体经历回答协作、冲突和成长类问题。',
+      scenarioType: 'INTERVIEW',
+    );
     const dailyScene = AgentScene(
       id: 'hotel-check-in',
       title: '酒店入住',
       description: '练习办理入住和沟通房间问题。',
     );
 
-    for (final scene in [agentScenes[1], dailyScene]) {
+    for (final scene in [interviewScene, dailyScene]) {
       final controller = AgentController(
         client: FakeAgentClient(),
         practiceClient: FakePracticeClient(),
@@ -1158,6 +1164,14 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(const Key('practice-record')), findsOneWidget);
+      expect(
+        find.byKey(const Key('interview-question-progress')),
+        scene == interviewScene ? findsOneWidget : findsNothing,
+      );
+      if (scene == interviewScene) {
+        expect(find.textContaining('第 1/'), findsOneWidget);
+        expect(find.textContaining('等待作答'), findsOneWidget);
+      }
       await tester.tap(find.byKey(const Key('practice-open-keyboard')));
       await tester.pump();
       expect(find.byKey(const Key('practice-text-answer')), findsOneWidget);
