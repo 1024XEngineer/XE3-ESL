@@ -17,6 +17,12 @@ const fixture = JSON.parse(
     'utf8',
   ),
 );
+const interviewReportFixture = JSON.parse(
+  await readFile(
+    resolve(apiDirectory, 'examples/interview-report-contract.json'),
+    'utf8',
+  ),
+);
 
 const bundleOpenApi = async () => {
   const temporaryDirectory = await mkdtemp(
@@ -143,7 +149,9 @@ const validators = Object.fromEntries(
   [
     'CreateEvaluationRequest',
     'EvaluationAccepted',
+    'EvaluationReplay',
     'Evaluation',
+    'InterviewReportEnvelope',
     'SceneEvaluationResult',
     'CoreAbilityObservation',
     'EvidenceRef',
@@ -181,8 +189,53 @@ assertValid(
   'CreateEvaluationRequest',
   fixture.create_dual_channel,
 );
+const digitLeadingPracticeCreate = structuredClone(
+  fixture.create_dual_channel,
+);
+digitLeadingPracticeCreate.practice_session_id =
+  '20000000-0000-4000-8000-000000000001';
+assertValid(
+  'digit-leading Practice session create',
+  'CreateEvaluationRequest',
+  digitLeadingPracticeCreate,
+);
 assertValid('queued create response', 'EvaluationAccepted', fixture.queued);
+assert.match(
+  fixture.queued.evaluation_id,
+  /^[0-9]/,
+  'queued fixture must cover a digit-leading Evaluation UUID',
+);
+assertValid(
+  'ready idempotent replay',
+  'EvaluationReplay',
+  fixture.ready_replay,
+);
+for (const status of ['RUNNING', 'READY', 'FAILED']) {
+  const replay = structuredClone(fixture.ready_replay);
+  replay.evaluation_status = status;
+  assertValid(
+    `${status} idempotent replay`,
+    'EvaluationReplay',
+    replay,
+  );
+}
+const laterRevisionReplay = structuredClone(fixture.ready_replay);
+laterRevisionReplay.evaluation_revision_id =
+  'a1000002-0000-4000-8000-000000000002';
+laterRevisionReplay.revision = 2;
+laterRevisionReplay.supersedes_revision_id =
+  'a1000001-0000-4000-8000-000000000001';
+assertValid(
+  'later current revision idempotent replay',
+  'EvaluationReplay',
+  laterRevisionReplay,
+);
 assertValid('Core 4D ready', 'Evaluation', fixture.core_4d_ready);
+assert.match(
+  fixture.core_4d_ready.evaluation_id,
+  /^[A-Fa-f]/,
+  'ready fixture must cover a letter-leading Evaluation UUID',
+);
 assertValid(
   'short sample blocked',
   'Evaluation',
@@ -204,6 +257,22 @@ assertValid(
   'replacement revision queued',
   'EvaluationAccepted',
   fixture.revision_queued,
+);
+
+const replayDisguisedAsQueued = structuredClone(fixture.ready_replay);
+replayDisguisedAsQueued.evaluation_status = 'QUEUED';
+assertSchemaRejected(
+  'idempotent replay disguised as queued',
+  'EvaluationReplay',
+  replayDisguisedAsQueued,
+);
+
+const freshAcceptedDisguisedAsReady = structuredClone(fixture.queued);
+freshAcceptedDisguisedAsReady.evaluation_status = 'READY';
+assertSchemaRejected(
+  'fresh accepted response disguised as ready',
+  'EvaluationAccepted',
+  freshAcceptedDisguisedAsReady,
 );
 
 const scoreFields = [
@@ -462,6 +531,14 @@ assertSchemaRejected(
   invalidCreateWithOwner,
 );
 
+const invalidAcceptedEvaluationId = structuredClone(fixture.queued);
+invalidAcceptedEvaluationId.evaluation_id = 'evaluation_not_a_uuid';
+assertSchemaRejected(
+  'non-UUID Evaluation ID',
+  'EvaluationAccepted',
+  invalidAcceptedEvaluationId,
+);
+
 const invalidCreateWithoutSceneStrategy = structuredClone(
   fixture.create_dual_channel,
 );
@@ -595,4 +672,440 @@ provisionalMarkedFinal.is_final = true;
 assert.throws(
   () => assertEvaluationSemantics(provisionalMarkedFinal),
   /provisional result cannot be final/,
+);
+
+const interviewDimensionOrder = [
+  'INTERVIEW_RELEVANCE',
+  'INTERVIEW_STRUCTURE',
+  'INTERVIEW_EVIDENCE',
+  'INTERVIEW_PROFESSIONAL',
+  'INTERVIEW_INTERACTION',
+];
+const interviewFindingKinds = [
+  ['strengths', 'strength_finding_ids'],
+  ['improvements', 'improvement_finding_ids'],
+  ['recommended_expressions', 'recommended_expression_finding_ids'],
+];
+const forbiddenInterviewReportField = new RegExp(
+  String.raw`(^|_)(raw|display|score|overall|total|weight|weights|probe_weight)($|_)`,
+  'u',
+);
+
+const assertNoInterviewScoreFields = (value, path = 'report') => {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      assertNoInterviewScoreFields(item, `${path}[${index}]`),
+    );
+    return;
+  }
+  if (value === null || typeof value !== 'object') {
+    return;
+  }
+  for (const [field, item] of Object.entries(value)) {
+    assert.doesNotMatch(
+      field,
+      forbiddenInterviewReportField,
+      `${path}.${field} exposes a forbidden numeric score field`,
+    );
+    assertNoInterviewScoreFields(item, `${path}.${field}`);
+  }
+};
+
+const sortedStrings = (values) => [...values].sort();
+
+const assertInterviewReportSemantics = (envelope) => {
+  assert.equal(
+    envelope.status_url,
+    `/v1/practice-sessions/${envelope.practice_session_id}/interview-report`,
+    'Interview report status_url must address the same Practice Session',
+  );
+  if (envelope.evaluation_status !== 'READY') {
+    return;
+  }
+
+  const report = envelope.report;
+  assert.equal(report.schema_version, 'interview-report/v1');
+  assert.equal(report.readiness_level, 'NOT_ASSESSED');
+  assertNoInterviewScoreFields(report);
+  assert.deepEqual(
+    report.dimensions.map((dimension) => dimension.dimension_id),
+    interviewDimensionOrder,
+    'Interview report dimensions must use the canonical order',
+  );
+
+  const questionById = new Map();
+  const questionByTurnId = new Map();
+  for (const question of report.questions) {
+    assert.ok(
+      !questionById.has(question.question_id),
+      `Duplicate question ${question.question_id}`,
+    );
+    questionById.set(question.question_id, question);
+    if (question.response_turn_id !== undefined) {
+      assert.ok(
+        !questionByTurnId.has(question.response_turn_id),
+        `Duplicate response Turn ${question.response_turn_id}`,
+      );
+      questionByTurnId.set(question.response_turn_id, question);
+    }
+    assert.deepEqual(
+      question.dimension_findings.map(
+        (dimension) => dimension.dimension_id,
+      ),
+      interviewDimensionOrder,
+      `${question.question_id}: dimension finding order changed`,
+    );
+    if (question.assessment_status === 'NOT_ASSESSED') {
+      for (const dimension of question.dimension_findings) {
+        for (const [, referenceField] of interviewFindingKinds) {
+          assert.deepEqual(
+            dimension[referenceField],
+            [],
+            `${question.question_id}: unassessed question references findings`,
+          );
+        }
+      }
+    }
+  }
+  for (const question of report.questions) {
+    if (question.question_type === 'FOLLOW_UP') {
+      const parent = questionById.get(question.parent_question_id);
+      assert.ok(parent, `${question.question_id}: parent question is missing`);
+      assert.equal(
+        parent.question_type,
+        'PRIMARY',
+        `${question.question_id}: parent must be PRIMARY`,
+      );
+    }
+  }
+
+  const findingById = new Map();
+  for (const dimension of report.dimensions) {
+    if (report.scoreability_status === 'INSUFFICIENT') {
+      assert.equal(dimension.scoreability_status, 'INSUFFICIENT');
+      assert.equal(dimension.gate_status, 'BLOCKED');
+    } else {
+      assert.ok(
+        (dimension.scoreability_status === 'PROVISIONAL' &&
+          dimension.gate_status === 'FEEDBACK_ONLY') ||
+          (dimension.scoreability_status === 'INSUFFICIENT' &&
+            dimension.gate_status === 'BLOCKED'),
+        `${dimension.dimension_id}: invalid qualitative gate`,
+      );
+    }
+
+    const evidenceRefIds = new Set();
+    for (const [findingField, referenceField] of interviewFindingKinds) {
+      for (const finding of dimension[findingField]) {
+        assert.ok(
+          !findingById.has(finding.finding_id),
+          `Duplicate finding ${finding.finding_id}`,
+        );
+        findingById.set(finding.finding_id, {
+          dimensionId: dimension.dimension_id,
+          findingField,
+          referenceField,
+          finding,
+        });
+        for (const evidence of finding.evidence) {
+          evidenceRefIds.add(evidence.evidence_ref_id);
+          assert.ok(
+            evidence.start_utf8_byte < evidence.end_utf8_byte,
+            `${finding.finding_id}: evidence span must be non-empty`,
+          );
+          const question = questionByTurnId.get(evidence.turn_id);
+          assert.ok(
+            question,
+            `${finding.finding_id}: evidence Turn is not a confirmed response`,
+          );
+          assert.ok(
+            question.evidence_ref_ids.includes(evidence.evidence_ref_id),
+            `${finding.finding_id}: evidence reference is outside its response`,
+          );
+          const transcriptBytes = Buffer.from(
+            question.confirmed_transcript,
+            'utf8',
+          );
+          assert.ok(
+            evidence.end_utf8_byte <= transcriptBytes.length,
+            `${finding.finding_id}: evidence span exceeds its response`,
+          );
+          assert.equal(
+            transcriptBytes
+              .subarray(evidence.start_utf8_byte, evidence.end_utf8_byte)
+              .toString('utf8'),
+            evidence.original_excerpt,
+            `${finding.finding_id}: evidence excerpt does not match its response`,
+          );
+        }
+      }
+    }
+    assert.deepEqual(
+      sortedStrings(dimension.evidence_ref_ids),
+      sortedStrings(evidenceRefIds),
+      `${dimension.dimension_id}: evidence_ref_ids must equal finding evidence`,
+    );
+  }
+
+  for (const question of report.questions) {
+    for (const dimension of question.dimension_findings) {
+      for (const [, referenceField] of interviewFindingKinds) {
+        for (const findingId of dimension[referenceField]) {
+          const target = findingById.get(findingId);
+          assert.ok(
+            target,
+            `${question.question_id}: dangling finding ${findingId}`,
+          );
+          assert.equal(
+            target.dimensionId,
+            dimension.dimension_id,
+            `${question.question_id}: finding dimension mismatch`,
+          );
+          assert.equal(
+            target.referenceField,
+            referenceField,
+            `${question.question_id}: finding category mismatch`,
+          );
+          assert.ok(
+            target.finding.evidence.some((evidence) =>
+              question.evidence_ref_ids.includes(evidence.evidence_ref_id),
+            ),
+            `${question.question_id}: finding is unrelated to its response`,
+          );
+        }
+      }
+    }
+  }
+
+  for (const action of report.priority_actions) {
+    const target = findingById.get(action.finding_id);
+    assert.ok(target, `Priority action ${action.finding_id} is dangling`);
+    assert.equal(
+      target.dimensionId,
+      action.dimension_id,
+      `Priority action ${action.finding_id} has the wrong dimension`,
+    );
+    assert.equal(
+      target.findingField,
+      'improvements',
+      `Priority action ${action.finding_id} must reference an improvement`,
+    );
+  }
+};
+
+for (const [name, value] of Object.entries(interviewReportFixture)) {
+  assertValid(
+    `Interview report ${name}`,
+    'InterviewReportEnvelope',
+    value,
+  );
+  assertInterviewReportSemantics(value);
+}
+
+const digitLeadingInterviewReport = structuredClone(
+  interviewReportFixture.ready,
+);
+digitLeadingInterviewReport.practice_session_id =
+  '20000000-0000-4000-8000-000000000001';
+digitLeadingInterviewReport.status_url =
+  '/v1/practice-sessions/20000000-0000-4000-8000-000000000001/interview-report';
+assertValid(
+  'digit-leading Practice session Interview report',
+  'InterviewReportEnvelope',
+  digitLeadingInterviewReport,
+);
+assertInterviewReportSemantics(digitLeadingInterviewReport);
+
+for (const reasonCode of [
+  'POLICY_VIOLATION',
+  'EVIDENCE_REF_INVALID',
+  'VERSION_CONFLICT',
+]) {
+  const nonRetryableFailure = structuredClone(interviewReportFixture.failed);
+  nonRetryableFailure.stable_failure = {
+    reason_code: reasonCode,
+    retryable: false,
+  };
+  assertValid(
+    `Interview report ${reasonCode} failure`,
+    'InterviewReportEnvelope',
+    nonRetryableFailure,
+  );
+}
+
+const retryablePolicyFailure = structuredClone(interviewReportFixture.failed);
+retryablePolicyFailure.stable_failure = {
+  reason_code: 'POLICY_VIOLATION',
+  retryable: true,
+};
+assertSchemaRejected(
+  'retryable non-transient Interview report failure',
+  'InterviewReportEnvelope',
+  retryablePolicyFailure,
+);
+
+const nonRetryableInternalFailure = structuredClone(
+  interviewReportFixture.failed,
+);
+nonRetryableInternalFailure.stable_failure.retryable = false;
+assertSchemaRejected(
+  'non-retryable INTERNAL_RETRYABLE Interview report failure',
+  'InterviewReportEnvelope',
+  nonRetryableInternalFailure,
+);
+
+const readyWithoutReport = structuredClone(interviewReportFixture.ready);
+delete readyWithoutReport.report;
+assertSchemaRejected(
+  'READY Interview report without report',
+  'InterviewReportEnvelope',
+  readyWithoutReport,
+);
+
+const failedWithReport = structuredClone(interviewReportFixture.failed);
+failedWithReport.report = structuredClone(interviewReportFixture.ready.report);
+assertSchemaRejected(
+  'FAILED Interview report carrying a report',
+  'InterviewReportEnvelope',
+  failedWithReport,
+);
+
+const pendingWithReport = structuredClone(interviewReportFixture.running);
+pendingWithReport.report = structuredClone(interviewReportFixture.ready.report);
+assertSchemaRejected(
+  'pending Interview report carrying a report',
+  'InterviewReportEnvelope',
+  pendingWithReport,
+);
+
+const reportWithUnknownVersion = structuredClone(interviewReportFixture.ready);
+reportWithUnknownVersion.report.schema_version = 'interview-report/v2';
+assertSchemaRejected(
+  'Interview report with unknown schema version',
+  'InterviewReportEnvelope',
+  reportWithUnknownVersion,
+);
+
+for (const [caseName, mutate] of [
+  ['overall score', (value) => (value.report.overall = 75)],
+  ['dimension raw value', (value) => (value.report.dimensions[0].raw = 75)],
+  [
+    'finding display score',
+    (value) =>
+      (value.report.dimensions[0].improvements[0].display_score = 75),
+  ],
+  [
+    'question probe weight',
+    (value) => (value.report.questions[0].probe_weight = 1),
+  ],
+  [
+    'priority action weight',
+    (value) => (value.report.priority_actions[0].weight = 1),
+  ],
+]) {
+  const invalid = structuredClone(interviewReportFixture.ready);
+  mutate(invalid);
+  assertSchemaRejected(
+    `Interview report with ${caseName}`,
+    'InterviewReportEnvelope',
+    invalid,
+  );
+}
+
+const unknownReportReason = structuredClone(interviewReportFixture.ready);
+unknownReportReason.report.dimensions[0].reason_codes = ['UNKNOWN'];
+assertSchemaRejected(
+  'Interview report with free-text reason relationship',
+  'InterviewReportEnvelope',
+  unknownReportReason,
+);
+
+const unknownQuestionType = structuredClone(interviewReportFixture.ready);
+unknownQuestionType.report.questions[0].question_type = 'RELATED';
+assertSchemaRejected(
+  'Interview report with free-text question relationship',
+  'InterviewReportEnvelope',
+  unknownQuestionType,
+);
+
+const unknownParent = structuredClone(interviewReportFixture.ready);
+unknownParent.report.questions[1].parent_question_id = 'question_missing';
+assert.throws(
+  () => assertInterviewReportSemantics(unknownParent),
+  /parent question is missing/,
+);
+
+const danglingQuestionFinding = structuredClone(
+  interviewReportFixture.ready,
+);
+danglingQuestionFinding.report.questions[0].dimension_findings[0]
+  .improvement_finding_ids = ['interview_finding_missing'];
+assertValid(
+  'schema-valid dangling question finding',
+  'InterviewReportEnvelope',
+  danglingQuestionFinding,
+);
+assert.throws(
+  () => assertInterviewReportSemantics(danglingQuestionFinding),
+  /dangling finding/,
+);
+
+const danglingPriorityAction = structuredClone(
+  interviewReportFixture.ready,
+);
+danglingPriorityAction.report.priority_actions[0].finding_id =
+  'interview_finding_missing';
+assertValid(
+  'schema-valid dangling priority action',
+  'InterviewReportEnvelope',
+  danglingPriorityAction,
+);
+assert.throws(
+  () => assertInterviewReportSemantics(danglingPriorityAction),
+  /is dangling/,
+);
+
+const mismatchedFindingCategory = structuredClone(
+  interviewReportFixture.ready,
+);
+mismatchedFindingCategory.report.questions[0].dimension_findings[0]
+  .strength_finding_ids = ['interview_finding_relevance_001'];
+mismatchedFindingCategory.report.questions[0].dimension_findings[0]
+  .improvement_finding_ids = [];
+assertValid(
+  'schema-valid mismatched finding category',
+  'InterviewReportEnvelope',
+  mismatchedFindingCategory,
+);
+assert.throws(
+  () => assertInterviewReportSemantics(mismatchedFindingCategory),
+  /finding category mismatch/,
+);
+
+const forgedInterviewExcerpt = structuredClone(interviewReportFixture.ready);
+forgedInterviewExcerpt.report.dimensions[0].improvements[0].evidence[0]
+  .original_excerpt = 'forged excerpt';
+assertValid(
+  'schema-valid forged Interview excerpt',
+  'InterviewReportEnvelope',
+  forgedInterviewExcerpt,
+);
+assert.throws(
+  () => assertInterviewReportSemantics(forgedInterviewExcerpt),
+  /evidence excerpt does not match/,
+);
+
+const mismatchedReportStatusUrl = structuredClone(
+  interviewReportFixture.running,
+);
+mismatchedReportStatusUrl.status_url =
+  '/v1/practice-sessions/session_other/interview-report';
+assertValid(
+  'schema-valid mismatched Interview status URL',
+  'InterviewReportEnvelope',
+  mismatchedReportStatusUrl,
+);
+assert.throws(
+  () => assertInterviewReportSemantics(mismatchedReportStatusUrl),
+  /same Practice Session/,
 );

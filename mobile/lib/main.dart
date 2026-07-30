@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
@@ -7,7 +9,9 @@ import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_image_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
+import 'package:speakup/features/practice/immersive_roleplay_session.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/preparation/ielts_practice_history_store.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
 import 'package:speakup/features/preparation/preparation_launch_controller.dart';
@@ -22,11 +26,14 @@ import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/session_store.dart';
 import 'package:speakup/practice/ios_practice_recorder.dart';
+import 'package:speakup/practice/avatar/avatar.dart';
 import 'package:speakup/practice/practice_audio_player.dart';
 import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/practice/wire_practice_client.dart';
+import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/review_history_controller.dart';
+import 'package:speakup/review/wire_interview_report_client.dart';
 import 'package:speakup/review/wire_review_history_client.dart';
 
 void main() {
@@ -46,6 +53,8 @@ void main() {
       jobPreparationController: dependencies.jobPreparationController,
       preparationLaunchController: dependencies.preparationLaunchController,
       reviewHistoryController: dependencies.reviewHistoryController,
+      avatarControllerFactory: dependencies.avatarControllerFactory,
+      interviewReportController: dependencies.interviewReportController,
     ),
   );
 }
@@ -58,6 +67,8 @@ final class ProductionAppDependencies {
     required this.jobPreparationController,
     required this.preparationLaunchController,
     required this.reviewHistoryController,
+    required this.avatarControllerFactory,
+    required this.interviewReportController,
   });
 
   final AuthController authController;
@@ -66,6 +77,8 @@ final class ProductionAppDependencies {
   final JobPreparationController jobPreparationController;
   final PreparationLaunchController preparationLaunchController;
   final ReviewHistoryController reviewHistoryController;
+  final AvatarControllerFactory avatarControllerFactory;
+  final InterviewReportController interviewReportController;
 }
 
 ProductionAppDependencies createProductionAppDependencies({
@@ -79,6 +92,7 @@ ProductionAppDependencies createProductionAppDependencies({
   IdentityHttpTransport? jobPreparationTransport,
   IdentityHttpTransport? preparationLaunchTransport,
   IdentityHttpTransport? reviewHistoryTransport,
+  IdentityHttpTransport? interviewReportTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
   PracticeMediaWireTransport? signedAudioTransport,
@@ -87,6 +101,8 @@ ProductionAppDependencies createProductionAppDependencies({
   AgentVoiceAudioPlayer? agentVoiceAudioPlayer,
   PracticeMediaClient? practiceMediaClient,
   PracticeAudioPlayer? practiceAudioPlayer,
+  AvatarSessionTokenClient? avatarSessionTokenClient,
+  AvatarControllerFactory? avatarControllerFactory,
   JobPreparationDraftStore? jobPreparationDraftStore,
   PracticeLaunchRecordStore? practiceLaunchRecordStore,
   SessionStore? sessionStore,
@@ -129,6 +145,49 @@ ProductionAppDependencies createProductionAppDependencies({
         },
     transport: agentImageTransport,
   );
+  final resolvedPracticeAudioPlayer =
+      practiceAudioPlayer ?? AudioplayersPracticeAudioPlayer();
+  final resolvedAvatarSessionTokenClient =
+      avatarSessionTokenClient ??
+      WireAvatarSessionTokenClient(
+        baseUri: baseUri,
+        credentialProvider: () => authController.currentCredential,
+        invalidateSession:
+            ({required expectedSessionToken, required expectedGeneration}) {
+              return authController.invalidateSession(
+                expectedSessionToken: expectedSessionToken,
+                expectedGeneration: expectedGeneration,
+              );
+            },
+      );
+  final activeAvatarControllers = <AvatarController>{};
+  final accountAvatarControllers = <AvatarController>{};
+  AvatarController createAvatarController() {
+    for (final active in activeAvatarControllers.toList(growable: false)) {
+      unawaited(active.close().catchError((_) {}));
+    }
+    final controller =
+        avatarControllerFactory?.call() ??
+        AvatarController(
+          renderer: SpatiusAvatarRenderer(),
+          tokenClient: resolvedAvatarSessionTokenClient,
+          fallbackPlayback: resolvedPracticeAudioPlayer.playWav,
+          fallbackStop: resolvedPracticeAudioPlayer.stop,
+        );
+    activeAvatarControllers.add(controller);
+    accountAvatarControllers.add(controller);
+    late final void Function() removeClosedController;
+    removeClosedController = () {
+      if (controller.state.phase != AvatarControllerPhase.closed) {
+        return;
+      }
+      controller.removeListener(removeClosedController);
+      activeAvatarControllers.remove(controller);
+    };
+    controller.addListener(removeClosedController);
+    return controller;
+  }
+
   final agentController = AgentController(
     client: agentClient,
     imageClient: agentImageClient,
@@ -165,7 +224,7 @@ ProductionAppDependencies createProductionAppDependencies({
           apiTransport: practiceMediaTransport,
           signedAudioTransport: signedAudioTransport,
         ),
-    audioPlayer: practiceAudioPlayer ?? AudioplayersPracticeAudioPlayer(),
+    audioPlayer: resolvedPracticeAudioPlayer,
   );
   final reviewHistoryController = ReviewHistoryController(
     client: WireReviewHistoryClient(
@@ -181,11 +240,28 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: reviewHistoryTransport,
     ),
   );
-  final preparationController = PreparationController(
-    client: WirePreparationCatalogClient(
+  final interviewReportController = InterviewReportController(
+    client: WireInterviewReportClient(
       baseUri: baseUri,
-      transport: preparationTransport,
+      credentialProvider: () => authController.currentCredential,
+      invalidateSession:
+          ({required expectedSessionToken, required expectedGeneration}) {
+            return authController.invalidateSession(
+              expectedSessionToken: expectedSessionToken,
+              expectedGeneration: expectedGeneration,
+            );
+          },
+      transport: interviewReportTransport,
     ),
+  );
+  final preparationCatalogClient = WirePreparationCatalogClient(
+    baseUri: baseUri,
+    transport: preparationTransport,
+  );
+  final preparationController = PreparationController(
+    client: preparationCatalogClient,
+    ieltsQuestionBankClient: preparationCatalogClient,
+    ieltsHistoryStore: const SecureIeltsPracticeHistoryStore(),
   );
   final practiceWorkspaceController = PracticeWorkspaceController(
     agentController: agentController,
@@ -227,6 +303,12 @@ ProductionAppDependencies createProductionAppDependencies({
               id: selection.scenarioDefinitionId,
               title: selection.scenarioDisplayName,
               description: selection.scenarioDescription,
+              scenarioType: selection.scenarioType,
+              presentationMode:
+                  selection.scenarioType == 'WORKPLACE' ||
+                      selection.scenarioType == 'DAILY'
+                  ? AgentScenePresentationMode.immersiveRoleplay
+                  : AgentScenePresentationMode.standard,
             ),
             clientOperationId: clientOperationId,
           );
@@ -290,18 +372,36 @@ ProductionAppDependencies createProductionAppDependencies({
     baseUri: baseUri,
     transport: identityTransport,
   );
+  Future<void> clearAvatarPrivateState() async {
+    final controllers = accountAvatarControllers.toList(growable: false);
+    activeAvatarControllers.clear();
+    accountAvatarControllers.clear();
+    await Future.wait<void>([
+      for (final controller in controllers)
+        controller.clearAccountState().catchError((_) {}),
+    ]);
+    await resolvedAvatarSessionTokenClient.clearAccountState();
+  }
+
   authController = AuthController(
     identityClient: identityClient,
     profileClient: identityClient,
     sessionStore: sessionStore ?? const IosKeychainSessionStore(),
     clearPrivateState: () async {
-      await preparationLaunchController.clearPrivateState();
-      await Future.wait<void>([
-        agentController.clearPrivateState(),
-        preparationController.clearPrivateState(),
-        jobPreparationController.clearPrivateState(),
-        reviewHistoryController.clearPrivateState(),
-      ]);
+      final interviewReportCleanup = interviewReportController
+          .clearPrivateState();
+      try {
+        await preparationLaunchController.clearPrivateState();
+        await clearAvatarPrivateState();
+        await Future.wait<void>([
+          agentController.clearPrivateState(),
+          preparationController.clearPrivateState(),
+          jobPreparationController.clearPrivateState(),
+          reviewHistoryController.clearPrivateState(),
+        ]);
+      } finally {
+        await interviewReportCleanup;
+      }
     },
   );
   return ProductionAppDependencies(
@@ -311,5 +411,7 @@ ProductionAppDependencies createProductionAppDependencies({
     jobPreparationController: jobPreparationController,
     preparationLaunchController: preparationLaunchController,
     reviewHistoryController: reviewHistoryController,
+    avatarControllerFactory: createAvatarController,
+    interviewReportController: interviewReportController,
   );
 }

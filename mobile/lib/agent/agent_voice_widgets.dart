@@ -151,6 +151,19 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
       data: message.text,
       foreground: foreground,
     );
+    if (message.isStreaming && message.text.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 6),
+        child: SizedBox.square(
+          key: Key('agent-assistant-streaming'),
+          dimension: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (message.isStreaming || message.hasFailed) {
+      return markdown;
+    }
     if (voice == null) {
       return markdown;
     }

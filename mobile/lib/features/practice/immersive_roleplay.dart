@@ -1,0 +1,1222 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/design/voice_capture_control.dart';
+
+/// A vendor-neutral surface used by the immersive roleplay shell.
+///
+/// The injected builder may render any avatar implementation. Keeping the
+/// dependency in the composition root lets the product UI survive a vendor
+/// change without importing a provider SDK.
+typedef ImmersiveAvatarSurfaceBuilder = Widget Function(BuildContext context);
+typedef ImmersiveAsyncAction = Future<void> Function();
+
+class ImmersiveRoleplayPage extends StatefulWidget {
+  const ImmersiveRoleplayPage({
+    required this.agentController,
+    this.avatarSurfaceBuilder,
+    this.avatarStatusLabel = '正在准备画面',
+    this.onBeforeStartRecording,
+    this.onBeforeSubmitText,
+    this.onReplayQuestion,
+    this.replayLoading = false,
+    this.replayPlaying = false,
+    this.onExitRequested,
+    this.previewMode = false,
+    super.key,
+  });
+
+  final AgentController agentController;
+  final ImmersiveAvatarSurfaceBuilder? avatarSurfaceBuilder;
+  final String? avatarStatusLabel;
+  final ImmersiveAsyncAction? onBeforeStartRecording;
+  final ImmersiveAsyncAction? onBeforeSubmitText;
+  final ImmersiveAsyncAction? onReplayQuestion;
+  final bool replayLoading;
+  final bool replayPlaying;
+  final Future<bool> Function()? onExitRequested;
+  final bool previewMode;
+
+  @override
+  State<ImmersiveRoleplayPage> createState() => _ImmersiveRoleplayPageState();
+}
+
+class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
+  final _conversationScrollController = ScrollController();
+  final _textController = TextEditingController();
+  final _textFocusNode = FocusNode();
+  Timer? _recordingTicker;
+  DateTime? _recordingStartedAt;
+  int _recordingSeconds = 0;
+  int _observedMessageCount = 0;
+  bool _textMode = false;
+  bool _exitInFlight = false;
+  bool _exitApproved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _observedMessageCount = widget.agentController.messages.length;
+    widget.agentController.addListener(_handleControllerState);
+    _syncRecordingTimer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _conversationScrollController.hasClients) {
+        _conversationScrollController.jumpTo(
+          _conversationScrollController.position.maxScrollExtent,
+        );
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant ImmersiveRoleplayPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.agentController == widget.agentController) {
+      return;
+    }
+    oldWidget.agentController.removeListener(_handleControllerState);
+    _observedMessageCount = widget.agentController.messages.length;
+    widget.agentController.addListener(_handleControllerState);
+    _syncRecordingTimer();
+  }
+
+  @override
+  void dispose() {
+    widget.agentController.removeListener(_handleControllerState);
+    _recordingTicker?.cancel();
+    _conversationScrollController.dispose();
+    _textController.dispose();
+    _textFocusNode.dispose();
+    unawaited(widget.agentController.stopPracticeAudio(notify: false));
+    super.dispose();
+  }
+
+  void _handleControllerState() {
+    if (!mounted) {
+      return;
+    }
+    final messageCount = widget.agentController.messages.length;
+    final shouldFollowConversation = messageCount != _observedMessageCount;
+    _observedMessageCount = messageCount;
+    _syncRecordingTimer();
+    setState(() {});
+    if (shouldFollowConversation) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_conversationScrollController.hasClients) {
+          return;
+        }
+        unawaited(
+          _conversationScrollController.animateTo(
+            _conversationScrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+          ),
+        );
+      });
+    }
+  }
+
+  void _syncRecordingTimer() {
+    final isRecording =
+        widget.agentController.recordingState ==
+        PracticeRecordingState.recording;
+    if (isRecording) {
+      if (_recordingTicker != null) {
+        return;
+      }
+      _recordingStartedAt = DateTime.now();
+      _recordingSeconds = 0;
+      _recordingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+        final startedAt = _recordingStartedAt;
+        if (!mounted || startedAt == null) {
+          return;
+        }
+        setState(() {
+          _recordingSeconds = DateTime.now().difference(startedAt).inSeconds;
+        });
+      });
+      return;
+    }
+    _recordingTicker?.cancel();
+    _recordingTicker = null;
+    _recordingStartedAt = null;
+    _recordingSeconds = 0;
+    if (widget.agentController.recordingState != PracticeRecordingState.idle) {
+      _textMode = false;
+    }
+  }
+
+  Future<void> _submitText() async {
+    await _runBoundedUserTurnAction(widget.onBeforeSubmitText);
+    if (!mounted) {
+      return;
+    }
+    final submitted = await widget.agentController.submitPracticeText(
+      _textController.text,
+    );
+    if (!mounted || !submitted) {
+      return;
+    }
+    _textController.clear();
+    _textFocusNode.unfocus();
+    setState(() => _textMode = false);
+  }
+
+  void _toggleTextMode() {
+    setState(() => _textMode = !_textMode);
+    if (!_textMode) {
+      _textFocusNode.unfocus();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _textFocusNode.requestFocus();
+      }
+    });
+  }
+
+  Future<void> _requestExit() async {
+    if (!mounted || _exitInFlight || _exitApproved) {
+      return;
+    }
+    final callback = widget.onExitRequested;
+    if (callback == null) {
+      _exitApproved = true;
+    } else {
+      setState(() => _exitInFlight = true);
+      var approved = false;
+      try {
+        approved = await callback();
+      } on Object {
+        approved = false;
+      }
+      if (!mounted) {
+        return;
+      }
+      _exitInFlight = false;
+      if (!approved) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(const SnackBar(content: Text('当前练习正在保存，请稍后再返回。')));
+        setState(() {});
+        return;
+      }
+      _exitApproved = true;
+    }
+    if (mounted) {
+      setState(() {});
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    if (mounted) {
+      await Navigator.of(context).maybePop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scene = widget.agentController.scene;
+    return PopScope<void>(
+      canPop: widget.onExitRequested == null || _exitApproved,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          unawaited(_requestExit());
+        }
+      },
+      child: Scaffold(
+        key: const Key('immersive-roleplay-page'),
+        backgroundColor: SpeakUpDesign.canvas,
+        body: SafeArea(
+          child: scene == null
+              ? const Center(child: Text('请先选择一个情景开始对话。'))
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final landscape =
+                        constraints.maxWidth > constraints.maxHeight;
+                    final avatar = _AvatarStage(
+                      scene: scene,
+                      surfaceBuilder: widget.avatarSurfaceBuilder,
+                      statusLabel: widget.avatarStatusLabel,
+                      latestAssistantMessage: _latestAssistantMessage(
+                        widget.agentController.messages,
+                      ),
+                      exitInFlight: _exitInFlight,
+                      onExit: _requestExit,
+                    );
+                    final conversation = _ConversationPanel(
+                      controller: widget.agentController,
+                      scrollController: _conversationScrollController,
+                      textController: _textController,
+                      textFocusNode: _textFocusNode,
+                      textMode: _textMode,
+                      recordingSeconds: _recordingSeconds,
+                      previewMode: widget.previewMode,
+                      onBeforeStartRecording: () => _runBoundedUserTurnAction(
+                        widget.onBeforeStartRecording,
+                      ),
+                      onReplayQuestion: widget.onReplayQuestion,
+                      replayLoading: widget.replayLoading,
+                      replayPlaying: widget.replayPlaying,
+                      onToggleTextMode: _toggleTextMode,
+                      onSubmitText: _submitText,
+                    );
+                    if (landscape) {
+                      return Row(
+                        children: [
+                          SizedBox(
+                            key: const Key('immersive-avatar-region'),
+                            width: constraints.maxWidth * 0.44,
+                            child: avatar,
+                          ),
+                          Expanded(child: conversation),
+                        ],
+                      );
+                    }
+                    return Column(
+                      children: [
+                        SizedBox(
+                          key: const Key('immersive-avatar-region'),
+                          height: constraints.maxHeight * 0.44,
+                          child: avatar,
+                        ),
+                        Expanded(child: conversation),
+                      ],
+                    );
+                  },
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AvatarStage extends StatelessWidget {
+  const _AvatarStage({
+    required this.scene,
+    required this.surfaceBuilder,
+    required this.statusLabel,
+    required this.latestAssistantMessage,
+    required this.exitInFlight,
+    required this.onExit,
+  });
+
+  final AgentScene scene;
+  final ImmersiveAvatarSurfaceBuilder? surfaceBuilder;
+  final String? statusLabel;
+  final AgentMessage? latestAssistantMessage;
+  final bool exitInFlight;
+  final VoidCallback onExit;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: const Color(0xFFE5E9E5),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (surfaceBuilder case final builder?)
+            builder(context)
+          else
+            const _AvatarPlaceholder(),
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0x33000000),
+                      Colors.transparent,
+                      Color(0x4D000000),
+                    ],
+                    stops: [0, 0.45, 1],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 12,
+            right: 12,
+            top: 10,
+            child: Row(
+              children: [
+                IconButton.filledTonal(
+                  key: const Key('immersive-exit'),
+                  tooltip: '返回',
+                  onPressed: exitInFlight ? null : onExit,
+                  icon: exitInFlight
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.arrow_back_rounded),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.9),
+                    foregroundColor: SpeakUpDesign.ink,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    scene.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      shadows: [
+                        Shadow(color: Color(0x66000000), blurRadius: 8),
+                      ],
+                    ),
+                  ),
+                ),
+                if (statusLabel case final label?)
+                  Flexible(
+                    child: Semantics(
+                      liveRegion: true,
+                      child: Container(
+                        key: const Key('immersive-avatar-status'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.46),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (latestAssistantMessage case final message?)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 14,
+              child: Container(
+                key: const Key('immersive-live-subtitle'),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 15,
+                  vertical: 11,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.58),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  message.text,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    height: 1.35,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AvatarPlaceholder extends StatelessWidget {
+  const _AvatarPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: '情景对话画面',
+      child: const Center(
+        child: Icon(
+          Icons.person_outline_rounded,
+          key: Key('immersive-avatar-placeholder'),
+          size: 84,
+          color: Color(0xFF819087),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConversationPanel extends StatelessWidget {
+  const _ConversationPanel({
+    required this.controller,
+    required this.scrollController,
+    required this.textController,
+    required this.textFocusNode,
+    required this.textMode,
+    required this.recordingSeconds,
+    required this.previewMode,
+    required this.onBeforeStartRecording,
+    required this.onReplayQuestion,
+    required this.replayLoading,
+    required this.replayPlaying,
+    required this.onToggleTextMode,
+    required this.onSubmitText,
+  });
+
+  final AgentController controller;
+  final ScrollController scrollController;
+  final TextEditingController textController;
+  final FocusNode textFocusNode;
+  final bool textMode;
+  final int recordingSeconds;
+  final bool previewMode;
+  final ImmersiveAsyncAction? onBeforeStartRecording;
+  final ImmersiveAsyncAction? onReplayQuestion;
+  final bool replayLoading;
+  final bool replayPlaying;
+  final VoidCallback onToggleTextMode;
+  final VoidCallback onSubmitText;
+
+  @override
+  Widget build(BuildContext context) {
+    final messages = controller.messages;
+    return ColoredBox(
+      color: SpeakUpDesign.surface,
+      child: Column(
+        children: [
+          _ConversationHeader(
+            controller: controller,
+            onReplayQuestion: onReplayQuestion,
+            replayLoading: replayLoading,
+            replayPlaying: replayPlaying,
+          ),
+          Expanded(
+            child: messages.isEmpty
+                ? const _ConversationEmpty()
+                : ListView.separated(
+                    key: const Key('immersive-conversation-history'),
+                    controller: scrollController,
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                    itemCount:
+                        messages.length +
+                        (controller.errorMessage == null ? 0 : 1) +
+                        (controller.mediaErrorMessage == null ? 0 : 1) +
+                        (previewMode ? 1 : 0),
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      if (index < messages.length) {
+                        return _MessageBubble(message: messages[index]);
+                      }
+                      var extraIndex = index - messages.length;
+                      if (controller.errorMessage case final error?) {
+                        if (extraIndex == 0) {
+                          return _InlineError(message: error);
+                        }
+                        extraIndex--;
+                      }
+                      if (controller.mediaErrorMessage case final error?) {
+                        if (extraIndex == 0) {
+                          return _InlineError(message: error);
+                        }
+                        extraIndex--;
+                      }
+                      return const Text(
+                        '当前为预览模式，语音服务可能不可用。',
+                        textAlign: TextAlign.center,
+                        style: SpeakUpDesign.meta,
+                      );
+                    },
+                  ),
+          ),
+          _ImmersiveComposer(
+            controller: controller,
+            textController: textController,
+            textFocusNode: textFocusNode,
+            textMode: textMode,
+            recordingSeconds: recordingSeconds,
+            onBeforeStartRecording: onBeforeStartRecording,
+            onToggleTextMode: onToggleTextMode,
+            onSubmitText: onSubmitText,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConversationHeader extends StatelessWidget {
+  const _ConversationHeader({
+    required this.controller,
+    required this.onReplayQuestion,
+    required this.replayLoading,
+    required this.replayPlaying,
+  });
+
+  final AgentController controller;
+  final ImmersiveAsyncAction? onReplayQuestion;
+  final bool replayLoading;
+  final bool replayPlaying;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = (controller.completedTurns + 1).clamp(
+      1,
+      controller.turnLimit,
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: SpeakUpDesign.border)),
+      ),
+      child: Row(
+        children: [
+          const Expanded(child: Text('对话', style: SpeakUpDesign.cardTitle)),
+          Flexible(
+            child: Text(
+              '第 $current 轮 · 共 ${controller.turnLimit} 轮',
+              key: const Key('immersive-turn-progress'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: SpeakUpDesign.meta,
+            ),
+          ),
+          if (onReplayQuestion != null || controller.canPlayQuestionAudio) ...[
+            const SizedBox(width: 6),
+            IconButton(
+              key: const Key('immersive-replay-question'),
+              tooltip:
+                  (onReplayQuestion != null
+                      ? replayPlaying
+                      : controller.isQuestionAudioPlaying)
+                  ? '停止播放'
+                  : '重听对方',
+              onPressed: onReplayQuestion != null
+                  ? replayLoading || !_canTriggerImmersiveReplay(controller)
+                        ? null
+                        : () => unawaited(onReplayQuestion!())
+                  : controller.canUsePracticeAudio
+                  ? controller.toggleQuestionAudio
+                  : null,
+              visualDensity: VisualDensity.compact,
+              icon:
+                  (onReplayQuestion != null
+                      ? replayLoading
+                      : controller.isQuestionAudioLoading)
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      (onReplayQuestion != null
+                              ? replayPlaying
+                              : controller.isQuestionAudioPlaying)
+                          ? Icons.stop_circle_outlined
+                          : Icons.volume_up_outlined,
+                    ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ConversationEmpty extends StatelessWidget {
+  const _ConversationEmpty();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(24),
+        child: Text(
+          '对方正在准备开场，请稍候。',
+          textAlign: TextAlign.center,
+          style: SpeakUpDesign.body,
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({required this.message});
+
+  final AgentMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = message.role == AgentMessageRole.user;
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Semantics(
+        label: '${isUser ? '你' : '对话伙伴'}：${message.text}',
+        child: Container(
+          key: Key('immersive-message-${message.id}'),
+          constraints: const BoxConstraints(maxWidth: 520),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: isUser ? SpeakUpDesign.primary : SpeakUpDesign.surfaceMuted,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(16),
+              topRight: const Radius.circular(16),
+              bottomLeft: Radius.circular(isUser ? 16 : 4),
+              bottomRight: Radius.circular(isUser ? 4 : 16),
+            ),
+          ),
+          child: Text(
+            message.text,
+            style: TextStyle(
+              color: isUser ? Colors.white : SpeakUpDesign.ink,
+              fontSize: 15,
+              height: 1.42,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      message,
+      textAlign: TextAlign.center,
+      style: const TextStyle(color: SpeakUpDesign.error, fontSize: 13),
+    );
+  }
+}
+
+class _ImmersiveComposer extends StatefulWidget {
+  const _ImmersiveComposer({
+    required this.controller,
+    required this.textController,
+    required this.textFocusNode,
+    required this.textMode,
+    required this.recordingSeconds,
+    required this.onBeforeStartRecording,
+    required this.onToggleTextMode,
+    required this.onSubmitText,
+  });
+
+  final AgentController controller;
+  final TextEditingController textController;
+  final FocusNode textFocusNode;
+  final bool textMode;
+  final int recordingSeconds;
+  final ImmersiveAsyncAction? onBeforeStartRecording;
+  final VoidCallback onToggleTextMode;
+  final VoidCallback onSubmitText;
+
+  @override
+  State<_ImmersiveComposer> createState() => _ImmersiveComposerState();
+}
+
+class _ImmersiveComposerState extends State<_ImmersiveComposer> {
+  Future<void> _sendVoice() async {
+    await widget.controller.finishRecordingGesture();
+    if (!mounted ||
+        widget.controller.recordingState !=
+            PracticeRecordingState.awaitingConfirmation) {
+      return;
+    }
+    await widget.controller.confirmTranscript();
+  }
+
+  Future<void> _convertToText() async {
+    await widget.controller.finishRecordingGesture();
+    if (!mounted ||
+        widget.controller.recordingState !=
+            PracticeRecordingState.awaitingConfirmation) {
+      return;
+    }
+    final transcript = widget.controller.transcript?.trim() ?? '';
+    widget.controller.rerecord();
+    widget.textController.value = TextEditingValue(
+      text: transcript,
+      selection: TextSelection.collapsed(offset: transcript.length),
+    );
+    if (!widget.textMode) {
+      widget.onToggleTextMode();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = widget.controller.recordingState;
+    final capturePhase = switch (state) {
+      PracticeRecordingState.idle => VoiceCapturePhase.idle,
+      PracticeRecordingState.starting => VoiceCapturePhase.starting,
+      PracticeRecordingState.recording => VoiceCapturePhase.recording,
+      _ => VoiceCapturePhase.busy,
+    };
+    final captureEnabled =
+        !widget.textMode &&
+        !widget.controller.hasPendingPracticeAudio &&
+        (state == PracticeRecordingState.idle ||
+            state == PracticeRecordingState.starting ||
+            state == PracticeRecordingState.recording);
+    return VoiceCaptureControl(
+      phase: capturePhase,
+      enabled: captureEnabled,
+      onBeforeStart: widget.onBeforeStartRecording,
+      onStart: widget.controller.startRecording,
+      onSendVoice: _sendVoice,
+      onConvertToText: _convertToText,
+      onCancel: widget.controller.cancelRecording,
+      builder: (context, capture) => Material(
+        color: SpeakUpDesign.surface,
+        shape: const Border(top: BorderSide(color: SpeakUpDesign.border)),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: switch (state) {
+              PracticeRecordingState.idle =>
+                widget.controller.hasPendingPracticeAudio
+                    ? _PendingImmersiveAudio(controller: widget.controller)
+                    : _IdleComposer(
+                        textController: widget.textController,
+                        textFocusNode: widget.textFocusNode,
+                        textMode: widget.textMode,
+                        onToggleTextMode: widget.onToggleTextMode,
+                        onSubmitText: widget.onSubmitText,
+                        capture: capture,
+                      ),
+              PracticeRecordingState.starting ||
+              PracticeRecordingState.recording => _RecordingComposer(
+                preparing: state == PracticeRecordingState.starting,
+                seconds: widget.recordingSeconds,
+                capture: capture,
+              ),
+              PracticeRecordingState.transcribing => const _ComposerProgress(
+                label: '正在识别你的回答…',
+              ),
+              PracticeRecordingState.awaitingConfirmation =>
+                _TranscriptComposer(controller: widget.controller),
+              PracticeRecordingState.submitting => const _ComposerProgress(
+                label: '正在发送并准备下一轮…',
+              ),
+              PracticeRecordingState.reviewFailed => _ComposerAction(
+                label: '本轮已完成，暂时无法保存结果。',
+                actionLabel: '重试',
+                onPressed: widget.controller.retryReview,
+              ),
+              PracticeRecordingState.completed => const _ComposerProgress(
+                label: '本轮对话已完成',
+                showProgress: false,
+              ),
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _IdleComposer extends StatelessWidget {
+  const _IdleComposer({
+    required this.textController,
+    required this.textFocusNode,
+    required this.textMode,
+    required this.onToggleTextMode,
+    required this.onSubmitText,
+    required this.capture,
+  });
+
+  final TextEditingController textController;
+  final FocusNode textFocusNode;
+  final bool textMode;
+  final VoidCallback onToggleTextMode;
+  final VoidCallback onSubmitText;
+  final VoiceCaptureView capture;
+
+  @override
+  Widget build(BuildContext context) {
+    if (textMode) {
+      return Row(
+        children: [
+          IconButton.outlined(
+            key: const Key('immersive-return-to-voice'),
+            tooltip: '切换到语音',
+            onPressed: onToggleTextMode,
+            icon: const Icon(Icons.mic_none_rounded),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              key: const Key('immersive-text-answer'),
+              controller: textController,
+              focusNode: textFocusNode,
+              minLines: 1,
+              maxLines: 2,
+              maxLength: 8000,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                hintText: 'Type your reply…',
+                counterText: '',
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton.filled(
+            key: const Key('immersive-submit-text'),
+            tooltip: '发送',
+            onPressed: onSubmitText,
+            icon: const Icon(Icons.arrow_upward_rounded),
+          ),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(
+          child: capture.wrapTarget(
+            key: const Key('immersive-record'),
+            semanticsLabel: '点击或按住说话',
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 100),
+              height: 52,
+              decoration: BoxDecoration(
+                color: capture.pressed
+                    ? SpeakUpDesign.primary.withValues(alpha: 0.82)
+                    : SpeakUpDesign.primary,
+                borderRadius: BorderRadius.circular(
+                  SpeakUpDesign.radiusControl,
+                ),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.mic_rounded, color: Colors.white),
+                  SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      '点击或按住说话',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton.outlined(
+          key: const Key('immersive-open-keyboard'),
+          tooltip: '键盘输入',
+          onPressed: onToggleTextMode,
+          icon: const Icon(Icons.keyboard_alt_outlined),
+          style: IconButton.styleFrom(minimumSize: const Size.square(52)),
+        ),
+      ],
+    );
+  }
+}
+
+class _RecordingComposer extends StatelessWidget {
+  const _RecordingComposer({
+    required this.preparing,
+    required this.seconds,
+    required this.capture,
+  });
+
+  final bool preparing;
+  final int seconds;
+  final VoiceCaptureView capture;
+
+  @override
+  Widget build(BuildContext context) {
+    final minutesText = (seconds ~/ 60).toString().padLeft(2, '0');
+    final secondsText = (seconds % 60).toString().padLeft(2, '0');
+    final cancelArmed =
+        capture.releaseIntent == VoiceCaptureReleaseIntent.cancel;
+    final convertArmed =
+        capture.releaseIntent == VoiceCaptureReleaseIntent.convertToText;
+    final accent = cancelArmed ? SpeakUpDesign.error : SpeakUpDesign.primary;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        VoiceCaptureIntentTargets(
+          capture: capture,
+          elapsed: Duration(seconds: seconds),
+          keyPrefix: 'immersive',
+        ),
+        const SizedBox(height: 10),
+        capture.wrapTarget(
+          key: const Key('immersive-record'),
+          semanticsLabel: capture.tapMode ? '发送语音回答' : '录音中，左滑取消，右滑转文字，松开发送',
+          child: AnimatedContainer(
+            key: const Key('immersive-stop-recording'),
+            duration: const Duration(milliseconds: 120),
+            constraints: const BoxConstraints(minHeight: 58),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: cancelArmed
+                  ? SpeakUpDesign.errorMuted
+                  : SpeakUpDesign.primaryMuted,
+              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+              border: Border.all(color: accent),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  cancelArmed
+                      ? Icons.delete_outline_rounded
+                      : convertArmed
+                      ? Icons.text_fields_rounded
+                      : Icons.graphic_eq_rounded,
+                  color: accent,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    cancelArmed
+                        ? '松开取消'
+                        : convertArmed
+                        ? '松开转成文字'
+                        : preparing
+                        ? '正在打开麦克风…'
+                        : capture.tapMode
+                        ? '点击发送语音 · $minutesText:$secondsText'
+                        : '松开发送语音 · $minutesText:$secondsText',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: SpeakUpDesign.label.copyWith(color: accent),
+                  ),
+                ),
+                if (!cancelArmed && !convertArmed)
+                  Icon(
+                    capture.tapMode
+                        ? Icons.send_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: accent,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PendingImmersiveAudio extends StatelessWidget {
+  const _PendingImmersiveAudio({required this.controller});
+
+  final AgentController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('immersive-pending-audio'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('这段录音已保留', style: SpeakUpDesign.cardTitle),
+        const SizedBox(height: 4),
+        const Text('刚才没有识别成功，可以重试转文字，或删除后重新录音。', style: SpeakUpDesign.body),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                key: const Key('immersive-delete-pending-audio'),
+                onPressed: controller.discardPendingPracticeAudio,
+                child: const Text('删除录音'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                key: const Key('immersive-retry-transcription'),
+                onPressed: controller.retryPracticeTranscription,
+                child: const Text('重试转文字'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _TranscriptComposer extends StatelessWidget {
+  const _TranscriptComposer({required this.controller});
+
+  final AgentController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          controller.transcript ?? '',
+          key: const Key('immersive-transcript'),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: SpeakUpDesign.body,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                key: const Key('immersive-rerecord'),
+                onPressed: controller.rerecord,
+                child: const Text('重录'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton(
+                key: const Key('immersive-confirm-turn'),
+                onPressed: controller.confirmTranscript,
+                child: const Text('发送'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ComposerProgress extends StatelessWidget {
+  const _ComposerProgress({required this.label, this.showProgress = true});
+
+  final String label;
+  final bool showProgress;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 52,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (showProgress) ...[
+            const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 10),
+          ],
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: SpeakUpDesign.body,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ComposerAction extends StatelessWidget {
+  const _ComposerAction({
+    required this.label,
+    required this.actionLabel,
+    required this.onPressed,
+  });
+
+  final String label;
+  final String actionLabel;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: SpeakUpDesign.body,
+          ),
+        ),
+        const SizedBox(width: 8),
+        FilledButton(onPressed: onPressed, child: Text(actionLabel)),
+      ],
+    );
+  }
+}
+
+AgentMessage? _latestAssistantMessage(List<AgentMessage> messages) {
+  for (final message in messages.reversed) {
+    if (message.role == AgentMessageRole.assistant) {
+      return message;
+    }
+  }
+  return null;
+}
+
+bool _canTriggerImmersiveReplay(AgentController controller) {
+  if (controller.isBusy) {
+    return false;
+  }
+  return switch (controller.recordingState) {
+    PracticeRecordingState.idle ||
+    PracticeRecordingState.awaitingConfirmation ||
+    PracticeRecordingState.reviewFailed ||
+    PracticeRecordingState.completed => true,
+    PracticeRecordingState.starting ||
+    PracticeRecordingState.recording ||
+    PracticeRecordingState.transcribing ||
+    PracticeRecordingState.submitting => false,
+  };
+}
+
+Future<void> _runBoundedUserTurnAction(ImmersiveAsyncAction? action) async {
+  if (action == null) {
+    return;
+  }
+  Future<void> guardedAction() async {
+    try {
+      await action();
+    } on Object {
+      // User input remains available when avatar interruption degrades.
+    }
+  }
+
+  final timeout = Completer<void>();
+  final timer = Timer(const Duration(milliseconds: 500), timeout.complete);
+  try {
+    await Future.any<void>([guardedAction(), timeout.future]);
+  } finally {
+    timer.cancel();
+  }
+}

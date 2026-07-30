@@ -21,6 +21,7 @@ func TestCatalogHTTPRoutesReturnCanonicalStableResponses(t *testing.T) {
 		path string
 	}{
 		{"/v1/scenario-definitions"},
+		{"/v1/ielts-speaking/question-bank"},
 		{"/v1/scenario-definitions/" + ProgrammerInterviewScenarioID},
 		{"/v1/scenario-definitions/" + ProgrammerInterviewScenarioID + "/role-definitions"},
 	}
@@ -84,6 +85,35 @@ func TestCatalogHTTPRoutesReturnCanonicalStableResponses(t *testing.T) {
 	if summaries["scn_interview_self_introduction"] ==
 		summaries["scn_interview_recruiter_screening"] {
 		t.Fatalf("distinct scenarios share one summary: %#v", summaries)
+	}
+
+	questionBankResponse := serveCatalogRequest(
+		router,
+		"/v1/ielts-speaking/question-bank",
+	)
+	var questionBank IELTSQuestionBank
+	if err := json.Unmarshal(
+		questionBankResponse.Body.Bytes(),
+		&questionBank,
+	); err != nil {
+		t.Fatalf("decode IELTS question bank: %v", err)
+	}
+	if len(questionBank.Part1Sets) != 38 ||
+		len(questionBank.TopicGroups) != 56 {
+		t.Fatalf(
+			"published IELTS bank counts = (%d, %d)",
+			len(questionBank.Part1Sets),
+			len(questionBank.TopicGroups),
+		)
+	}
+	for _, group := range questionBank.TopicGroups {
+		if !group.Published ||
+			group.Region != "mainland" ||
+			len(group.Part3Questions) < 1 ||
+			len(group.Part3Questions) > 5 ||
+			group.SupplementedQuestionCount != 0 {
+			t.Fatalf("invalid published topic group: %#v", group)
+		}
 	}
 
 	detailResponse := serveCatalogRequest(

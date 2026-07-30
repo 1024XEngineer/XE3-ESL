@@ -488,6 +488,8 @@ void main() {
       expect(confirmation.review?.title, '本次练习 · 88 分');
       expect(confirmation.review?.strength, 'You gave a concrete result.');
       expect(confirmation.review?.nextFocus, 'Name the rejected alternative.');
+      expect(confirmation.formalReview?.id, 'review-1');
+      expect(confirmation.formalReview?.result?.overallScore, 88);
     },
   );
 

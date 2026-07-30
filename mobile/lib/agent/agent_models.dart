@@ -128,16 +128,24 @@ enum PracticeRecordingState {
   completed,
 }
 
+/// Selects the product presentation without coupling navigation to a scene
+/// title or a concrete avatar vendor.
+enum AgentScenePresentationMode { standard, immersiveRoleplay }
+
 final class AgentScene {
   const AgentScene({
     required this.id,
     required this.title,
     required this.description,
+    this.scenarioType,
+    this.presentationMode = AgentScenePresentationMode.standard,
   });
 
   final String id;
   final String title;
   final String description;
+  final String? scenarioType;
+  final AgentScenePresentationMode presentationMode;
 }
 
 final class AgentMessage {
@@ -150,6 +158,8 @@ final class AgentMessage {
     this.modality = AgentMessageModality.text,
     this.audio,
     this.images = const <AgentImageAsset>[],
+    this.isStreaming = false,
+    this.hasFailed = false,
     this.actions = const <AgentMessageAction>[],
   }) : assert(
          (modality == AgentMessageModality.voice && audio != null) ||
@@ -164,22 +174,30 @@ final class AgentMessage {
   final AgentMessageModality modality;
   final AgentMessageAudio? audio;
   final List<AgentImageAsset> images;
+  final bool isStreaming;
+  final bool hasFailed;
   final List<AgentMessageAction> actions;
 
   AgentMessage copyWith({
+    String? id,
+    String? text,
     AgentMessageAudio? audio,
     bool clearAudio = false,
     List<AgentImageAsset>? images,
+    bool? isStreaming,
+    bool? hasFailed,
   }) {
     return AgentMessage(
-      id: id,
+      id: id ?? this.id,
       role: role,
-      text: text,
+      text: text ?? this.text,
       sequence: sequence,
       createdAt: createdAt,
       modality: clearAudio ? AgentMessageModality.text : modality,
       audio: clearAudio ? null : audio ?? this.audio,
       images: images ?? this.images,
+      isStreaming: isStreaming ?? this.isStreaming,
+      hasFailed: hasFailed ?? this.hasFailed,
       actions: actions,
     );
   }

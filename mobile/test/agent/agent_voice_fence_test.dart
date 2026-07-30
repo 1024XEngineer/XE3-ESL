@@ -268,19 +268,18 @@ void main() {
         ),
       ),
     );
+    await tester.tap(find.byKey(const Key('agent-show-text-composer')));
+    await tester.pump();
     await tester.enterText(
       find.byKey(const Key('agent-composer-field')),
       'Unsent text before recording',
     );
+    await tester.tap(find.byKey(const Key('agent-show-voice-composer')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('agent-voice-stop')));
     await _pumpVoiceOperation(tester);
-    expect(controller.state, AgentVoiceComposerState.awaitingConfirmation);
-
-    await tester.tap(find.byKey(const Key('agent-voice-confirm')));
-    await tester.pump();
-
     expect(controller.state, AgentVoiceComposerState.confirming);
     expect(find.byKey(const Key('agent-voice-cancel')), findsNothing);
     expect(find.text('Unsent text before recording'), findsNothing);

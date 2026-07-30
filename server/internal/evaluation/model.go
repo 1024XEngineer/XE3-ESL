@@ -13,10 +13,13 @@ import (
 const SchemaVersion = "evaluation-schema/1.0.0"
 
 var (
-	ErrInvalidRequest      = errors.New("evaluation: invalid request")
-	ErrNotFound            = errors.New("evaluation: not found")
-	ErrIdempotencyConflict = errors.New("evaluation: idempotency conflict")
-	ErrAccountUnavailable  = errors.New("evaluation: account unavailable")
+	ErrInvalidRequest          = errors.New("evaluation: invalid request")
+	ErrNotFound                = errors.New("evaluation: not found")
+	ErrIdempotencyConflict     = errors.New("evaluation: idempotency conflict")
+	ErrAccountUnavailable      = errors.New("evaluation: account unavailable")
+	ErrDeletionGenerationStale = errors.New(
+		"evaluation: deletion generation stale",
+	)
 )
 
 type Channel string
@@ -312,7 +315,7 @@ var (
 		`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`,
 	)
 	identifierPattern = regexp.MustCompile(
-		`^[A-Za-z][A-Za-z0-9._:-]{0,127}$`,
+		`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
 	)
 	versionPattern = regexp.MustCompile(
 		`^[A-Za-z][A-Za-z0-9._:/-]{0,127}$`,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:speakup/features/preparation/ielts_question_bank.dart';
 import 'package:speakup/features/preparation/preparation_launch_client.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
@@ -13,7 +14,9 @@ const _scenarioFamilies = <String>{'INTERVIEW', 'EXAM', 'WORKPLACE', 'DAILY'};
 const _scenarioModels = <String>{
   'PROJECT_EXPERIENCE_DEEP_DIVE',
   'INTERVIEW_BASIC_DIALOGUE',
+  'IELTS_SPEAKING_PART_1',
   'IELTS_SPEAKING_PART_2',
+  'IELTS_SPEAKING_PART_3',
   'IELTS_SPEAKING_FULL_MOCK',
   'EXAM_BASIC_DIALOGUE',
   'PROGRESS_AND_RISK_UPDATE',
@@ -135,11 +138,7 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
         'selected_role_ids': <String>[input.selection.roleDefinitionId],
         'practice_option_id': input.selection.practiceOptionId,
         'practice_option_version': input.selection.practiceOptionVersion,
-        'max_effective_turns':
-            input.selection.practiceOptionType ==
-                PreparationOptionType.fullSimulation
-            ? 6
-            : 3,
+        'max_effective_turns': _planMaxEffectiveTurns(input.selection),
       },
       stage: PreparationLaunchStage.plan,
     );
@@ -174,9 +173,11 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
           '/practice-start-confirmations',
       idempotencyKey: idempotencyKey,
       body: <String, Object?>{
+        'practice_plan_id': planId,
         'expected_plan_revision': input.expectedPlanRevision,
         'user_confirmed': true,
-        'practice_plan_id': planId,
+        if (input.selection.ieltsSelection case final selection?)
+          'ielts_selection': selection.toJson(),
       },
       stage: PreparationLaunchStage.session,
     );
@@ -419,10 +420,20 @@ PreparationPracticePlan _plan(
       'scenario_config_version',
       'preparation_profile_id',
       'selected_role_ids',
+      'preparation_snapshot',
+      'catalog_snapshot',
+      'session_policy',
+      'practice_focuses',
       'plan_revision',
       'practice_plan_status',
       'created_at',
       'updated_at',
+    },
+    optional: const <String>{
+      'preparation_snapshot',
+      'catalog_snapshot',
+      'session_policy',
+      'practice_focuses',
     },
   );
   final context = AgentPracticeContext(
@@ -449,6 +460,12 @@ PreparationPracticePlan _plan(
           expected.preparationProfileId ||
       roles.length != 1 ||
       roles.single != expected.selection.roleDefinitionId) {
+    throw _invalidResponse();
+  }
+  if (object['preparation_snapshot'] is! Map<String, Object?> ||
+      object['catalog_snapshot'] is! Map<String, Object?> ||
+      object['session_policy'] is! Map<String, Object?> ||
+      object['practice_focuses'] is! List<Object?>) {
     throw _invalidResponse();
   }
   _dateTime(object['created_at']);
@@ -525,6 +542,7 @@ PreparationPracticeBootstrap _bootstrap(
       'practice_focuses',
       'created_at',
     },
+    optional: const <String>{'ielts_assignment'},
   );
   if (_resourceId(snapshotObject['snapshot_id']) != snapshotId ||
       _resourceId(snapshotObject['practice_session_id']) != sessionId ||
@@ -565,10 +583,15 @@ PreparationPracticeBootstrap _bootstrap(
     snapshotObject['practice_option'],
     expected.selection,
   );
+  final ieltsTurnCount = _validateIeltsAssignment(
+    snapshotObject['ielts_assignment'],
+    expected.selection.ieltsSelection,
+  );
   final maxEffectiveTurns = _validateSessionPolicy(
     snapshotObject['session_policy'],
     optionType: expected.selection.practiceOptionType,
     scenarioModel: expected.selection.scenarioModel,
+    expectedIeltsTurns: ieltsTurnCount,
   );
   _validateObjectives(snapshotObject['practice_focuses'], allowEmpty: true);
   _dateTime(snapshotObject['created_at']);
@@ -827,10 +850,27 @@ void _validatePracticeOption(
   _text(object['display_name']);
 }
 
+int _planMaxEffectiveTurns(PreparationLaunchSelection selection) {
+  if (selection.practiceOptionType == PreparationOptionType.focus) {
+    return 3;
+  }
+  return switch (selection.scenarioModel) {
+    'IELTS_SPEAKING_FULL_MOCK' => 14,
+    'IELTS_SPEAKING_PART_1' => 8,
+    // The Part 2 catalog preview has four frozen blueprints. The selected
+    // question group replaces this preview with its exact turn count when the
+    // Session is created.
+    'IELTS_SPEAKING_PART_2' => 4,
+    'IELTS_SPEAKING_PART_3' => 5,
+    _ => 6,
+  };
+}
+
 int _validateSessionPolicy(
   Object? value, {
   required PreparationOptionType optionType,
   required String scenarioModel,
+  required int? expectedIeltsTurns,
 }) {
   final object = _object(
     value,
@@ -847,11 +887,16 @@ int _validateSessionPolicy(
   final minimum = _version(object['min_effective_turns']);
   final maximum = _version(object['max_effective_turns']);
   final checkpoint = _version(object['coverage_checkpoint_turn']);
-  final isIeltsFullMock =
-      scenarioModel == 'IELTS_SPEAKING_FULL_MOCK' &&
-      optionType == PreparationOptionType.fullSimulation;
-  final expectedMaximum = isIeltsFullMock
-      ? 14
+  final isFixedIelts = scenarioModel.startsWith('IELTS_SPEAKING_');
+  final expectedMaximum = isFixedIelts
+      ? expectedIeltsTurns ??
+            switch (scenarioModel) {
+              'IELTS_SPEAKING_FULL_MOCK' => 14,
+              'IELTS_SPEAKING_PART_1' => 8,
+              'IELTS_SPEAKING_PART_2' => 6,
+              'IELTS_SPEAKING_PART_3' => 5,
+              _ => throw _invalidResponse(),
+            }
       : switch (optionType) {
           PreparationOptionType.fullSimulation => 6,
           PreparationOptionType.focus => 3,
@@ -860,9 +905,9 @@ int _validateSessionPolicy(
       minimum > checkpoint ||
       checkpoint > maximum ||
       maximum != expectedMaximum ||
-      (isIeltsFullMock &&
-          (minimum != 14 ||
-              checkpoint != 14 ||
+      (isFixedIelts &&
+          (minimum != expectedMaximum ||
+              checkpoint != expectedMaximum ||
               object['max_follow_ups_per_question'] != 0)) ||
       object['max_follow_ups_per_question'] is! int ||
       (object['max_follow_ups_per_question'] as int) < 0) {
@@ -1054,7 +1099,9 @@ bool _validScenarioFamilyModel(String family, String model) {
   return switch ((family, model)) {
     ('INTERVIEW', 'PROJECT_EXPERIENCE_DEEP_DIVE') ||
     ('INTERVIEW', 'INTERVIEW_BASIC_DIALOGUE') ||
+    ('EXAM', 'IELTS_SPEAKING_PART_1') ||
     ('EXAM', 'IELTS_SPEAKING_PART_2') ||
+    ('EXAM', 'IELTS_SPEAKING_PART_3') ||
     ('EXAM', 'IELTS_SPEAKING_FULL_MOCK') ||
     ('EXAM', 'EXAM_BASIC_DIALOGUE') ||
     ('WORKPLACE', 'PROGRESS_AND_RISK_UPDATE') ||
@@ -1063,6 +1110,80 @@ bool _validScenarioFamilyModel(String family, String model) {
     ('DAILY', 'DAILY_BASIC_DIALOGUE') => true,
     _ => false,
   };
+}
+
+int? _validateIeltsAssignment(Object? value, IeltsPracticeSelection? expected) {
+  if (expected == null) {
+    if (value != null) {
+      throw _invalidResponse();
+    }
+    return null;
+  }
+  final object = _object(
+    value,
+    required: const <String>{
+      'bank_id',
+      'season',
+      'mode',
+      'part_1_questions',
+      'part_2_questions',
+      'part_3_questions',
+      'turn_blueprints',
+    },
+    optional: const <String>{
+      'part_1_set_id',
+      'topic_group_id',
+      'topic_title',
+      'part_2_cue_card',
+    },
+  );
+  final part1Count = object['part_1_questions'];
+  final part2Count = object['part_2_questions'];
+  final part3Count = object['part_3_questions'];
+  final turns = _nonEmptyTextList(object['turn_blueprints']);
+  if (_resourceId(object['bank_id']).isEmpty ||
+      _text(object['season']).isEmpty ||
+      object['mode'] != expected.mode.wireName ||
+      object['part_1_set_id'] != expected.part1SetId ||
+      object['topic_group_id'] != expected.topicGroupId ||
+      part1Count is! int ||
+      part2Count is! int ||
+      part3Count is! int) {
+    throw _invalidResponse();
+  }
+  final validShape = switch (expected.mode) {
+    IeltsPracticeMode.fullMock =>
+      part1Count == 8 &&
+          part2Count == 1 &&
+          part3Count >= 1 &&
+          part3Count <= 5 &&
+          turns.length == 9 + part3Count,
+    IeltsPracticeMode.part1 =>
+      part1Count == 8 &&
+          part2Count == 0 &&
+          part3Count == 0 &&
+          turns.length == 8,
+    IeltsPracticeMode.part2 =>
+      part1Count == 0 &&
+          part2Count == 1 &&
+          part3Count >= 1 &&
+          part3Count <= 5 &&
+          turns.length == 1 + part3Count,
+    IeltsPracticeMode.part3 =>
+      part1Count == 0 &&
+          part2Count == 0 &&
+          part3Count >= 1 &&
+          part3Count <= 5 &&
+          turns.length == part3Count,
+  };
+  if (!validShape) {
+    throw _invalidResponse();
+  }
+  if (expected.topicGroupId != null) {
+    _text(object['topic_title']);
+    _text(object['part_2_cue_card']);
+  }
+  return turns.length;
 }
 
 void _requireDisplayText(String value) {

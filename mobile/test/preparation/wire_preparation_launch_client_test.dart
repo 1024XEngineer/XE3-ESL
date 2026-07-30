@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/features/preparation/ielts_question_bank.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
@@ -96,6 +97,81 @@ void main() {
       }
     },
   );
+
+  test('sends the catalog-compatible IELTS plan turn budgets', () async {
+    const cases = <(String, int)>[
+      ('IELTS_SPEAKING_FULL_MOCK', 14),
+      ('IELTS_SPEAKING_PART_1', 8),
+      ('IELTS_SPEAKING_PART_2', 4),
+      ('IELTS_SPEAKING_PART_3', 5),
+    ];
+
+    for (final testCase in cases) {
+      final model = testCase.$1;
+      final expectedTurns = testCase.$2;
+      final scenarioId = 'scenario-${model.toLowerCase()}';
+      final configId = 'config-${model.toLowerCase()}';
+      final selection = PreparationLaunchSelection(
+        scenarioDefinitionId: scenarioId,
+        scenarioDefinitionVersion: 1,
+        scenarioType: 'EXAM',
+        scenarioModel: model,
+        scenarioDisplayName: model,
+        scenarioDescription: 'IELTS practice',
+        scenarioConfigId: configId,
+        scenarioConfigVersion: 1,
+        roleDefinitionId: _roleId,
+        roleDefinitionVersion: 1,
+        practiceOptionId: _fullOptionId,
+        practiceOptionType: PreparationOptionType.fullSimulation,
+        practiceOptionVersion: 1,
+      );
+      final response = _planJson()
+        ..['scenario_definition_id'] = scenarioId
+        ..['scenario_type'] = 'EXAM'
+        ..['scenario_model'] = model
+        ..['scenario_config_id'] = configId;
+      final transport = _QueueTransport([_response(response)]);
+      final client = _client(transport);
+
+      await client.createPlan(
+        input: CreatePreparationPlanInput(
+          context: _context,
+          selection: selection,
+          preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
+          preparationUserId: _userId,
+        ),
+        idempotencyKey: 'plan-$expectedTurns-key',
+      );
+
+      final body =
+          jsonDecode(transport.calls.single.body!) as Map<String, Object?>;
+      expect(body['max_effective_turns'], expectedTurns, reason: model);
+    }
+  });
+
+  test('accepts the configured preview fields in a created Plan', () async {
+    final response = _planJson()
+      ..['preparation_snapshot'] = <String, Object?>{}
+      ..['catalog_snapshot'] = <String, Object?>{}
+      ..['session_policy'] = <String, Object?>{}
+      ..['practice_focuses'] = <Object?>[];
+    final client = _client(_QueueTransport([_response(response)]));
+
+    final plan = await client.createPlan(
+      input: const CreatePreparationPlanInput(
+        context: _context,
+        selection: _selection,
+        preparationProfileId: _profileId,
+        preparationSnapshotId: _preparationSnapshotId,
+        preparationUserId: _userId,
+      ),
+      idempotencyKey: 'configured-plan-key',
+    );
+
+    expect(plan.id, _planId);
+  });
 
   test(
     'marks malformed 201 creates ambiguous and retries Session with one key',
@@ -236,7 +312,8 @@ void main() {
 
   test('rejects a Plan owned by a different user', () async {
     final response = _planJson()..['user_id'] = 'user-other';
-    final client = _client(_QueueTransport([_response(response)]));
+    final transport = _QueueTransport([_response(response)]);
+    final client = _client(transport);
 
     await expectLater(
       client.createPlan(
@@ -255,6 +332,26 @@ void main() {
 
   test('rejects a Plan bound to a different Agent Matter', () async {
     final response = _planJson()..['matter_id'] = 'matter-other';
+    final transport = _QueueTransport([_response(response)]);
+    final client = _client(transport);
+
+    await expectLater(
+      client.createPlan(
+        input: const CreatePreparationPlanInput(
+          context: _context,
+          selection: _selection,
+          preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
+          preparationUserId: _userId,
+        ),
+        idempotencyKey: 'plan-key-123456',
+      ),
+      throwsA(_invalidResponse),
+    );
+  });
+
+  test('rejects an unknown Plan response field', () async {
+    final response = _planJson()..['unexpected_field'] = true;
     final client = _client(_QueueTransport([_response(response)]));
 
     await expectLater(
@@ -414,7 +511,24 @@ void main() {
       ..['max_effective_turns'] = 14
       ..['coverage_checkpoint_turn'] = 14
       ..['max_follow_ups_per_question'] = 0;
-    final client = _client(_QueueTransport([_response(response)]));
+    snapshot['ielts_assignment'] = {
+      'bank_id': 'ielts-2026-05-08',
+      'season': '2026-05-08',
+      'mode': 'FULL_MOCK',
+      'part_1_set_id': 'p1-002',
+      'topic_group_id': 'p23-new-001',
+      'topic_title': '语言学习',
+      'part_2_cue_card': 'Describe a language you would like to learn',
+      'part_1_questions': 8,
+      'part_2_questions': 1,
+      'part_3_questions': 5,
+      'turn_blueprints': List<String>.generate(
+        14,
+        (index) => 'Question ${index + 1}',
+      ),
+    };
+    final transport = _QueueTransport([_response(response)]);
+    final client = _client(transport);
 
     final bootstrap = await client.createSession(
       planId: _planId,
@@ -433,6 +547,16 @@ void main() {
 
     expect(bootstrap.maxEffectiveTurns, 14);
     expect(bootstrap.session.scenarioModel, 'IELTS_SPEAKING_FULL_MOCK');
+    expect(jsonDecode(transport.calls.single.body!), {
+      'practice_plan_id': _planId,
+      'expected_plan_revision': 1,
+      'user_confirmed': true,
+      'ielts_selection': {
+        'mode': 'FULL_MOCK',
+        'part_1_set_id': 'p1-002',
+        'topic_group_id': 'p23-new-001',
+      },
+    });
   });
 
   test('fences a response that completes after account cleanup', () async {
@@ -565,24 +689,38 @@ Map<String, Object?> _snapshotJson() => {
   'created_at': _time,
 };
 
-Map<String, Object?> _planJson() => {
-  'practice_plan_id': _planId,
-  'user_id': _userId,
-  'agent_thread_id': _threadId,
-  'matter_id': _matterId,
-  'scenario_definition_id': _scenarioId,
-  'scenario_definition_version': 1,
-  'scenario_type': 'INTERVIEW',
-  'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
-  'scenario_config_id': _configId,
-  'scenario_config_version': 1,
-  'preparation_profile_id': _profileId,
-  'selected_role_ids': [_roleId],
-  'plan_revision': 1,
-  'practice_plan_status': 'ready',
-  'created_at': _time,
-  'updated_at': _time,
-};
+Map<String, Object?> _planJson() {
+  final snapshot = _bootstrapJson()['snapshot']! as Map<String, Object?>;
+  final participants = snapshot['participants']! as List<Object?>;
+  final facilitator = participants.first as Map<String, Object?>;
+  return {
+    'practice_plan_id': _planId,
+    'user_id': _userId,
+    'agent_thread_id': _threadId,
+    'matter_id': _matterId,
+    'scenario_definition_id': _scenarioId,
+    'scenario_definition_version': 1,
+    'scenario_type': 'INTERVIEW',
+    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+    'scenario_config_id': _configId,
+    'scenario_config_version': 1,
+    'preparation_profile_id': _profileId,
+    'selected_role_ids': [_roleId],
+    'preparation_snapshot': snapshot['preparation_snapshot'],
+    'catalog_snapshot': {
+      'scenario_definition': snapshot['scenario_definition_snapshot'],
+      'scenario_config': snapshot['scenario_config_snapshot'],
+      'selected_roles': [facilitator['role_snapshot']],
+      'practice_option': snapshot['practice_option'],
+    },
+    'session_policy': snapshot['session_policy'],
+    'practice_focuses': snapshot['practice_focuses'],
+    'plan_revision': 1,
+    'practice_plan_status': 'ready',
+    'created_at': _time,
+    'updated_at': _time,
+  };
+}
 
 Map<String, Object?> _bootstrapJson() => {
   'practice_session': {
@@ -789,4 +927,9 @@ const _ieltsFullSelection = PreparationLaunchSelection(
   practiceOptionId: _ieltsFullOptionId,
   practiceOptionType: PreparationOptionType.fullSimulation,
   practiceOptionVersion: 2,
+  ieltsSelection: IeltsPracticeSelection(
+    mode: IeltsPracticeMode.fullMock,
+    part1SetId: 'p1-002',
+    topicGroupId: 'p23-new-001',
+  ),
 );

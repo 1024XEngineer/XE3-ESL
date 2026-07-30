@@ -19,6 +19,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	conversationpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
@@ -56,21 +57,22 @@ type VoicePorts struct {
 }
 
 type VoiceConfiguration struct {
-	Recognizer                ai.SpeechRecognizer
-	Synthesizer               ai.SpeechSynthesizer
-	TemporaryAudio            conversation.TemporaryAudioVault
-	Ports                     VoicePorts
-	Recordings                conversation.VoiceRecordingLifecycle
-	ObjectStore               objectstore.Store
-	AgentVoiceMessagesEnabled bool
-	ScratchDirectory          string
-	ObjectReadAllowedHosts    []string
-	AudioStagedTTL            time.Duration
-	AudioUploadLease          time.Duration
-	ASRLease                  time.Duration
-	ReviewGenerationTimeout   time.Duration
-	AudioReadTimeout          time.Duration
-	ReviewHistoryCursorKey    []byte
+	Recognizer                 ai.SpeechRecognizer
+	Synthesizer                ai.SpeechSynthesizer
+	TemporaryAudio             conversation.TemporaryAudioVault
+	Ports                      VoicePorts
+	Recordings                 conversation.VoiceRecordingLifecycle
+	ObjectStore                objectstore.Store
+	AgentVoiceMessagesEnabled  bool
+	ScratchDirectory           string
+	ObjectReadAllowedHosts     []string
+	AudioStagedTTL             time.Duration
+	AudioUploadLease           time.Duration
+	ASRLease                   time.Duration
+	ReviewGenerationTimeout    time.Duration
+	AudioReadTimeout           time.Duration
+	ReviewHistoryCursorKey     []byte
+	InterviewShadowCoordinator *evaluation.InterviewShadowCoordinator
 }
 
 type AgentImageConfiguration struct {
@@ -270,10 +272,15 @@ func buildProductionVoiceApplication(
 		sourceReader,
 		reviewGenerator,
 	)
+	var interviewShadowCoordinator interviewShadowCompletionCoordinator
+	if configuration.InterviewShadowCoordinator != nil {
+		interviewShadowCoordinator = configuration.InterviewShadowCoordinator
+	}
 	reviewAdapter := &voiceReviewAdapter{
-		service:      ensureReviews,
-		history:      reviewHistory,
-		sourceReader: sourceReader,
+		service:                    ensureReviews,
+		history:                    reviewHistory,
+		sourceReader:               sourceReader,
+		interviewShadowCoordinator: interviewShadowCoordinator,
 	}
 	orchestrator, err := agent.NewVoiceRoundOrchestrator(
 		conversationService,
@@ -1161,7 +1168,7 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		return conversation.VoiceQuestion{}, err
 	}
 	content := ""
-	if session.ScenarioModel == "IELTS_SPEAKING_FULL_MOCK" {
+	if isFrozenIELTSSpeakingModel(session.ScenarioModel) {
 		content, err = frozenIELTSFullMockQuestion(session, sequence)
 	} else {
 		var generated ai.TextResult
@@ -1204,6 +1211,18 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		return conversation.VoiceQuestion{}, mapConversationError(err)
 	}
 	return mapVoiceQuestion(saved), nil
+}
+
+func isFrozenIELTSSpeakingModel(model string) bool {
+	switch model {
+	case "IELTS_SPEAKING_PART_1",
+		"IELTS_SPEAKING_PART_2",
+		"IELTS_SPEAKING_PART_3",
+		"IELTS_SPEAKING_FULL_MOCK":
+		return true
+	default:
+		return false
+	}
 }
 
 func frozenIELTSFullMockQuestion(
@@ -1379,9 +1398,25 @@ func (adapter *voiceCheckpointAdapter) LatestTurn(
 }
 
 type voiceReviewAdapter struct {
-	service      *review.EnsureService
-	history      *review.HistoryService
-	sourceReader review.ReviewSourceReader
+	service                    voiceReviewEnsurer
+	history                    *review.HistoryService
+	sourceReader               review.ReviewSourceReader
+	interviewShadowCoordinator interviewShadowCompletionCoordinator
+}
+
+type voiceReviewEnsurer interface {
+	EnsureReview(
+		context.Context,
+		review.EnsureReviewCommand,
+	) (review.FormalReview, error)
+}
+
+type interviewShadowCompletionCoordinator interface {
+	EnsureForCompletedInterview(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (evaluation.Evaluation, bool, error)
 }
 
 func (adapter *voiceReviewAdapter) EnsureSessionReview(
@@ -1420,6 +1455,18 @@ func (adapter *voiceReviewAdapter) EnsureSessionReview(
 	)
 	if err != nil {
 		return agent.VoiceReviewCheckpoint{}, mapReviewError(err)
+	}
+	if snapshot.EvaluationContext.ContextType ==
+		review.ContextInterviewProjectDeepDive &&
+		adapter.interviewShadowCoordinator != nil {
+		if _, _, err := adapter.interviewShadowCoordinator.
+			EnsureForCompletedInterview(
+				ctx,
+				actor,
+				source.SessionID,
+			); err != nil {
+			return agent.VoiceReviewCheckpoint{}, err
+		}
 	}
 	return agent.VoiceReviewCheckpoint{
 		ID:           formalReview.ID,
@@ -1569,11 +1616,12 @@ func mapVoiceSessionReview(
 	)
 	for index, conclusion := range formalReview.Result.Conclusions {
 		conclusions[index] = agent.VoiceReviewConclusion{
-			Key:        conclusion.Key,
-			Category:   conclusion.Category,
-			Score:      conclusion.Score,
-			Message:    conclusion.Message,
-			Suggestion: conclusion.Suggestion,
+			Key:          conclusion.Key,
+			Category:     conclusion.Category,
+			Score:        conclusion.Score,
+			ScorePresent: formalReview.ImplementationVersion == voiceReviewImplementation,
+			Message:      conclusion.Message,
+			Suggestion:   conclusion.Suggestion,
 		}
 	}
 	feedback := make(
@@ -1940,16 +1988,19 @@ func (generator *voiceReviewGenerator) GenerateReview(
 	)
 	result, err := generator.generator.Generate(
 		generationContext,
-		ai.TextRequest{Messages: []ai.TextMessage{
-			{
-				Role:    ai.TextRoleSystem,
-				Content: reviewGenerationSystemContract,
+		ai.TextRequest{
+			ResponseFormat: ai.TextResponseFormatJSON,
+			Messages: []ai.TextMessage{
+				{
+					Role:    ai.TextRoleSystem,
+					Content: reviewGenerationSystemContract,
+				},
+				{
+					Role:    ai.TextRoleUser,
+					Content: prompt,
+				},
 			},
-			{
-				Role:    ai.TextRoleUser,
-				Content: prompt,
-			},
-		}},
+		},
 	)
 	if err != nil {
 		return review.GeneratedReview{}, err
@@ -2062,7 +2113,7 @@ type generatedEvidenceAnchor struct {
 type generatedConclusion struct {
 	Key        string                    `json:"key"`
 	Category   string                    `json:"category"`
-	Score      int                       `json:"score"`
+	Score      *int                      `json:"score"`
 	Message    string                    `json:"message"`
 	Suggestion string                    `json:"suggestion"`
 	Evidence   []generatedEvidenceAnchor `json:"evidence"`
@@ -2105,12 +2156,16 @@ func parseVoiceReviewResult(content string) (review.GeneratedReview, error) {
 	}
 	links := make([]review.EvidenceLink, 0)
 	for index, conclusion := range payload.Conclusions {
+		if conclusion.Score == nil {
+			return review.GeneratedReview{}, review.ErrInvalidReview
+		}
 		result.Conclusions[index] = review.ReviewConclusion{
-			Key:        conclusion.Key,
-			Category:   conclusion.Category,
-			Score:      conclusion.Score,
-			Message:    conclusion.Message,
-			Suggestion: conclusion.Suggestion,
+			Key:          conclusion.Key,
+			Category:     conclusion.Category,
+			Score:        *conclusion.Score,
+			ScorePresent: true,
+			Message:      conclusion.Message,
+			Suggestion:   conclusion.Suggestion,
 		}
 		links = appendGeneratedEvidenceLinks(
 			links,

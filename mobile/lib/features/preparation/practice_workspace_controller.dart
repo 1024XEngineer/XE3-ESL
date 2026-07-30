@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/preparation/practice_launch_record_store.dart';
 
 final class PracticeWorkspaceLease {
@@ -71,6 +72,9 @@ final class PracticeWorkspaceController extends ChangeNotifier {
   String? get currentMatterId => _current?.matterId;
   String? get currentSessionId => _current?.sessionId;
   String? get currentScenarioId => _current?.scenarioId;
+  String? get currentScenarioType => _current?.scenarioType;
+  AgentScenePresentationMode get currentPresentationMode =>
+      _current?.presentationMode ?? AgentScenePresentationMode.standard;
 
   Future<void> activateAccount(String accountId) async {
     await _activeOperationDone?.future;
@@ -264,12 +268,16 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     required String sessionId,
     required String scenarioId,
     required String scenarioTitle,
+    String? scenarioType,
+    AgentScenePresentationMode presentationMode =
+        AgentScenePresentationMode.standard,
   }) async {
     if (!_canStartOperation() ||
         !_validOpaqueId(matterId) ||
         !_validOpaqueId(sessionId) ||
         !_validOpaqueId(scenarioId) ||
-        !_validTitle(scenarioTitle)) {
+        !_validTitle(scenarioTitle) ||
+        !_validScenePresentation(scenarioType, presentationMode)) {
       if (!_busy) {
         _setError('练习记录不完整，暂时无法保存。');
       }
@@ -293,6 +301,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
         sessionId: sessionId,
         scenarioId: scenarioId,
         scenarioTitle: scenarioTitle,
+        scenarioType: scenarioType,
+        presentationMode: presentationMode,
       );
       _current = committed;
       notifyListeners();
@@ -701,6 +711,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       sessionId: sessionId,
       scenarioId: matter.scene.id,
       scenarioTitle: matter.scene.title,
+      scenarioType: matter.scene.scenarioType,
+      presentationMode: matter.scene.presentationMode,
     );
   }
 
@@ -973,6 +985,8 @@ final class _StoredPracticeWorkspace {
     required this.sessionId,
     required this.scenarioId,
     required this.scenarioTitle,
+    required this.scenarioType,
+    required this.presentationMode,
   });
 
   factory _StoredPracticeWorkspace.pending({
@@ -990,10 +1004,12 @@ final class _StoredPracticeWorkspace {
       sessionId: null,
       scenarioId: null,
       scenarioTitle: null,
+      scenarioType: null,
+      presentationMode: AgentScenePresentationMode.standard,
     );
   }
 
-  static const schemaVersion = 1;
+  static const schemaVersion = 2;
 
   final String accountId;
   final String operationId;
@@ -1003,6 +1019,8 @@ final class _StoredPracticeWorkspace {
   final String? sessionId;
   final String? scenarioId;
   final String? scenarioTitle;
+  final String? scenarioType;
+  final AgentScenePresentationMode presentationMode;
 
   bool get isCommitted =>
       matterId != null &&
@@ -1021,6 +1039,9 @@ final class _StoredPracticeWorkspace {
     required String sessionId,
     required String scenarioId,
     required String scenarioTitle,
+    String? scenarioType,
+    AgentScenePresentationMode presentationMode =
+        AgentScenePresentationMode.standard,
   }) {
     return _StoredPracticeWorkspace(
       accountId: accountId,
@@ -1031,6 +1052,8 @@ final class _StoredPracticeWorkspace {
       sessionId: sessionId,
       scenarioId: scenarioId,
       scenarioTitle: scenarioTitle,
+      scenarioType: scenarioType,
+      presentationMode: presentationMode,
     );
   }
 
@@ -1044,6 +1067,8 @@ final class _StoredPracticeWorkspace {
       sessionId: sessionId,
       scenarioId: scenarioId,
       scenarioTitle: scenarioTitle,
+      scenarioType: scenarioType,
+      presentationMode: presentationMode,
     );
   }
 
@@ -1058,6 +1083,8 @@ final class _StoredPracticeWorkspace {
       'practice_session_id': sessionId,
       'scenario_definition_id': scenarioId,
       'scenario_title': scenarioTitle,
+      'scenario_type': scenarioType,
+      'presentation_mode': presentationMode.name,
     });
   }
 
@@ -1067,19 +1094,37 @@ final class _StoredPracticeWorkspace {
   }) {
     try {
       final decoded = jsonDecode(encoded);
-      if (decoded is! Map<String, Object?> ||
-          !setEquals(decoded.keys.toSet(), const <String>{
-            'schema_version',
-            'account_id',
-            'operation_id',
-            'practice_thread_id',
-            'return_thread_id',
-            'matter_id',
-            'practice_session_id',
-            'scenario_definition_id',
-            'scenario_title',
-          }) ||
-          decoded['schema_version'] != schemaVersion ||
+      if (decoded is! Map<String, Object?>) {
+        return null;
+      }
+      final version = decoded['schema_version'];
+      final expectedKeys = version == 1
+          ? const <String>{
+              'schema_version',
+              'account_id',
+              'operation_id',
+              'practice_thread_id',
+              'return_thread_id',
+              'matter_id',
+              'practice_session_id',
+              'scenario_definition_id',
+              'scenario_title',
+            }
+          : const <String>{
+              'schema_version',
+              'account_id',
+              'operation_id',
+              'practice_thread_id',
+              'return_thread_id',
+              'matter_id',
+              'practice_session_id',
+              'scenario_definition_id',
+              'scenario_title',
+              'scenario_type',
+              'presentation_mode',
+            };
+      if (!setEquals(decoded.keys.toSet(), expectedKeys) ||
+          (version != 1 && version != schemaVersion) ||
           decoded['account_id'] != expectedAccountId) {
         return null;
       }
@@ -1091,6 +1136,13 @@ final class _StoredPracticeWorkspace {
       final sessionId = decoded['practice_session_id'];
       final scenarioId = decoded['scenario_definition_id'];
       final scenarioTitle = decoded['scenario_title'];
+      final scenarioType = version == 1 ? null : decoded['scenario_type'];
+      final presentationModeName = version == 1
+          ? AgentScenePresentationMode.standard.name
+          : decoded['presentation_mode'];
+      final presentationMode = AgentScenePresentationMode.values
+          .where((value) => value.name == presentationModeName)
+          .firstOrNull;
       if (accountId is! String ||
           operationId is! String ||
           practiceThreadId is! String ||
@@ -1099,6 +1151,8 @@ final class _StoredPracticeWorkspace {
           (sessionId != null && sessionId is! String) ||
           (scenarioId != null && scenarioId is! String) ||
           (scenarioTitle != null && scenarioTitle is! String) ||
+          (scenarioType != null && scenarioType is! String) ||
+          presentationMode == null ||
           !_validOpaqueId(accountId) ||
           !_validOperationId(operationId) ||
           !_validOpaqueId(practiceThreadId) ||
@@ -1121,7 +1175,11 @@ final class _StoredPracticeWorkspace {
           (!_validOpaqueId(matterId! as String) ||
               !_validOpaqueId(sessionId! as String) ||
               !_validOpaqueId(scenarioId! as String) ||
-              !_validTitle(scenarioTitle! as String))) {
+              !_validTitle(scenarioTitle! as String) ||
+              !_validScenePresentation(
+                scenarioType as String?,
+                presentationMode,
+              ))) {
         return null;
       }
       return _StoredPracticeWorkspace(
@@ -1133,11 +1191,29 @@ final class _StoredPracticeWorkspace {
         sessionId: sessionId as String?,
         scenarioId: scenarioId as String?,
         scenarioTitle: scenarioTitle as String?,
+        scenarioType: scenarioType as String?,
+        presentationMode: presentationMode,
       );
     } on Object {
       return null;
     }
   }
+}
+
+bool _validScenePresentation(
+  String? scenarioType,
+  AgentScenePresentationMode presentationMode,
+) {
+  if (scenarioType != null &&
+      (scenarioType.isEmpty ||
+          scenarioType.length > 32 ||
+          scenarioType.trim() != scenarioType ||
+          !RegExp(r'^[A-Z][A-Z0-9_]*$').hasMatch(scenarioType))) {
+    return false;
+  }
+  return presentationMode != AgentScenePresentationMode.immersiveRoleplay ||
+      scenarioType == 'WORKPLACE' ||
+      scenarioType == 'DAILY';
 }
 
 bool _validOpaqueId(String value) {

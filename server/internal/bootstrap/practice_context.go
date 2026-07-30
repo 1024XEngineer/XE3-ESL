@@ -788,6 +788,50 @@ func (r *practiceCatalogContextReader) ReadSessionCatalog(
 	}, nil
 }
 
+func (r *practiceCatalogContextReader) ResolveIELTSQuestionSet(
+	request practice.IELTSQuestionSetRequest,
+) (practice.IELTSQuestionSetSelection, error) {
+	reader, ok := r.catalog.(preparation.IELTSQuestionBankReader)
+	if !ok {
+		return practice.IELTSQuestionSetSelection{},
+			practicepersistence.ErrConflict
+	}
+	resolved, err := reader.ResolveIELTSQuestionSet(
+		preparation.IELTSQuestionSetSelection{
+			Mode:         preparation.IELTSPracticeMode(request.Mode),
+			Part1SetID:   request.Part1SetID,
+			TopicGroupID: request.TopicGroupID,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, preparation.ErrIELTSQuestionSetNotFound):
+			return practice.IELTSQuestionSetSelection{},
+				practicepersistence.ErrNotFound
+		case errors.Is(err, preparation.ErrIELTSPracticeModeInvalid),
+			errors.Is(err, preparation.ErrIELTSQuestionBankUnavailable):
+			return practice.IELTSQuestionSetSelection{},
+				practicepersistence.ErrConflict
+		default:
+			return practice.IELTSQuestionSetSelection{},
+				fmt.Errorf("bootstrap: resolve IELTS question set: %w", err)
+		}
+	}
+	return practice.IELTSQuestionSetSelection{
+		BankID:         resolved.BankID,
+		Season:         resolved.Season,
+		Mode:           string(resolved.Mode),
+		Part1SetID:     resolved.Part1SetID,
+		TopicGroupID:   resolved.TopicGroupID,
+		TopicTitle:     resolved.TopicTitle,
+		Part2CueCard:   resolved.Part2CueCard,
+		TurnBlueprints: append([]string(nil), resolved.TurnBlueprints...),
+		Part1Questions: resolved.Part1Questions,
+		Part2Questions: resolved.Part2Questions,
+		Part3Questions: resolved.Part3Questions,
+	}, nil
+}
+
 func exactPlanCatalogRequest(
 	request practice.PlanCatalogRequest,
 	detail preparation.ScenarioDetail,
@@ -929,8 +973,9 @@ func mapPracticeCatalogError(err error) error {
 }
 
 var (
-	_ practice.AgentContextReader       = (*agentPracticeContextReader)(nil)
-	_ practice.PreparationContextReader = (*preparationPracticeContextReader)(nil)
-	_ practice.CatalogContextReader     = (*practiceCatalogContextReader)(nil)
-	_ RouteRegistrar                    = (*bearerProtectedRoutes)(nil)
+	_ practice.AgentContextReader        = (*agentPracticeContextReader)(nil)
+	_ practice.PreparationContextReader  = (*preparationPracticeContextReader)(nil)
+	_ practice.CatalogContextReader      = (*practiceCatalogContextReader)(nil)
+	_ practice.IELTSCatalogContextReader = (*practiceCatalogContextReader)(nil)
+	_ RouteRegistrar                     = (*bearerProtectedRoutes)(nil)
 )

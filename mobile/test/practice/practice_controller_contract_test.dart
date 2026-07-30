@@ -12,10 +12,12 @@ import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/review/formal_review.dart';
 
 void main() {
   test('consumes server turnLimit and Review from confirmation', () async {
-    final practice = _TwoTurnPracticeClient();
+    final formalReview = _provisionalFormalReview();
+    final practice = _TwoTurnPracticeClient(formalReview: formalReview);
     final recorder = _Recorder();
     final controller = AgentController(
       client: FakeAgentClient(),
@@ -41,10 +43,233 @@ void main() {
     }
 
     expect(controller.review?.id, _reviewId);
+    expect(controller.formalReview, same(formalReview));
     expect(controller.recordingState, PracticeRecordingState.completed);
     expect(practice.confirmedQuestionIds, ['question-1', 'question-2']);
     expect(recorder.discarded, 2);
   });
+
+  test(
+    'retains failed transcription audio and retries with one Turn identity',
+    () async {
+      final practice = _TwoTurnPracticeClient()
+        ..transcribeFailure = const AgentClientException(
+          kind: AgentClientFailureKind.network,
+          retryable: true,
+        );
+      final recorder = _Recorder();
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: recorder,
+        clientIdFactory: (scope) => '$scope-stable',
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+
+      await controller.startRecording();
+      await controller.stopRecording();
+
+      expect(controller.recordingState, PracticeRecordingState.idle);
+      expect(controller.hasPendingPracticeAudio, isTrue);
+      expect(recorder.discarded, 0);
+      expect(practice.transcriptionClientTurnIds, <String>['turn-stable']);
+
+      await controller.startRecording();
+      expect(recorder.recording, isFalse);
+
+      practice.transcribeFailure = null;
+      await controller.retryPracticeTranscription();
+
+      expect(
+        controller.recordingState,
+        PracticeRecordingState.awaitingConfirmation,
+      );
+      expect(controller.hasPendingPracticeAudio, isFalse);
+      expect(recorder.discarded, 1);
+      expect(practice.transcriptionClientTurnIds, <String>[
+        'turn-stable',
+        'turn-stable',
+      ]);
+    },
+  );
+
+  test('explicitly deletes retained transcription audio', () async {
+    final practice = _TwoTurnPracticeClient()
+      ..transcribeFailure = StateError('transcription failed');
+    final recorder = _Recorder();
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: recorder,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await controller.startRecording();
+    await controller.stopRecording();
+
+    await controller.discardPendingPracticeAudio();
+
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    expect(recorder.discarded, 1);
+    expect(controller.errorMessage, isNull);
+
+    await controller.startRecording();
+    expect(recorder.recording, isTrue);
+    await controller.cancelRecording();
+  });
+
+  test(
+    'failed local deletion keeps the retained recording addressable',
+    () async {
+      final practice = _TwoTurnPracticeClient()
+        ..transcribeFailure = StateError('transcription failed');
+      final recorder = _Recorder()
+        ..discardFailure = StateError('local delete failed');
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: recorder,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      await controller.startRecording();
+      await controller.stopRecording();
+
+      await controller.discardPendingPracticeAudio();
+
+      expect(controller.hasPendingPracticeAudio, isTrue);
+      expect(controller.errorMessage, '暂时无法删除本地录音，请重试。');
+
+      recorder.discardFailure = null;
+      await controller.discardPendingPracticeAudio();
+      expect(controller.hasPendingPracticeAudio, isFalse);
+    },
+  );
+
+  test('retained transcription audio blocks Thread replacement', () async {
+    final practice = _TwoTurnPracticeClient()
+      ..transcribeFailure = StateError('transcription failed');
+    final recorder = _Recorder();
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: recorder,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await controller.startRecording();
+    await controller.stopRecording();
+    final threadId = controller.threadId;
+
+    final changed = await controller.createThread();
+
+    expect(changed, isFalse);
+    expect(controller.threadId, threadId);
+    expect(controller.hasPendingPracticeAudio, isTrue);
+    expect(recorder.discarded, 0);
+  });
+
+  test(
+    'retained transcription audio blocks leaving without deleting it',
+    () async {
+      final practice = _TwoTurnPracticeClient()
+        ..transcribeFailure = StateError('transcription failed');
+      final recorder = _Recorder();
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: recorder,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      await controller.startRecording();
+      await controller.stopRecording();
+
+      expect(await controller.prepareToLeavePractice(), isFalse);
+      expect(controller.hasPendingPracticeAudio, isTrue);
+      expect(recorder.discarded, 0);
+    },
+  );
+
+  test('account cleanup removes retained transcription audio state', () async {
+    final practice = _TwoTurnPracticeClient()
+      ..transcribeFailure = StateError('transcription failed');
+    final recorder = _Recorder();
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: recorder,
+    );
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await controller.startRecording();
+    await controller.stopRecording();
+    expect(controller.hasPendingPracticeAudio, isTrue);
+
+    await controller.clearPrivateState();
+
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    expect(recorder.cleanupCount, 1);
+    controller.dispose();
+  });
+
+  test('dispose deletes retained transcription audio', () async {
+    final practice = _TwoTurnPracticeClient()
+      ..transcribeFailure = StateError('transcription failed');
+    final discarded = Completer<void>();
+    final recorder = _Recorder(discardSignal: discarded);
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: recorder,
+    );
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await controller.startRecording();
+    await controller.stopRecording();
+
+    controller.dispose();
+    await discarded.future.timeout(const Duration(seconds: 2));
+
+    expect(recorder.discarded, 1);
+  });
+
+  test(
+    'dispose retries account cleanup after an in-flight delete fails',
+    () async {
+      final practice = _TwoTurnPracticeClient()
+        ..transcribeFailure = StateError('transcription failed');
+      final discardGate = Completer<void>();
+      final cleanupSignal = Completer<void>();
+      final recorder = _Recorder(
+        discardGate: discardGate,
+        cleanupSignal: cleanupSignal,
+      )..discardFailure = StateError('first delete failed');
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: recorder,
+      );
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      await controller.startRecording();
+      await controller.stopRecording();
+
+      unawaited(controller.discardPendingPracticeAudio());
+      await Future<void>.delayed(Duration.zero);
+      controller.dispose();
+      discardGate.complete();
+      await cleanupSignal.future.timeout(const Duration(seconds: 2));
+
+      expect(recorder.cleanupCount, 1);
+    },
+  );
 
   test(
     'private-state cleanup clears Practice transport and temporary audio',
@@ -324,7 +549,7 @@ void main() {
       await tester.pump();
       expect(controller.recordingState, PracticeRecordingState.starting);
       expect(
-        find.byKey(const Key('practice-cancel-tap-recording')),
+        find.byKey(const Key('practice-voice-target-cancel')),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
@@ -336,7 +561,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(recorder.stopCount, 1);
-      expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
+      expect(controller.completedTurns, 1);
+      expect(find.byKey(const Key('practice-transcript')), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -626,7 +852,15 @@ void main() {
     await controller.stopRecording();
     await tester.pumpAndSettle();
 
-    expect(find.text('今日免费语音额度已用完，本轮未计入进度。'), findsOneWidget);
+    expect(find.text('今日免费语音额度已用完，录音已保留，本轮未计入进度。'), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-retry-transcription')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('practice-delete-pending-audio')),
+      findsOneWidget,
+    );
     expect(controller.completedTurns, 0);
     expect(controller.recordingState, PracticeRecordingState.idle);
   });
@@ -1037,12 +1271,14 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     this.firstQuestion = 'First question',
     this.firstAnswer = 'Answer 1',
     this.secondQuestion = 'Second question',
+    this.formalReview,
   });
 
   final bool includeAudioAssets;
   final String firstQuestion;
   final String firstAnswer;
   final String secondQuestion;
+  final FormalReview? formalReview;
   int completed = 0;
   int cleanupCount = 0;
   final List<String> confirmedQuestionIds = [];
@@ -1055,6 +1291,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   Object? restoreFailure;
   PracticeSessionSnapshot? restoreResult;
   int transcribeCount = 0;
+  final List<String> transcriptionClientTurnIds = <String>[];
 
   @override
   Future<void> clearAccountState() async {
@@ -1101,6 +1338,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     PracticeTranscriptionRequest request,
   ) async {
     transcribeCount++;
+    transcriptionClientTurnIds.add(request.clientTurnId);
     if (transcribeFailure case final failure?) {
       throw failure;
     }
@@ -1161,6 +1399,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
               nextFocus: 'Next focus',
             )
           : null,
+      formalReview: done && !omitReview ? formalReview : null,
       audioAssetId: includeAudioAssets ? 'audio-$completed' : null,
     );
   }
@@ -1370,9 +1609,12 @@ final class _ControlledStartRecorder implements PracticeRecorder {
 }
 
 final class _Recorder implements PracticeRecorder {
-  _Recorder({this.discardSignal});
+  _Recorder({this.discardSignal, this.discardGate, this.cleanupSignal});
 
   final Completer<void>? discardSignal;
+  final Completer<void>? discardGate;
+  final Completer<void>? cleanupSignal;
+  Object? discardFailure;
   int discarded = 0;
   int cleanupCount = 0;
   bool recording = false;
@@ -1394,6 +1636,10 @@ final class _Recorder implements PracticeRecorder {
 
   @override
   Future<void> discard(RecordedPracticeAudio audio) async {
+    await discardGate?.future;
+    if (discardFailure case final failure?) {
+      throw failure;
+    }
     discarded++;
     final signal = discardSignal;
     if (signal != null && !signal.isCompleted) {
@@ -1410,11 +1656,49 @@ final class _Recorder implements PracticeRecorder {
   Future<void> clearAccountState() async {
     cleanupCount++;
     recording = false;
+    final signal = cleanupSignal;
+    if (signal != null && !signal.isCompleted) {
+      signal.complete();
+    }
   }
 }
 
 const _sessionId = 'practice-session-server';
 const _reviewId = 'review-server';
+
+FormalReview _provisionalFormalReview() {
+  final createdAt = DateTime.utc(2026, 7, 30, 3);
+  return FormalReview(
+    id: _reviewId,
+    practiceSessionId: _sessionId,
+    status: FormalReviewStatus.completed,
+    schema: FormalReviewSchema.scenarioV2,
+    implementationVersion: 'qianwen-scenario-review-v2',
+    sourceTurnId: 'turn-2',
+    sourceTurnVersion: 'conversation-turn:evidence-v2',
+    contextType: FormalReviewContextType.interviewProjectDeepDive,
+    result: const FormalReviewResult(
+      eligibility: FormalReviewSummaryEligibility.provisional,
+      summary: '本次仅根据文本给出暂定反馈。',
+      dimensions: <FormalReviewDimension>[
+        FormalReviewDimension(
+          key: 'relevance_structure',
+          category: 'relevance_structure',
+          score: 76,
+          message: '回答与问题相关。',
+        ),
+      ],
+      feedbackItems: <FormalReviewFeedbackItem>[],
+      repracticeSuggestionRefs: <String>[],
+      insufficientEvidenceReasons: <String>[
+        'pronunciation_audio_evidence_unavailable',
+      ],
+    ),
+    createdAt: createdAt,
+    updatedAt: createdAt,
+    completedAt: createdAt,
+  );
+}
 
 Uint8List _wave() {
   final bytes = Uint8List(44);

@@ -2084,24 +2084,35 @@ func contextSnapshotMatchesPlan(
 		return false
 	}
 	if plan.PreparationSnapshot != nil {
-		if plan.CatalogSnapshot == nil || plan.SessionPolicy == nil ||
-			!equalPreparationSnapshot(
-				*plan.PreparationSnapshot,
-				snapshot.Preparation,
-			) ||
+		if plan.CatalogSnapshot == nil || plan.SessionPolicy == nil {
+			return false
+		}
+		configMatches := reflect.DeepEqual(
+			plan.CatalogSnapshot.ScenarioConfig,
+			snapshot.ScenarioConfig,
+		)
+		policyMatches := reflect.DeepEqual(
+			*plan.SessionPolicy,
+			snapshot.SessionPolicy,
+		)
+		if snapshot.IELTSAssignment != nil {
+			configMatches, policyMatches =
+				dynamicIELTSPreviewMatchesPlan(snapshot, plan)
+		}
+		if !equalPreparationSnapshot(
+			*plan.PreparationSnapshot,
+			snapshot.Preparation,
+		) ||
 			!reflect.DeepEqual(
 				plan.CatalogSnapshot.ScenarioDefinition,
 				snapshot.ScenarioDefinition,
 			) ||
-			!reflect.DeepEqual(
-				plan.CatalogSnapshot.ScenarioConfig,
-				snapshot.ScenarioConfig,
-			) ||
+			!configMatches ||
 			!reflect.DeepEqual(
 				plan.CatalogSnapshot.PracticeOption,
 				snapshot.PracticeOption,
 			) ||
-			!reflect.DeepEqual(*plan.SessionPolicy, snapshot.SessionPolicy) ||
+			!policyMatches ||
 			!reflect.DeepEqual(
 				plan.PracticeFocuses,
 				snapshot.PracticeFocuses,
@@ -2187,6 +2198,49 @@ func contextSnapshotMatchesPlan(
 			selectedFacilitatorRole
 	}
 	return snapshot.PracticeOption.RoleDefinitionID == ""
+}
+
+func dynamicIELTSPreviewMatchesPlan(
+	snapshot persistence.ContextSessionSnapshot,
+	plan persistence.Plan,
+) (bool, bool) {
+	if snapshot.IELTSAssignment == nil ||
+		plan.CatalogSnapshot == nil ||
+		plan.SessionPolicy == nil {
+		return false, false
+	}
+
+	planConfig := plan.CatalogSnapshot.ScenarioConfig
+	normalizedConfig := snapshot.ScenarioConfig
+	normalizedConfig.PromptModel.PublicSceneBrief =
+		planConfig.PromptModel.PublicSceneBrief
+	normalizedConfig.PromptModel.TurnBlueprints =
+		planConfig.PromptModel.TurnBlueprints
+	normalizedConfig.PromptModel.SuggestedDurationSeconds =
+		planConfig.PromptModel.SuggestedDurationSeconds
+	configMatches := reflect.DeepEqual(planConfig, normalizedConfig)
+
+	turns := len(snapshot.IELTSAssignment.TurnBlueprints)
+	policy := snapshot.SessionPolicy
+	dynamicPolicyValid :=
+		policy.SuggestedDurationSeconds ==
+			snapshot.ScenarioConfig.PromptModel.SuggestedDurationSeconds &&
+			policy.MinEffectiveTurns == turns &&
+			policy.MaxEffectiveTurns == turns &&
+			policy.CoverageCheckpointTurn == turns
+	normalizedPolicy := policy
+	normalizedPolicy.SuggestedDurationSeconds =
+		plan.SessionPolicy.SuggestedDurationSeconds
+	normalizedPolicy.MinEffectiveTurns =
+		plan.SessionPolicy.MinEffectiveTurns
+	normalizedPolicy.MaxEffectiveTurns =
+		plan.SessionPolicy.MaxEffectiveTurns
+	normalizedPolicy.CoverageCheckpointTurn =
+		plan.SessionPolicy.CoverageCheckpointTurn
+	policyMatches := dynamicPolicyValid &&
+		reflect.DeepEqual(*plan.SessionPolicy, normalizedPolicy)
+
+	return configMatches, policyMatches
 }
 
 func completeStoredPlanPreview(plan persistence.Plan) bool {
@@ -2354,7 +2408,9 @@ func validScenarioFamilyModel(
 		return model == persistence.ScenarioModelProjectExperienceDeepDive ||
 			model == persistence.ScenarioModelInterviewBasicDialogue
 	case persistence.ScenarioFamilyExam:
-		return model == persistence.ScenarioModelIELTSSpeakingPart2 ||
+		return model == persistence.ScenarioModelIELTSSpeakingPart1 ||
+			model == persistence.ScenarioModelIELTSSpeakingPart2 ||
+			model == persistence.ScenarioModelIELTSSpeakingPart3 ||
 			model == persistence.ScenarioModelIELTSSpeakingFullMock ||
 			model == persistence.ScenarioModelExamBasicDialogue
 	case persistence.ScenarioFamilyWorkplace:
@@ -2572,8 +2628,74 @@ func validCreateContextSessionCommand(
 		snapshot.Preparation.ID == command.PreparationSnapshotID &&
 		snapshot.CreatedAt.IsZero() &&
 		contextSnapshotMatchesBasicActor(actor, snapshot) &&
+		validCreatedIELTSAssignment(snapshot) &&
 		validContextIntent(command.Intent) &&
 		command.Intent.Method == "POST"
+}
+
+func validCreatedIELTSAssignment(
+	snapshot persistence.ContextSessionSnapshot,
+) bool {
+	assignment := snapshot.IELTSAssignment
+	isIELTS := snapshot.ScenarioModel ==
+		persistence.ScenarioModelIELTSSpeakingFullMock ||
+		snapshot.ScenarioModel == persistence.ScenarioModelIELTSSpeakingPart1 ||
+		snapshot.ScenarioModel == persistence.ScenarioModelIELTSSpeakingPart2 ||
+		snapshot.ScenarioModel == persistence.ScenarioModelIELTSSpeakingPart3
+	if !isIELTS {
+		return assignment == nil
+	}
+	if assignment == nil ||
+		!validContextResourceID(assignment.BankID) ||
+		strings.TrimSpace(assignment.Season) == "" ||
+		!reflect.DeepEqual(
+			assignment.TurnBlueprints,
+			snapshot.ScenarioConfig.PromptModel.TurnBlueprints,
+		) {
+		return false
+	}
+	switch snapshot.ScenarioModel {
+	case persistence.ScenarioModelIELTSSpeakingFullMock:
+		return assignment.Mode == "FULL_MOCK" &&
+			validContextResourceID(assignment.Part1SetID) &&
+			validContextResourceID(assignment.TopicGroupID) &&
+			assignment.Part1Questions == 8 &&
+			assignment.Part2Questions == 1 &&
+			assignment.Part3Questions >= 1 &&
+			assignment.Part3Questions <= 5 &&
+			len(assignment.TurnBlueprints) ==
+				9+assignment.Part3Questions
+	case persistence.ScenarioModelIELTSSpeakingPart1:
+		return assignment.Mode == "PART_1" &&
+			validContextResourceID(assignment.Part1SetID) &&
+			assignment.TopicGroupID == "" &&
+			assignment.Part1Questions == 8 &&
+			assignment.Part2Questions == 0 &&
+			assignment.Part3Questions == 0 &&
+			len(assignment.TurnBlueprints) == 8
+	case persistence.ScenarioModelIELTSSpeakingPart2:
+		return assignment.Mode == "PART_2" &&
+			assignment.Part1SetID == "" &&
+			validContextResourceID(assignment.TopicGroupID) &&
+			assignment.Part1Questions == 0 &&
+			assignment.Part2Questions == 1 &&
+			assignment.Part3Questions >= 1 &&
+			assignment.Part3Questions <= 5 &&
+			len(assignment.TurnBlueprints) ==
+				1+assignment.Part3Questions
+	case persistence.ScenarioModelIELTSSpeakingPart3:
+		return assignment.Mode == "PART_3" &&
+			assignment.Part1SetID == "" &&
+			validContextResourceID(assignment.TopicGroupID) &&
+			assignment.Part1Questions == 0 &&
+			assignment.Part2Questions == 0 &&
+			assignment.Part3Questions >= 1 &&
+			assignment.Part3Questions <= 5 &&
+			len(assignment.TurnBlueprints) ==
+				assignment.Part3Questions
+	default:
+		return false
+	}
 }
 
 func contextSnapshotMatchesBasicActor(
@@ -2624,10 +2746,35 @@ func validContextPolicy(
 	}
 	switch optionType {
 	case "FULL_SIMULATION":
-		if scenarioModel == persistence.ScenarioModelIELTSSpeakingFullMock {
-			return policy.MinEffectiveTurns == 14 &&
-				policy.CoverageCheckpointTurn == 14 &&
-				policy.MaxEffectiveTurns == 14 &&
+		switch scenarioModel {
+		case persistence.ScenarioModelIELTSSpeakingFullMock:
+			return policy.MinEffectiveTurns >= 10 &&
+				policy.MinEffectiveTurns <= 14 &&
+				policy.CoverageCheckpointTurn ==
+					policy.MinEffectiveTurns &&
+				policy.MaxEffectiveTurns ==
+					policy.MinEffectiveTurns &&
+				policy.MaxFollowUpsPerQuestion == 0
+		case persistence.ScenarioModelIELTSSpeakingPart1:
+			return policy.MinEffectiveTurns == 8 &&
+				policy.CoverageCheckpointTurn == 8 &&
+				policy.MaxEffectiveTurns == 8 &&
+				policy.MaxFollowUpsPerQuestion == 0
+		case persistence.ScenarioModelIELTSSpeakingPart2:
+			return policy.MinEffectiveTurns >= 2 &&
+				policy.MinEffectiveTurns <= 6 &&
+				policy.CoverageCheckpointTurn ==
+					policy.MinEffectiveTurns &&
+				policy.MaxEffectiveTurns ==
+					policy.MinEffectiveTurns &&
+				policy.MaxFollowUpsPerQuestion == 0
+		case persistence.ScenarioModelIELTSSpeakingPart3:
+			return policy.MinEffectiveTurns >= 1 &&
+				policy.MinEffectiveTurns <= 5 &&
+				policy.CoverageCheckpointTurn ==
+					policy.MinEffectiveTurns &&
+				policy.MaxEffectiveTurns ==
+					policy.MinEffectiveTurns &&
 				policy.MaxFollowUpsPerQuestion == 0
 		}
 		return policy.MinEffectiveTurns == 4 &&

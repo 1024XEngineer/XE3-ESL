@@ -1,6 +1,7 @@
 package qianwen
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -26,6 +27,9 @@ const (
 	maxOutputTokens         = 1_000_000
 	maxProviderIdentifier   = 128
 	maxProviderToolName     = 64
+	maxStreamEventBytes     = 1 << 20
+	maxStreamBytes          = 8 << 20
+	maxStreamToolArgsBytes  = 1 << 20
 	authorizationHeaderName = "Authorization"
 )
 
@@ -316,18 +320,180 @@ func (generator *Generator) Generate(
 	return result, nil
 }
 
+// GenerateStream implements the provider-neutral streaming boundary. It
+// validates the complete Qwen stream before returning the canonical result and
+// emits only visible assistant content. Tool-call fragments remain internal.
+func (generator *Generator) GenerateStream(
+	ctx context.Context,
+	request ai.TextRequest,
+	observer ai.TextDeltaObserver,
+) (ai.TextResult, error) {
+	if ctx == nil || observer == nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidRequest, 0, "", "",
+			errors.New("streaming text generation context and observer are required"),
+		)
+	}
+	if err := ai.ValidateTextRequest(request); err != nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidRequest, 0, "", "", err,
+		)
+	}
+	internalToProvider, providerToInternal, err := toolNameMappings(request)
+	if err != nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidRequest, 0, "", "", err,
+		)
+	}
+	payload, err := generator.providerRequest(request, internalToProvider)
+	if err != nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidRequest, 0, "", "", err,
+		)
+	}
+	payload.Stream = true
+	payload.StreamOptions = &chatStreamOptions{IncludeUsage: true}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidRequest, 0, "", "", err,
+		)
+	}
+	callContext, cancel := context.WithTimeout(ctx, generator.timeout)
+	defer cancel()
+	httpRequest, err := http.NewRequestWithContext(
+		callContext, http.MethodPost, generator.endpoint, bytes.NewReader(body),
+	)
+	if err != nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorConfiguration, 0, "", "", err,
+		)
+	}
+	httpRequest.Header.Set(authorizationHeaderName, "Bearer "+generator.apiKey.reveal())
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Accept", "text/event-stream")
+	response, err := generator.client.Do(httpRequest)
+	if err != nil {
+		return ai.TextResult{}, transportError(callContext, err)
+	}
+	if response == nil || response.Body == nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidResponse, 0, "", "",
+			errors.New("Qianwen returned an invalid streaming HTTP response"),
+		)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return ai.TextResult{}, decodeStatusError(response)
+	}
+	if mediaType := strings.ToLower(strings.TrimSpace(
+		strings.Split(response.Header.Get("Content-Type"), ";")[0],
+	)); mediaType != "text/event-stream" {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidResponse, response.StatusCode, "",
+			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
+			errors.New("Qianwen streaming response has an invalid content type"),
+		)
+	}
+	result, err := decodeCompletionStream(
+		callContext,
+		response.Body,
+		providerToInternal,
+		observer,
+	)
+	if err != nil {
+		var generationError *ai.GenerationError
+		if errors.As(err, &generationError) {
+			return ai.TextResult{}, err
+		}
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidResponse, response.StatusCode, "",
+			sanitizeIdentifier(response.Header.Get("X-Request-Id")), err,
+		)
+	}
+	if result.Model != generator.model {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidResponse, response.StatusCode, "", "",
+			errors.New("Qianwen response model does not match the requested model"),
+		)
+	}
+	if result.Usage.OutputTokens > generator.maxOutputTokens {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidResponse, response.StatusCode, "", "",
+			errors.New("Qianwen response exceeded the configured output budget"),
+		)
+	}
+	return result, nil
+}
+
+func (generator *Generator) providerRequest(
+	request ai.TextRequest,
+	internalToProvider map[string]string,
+) (chatCompletionRequest, error) {
+	payload := chatCompletionRequest{
+		Model:          generator.model,
+		Messages:       make([]chatMessage, 0, len(request.Messages)),
+		Tools:          make([]chatTool, 0, len(request.Tools)),
+		Stream:         false,
+		EnableThinking: false,
+		MaxTokens:      generator.maxOutputTokens,
+	}
+	if request.ResponseFormat == ai.TextResponseFormatJSON {
+		payload.ResponseFormat = &chatResponseFormat{
+			Type: string(ai.TextResponseFormatJSON),
+		}
+	}
+	toolChoice, err := providerToolChoice(request.ToolChoice, internalToProvider)
+	if err != nil {
+		return chatCompletionRequest{}, err
+	}
+	payload.ToolChoice = toolChoice
+	for _, message := range request.Messages {
+		providerMessage := chatMessage{
+			Role: string(message.Role), Content: message.Content,
+			ToolCallID: message.ToolCallID,
+			ToolCalls:  make([]chatToolCall, 0, len(message.ToolCalls)),
+		}
+		for index, call := range message.ToolCalls {
+			providerMessage.ToolCalls = append(providerMessage.ToolCalls, chatToolCall{
+				ID: call.ID, Type: "function", Index: index,
+				Function: chatFunctionCall{
+					Name: internalToProvider[call.Name], Arguments: string(call.Arguments),
+				},
+			})
+		}
+		payload.Messages = append(payload.Messages, providerMessage)
+	}
+	for _, definition := range request.Tools {
+		payload.Tools = append(payload.Tools, chatTool{
+			Type: "function",
+			Function: chatToolFunction{
+				Name:        internalToProvider[definition.Name],
+				Description: definition.Description,
+				Parameters:  definition.InputSchema,
+			},
+		})
+	}
+	return payload, nil
+}
+
 type chatCompletionRequest struct {
 	Model          string              `json:"model"`
 	Messages       []chatMessage       `json:"messages"`
 	Tools          []chatTool          `json:"tools,omitempty"`
 	ToolChoice     any                 `json:"tool_choice,omitempty"`
 	Stream         bool                `json:"stream"`
+	StreamOptions  *chatStreamOptions  `json:"stream_options,omitempty"`
 	EnableThinking bool                `json:"enable_thinking"`
 	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
 	// The current compatibility overview lists max_completion_tokens as
 	// silently ignored. The endpoint-specific Chat API still honors the
 	// deprecated max_tokens field, so it remains the enforceable budget.
 	MaxTokens int `json:"max_tokens"`
+}
+
+type chatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type chatResponseFormat struct {
@@ -414,6 +580,241 @@ type chatCompletionResponse struct {
 		CompletionTokens *int `json:"completion_tokens"`
 		TotalTokens      *int `json:"total_tokens"`
 	} `json:"usage"`
+}
+
+type chatCompletionChunk struct {
+	ID      string `json:"id"`
+	Model   string `json:"model"`
+	Choices []struct {
+		FinishReason *string `json:"finish_reason"`
+		Delta        struct {
+			Role      string         `json:"role"`
+			Content   *string        `json:"content"`
+			ToolCalls []chatToolCall `json:"tool_calls"`
+		} `json:"delta"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     *int `json:"prompt_tokens"`
+		CompletionTokens *int `json:"completion_tokens"`
+		TotalTokens      *int `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+type streamMode uint8
+
+const (
+	streamModeUnknown streamMode = iota
+	streamModeText
+	streamModeTools
+)
+
+type streamToolCall struct {
+	id        string
+	name      string
+	arguments strings.Builder
+}
+
+func decodeCompletionStream(
+	ctx context.Context,
+	body io.Reader,
+	providerToInternal map[string]string,
+	observer ai.TextDeltaObserver,
+) (ai.TextResult, error) {
+	scanner := bufio.NewScanner(io.LimitReader(body, maxStreamBytes+1))
+	scanner.Buffer(make([]byte, 16<<10), maxStreamEventBytes)
+	mode := streamModeUnknown
+	var completionID, model, finishReason string
+	var content strings.Builder
+	var pendingWhitespace string
+	var totalBytes int
+	var usage *struct {
+		prompt     int
+		completion int
+		total      int
+	}
+	var tools []streamToolCall
+	sawDone := false
+	sawUsage := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		totalBytes += len(line) + 1
+		if totalBytes > maxStreamBytes {
+			return ai.TextResult{}, errors.New("Qianwen stream exceeds the response limit")
+		}
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			return ai.TextResult{}, errors.New("Qianwen stream contains an unsupported SSE field")
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			sawDone = true
+			break
+		}
+		if data == "" {
+			return ai.TextResult{}, errors.New("Qianwen stream contains empty event data")
+		}
+		var chunk chatCompletionChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return ai.TextResult{}, errors.New("decode Qianwen stream event")
+		}
+		if completionID == "" {
+			completionID = sanitizeIdentifier(chunk.ID)
+			model, _ = normalizeModel(chunk.Model)
+		} else if chunk.ID != completionID || chunk.Model != model {
+			return ai.TextResult{}, errors.New("Qianwen stream changed completion identity")
+		}
+		if completionID == "" || model == "" {
+			return ai.TextResult{}, errors.New("Qianwen stream has invalid completion identity")
+		}
+		if chunk.Usage != nil {
+			if sawUsage || len(chunk.Choices) != 0 ||
+				chunk.Usage.PromptTokens == nil ||
+				chunk.Usage.CompletionTokens == nil ||
+				chunk.Usage.TotalTokens == nil {
+				return ai.TextResult{}, errors.New("Qianwen stream has invalid final usage")
+			}
+			usage = &struct {
+				prompt     int
+				completion int
+				total      int
+			}{
+				prompt:     *chunk.Usage.PromptTokens,
+				completion: *chunk.Usage.CompletionTokens,
+				total:      *chunk.Usage.TotalTokens,
+			}
+			if usage.prompt < 0 || usage.completion < 0 || usage.total < 0 ||
+				usage.total-usage.prompt != usage.completion {
+				return ai.TextResult{}, errors.New("Qianwen stream has invalid token usage")
+			}
+			sawUsage = true
+			continue
+		}
+		if sawUsage || len(chunk.Choices) != 1 {
+			return ai.TextResult{}, errors.New("Qianwen stream must contain exactly one choice")
+		}
+		choice := chunk.Choices[0]
+		if choice.Delta.Role != "" &&
+			choice.Delta.Role != string(ai.TextRoleAssistant) {
+			return ai.TextResult{}, errors.New("Qianwen stream has an invalid delta role")
+		}
+		hasText := choice.Delta.Content != nil && *choice.Delta.Content != ""
+		hasTools := len(choice.Delta.ToolCalls) != 0
+		if hasText && hasTools {
+			return ai.TextResult{}, errors.New("Qianwen stream mixed text and tool deltas")
+		}
+		if hasText {
+			if mode == streamModeTools {
+				return ai.TextResult{}, errors.New("Qianwen stream changed from tools to text")
+			}
+			mode = streamModeText
+			visible, pending := normalizedVisibleDelta(
+				content.Len() > 0,
+				pendingWhitespace+*choice.Delta.Content,
+			)
+			pendingWhitespace = pending
+			if visible != "" {
+				content.WriteString(visible)
+				if err := observer.OnTextDelta(ctx, visible); err != nil {
+					return ai.TextResult{}, ai.NewGenerationError(
+						ai.ErrorCancelled, 0, "", "", err,
+					)
+				}
+			}
+		}
+		if hasTools {
+			if mode == streamModeText {
+				return ai.TextResult{}, errors.New("Qianwen stream changed from text to tools")
+			}
+			mode = streamModeTools
+			for _, fragment := range choice.Delta.ToolCalls {
+				if fragment.Index < 0 || fragment.Index > len(tools) {
+					return ai.TextResult{}, errors.New("Qianwen stream has a non-contiguous tool index")
+				}
+				if fragment.Index == len(tools) {
+					tools = append(tools, streamToolCall{})
+				}
+				call := &tools[fragment.Index]
+				if fragment.ID != "" {
+					if call.id != "" && call.id != fragment.ID {
+						return ai.TextResult{}, errors.New("Qianwen stream changed tool call ID")
+					}
+					call.id = fragment.ID
+				}
+				if fragment.Type != "" && fragment.Type != "function" {
+					return ai.TextResult{}, errors.New("Qianwen stream has an invalid tool type")
+				}
+				if fragment.Function.Name != "" {
+					if call.name != "" && call.name != fragment.Function.Name {
+						return ai.TextResult{}, errors.New("Qianwen stream changed tool name")
+					}
+					call.name = fragment.Function.Name
+				}
+				if call.arguments.Len()+len(fragment.Function.Arguments) >
+					maxStreamToolArgsBytes {
+					return ai.TextResult{}, errors.New("Qianwen tool arguments exceed the stream limit")
+				}
+				call.arguments.WriteString(fragment.Function.Arguments)
+			}
+		}
+		if choice.FinishReason != nil {
+			if finishReason != "" {
+				return ai.TextResult{}, errors.New("Qianwen stream duplicated finish reason")
+			}
+			finishReason = *choice.FinishReason
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return ai.TextResult{}, err
+	}
+	if !sawDone || !sawUsage || finishReason == "" {
+		return ai.TextResult{}, errors.New("Qianwen stream ended before completion")
+	}
+	result := ai.TextResult{
+		ID: completionID, Provider: providerName, Model: model,
+		Content: content.String(), FinishReason: finishReason,
+		Usage: ai.TokenUsage{
+			InputTokens: usage.prompt, OutputTokens: usage.completion,
+			TotalTokens: usage.total,
+		},
+	}
+	switch mode {
+	case streamModeText:
+		if result.Content == "" || (finishReason != "stop" && finishReason != "length") {
+			return ai.TextResult{}, errors.New("Qianwen text stream has an invalid completion")
+		}
+	case streamModeTools:
+		if finishReason != "tool_calls" || len(tools) == 0 {
+			return ai.TextResult{}, errors.New("Qianwen tool stream has an invalid completion")
+		}
+		result.ToolCalls = make([]ai.ToolCall, 0, len(tools))
+		for _, streamed := range tools {
+			internalName, exists := providerToInternal[streamed.name]
+			if !exists {
+				return ai.TextResult{}, errors.New("Qianwen stream selected an unknown tool")
+			}
+			call := ai.ToolCall{
+				ID: streamed.id, Name: internalName,
+				Arguments: json.RawMessage(streamed.arguments.String()),
+			}
+			if err := ai.ValidateToolCall(call); err != nil {
+				return ai.TextResult{}, errors.New("Qianwen stream contains an invalid tool call")
+			}
+			result.ToolCalls = append(result.ToolCalls, call)
+		}
+	default:
+		return ai.TextResult{}, errors.New("Qianwen stream has no substantive delta")
+	}
+	return result, nil
+}
+
+func normalizedVisibleDelta(started bool, value string) (string, string) {
+	if !started {
+		value = strings.TrimLeftFunc(value, unicode.IsSpace)
+	}
+	visible := strings.TrimRightFunc(value, unicode.IsSpace)
+	return visible, value[len(visible):]
 }
 
 func (response chatCompletionResponse) result(

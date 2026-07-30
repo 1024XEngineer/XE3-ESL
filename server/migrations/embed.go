@@ -20,5 +20,9 @@ import "embed"
 //go:embed 000032_ielts_speaking_full_mock_model.*.sql
 //go:embed 000033_matter_agent_tools.*.sql
 //go:embed 000034_practice_optional_preview_snapshot.*.sql
-//go:embed 000035_agent_image_assets.*.sql
+//go:embed 000035_ielts_speaking_section_models.*.sql
+//go:embed 000036_evaluation_evidence_snapshots.*.sql
+//go:embed 000037_evaluation_interview_shadow_runtime.*.sql
+//go:embed 000038_evaluation_practice_resource_ids.*.sql
+//go:embed 000039_agent_image_assets.*.sql
 var Files embed.FS

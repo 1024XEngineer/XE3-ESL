@@ -13,7 +13,8 @@ import (
 )
 
 type PostgresRepository struct {
-	pool *pgxpool.Pool
+	pool                     *pgxpool.Pool
+	afterEvidenceSourceFence func()
 }
 
 func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
@@ -211,9 +212,28 @@ func (r *PostgresRepository) Reevaluate(
 		return evaluation, true, nil
 	}
 
+	if err := lockEvaluationRevisionRuntimeRows(
+		ctx,
+		tx,
+		command.OwnerUserID,
+		command.EvaluationID,
+		latestRevisionID,
+	); err != nil {
+		return Evaluation{}, false, err
+	}
+	if err := cancelSupersededEvaluationRuntime(
+		ctx,
+		tx,
+		command.OwnerUserID,
+		command.EvaluationID,
+		latestRevisionID,
+	); err != nil {
+		return Evaluation{}, false, err
+	}
 	_, err = tx.Exec(ctx, `
 		UPDATE evaluation_revision_states
 		SET evaluation_status = 'SUPERSEDED',
+		    is_final = false,
 		    updated_at = transaction_timestamp(),
 		    completed_at = transaction_timestamp()
 		WHERE revision_id = $1
@@ -408,10 +428,15 @@ func lockActiveOwner(
 ) error {
 	var status string
 	err := tx.QueryRow(ctx, `
-		SELECT account_status
-		FROM identity_users
-		WHERE id = $1
-		FOR KEY SHARE
+		SELECT owner.account_status
+		FROM identity_users AS owner
+		WHERE owner.id = $1
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM evaluation_deletion_fences AS fence
+		      WHERE fence.owner_user_id = owner.id
+		  )
+		FOR SHARE OF owner
 	`, ownerUserID).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && status != "active") {
 		return ErrAccountUnavailable

@@ -91,6 +91,19 @@ func TestEveryEmbeddedMigrationVersionIsUniqueAndPaired(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingSectionModelMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000035_ielts_speaking_section_models.up.sql",
+		"000035_ielts_speaking_section_models.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf("read embedded IELTS section-model migration %q: %v", name, err)
+		}
+	}
+}
+
 func TestDatabaseBaselineContainsNoBusinessDDL(t *testing.T) {
 	t.Parallel()
 
@@ -115,8 +128,8 @@ func TestAgentImageMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{
-		"000035_agent_image_assets.up.sql",
-		"000035_agent_image_assets.down.sql",
+		"000039_agent_image_assets.up.sql",
+		"000039_agent_image_assets.down.sql",
 	} {
 		if _, err := Files.ReadFile(name); err != nil {
 			t.Fatalf("read embedded Agent image migration %q: %v", name, err)

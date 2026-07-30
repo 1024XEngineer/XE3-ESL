@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
@@ -9,10 +12,12 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/conversation/conversation.dart';
+import 'package:speakup/practice/practice_audio_player.dart';
+import 'package:speakup/practice/practice_media.dart';
 
 void main() {
   testWidgets(
-    'records, confirms, plays, and deletes one ordinary Agent voice Message',
+    'records, directly sends, plays, and deletes one Agent voice Message',
     (tester) async {
       final controller = AgentController(
         client: FakeAgentClient(),
@@ -35,30 +40,12 @@ void main() {
 
       await tester.tap(find.byKey(const Key('agent-voice-stop')));
       await _pumpVoiceOperation(tester);
-      expect(
-        controller.voiceController?.state,
-        AgentVoiceComposerState.awaitingConfirmation,
-      );
+      expect(controller.voiceController?.state, AgentVoiceComposerState.idle);
       expect(find.byKey(const Key('agent-composer-surface')), findsOneWidget);
       expect(find.byKey(const Key('agent-voice-composer-panel')), findsNothing);
       expect(find.text('试听'), findsNothing);
       expect(find.text('重录'), findsNothing);
       expect(find.text('上传并转写'), findsNothing);
-      final transcriptField = find.byKey(const Key('agent-composer-field'));
-      expect(transcriptField, findsOneWidget);
-      await tester.enterText(
-        transcriptField,
-        'I kept the migration safe with staged checks.',
-      );
-      await tester.pump();
-      expect(
-        controller.voiceController?.editedTranscript,
-        'I kept the migration safe with staged checks.',
-      );
-      expect(controller.voiceController?.canConfirm, isTrue);
-
-      await tester.tap(find.byKey(const Key('agent-voice-confirm')));
-      await _pumpVoiceOperation(tester);
 
       final voiceMessages = controller.messages
           .where((message) => message.modality == AgentMessageModality.voice)
@@ -66,7 +53,7 @@ void main() {
       expect(voiceMessages, hasLength(1));
       expect(
         voiceMessages.single.text,
-        'I kept the migration safe with staged checks.',
+        'I explained the problem, the trade-off, and the result clearly.',
       );
       expect(voiceMessages.single.audio?.isReadable, isTrue);
       expect(
@@ -149,6 +136,49 @@ void main() {
     },
   );
 
+  testWidgets('right swipe converts home recording into editable text', (
+    tester,
+  ) async {
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      clientIdFactory: _sequentialIdFactory(),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('agent-mic-placeholder'))),
+    );
+    await tester.pump(const Duration(milliseconds: 220));
+    await gesture.moveBy(const Offset(90, 0));
+    await tester.pump();
+    expect(find.text('松开转成文字'), findsOneWidget);
+    await gesture.up();
+    await _pumpVoiceOperation(tester);
+
+    final field = find.byKey(const Key('agent-composer-field'));
+    expect(field, findsOneWidget);
+    expect(
+      tester.widget<TextField>(field).controller?.text,
+      'I explained the problem, the trade-off, and the result clearly.',
+    );
+    expect(
+      controller.voiceController?.state,
+      AgentVoiceComposerState.awaitingConfirmation,
+    );
+
+    await tester.enterText(field, 'Edited transcript sent as text.');
+    await tester.tap(find.byKey(const Key('agent-voice-confirm')));
+    await _pumpVoiceOperation(tester);
+
+    final userMessage = controller.messages.lastWhere(
+      (message) => message.role == AgentMessageRole.user,
+    );
+    expect(userMessage.text, 'Edited transcript sent as text.');
+    expect(userMessage.modality, AgentMessageModality.text);
+  });
+
   testWidgets('recording elapsed time updates inside the original composer', (
     tester,
   ) async {
@@ -200,6 +230,68 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('leaving the Agent tab cancels hands-free recording', (
+    tester,
+  ) async {
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      clientIdFactory: _sequentialIdFactory(),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+    await tester.pump();
+    expect(
+      controller.voiceController?.state,
+      AgentVoiceComposerState.recording,
+    );
+
+    await tester.tap(find.byKey(const Key('primary-tab-scenes')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('scenes-page')), findsOneWidget);
+    expect(controller.voiceController?.state, AgentVoiceComposerState.idle);
+    await tester.pump(const Duration(seconds: 60));
+    expect(
+      controller.messages.where(
+        (message) => message.modality == AgentMessageModality.voice,
+      ),
+      isEmpty,
+    );
+  });
+
+  test(
+    'leaving Agent while playback is stopping fences microphone start',
+    () async {
+      final player = _GatedPracticeAudioPlayer();
+      final recorder = _TrackingAgentVoiceRecorder();
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        mediaClient: _NoopPracticeMediaClient(),
+        audioPlayer: player,
+        voiceRecorder: recorder,
+        voiceAudioPlayer: FakeAgentVoiceAudioPlayer(),
+        clientIdFactory: _sequentialIdFactory(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      final stop = player.blockNextStop();
+      final start = controller.startAgentVoiceRecording();
+      await stop.entered.future;
+
+      final leave = controller.prepareToLeaveAgent();
+      stop.release.complete();
+
+      await start;
+      expect(await leave, isTrue);
+      expect(recorder.startCalls, 0);
+      expect(controller.voiceController?.state, AgentVoiceComposerState.idle);
+    },
+  );
+
   testWidgets('composer drafts cannot cross the Thread boundary', (
     tester,
   ) async {
@@ -231,10 +323,14 @@ void main() {
         ),
       ),
     );
+    await tester.tap(find.byKey(const Key('agent-show-text-composer')));
+    await tester.pump();
     await tester.enterText(
       find.byKey(const Key('agent-composer-field')),
       'Thread A private draft',
     );
+    await tester.tap(find.byKey(const Key('agent-show-voice-composer')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
     await tester.pump();
     expect(voiceController.state, AgentVoiceComposerState.recording);
@@ -245,9 +341,11 @@ void main() {
     await tester.pump();
 
     expect(voiceController.state, AgentVoiceComposerState.recording);
-    await tester.tap(find.byKey(const Key('agent-voice-cancel')));
+    await tester.tap(find.byKey(const Key('agent-voice-target-cancel')));
     await _pumpVoiceOperation(tester);
 
+    await tester.tap(find.byKey(const Key('agent-show-text-composer')));
+    await tester.pump();
     final field = find.byKey(const Key('agent-composer-field'));
     expect(field, findsOneWidget);
     expect(tester.widget<TextField>(field).controller?.text, isEmpty);
@@ -273,17 +371,16 @@ void main() {
         find.byKey(const Key('no-focused-conversation-home')),
         findsNothing,
       );
-      expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('agent-composer-field')))
-            .enabled,
-        isTrue,
-      );
+      expect(find.byKey(const Key('agent-show-text-composer')), findsOneWidget);
 
+      await tester.tap(find.byKey(const Key('agent-show-text-composer')));
+      await tester.pump();
       await tester.enterText(
         find.byKey(const Key('agent-composer-field')),
         'Keep this typed draft',
       );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-show-voice-composer')));
       await tester.pump();
       await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
       await tester.pump();
@@ -295,6 +392,8 @@ void main() {
         AgentVoiceComposerState.recording,
       );
       await controller.voiceController?.cancel();
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-show-text-composer')));
       await tester.pump();
       expect(
         tester
@@ -346,7 +445,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
 
-      await tester.tap(find.byKey(const Key('agent-voice-stop')));
+      await tester.tap(find.byKey(const Key('agent-voice-target-convert')));
       await _pumpVoiceOperation(tester);
 
       expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
@@ -355,6 +454,81 @@ void main() {
       await tester.pump();
     },
   );
+}
+
+final class _TrackingAgentVoiceRecorder implements AgentVoiceRecorder {
+  int startCalls = 0;
+
+  @override
+  Future<void> start() async {
+    startCalls++;
+  }
+
+  @override
+  Future<AgentVoiceLocalRecording> stop() {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> discardCurrent() async {}
+
+  @override
+  Future<void> discard(AgentVoiceLocalRecording recording) async {}
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _NoopPracticeMediaClient implements PracticeMediaClient {
+  @override
+  Future<Uint8List> loadQuestionSpeech(String speechPath) async => Uint8List(0);
+
+  @override
+  Future<Uint8List> loadRecording(String audioAssetId) async => Uint8List(0);
+
+  @override
+  Future<void> deleteRecording(String audioAssetId) async {}
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() async {}
+}
+
+final class _GatedPracticeAudioPlayer implements PracticeAudioPlayer {
+  Completer<void>? _nextStopEntered;
+  Completer<void>? _nextStopGate;
+
+  ({Completer<void> entered, Completer<void> release}) blockNextStop() {
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    _nextStopEntered = entered;
+    _nextStopGate = release;
+    return (entered: entered, release: release);
+  }
+
+  @override
+  Stream<void> get onComplete => const Stream<void>.empty();
+
+  @override
+  Future<void> playWav(Uint8List bytes) async {}
+
+  @override
+  Future<void> stop() async {
+    final entered = _nextStopEntered;
+    final gate = _nextStopGate;
+    _nextStopEntered = null;
+    _nextStopGate = null;
+    entered?.complete();
+    await gate?.future;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 Future<void> _pumpVoiceOperation(WidgetTester tester) async {

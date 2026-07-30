@@ -143,11 +143,34 @@ type VoiceReviewResult struct {
 }
 
 type VoiceReviewConclusion struct {
-	Key        string `json:"key"`
-	Category   string `json:"category"`
-	Score      int    `json:"score,omitempty"`
-	Message    string `json:"message"`
-	Suggestion string `json:"suggestion,omitempty"`
+	Key          string `json:"key"`
+	Category     string `json:"category"`
+	Score        int    `json:"score,omitempty"`
+	ScorePresent bool   `json:"-"`
+	Message      string `json:"message"`
+	Suggestion   string `json:"suggestion,omitempty"`
+}
+
+func (c VoiceReviewConclusion) MarshalJSON() ([]byte, error) {
+	type wireConclusion struct {
+		Key        string `json:"key"`
+		Category   string `json:"category"`
+		Score      *int   `json:"score,omitempty"`
+		Message    string `json:"message"`
+		Suggestion string `json:"suggestion,omitempty"`
+	}
+	var score *int
+	if c.ScorePresent || c.Score != 0 {
+		value := c.Score
+		score = &value
+	}
+	return json.Marshal(wireConclusion{
+		Key:        c.Key,
+		Category:   c.Category,
+		Score:      score,
+		Message:    c.Message,
+		Suggestion: c.Suggestion,
+	})
 }
 
 type VoiceReviewFeedbackItem struct {
@@ -595,7 +618,15 @@ func (application *VoiceSessionApplication) state(
 }
 
 func requiresSynchronousSessionReview(session VoicePracticeSession) bool {
-	return session.ScenarioModel != ieltsSpeakingFullMockModel
+	switch session.ScenarioModel {
+	case "IELTS_SPEAKING_PART_1",
+		"IELTS_SPEAKING_PART_2",
+		"IELTS_SPEAKING_PART_3",
+		"IELTS_SPEAKING_FULL_MOCK":
+		return false
+	default:
+		return true
+	}
 }
 
 func validVoiceScenarioPrompt(session VoicePracticeSession) bool {

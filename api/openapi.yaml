@@ -41,6 +41,8 @@ tags:
     description: Analysis, evidence feedback, same-question retry, and history projections.
   - name: Evaluation
     description: Versioned Scene and Core 4D evaluation facts, gates, evidence, and revisions.
+  - name: Avatar
+    description: Short-lived avatar rendering credentials for owned interactive practice sessions.
 paths:
   /health:
     get:
@@ -77,6 +79,8 @@ paths:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me~1profile
   /v1/scenario-definitions:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions
+  /v1/ielts-speaking/question-bank:
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1ielts-speaking~1question-bank
   /v1/matters:
     $ref: ./modules/agent.yaml#/paths/~1v1~1matters
   /v1/matters/{matter_id}:
@@ -113,10 +117,14 @@ paths:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-messages~1{message_id}~1speech
   /v1/agent-threads/{thread_id}/runs:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1runs
+  /v1/agent-threads/{thread_id}/runs/stream:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1runs~1stream
   /v1/agent-runs/{run_id}:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}
   /v1/agent-runs/{run_id}/retries:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1retries
+  /v1/agent-runs/{run_id}/retries/stream:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1retries~1stream
   /v1/agent-runs/{run_id}/context-manifest:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1context-manifest
   /v1/agent-threads/{thread_id}/voice-practice-sessions:
@@ -141,6 +149,8 @@ paths:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1evaluations~1{evaluation_id}
   /v1/evaluations/{evaluation_id}/re-evaluate:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1evaluations~1{evaluation_id}~1re-evaluate
+  /v1/practice-sessions/{practice_session_id}/interview-report:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1interview-report
   /v1/scenario-definitions/{scenario_definition_id}:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions~1{scenario_definition_id}
   /v1/scenario-definitions/{scenario_definition_id}/role-definitions:
@@ -169,6 +179,8 @@ paths:
     $ref: ./modules/practice.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1practice-start-confirmations
   /v1/practice-sessions/{practice_session_id}:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}
+  /v1/practice-sessions/{practice_session_id}/avatar-session-token:
+    $ref: ./modules/avatar.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1avatar-session-token
   /v1/practice-sessions/{practice_session_id}/snapshot:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1snapshot
   /v1/practice-sessions/{practice_session_id}/pause:
@@ -332,6 +344,10 @@ components:
       $ref: ./modules/evaluation.yaml#/components/schemas/ReevaluateEvaluationRequest
     EvaluationAccepted:
       $ref: ./modules/evaluation.yaml#/components/schemas/EvaluationAccepted
+    InterviewReportEnvelope:
+      $ref: ./modules/evaluation.yaml#/components/schemas/InterviewReportEnvelope
+    InterviewReport:
+      $ref: ./modules/evaluation.yaml#/components/schemas/InterviewReport
     Evaluation:
       $ref: ./modules/evaluation.yaml#/components/schemas/Evaluation
     SceneEvaluationResult:

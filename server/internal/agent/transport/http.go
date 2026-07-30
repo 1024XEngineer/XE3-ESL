@@ -251,10 +251,18 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 			"/v1/agent-threads/:thread_id/runs",
 			h.submitRun,
 		)
+		protected.POST(
+			"/v1/agent-threads/:thread_id/runs/stream",
+			h.submitRunStream,
+		)
 		protected.GET("/v1/agent-runs/:run_id", h.getRun)
 		protected.POST(
 			"/v1/agent-runs/:run_id/retries",
 			h.retryRun,
+		)
+		protected.POST(
+			"/v1/agent-runs/:run_id/retries/stream",
+			h.retryRunStream,
 		)
 		protected.GET(
 			"/v1/agent-runs/:run_id/context-manifest",
@@ -785,6 +793,194 @@ func (h *HTTPHandler) submitRun(c *gin.Context) {
 		return
 	}
 	c.JSON(runWriteStatus(submission.Run), runResponse(submission.Run))
+}
+
+type streamingRunApplication interface {
+	SubmitTextStream(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+		string,
+		RunStreamObserver,
+	) (RunSubmission, error)
+	RetryTextStream(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+		RunStreamObserver,
+	) (RunRetry, error)
+}
+
+func (h *HTTPHandler) retryRunStream(c *gin.Context) {
+	values, ok := decodeObject(
+		c,
+		[]string{"client_retry_id"},
+		[]string{"client_retry_id"},
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	retryClientID, ok := decodeString(values["client_retry_id"])
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	runs, ok := h.runs.(streamingRunApplication)
+	if !ok {
+		h.writeError(c, http.StatusNotImplemented, "streaming_unavailable", false)
+		return
+	}
+	stream := &agentRunSSEWriter{context: c}
+	retry, err := runs.RetryTextStream(
+		c.Request.Context(),
+		actor,
+		c.Param("run_id"),
+		retryClientID,
+		stream,
+	)
+	submission := RunSubmission{Run: retry.Run}
+	h.finishRunStream(c, stream, submission, err)
+}
+
+func (h *HTTPHandler) finishRunStream(
+	c *gin.Context,
+	stream *agentRunSSEWriter,
+	submission RunSubmission,
+	err error,
+) {
+	if err != nil {
+		if !stream.started {
+			h.writeAgentError(c, err)
+			return
+		}
+		_ = stream.write("run.failed", gin.H{
+			"run_id":    submission.Run.ID,
+			"kind":      "stream_interrupted",
+			"retryable": true,
+		})
+		return
+	}
+	switch submission.Run.Status {
+	case RunStatusCompleted:
+		_ = stream.write("run.completed", gin.H{
+			"run": runResponse(submission.Run),
+		})
+	case RunStatusFailed:
+		_ = stream.write("run.failed", gin.H{
+			"run":       runResponse(submission.Run),
+			"kind":      submission.Run.FailureKind,
+			"retryable": submission.Run.FailureRetryable,
+		})
+	default:
+		_ = stream.write("run.failed", gin.H{
+			"run":       runResponse(submission.Run),
+			"kind":      "run_not_terminal",
+			"retryable": true,
+		})
+	}
+}
+
+func (h *HTTPHandler) submitRunStream(c *gin.Context) {
+	values, ok := decodeObject(
+		c,
+		[]string{"client_message_id", "content"},
+		[]string{"client_message_id", "content"},
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	clientMessageID, clientIDOK := decodeString(values["client_message_id"])
+	content, contentOK := decodeString(values["content"])
+	if !clientIDOK || !contentOK {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	runs, ok := h.runs.(streamingRunApplication)
+	if !ok {
+		h.writeError(c, http.StatusNotImplemented, "streaming_unavailable", false)
+		return
+	}
+	stream := &agentRunSSEWriter{context: c}
+	submission, err := runs.SubmitTextStream(
+		c.Request.Context(),
+		actor,
+		c.Param("thread_id"),
+		clientMessageID,
+		content,
+		stream,
+	)
+	h.finishRunStream(c, stream, submission, err)
+}
+
+type agentRunSSEWriter struct {
+	context *gin.Context
+	started bool
+	runID   string
+}
+
+func (writer *agentRunSSEWriter) OnInputCommitted(
+	_ context.Context,
+	submission RunSubmission,
+) error {
+	writer.runID = submission.Run.ID
+	return writer.write("input.committed", gin.H{
+		"run":     runResponse(submission.Run),
+		"message": messageResponse(submission.UserMessage),
+	})
+}
+
+func (writer *agentRunSSEWriter) OnAssistantStarted(
+	_ context.Context,
+	run Run,
+) error {
+	writer.runID = run.ID
+	return writer.write("assistant.started", gin.H{"run_id": run.ID})
+}
+
+func (writer *agentRunSSEWriter) OnAssistantDelta(
+	_ context.Context,
+	delta string,
+) error {
+	return writer.write("assistant.delta", gin.H{
+		"run_id": writer.runID,
+		"delta":  delta,
+	})
+}
+
+func (writer *agentRunSSEWriter) write(event string, data any) error {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	if !writer.started {
+		writer.context.Header("Content-Type", "text/event-stream; charset=utf-8")
+		writer.context.Header("Cache-Control", "no-cache, no-store")
+		writer.context.Header("X-Accel-Buffering", "no")
+		writer.context.Header("Connection", "keep-alive")
+		writer.context.Status(http.StatusOK)
+		writer.started = true
+	}
+	if _, err := writer.context.Writer.WriteString(
+		"event: " + event + "\ndata: " + string(encoded) + "\n\n",
+	); err != nil {
+		return err
+	}
+	writer.context.Writer.Flush()
+	return writer.context.Request.Context().Err()
 }
 
 func (h *HTTPHandler) retryRun(c *gin.Context) {

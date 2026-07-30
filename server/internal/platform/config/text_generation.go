@@ -14,7 +14,7 @@ const (
 	TextProviderQianwen = "qianwen"
 
 	defaultTextTimeout         = 60 * time.Second
-	defaultTextMaxOutputTokens = 512
+	defaultTextMaxOutputTokens = 2048
 	defaultAgentContextChars   = 12000
 	maximumTextTimeout         = 5 * time.Minute
 	maximumTextOutputTokens    = 1_000_000

@@ -3,12 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:speakup/features/preparation/ielts_question_bank.dart';
 import 'package:speakup/features/preparation/preparation_client.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 
-final class WirePreparationCatalogClient implements PreparationCatalogClient {
+final class WirePreparationCatalogClient
+    implements PreparationCatalogClient, IeltsQuestionBankClient {
   factory WirePreparationCatalogClient({
     required Uri baseUri,
     IdentityHttpTransport? transport,
@@ -137,6 +139,62 @@ final class WirePreparationCatalogClient implements PreparationCatalogClient {
       roles.add(role);
     }
     return List<PreparationRole>.unmodifiable(roles);
+  }
+
+  @override
+  Future<IeltsQuestionBank> getIeltsQuestionBank() async {
+    final response = await _get('/v1/ielts-speaking/question-bank');
+    final root = _object(
+      _decode(response.body),
+      required: const <String>{
+        'schema_version',
+        'bank_id',
+        'season',
+        'source_cutoff',
+        'part1_sets',
+        'topic_groups',
+      },
+    );
+    if (root['schema_version'] != 1) {
+      throw _invalidResponse();
+    }
+    final sourceCutoff = DateTime.tryParse(_string(root['source_cutoff']));
+    final rawPart1Sets = root['part1_sets'];
+    final rawTopicGroups = root['topic_groups'];
+    if (sourceCutoff == null ||
+        rawPart1Sets is! List<Object?> ||
+        rawPart1Sets.length != 38 ||
+        rawTopicGroups is! List<Object?> ||
+        rawTopicGroups.length != 56) {
+      throw _invalidResponse();
+    }
+    final part1Ids = <String>{};
+    final part1Sets = rawPart1Sets
+        .map((raw) {
+          final set = _ieltsPart1Set(raw);
+          if (!part1Ids.add(set.id)) {
+            throw _invalidResponse();
+          }
+          return set;
+        })
+        .toList(growable: false);
+    final groupIds = <String>{};
+    final topicGroups = rawTopicGroups
+        .map((raw) {
+          final group = _ieltsTopicGroup(raw);
+          if (!groupIds.add(group.id)) {
+            throw _invalidResponse();
+          }
+          return group;
+        })
+        .toList(growable: false);
+    return IeltsQuestionBank(
+      bankId: _resourceId(root['bank_id']),
+      season: _string(root['season']),
+      sourceCutoff: sourceCutoff.toUtc(),
+      part1Sets: List<IeltsPart1Set>.unmodifiable(part1Sets),
+      topicGroups: List<IeltsTopicGroup>.unmodifiable(topicGroups),
+    );
   }
 
   Future<IdentityHttpResponse> _get(String path) async {
@@ -342,7 +400,9 @@ bool _validScenarioFamilyModel(String family, String model) {
   return switch ((family, model)) {
     ('INTERVIEW', 'PROJECT_EXPERIENCE_DEEP_DIVE') ||
     ('INTERVIEW', 'INTERVIEW_BASIC_DIALOGUE') ||
+    ('EXAM', 'IELTS_SPEAKING_PART_1') ||
     ('EXAM', 'IELTS_SPEAKING_PART_2') ||
+    ('EXAM', 'IELTS_SPEAKING_PART_3') ||
     ('EXAM', 'IELTS_SPEAKING_FULL_MOCK') ||
     ('EXAM', 'EXAM_BASIC_DIALOGUE') ||
     ('WORKPLACE', 'PROGRESS_AND_RISK_UPDATE') ||
@@ -351,6 +411,103 @@ bool _validScenarioFamilyModel(String family, String model) {
     ('DAILY', 'DAILY_BASIC_DIALOGUE') => true,
     _ => false,
   };
+}
+
+IeltsPart1Set _ieltsPart1Set(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'id',
+      'title',
+      'topics',
+      'question_count',
+      'published',
+    },
+  );
+  final rawTopics = object['topics'];
+  if (rawTopics is! List<Object?> ||
+      rawTopics.length != 3 ||
+      object['question_count'] != 8 ||
+      object['published'] != true) {
+    throw _invalidResponse();
+  }
+  final topics = rawTopics.map(_ieltsPart1Topic).toList(growable: false);
+  if (topics.fold<int>(0, (total, topic) => total + topic.questions.length) !=
+      8) {
+    throw _invalidResponse();
+  }
+  return IeltsPart1Set(
+    id: _resourceId(object['id']),
+    title: _string(object['title']),
+    topics: List<IeltsPart1Topic>.unmodifiable(topics),
+    questionCount: 8,
+  );
+}
+
+IeltsPart1Topic _ieltsPart1Topic(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{'title', 'release', 'questions'},
+  );
+  final release = _string(object['release'], maximumBytes: 32);
+  if (!const <String>{'new', 'carry_over', 'evergreen'}.contains(release)) {
+    throw _invalidResponse();
+  }
+  final questions = _stringList(object['questions'], maximumItemBytes: 1024);
+  if (questions.length < 2) {
+    throw _invalidResponse();
+  }
+  return IeltsPart1Topic(
+    title: _string(object['title']),
+    release: release,
+    questions: questions,
+  );
+}
+
+IeltsTopicGroup _ieltsTopicGroup(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'id',
+      'title_zh',
+      'release',
+      'region',
+      'part2',
+      'part3_questions',
+      'published',
+      'supplemented_question_count',
+    },
+  );
+  final release = _string(object['release'], maximumBytes: 32);
+  final supplemented = object['supplemented_question_count'];
+  if (!const <String>{'new', 'carry_over'}.contains(release) ||
+      object['region'] != 'mainland' ||
+      object['published'] != true ||
+      supplemented is! int ||
+      supplemented < 0 ||
+      supplemented > 5) {
+    throw _invalidResponse();
+  }
+  final cueObject = _object(
+    object['part2'],
+    required: const <String>{'prompt', 'points'},
+  );
+  final points = _stringList(cueObject['points'], maximumItemBytes: 1024);
+  final questions = _stringList(
+    object['part3_questions'],
+    maximumItemBytes: 1024,
+  );
+  if (points.length < 3 || questions.isEmpty || questions.length > 5) {
+    throw _invalidResponse();
+  }
+  return IeltsTopicGroup(
+    id: _resourceId(object['id']),
+    title: _string(object['title_zh']),
+    release: release,
+    cueCard: IeltsCueCard(prompt: _string(cueObject['prompt']), points: points),
+    part3Questions: questions,
+    supplementedQuestionCount: supplemented,
+  );
 }
 
 PreparationRole _role(Object? value) {

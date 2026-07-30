@@ -1,3 +1,4 @@
+import 'package:speakup/features/preparation/ielts_question_bank.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
 final class AgentPracticeContext {
@@ -31,6 +32,7 @@ final class PreparationLaunchSelection {
     required this.practiceOptionId,
     required this.practiceOptionType,
     required this.practiceOptionVersion,
+    this.ieltsSelection,
   });
 
   factory PreparationLaunchSelection.fromCatalog({
@@ -38,6 +40,7 @@ final class PreparationLaunchSelection {
     required PreparationScenarioConfig config,
     required PreparationRole role,
     required PreparationOption option,
+    IeltsPracticeSelection? ieltsSelection,
   }) {
     return PreparationLaunchSelection(
       scenarioDefinitionId: scenario.id,
@@ -53,6 +56,7 @@ final class PreparationLaunchSelection {
       practiceOptionId: option.id,
       practiceOptionType: option.type,
       practiceOptionVersion: option.version,
+      ieltsSelection: ieltsSelection,
     );
   }
 
@@ -69,6 +73,7 @@ final class PreparationLaunchSelection {
   final String practiceOptionId;
   final PreparationOptionType practiceOptionType;
   final int practiceOptionVersion;
+  final IeltsPracticeSelection? ieltsSelection;
 
   @override
   bool operator ==(Object other) =>
@@ -85,7 +90,8 @@ final class PreparationLaunchSelection {
       other.roleDefinitionVersion == roleDefinitionVersion &&
       other.practiceOptionId == practiceOptionId &&
       other.practiceOptionType == practiceOptionType &&
-      other.practiceOptionVersion == practiceOptionVersion;
+      other.practiceOptionVersion == practiceOptionVersion &&
+      other.ieltsSelection == ieltsSelection;
 
   @override
   int get hashCode => Object.hash(
@@ -102,6 +108,7 @@ final class PreparationLaunchSelection {
     practiceOptionId,
     practiceOptionType,
     practiceOptionVersion,
+    ieltsSelection,
   );
 }
 

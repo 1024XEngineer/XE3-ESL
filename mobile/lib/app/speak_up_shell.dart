@@ -17,6 +17,7 @@ import 'package:speakup/features/preparation/preparation_launch_controller.dart'
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
+import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
 class SpeakUpShell extends StatefulWidget {
@@ -29,6 +30,7 @@ class SpeakUpShell extends StatefulWidget {
     this.preparationLaunchController,
     this.jobPreparationController,
     this.reviewHistoryController,
+    this.interviewReportController,
     required this.agentController,
     super.key,
   });
@@ -42,6 +44,7 @@ class SpeakUpShell extends StatefulWidget {
   final PreparationLaunchController? preparationLaunchController;
   final JobPreparationController? jobPreparationController;
   final ReviewHistoryController? reviewHistoryController;
+  final InterviewReportController? interviewReportController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -123,6 +126,16 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     final navigationGeneration = ++_navigationGeneration;
+    if (_selectedIndex == 0 && index != 0) {
+      final parked = await widget.agentController.prepareToLeaveAgent();
+      if (!mounted || navigationGeneration != _navigationGeneration) {
+        return;
+      }
+      if (!parked) {
+        _showMockNotice('语音正在发送，请完成后再离开');
+        return;
+      }
+    }
     if (_selectedIndex == 1 && index != 1) {
       final launch = widget.preparationLaunchController;
       if (launch?.isStarting ?? false) {
@@ -233,7 +246,18 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       if (!mounted) {
         return;
       }
-      await Navigator.of(context).pushNamed(AppRoutes.practice);
+      final result = await Navigator.of(
+        context,
+      ).pushNamed<Object?>(AppRoutes.practice);
+      if (mounted && result is IeltsPracticeRouteResult) {
+        setState(() => _selectedIndex = 1);
+        widget.preparationController?.requestIeltsNavigation(
+          IeltsPracticeNavigationRequest(
+            mode: result.mode,
+            selection: result.selection,
+          ),
+        );
+      }
     } finally {
       _practiceRouteInFlight = false;
     }
@@ -244,9 +268,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     final review = widget.agentController.review;
-    final suppressReview = isIeltsSpeakingFullMockSession(
-      widget.agentController,
-    );
+    final suppressReview = isIeltsSpeakingSession(widget.agentController);
     if (review == null || suppressReview) {
       _reviewPresented = false;
     } else if (!_reviewPresented) {
@@ -259,7 +281,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   void _restorePresentedReview() {
     if (widget.agentController.review == null ||
-        isIeltsSpeakingFullMockSession(widget.agentController)) {
+        isIeltsSpeakingSession(widget.agentController)) {
       _reviewPresented = false;
       return;
     }
@@ -360,6 +382,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         historyController: widget.reviewHistoryController,
+        interviewReportController: widget.interviewReportController,
         agentController: widget.agentController,
         autoload: false,
       ),

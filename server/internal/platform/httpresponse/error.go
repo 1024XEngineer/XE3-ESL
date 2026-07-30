@@ -150,6 +150,8 @@ func statusForCategory(category apperror.Category) (int, bool) {
 		return http.StatusConflict, true
 	case apperror.FailedPrecondition:
 		return http.StatusPreconditionFailed, true
+	case apperror.UnprocessableEntity:
+		return http.StatusUnprocessableEntity, true
 	case apperror.ResourceExhausted:
 		return http.StatusTooManyRequests, true
 	case apperror.DeadlineExceeded:
@@ -173,6 +175,9 @@ func statusForCategory(category apperror.Category) (int, bool) {
 // schema.
 var canonicalHTTPStatusByCode = map[string]int{
 	"invalid_request":                         http.StatusBadRequest,
+	"invalid_image":                           http.StatusBadRequest,
+	"unsupported_image_format":                http.StatusBadRequest,
+	"image_too_large":                         http.StatusRequestEntityTooLarge,
 	"answer_invalid":                          http.StatusBadRequest,
 	"unsupported_message":                     http.StatusBadRequest,
 	"authentication_required":                 http.StatusUnauthorized,

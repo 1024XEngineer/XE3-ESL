@@ -40,8 +40,8 @@ type VoiceTurnProgress struct {
 }
 
 // RequiresSessionReview reports whether completing this frozen Session must
-// synchronously create a formal Review. IELTS full mock reports are delivered
-// separately, so their speaking flow must not depend on Review generation.
+// synchronously create a formal Review. IELTS reports and practice history are
+// delivered separately, so no IELTS speaking flow depends on Review generation.
 func (a *VoiceApplication) RequiresSessionReview(
 	ctx context.Context,
 	actor persistence.Actor,
@@ -58,8 +58,15 @@ func (a *VoiceApplication) RequiresSessionReview(
 	if err != nil {
 		return false, err
 	}
-	return session.ScenarioModel !=
-		persistence.ScenarioModelIELTSSpeakingFullMock, nil
+	switch session.ScenarioModel {
+	case persistence.ScenarioModelIELTSSpeakingFullMock,
+		persistence.ScenarioModelIELTSSpeakingPart1,
+		persistence.ScenarioModelIELTSSpeakingPart2,
+		persistence.ScenarioModelIELTSSpeakingPart3:
+		return false, nil
+	default:
+		return true, nil
+	}
 }
 
 // VoiceApplication exposes Practice capabilities without leaking its

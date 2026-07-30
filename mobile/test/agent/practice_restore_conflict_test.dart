@@ -11,6 +11,8 @@ import 'package:speakup/practice/wire_practice_client.dart';
 import 'package:speakup/review/review_history_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
+import '../review/formal_review_fixture.dart';
+
 void main() {
   test(
     'two completed Sessions keep Agent usable without guessing a Practice',
@@ -296,16 +298,24 @@ final class _CompletedReviewHistoryClient implements ReviewHistoryClient {
 
   ReviewHistoryItem _historyItem(String sessionId, String reviewId) {
     final completedAt = DateTime.parse(_timestamp);
+    final createdAt = completedAt.subtract(const Duration(minutes: 5));
+    final review = AgentReview(
+      id: reviewId,
+      title: 'Completed review',
+      summary: 'Historical Session remains in Review history.',
+      strength: 'Clear answer',
+      nextFocus: 'Add evidence',
+    );
     return ReviewHistoryItem(
-      review: AgentReview(
-        id: reviewId,
-        title: 'Completed review',
-        summary: 'Historical Session remains in Review history.',
-        strength: 'Clear answer',
-        nextFocus: 'Add evidence',
+      review: review,
+      formalReview: legacyFormalReviewFixture(
+        review: review,
+        practiceSessionId: sessionId,
+        createdAt: createdAt,
+        completedAt: completedAt,
       ),
       practiceSessionId: sessionId,
-      createdAt: completedAt.subtract(const Duration(minutes: 5)),
+      createdAt: createdAt,
       completedAt: completedAt,
     );
   }

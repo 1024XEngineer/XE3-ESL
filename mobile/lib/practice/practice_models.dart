@@ -1,5 +1,6 @@
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/review/formal_review.dart';
 
 final class PracticeQuestion {
   const PracticeQuestion({
@@ -40,6 +41,7 @@ final class PracticeSessionSnapshot {
     this.currentQuestion,
     this.currentTurn,
     this.review,
+    this.formalReview,
   });
 
   final String sessionId;
@@ -53,6 +55,7 @@ final class PracticeSessionSnapshot {
   final PracticeQuestion? currentQuestion;
   final PracticeTurnSnapshot? currentTurn;
   final AgentReview? review;
+  final FormalReview? formalReview;
 }
 
 final class PracticeTurnSnapshot {
@@ -140,6 +143,7 @@ final class PracticeTurnConfirmation {
     this.sessionVersion,
     this.nextQuestion,
     this.review,
+    this.formalReview,
     this.audioAssetId,
   });
 
@@ -154,6 +158,7 @@ final class PracticeTurnConfirmation {
   final int? sessionVersion;
   final PracticeQuestion? nextQuestion;
   final AgentReview? review;
+  final FormalReview? formalReview;
   final String? audioAssetId;
 }
 
