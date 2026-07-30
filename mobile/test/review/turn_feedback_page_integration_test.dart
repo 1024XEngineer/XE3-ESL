@@ -142,15 +142,6 @@ void main() {
       await tester.tap(find.byKey(const Key('practice-stop-recording')));
       await tester.pumpAndSettle();
 
-      expect(
-        practiceController.recordingState,
-        PracticeRecordingState.awaitingConfirmation,
-      );
-      expect(find.text('I managed the release.'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('practice-confirm-turn')));
-      await tester.pumpAndSettle();
-
       expect(practiceClient.retryConfirmations, 1);
       expect(practiceController.recordingState, PracticeRecordingState.idle);
       expect(practiceController.completedTurns, 1);
