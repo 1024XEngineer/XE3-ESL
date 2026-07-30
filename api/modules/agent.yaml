@@ -1197,6 +1197,16 @@ components:
           description: Present only for a multimodal user Message.
           items:
             $ref: '#/components/schemas/AgentImageAsset'
+        speech_feedback_status_url:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^/v1/speech-feedback/[A-Za-z0-9._~-]{1,128}$'
+          readOnly: true
+          description: |
+            Present only for an eligible, confirmed user voice Message. It is
+            absent, never null, for text, assistant, unconfirmed, hidden, or
+            deleted sources.
         actions:
           type: array
           maxItems: 4

@@ -183,6 +183,25 @@ func run() int {
 		)
 		return 1
 	}
+	speechFeedbackComposition, err :=
+		bootstrap.NewSpeechFeedbackComposition(
+			databasePool.Native(),
+			textGenerator,
+			bootstrap.SpeechFeedbackConfiguration{
+				Provider:      textConfig.Provider,
+				Model:         textConfig.Model,
+				MaxAttempts:   3,
+				LeaseDuration: 30 * time.Second,
+				RetryDelay:    2 * time.Second,
+			},
+		)
+	if err != nil {
+		logger.Error(
+			"speech feedback composition failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
 
 	memoryIndexComposition, err := bootstrap.NewMemoryIndexComposition(
 		databasePool.Native(),
@@ -272,6 +291,8 @@ func run() int {
 					InterviewShadowCoordinator(),
 				IELTSSpeakingShadowCoordinator: evaluationComposition.
 					IELTSSpeakingShadowCoordinator(),
+				SpeechFeedbackCoordinator: speechFeedbackComposition.
+					Coordinator(),
 			},
 		)
 	if err != nil {
@@ -330,6 +351,8 @@ func run() int {
 	contextRoutes, err := applicationComposition.ProtectedRoutes(
 		avatarHTTP,
 		evaluationComposition.HTTPHandler(),
+		speechFeedbackComposition.HTTPHandler(),
+		speechFeedbackComposition.RetryHTTPHandler(),
 	)
 	if err != nil {
 		logger.Error("context route startup failed", slog.Any("error", err))
@@ -342,6 +365,17 @@ func run() int {
 	if err != nil {
 		logger.Error(
 			"evaluation shadow startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	speechFeedback, err := buildSpeechFeedbackWorker(
+		speechFeedbackComposition.Worker(),
+		logger,
+	)
+	if err != nil {
+		logger.Error(
+			"speech feedback startup failed",
 			slog.String("error_kind", "dependency"),
 		)
 		return 1
@@ -454,6 +488,11 @@ func run() int {
 		defer close(evaluationShadowDone)
 		evaluationShadow.Run(ctx)
 	}()
+	speechFeedbackDone := make(chan struct{})
+	go func() {
+		defer close(speechFeedbackDone)
+		speechFeedback.Run(ctx)
+	}()
 
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
 		logger,
@@ -565,6 +604,15 @@ func run() int {
 	case <-shutdownCtx.Done():
 		logger.Error(
 			"evaluation shadow shutdown failed",
+			slog.String("error_kind", "timeout"),
+		)
+		exitCode = 1
+	}
+	select {
+	case <-speechFeedbackDone:
+	case <-shutdownCtx.Done():
+		logger.Error(
+			"speech feedback shutdown failed",
 			slog.String("error_kind", "timeout"),
 		)
 		exitCode = 1

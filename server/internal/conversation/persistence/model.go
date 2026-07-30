@@ -167,7 +167,17 @@ type ConfirmTurnCommand struct {
 	EvidenceVersion int64
 	ConfirmedText   string
 	IdempotencyKey  string
+	// RetryTurnID is the Conversation-owned ANSWERING draft to confirm.
+	// Empty means the ordinary EFFECTIVE Turn path.
+	RetryTurnID string
 }
+
+type TurnKind string
+
+const (
+	TurnKindEffective TurnKind = "EFFECTIVE"
+	TurnKindRetry     TurnKind = "RETRY"
+)
 
 type ConfirmedTurn struct {
 	ID                      string
@@ -181,6 +191,10 @@ type ConfirmedTurn struct {
 	AnswerText              string
 	CandidateID             string
 	EvidenceVersion         int64
+	Kind                    TurnKind
+	RetryRequestID          string
+	OriginalTurnID          string
+	CountsTowardTurnLimit   bool
 	Progress                TurnProgress
 	Review                  TurnReviewCheckpoint
 	ConfirmedAt             time.Time

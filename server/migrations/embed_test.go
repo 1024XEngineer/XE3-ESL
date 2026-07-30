@@ -128,8 +128,8 @@ func TestAgentImageMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{
-		"000040_agent_image_assets.up.sql",
-		"000040_agent_image_assets.down.sql",
+		"000042_agent_image_assets.up.sql",
+		"000042_agent_image_assets.down.sql",
 	} {
 		if _, err := Files.ReadFile(name); err != nil {
 			t.Fatalf("read embedded Agent image migration %q: %v", name, err)

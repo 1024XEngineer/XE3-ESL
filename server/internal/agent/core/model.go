@@ -52,17 +52,18 @@ type ThreadMatterLink struct {
 }
 
 type Message struct {
-	ID              string
-	OwnerID         string
-	ThreadID        string
-	Sequence        int64
-	Role            MessageRole
-	ClientMessageID string
-	ProducedByRunID string
-	Modality        MessageModality
-	Content         string
-	Audio           *MessageAudio
-	CreatedAt       time.Time
+	ID                      string
+	OwnerID                 string
+	ThreadID                string
+	Sequence                int64
+	Role                    MessageRole
+	ClientMessageID         string
+	ProducedByRunID         string
+	Modality                MessageModality
+	Content                 string
+	Audio                   *MessageAudio
+	SpeechFeedbackStatusURL string
+	CreatedAt               time.Time
 }
 
 // MessageAudio is the durable one-to-one recording projection for a user

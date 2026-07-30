@@ -1,6 +1,7 @@
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/practice/practice_recording.dart';
 
 abstract interface class PracticeClient {
   Future<void> clearAccountState();
@@ -43,6 +44,33 @@ abstract interface class PracticeLifecycleClient {
   Future<PracticeSessionLifecycle> endEarly({
     required String sessionId,
     required int expectedSessionVersion,
+    required String idempotencyKey,
+  });
+}
+
+/// Optional Daily/Workplace same-question retry capability.
+///
+/// Keeping this separate from [PracticeClient] lets existing test doubles and
+/// non-feedback practice clients remain unchanged.
+abstract interface class PracticeSpeechFeedbackRetryClient {
+  Future<PracticeRetryRequest> requestSameQuestionRetry({
+    required String feedbackItemId,
+    required String idempotencyKey,
+  });
+
+  Future<PracticeRetryRequest> getSameQuestionRetryRequest({
+    required String retryRequestId,
+  });
+
+  Future<RetryTranscriptionCandidate> transcribeRetry({
+    required String answerPath,
+    required String idempotencyKey,
+    required RecordedPracticeAudio audio,
+  });
+
+  Future<ConfirmedRetryTurn> confirmRetry({
+    required String retryTurnId,
+    required String candidateId,
     required String idempotencyKey,
   });
 }

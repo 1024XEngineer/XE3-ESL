@@ -128,6 +128,20 @@ type VoiceCompletionEvaluationSource struct {
 	SessionID string
 }
 
+type VoiceTurnFeedbackReference struct {
+	StatusURL  string
+	Applicable bool
+}
+
+type VoiceTurnFeedbackPort interface {
+	EnsureConversationTurn(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+	) (VoiceTurnFeedbackReference, error)
+}
+
 // VoiceRoundOrchestrator owns the cross-module voice-round saga. It never
 // reaches into a module Repository and relies on stable Turn and Session IDs
 // for idempotent recovery after any completed step.
@@ -136,6 +150,7 @@ type VoiceRoundOrchestrator struct {
 	practice      VoicePracticePort
 	reviews       VoiceReviewPort
 	completions   VoiceCompletionEvaluationPort
+	feedback      VoiceTurnFeedbackPort
 }
 
 func NewVoiceRoundOrchestrator(
@@ -143,17 +158,23 @@ func NewVoiceRoundOrchestrator(
 	practice VoicePracticePort,
 	reviews VoiceReviewPort,
 	completions VoiceCompletionEvaluationPort,
+	feedbackPorts ...VoiceTurnFeedbackPort,
 ) (*VoiceRoundOrchestrator, error) {
 	if conversations == nil || practice == nil || reviews == nil ||
-		completions == nil {
+		completions == nil || len(feedbackPorts) > 1 ||
+		(len(feedbackPorts) == 1 && feedbackPorts[0] == nil) {
 		return nil, errors.New("agent: voice round dependency is required")
 	}
-	return &VoiceRoundOrchestrator{
+	orchestrator := &VoiceRoundOrchestrator{
 		conversations: conversations,
 		practice:      practice,
 		reviews:       reviews,
 		completions:   completions,
-	}, nil
+	}
+	if len(feedbackPorts) == 1 {
+		orchestrator.feedback = feedbackPorts[0]
+	}
+	return orchestrator, nil
 }
 
 func (orchestrator *VoiceRoundOrchestrator) Transcribe(
@@ -203,7 +224,30 @@ func (orchestrator *VoiceRoundOrchestrator) Confirm(
 	if err != nil {
 		return conversation.ConfirmedVoiceTurn{}, err
 	}
-	return orchestrator.finishTurn(ctx, actor, candidate, turn)
+	turn, err = orchestrator.finishTurn(ctx, actor, candidate, turn)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	if orchestrator.feedback == nil {
+		return turn, nil
+	}
+	reference, err := orchestrator.feedback.EnsureConversationTurn(
+		ctx,
+		actor,
+		turn.SessionID,
+		turn.ID,
+	)
+	if err != nil {
+		return conversation.ConfirmedVoiceTurn{}, err
+	}
+	if !reference.Applicable {
+		return turn, nil
+	}
+	if strings.TrimSpace(reference.StatusURL) == "" {
+		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+	}
+	turn.SpeechFeedbackStatusURL = reference.StatusURL
+	return turn, nil
 }
 
 func (orchestrator *VoiceRoundOrchestrator) SubmitText(

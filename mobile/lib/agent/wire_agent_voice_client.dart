@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/transport_security.dart';
+import 'package:speakup/review/turn_feedback.dart';
 
 import 'agent_client.dart';
 import 'agent_models.dart';
@@ -1289,6 +1290,7 @@ AgentMessage _decodeMessageObject(
       'modality',
       'content',
       'audio',
+      'speech_feedback_status_url',
       'created_at',
     },
     required: const <String>{
@@ -1323,13 +1325,22 @@ AgentMessage _decodeMessageObject(
   };
   final audioObject = _optionalObject(object, 'audio');
   final audio = audioObject == null ? null : _decodeMessageAudio(audioObject);
+  final speechFeedbackStatusUrl = _optionalString(
+    object,
+    'speech_feedback_status_url',
+    max: 160,
+  );
   if ((role == AgentMessageRole.user &&
           (clientId == null || producedBy != null)) ||
       (role == AgentMessageRole.assistant &&
           (clientId != null || producedBy == null)) ||
       (modality == AgentMessageModality.voice &&
           (role != AgentMessageRole.user || audio == null)) ||
-      (modality == AgentMessageModality.text && audio != null)) {
+      (modality == AgentMessageModality.text && audio != null) ||
+      (speechFeedbackStatusUrl != null &&
+          (role != AgentMessageRole.user ||
+              modality != AgentMessageModality.voice ||
+              !validSpeechFeedbackStatusUrl(speechFeedbackStatusUrl)))) {
     throw const _InvalidVoiceResponse();
   }
   return AgentMessage(
@@ -1340,6 +1351,7 @@ AgentMessage _decodeMessageObject(
     createdAt: _strictDateTime(object['created_at']),
     modality: modality,
     audio: audio,
+    speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
 

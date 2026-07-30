@@ -101,6 +101,22 @@ type VoiceCheckpointPort interface {
 	) (conversation.ConfirmedVoiceTurn, bool, error)
 }
 
+// VoiceTurnHistoryPort is implemented by the production Conversation adapter.
+// It restores confirmed exchanges without making Practice infer prior messages
+// from the latest checkpoint.
+type VoiceTurnHistoryPort interface {
+	ListTurnHistory(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) ([]VoiceTurnExchange, error)
+}
+
+type VoiceTurnExchange struct {
+	Question conversation.VoiceQuestion
+	Turn     conversation.ConfirmedVoiceTurn
+}
+
 type VoiceReviewReader interface {
 	GetReview(
 		context.Context,
@@ -222,11 +238,12 @@ type VoiceReviewHistoryPage struct {
 }
 
 type VoiceSessionState struct {
-	Session  VoicePracticeSession
-	Matter   matter.Matter
-	Question *conversation.VoiceQuestion
-	Turn     *conversation.ConfirmedVoiceTurn
-	Review   *VoiceSessionReview
+	Session     VoicePracticeSession
+	Matter      matter.Matter
+	Question    *conversation.VoiceQuestion
+	Turn        *conversation.ConfirmedVoiceTurn
+	TurnHistory []VoiceTurnExchange
+	Review      *VoiceSessionReview
 }
 
 type VoiceSessionApplication struct {
@@ -510,6 +527,15 @@ func (application *VoiceSessionApplication) state(
 		state.Session.MatterTitle = currentMatter.Title
 	}
 	if session.Status == "paused" || session.Status == "ended_early" {
+		history, err := application.restoreTurnHistory(
+			ctx,
+			actor,
+			session,
+		)
+		if err != nil {
+			return VoiceSessionState{}, err
+		}
+		state.TurnHistory = history
 		return state, nil
 	}
 	latest, found, err := application.checkpoints.LatestTurn(
@@ -565,6 +591,17 @@ func (application *VoiceSessionApplication) state(
 			return VoiceSessionState{}, recoveryErr
 		}
 	}
+	history, err := application.restoreTurnHistory(ctx, actor, state.Session)
+	if err != nil {
+		return VoiceSessionState{}, err
+	}
+	state.TurnHistory = history
+	if len(history) > 0 {
+		historyLatest := history[len(history)-1].Turn
+		if state.Turn == nil || historyLatest.ID != state.Turn.ID {
+			return VoiceSessionState{}, ErrInvalidContext
+		}
+	}
 	if state.Turn != nil && state.Turn.ReviewID != "" {
 		formalReview, reviewErr := application.GetReview(
 			ctx,
@@ -617,6 +654,37 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return state, nil
+}
+
+func (application *VoiceSessionApplication) restoreTurnHistory(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	session VoicePracticeSession,
+) ([]VoiceTurnExchange, error) {
+	historyPort, ok := application.checkpoints.(VoiceTurnHistoryPort)
+	if !ok {
+		return nil, nil
+	}
+	history, err := historyPort.ListTurnHistory(ctx, actor, session.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(history) != session.EffectiveTurns {
+		return nil, ErrInvalidContext
+	}
+	for index, exchange := range history {
+		expectedTurn := index + 1
+		if exchange.Question.SessionID != session.ID ||
+			exchange.Turn.SessionID != session.ID ||
+			exchange.Question.ID != exchange.Turn.QuestionID ||
+			exchange.Turn.EffectiveTurns != expectedTurn ||
+			(exchange.Turn.SessionCompleted !=
+				(expectedTurn == session.EffectiveTurns &&
+					session.Completed)) {
+			return nil, ErrInvalidContext
+		}
+	}
+	return history, nil
 }
 
 func requiresSynchronousSessionReview(session VoicePracticeSession) bool {

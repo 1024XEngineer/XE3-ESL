@@ -12,6 +12,9 @@ import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/agent_voice_widgets.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
+import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/review/turn_feedback_disclosure.dart';
 
 typedef ConversationVoiceStarter = FutureOr<void> Function();
 typedef ConversationPendingImageAction = FutureOr<void> Function(String);
@@ -54,6 +57,7 @@ class ConversationPage extends StatefulWidget {
     this.onRemovePendingImage,
     this.onRetryPendingImage,
     this.onRefreshMessageImage,
+    this.speechFeedbackController,
     super.key,
   }) : onStartVoice = onStartVoice ?? onVoicePlaceholder;
 
@@ -90,6 +94,7 @@ class ConversationPage extends StatefulWidget {
   final ConversationPendingImageAction? onRemovePendingImage;
   final ConversationPendingImageAction? onRetryPendingImage;
   final ConversationMessageImageAction? onRefreshMessageImage;
+  final SpeechFeedbackController? speechFeedbackController;
 
   @override
   State<ConversationPage> createState() => _ConversationPageState();
@@ -251,6 +256,21 @@ class ConversationPage extends StatefulWidget {
                                 voiceController: voiceController,
                                 onAction: onMessageAction,
                                 onRefreshImage: onRefreshMessageImage,
+                                speechFeedbackController:
+                                    speechFeedbackController,
+                                feedbackSourceKey: (message) =>
+                                    _agentFeedbackSourceKey(threadId, message),
+                                onRepractice: !isBusy && onStartVoice != null
+                                    ? (item) {
+                                        if (item.repracticeMode ==
+                                            SpeechFeedbackRepracticeMode
+                                                .sameThread) {
+                                          unawaited(
+                                            Future<void>.sync(onStartVoice!),
+                                          );
+                                        }
+                                      }
+                                    : null,
                               ),
                             ],
                             if (isBusy) ...[
@@ -326,20 +346,30 @@ class ConversationPage extends StatefulWidget {
 
 class _ConversationPageState extends State<ConversationPage> {
   final ScrollController _scrollController = ScrollController();
+  final Map<String, String> _feedbackSources = {};
   _ConversationScrollAnchor? _earlierMessagesAnchor;
   int _scrollRequestGeneration = 0;
   bool _showJumpToLatest = false;
+  bool _feedbackRebuildScheduled = false;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_handleScroll);
     _scheduleThreadInitialPosition();
+    _syncSpeechFeedbackSources();
+    widget.speechFeedbackController?.addListener(_handleFeedbackState);
   }
 
   @override
   void didUpdateWidget(covariant ConversationPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.speechFeedbackController != widget.speechFeedbackController) {
+      oldWidget.speechFeedbackController?.removeListener(_handleFeedbackState);
+      _removeSpeechFeedbackSources(oldWidget.speechFeedbackController);
+      widget.speechFeedbackController?.addListener(_handleFeedbackState);
+    }
+    _syncSpeechFeedbackSources();
     if (oldWidget.threadId != widget.threadId) {
       _earlierMessagesAnchor = null;
       _scheduleThreadInitialPosition();
@@ -383,6 +413,8 @@ class _ConversationPageState extends State<ConversationPage> {
   void dispose() {
     _scrollRequestGeneration++;
     _scrollController.removeListener(_handleScroll);
+    widget.speechFeedbackController?.removeListener(_handleFeedbackState);
+    _removeSpeechFeedbackSources(widget.speechFeedbackController);
     _scrollController.dispose();
     super.dispose();
   }
@@ -406,6 +438,56 @@ class _ConversationPageState extends State<ConversationPage> {
       return;
     }
     setState(() => _showJumpToLatest = value);
+  }
+
+  void _syncSpeechFeedbackSources() {
+    final controller = widget.speechFeedbackController;
+    if (controller == null) {
+      _feedbackSources.clear();
+      return;
+    }
+    final current = <String, String>{};
+    for (final message in widget.messages) {
+      final statusUrl = message.speechFeedbackStatusUrl;
+      if (statusUrl != null) {
+        current[_agentFeedbackSourceKey(widget.threadId, message)] = statusUrl;
+      }
+    }
+    for (final entry in _feedbackSources.entries.toList()) {
+      if (current[entry.key] != entry.value) {
+        controller.removeSource(entry.key);
+        _feedbackSources.remove(entry.key);
+      }
+    }
+    for (final entry in current.entries) {
+      if (_feedbackSources[entry.key] == entry.value) {
+        continue;
+      }
+      _feedbackSources[entry.key] = entry.value;
+      unawaited(controller.load(sourceKey: entry.key, statusUrl: entry.value));
+    }
+  }
+
+  void _removeSpeechFeedbackSources(SpeechFeedbackController? controller) {
+    if (controller != null) {
+      for (final sourceKey in _feedbackSources.keys) {
+        controller.removeSource(sourceKey);
+      }
+    }
+    _feedbackSources.clear();
+  }
+
+  void _handleFeedbackState() {
+    if (_feedbackRebuildScheduled) {
+      return;
+    }
+    _feedbackRebuildScheduled = true;
+    scheduleMicrotask(() {
+      _feedbackRebuildScheduled = false;
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 
   void _handleLoadEarlierMessages() {
@@ -488,6 +570,9 @@ class _ConversationPageState extends State<ConversationPage> {
     );
   }
 }
+
+String _agentFeedbackSourceKey(String? threadId, AgentMessage message) =>
+    'agent:$threadId:${message.id}';
 
 final class _ConversationScrollAnchor {
   const _ConversationScrollAnchor({
@@ -795,27 +880,64 @@ class _MessageList extends StatelessWidget {
     this.voiceController,
     this.onAction,
     this.onRefreshImage,
+    this.speechFeedbackController,
+    this.feedbackSourceKey,
+    this.onRepractice,
   });
 
   final List<AgentMessage> messages;
   final AgentVoiceController? voiceController;
   final ValueChanged<AgentMessageAction>? onAction;
   final ConversationMessageImageAction? onRefreshImage;
+  final SpeechFeedbackController? speechFeedbackController;
+  final String Function(AgentMessage message)? feedbackSourceKey;
+  final SpeechFeedbackRepracticeCallback? onRepractice;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       key: const Key('agent-message-list'),
       children: [
-        for (final message in messages)
+        for (final message in messages) ...[
           AgentMessageBubble(
             message: message,
             voiceController: voiceController,
             onAction: onAction,
             onRefreshImage: onRefreshImage,
           ),
+          if (_feedbackProjection(message) case final projection?) ...[
+            const SizedBox(height: SpeakUpDesign.space8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FractionallySizedBox(
+                widthFactor: 0.78,
+                child: SpeechFeedbackDisclosure(
+                  key: ValueKey(
+                    'agent-speech-feedback-${projection.sourceKey}',
+                  ),
+                  projection: projection,
+                  onRetry: projection.canRetry
+                      ? () => unawaited(
+                          speechFeedbackController!.retry(projection.sourceKey),
+                        )
+                      : null,
+                  onRepractice: onRepractice,
+                ),
+              ),
+            ),
+          ],
+        ],
       ],
     );
+  }
+
+  SpeechFeedbackProjection? _feedbackProjection(AgentMessage message) {
+    if (message.speechFeedbackStatusUrl == null ||
+        speechFeedbackController == null ||
+        feedbackSourceKey == null) {
+      return null;
+    }
+    return speechFeedbackController!.projectionFor(feedbackSourceKey!(message));
   }
 }
 

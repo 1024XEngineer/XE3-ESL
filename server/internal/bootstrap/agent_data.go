@@ -294,16 +294,18 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	var voiceApplication *agentvoice.VoiceSessionApplication
+	var sameQuestionRetry *agentvoice.SameQuestionRetryApplication
 	var audioAssets *conversation.AudioAssetService
 	if len(voiceConfigurations) == 1 {
-		voiceApplication, audioAssets, err = buildProductionVoiceApplication(
-			database,
-			generator,
-			matterService,
-			reviewRepository,
-			reviewHistory,
-			voiceConfigurations[0],
-		)
+		voiceApplication, sameQuestionRetry, audioAssets, err =
+			buildProductionVoiceApplication(
+				database,
+				generator,
+				matterService,
+				reviewRepository,
+				reviewHistory,
+				voiceConfigurations[0],
+			)
 		if err != nil {
 			return nil, err
 		}
@@ -320,6 +322,11 @@ func buildIdentityAgentComposition(
 		if agentVoiceMessages != nil {
 			voiceHTTPOption.AgentMessages = agentVoiceMessages
 		}
+		if voiceConfigurations[0].SpeechFeedbackCoordinator != nil {
+			voiceHTTPOption.SpeechFeedback =
+				voiceConfigurations[0].SpeechFeedbackCoordinator
+		}
+		voiceHTTPOption.SameQuestionRetry = sameQuestionRetry
 		voiceHTTPOptions = append(
 			voiceHTTPOptions,
 			voiceHTTPOption,
@@ -486,6 +493,15 @@ func buildAgentVoiceMessageApplication(
 	if err != nil {
 		return nil, err
 	}
+	feedbackPorts := make([]agentvoice.VoiceMessageFeedbackPort, 0, 1)
+	if configuration.SpeechFeedbackCoordinator != nil {
+		feedbackPorts = append(
+			feedbackPorts,
+			&voiceSpeechFeedbackAdapter{
+				coordinator: configuration.SpeechFeedbackCoordinator,
+			},
+		)
+	}
 	return agentvoice.NewVoiceMessageService(
 		repository,
 		configuration.ObjectStore,
@@ -501,5 +517,6 @@ func buildAgentVoiceMessageApplication(
 			UploadLease:      configuration.AudioUploadLease,
 			ASRLease:         configuration.ASRLease,
 		},
+		feedbackPorts...,
 	)
 }

@@ -816,6 +816,33 @@ func (r *Repository) confirmTurnInTransaction(
 		return conversation.ConfirmedTurn{}, conversation.ErrPersistenceConflict
 	}
 
+	var retryDraft domainRetryTurnDraft
+	if command.RetryTurnID != "" {
+		persistedDraft, retryErr := lockRetryTurn(
+			ctx,
+			tx,
+			actor.UserID,
+			command.RetryTurnID,
+		)
+		if retryErr != nil {
+			return conversation.ConfirmedTurn{},
+				mapRetryConfirmationError(retryErr)
+		}
+		if persistedDraft.PracticeSessionID != candidate.SessionID ||
+			persistedDraft.QuestionID != candidate.QuestionID ||
+			(persistedDraft.Status == "CONFIRMED" &&
+				persistedDraft.CandidateID != candidate.ID) {
+			return conversation.ConfirmedTurn{},
+				conversation.ErrPersistenceConflict
+		}
+		retryDraft = domainRetryTurnDraft{
+			TurnID:         persistedDraft.TurnID,
+			RetryRequestID: persistedDraft.RetryRequestID,
+			OriginalTurnID: persistedDraft.OriginalTurnID,
+			Status:         string(persistedDraft.Status),
+		}
+	}
+
 	turn, found, err := findTurnByCandidate(
 		ctx,
 		tx,
@@ -828,7 +855,12 @@ func (r *Repository) confirmTurnInTransaction(
 	now := databaseTime(r.now)
 	if found {
 		if turn.EvidenceVersion != command.EvidenceVersion ||
-			turn.AnswerText != command.ConfirmedText {
+			turn.AnswerText != command.ConfirmedText ||
+			(command.RetryTurnID == "" &&
+				turn.Kind != conversation.TurnKindEffective) ||
+			(command.RetryTurnID != "" &&
+				(turn.Kind != conversation.TurnKindRetry ||
+					turn.ID != command.RetryTurnID)) {
 			return conversation.ConfirmedTurn{}, conversation.ErrPersistenceConflict
 		}
 	} else {
@@ -841,8 +873,24 @@ func (r *Repository) confirmTurnInTransaction(
 		if questionErr != nil {
 			return conversation.ConfirmedTurn{}, questionErr
 		}
+		turnID := newID("turn")
+		turnKind := conversation.TurnKindEffective
+		countsTowardTurnLimit := true
+		retryRequestID := ""
+		originalTurnID := ""
+		if command.RetryTurnID != "" {
+			if retryDraft.Status != "ANSWERING" {
+				return conversation.ConfirmedTurn{},
+					conversation.ErrPersistenceConflict
+			}
+			turnID = retryDraft.TurnID
+			turnKind = conversation.TurnKindRetry
+			countsTowardTurnLimit = false
+			retryRequestID = retryDraft.RetryRequestID
+			originalTurnID = retryDraft.OriginalTurnID
+		}
 		turn = conversation.ConfirmedTurn{
-			ID:                      newID("turn"),
+			ID:                      turnID,
 			SessionID:               candidate.SessionID,
 			QuestionID:              candidate.QuestionID,
 			SpeakerParticipantID:    question.SpeakerParticipantID,
@@ -853,6 +901,10 @@ func (r *Repository) confirmTurnInTransaction(
 			AnswerText:              command.ConfirmedText,
 			CandidateID:             candidate.ID,
 			EvidenceVersion:         candidate.EvidenceVersion,
+			Kind:                    turnKind,
+			RetryRequestID:          retryRequestID,
+			OriginalTurnID:          originalTurnID,
+			CountsTowardTurnLimit:   countsTowardTurnLimit,
 			ConfirmedAt:             now,
 			CreatedAt:               now,
 		}
@@ -863,9 +915,12 @@ func (r *Repository) confirmTurnInTransaction(
 				practice_session_id, speaker_participant_id,
 				addressee_participant_ids, respondent_participant_id,
 				sequence, interaction_mode, answer_text, evidence_version,
-				confirmed_at, created_at
+				confirmed_at, created_at, turn_kind, retry_request_id,
+				original_turn_id, counts_toward_effective_turn_limit
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+				$13, $13, $14, NULLIF($15, '')::uuid,
+				NULLIF($16, ''), $17
 			)`,
 			actor.UserID,
 			turn.ID,
@@ -880,6 +935,10 @@ func (r *Repository) confirmTurnInTransaction(
 			turn.AnswerText,
 			turn.EvidenceVersion,
 			now,
+			turn.Kind,
+			turn.RetryRequestID,
+			turn.OriginalTurnID,
+			turn.CountsTowardTurnLimit,
 		)
 		if err != nil {
 			return conversation.ConfirmedTurn{}, safeDatabaseError(err)
@@ -894,6 +953,27 @@ func (r *Repository) confirmTurnInTransaction(
 		)
 		if err != nil {
 			return conversation.ConfirmedTurn{}, safeDatabaseError(err)
+		}
+		if command.RetryTurnID != "" {
+			tag, updateErr := tx.Exec(ctx, `
+				UPDATE conversation_retry_turn_drafts
+				SET status = 'CONFIRMED',
+				    candidate_id = $3,
+				    confirmed_at = $4,
+				    updated_at = $4
+				WHERE owner_user_id = $1
+				  AND turn_id = $2
+				  AND status = 'ANSWERING'
+				  AND candidate_id IS NULL
+			`, actor.UserID, command.RetryTurnID, candidate.ID, now)
+			if updateErr != nil {
+				return conversation.ConfirmedTurn{},
+					safeDatabaseError(updateErr)
+			}
+			if tag.RowsAffected() != 1 {
+				return conversation.ConfirmedTurn{},
+					conversation.ErrPersistenceConflict
+			}
 		}
 	}
 	_, err = tx.Exec(
@@ -921,7 +1001,9 @@ func validConfirmation(
 		strings.TrimSpace(command.CandidateID) != "" &&
 		command.EvidenceVersion > 0 &&
 		strings.TrimSpace(command.ConfirmedText) != "" &&
-		strings.TrimSpace(command.IdempotencyKey) != ""
+		strings.TrimSpace(command.IdempotencyKey) != "" &&
+		(command.RetryTurnID == "" ||
+			validRetryTurnIdentifier(command.RetryTurnID))
 }
 
 func (r *Repository) GetTurn(
@@ -970,6 +1052,11 @@ func (r *Repository) SaveTurnProgress(
 	turn, err := lockTurn(ctx, tx, actor.UserID, turnID)
 	if err != nil {
 		return conversation.ConfirmedTurn{}, err
+	}
+	if turn.Kind != conversation.TurnKindEffective ||
+		!turn.CountsTowardTurnLimit {
+		return conversation.ConfirmedTurn{},
+			conversation.ErrPersistenceConflict
 	}
 	if turn.Progress.EffectiveTurns != 0 {
 		if progress != turn.Progress {
@@ -1028,7 +1115,9 @@ func (r *Repository) SaveTurnReview(
 	if err != nil {
 		return conversation.ConfirmedTurn{}, err
 	}
-	if !turn.Progress.SessionCompleted {
+	if turn.Kind != conversation.TurnKindEffective ||
+		!turn.CountsTowardTurnLimit ||
+		!turn.Progress.SessionCompleted {
 		return conversation.ConfirmedTurn{}, conversation.ErrPersistenceConflict
 	}
 	if turn.Review.ReviewID != "" {
@@ -1079,7 +1168,9 @@ func (r *Repository) ListSessionTurns(
 	rows, err := tx.Query(
 		ctx,
 		turnColumns+`
-		 WHERE owner_user_id = $1 AND practice_session_id = $2
+		 WHERE owner_user_id = $1
+		   AND practice_session_id = $2
+		   AND turn_kind = 'EFFECTIVE'
 		 ORDER BY sequence, created_at, turn_id`,
 		actor.UserID,
 		sessionID,
@@ -1398,6 +1489,10 @@ const turnColumns = `SELECT turn_id, practice_session_id, question_id,
                             speaker_participant_id, addressee_participant_ids,
                             respondent_participant_id, sequence, interaction_mode,
                             answer_text, candidate_id, evidence_version,
+                            turn_kind,
+                            COALESCE(retry_request_id::text, ''),
+                            COALESCE(original_turn_id, ''),
+                            counts_toward_effective_turn_limit,
                             effective_turns, session_completed,
                             COALESCE(review_id, ''),
                             COALESCE(review_source_turn_id, ''),
@@ -1422,6 +1517,10 @@ func scanTurn(row rowScanner) (conversation.ConfirmedTurn, error) {
 		&turn.AnswerText,
 		&turn.CandidateID,
 		&turn.EvidenceVersion,
+		&turn.Kind,
+		&turn.RetryRequestID,
+		&turn.OriginalTurnID,
+		&turn.CountsTowardTurnLimit,
 		&turn.Progress.EffectiveTurns,
 		&turn.Progress.SessionCompleted,
 		&turn.Review.ReviewID,
@@ -1780,12 +1879,16 @@ func sameCandidateCompletion(
 }
 
 func confirmationHash(command conversation.ConfirmTurnCommand) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf(
+	payload := fmt.Sprintf(
 		"%s\x00%d\x00%s",
 		command.CandidateID,
 		command.EvidenceVersion,
 		command.ConfirmedText,
-	)))
+	)
+	if command.RetryTurnID != "" {
+		payload += "\x00" + command.RetryTurnID
+	}
+	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
 }
 
