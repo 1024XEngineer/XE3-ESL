@@ -296,6 +296,124 @@ func TestVoiceReviewAdapterPropagatesInterviewShadowFailure(
 	}
 }
 
+func TestVoiceCompletionEvaluationAdapterRoutesOnlyCompletedIELTSFullMock(
+	t *testing.T,
+) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "auth-session-1",
+	}
+	session := agent.VoicePracticeSession{
+		ID:             "practice-session-1",
+		ScenarioType:   "EXAM",
+		ScenarioModel:  "IELTS_SPEAKING_FULL_MOCK",
+		Status:         "completed",
+		Completed:      true,
+		EffectiveTurns: 14,
+		TurnLimit:      14,
+	}
+	coordinator := &ieltsSpeakingCompletionCoordinatorStub{}
+	adapter := &voiceCompletionEvaluationAdapter{
+		sessions:    voiceCompletionSessionPortStub{session: session},
+		ieltsShadow: coordinator,
+	}
+	source := agent.VoiceCompletionEvaluationSource{
+		SessionID: session.ID,
+		TurnID:    "turn-14",
+	}
+
+	if err := adapter.EnsureCompletedSessionEvaluation(
+		context.Background(),
+		actor,
+		source,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if coordinator.calls != 1 ||
+		coordinator.actor != actor ||
+		coordinator.sessionID != session.ID {
+		t.Fatalf("IELTS coordinator call = %+v", coordinator)
+	}
+
+	interview := session
+	interview.ScenarioType = "INTERVIEW"
+	interview.ScenarioModel = "PROJECT_EXPERIENCE_DEEP_DIVE"
+	adapter.sessions = voiceCompletionSessionPortStub{session: interview}
+	if err := adapter.EnsureCompletedSessionEvaluation(
+		context.Background(),
+		actor,
+		source,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if coordinator.calls != 1 {
+		t.Fatalf(
+			"Interview also invoked IELTS coordinator: %d",
+			coordinator.calls,
+		)
+	}
+}
+
+func TestVoiceCompletionEvaluationAdapterFailsExplicitly(t *testing.T) {
+	t.Parallel()
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "auth-session-1",
+	}
+	session := agent.VoicePracticeSession{
+		ID:             "practice-session-1",
+		ScenarioType:   "EXAM",
+		ScenarioModel:  "IELTS_SPEAKING_FULL_MOCK",
+		Status:         "completed",
+		Completed:      true,
+		EffectiveTurns: 14,
+		TurnLimit:      14,
+	}
+	source := agent.VoiceCompletionEvaluationSource{
+		SessionID: session.ID,
+		TurnID:    "turn-14",
+	}
+
+	adapter := &voiceCompletionEvaluationAdapter{
+		sessions: voiceCompletionSessionPortStub{session: session},
+	}
+	if err := adapter.EnsureCompletedSessionEvaluation(
+		context.Background(),
+		actor,
+		source,
+	); err == nil {
+		t.Fatal("missing IELTS coordinator was silently ignored")
+	}
+
+	want := errors.New("IELTS completion failed")
+	adapter.ieltsShadow = &ieltsSpeakingCompletionCoordinatorStub{err: want}
+	if err := adapter.EnsureCompletedSessionEvaluation(
+		context.Background(),
+		actor,
+		source,
+	); !errors.Is(err, want) {
+		t.Fatalf("coordinator error = %v, want %v", err, want)
+	}
+
+	session.EffectiveTurns = 13
+	session.Completed = false
+	session.Status = "in_progress"
+	coordinator := &ieltsSpeakingCompletionCoordinatorStub{}
+	adapter.sessions = voiceCompletionSessionPortStub{session: session}
+	adapter.ieltsShadow = coordinator
+	if err := adapter.EnsureCompletedSessionEvaluation(
+		context.Background(),
+		actor,
+		source,
+	); !errors.Is(err, agent.ErrInvalidContext) {
+		t.Fatalf("incomplete Session error = %v", err)
+	}
+	if coordinator.calls != 0 {
+		t.Fatal("incomplete Session reached IELTS coordinator")
+	}
+}
+
 type voiceReviewEnsurerStub struct {
 	result review.FormalReview
 	err    error
@@ -345,6 +463,56 @@ func (stub *interviewShadowCoordinatorStub) EnsureForCompletedInterview(
 		*stub.events = append(*stub.events, "shadow")
 	}
 	return evaluation.Evaluation{}, false, stub.err
+}
+
+type ieltsSpeakingCompletionCoordinatorStub struct {
+	calls     int
+	actor     requestcontext.Actor
+	sessionID string
+	err       error
+}
+
+func (stub *ieltsSpeakingCompletionCoordinatorStub) EnsureForCompletedIELTSSpeaking(
+	_ context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) (evaluation.Evaluation, bool, error) {
+	stub.calls++
+	stub.actor = actor
+	stub.sessionID = sessionID
+	return evaluation.Evaluation{}, false, stub.err
+}
+
+type voiceCompletionSessionPortStub struct {
+	session agent.VoicePracticeSession
+	err     error
+}
+
+func (stub voiceCompletionSessionPortStub) Start(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+	string,
+) (agent.VoicePracticeSession, error) {
+	return stub.session, stub.err
+}
+
+func (stub voiceCompletionSessionPortStub) GetByThread(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+) (agent.VoicePracticeSession, error) {
+	return stub.session, stub.err
+}
+
+func (stub voiceCompletionSessionPortStub) GetByID(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (agent.VoicePracticeSession, error) {
+	return stub.session, stub.err
 }
 
 func TestLegacyReviewManifestFingerprintRemainsStable(t *testing.T) {
@@ -766,6 +934,7 @@ func TestBuildVoiceApplicationRequiresOwningModulePorts(t *testing.T) {
 			Questions:         &voiceTestQuestions{},
 			Checkpoints:       &voiceTestCheckpoints{},
 			Reviews:           &voiceTestReviews{},
+			Completions:       &voiceTestCompletions{},
 		},
 	}
 	if _, err := buildVoiceApplication(&voiceTestMatters{}, valid); err != nil {
@@ -779,6 +948,14 @@ func TestBuildVoiceApplicationRequiresOwningModulePorts(t *testing.T) {
 		missingStore,
 	); err == nil {
 		t.Fatal("missing Conversation Port was accepted")
+	}
+	missingCompletion := valid
+	missingCompletion.Ports.Completions = nil
+	if _, err := buildVoiceApplication(
+		&voiceTestMatters{},
+		missingCompletion,
+	); err == nil {
+		t.Fatal("missing completion Evaluation Port was accepted")
 	}
 	if _, err := buildVoiceApplication(nil, valid); err == nil {
 		t.Fatal("missing Matter Port was accepted")
@@ -836,6 +1013,10 @@ type voiceTestCheckpoints struct {
 type voiceTestReviews struct {
 	agent.VoiceReviewPort
 	agent.VoiceReviewReader
+}
+
+type voiceTestCompletions struct {
+	agent.VoiceCompletionEvaluationPort
 }
 
 type voiceTestMatters struct {

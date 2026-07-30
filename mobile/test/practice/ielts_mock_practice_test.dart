@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
@@ -13,6 +15,9 @@ import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/review/ielts_speaking_report.dart';
+import 'package:speakup/review/ielts_speaking_report_client.dart';
+import 'package:speakup/review/ielts_speaking_report_controller.dart';
 
 void main() {
   testWidgets(
@@ -423,14 +428,116 @@ void main() {
     },
   );
 
+  testWidgets('clearing practice state fences the bound report poll', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 14);
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    final reportClient = _PendingReportClient();
+    final reportController = IeltsSpeakingReportController(
+      client: reportClient,
+    );
+    addTearDown(controller.dispose);
+    addTearDown(reportController.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          reportController: reportController,
+        ),
+      ),
+    );
+    await tester.pump();
+    await reportClient.started.future;
+    expect(reportController.practiceSessionId, _sessionId);
+
+    await controller.clearPrivateState();
+    await tester.pump();
+
+    expect(controller.practiceSessionId, isNull);
+    expect(reportController.practiceSessionId, isNull);
+    expect(reportController.isLoading, isFalse);
+  });
+
+  testWidgets('section completion never requests the full-mock report', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(
+      initialCompleted: 7,
+      turnLimit: 8,
+      scenarioModel: 'IELTS_SPEAKING_PART_1',
+    );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    final preparation = PreparationController(
+      client: _EmptyPreparationCatalogClient(),
+    );
+    final reportClient = _PendingReportClient();
+    final reportController = IeltsSpeakingReportController(
+      client: reportClient,
+    );
+    addTearDown(controller.dispose);
+    addTearDown(preparation.dispose);
+    addTearDown(reportController.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsPart1Scene);
+    expect(controller.errorMessage, isNull);
+    expect(controller.practiceSessionId, _sessionId);
+    await preparation.beginIeltsSession(
+      _sessionId,
+      const IeltsPracticeSelection(
+        mode: IeltsPracticeMode.part1,
+        part1SetId: 'p1-set-02',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          preparationController: preparation,
+          reportController: reportController,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(controller.completedTurns, 8);
+    expect(
+      find.byKey(const Key('ielts-section-practice-complete-part1')),
+      findsOneWidget,
+    );
+    expect(reportClient.started.isCompleted, isFalse);
+    expect(reportController.practiceSessionId, isNull);
+  });
+
   testWidgets('restored matter identity still opens the three-part mock flow', (
     tester,
   ) async {
     final practice = _IeltsPracticeClient(
       initialCompleted: 8,
       snapshotScene: const AgentScene(
-        id: 'matter-restored',
-        title: 'IELTS 口语完整模拟',
+        id: 'unrelated-restored-scene-id',
+        title: 'Renamed server-owned practice',
         description: '恢复的练习场景',
       ),
     );
@@ -456,6 +563,44 @@ void main() {
     expect(find.byKey(const Key('ielts-mock-part-1-complete')), findsOneWidget);
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
+
+  testWidgets(
+    'same title and fourteen-turn limit do not impersonate the full mock',
+    (tester) async {
+      final practice = _IeltsPracticeClient(
+        initialCompleted: 8,
+        scenarioType: 'EXAM',
+        scenarioModel: 'EXAM_BASIC_DIALOGUE',
+        snapshotScene: const AgentScene(
+          id: ieltsSpeakingFullMockScenarioId,
+          title: 'IELTS 口语完整模拟',
+          description: '同名但不是完整模考',
+        ),
+      );
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(_ieltsScene);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PracticePage(
+            agentController: controller,
+            ieltsMockProgressStore: _MemoryProgressStore(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(controller.turnLimit, 14);
+      expect(find.byKey(const Key('practice-page')), findsOneWidget);
+      expect(find.byKey(const Key('ielts-mock-page')), findsNothing);
+    },
+  );
 
   testWidgets('save and exit returns from an in-progress full mock', (
     tester,
@@ -610,7 +755,11 @@ void main() {
   testWidgets('one-question Part 3 section completes after its original item', (
     tester,
   ) async {
-    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
+    final practice = _IeltsPracticeClient(
+      initialCompleted: 0,
+      turnLimit: 1,
+      scenarioModel: 'IELTS_SPEAKING_PART_3',
+    );
     final controller = AgentController(
       client: FakeAgentClient(),
       practiceClient: practice,
@@ -799,6 +948,8 @@ final class _IeltsPracticeClient implements PracticeClient {
     this.snapshotScene,
     this.turnLimit = 14,
     this.transcriptionFailuresRemaining = 0,
+    this.scenarioType = 'EXAM',
+    this.scenarioModel = 'IELTS_SPEAKING_FULL_MOCK',
   }) : completed = initialCompleted;
 
   final int initialCompleted;
@@ -806,6 +957,8 @@ final class _IeltsPracticeClient implements PracticeClient {
   Object? transcribeFailure;
   final int turnLimit;
   int transcriptionFailuresRemaining;
+  final String scenarioType;
+  final String scenarioModel;
   int completed;
   final List<String> confirmedQuestionIds = [];
 
@@ -828,6 +981,8 @@ final class _IeltsPracticeClient implements PracticeClient {
     return PracticeStartResult(
       snapshot: PracticeSessionSnapshot(
         sessionId: _sessionId,
+        scenarioType: scenarioType,
+        scenarioModel: scenarioModel,
         matter: snapshotScene == null
             ? activeMatter
             : AgentMatter(id: activeMatter.id, scene: snapshotScene!),
@@ -886,6 +1041,8 @@ final class _IeltsPracticeClient implements PracticeClient {
       completedTurns: completed,
       turnLimit: turnLimit,
       sessionCompleted: done,
+      scenarioType: scenarioType,
+      scenarioModel: scenarioModel,
       nextQuestion: done ? null : _question(completed + 1),
       review: done && turnLimit == 14 ? _review : null,
     );
@@ -932,6 +1089,20 @@ final class _Recorder implements PracticeRecorder {
   Future<void> clearAccountState() async {
     recording = false;
   }
+}
+
+final class _PendingReportClient implements IeltsSpeakingReportClient {
+  final started = Completer<void>();
+  final response = Completer<IeltsSpeakingReportEnvelope>();
+
+  @override
+  Future<IeltsSpeakingReportEnvelope> getReport(String practiceSessionId) {
+    started.complete();
+    return response.future;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
 }
 
 PracticeQuestion _question(int turn) {

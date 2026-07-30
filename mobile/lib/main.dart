@@ -32,6 +32,9 @@ import 'package:speakup/practice/practice_media.dart';
 import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/practice/wire_practice_client.dart';
 import 'package:speakup/review/interview_report_controller.dart';
+import 'package:speakup/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
+import 'package:speakup/review/ielts_speaking_report_wire_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
 import 'package:speakup/review/wire_interview_report_client.dart';
 import 'package:speakup/review/wire_review_history_client.dart';
@@ -55,6 +58,9 @@ void main() {
       reviewHistoryController: dependencies.reviewHistoryController,
       avatarControllerFactory: dependencies.avatarControllerFactory,
       interviewReportController: dependencies.interviewReportController,
+      ieltsSpeakingReportController: dependencies.ieltsSpeakingReportController,
+      ieltsSpeakingReportIndexController:
+          dependencies.ieltsSpeakingReportIndexController,
     ),
   );
 }
@@ -69,6 +75,8 @@ final class ProductionAppDependencies {
     required this.reviewHistoryController,
     required this.avatarControllerFactory,
     required this.interviewReportController,
+    required this.ieltsSpeakingReportController,
+    required this.ieltsSpeakingReportIndexController,
   });
 
   final AuthController authController;
@@ -79,6 +87,8 @@ final class ProductionAppDependencies {
   final ReviewHistoryController reviewHistoryController;
   final AvatarControllerFactory avatarControllerFactory;
   final InterviewReportController interviewReportController;
+  final IeltsSpeakingReportController ieltsSpeakingReportController;
+  final IeltsSpeakingReportIndexController ieltsSpeakingReportIndexController;
 }
 
 ProductionAppDependencies createProductionAppDependencies({
@@ -93,6 +103,7 @@ ProductionAppDependencies createProductionAppDependencies({
   IdentityHttpTransport? preparationLaunchTransport,
   IdentityHttpTransport? reviewHistoryTransport,
   IdentityHttpTransport? interviewReportTransport,
+  IdentityHttpTransport? ieltsSpeakingReportTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
   PracticeMediaWireTransport? signedAudioTransport,
@@ -258,6 +269,24 @@ ProductionAppDependencies createProductionAppDependencies({
     baseUri: baseUri,
     transport: preparationTransport,
   );
+  final ieltsSpeakingReportClient = WireIeltsSpeakingReportClient(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    transport: ieltsSpeakingReportTransport,
+  );
+  final ieltsSpeakingReportController = IeltsSpeakingReportController(
+    client: ieltsSpeakingReportClient,
+  );
+  final ieltsSpeakingReportIndexController = IeltsSpeakingReportIndexController(
+    client: ieltsSpeakingReportClient,
+  );
   final preparationController = PreparationController(
     client: preparationCatalogClient,
     ieltsQuestionBankClient: preparationCatalogClient,
@@ -390,6 +419,10 @@ ProductionAppDependencies createProductionAppDependencies({
     clearPrivateState: () async {
       final interviewReportCleanup = interviewReportController
           .clearPrivateState();
+      final ieltsSpeakingReportCleanup = ieltsSpeakingReportController
+          .clearPrivateState();
+      final ieltsSpeakingReportIndexCleanup = ieltsSpeakingReportIndexController
+          .clearPrivateState();
       try {
         await preparationLaunchController.clearPrivateState();
         await clearAvatarPrivateState();
@@ -400,7 +433,11 @@ ProductionAppDependencies createProductionAppDependencies({
           reviewHistoryController.clearPrivateState(),
         ]);
       } finally {
-        await interviewReportCleanup;
+        await Future.wait<void>([
+          interviewReportCleanup,
+          ieltsSpeakingReportCleanup,
+          ieltsSpeakingReportIndexCleanup,
+        ]);
       }
     },
   );
@@ -413,5 +450,7 @@ ProductionAppDependencies createProductionAppDependencies({
     reviewHistoryController: reviewHistoryController,
     avatarControllerFactory: createAvatarController,
     interviewReportController: interviewReportController,
+    ieltsSpeakingReportController: ieltsSpeakingReportController,
+    ieltsSpeakingReportIndexController: ieltsSpeakingReportIndexController,
   );
 }

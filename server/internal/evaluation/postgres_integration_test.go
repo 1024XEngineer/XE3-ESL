@@ -608,6 +608,17 @@ func evaluationDatabase(t *testing.T) *pgxpool.Pool {
 			t.Fatalf("read %s: %v", migration, readErr)
 		}
 		if _, applyErr := pool.Exec(ctx, string(up)); applyErr != nil {
+			var databaseError *pgconn.PgError
+			if errors.As(applyErr, &databaseError) {
+				t.Fatalf(
+					"apply %s: %v position=%d internal_position=%d where=%s",
+					migration,
+					applyErr,
+					databaseError.Position,
+					databaseError.InternalPosition,
+					databaseError.Where,
+				)
+			}
 			t.Fatalf("apply %s: %v", migration, applyErr)
 		}
 	}

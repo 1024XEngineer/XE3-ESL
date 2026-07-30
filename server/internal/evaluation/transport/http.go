@@ -3,12 +3,17 @@ package transport
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -21,7 +26,15 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-const maxEvaluationRequestBody = 32 * 1024
+const (
+	maxEvaluationRequestBody       = 32 * 1024
+	ieltsReportIndexCursorVersion  = 1
+	ieltsReportIndexCursorKind     = "ielts-speaking-report-index"
+	ieltsReportIndexDefaultLimit   = 20
+	ieltsReportIndexMaximumLimit   = 100
+	ieltsReportIndexMaximumCursor  = 512
+	ieltsReportIndexMaximumPayload = 384
+)
 
 // Application is the authenticated application boundary used by the
 // Evaluation HTTP transport. Implementations must join the immutable ledger
@@ -42,6 +55,16 @@ type Application interface {
 		requestcontext.Actor,
 		string,
 	) (InterviewReportResource, error)
+	GetIELTSSpeakingReport(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (IELTSSpeakingReportResource, error)
+	ListIELTSSpeakingReports(
+		context.Context,
+		requestcontext.Actor,
+		IELTSSpeakingReportIndexQuery,
+	) (IELTSSpeakingReportIndexPageResource, error)
 	Reevaluate(
 		context.Context,
 		requestcontext.Actor,
@@ -155,18 +178,64 @@ type InterviewReportResource struct {
 	StableFailure        *EvaluationFailure
 }
 
+type IELTSSpeakingReportResource struct {
+	PracticeSessionID    string
+	EvaluationID         string
+	EvaluationRevisionID string
+	Revision             int
+	EvaluationStatus     evaluation.Status
+	IsFinal              bool
+	Report               *evaluation.IELTSSpeakingReport
+	StableFailure        *EvaluationFailure
+}
+
+type IELTSSpeakingReportIndexBoundary struct {
+	UpdatedAt    time.Time
+	EvaluationID string
+}
+
+type IELTSSpeakingReportIndexQuery struct {
+	Limit  int
+	Before *IELTSSpeakingReportIndexBoundary
+}
+
+type IELTSSpeakingReportIndexEntryResource struct {
+	PracticeSessionID    string
+	EvaluationID         string
+	EvaluationRevisionID string
+	Revision             int
+	EvaluationStatus     evaluation.Status
+	IsFinal              bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+type IELTSSpeakingReportIndexPageResource struct {
+	Items   []IELTSSpeakingReportIndexEntryResource
+	HasMore bool
+}
+
 type HTTPHandler struct {
 	application Application
 	errors      *httpresponse.Renderer
+	cursorKey   []byte
 }
 
-func NewHTTPHandler(application Application) (*HTTPHandler, error) {
-	if application == nil {
-		return nil, errors.New("evaluation: HTTP application is required")
+func NewHTTPHandler(
+	application Application,
+	cursorSigningKey []byte,
+) (*HTTPHandler, error) {
+	if application == nil ||
+		len(cursorSigningKey) < 32 ||
+		len(cursorSigningKey) > 128 {
+		return nil, errors.New(
+			"evaluation: HTTP application and cursor signing key are required",
+		)
 	}
 	return &HTTPHandler{
 		application: application,
 		errors:      httpresponse.NewRenderer(nil),
+		cursorKey:   append([]byte(nil), cursorSigningKey...),
 	}, nil
 }
 
@@ -177,6 +246,14 @@ func (h *HTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 	routes.GET(
 		"/v1/practice-sessions/:practice_session_id/interview-report",
 		h.getInterviewReport,
+	)
+	routes.GET(
+		"/v1/practice-sessions/:practice_session_id/ielts-speaking-report",
+		h.getIELTSSpeakingReport,
+	)
+	routes.GET(
+		"/v1/ielts-speaking-reports",
+		h.listIELTSSpeakingReports,
 	)
 }
 
@@ -301,6 +378,74 @@ func (h *HTTPHandler) getInterviewReport(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, resource.response())
+}
+
+func (h *HTTPHandler) getIELTSSpeakingReport(c *gin.Context) {
+	setInterviewReportResponseHeaders(c)
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	practiceSessionID := c.Param("practice_session_id")
+	if !stableIdentifierPattern.MatchString(practiceSessionID) {
+		h.errors.Write(c, evaluationNotFoundError())
+		return
+	}
+	resource, err := h.application.GetIELTSSpeakingReport(
+		c.Request.Context(),
+		actor,
+		practiceSessionID,
+	)
+	if err != nil {
+		h.writeApplicationError(c, err)
+		return
+	}
+	if !resource.valid() ||
+		resource.PracticeSessionID != practiceSessionID {
+		h.errors.Write(c, errInvalidApplicationProjection)
+		return
+	}
+	c.JSON(http.StatusOK, resource.response())
+}
+
+func (h *HTTPHandler) listIELTSSpeakingReports(c *gin.Context) {
+	setInterviewReportResponseHeaders(c)
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	query, ok := h.decodeIELTSSpeakingReportIndexQuery(
+		actor.UserID,
+		c.Request,
+	)
+	if !ok {
+		h.writeInvalidRequest(c)
+		return
+	}
+	resource, err := h.application.ListIELTSSpeakingReports(
+		c.Request.Context(),
+		actor,
+		query,
+	)
+	if err != nil {
+		h.writeApplicationError(c, err)
+		return
+	}
+	if !resource.valid(query.Limit) {
+		h.errors.Write(c, errInvalidApplicationProjection)
+		return
+	}
+	response, ok := h.ieltsSpeakingReportIndexResponse(
+		actor.UserID,
+		resource,
+	)
+	if !ok {
+		h.errors.Write(c, errInvalidApplicationProjection)
+		return
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 type optionalString struct {
@@ -541,6 +686,341 @@ func validInterviewReportFailure(failure *EvaluationFailure) bool {
 	default:
 		return false
 	}
+}
+
+type ieltsSpeakingReportResponse struct {
+	PracticeSessionID    string                          `json:"practice_session_id"`
+	EvaluationID         string                          `json:"evaluation_id"`
+	EvaluationRevisionID string                          `json:"evaluation_revision_id"`
+	Revision             int                             `json:"revision"`
+	EvaluationStatus     evaluation.Status               `json:"evaluation_status"`
+	IsFinal              bool                            `json:"is_final"`
+	StatusURL            string                          `json:"status_url"`
+	Report               *evaluation.IELTSSpeakingReport `json:"report,omitempty"`
+	StableFailure        *EvaluationFailure              `json:"stable_failure,omitempty"`
+}
+
+func (resource IELTSSpeakingReportResource) response() ieltsSpeakingReportResponse {
+	return ieltsSpeakingReportResponse{
+		PracticeSessionID:    resource.PracticeSessionID,
+		EvaluationID:         resource.EvaluationID,
+		EvaluationRevisionID: resource.EvaluationRevisionID,
+		Revision:             resource.Revision,
+		EvaluationStatus:     resource.EvaluationStatus,
+		IsFinal:              resource.IsFinal,
+		StatusURL: "/v1/practice-sessions/" +
+			resource.PracticeSessionID +
+			"/ielts-speaking-report",
+		Report:        resource.Report,
+		StableFailure: resource.StableFailure,
+	}
+}
+
+func (resource IELTSSpeakingReportResource) valid() bool {
+	if !stableIdentifierPattern.MatchString(resource.PracticeSessionID) ||
+		!validEvaluationID(resource.EvaluationID) ||
+		!validEvaluationID(resource.EvaluationRevisionID) ||
+		resource.Revision < 1 ||
+		resource.IsFinal {
+		return false
+	}
+	switch resource.EvaluationStatus {
+	case evaluation.StatusQueued, evaluation.StatusRunning:
+		return resource.Report == nil &&
+			resource.StableFailure == nil
+	case evaluation.StatusReady:
+		return resource.Report != nil &&
+			resource.Report.Valid() &&
+			resource.StableFailure == nil
+	case evaluation.StatusFailed:
+		return resource.Report == nil &&
+			validInterviewReportFailure(resource.StableFailure)
+	default:
+		return false
+	}
+}
+
+type ieltsSpeakingReportIndexEntryResponse struct {
+	ReportKind           string            `json:"report_kind"`
+	PracticeSessionID    string            `json:"practice_session_id"`
+	EvaluationID         string            `json:"evaluation_id"`
+	EvaluationRevisionID string            `json:"evaluation_revision_id"`
+	Revision             int               `json:"revision"`
+	EvaluationStatus     evaluation.Status `json:"evaluation_status"`
+	IsFinal              bool              `json:"is_final"`
+	StatusURL            string            `json:"status_url"`
+	CreatedAt            string            `json:"created_at"`
+	UpdatedAt            string            `json:"updated_at"`
+}
+
+type ieltsSpeakingReportIndexResponse struct {
+	Items      []ieltsSpeakingReportIndexEntryResponse `json:"items"`
+	NextCursor string                                  `json:"next_cursor,omitempty"`
+}
+
+func (resource IELTSSpeakingReportIndexEntryResource) valid() bool {
+	return stableIdentifierPattern.MatchString(
+		resource.PracticeSessionID,
+	) &&
+		validEvaluationID(resource.EvaluationID) &&
+		validEvaluationID(resource.EvaluationRevisionID) &&
+		resource.Revision >= 1 &&
+		validIELTSSpeakingReportStatus(resource.EvaluationStatus) &&
+		!resource.IsFinal &&
+		!resource.CreatedAt.IsZero() &&
+		!resource.UpdatedAt.Before(resource.CreatedAt)
+}
+
+func validIELTSSpeakingReportStatus(status evaluation.Status) bool {
+	switch status {
+	case evaluation.StatusQueued,
+		evaluation.StatusRunning,
+		evaluation.StatusReady,
+		evaluation.StatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (resource IELTSSpeakingReportIndexPageResource) valid(
+	limit int,
+) bool {
+	if limit < 1 || limit > 100 ||
+		resource.Items == nil ||
+		len(resource.Items) > limit ||
+		(resource.HasMore && len(resource.Items) != limit) {
+		return false
+	}
+	for index, item := range resource.Items {
+		if !item.valid() {
+			return false
+		}
+		if index == 0 {
+			continue
+		}
+		previous := resource.Items[index-1]
+		if item.UpdatedAt.After(previous.UpdatedAt) ||
+			(item.UpdatedAt.Equal(previous.UpdatedAt) &&
+				item.EvaluationID >= previous.EvaluationID) {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *HTTPHandler) decodeIELTSSpeakingReportIndexQuery(
+	actorUserID string,
+	request *http.Request,
+) (IELTSSpeakingReportIndexQuery, bool) {
+	if h == nil || request == nil ||
+		!validEvaluationID(actorUserID) {
+		return IELTSSpeakingReportIndexQuery{}, false
+	}
+	values, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		return IELTSSpeakingReportIndexQuery{}, false
+	}
+	for key := range values {
+		if key != "limit" && key != "cursor" {
+			return IELTSSpeakingReportIndexQuery{}, false
+		}
+	}
+	query := IELTSSpeakingReportIndexQuery{
+		Limit: ieltsReportIndexDefaultLimit,
+	}
+	if rawLimits, exists := values["limit"]; exists {
+		if len(rawLimits) != 1 {
+			return IELTSSpeakingReportIndexQuery{}, false
+		}
+		limit, err := strconv.Atoi(rawLimits[0])
+		if err != nil ||
+			limit < 1 ||
+			limit > ieltsReportIndexMaximumLimit ||
+			strconv.Itoa(limit) != rawLimits[0] {
+			return IELTSSpeakingReportIndexQuery{}, false
+		}
+		query.Limit = limit
+	}
+	if rawCursors, exists := values["cursor"]; exists {
+		if len(rawCursors) != 1 {
+			return IELTSSpeakingReportIndexQuery{}, false
+		}
+		boundary, ok := h.decodeIELTSSpeakingReportIndexCursor(
+			actorUserID,
+			rawCursors[0],
+		)
+		if !ok {
+			return IELTSSpeakingReportIndexQuery{}, false
+		}
+		query.Before = &boundary
+	}
+	return query, true
+}
+
+type ieltsSpeakingReportIndexCursorEnvelope struct {
+	Version      int    `json:"v"`
+	Kind         string `json:"kind"`
+	UpdatedAt    string `json:"updated_at"`
+	EvaluationID string `json:"evaluation_id"`
+}
+
+func (h *HTTPHandler) encodeIELTSSpeakingReportIndexCursor(
+	actorUserID string,
+	boundary IELTSSpeakingReportIndexBoundary,
+) (string, bool) {
+	if h == nil ||
+		len(h.cursorKey) < 32 ||
+		len(h.cursorKey) > 128 ||
+		!validEvaluationID(actorUserID) ||
+		boundary.UpdatedAt.IsZero() ||
+		!validEvaluationID(boundary.EvaluationID) {
+		return "", false
+	}
+	payload, err := json.Marshal(
+		ieltsSpeakingReportIndexCursorEnvelope{
+			Version:      ieltsReportIndexCursorVersion,
+			Kind:         ieltsReportIndexCursorKind,
+			UpdatedAt:    boundary.UpdatedAt.UTC().Format(time.RFC3339Nano),
+			EvaluationID: boundary.EvaluationID,
+		},
+	)
+	if err != nil || len(payload) > ieltsReportIndexMaximumPayload {
+		return "", false
+	}
+	signature := ieltsSpeakingReportIndexCursorMAC(
+		h.cursorKey,
+		actorUserID,
+		payload,
+	)
+	encoded := make([]byte, 0, len(payload)+len(signature))
+	encoded = append(encoded, payload...)
+	encoded = append(encoded, signature...)
+	value := base64.RawURLEncoding.EncodeToString(encoded)
+	if len(value) < 16 || len(value) > ieltsReportIndexMaximumCursor {
+		return "", false
+	}
+	return value, true
+}
+
+func (h *HTTPHandler) decodeIELTSSpeakingReportIndexCursor(
+	actorUserID string,
+	value string,
+) (IELTSSpeakingReportIndexBoundary, bool) {
+	if h == nil ||
+		len(h.cursorKey) < 32 ||
+		len(h.cursorKey) > 128 ||
+		!validEvaluationID(actorUserID) ||
+		len(value) < 16 ||
+		len(value) > ieltsReportIndexMaximumCursor {
+		return IELTSSpeakingReportIndexBoundary{}, false
+	}
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(value)
+	if err != nil ||
+		len(decoded) <= sha256.Size ||
+		len(decoded)-sha256.Size > ieltsReportIndexMaximumPayload {
+		return IELTSSpeakingReportIndexBoundary{}, false
+	}
+	payload := decoded[:len(decoded)-sha256.Size]
+	signature := decoded[len(decoded)-sha256.Size:]
+	if !hmac.Equal(
+		signature,
+		ieltsSpeakingReportIndexCursorMAC(
+			h.cursorKey,
+			actorUserID,
+			payload,
+		),
+	) {
+		return IELTSSpeakingReportIndexBoundary{}, false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var envelope ieltsSpeakingReportIndexCursorEnvelope
+	if err := decoder.Decode(&envelope); err != nil ||
+		decoder.Decode(&struct{}{}) != io.EOF ||
+		envelope.Version != ieltsReportIndexCursorVersion ||
+		envelope.Kind != ieltsReportIndexCursorKind ||
+		!validEvaluationID(envelope.EvaluationID) {
+		return IELTSSpeakingReportIndexBoundary{}, false
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, envelope.UpdatedAt)
+	if err != nil || updatedAt.IsZero() {
+		return IELTSSpeakingReportIndexBoundary{}, false
+	}
+	boundary := IELTSSpeakingReportIndexBoundary{
+		UpdatedAt:    updatedAt,
+		EvaluationID: envelope.EvaluationID,
+	}
+	canonical, ok := h.encodeIELTSSpeakingReportIndexCursor(
+		actorUserID,
+		boundary,
+	)
+	if !ok || canonical != value {
+		return IELTSSpeakingReportIndexBoundary{}, false
+	}
+	return boundary, true
+}
+
+func ieltsSpeakingReportIndexCursorMAC(
+	key []byte,
+	actorUserID string,
+	payload []byte,
+) []byte {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(ieltsReportIndexCursorKind))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(actorUserID))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write(payload)
+	return mac.Sum(nil)
+}
+
+func (h *HTTPHandler) ieltsSpeakingReportIndexResponse(
+	actorUserID string,
+	page IELTSSpeakingReportIndexPageResource,
+) (ieltsSpeakingReportIndexResponse, bool) {
+	items := make(
+		[]ieltsSpeakingReportIndexEntryResponse,
+		len(page.Items),
+	)
+	for index, item := range page.Items {
+		if !item.valid() {
+			return ieltsSpeakingReportIndexResponse{}, false
+		}
+		items[index] = ieltsSpeakingReportIndexEntryResponse{
+			ReportKind:           "IELTS_SPEAKING_FULL_MOCK",
+			PracticeSessionID:    item.PracticeSessionID,
+			EvaluationID:         item.EvaluationID,
+			EvaluationRevisionID: item.EvaluationRevisionID,
+			Revision:             item.Revision,
+			EvaluationStatus:     item.EvaluationStatus,
+			IsFinal:              item.IsFinal,
+			StatusURL: "/v1/practice-sessions/" +
+				item.PracticeSessionID +
+				"/ielts-speaking-report",
+			CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339Nano),
+			UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		}
+	}
+	response := ieltsSpeakingReportIndexResponse{Items: items}
+	if page.HasMore {
+		if len(page.Items) == 0 {
+			return ieltsSpeakingReportIndexResponse{}, false
+		}
+		last := page.Items[len(page.Items)-1]
+		cursor, ok := h.encodeIELTSSpeakingReportIndexCursor(
+			actorUserID,
+			IELTSSpeakingReportIndexBoundary{
+				UpdatedAt:    last.UpdatedAt,
+				EvaluationID: last.EvaluationID,
+			},
+		)
+		if !ok {
+			return ieltsSpeakingReportIndexResponse{}, false
+		}
+		response.NextCursor = cursor
+	}
+	return response, true
 }
 
 func (resource EvaluationResource) response() evaluationResponse {

@@ -151,6 +151,10 @@ paths:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1evaluations~1{evaluation_id}~1re-evaluate
   /v1/practice-sessions/{practice_session_id}/interview-report:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1interview-report
+  /v1/practice-sessions/{practice_session_id}/ielts-speaking-report:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1ielts-speaking-report
+  /v1/ielts-speaking-reports:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1ielts-speaking-reports
   /v1/scenario-definitions/{scenario_definition_id}:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions~1{scenario_definition_id}
   /v1/scenario-definitions/{scenario_definition_id}/role-definitions:
@@ -348,6 +352,12 @@ components:
       $ref: ./modules/evaluation.yaml#/components/schemas/InterviewReportEnvelope
     InterviewReport:
       $ref: ./modules/evaluation.yaml#/components/schemas/InterviewReport
+    IeltsSpeakingReportEnvelope:
+      $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReportEnvelope
+    IeltsSpeakingReport:
+      $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReport
+    IeltsSpeakingReportIndexPage:
+      $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReportIndexPage
     Evaluation:
       $ref: ./modules/evaluation.yaml#/components/schemas/Evaluation
     SceneEvaluationResult:

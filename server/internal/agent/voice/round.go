@@ -111,6 +111,23 @@ type VoiceReviewSource struct {
 	SessionID string
 }
 
+// VoiceCompletionEvaluationPort is the server-owned completion boundary for
+// asynchronous Evaluation workflows. Implementations must be idempotent by
+// completed Session and must return failures instead of silently skipping an
+// applicable Evaluation.
+type VoiceCompletionEvaluationPort interface {
+	EnsureCompletedSessionEvaluation(
+		context.Context,
+		requestcontext.Actor,
+		VoiceCompletionEvaluationSource,
+	) error
+}
+
+type VoiceCompletionEvaluationSource struct {
+	TurnID    string
+	SessionID string
+}
+
 // VoiceRoundOrchestrator owns the cross-module voice-round saga. It never
 // reaches into a module Repository and relies on stable Turn and Session IDs
 // for idempotent recovery after any completed step.
@@ -118,20 +135,24 @@ type VoiceRoundOrchestrator struct {
 	conversations VoiceConversationPort
 	practice      VoicePracticePort
 	reviews       VoiceReviewPort
+	completions   VoiceCompletionEvaluationPort
 }
 
 func NewVoiceRoundOrchestrator(
 	conversations VoiceConversationPort,
 	practice VoicePracticePort,
 	reviews VoiceReviewPort,
+	completions VoiceCompletionEvaluationPort,
 ) (*VoiceRoundOrchestrator, error) {
-	if conversations == nil || practice == nil || reviews == nil {
+	if conversations == nil || practice == nil || reviews == nil ||
+		completions == nil {
 		return nil, errors.New("agent: voice round dependency is required")
 	}
 	return &VoiceRoundOrchestrator{
 		conversations: conversations,
 		practice:      practice,
 		reviews:       reviews,
+		completions:   completions,
 	}, nil
 }
 
@@ -285,39 +306,47 @@ func (orchestrator *VoiceRoundOrchestrator) finishTurn(
 	if err != nil {
 		return conversation.ConfirmedVoiceTurn{}, err
 	}
-	if !reviewRequired {
-		return turn, nil
+	if reviewRequired {
+		sessionReview, reviewErr := orchestrator.reviews.EnsureSessionReview(
+			ctx,
+			actor,
+			VoiceReviewSource{
+				TurnID:    turn.ID,
+				SessionID: turn.SessionID,
+			},
+		)
+		if reviewErr != nil {
+			return conversation.ConfirmedVoiceTurn{}, reviewErr
+		}
+		if sessionReview.ID == "" ||
+			sessionReview.SessionID != turn.SessionID ||
+			sessionReview.SourceTurnID != turn.ID {
+			return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+		}
+		turn, err = orchestrator.conversations.SaveTurnReview(
+			ctx,
+			actor,
+			turn.ID,
+			sessionReview.ID,
+		)
+		if err != nil {
+			return conversation.ConfirmedVoiceTurn{}, err
+		}
+		if turn.ReviewID != sessionReview.ID ||
+			!candidateMatchesTurn(candidate, turn) ||
+			!validVoiceTurnCheckpoint(turn) {
+			return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+		}
 	}
-
-	sessionReview, err := orchestrator.reviews.EnsureSessionReview(
+	if err := orchestrator.completions.EnsureCompletedSessionEvaluation(
 		ctx,
 		actor,
-		VoiceReviewSource{
+		VoiceCompletionEvaluationSource{
 			TurnID:    turn.ID,
 			SessionID: turn.SessionID,
 		},
-	)
-	if err != nil {
+	); err != nil {
 		return conversation.ConfirmedVoiceTurn{}, err
-	}
-	if sessionReview.ID == "" ||
-		sessionReview.SessionID != turn.SessionID ||
-		sessionReview.SourceTurnID != turn.ID {
-		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
-	}
-	turn, err = orchestrator.conversations.SaveTurnReview(
-		ctx,
-		actor,
-		turn.ID,
-		sessionReview.ID,
-	)
-	if err != nil {
-		return conversation.ConfirmedVoiceTurn{}, err
-	}
-	if turn.ReviewID != sessionReview.ID ||
-		!candidateMatchesTurn(candidate, turn) ||
-		!validVoiceTurnCheckpoint(turn) {
-		return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
 	}
 	return turn, nil
 }

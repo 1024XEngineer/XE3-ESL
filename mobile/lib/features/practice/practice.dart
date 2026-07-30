@@ -12,6 +12,7 @@ import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_recordings.dart';
+import 'package:speakup/review/ielts_speaking_report_controller.dart';
 
 class PracticePage extends StatefulWidget {
   const PracticePage({
@@ -20,6 +21,7 @@ class PracticePage extends StatefulWidget {
     this.onExitRequested,
     this.ieltsMockProgressStore,
     this.preparationController,
+    this.ieltsSpeakingReportController,
     super.key,
   });
 
@@ -28,6 +30,7 @@ class PracticePage extends StatefulWidget {
   final Future<bool> Function()? onExitRequested;
   final IeltsMockProgressStore? ieltsMockProgressStore;
   final PreparationController? preparationController;
+  final IeltsSpeakingReportController? ieltsSpeakingReportController;
 
   @override
   State<PracticePage> createState() => _PracticePageState();
@@ -420,6 +423,7 @@ class _PracticePageState extends State<PracticePage>
         onExitRequested: widget.onExitRequested,
         progressStore: widget.ieltsMockProgressStore,
         preparationController: widget.preparationController,
+        reportController: widget.ieltsSpeakingReportController,
       );
     }
     final scene = controller?.scene;

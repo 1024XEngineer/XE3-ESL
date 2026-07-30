@@ -178,6 +178,8 @@ Map<String, Object?> _activeSessionJson(String sessionId) {
     'practice_session_id': sessionId,
     'practice_plan_id': 'plan-new',
     'thread_id': _threadId,
+    'scenario_type': 'INTERVIEW',
+    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'matter': {
       'matter_id': _matterId,
       'title': _matter.scene.title,

@@ -171,6 +171,9 @@ func run() int {
 			GenerationTimeout: 20 * time.Second,
 			LeaseDuration:     30 * time.Second,
 			MaxAttempts:       3,
+			CursorSigningKey: []byte(
+				reviewHistoryConfig.CursorSigningKey.Reveal(),
+			),
 		},
 	)
 	if err != nil {
@@ -267,6 +270,8 @@ func run() int {
 				),
 				InterviewShadowCoordinator: evaluationComposition.
 					InterviewShadowCoordinator(),
+				IELTSSpeakingShadowCoordinator: evaluationComposition.
+					IELTSSpeakingShadowCoordinator(),
 			},
 		)
 	if err != nil {

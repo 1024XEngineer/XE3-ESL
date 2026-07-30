@@ -2003,6 +2003,8 @@ func voiceSessionStateResponse(state VoiceSessionState) gin.H {
 		"practice_session_id": state.Session.ID,
 		"practice_plan_id":    state.Session.PlanID,
 		"thread_id":           state.Session.ThreadID,
+		"scenario_type":       state.Session.ScenarioType,
+		"scenario_model":      state.Session.ScenarioModel,
 		"matter":              matterResponse(state.Matter),
 		"session_version":     state.Session.SessionVersion,
 		"effective_turns":     state.Session.EffectiveTurns,

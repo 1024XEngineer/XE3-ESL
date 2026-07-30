@@ -23,6 +23,8 @@ void main() {
             'practice_session_id': _sessionId,
             'practice_plan_id': 'plan-1',
             'thread_id': _threadId,
+            'scenario_type': 'INTERVIEW',
+            'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
             'matter': _matterJson(),
             'session_version': 5,
             'effective_turns': 4,
@@ -50,6 +52,8 @@ void main() {
       expect(snapshot?.completedTurns, 4);
       expect(snapshot?.turnLimit, 6);
       expect(snapshot?.sessionCompleted, isTrue);
+      expect(snapshot?.scenarioType, 'INTERVIEW');
+      expect(snapshot?.scenarioModel, 'PROJECT_EXPERIENCE_DEEP_DIVE');
       transport.expectDone();
     },
   );
@@ -139,6 +143,8 @@ void main() {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
           'thread_id': _threadId,
+          'scenario_type': 'INTERVIEW',
+          'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
           'matter': _matterJson(),
           'session_version': 2,
           'effective_turns': 1,
@@ -220,6 +226,8 @@ void main() {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
           'thread_id': _threadId,
+          'scenario_type': 'INTERVIEW',
+          'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
           'matter': _matterJson(),
           'session_version': 2,
           'effective_turns': 1,
@@ -427,6 +435,8 @@ void main() {
             'practice_session_id': _sessionId,
             'practice_plan_id': 'plan-1',
             'thread_id': _threadId,
+            'scenario_type': 'INTERVIEW',
+            'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
             'matter': _matterJson(),
             'session_version': 4,
             'effective_turns': 3,
@@ -883,6 +893,8 @@ Map<String, Object?> _sessionJson() {
     'practice_session_id': _sessionId,
     'practice_plan_id': 'plan-1',
     'thread_id': _threadId,
+    'scenario_type': 'INTERVIEW',
+    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'matter': _matterJson(),
     'session_version': 1,
     'effective_turns': 0,
