@@ -13,7 +13,8 @@ import (
 )
 
 type PostgresRepository struct {
-	pool *pgxpool.Pool
+	pool                     *pgxpool.Pool
+	afterEvidenceSourceFence func()
 }
 
 func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {

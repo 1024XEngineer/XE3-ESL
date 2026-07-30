@@ -13,10 +13,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const evidenceSourceLockNamespace = "evidence-source"
+
 // lockCurrentEvidenceSources closes the gap between composing a snapshot and
 // inserting it. Every mutable or deletable source row referenced by the
-// canonical payload is revalidated and held with FOR SHARE until the
-// EvidenceSnapshot transaction commits.
+// canonical payload is revalidated while the matching Conversation writers
+// are fenced until the EvidenceSnapshot transaction commits.
 func lockCurrentEvidenceSources(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -25,6 +27,14 @@ func lockCurrentEvidenceSources(
 	var payload evidencePayload
 	if json.Unmarshal(command.CanonicalPayload, &payload) != nil {
 		return ErrInvalidRequest
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		command.OwnerUserID+"\x1f"+evidenceSourceLockNamespace+"\x1f"+
+			command.PracticeSessionID,
+	); err != nil {
+		return fmt.Errorf("lock EvidenceSnapshot source set: %w", err)
 	}
 	var sessionVersion int
 	var effectiveTurns int

@@ -559,6 +559,79 @@ func TestConcurrentConfirmationCreatesExactlyOneTurn(t *testing.T) {
 	}
 }
 
+func TestConfirmTurnWaitsForEvidenceSnapshotSourceFence(t *testing.T) {
+	repository, pool := newIntegrationRepository(t)
+	actor := testActor(testUserA)
+	question := saveTestQuestion(
+		t,
+		repository,
+		actor,
+		"question-evidence-fence",
+		"session-evidence-fence",
+	)
+	reservation := reserveTestTranscription(
+		t,
+		repository,
+		actor,
+		question,
+		"reserve-evidence-fence",
+	)
+	candidate := completeTestTranscription(
+		t,
+		repository,
+		reservation,
+		"transcript-evidence-fence",
+	)
+	ctx := context.Background()
+	fence, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin EvidenceSnapshot source fence: %v", err)
+	}
+	defer func() { _ = fence.Rollback(ctx) }()
+	if err := lockEvidenceSourceSession(
+		ctx,
+		fence,
+		actor.UserID,
+		question.SessionID,
+	); err != nil {
+		t.Fatalf("lock EvidenceSnapshot source set: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, confirmErr := repository.ConfirmTurn(
+			context.Background(),
+			actor,
+			conversation.ConfirmTurnCommand{
+				CandidateID:     candidate.ID,
+				EvidenceVersion: candidate.EvidenceVersion,
+				ConfirmedText:   "I fenced the source write.",
+				IdempotencyKey:  "confirm-evidence-fence",
+			},
+		)
+		result <- confirmErr
+	}()
+	select {
+	case confirmErr := <-result:
+		t.Fatalf(
+			"ConfirmTurn bypassed EvidenceSnapshot source fence: %v",
+			confirmErr,
+		)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := fence.Commit(ctx); err != nil {
+		t.Fatalf("commit EvidenceSnapshot source fence: %v", err)
+	}
+	select {
+	case confirmErr := <-result:
+		if confirmErr != nil {
+			t.Fatalf("ConfirmTurn after source fence commit: %v", confirmErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ConfirmTurn did not resume after source fence commit")
+	}
+}
+
 func TestConcurrentCandidatesForOneQuestionCreateOneFormalTurn(t *testing.T) {
 	repository, pool := newIntegrationRepository(t)
 	actor := testActor(testUserA)

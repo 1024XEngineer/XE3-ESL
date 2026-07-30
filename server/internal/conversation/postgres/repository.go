@@ -19,6 +19,8 @@ import (
 	conversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 )
 
+const evidenceSourceLockNamespace = "evidence-source"
+
 type Repository struct {
 	pool               *pgxpool.Pool
 	now                func() time.Time
@@ -58,6 +60,14 @@ func (r *Repository) SaveQuestion(
 		return conversation.PersistentQuestion{}, err
 	}
 	r.reachedWriteFence()
+	if err := lockEvidenceSourceSession(
+		ctx,
+		tx,
+		actor.UserID,
+		question.SessionID,
+	); err != nil {
+		return conversation.PersistentQuestion{}, err
+	}
 	if err := lockKey(ctx, tx, actor.UserID, "question", question.ID); err != nil {
 		return conversation.PersistentQuestion{}, err
 	}
@@ -730,7 +740,22 @@ func (r *Repository) ConfirmTurn(
 		return conversation.ConfirmedTurn{}, err
 	}
 	r.reachedWriteFence()
-	turn, err := r.confirmTurnInTransaction(ctx, tx, actor, command)
+	sourceSessionID, err := lockCandidateEvidenceSourceSession(
+		ctx,
+		tx,
+		actor.UserID,
+		command.CandidateID,
+	)
+	if err != nil {
+		return conversation.ConfirmedTurn{}, err
+	}
+	turn, err := r.confirmTurnInTransaction(
+		ctx,
+		tx,
+		actor,
+		command,
+		sourceSessionID,
+	)
 	if err != nil {
 		return conversation.ConfirmedTurn{}, err
 	}
@@ -745,6 +770,7 @@ func (r *Repository) confirmTurnInTransaction(
 	tx pgx.Tx,
 	actor conversation.Actor,
 	command conversation.ConfirmTurnCommand,
+	sourceSessionID string,
 ) (conversation.ConfirmedTurn, error) {
 	payloadHash := confirmationHash(command)
 	if err := lockKey(
@@ -785,7 +811,8 @@ func (r *Repository) confirmTurnInTransaction(
 	if err != nil {
 		return conversation.ConfirmedTurn{}, err
 	}
-	if candidate.EvidenceVersion != command.EvidenceVersion {
+	if candidate.SessionID != sourceSessionID ||
+		candidate.EvidenceVersion != command.EvidenceVersion {
 		return conversation.ConfirmedTurn{}, conversation.ErrPersistenceConflict
 	}
 
@@ -1574,6 +1601,53 @@ func lockKey(
 		return safeDatabaseError(err)
 	}
 	return nil
+}
+
+func lockEvidenceSourceSession(
+	ctx context.Context,
+	tx pgx.Tx,
+	ownerUserID string,
+	sessionID string,
+) error {
+	return lockKey(
+		ctx,
+		tx,
+		ownerUserID,
+		evidenceSourceLockNamespace,
+		sessionID,
+	)
+}
+
+func lockCandidateEvidenceSourceSession(
+	ctx context.Context,
+	tx pgx.Tx,
+	ownerUserID string,
+	candidateID string,
+) (string, error) {
+	var sessionID string
+	err := tx.QueryRow(
+		ctx,
+		`SELECT practice_session_id
+		 FROM conversation_transcript_candidates
+		 WHERE owner_user_id = $1 AND candidate_id = $2`,
+		ownerUserID,
+		candidateID,
+	).Scan(&sessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", conversation.ErrPersistenceNotFound
+	}
+	if err != nil {
+		return "", safeDatabaseError(err)
+	}
+	if err := lockEvidenceSourceSession(
+		ctx,
+		tx,
+		ownerUserID,
+		sessionID,
+	); err != nil {
+		return "", err
+	}
+	return sessionID, nil
 }
 
 func (r *Repository) reachedWriteFence() {

@@ -79,6 +79,9 @@ func (r *PostgresRepository) EnsureEvidenceSnapshot(
 	if err := lockCurrentEvidenceSources(ctx, tx, command); err != nil {
 		return EvidenceSnapshot{}, false, err
 	}
+	if r.afterEvidenceSourceFence != nil {
+		r.afterEvidenceSourceFence()
+	}
 
 	var revision int
 	if err := tx.QueryRow(ctx, `

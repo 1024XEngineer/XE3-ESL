@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	conversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -588,6 +590,131 @@ func TestPostgresConcurrentEvidenceSnapshotReplayCreatesOneRevision(
 	}
 	if count != 1 {
 		t.Fatalf("snapshot count = %d, want 1", count)
+	}
+}
+
+func TestPostgresEvidenceSnapshotFencesConcurrentQuestionInsert(
+	t *testing.T,
+) {
+	pool := evidenceSnapshotDatabase(t)
+	insertEvaluationUsers(t, pool, testOwnerA)
+	command := validEvidenceSnapshotCommand()
+	installEvidenceAuthorities(t, pool, command)
+	enteredFence := make(chan struct{})
+	releaseFenceSignal := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseFence := func() {
+		releaseOnce.Do(func() {
+			close(releaseFenceSignal)
+		})
+	}
+	t.Cleanup(releaseFence)
+	repository := NewPostgresRepository(pool)
+	repository.afterEvidenceSourceFence = func() {
+		close(enteredFence)
+		<-releaseFenceSignal
+	}
+	type ensureResult struct {
+		snapshot EvidenceSnapshot
+		replayed bool
+		err      error
+	}
+	result := make(chan ensureResult, 1)
+	go func() {
+		snapshot, replayed, err := repository.EnsureEvidenceSnapshot(
+			context.Background(),
+			command,
+		)
+		result <- ensureResult{
+			snapshot: snapshot,
+			replayed: replayed,
+			err:      err,
+		}
+	}()
+	select {
+	case <-enteredFence:
+	case <-time.After(5 * time.Second):
+		t.Fatal("EvidenceSnapshot did not reach its source fence")
+	}
+
+	conversationRepository, err := conversationpostgres.New(pool)
+	if err != nil {
+		t.Fatalf("new Conversation repository: %v", err)
+	}
+	writer := make(chan error, 1)
+	go func() {
+		_, saveErr := conversationRepository.SaveQuestion(
+			context.Background(),
+			conversation.Actor{
+				UserID:    command.OwnerUserID,
+				SessionID: "trusted-session",
+			},
+			conversation.PersistentQuestion{
+				ID:                      "question-concurrent",
+				SessionID:               command.PracticeSessionID,
+				SpeakerParticipantID:    "participant-interviewer",
+				AddresseeParticipantIDs: []string{"participant-candidate"},
+				ObjectiveID:             "objective-1",
+				Type:                    "PRIMARY",
+				Content:                 "What did you learn from that migration?",
+				Sequence:                2,
+			},
+		)
+		writer <- saveErr
+	}()
+	select {
+	case saveErr := <-writer:
+		t.Fatalf(
+			"Question insert bypassed EvidenceSnapshot source fence: %v",
+			saveErr,
+		)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseFence()
+	var created EvidenceSnapshot
+	select {
+	case ensure := <-result:
+		if ensure.err != nil {
+			t.Fatalf("EnsureEvidenceSnapshot: %v", ensure.err)
+		}
+		if ensure.replayed {
+			t.Fatal("EnsureEvidenceSnapshot unexpectedly replayed")
+		}
+		created = ensure.snapshot
+	case <-time.After(5 * time.Second):
+		t.Fatal("EvidenceSnapshot did not commit after releasing source fence")
+	}
+	select {
+	case saveErr := <-writer:
+		if saveErr != nil {
+			t.Fatalf("save Question after EvidenceSnapshot commit: %v", saveErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Question insert did not resume after EvidenceSnapshot commit")
+	}
+	var payload evidencePayload
+	if err := json.Unmarshal(created.Payload, &payload); err != nil {
+		t.Fatalf("decode created EvidenceSnapshot: %v", err)
+	}
+	if len(payload.OpportunityManifest) != 1 {
+		t.Fatalf(
+			"snapshot opportunity count = %d, want 1",
+			len(payload.OpportunityManifest),
+		)
+	}
+	var questionCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM conversation_questions
+		WHERE owner_user_id = $1 AND practice_session_id = $2
+	`, command.OwnerUserID, command.PracticeSessionID).Scan(
+		&questionCount,
+	); err != nil {
+		t.Fatalf("count Questions after concurrent insert: %v", err)
+	}
+	if questionCount != 2 {
+		t.Fatalf("Question count = %d, want 2", questionCount)
 	}
 }
 
