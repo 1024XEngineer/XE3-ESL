@@ -35,6 +35,11 @@ func TestRendererAcceptsMatchingCanonicalCodeStatusPairs(t *testing.T) {
 		{apperror.NotFound, "resource_not_found", http.StatusNotFound},
 		{apperror.AlreadyExists, "account_registration_unavailable", http.StatusConflict},
 		{apperror.Conflict, "resource_conflict", http.StatusConflict},
+		{
+			apperror.UnprocessableEntity,
+			"evaluation_strategy_not_available",
+			http.StatusUnprocessableEntity,
+		},
 		{apperror.ResourceExhausted, "rate_limited", http.StatusTooManyRequests},
 		{apperror.Internal, "internal_error", http.StatusInternalServerError},
 	}

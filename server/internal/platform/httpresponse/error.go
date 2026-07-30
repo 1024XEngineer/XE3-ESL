@@ -150,6 +150,8 @@ func statusForCategory(category apperror.Category) (int, bool) {
 		return http.StatusConflict, true
 	case apperror.FailedPrecondition:
 		return http.StatusPreconditionFailed, true
+	case apperror.UnprocessableEntity:
+		return http.StatusUnprocessableEntity, true
 	case apperror.ResourceExhausted:
 		return http.StatusTooManyRequests, true
 	case apperror.DeadlineExceeded:
