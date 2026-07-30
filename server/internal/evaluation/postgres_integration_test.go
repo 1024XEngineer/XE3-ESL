@@ -20,6 +20,114 @@ import (
 
 const integrationOwnerB = "20000000-0000-4000-8000-000000000002"
 
+func TestPostgresAcceptsDigitLeadingPracticeSessionID(t *testing.T) {
+	const practiceSessionID = "20000000-0000-4000-8000-000000000001"
+	pool := evaluationDatabase(t)
+	insertEvaluationUsers(t, pool, testOwnerA)
+	repository := NewPostgresRepository(pool)
+	command := validEvidenceCommand(
+		testOwnerA,
+		practiceSessionID,
+		ScopeSession,
+		SceneInterview,
+	)
+	installEvidenceAuthorities(t, pool, command)
+	snapshot, replayed, err := repository.EnsureEvidenceSnapshot(
+		testActorContext(testOwnerA),
+		command,
+	)
+	if err != nil {
+		t.Fatalf("EnsureEvidenceSnapshot: %v", err)
+	}
+	if replayed || snapshot.PracticeSessionID != practiceSessionID {
+		t.Fatalf("snapshot = %#v, replayed = %v", snapshot, replayed)
+	}
+	request := validCreateRequest()
+	request.PracticeSessionID = practiceSessionID
+	request.InputSnapshotID = snapshot.ID
+	request.InputRevision = snapshot.InputRevision
+	request.SceneStrategyRef = InterviewShadowStrategyRef
+	request.PipelineVersion = InterviewShadowPipelineVersion
+	created, replayed, err := NewService(
+		repository,
+		repository,
+	).Create(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		request,
+	)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if replayed || created.PracticeSessionID != practiceSessionID ||
+		!created.Valid() {
+		t.Fatalf("created = %#v, replayed = %v", created, replayed)
+	}
+	configuration := InterviewShadowRuntimeConfiguration{
+		MaxAttempts:     3,
+		LeaseDuration:   5 * time.Second,
+		StrategyRef:     InterviewShadowStrategyRef,
+		PipelineVersion: InterviewShadowPipelineVersion,
+		FullConfigHash: sha256.Sum256(
+			[]byte("practice-resource-id-integration/v1"),
+		),
+		PromptVersion: InterviewShadowPromptVersion,
+		Provider:      "qianwen",
+		Model:         "qwen-plus",
+	}
+	claim := claimInterviewShadow(t, repository, configuration)
+	if claim.EvaluationID != created.ID ||
+		claim.Snapshot.PracticeSessionID != practiceSessionID {
+		t.Fatalf("claim = %#v", claim)
+	}
+
+	down, err := migrations.Files.ReadFile(
+		"000038_evaluation_practice_resource_ids.down.sql",
+	)
+	if err != nil {
+		t.Fatalf("read resource ID down migration: %v", err)
+	}
+	connection, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire migration connection: %v", err)
+	}
+	defer connection.Release()
+	if _, err = connection.Exec(context.Background(), string(down)); err == nil {
+		t.Fatal("down migration accepted digit-leading Practice data")
+	}
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) ||
+		databaseError.Code != "23514" ||
+		databaseError.ConstraintName !=
+			"evaluation_module_runs_practice_session_check" {
+		t.Fatalf("down migration error = %v", err)
+	}
+	if _, rollbackErr := connection.Exec(
+		context.Background(),
+		"ROLLBACK",
+	); rollbackErr != nil {
+		t.Fatalf("rollback rejected down migration: %v", rollbackErr)
+	}
+	var preservedRows int64
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+		    (SELECT count(*)
+		       FROM evaluation_ledgers
+		      WHERE practice_session_id = $1)
+		  + (SELECT count(*)
+		       FROM evaluation_evidence_snapshots
+		      WHERE practice_session_id = $1)
+		  + (SELECT count(*)
+		       FROM evaluation_module_runs
+		      WHERE practice_session_id = $1)
+	`, practiceSessionID).Scan(&preservedRows); err != nil {
+		t.Fatalf("inspect preserved Practice rows: %v", err)
+	}
+	if preservedRows != 3 {
+		t.Fatalf("preserved Practice rows = %d, want 3", preservedRows)
+	}
+}
+
 func TestPostgresLedgerRevisionIdempotencyAndIsolation(t *testing.T) {
 	pool := evaluationDatabase(t)
 	insertEvaluationUsers(t, pool, testOwnerA, integrationOwnerB)

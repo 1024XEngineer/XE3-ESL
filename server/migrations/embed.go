@@ -23,4 +23,5 @@ import "embed"
 //go:embed 000035_ielts_speaking_section_models.*.sql
 //go:embed 000036_evaluation_evidence_snapshots.*.sql
 //go:embed 000037_evaluation_interview_shadow_runtime.*.sql
+//go:embed 000038_evaluation_practice_resource_ids.*.sql
 var Files embed.FS
