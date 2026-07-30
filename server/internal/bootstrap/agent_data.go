@@ -11,13 +11,17 @@ import (
 	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
 	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	agenttransport "github.com/1024XEngineer/XE3-ESL/server/internal/agent/transport"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	matteragenttool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -56,6 +60,9 @@ func NewIdentityAndAgentModules(
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := composition.recoverInterruptedRuns(ctx); err != nil {
+		return nil, nil, err
+	}
 	return composition.identity.module, composition.agentModule, nil
 }
 
@@ -65,6 +72,8 @@ type identityAgentComposition struct {
 	agentService        *agentapp.Service
 	agentVoiceReclaimer AgentVoiceObjectReclaimer
 	matterService       *matter.Service
+	productionTools     *tool.Registry
+	runService          *agentruntime.RunService
 	memoryExtraction    memory.ExtractionProcessor
 	summaryProcessor    agentsummary.Processor
 	ids                 *identity.UUIDv4Generator
@@ -123,6 +132,28 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	reviewRepository := review.NewPostgresRepository(database)
+	reviewHistory := review.NewHistoryService(reviewRepository)
+	matterTools, err := matteragenttool.NewServicePort(
+		matterService,
+		agentService,
+	)
+	if err != nil {
+		return nil, err
+	}
+	reviewTools, err := reviewagenttool.NewServicePort(reviewHistory)
+	if err != nil {
+		return nil, err
+	}
+	productionTools, err := tool.NewRegistry(
+		matteragenttool.NewScenarioCreateTool(matterTools),
+		matteragenttool.NewScenarioSearchTool(matterTools),
+		reviewagenttool.NewReviewSearchTool(reviewTools),
+		reviewagenttool.NewReviewGetTool(reviewTools),
+	)
+	if err != nil {
+		return nil, err
+	}
 	contextMemorySearcher, err := newAgentMemoryContextSearcher(memorySearcher)
 	if err != nil {
 		return nil, err
@@ -144,7 +175,7 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	runOptions, err := agentRunServiceOptions()
+	toolOptions, err := agentRunServiceOptions(productionTools)
 	if err != nil {
 		return nil, err
 	}
@@ -167,12 +198,9 @@ func buildIdentityAgentComposition(
 		contextAssembler,
 		generator,
 		runConfiguration,
-		runOptions...,
+		toolOptions.runOptions...,
 	)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := runService.RecoverInterruptedRuns(ctx); err != nil {
 		return nil, err
 	}
 	memoryExtraction, err := buildMemoryExtractionProcessor(
@@ -236,6 +264,8 @@ func buildIdentityAgentComposition(
 			database,
 			generator,
 			matterService,
+			reviewRepository,
+			reviewHistory,
 			voiceConfigurations[0],
 		)
 		if err != nil {
@@ -282,6 +312,8 @@ func buildIdentityAgentComposition(
 		agentService:        agentService,
 		agentVoiceReclaimer: agentVoiceReclaimer,
 		matterService:       matterService,
+		productionTools:     toolOptions.productionRegistry,
+		runService:          runService,
 		memoryExtraction:    memoryExtraction,
 		summaryProcessor:    summaryProcessor,
 		ids:                 ids,
@@ -320,10 +352,23 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	if err := composition.recoverInterruptedRuns(ctx); err != nil {
+		return nil, nil, nil, err
+	}
 	return composition.identity.module,
 		composition.agentModule,
 		composition.agentVoiceReclaimer,
 		nil
+}
+
+func (composition *identityAgentComposition) recoverInterruptedRuns(
+	ctx context.Context,
+) error {
+	if composition == nil || composition.runService == nil {
+		return errors.New("bootstrap: Agent Run service is required")
+	}
+	_, err := composition.runService.RecoverInterruptedRuns(ctx)
+	return err
 }
 
 func buildAgentVoiceMessageApplication(

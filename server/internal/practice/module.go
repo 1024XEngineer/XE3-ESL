@@ -1,6 +1,8 @@
 // Package practice owns practice plans, sessions, and policy snapshots.
 package practice
 
+import "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
+
 type Module struct{}
 
 func New() Module { return Module{} }
@@ -17,6 +19,9 @@ type CreatePlanRequest struct {
 	ScenarioConfigVersion     int      `json:"scenario_config_version,omitempty"`
 	PreparationProfileID      string   `json:"preparation_profile_id,omitempty"`
 	SelectedRoleIDs           []string `json:"selected_role_ids,omitempty"`
+	PracticeOptionID          string   `json:"practice_option_id,omitempty"`
+	PracticeOptionVersion     int      `json:"practice_option_version,omitempty"`
+	MaxEffectiveTurns         int      `json:"max_effective_turns,omitempty"`
 }
 
 type UpdatePlanRequest struct {
@@ -40,6 +45,19 @@ type IELTSPracticeSelection struct {
 	Mode         string `json:"mode"`
 	Part1SetID   string `json:"part_1_set_id,omitempty"`
 	TopicGroupID string `json:"topic_group_id,omitempty"`
+}
+
+type StartConfirmation struct {
+	AgentThreadID        string
+	PracticePlanID       string
+	ExpectedPlanRevision int
+	IELTSSelection       *IELTSPracticeSelection
+}
+
+type ConfirmAndStartResult struct {
+	Bootstrap      persistence.ContextSessionBootstrap
+	Replayed       bool
+	ActiveConflict bool
 }
 
 type Backend interface {

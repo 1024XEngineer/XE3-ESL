@@ -101,6 +101,44 @@ void main() {
     expect(find.byType(Image), findsNothing);
     expect(find.text('[图片：private diagram]'), findsOneWidget);
   });
+
+  testWidgets('renders and dispatches an interview preparation action', (
+    tester,
+  ) async {
+    const action = AgentMessageAction(
+      type: AgentMessageActionType.openInterviewPreparation,
+      label: '配置并开始面试',
+      matterId: '10000000-0000-4000-8000-000000000001',
+      title: 'Java Interview Practice',
+    );
+    AgentMessageAction? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentMessageBubble(
+            message: const AgentMessage(
+              id: 'assistant-interview',
+              role: AgentMessageRole.assistant,
+              text: '面试场景已创建。',
+              actions: <AgentMessageAction>[action],
+            ),
+            onAction: (value) => selected = value,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Java Interview Practice'), findsOneWidget);
+    expect(find.text('配置并开始面试'), findsOneWidget);
+    await tester.tap(
+      find.byKey(
+        const Key(
+          'agent-action-interview-10000000-0000-4000-8000-000000000001',
+        ),
+      ),
+    );
+    expect(selected, same(action));
+  });
 }
 
 Future<void> _pumpMessage(WidgetTester tester, AgentMessage message) async {

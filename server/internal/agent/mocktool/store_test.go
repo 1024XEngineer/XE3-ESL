@@ -86,12 +86,8 @@ func TestToolDefinitionsGuideModelAndConstrainArguments(t *testing.T) {
 	}
 	createProperties := createTool.Definition().
 		InputSchema["properties"].(map[string]any)
-	scenarioTypes := createProperties["type"].(map[string]any)["enum"]
-	if !equalAny(
-		scenarioTypes,
-		[]string{"interview", "meeting", "client", "presentation", "speaking"},
-	) {
-		t.Fatalf("scenario type enum = %#v", scenarioTypes)
+	if len(createProperties) != 1 || createProperties["title"] == nil {
+		t.Fatalf("scenario create properties = %#v, want only title", createProperties)
 	}
 
 	materialTool, ok := registry.Get(MaterialSearchToolName)
@@ -114,7 +110,7 @@ func TestScenarioCreateIsAvailableAndIdempotent(t *testing.T) {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
 	executor := tool.NewExecutor(registry)
-	input := json.RawMessage(`{"type":"interview","title":"PM interview","goal":"prepare concise answers"}`)
+	input := json.RawMessage(`{"title":"PM interview"}`)
 	first, err := executor.Execute(
 		context.Background(),
 		validCallContext("create-scenario-1"),
@@ -131,9 +127,20 @@ func TestScenarioCreateIsAvailableAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay Execute() error = %v", err)
 	}
-	if first.Content["scenario"] == nil ||
-		!equalAny(first.Content["scenario"], replayed.Content["scenario"]) {
+	if first.Content["matter"] == nil ||
+		!equalAny(first.Content["matter"], replayed.Content["matter"]) {
 		t.Fatalf("idempotent scenario mismatch: %#v vs %#v", first.Content, replayed.Content)
+	}
+	_, err = executor.Execute(
+		context.Background(),
+		validCallContext("create-scenario-1"),
+		tool.Invocation{
+			Name:  mattertool.ScenarioCreateToolName,
+			Input: json.RawMessage(`{"title":"Different Matter"}`),
+		},
+	)
+	if !errors.Is(err, tool.ErrExecutionRejected) {
+		t.Fatalf("changed replay error = %v, want execution rejected", err)
 	}
 }
 
@@ -149,8 +156,8 @@ func TestReadOnlyMockToolsReturnExpectedFixtures(t *testing.T) {
 			name:       "scenario search",
 			toolName:   mattertool.ScenarioSearchToolName,
 			input:      json.RawMessage(`{"query":"interview","limit":1}`),
-			resultKey:  "scenarios",
-			sourceType: "mock_scenario",
+			resultKey:  "matters",
+			sourceType: "mock_matter",
 		},
 		{
 			name:       "review search",
@@ -286,8 +293,8 @@ func TestCapabilitySummariesIncludeRiskAndSchemaFields(t *testing.T) {
 	}
 	if scenario.Risk != string(tool.RiskLowRiskWrite) ||
 		scenario.ReadOnly ||
-		!containsString(scenario.SchemaFields, "type") ||
-		!containsString(scenario.RequiredNames, "type") {
+		!containsString(scenario.SchemaFields, "title") ||
+		!containsString(scenario.RequiredNames, "title") {
 		t.Fatalf("scenario summary = %#v", scenario)
 	}
 }

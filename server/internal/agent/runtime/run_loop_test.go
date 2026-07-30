@@ -473,12 +473,12 @@ func TestRunLoopRejectsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
 		toolLoopResult(
 			"call-create-1",
 			mattertool.ScenarioCreateToolName,
-			`{"type":"interview","title":"First scenario"}`,
+			`{"title":"First scenario"}`,
 		),
 		toolLoopResult(
 			"call-create-1",
 			mattertool.ScenarioCreateToolName,
-			`{"type":"meeting","title":"Repeated scenario"}`,
+			`{"title":"Repeated scenario"}`,
 		),
 	)
 	service := newLoopTestService(t, generator)
@@ -509,7 +509,7 @@ func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
 			toolLoopResult(
 				"call-create-stable",
 				mattertool.ScenarioCreateToolName,
-				`{"type":"interview","title":"Stable scenario"}`,
+				`{"title":"Stable scenario"}`,
 			),
 			finalLoopResult("Created."),
 		)
@@ -547,12 +547,12 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 			{
 				ID:        "call-create-1",
 				Name:      mattertool.ScenarioCreateToolName,
-				Arguments: json.RawMessage(`{"type":"interview","title":"PM interview"}`),
+				Arguments: json.RawMessage(`{"title":"PM interview"}`),
 			},
 			{
 				ID:        "call-create-2",
 				Name:      mattertool.ScenarioCreateToolName,
-				Arguments: json.RawMessage(`{"type":"meeting","title":"Client meeting"}`),
+				Arguments: json.RawMessage(`{"title":"Client meeting"}`),
 			},
 		},
 		Usage: ai.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},

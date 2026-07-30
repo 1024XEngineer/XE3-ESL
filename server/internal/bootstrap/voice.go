@@ -164,6 +164,8 @@ func buildProductionVoiceApplication(
 	database *pgxpool.Pool,
 	textGenerator ai.TextGenerator,
 	matters matter.Reader,
+	reviewRepository *review.PostgresRepository,
+	reviewHistory *review.HistoryService,
 	configuration VoiceConfiguration,
 ) (
 	*agent.VoiceSessionApplication,
@@ -171,6 +173,7 @@ func buildProductionVoiceApplication(
 	error,
 ) {
 	if database == nil || textGenerator == nil || matters == nil ||
+		reviewRepository == nil || reviewHistory == nil ||
 		configuration.Recognizer == nil ||
 		configuration.Synthesizer == nil ||
 		configuration.TemporaryAudio == nil ||
@@ -252,7 +255,6 @@ func buildProductionVoiceApplication(
 		conversations: conversationRepository,
 		practice:      practiceRepository,
 	}
-	reviewRepository := review.NewPostgresRepository(database)
 	reviewGenerator := &voiceReviewGenerator{
 		generator: textGenerator,
 		timeout:   configuration.ReviewGenerationTimeout,
@@ -264,7 +266,7 @@ func buildProductionVoiceApplication(
 	)
 	reviewAdapter := &voiceReviewAdapter{
 		service:      ensureReviews,
-		history:      review.NewHistoryService(reviewRepository),
+		history:      reviewHistory,
 		sourceReader: sourceReader,
 	}
 	orchestrator, err := agent.NewVoiceRoundOrchestrator(

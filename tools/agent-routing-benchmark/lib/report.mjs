@@ -223,6 +223,11 @@ function escapeHtml(value) {
 }
 
 export function renderHtml(metadata, results, metrics) {
+  const pageData = JSON.stringify({
+    reportId: metadata.report_id,
+    suiteFingerprint: metadata.suite_fingerprint,
+    overallAccuracy: metrics.overall.percentage,
+  }).replaceAll("<", "\\u003c");
   const metricCards = [
     ["总体准确率", metrics.overall],
     ["决策准确率", metrics.decision],
@@ -270,6 +275,20 @@ export function renderHtml(metadata, results, metrics) {
     .metric { padding: 15px; border: 1px solid #dbe2df; border-radius: 6px; background: #fff; }
     .metric span { display: block; color: #5c6864; font-size: 13px; }
     .metric strong { display: block; margin-top: 6px; font-size: 20px; }
+    .history { margin-bottom: 24px; padding: 18px; border: 1px solid #dbe2df; background: #fff; }
+    .history-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+    .history h2 { margin: 0; font-size: 17px; letter-spacing: 0; }
+    .record-controls { display: flex; align-items: center; gap: 8px; }
+    .record-controls input { width: min(260px, 28vw); min-height: 36px; box-sizing: border-box; padding: 0 10px; border: 1px solid #cbd5d1; border-radius: 5px; color: #17201d; background: #fff; font: inherit; }
+    .record-controls input:focus { border-color: #176b52; outline: 2px solid #cce2da; outline-offset: 0; }
+    .record-controls input:disabled { color: #68736f; background: #eef2f0; }
+    .history button { min-height: 36px; padding: 0 13px; border: 0; border-radius: 5px; color: #fff; background: #176b52; font: inherit; font-weight: 650; cursor: pointer; }
+    .history button:hover { background: #115742; }
+    .history button:disabled { color: #68736f; background: #e2e7e5; cursor: default; }
+    .comparison { min-height: 20px; margin: 0 0 12px; color: #43504c; font-size: 14px; }
+    .chart-wrap { position: relative; width: 100%; height: 260px; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .chart-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #75817d; font-size: 13px; pointer-events: none; }
     .table-wrap { overflow-x: auto; border: 1px solid #dbe2df; background: #fff; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 11px 12px; border-bottom: 1px solid #e7ecea; text-align: left; vertical-align: top; }
@@ -279,6 +298,13 @@ export function renderHtml(metadata, results, metrics) {
     .pass { background: #26734d; }
     .fail { background: #b63838; }
     footer { margin-top: 16px; color: #66736f; font-size: 12px; }
+    @media (max-width: 640px) {
+      .history-head { align-items: flex-start; flex-direction: column; }
+      .record-controls { width: 100%; }
+      .record-controls input { width: 100%; min-width: 0; }
+      .history button { width: 100%; }
+      .chart-wrap { height: 220px; }
+    }
   </style>
 </head>
 <body>
@@ -292,6 +318,20 @@ export function renderHtml(metadata, results, metrics) {
   </header>
   <main>
     <section class="metrics">${metricCards}</section>
+    <section class="history">
+      <div class="history-head">
+        <h2>已记录结果趋势</h2>
+        <div class="record-controls">
+          <input id="record-label" type="text" maxlength="120" placeholder="备注（可选）" aria-label="历史记录备注">
+          <button id="record-result" type="button">记录本次结果</button>
+        </div>
+      </div>
+      <p id="comparison" class="comparison">正在读取历史记录...</p>
+      <div class="chart-wrap">
+        <canvas id="history-chart" aria-label="总体准确率历史趋势"></canvas>
+        <div id="chart-empty" class="chart-empty" hidden></div>
+      </div>
+    </section>
     <div class="table-wrap">
       <table>
         <thead><tr><th>结果</th><th>Case</th><th>用户消息</th><th>期望决策</th><th>实际决策</th><th>期望工具</th><th>实际工具</th><th>说明</th></tr></thead>
@@ -300,6 +340,166 @@ export function renderHtml(metadata, results, metrics) {
     </div>
     <footer>原始 JSON 保留 thread_id / run_id，用于关联结构化服务日志。</footer>
   </main>
+  <script>
+    const pageData = ${pageData};
+    const recordButton = document.getElementById("record-result");
+    const recordLabel = document.getElementById("record-label");
+    const comparison = document.getElementById("comparison");
+    const canvas = document.getElementById("history-chart");
+    const emptyState = document.getElementById("chart-empty");
+    let suiteRecords = [];
+
+    function accuracy(record) {
+      return Number(record.metrics?.overall ?? 0);
+    }
+
+    function describeComparison(records) {
+      const currentIndex = records.findIndex(
+        (record) => record.report_id === pageData.reportId,
+      );
+      const previous =
+        currentIndex > 0
+          ? records[currentIndex - 1]
+          : currentIndex < 0
+            ? records.at(-1)
+            : null;
+      if (!previous) {
+        return currentIndex === 0
+          ? "这是当前测试集记录的第一个节点。"
+          : "当前测试集还没有已记录结果。";
+      }
+      const delta = pageData.overallAccuracy - accuracy(previous);
+      const direction =
+        delta > 0 ? "上升" : delta < 0 ? "下降" : "持平";
+      return \`本次 \${pageData.overallAccuracy.toFixed(1)}%，上次记录 \${accuracy(previous).toFixed(1)}%，\${direction}\${delta === 0 ? "" : " " + Math.abs(delta).toFixed(1) + " 个百分点"}。\`;
+    }
+
+    function drawChart(records) {
+      const context = canvas.getContext("2d");
+      const bounds = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(bounds.width * ratio));
+      canvas.height = Math.max(1, Math.floor(bounds.height * ratio));
+      context.scale(ratio, ratio);
+      context.clearRect(0, 0, bounds.width, bounds.height);
+
+      if (records.length === 0) {
+        emptyState.hidden = false;
+        emptyState.textContent = "点击“记录本次结果”后，这里会出现第一个趋势节点。";
+        return;
+      }
+      emptyState.hidden = true;
+      const padding = { top: 20, right: 20, bottom: 46, left: 44 };
+      const width = bounds.width - padding.left - padding.right;
+      const height = bounds.height - padding.top - padding.bottom;
+      context.font = "12px system-ui, sans-serif";
+      context.lineWidth = 1;
+      context.textAlign = "right";
+      context.textBaseline = "middle";
+
+      for (const value of [0, 25, 50, 75, 100]) {
+        const y = padding.top + height * (1 - value / 100);
+        context.strokeStyle = "#e4e9e7";
+        context.beginPath();
+        context.moveTo(padding.left, y);
+        context.lineTo(padding.left + width, y);
+        context.stroke();
+        context.fillStyle = "#71807b";
+        context.fillText(\`\${value}%\`, padding.left - 8, y);
+      }
+
+      const point = (record, index) => ({
+        x:
+          records.length === 1
+            ? padding.left + width / 2
+            : padding.left + (width * index) / (records.length - 1),
+        y: padding.top + height * (1 - accuracy(record) / 100),
+      });
+      const points = records.map(point);
+      context.strokeStyle = "#176b52";
+      context.lineWidth = 2;
+      context.beginPath();
+      points.forEach((item, index) => {
+        if (index === 0) context.moveTo(item.x, item.y);
+        else context.lineTo(item.x, item.y);
+      });
+      context.stroke();
+
+      points.forEach((item, index) => {
+        const record = records[index];
+        context.fillStyle = "#fff";
+        context.strokeStyle = "#176b52";
+        context.lineWidth = 2;
+        context.beginPath();
+        context.arc(item.x, item.y, 4, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+
+        context.fillStyle = "#173f35";
+        context.textAlign = "center";
+        context.textBaseline = "bottom";
+        context.fillText(\`\${accuracy(record).toFixed(1)}%\`, item.x, item.y - 8);
+        context.fillStyle = "#71807b";
+        context.textBaseline = "top";
+        const label = record.label || new Date(record.recorded_at).toLocaleDateString();
+        const shortLabel = label.length > 16 ? label.slice(0, 15) + "..." : label;
+        if (records.length === 1) context.textAlign = "center";
+        else if (index === 0) context.textAlign = "left";
+        else if (index === records.length - 1) context.textAlign = "right";
+        else context.textAlign = "center";
+        context.fillText(shortLabel, item.x, padding.top + height + 12);
+      });
+    }
+
+    async function refreshHistory() {
+      try {
+        const response = await fetch("/api/history", { cache: "no-store" });
+        if (!response.ok) throw new Error("history service unavailable");
+        const history = await response.json();
+        suiteRecords = history.records.filter(
+          (record) => record.suite_fingerprint === pageData.suiteFingerprint,
+        );
+        const alreadyRecorded = suiteRecords.some(
+          (record) => record.report_id === pageData.reportId,
+        );
+        recordButton.disabled = alreadyRecorded;
+        recordLabel.disabled = alreadyRecorded;
+        recordButton.textContent = alreadyRecorded ? "已记录" : "记录本次结果";
+        comparison.textContent = describeComparison(suiteRecords);
+        drawChart(suiteRecords);
+      } catch {
+        recordButton.disabled = true;
+        comparison.textContent =
+          "历史记录服务未运行。请通过双击 Benchmark 脚本打开本报告。";
+        emptyState.hidden = false;
+        emptyState.textContent = "无法读取历史趋势";
+      }
+    }
+
+    recordButton.addEventListener("click", async () => {
+      recordButton.disabled = true;
+      recordButton.textContent = "记录中...";
+      try {
+        const response = await fetch("/api/history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            report_id: pageData.reportId,
+            label: recordLabel.value,
+          }),
+        });
+        if (!response.ok) throw new Error("record failed");
+        await refreshHistory();
+      } catch {
+        recordButton.disabled = false;
+        recordButton.textContent = "重试记录";
+        comparison.textContent = "记录失败，请确认本地报告服务仍在运行。";
+      }
+    });
+
+    window.addEventListener("resize", () => drawChart(suiteRecords));
+    refreshHistory();
+  </script>
 </body>
 </html>`;
 }

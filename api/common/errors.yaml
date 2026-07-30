@@ -83,6 +83,9 @@ components:
         - practice_participant_invalid
         - practice_participant_not_authorized
         - practice_option_invalid
+        - confirmation_required
+        - version_conflict
+        - active_session_conflict
         - question_not_found
         - answer_invalid
         - turn_not_found
@@ -106,6 +109,9 @@ components:
         answer_invalid: 400
         unsupported_message: 400
         authentication_required: 401
+        confirmation_required: 409
+        version_conflict: 409
+        active_session_conflict: 409
         invalid_credentials: 401
         practice_participant_not_authorized: 403
         scenario_definition_not_found: 404

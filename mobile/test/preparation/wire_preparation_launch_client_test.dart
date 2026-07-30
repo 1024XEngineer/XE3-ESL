@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/features/preparation/ielts_question_bank.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
@@ -37,6 +38,7 @@ void main() {
           context: _context,
           selection: _selection,
           preparationProfileId: profile.id,
+          preparationSnapshotId: snapshot.id,
           preparationUserId: profile.userId,
         ),
         idempotencyKey: 'plan-key-123456',
@@ -44,6 +46,7 @@ void main() {
       final bootstrap = await client.createSession(
         planId: plan.id,
         input: CreatePreparationSessionInput(
+          agentThreadId: _threadId,
           expectedPlanRevision: plan.revision,
           preparationSnapshotId: snapshot.id,
           preparationProfileId: profile.id,
@@ -60,7 +63,7 @@ void main() {
         '/v1/preparation-profiles',
         '/v1/preparation-profiles/$_profileId/snapshots',
         '/v1/practice-plans',
-        '/v1/practice-plans/$_planId/practice-sessions',
+        '/v1/agent-threads/$_threadId/practice-start-confirmations',
       ]);
       expect(jsonDecode(transport.calls.first.body!), {
         'background_summary': _background,
@@ -73,14 +76,16 @@ void main() {
         'scenario_config_id': _configId,
         'scenario_config_version': 1,
         'preparation_profile_id': _profileId,
+        'preparation_snapshot_id': _preparationSnapshotId,
         'selected_role_ids': [_roleId],
+        'practice_option_id': _optionId,
+        'practice_option_version': 1,
+        'max_effective_turns': 3,
       });
       expect(jsonDecode(transport.calls.last.body!), {
         'expected_plan_revision': 1,
         'user_confirmed': true,
-        'preparation_snapshot_id': _preparationSnapshotId,
-        'practice_option_id': _optionId,
-        'role_definition_ids': [_roleId],
+        'practice_plan_id': _planId,
       });
       for (final call in transport.calls) {
         expect(
@@ -105,6 +110,7 @@ void main() {
       ]);
       final client = _client(transport);
       const sessionInput = CreatePreparationSessionInput(
+        agentThreadId: _threadId,
         expectedPlanRevision: 1,
         preparationSnapshotId: _preparationSnapshotId,
         preparationProfileId: _profileId,
@@ -139,6 +145,7 @@ void main() {
                   context: _context,
                   selection: _selection,
                   preparationProfileId: _profileId,
+                  preparationSnapshotId: _preparationSnapshotId,
                   preparationUserId: _userId,
                 ),
                 idempotencyKey: 'plan-malformed-key',
@@ -183,7 +190,7 @@ void main() {
 
       expect(bootstrap.session.id, _sessionId);
       final sessionCalls = transport.calls.where(
-        (call) => call.uri.path.endsWith('/practice-sessions'),
+        (call) => call.uri.path.endsWith('/practice-start-confirmations'),
       );
       expect(sessionCalls, hasLength(2));
       expect(
@@ -230,7 +237,8 @@ void main() {
 
   test('rejects a Plan owned by a different user', () async {
     final response = _planJson()..['user_id'] = 'user-other';
-    final client = _client(_QueueTransport([_response(response)]));
+    final transport = _QueueTransport([_response(response)]);
+    final client = _client(transport);
 
     await expectLater(
       client.createPlan(
@@ -238,6 +246,7 @@ void main() {
           context: _context,
           selection: _selection,
           preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
           preparationUserId: _userId,
         ),
         idempotencyKey: 'plan-key-123456',
@@ -248,7 +257,8 @@ void main() {
 
   test('rejects a Plan bound to a different Agent Matter', () async {
     final response = _planJson()..['matter_id'] = 'matter-other';
-    final client = _client(_QueueTransport([_response(response)]));
+    final transport = _QueueTransport([_response(response)]);
+    final client = _client(transport);
 
     await expectLater(
       client.createPlan(
@@ -256,6 +266,7 @@ void main() {
           context: _context,
           selection: _selection,
           preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
           preparationUserId: _userId,
         ),
         idempotencyKey: 'plan-key-123456',
@@ -308,6 +319,7 @@ void main() {
           client.createSession(
             planId: _planId,
             input: const CreatePreparationSessionInput(
+              agentThreadId: _threadId,
               expectedPlanRevision: 1,
               preparationSnapshotId: _preparationSnapshotId,
               preparationProfileId: _profileId,
@@ -343,6 +355,7 @@ void main() {
     final bootstrap = await client.createSession(
       planId: _planId,
       input: const CreatePreparationSessionInput(
+        agentThreadId: _threadId,
         expectedPlanRevision: 1,
         preparationSnapshotId: _preparationSnapshotId,
         preparationProfileId: _profileId,
@@ -404,11 +417,29 @@ void main() {
       ..['max_effective_turns'] = 14
       ..['coverage_checkpoint_turn'] = 14
       ..['max_follow_ups_per_question'] = 0;
-    final client = _client(_QueueTransport([_response(response)]));
+    snapshot['ielts_assignment'] = {
+      'bank_id': 'ielts-2026-05-08',
+      'season': '2026-05-08',
+      'mode': 'FULL_MOCK',
+      'part_1_set_id': 'p1-002',
+      'topic_group_id': 'p23-new-001',
+      'topic_title': '语言学习',
+      'part_2_cue_card': 'Describe a language you would like to learn',
+      'part_1_questions': 8,
+      'part_2_questions': 1,
+      'part_3_questions': 5,
+      'turn_blueprints': List<String>.generate(
+        14,
+        (index) => 'Question ${index + 1}',
+      ),
+    };
+    final transport = _QueueTransport([_response(response)]);
+    final client = _client(transport);
 
     final bootstrap = await client.createSession(
       planId: _planId,
       input: const CreatePreparationSessionInput(
+        agentThreadId: _threadId,
         expectedPlanRevision: 1,
         preparationSnapshotId: _preparationSnapshotId,
         preparationProfileId: _profileId,
@@ -422,6 +453,16 @@ void main() {
 
     expect(bootstrap.maxEffectiveTurns, 14);
     expect(bootstrap.session.scenarioModel, 'IELTS_SPEAKING_FULL_MOCK');
+    expect(jsonDecode(transport.calls.single.body!), {
+      'practice_plan_id': _planId,
+      'expected_plan_revision': 1,
+      'user_confirmed': true,
+      'ielts_selection': {
+        'mode': 'FULL_MOCK',
+        'part_1_set_id': 'p1-002',
+        'topic_group_id': 'p23-new-001',
+      },
+    });
   });
 
   test('fences a response that completes after account cleanup', () async {
@@ -778,4 +819,9 @@ const _ieltsFullSelection = PreparationLaunchSelection(
   practiceOptionId: _ieltsFullOptionId,
   practiceOptionType: PreparationOptionType.fullSimulation,
   practiceOptionVersion: 2,
+  ieltsSelection: IeltsPracticeSelection(
+    mode: IeltsPracticeMode.fullMock,
+    part1SetId: 'p1-002',
+    topicGroupId: 'p23-new-001',
+  ),
 );

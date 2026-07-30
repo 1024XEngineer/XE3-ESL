@@ -65,7 +65,7 @@ func BaselineCases() []RoutingCase {
 			ExpectedToolNames: []string{mattertool.ScenarioCreateToolName},
 			ExpectedArgs: map[string]map[string]any{
 				mattertool.ScenarioCreateToolName: {
-					"type": "interview",
+					"title": "英文 PM 面试",
 				},
 			},
 		},

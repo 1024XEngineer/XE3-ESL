@@ -209,17 +209,20 @@ final class CreatePreparationPlanInput {
     required this.context,
     required this.selection,
     required this.preparationProfileId,
+    required this.preparationSnapshotId,
     required this.preparationUserId,
   });
 
   final AgentPracticeContext context;
   final PreparationLaunchSelection selection;
   final String preparationProfileId;
+  final String preparationSnapshotId;
   final String preparationUserId;
 }
 
 final class CreatePreparationSessionInput {
   const CreatePreparationSessionInput({
+    required this.agentThreadId,
     required this.expectedPlanRevision,
     required this.preparationSnapshotId,
     required this.preparationProfileId,
@@ -229,6 +232,7 @@ final class CreatePreparationSessionInput {
     required this.selection,
   });
 
+  final String agentThreadId;
   final int expectedPlanRevision;
   final String preparationSnapshotId;
   final String preparationProfileId;

@@ -5,13 +5,25 @@
 
 ## 双击运行
 
-1. 确认仓库根目录的 `.env` 已配置文本生成模型，PostgreSQL 容器正在运行。
+1. 确认仓库根目录的 `.env` 已配置文本生成模型和 `DATABASE_URL`，PostgreSQL
+   容器正在运行。
 2. 双击仓库根目录的 `Agent Routing Benchmark.command`。
 3. 运行结束后会自动打开 `reports/latest.html`。
+4. 认为本次结果值得保留时，点击报告中的“记录本次结果”并填写可选备注。
+5. 查看或记录完成后，回到终端窗口按回车关闭本地报告服务。
 
 每次运行会生成带时间戳的 Markdown、HTML、JSON 和服务日志，并更新
 `latest.md`、`latest.html` 和 `latest.json`。报告目录已被 Git 忽略。
 报告会记录当前 Git commit；工作区有未提交内容时会附加 `-dirty`。
+普通运行不会进入折线图。只有手动记录的结果会写入
+`reports/history/index.json`，重复记录同一份报告不会创建重复节点。
+
+历史趋势只比较用例集指纹相同的报告。修改 `cases.json` 后会自动开始一组新的
+趋势，避免不同测试集之间产生误导性的准确率比较。
+
+每次运行会创建名称以 `xe3_benchmark_` 开头的隔离数据库，执行当前代码内嵌的
+完整迁移，并在退出时删除。Benchmark 不读取或污染日常开发数据库中的用户、
+Thread 和工具数据。
 
 ## 命令行运行
 
@@ -24,12 +36,13 @@
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `BENCHMARK_PORT` | `18080` | benchmark 独占的本地后端端口 |
+| `BENCHMARK_REPORT_PORT` | 自动分配 | 本地报告与历史记录服务端口 |
 | `BENCHMARK_CASES_FILE` | `cases.json` | 使用另一份用例文件 |
 | `BENCHMARK_REPORT_DIR` | `reports/` | 报告输出目录 |
 | `BENCHMARK_OPEN_REPORT` | `1` | 设为 `0` 时不自动打开 HTML |
-| `BENCHMARK_RUN_MIGRATIONS` | `0` | 设为 `1` 时启动前执行迁移 |
 
 脚本只停止自己启动的后端进程。若目标端口已被占用，它会直接退出。
+业务后端在测试结束后立即关闭；本地报告服务只在报告页面使用期间运行。
 全部用例通过时退出码为 `0`，报告生成但存在失败用例时为 `2`，基础设施或
 执行错误时为 `1`。
 

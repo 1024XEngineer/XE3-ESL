@@ -120,6 +120,7 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     _requireContext(input.context);
     _requireSelection(input.selection);
     _requireResourceId(input.preparationProfileId);
+    _requireResourceId(input.preparationSnapshotId);
     _requireResourceId(input.preparationUserId);
     final response = await _post(
       path: '/v1/practice-plans',
@@ -133,7 +134,15 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
         'scenario_config_id': input.selection.scenarioConfigId,
         'scenario_config_version': input.selection.scenarioConfigVersion,
         'preparation_profile_id': input.preparationProfileId,
+        'preparation_snapshot_id': input.preparationSnapshotId,
         'selected_role_ids': <String>[input.selection.roleDefinitionId],
+        'practice_option_id': input.selection.practiceOptionId,
+        'practice_option_version': input.selection.practiceOptionVersion,
+        'max_effective_turns':
+            input.selection.practiceOptionType ==
+                PreparationOptionType.fullSimulation
+            ? 6
+            : 3,
       },
       stage: PreparationLaunchStage.plan,
     );
@@ -150,6 +159,7 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     required String idempotencyKey,
   }) async {
     _requireResourceId(planId);
+    _requireResourceId(input.agentThreadId);
     _requireSelection(input.selection);
     _requireResourceId(input.preparationSnapshotId);
     _requireResourceId(input.preparationProfileId);
@@ -163,15 +173,13 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     }
     final response = await _post(
       path:
-          '/v1/practice-plans/${Uri.encodeComponent(planId)}'
-          '/practice-sessions',
+          '/v1/agent-threads/${Uri.encodeComponent(input.agentThreadId)}'
+          '/practice-start-confirmations',
       idempotencyKey: idempotencyKey,
       body: <String, Object?>{
+        'practice_plan_id': planId,
         'expected_plan_revision': input.expectedPlanRevision,
         'user_confirmed': true,
-        'preparation_snapshot_id': input.preparationSnapshotId,
-        'practice_option_id': input.selection.practiceOptionId,
-        'role_definition_ids': <String>[input.selection.roleDefinitionId],
         if (input.selection.ieltsSelection case final selection?)
           'ielts_selection': selection.toJson(),
       },

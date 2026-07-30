@@ -161,6 +161,8 @@ paths:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans~1{practice_plan_id}
   /v1/practice-plans/{practice_plan_id}/practice-sessions:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans~1{practice_plan_id}~1practice-sessions
+  /v1/agent-threads/{thread_id}/practice-start-confirmations:
+    $ref: ./modules/practice.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1practice-start-confirmations
   /v1/practice-sessions/{practice_session_id}:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}
   /v1/practice-sessions/{practice_session_id}/snapshot:

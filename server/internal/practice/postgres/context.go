@@ -699,8 +699,7 @@ func encodePlanPreview(
 		len(command.PracticeFocuses) == 0 {
 		return "", nil, nil, nil, nil
 	}
-	if command.PreparationSnapshot == nil ||
-		command.CatalogSnapshot == nil ||
+	if command.CatalogSnapshot == nil ||
 		command.SessionPolicy == nil ||
 		len(command.PracticeFocuses) == 0 {
 		return "", nil, nil, nil, persistence.ErrInvalidArgument
@@ -717,7 +716,11 @@ func encodePlanPreview(
 	if err != nil {
 		return "", nil, nil, nil, persistence.ErrInvalidArgument
 	}
-	return command.PreparationSnapshot.ID, catalog, policy, focuses, nil
+	preparationSnapshotID := ""
+	if command.PreparationSnapshot != nil {
+		preparationSnapshotID = command.PreparationSnapshot.ID
+	}
+	return preparationSnapshotID, catalog, policy, focuses, nil
 }
 
 func decodeStoredPreparationTarget(
@@ -1622,8 +1625,23 @@ func scanContextPlan(row contextRowScanner) (persistence.Plan, error) {
 		return persistence.Plan{}, persistence.ErrConflict
 	}
 	if preparation.ID == "" {
-		if len(catalogSnapshot) != 0 || len(sessionPolicy) != 0 ||
-			len(practiceFocuses) != 0 {
+		if len(catalogSnapshot) == 0 && len(sessionPolicy) == 0 &&
+			len(practiceFocuses) == 0 {
+			return plan, nil
+		}
+		if len(catalogSnapshot) == 0 || len(sessionPolicy) == 0 ||
+			len(practiceFocuses) == 0 {
+			return persistence.Plan{}, persistence.ErrConflict
+		}
+		if err := decodeStoredPlanConfiguration(
+			&plan,
+			catalogSnapshot,
+			sessionPolicy,
+			practiceFocuses,
+		); err != nil {
+			return persistence.Plan{}, err
+		}
+		if !completeStoredPlanConfiguration(plan) {
 			return persistence.Plan{}, persistence.ErrConflict
 		}
 		return plan, nil
@@ -1646,22 +1664,42 @@ func scanContextPlan(row contextRowScanner) (persistence.Plan, error) {
 	); err != nil {
 		return persistence.Plan{}, err
 	}
+	plan.PreparationSnapshot = &preparation
+	if err := decodeStoredPlanConfiguration(
+		&plan,
+		catalogSnapshot,
+		sessionPolicy,
+		practiceFocuses,
+	); err != nil {
+		return persistence.Plan{}, err
+	}
+	if !completeStoredPlanPreview(plan) {
+		return persistence.Plan{}, persistence.ErrConflict
+	}
+	return plan, nil
+}
+
+func decodeStoredPlanConfiguration(
+	plan *persistence.Plan,
+	catalogSnapshot []byte,
+	sessionPolicy []byte,
+	practiceFocuses []byte,
+) error {
+	if plan == nil {
+		return persistence.ErrConflict
+	}
 	var catalog persistence.PlanCatalogSnapshot
 	var policy persistence.ContextSessionPolicy
 	var focuses []persistence.PracticeObjective
 	if err := json.Unmarshal(catalogSnapshot, &catalog); err != nil ||
 		json.Unmarshal(sessionPolicy, &policy) != nil ||
 		json.Unmarshal(practiceFocuses, &focuses) != nil {
-		return persistence.Plan{}, persistence.ErrConflict
+		return persistence.ErrConflict
 	}
-	plan.PreparationSnapshot = &preparation
 	plan.CatalogSnapshot = &catalog
 	plan.SessionPolicy = &policy
 	plan.PracticeFocuses = focuses
-	if !completeStoredPlanPreview(plan) {
-		return persistence.Plan{}, persistence.ErrConflict
-	}
-	return plan, nil
+	return nil
 }
 
 func lockContextPlan(
@@ -2153,14 +2191,20 @@ func contextSnapshotMatchesPlan(
 
 func completeStoredPlanPreview(plan persistence.Plan) bool {
 	if plan.PreparationSnapshot == nil ||
-		plan.CatalogSnapshot == nil ||
-		plan.SessionPolicy == nil ||
-		len(plan.PracticeFocuses) == 0 ||
-		!validStoredTargetedPreparationSnapshot(
+		!validStoredPreparationSnapshot(
 			*plan.PreparationSnapshot,
 		) ||
 		plan.PreparationSnapshot.SourceProfileID !=
-			plan.PreparationProfileID ||
+			plan.PreparationProfileID {
+		return false
+	}
+	return completeStoredPlanConfiguration(plan)
+}
+
+func completeStoredPlanConfiguration(plan persistence.Plan) bool {
+	if plan.CatalogSnapshot == nil ||
+		plan.SessionPolicy == nil ||
+		len(plan.PracticeFocuses) == 0 ||
 		!validStoredPlanCatalog(
 			*plan.CatalogSnapshot,
 			plan.SelectedRoleIDs,
@@ -2186,6 +2230,23 @@ func completeStoredPlanPreview(plan persistence.Plan) bool {
 		return false
 	}
 	return true
+}
+
+func validStoredPreparationSnapshot(
+	snapshot persistence.PreparationSnapshot,
+) bool {
+	if !validContextResourceID(snapshot.ID) ||
+		!validContextResourceID(snapshot.SourceProfileID) ||
+		snapshot.SourceVersion < 1 ||
+		strings.TrimSpace(snapshot.BackgroundSnapshot) == "" ||
+		snapshot.CreatedAt.IsZero() {
+		return false
+	}
+	targetEmpty := snapshot.SourceJobTargetID == "" &&
+		snapshot.SourceJobTargetConfirmationVersion == 0 &&
+		snapshot.JobTargetInputSnapshot == nil &&
+		snapshot.JobTargetCandidateSnapshot == nil
+	return targetEmpty || validStoredTargetedPreparationSnapshot(snapshot)
 }
 
 func validStoredTargetedPreparationSnapshot(
@@ -2442,11 +2503,24 @@ func validCreatePlanCommand(command persistence.CreatePlanCommand) bool {
 	if legacy {
 		return true
 	}
-	if command.PreparationSnapshot == nil ||
-		command.CatalogSnapshot == nil ||
+	if command.CatalogSnapshot == nil ||
 		command.SessionPolicy == nil ||
 		len(command.PracticeFocuses) == 0 {
 		return false
+	}
+	if command.PreparationSnapshot == nil {
+		return completeStoredPlanConfiguration(persistence.Plan{
+			ScenarioDefinitionID:      command.ScenarioDefinitionID,
+			ScenarioDefinitionVersion: command.ScenarioDefinitionVersion,
+			ScenarioType:              command.ScenarioType,
+			ScenarioModel:             command.ScenarioModel,
+			ScenarioConfigID:          command.ScenarioConfigID,
+			ScenarioConfigVersion:     command.ScenarioConfigVersion,
+			SelectedRoleIDs:           command.SelectedRoleIDs,
+			CatalogSnapshot:           command.CatalogSnapshot,
+			SessionPolicy:             command.SessionPolicy,
+			PracticeFocuses:           command.PracticeFocuses,
+		})
 	}
 	return completeStoredPlanPreview(persistence.Plan{
 		ScenarioDefinitionID:      command.ScenarioDefinitionID,
@@ -2974,6 +3048,12 @@ func classifyContextWriteError(operation string, err error) error {
 			if postgresError.ConstraintName ==
 				"practice_idempotency_records_pkey" {
 				return persistence.ErrIdempotencyConflict
+			}
+			if postgresError.ConstraintName ==
+				"practice_one_effective_session_per_context_plan" ||
+				postgresError.ConstraintName ==
+					"practice_one_effective_session_per_agent_thread" {
+				return persistence.ErrActiveSessionConflict
 			}
 			return persistence.ErrConflict
 		case "23514", "55000":
