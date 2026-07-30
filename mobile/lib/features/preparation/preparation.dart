@@ -630,8 +630,8 @@ class _PreparationPageState extends State<PreparationPage> {
           const SizedBox(height: 12),
           _PracticeHubEntry(
             key: const Key('practice-hub-roleplay'),
-            title: 'AI 数字人陪练',
-            description: '工作、旅行与日常真实对话',
+            title: '情景对话',
+            description: '工作、旅行与日常英语实战',
             icon: Icons.record_voice_over_outlined,
             accentColor: PreparationDesign.roleplay,
             tintColor: PreparationDesign.roleplayTint,
@@ -842,8 +842,8 @@ class _PreparationPageState extends State<PreparationPage> {
         const SizedBox(height: 12),
         _PracticeHubEntry(
           key: const Key('practice-hub-roleplay'),
-          title: 'AI 数字人陪练',
-          description: '工作、旅行与日常真实对话',
+          title: '情景对话',
+          description: '工作、旅行与日常英语实战',
           icon: Icons.record_voice_over_outlined,
           accentColor: PreparationDesign.roleplay,
           tintColor: PreparationDesign.roleplayTint,
@@ -1876,7 +1876,7 @@ class _RoleplayModuleHeader extends StatelessWidget {
                 header: true,
                 container: true,
                 child: const Text(
-                  'AI 数字人陪练',
+                  '情景对话',
                   key: Key('practice-hub-title-roleplay'),
                   style: PreparationDesign.pageTitle,
                 ),
@@ -2648,7 +2648,7 @@ String _practiceHubLabel(_PracticeHub hub) {
   return switch (hub) {
     _PracticeHub.interview => '英文面试',
     _PracticeHub.ielts => 'IELTS 口语',
-    _PracticeHub.roleplay => 'AI 数字人陪练',
+    _PracticeHub.roleplay => '情景对话',
   };
 }
 

@@ -41,6 +41,8 @@ tags:
     description: Analysis, evidence feedback, same-question retry, and history projections.
   - name: Evaluation
     description: Versioned Scene and Core 4D evaluation facts, gates, evidence, and revisions.
+  - name: Avatar
+    description: Short-lived avatar rendering credentials for owned interactive practice sessions.
 paths:
   /health:
     get:
@@ -169,6 +171,8 @@ paths:
     $ref: ./modules/practice.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1practice-start-confirmations
   /v1/practice-sessions/{practice_session_id}:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}
+  /v1/practice-sessions/{practice_session_id}/avatar-session-token:
+    $ref: ./modules/avatar.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1avatar-session-token
   /v1/practice-sessions/{practice_session_id}/snapshot:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1snapshot
   /v1/practice-sessions/{practice_session_id}/pause:

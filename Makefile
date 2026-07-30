@@ -18,7 +18,8 @@ SHELL := /bin/bash
 	check-api \
 	check-api-dependencies \
 	check-api-contracts \
-	check-smoke
+	check-smoke \
+	dev-android
 
 help:
 	@printf '%s\n' \
@@ -28,7 +29,8 @@ help:
 		'  make check-go       Run Go format, vet, and test checks' \
 		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
-		'  make check-smoke    Run the deterministic Mock main flow'
+		'  make check-smoke    Run the deterministic Mock main flow' \
+		'  make dev-android    Start the backend and run the App on an Android device'
 
 check: check-flutter check-go check-api check-smoke
 
@@ -109,3 +111,6 @@ check-smoke:
 		exit 1; \
 	fi
 	cd server && go test -count=1 -run '^TestDeterministicMainFlow$$' ./internal/smoke
+
+dev-android:
+	./tools/android-dev/run.sh

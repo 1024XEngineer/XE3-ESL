@@ -943,6 +943,7 @@ for (const { key, operation, pathParameters } of operations) {
 }
 assert.deepEqual(sorted(tokenResponseLocations), [
   'POST /v1/auth/login 200 session_token',
+  'POST /v1/practice-sessions/{practice_session_id}/avatar-session-token 200 session_token',
 ]);
 
 const websocket = requireOperation(
