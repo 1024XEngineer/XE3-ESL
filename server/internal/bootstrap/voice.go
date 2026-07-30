@@ -73,6 +73,12 @@ type VoiceConfiguration struct {
 	ReviewHistoryCursorKey    []byte
 }
 
+type AgentImageConfiguration struct {
+	ObjectStore objectstore.Store
+	StagedTTL   time.Duration
+	UploadLease time.Duration
+}
+
 // NewSpeechRecognizer is the server-side ASR registration boundary. Production
 // never silently substitutes a Fake or another provider.
 func NewSpeechRecognizer(

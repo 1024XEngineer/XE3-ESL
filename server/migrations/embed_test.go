@@ -111,6 +111,19 @@ func TestDatabaseBaselineContainsNoBusinessDDL(t *testing.T) {
 	}
 }
 
+func TestAgentImageMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000035_agent_image_assets.up.sql",
+		"000035_agent_image_assets.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf("read embedded Agent image migration %q: %v", name, err)
+		}
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 

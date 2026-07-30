@@ -36,6 +36,7 @@ const (
 	defaultMessagePageSize  = 50
 	defaultVoiceReadTimeout = 15 * time.Second
 	maxReviewHistoryBody    = 768 * 1024
+	defaultImageReadTimeout = 30 * time.Second
 	reviewCursorVersion     = 1
 	reviewCursorKind        = "formal_reviews"
 	minReviewCursorKeyBytes = 32
@@ -53,13 +54,16 @@ type VoiceHTTPOptions struct {
 type HTTPHandler struct {
 	application      Application
 	runs             RunApplication
+	multimodalRuns   MultimodalRunApplication
 	voice            *VoiceSessionApplication
 	agentMessages    VoiceMessageApplication
 	audioAssets      conversation.AudioAssetHTTPService
+	images           ImageApplication
 	matters          matter.Application
 	authenticator    identity.Authenticator
 	correlationID    CorrelationIDGenerator
 	voiceReadTimeout time.Duration
+	imageReadTimeout time.Duration
 	reviewCursorKey  []byte
 }
 
@@ -126,11 +130,42 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 	correlationID CorrelationIDGenerator,
 	voiceOptions ...VoiceHTTPOptions,
 ) (*HTTPHandler, error) {
+	return NewHTTPHandlerWithRunsVoiceAudioAndImages(
+		application,
+		runs,
+		voice,
+		audioAssets,
+		nil,
+		matters,
+		authenticator,
+		correlationID,
+		voiceOptions...,
+	)
+}
+
+func NewHTTPHandlerWithRunsVoiceAudioAndImages(
+	application Application,
+	runs RunApplication,
+	voice *VoiceSessionApplication,
+	audioAssets conversation.AudioAssetHTTPService,
+	images ImageApplication,
+	matters matter.Application,
+	authenticator identity.Authenticator,
+	correlationID CorrelationIDGenerator,
+	voiceOptions ...VoiceHTTPOptions,
+) (*HTTPHandler, error) {
 	if application == nil || matters == nil || authenticator == nil {
 		return nil, errors.New("agent: HTTP dependency is required")
 	}
+	if images != nil && nilVoiceDependency(images) {
+		return nil, errors.New("agent: image application is required")
+	}
 	if correlationID == nil {
 		correlationID = newCorrelationID
+	}
+	var multimodalRuns MultimodalRunApplication
+	if runs != nil {
+		multimodalRuns, _ = runs.(MultimodalRunApplication)
 	}
 	voiceReadTimeout := defaultVoiceReadTimeout
 	var agentMessages VoiceMessageApplication
@@ -172,13 +207,16 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 	return &HTTPHandler{
 		application:      application,
 		runs:             runs,
+		multimodalRuns:   multimodalRuns,
 		voice:            voice,
 		agentMessages:    agentMessages,
 		audioAssets:      audioAssets,
+		images:           images,
 		matters:          matters,
 		authenticator:    authenticator,
 		correlationID:    correlationID,
 		voiceReadTimeout: voiceReadTimeout,
+		imageReadTimeout: defaultImageReadTimeout,
 		reviewCursorKey:  reviewCursorKey,
 	}, nil
 }
@@ -283,6 +321,20 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 		protected.GET(
 			"/v1/agent-messages/:message_id/speech",
 			h.agentMessageSpeech,
+		)
+	}
+	if h.images != nil {
+		protected.POST(
+			"/v1/agent-threads/:thread_id/image-assets",
+			h.uploadImageAsset,
+		)
+		protected.GET(
+			"/v1/agent-image-assets/:image_asset_id/content",
+			h.imageAssetContent,
+		)
+		protected.DELETE(
+			"/v1/agent-image-assets/:image_asset_id",
+			h.deleteImageAsset,
 		)
 	}
 	if h.audioAssets != nil {
@@ -679,7 +731,7 @@ func decimalDigits(value string) bool {
 func (h *HTTPHandler) submitRun(c *gin.Context) {
 	values, ok := decodeObject(
 		c,
-		[]string{"client_message_id", "content"},
+		[]string{"client_message_id", "content", "image_asset_ids"},
 		[]string{"client_message_id", "content"},
 	)
 	if !ok {
@@ -692,18 +744,42 @@ func (h *HTTPHandler) submitRun(c *gin.Context) {
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
 		return
 	}
+	var imageAssetIDs []string
+	if raw, exists := values["image_asset_ids"]; exists {
+		imageAssetIDs, ok = decodeStringArray(raw)
+		if !ok || len(imageAssetIDs) > core.MaxImagesPerMessage {
+			h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+			return
+		}
+	}
 	actor, ok := trustedActor(c)
 	if !ok {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	submission, err := h.runs.SubmitText(
-		c.Request.Context(),
-		actor,
-		c.Param("thread_id"),
-		clientMessageID,
-		content,
-	)
+	var submission RunSubmission
+	var err error
+	if len(imageAssetIDs) == 0 {
+		submission, err = h.runs.SubmitText(
+			c.Request.Context(),
+			actor,
+			c.Param("thread_id"),
+			clientMessageID,
+			content,
+		)
+	} else if h.multimodalRuns == nil {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	} else {
+		submission, err = h.multimodalRuns.SubmitMultimodal(
+			c.Request.Context(),
+			actor,
+			c.Param("thread_id"),
+			clientMessageID,
+			content,
+			imageAssetIDs,
+		)
+	}
 	if err != nil {
 		h.writeAgentError(c, err)
 		return
@@ -778,6 +854,111 @@ func (h *HTTPHandler) getContextManifest(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, contextManifestResponse(manifest))
+}
+
+func (h *HTTPHandler) uploadImageAsset(c *gin.Context) {
+	key, keyOK := voiceIdempotencyKey(c)
+	contentType, contentTypeOK := imageUploadContentType(c)
+	if !keyOK || c.Request.Body == nil {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	if !contentTypeOK {
+		h.writeError(c, http.StatusBadRequest, "unsupported_image_format", false)
+		return
+	}
+	if c.Request.ContentLength > core.MaxImageBytes {
+		h.writeError(c, http.StatusRequestEntityTooLarge, "image_too_large", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	thread, err := h.application.GetThread(
+		c.Request.Context(),
+		actor,
+		c.Param("thread_id"),
+	)
+	if err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+
+	controller := http.NewResponseController(c.Writer)
+	if err := controller.SetReadDeadline(
+		time.Now().Add(h.imageReadTimeout),
+	); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+		return
+	}
+	defer func() {
+		_ = controller.SetReadDeadline(time.Time{})
+	}()
+	body := http.MaxBytesReader(
+		c.Writer,
+		c.Request.Body,
+		core.MaxImageBytes,
+	)
+	asset, err := h.images.Upload(
+		c.Request.Context(),
+		actor,
+		UploadImageRequest{
+			ThreadID:       thread.ID,
+			IdempotencyKey: key,
+			ContentType:    contentType,
+			Body:           body,
+		},
+	)
+	if err != nil {
+		h.writeImageError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, imageAssetResponse(asset))
+}
+
+func (h *HTTPHandler) imageAssetContent(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	content, err := h.images.Content(
+		c.Request.Context(),
+		actor,
+		c.Param("image_asset_id"),
+	)
+	if err != nil {
+		h.writeImageError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{
+		"content_url": content.URL,
+		"expires_at":  content.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func (h *HTTPHandler) deleteImageAsset(c *gin.Context) {
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	if err := h.images.Delete(
+		c.Request.Context(),
+		actor,
+		c.Param("image_asset_id"),
+	); err != nil {
+		h.writeImageError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *HTTPHandler) startVoiceSession(c *gin.Context) {
@@ -1509,6 +1690,37 @@ func (h *HTTPHandler) writeAgentVoiceMessageError(
 	}
 }
 
+func (h *HTTPHandler) writeImageError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, core.ErrImageTooLarge):
+		h.writeError(c, http.StatusRequestEntityTooLarge, "image_too_large", false)
+	case errors.Is(err, core.ErrUnsupportedImage):
+		h.writeError(c, http.StatusBadRequest, "unsupported_image_format", false)
+	case errors.Is(err, core.ErrInvalidImage):
+		h.writeError(c, http.StatusBadRequest, "invalid_image", false)
+	case errors.Is(err, ErrInvalidRequest):
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+	case errors.Is(err, ErrNotFound):
+		h.writeError(c, http.StatusNotFound, "resource_not_found", false)
+	case errors.Is(err, ErrIdempotencyConflict):
+		h.writeError(c, http.StatusConflict, "idempotency_key_conflict", false)
+	case errors.Is(err, ErrConflict):
+		h.writeError(c, http.StatusConflict, "resource_conflict", false)
+	case errors.Is(err, objectstore.ErrOperationFailed),
+		errors.Is(err, objectstore.ErrDisabled),
+		errors.Is(err, objectstore.ErrCredentials):
+		c.Header("Retry-After", "1")
+		h.writeError(
+			c,
+			http.StatusServiceUnavailable,
+			"provider_unavailable",
+			true,
+		)
+	default:
+		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
+	}
+}
+
 func (h *HTTPHandler) writeProviderError(
 	c *gin.Context,
 	kind ai.ErrorKind,
@@ -1542,6 +1754,9 @@ func (h *HTTPHandler) writeError(
 ) {
 	messages := map[string]string{
 		"invalid_request":          "Request validation failed.",
+		"invalid_image":            "The image payload is invalid.",
+		"unsupported_image_format": "The image format is unsupported.",
+		"image_too_large":          "The image exceeds the allowed limits.",
 		"authentication_required":  "Authentication is required.",
 		"resource_not_found":       "Resource was not found.",
 		"resource_conflict":        "Resource state conflicts with this operation.",
@@ -1570,6 +1785,21 @@ func voiceIdempotencyKey(c *gin.Context) (string, bool) {
 	key := strings.TrimSpace(values[0])
 	return key, len(key) >= 8 && len(key) <= 128 &&
 		!strings.ContainsAny(key, "\r\n\x00")
+}
+
+func imageUploadContentType(c *gin.Context) (string, bool) {
+	contentType, parameters, err := mime.ParseMediaType(
+		strings.TrimSpace(c.GetHeader("Content-Type")),
+	)
+	if err != nil || len(parameters) != 0 {
+		return "", false
+	}
+	switch strings.ToLower(contentType) {
+	case "image/jpeg", "image/png", "image/webp":
+		return strings.ToLower(contentType), true
+	default:
+		return "", false
+	}
 }
 
 func voiceSessionStateResponse(state VoiceSessionState) gin.H {
@@ -1865,8 +2095,31 @@ func messageResponse(message Message) gin.H {
 	if message.Audio != nil {
 		result["modality"] = MessageModalityVoice
 		result["audio"] = agentMessageAudioResponse(*message.Audio)
+	} else if message.Modality == MessageModalityMultimodal {
+		result["modality"] = MessageModalityMultimodal
 	}
 	return result
+}
+
+func imageAssetResponse(asset ImageAsset) gin.H {
+	response := gin.H{
+		"image_asset_id": asset.ID,
+		"thread_id":      asset.ThreadID,
+		"content_type":   asset.ContentType,
+		"size_bytes":     asset.Size,
+		"width":          asset.Width,
+		"height":         asset.Height,
+		"status":         asset.Status,
+		"created_at": asset.CreatedAt.UTC().Format(
+			time.RFC3339Nano,
+		),
+	}
+	if !asset.AttachedAt.IsZero() {
+		response["attached_at"] = asset.AttachedAt.UTC().Format(
+			time.RFC3339Nano,
+		)
+	}
+	return response
 }
 
 func (h *HTTPHandler) messageResponseWithActions(
@@ -1875,6 +2128,25 @@ func (h *HTTPHandler) messageResponseWithActions(
 	message Message,
 ) (gin.H, error) {
 	response := messageResponse(message)
+	if message.Modality == MessageModalityMultimodal {
+		if h.images == nil {
+			return nil, ErrRepository
+		}
+		assets, err := h.images.MessageAssets(
+			ctx,
+			actor,
+			message.ThreadID,
+			message.ID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		images := make([]gin.H, 0, len(assets))
+		for _, asset := range assets {
+			images = append(images, imageAssetResponse(asset))
+		}
+		response["images"] = images
+	}
 	if h.runs == nil || message.Role != MessageRoleAssistant ||
 		message.ProducedByRunID == "" {
 		return response, nil
@@ -2241,6 +2513,24 @@ func decodeString(raw json.RawMessage) (string, bool) {
 		return "", false
 	}
 	return value, true
+}
+
+func decodeStringArray(raw json.RawMessage) ([]string, bool) {
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil || values == nil {
+		return nil, false
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if !validUUID(value) {
+			return nil, false
+		}
+		if _, found := seen[value]; found {
+			return nil, false
+		}
+		seen[value] = struct{}{}
+	}
+	return values, true
 }
 
 func decodeInt64(raw json.RawMessage) (int64, bool) {

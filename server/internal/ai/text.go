@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -50,11 +51,31 @@ type ToolChoice struct {
 	Name string
 }
 
+type ContentPartKind string
+
+const (
+	ContentPartText     ContentPartKind = "text"
+	ContentPartImageURL ContentPartKind = "image_url"
+
+	maxImageContentParts = 4
+	maxImageURLBytes     = 16 * 1024
+)
+
+// ContentPart is the provider-neutral representation of one multimodal user
+// input. ImageURL is an ephemeral server-minted HTTPS capability and must never
+// be persisted or included in logs and errors.
+type ContentPart struct {
+	Kind     ContentPartKind
+	Text     string
+	ImageURL string
+}
+
 type TextMessage struct {
-	Role       TextRole
-	Content    string
-	ToolCallID string
-	ToolCalls  []ToolCall
+	Role         TextRole
+	Content      string
+	ContentParts []ContentPart
+	ToolCallID   string
+	ToolCalls    []ToolCall
 }
 
 type TextResponseFormat string
@@ -119,9 +140,21 @@ func ValidateTextRequest(request TextRequest) error {
 	resolvedCalls := make(map[string]struct{})
 	for index, message := range request.Messages {
 		switch message.Role {
-		case TextRoleSystem, TextRoleUser:
-			if strings.TrimSpace(message.Content) == "" {
+		case TextRoleSystem:
+			if strings.TrimSpace(message.Content) == "" ||
+				len(message.ContentParts) != 0 {
 				return fmt.Errorf("text generation message %d has empty content", index)
+			}
+			if message.ToolCallID != "" || len(message.ToolCalls) != 0 {
+				return fmt.Errorf("text generation message %d has invalid tool metadata", index)
+			}
+		case TextRoleUser:
+			if err := validateUserContent(message); err != nil {
+				return fmt.Errorf(
+					"text generation message %d has invalid user content: %w",
+					index,
+					err,
+				)
 			}
 			if message.ToolCallID != "" || len(message.ToolCalls) != 0 {
 				return fmt.Errorf("text generation message %d has invalid tool metadata", index)
@@ -130,7 +163,8 @@ func ValidateTextRequest(request TextRequest) error {
 			if message.ToolCallID != "" {
 				return fmt.Errorf("text generation message %d has an unexpected tool call ID", index)
 			}
-			if strings.TrimSpace(message.Content) == "" && len(message.ToolCalls) == 0 {
+			if len(message.ContentParts) != 0 ||
+				strings.TrimSpace(message.Content) == "" && len(message.ToolCalls) == 0 {
 				return fmt.Errorf("text generation message %d has no content or tool calls", index)
 			}
 			for callIndex, call := range message.ToolCalls {
@@ -153,6 +187,7 @@ func ValidateTextRequest(request TextRequest) error {
 			}
 		case TextRoleTool:
 			if strings.TrimSpace(message.Content) == "" ||
+				len(message.ContentParts) != 0 ||
 				!validIdentifier(message.ToolCallID) ||
 				len(message.ToolCalls) != 0 {
 				return fmt.Errorf("text generation message %d has an invalid tool result", index)
@@ -182,6 +217,60 @@ func ValidateTextRequest(request TextRequest) error {
 		return errors.New("text generation requires the final message to have the user or tool role")
 	}
 	return nil
+}
+
+func validateUserContent(message TextMessage) error {
+	hasText := strings.TrimSpace(message.Content) != ""
+	if len(message.ContentParts) == 0 {
+		if !hasText {
+			return errors.New("content is empty")
+		}
+		return nil
+	}
+	if hasText {
+		return errors.New("content and content parts are mutually exclusive")
+	}
+
+	textParts := 0
+	imageParts := 0
+	for _, part := range message.ContentParts {
+		switch part.Kind {
+		case ContentPartText:
+			if strings.TrimSpace(part.Text) == "" || part.ImageURL != "" {
+				return errors.New("text part is invalid")
+			}
+			textParts++
+		case ContentPartImageURL:
+			if part.Text != "" || !validImageURL(part.ImageURL) {
+				return errors.New("image part is invalid")
+			}
+			imageParts++
+		default:
+			return errors.New("content part kind is unsupported")
+		}
+	}
+	if textParts != 1 {
+		return errors.New("multimodal content requires exactly one text part")
+	}
+	if imageParts < 1 || imageParts > maxImageContentParts {
+		return errors.New("multimodal content has an invalid image count")
+	}
+	return nil
+}
+
+func validImageURL(raw string) bool {
+	if raw == "" ||
+		len(raw) > maxImageURLBytes ||
+		strings.TrimSpace(raw) != raw ||
+		strings.ContainsAny(raw, "\r\n\t") {
+		return false
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	return err == nil &&
+		parsed.Scheme == "https" &&
+		parsed.Host != "" &&
+		parsed.User == nil &&
+		parsed.Fragment == ""
 }
 
 func validateToolChoice(

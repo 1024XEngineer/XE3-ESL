@@ -83,9 +83,32 @@ func New(
 	storageConfig config.ObjectStorageConfig,
 	provider credentials.CredentialsProvider,
 ) (*Client, error) {
+	return NewForPrefix(
+		ctx,
+		storageConfig,
+		storageConfig.AudioPrefix,
+		provider,
+	)
+}
+
+// NewForPrefix creates an isolated client for one configured object namespace.
+// Audio and image services share the bucket and credentials but cannot access
+// each other's keys through their Store capability.
+func NewForPrefix(
+	ctx context.Context,
+	storageConfig config.ObjectStorageConfig,
+	prefix string,
+	provider credentials.CredentialsProvider,
+) (*Client, error) {
+	if prefix == "" ||
+		(prefix != storageConfig.AudioPrefix &&
+			prefix != storageConfig.ImagePrefix) {
+		return nil, objectstore.ErrInvalidKey
+	}
 	return newClient(
 		ctx,
 		storageConfig,
+		prefix,
 		provider,
 		nil,
 		true,
@@ -95,6 +118,7 @@ func New(
 func newClient(
 	ctx context.Context,
 	storageConfig config.ObjectStorageConfig,
+	prefix string,
 	provider credentials.CredentialsProvider,
 	httpClient *http.Client,
 	runPreflight bool,
@@ -127,7 +151,7 @@ func newClient(
 	client := &Client{
 		sdk:          aliyunoss.NewClient(sdkConfig),
 		bucket:       storageConfig.Bucket,
-		prefix:       storageConfig.AudioPrefix,
+		prefix:       prefix,
 		signedURLTTL: storageConfig.SignedURLTTL,
 	}
 	if runPreflight {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:speakup/design/speak_up_design.dart';
@@ -10,12 +12,15 @@ class AgentMessageBubble extends StatefulWidget {
     required this.message,
     this.voiceController,
     this.onAction,
+    this.onRefreshImage,
     super.key,
   });
 
   final AgentMessage message;
   final AgentVoiceController? voiceController;
   final ValueChanged<AgentMessageAction>? onAction;
+  final FutureOr<void> Function(String messageId, String imageAssetId)?
+  onRefreshImage;
 
   @override
   State<AgentMessageBubble> createState() => _AgentMessageBubbleState();
@@ -89,9 +94,14 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     final message = widget.message;
     final isUser = message.role == AgentMessageRole.user;
     const foreground = SpeakUpDesign.ink;
-    final content = message.modality == AgentMessageModality.voice
-        ? _buildUserVoice(context, foreground)
-        : _buildTextMessage(context, foreground);
+    final content = switch (message.modality) {
+      AgentMessageModality.voice => _buildUserVoice(context, foreground),
+      AgentMessageModality.multimodal => _buildMultimodalMessage(
+        context,
+        foreground,
+      ),
+      AgentMessageModality.text => _buildTextMessage(context, foreground),
+    };
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -221,6 +231,34 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             ),
           ),
         ],
+      ],
+    );
+  }
+
+  Widget _buildMultimodalMessage(BuildContext context, Color foreground) {
+    final message = widget.message;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final image in message.images)
+              _MessageImageThumbnail(
+                key: Key('agent-message-image-${image.id}'),
+                image: image,
+                onRefresh: widget.onRefreshImage == null
+                    ? null
+                    : () => widget.onRefreshImage!(message.id, image.id),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          message.text,
+          style: TextStyle(color: foreground, fontSize: 15, height: 1.45),
+        ),
       ],
     );
   }
@@ -391,6 +429,62 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _MessageImageThumbnail extends StatelessWidget {
+  const _MessageImageThumbnail({
+    required this.image,
+    required this.onRefresh,
+    super.key,
+  });
+
+  final AgentImageAsset image;
+  final FutureOr<void> Function()? onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = image.isReadable ? image.contentUrl : null;
+    final placeholder = Container(
+      width: 104,
+      height: 104,
+      color: SpeakUpDesign.surfaceMuted,
+      alignment: Alignment.center,
+      child: IconButton(
+        tooltip: onRefresh == null ? '图片不可用' : '重新加载图片',
+        onPressed: onRefresh == null ? null : () => onRefresh!(),
+        icon: const Icon(Icons.broken_image_outlined),
+      ),
+    );
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: url == null
+          ? placeholder
+          : InkWell(
+              onTap: () => showDialog<void>(
+                context: context,
+                builder: (context) => Dialog(
+                  backgroundColor: Colors.black,
+                  insetPadding: const EdgeInsets.all(16),
+                  child: InteractiveViewer(
+                    maxScale: 5,
+                    child: Image.network(
+                      url.toString(),
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, _, _) => placeholder,
+                    ),
+                  ),
+                ),
+              ),
+              child: Image.network(
+                url.toString(),
+                width: 104,
+                height: 104,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => placeholder,
+              ),
+            ),
     );
   }
 }

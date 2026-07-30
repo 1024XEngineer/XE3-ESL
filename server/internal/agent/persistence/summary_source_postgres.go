@@ -85,7 +85,8 @@ ORDER BY sequence_no ASC`,
 			(item.Role != MessageRoleUser &&
 				item.Role != MessageRoleAssistant) ||
 			(item.Modality != MessageModalityText &&
-				item.Modality != MessageModalityVoice) ||
+				item.Modality != MessageModalityVoice &&
+				item.Modality != MessageModalityMultimodal) ||
 			!ValidMessageContent(item.Content) {
 			return nil, ErrRepository
 		}

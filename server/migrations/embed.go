@@ -20,4 +20,5 @@ import "embed"
 //go:embed 000032_ielts_speaking_full_mock_model.*.sql
 //go:embed 000033_matter_agent_tools.*.sql
 //go:embed 000034_practice_optional_preview_snapshot.*.sql
+//go:embed 000035_agent_image_assets.*.sql
 var Files embed.FS

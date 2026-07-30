@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	defaultObjectStoragePrefix = "audio/v1"
-	defaultSignedURLTTL        = 2 * time.Minute
-	maxSignedURLTTL            = 2 * time.Minute
+	defaultAudioStoragePrefix = "audio/v1"
+	defaultImageStoragePrefix = "image/v1"
+	defaultSignedURLTTL       = 2 * time.Minute
+	maxSignedURLTTL           = 2 * time.Minute
 )
 
 type ObjectStorageCredentialsProvider string
@@ -28,7 +29,7 @@ var (
 	ErrObjectStorageRegionRequired = errors.New("OSS_REGION is required when object storage is enabled")
 	ErrObjectStorageEndpoint       = errors.New("OSS_ENDPOINT must be an HTTPS origin without credentials, query, or fragment")
 	ErrObjectStorageBucketRequired = errors.New("OSS_BUCKET is required when object storage is enabled")
-	ErrObjectStoragePrefix         = errors.New("OSS_AUDIO_PREFIX must be audio/v1")
+	ErrObjectStoragePrefix         = errors.New("OSS object prefixes must use their configured v1 namespaces")
 	ErrObjectStorageSignedURLTTL   = errors.New("OSS_SIGNED_URL_TTL must be positive and no greater than 2m")
 	ErrObjectStorageCredentials    = errors.New("OSS_CREDENTIALS_PROVIDER must be ecs_role or environment")
 	ErrObjectStorageRAMRoleName    = errors.New("OSS_RAM_ROLE_NAME must be a valid RAM role name and is only allowed with ecs_role")
@@ -45,6 +46,7 @@ type ObjectStorageConfig struct {
 	Endpoint            string
 	Bucket              string
 	AudioPrefix         string
+	ImagePrefix         string
 	SignedURLTTL        time.Duration
 	CredentialsProvider ObjectStorageCredentialsProvider
 	RAMRoleName         string
@@ -63,7 +65,8 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 		Region:       strings.TrimSpace(os.Getenv("OSS_REGION")),
 		Endpoint:     strings.TrimSpace(os.Getenv("OSS_ENDPOINT")),
 		Bucket:       strings.TrimSpace(os.Getenv("OSS_BUCKET")),
-		AudioPrefix:  valueOrDefault("OSS_AUDIO_PREFIX", defaultObjectStoragePrefix),
+		AudioPrefix:  valueOrDefault("OSS_AUDIO_PREFIX", defaultAudioStoragePrefix),
+		ImagePrefix:  valueOrDefault("OSS_IMAGE_PREFIX", defaultImageStoragePrefix),
 		SignedURLTTL: defaultSignedURLTTL,
 		CredentialsProvider: ObjectStorageCredentialsProvider(strings.TrimSpace(
 			valueOrDefault(
@@ -83,10 +86,16 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 	}
 
 	config.AudioPrefix = strings.TrimSuffix(strings.TrimSpace(config.AudioPrefix), "/")
+	config.ImagePrefix = strings.TrimSuffix(strings.TrimSpace(config.ImagePrefix), "/")
 	if err := validateObjectStoragePrefix(config.AudioPrefix); err != nil {
 		return ObjectStorageConfig{}, err
 	}
-	if config.AudioPrefix != defaultObjectStoragePrefix {
+	if err := validateObjectStoragePrefix(config.ImagePrefix); err != nil {
+		return ObjectStorageConfig{}, err
+	}
+	if config.AudioPrefix != defaultAudioStoragePrefix ||
+		config.ImagePrefix != defaultImageStoragePrefix ||
+		config.AudioPrefix == config.ImagePrefix {
 		return ObjectStorageConfig{}, ErrObjectStoragePrefix
 	}
 	if config.SignedURLTTL <= 0 || config.SignedURLTTL > maxSignedURLTTL {

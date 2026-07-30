@@ -171,9 +171,13 @@ func (generator *Generator) Generate(
 	for _, message := range request.Messages {
 		providerMessage := chatMessage{
 			Role:       string(message.Role),
-			Content:    message.Content,
 			ToolCallID: message.ToolCallID,
 			ToolCalls:  make([]chatToolCall, 0, len(message.ToolCalls)),
+		}
+		if len(message.ContentParts) != 0 {
+			providerMessage.Content = providerContentParts(message.ContentParts)
+		} else if message.Content != "" {
+			providerMessage.Content = message.Content
 		}
 		for index, call := range message.ToolCalls {
 			providerMessage.ToolCalls = append(providerMessage.ToolCalls, chatToolCall{
@@ -332,9 +336,19 @@ type chatResponseFormat struct {
 
 type chatMessage struct {
 	Role       string         `json:"role"`
-	Content    string         `json:"content,omitempty"`
+	Content    any            `json:"content,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+}
+
+type chatContentPart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *chatImageURL `json:"image_url,omitempty"`
+}
+
+type chatImageURL struct {
+	URL string `json:"url"`
 }
 
 type chatTool struct {
@@ -367,6 +381,21 @@ type chatSpecificToolChoiceFunction struct {
 type chatFunctionCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
+}
+
+func providerContentParts(parts []ai.ContentPart) []chatContentPart {
+	result := make([]chatContentPart, 0, len(parts))
+	for _, part := range parts {
+		providerPart := chatContentPart{Type: string(part.Kind)}
+		switch part.Kind {
+		case ai.ContentPartText:
+			providerPart.Text = part.Text
+		case ai.ContentPartImageURL:
+			providerPart.ImageURL = &chatImageURL{URL: part.ImageURL}
+		}
+		result = append(result, providerPart)
+	}
+	return result
 }
 
 type chatCompletionResponse struct {

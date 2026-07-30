@@ -3,11 +3,13 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
 	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/image"
 	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
 	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
@@ -55,6 +57,7 @@ func NewIdentityAndAgentModules(
 		memorySearcher,
 		nil,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -71,6 +74,7 @@ type identityAgentComposition struct {
 	agentModule         RouteRegistrar
 	agentService        *agentapp.Service
 	agentVoiceReclaimer AgentVoiceObjectReclaimer
+	agentImageReclaimer AgentImageObjectReclaimer
 	matterService       *matter.Service
 	productionTools     *tool.Registry
 	runService          *agentruntime.RunService
@@ -89,6 +93,10 @@ type AgentVoiceObjectReclaimer interface {
 	) (core.VoiceCleanupResult, error)
 }
 
+type AgentImageObjectReclaimer interface {
+	Reclaim(context.Context, int) (agentimage.CleanupResult, error)
+}
+
 func buildIdentityAgentComposition(
 	ctx context.Context,
 	database *pgxpool.Pool,
@@ -99,6 +107,7 @@ func buildIdentityAgentComposition(
 	memorySearcher memory.Searcher,
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
+	imageConfiguration *AgentImageConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || generator == nil ||
@@ -129,6 +138,14 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	agentService, err := agentapp.NewService(agentRepository, matterService)
+	if err != nil {
+		return nil, err
+	}
+	agentImages, err := buildAgentImageApplication(
+		imageConfiguration,
+		database,
+		ids,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -166,11 +183,19 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	var contextOptions []agentruntime.ContextAssemblerOption
+	if agentImages != nil {
+		contextOptions = append(
+			contextOptions,
+			agentruntime.WithImageContextReader(agentImages),
+		)
+	}
 	contextAssembler, err := agentruntime.NewContextAssembler(
 		agentRepository,
 		matterService,
 		stableProfileReader,
 		contextMemorySearcher,
+		contextOptions...,
 	)
 	if err != nil {
 		return nil, err
@@ -191,6 +216,17 @@ func buildIdentityAgentComposition(
 		runRepository = &runCompletionNotifyingRepository{
 			RunRepository: agentRepository,
 			notifiers:     notifiers,
+		}
+	}
+	if imageConfiguration != nil {
+		runRepository, err =
+			agentpersistence.NewGormMultimodalRunRepositoryFromPool(
+				runRepository,
+				database,
+				ids,
+			)
+		if err != nil {
+			return nil, err
 		}
 	}
 	runService, err := agentruntime.NewRunService(
@@ -289,11 +325,12 @@ func buildIdentityAgentComposition(
 			voiceHTTPOption,
 		)
 	}
-	handler, err := agenttransport.NewHTTPHandlerWithRunsVoiceAndAudio(
+	handler, err := agenttransport.NewHTTPHandlerWithRunsVoiceAudioAndImages(
 		agentService,
 		runService,
 		voiceApplication,
 		audioAssets,
+		agentImages,
 		matterService,
 		identityContext.service,
 		nil,
@@ -306,11 +343,16 @@ func buildIdentityAgentComposition(
 	if agentVoiceMessages != nil {
 		agentVoiceReclaimer = agentVoiceMessages
 	}
+	var agentImageReclaimer AgentImageObjectReclaimer
+	if agentImages != nil {
+		agentImageReclaimer = agentImages
+	}
 	return &identityAgentComposition{
 		identity:            identityContext,
 		agentModule:         handler,
 		agentService:        agentService,
 		agentVoiceReclaimer: agentVoiceReclaimer,
+		agentImageReclaimer: agentImageReclaimer,
 		matterService:       matterService,
 		productionTools:     toolOptions.productionRegistry,
 		runService:          runService,
@@ -318,6 +360,36 @@ func buildIdentityAgentComposition(
 		summaryProcessor:    summaryProcessor,
 		ids:                 ids,
 	}, nil
+}
+
+func buildAgentImageApplication(
+	configuration *AgentImageConfiguration,
+	database *pgxpool.Pool,
+	ids core.IDGenerator,
+) (*agentimage.Service, error) {
+	if configuration == nil {
+		return nil, nil
+	}
+	if configuration.ObjectStore == nil {
+		return nil, errors.New(
+			"bootstrap: Agent image object storage is required",
+		)
+	}
+	repository, err :=
+		agentpersistence.NewGormImageAssetRepositoryFromPool(database)
+	if err != nil {
+		return nil, err
+	}
+	return agentimage.NewService(
+		repository,
+		configuration.ObjectStore,
+		ids,
+		agentimage.Config{
+			StagedTTL:   configuration.StagedTTL,
+			UploadLease: configuration.UploadLease,
+		},
+		agentimage.WithLogger(slog.Default()),
+	)
 }
 
 // NewIdentityAgentModulesWithVoiceCleanup retains the narrow cleanup
@@ -345,6 +417,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 		generator,
 		runConfiguration,
 		memorySearcher,
+		nil,
 		nil,
 		nil,
 		voiceConfigurations...,

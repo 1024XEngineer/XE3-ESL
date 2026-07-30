@@ -1,6 +1,9 @@
 package core
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	ErrInvalidRequest      = errors.New("agent: invalid request")
@@ -9,4 +12,7 @@ var (
 	ErrIdempotencyConflict = errors.New("agent: idempotency conflict")
 	ErrInvalidContext      = errors.New("agent: invalid context")
 	ErrRepository          = errors.New("agent repository: operation failed")
+	ErrImageTooLarge       = fmt.Errorf("%w: image exceeds limits", ErrInvalidRequest)
+	ErrUnsupportedImage    = fmt.Errorf("%w: image format is unsupported", ErrInvalidRequest)
+	ErrInvalidImage        = fmt.Errorf("%w: image payload is invalid", ErrInvalidRequest)
 )

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/agent/image_picker_agent_image_picker.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
+import 'package:speakup/agent/wire_agent_image_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
@@ -72,6 +74,7 @@ ProductionAppDependencies createProductionAppDependencies({
   IdentityHttpTransport? agentTransport,
   AgentVoiceWireTransport? agentVoiceTransport,
   AgentVoiceWireTransport? signedAgentVoiceTransport,
+  AgentImageWireTransport? agentImageTransport,
   IdentityHttpTransport? preparationTransport,
   IdentityHttpTransport? jobPreparationTransport,
   IdentityHttpTransport? preparationLaunchTransport,
@@ -114,8 +117,22 @@ ProductionAppDependencies createProductionAppDependencies({
     apiTransport: agentVoiceTransport,
     signedAudioTransport: signedAgentVoiceTransport,
   );
+  final agentImageClient = WireAgentImageClient(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    transport: agentImageTransport,
+  );
   final agentController = AgentController(
     client: agentClient,
+    imageClient: agentImageClient,
+    imagePicker: ImagePickerAgentImagePicker(),
     voiceClient: agentVoiceClient,
     voiceRecorder: agentVoiceRecorder ?? IosAgentVoiceRecorder(),
     voiceAudioPlayer:

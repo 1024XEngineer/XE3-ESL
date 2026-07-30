@@ -32,6 +32,7 @@ const (
 
 type RunService struct {
 	repository    RunRepository
+	multimodal    core.MultimodalRunRepository
 	assembler     *ContextAssembler
 	generator     ai.TextGenerator
 	configuration RunConfiguration
@@ -78,6 +79,9 @@ func NewRunService(
 		configuration: configuration,
 		loopLimits:    defaultLoopLimits(),
 		logOptions:    normalizeLogOptions(LogOptions{}),
+	}
+	if multimodal, ok := repository.(core.MultimodalRunRepository); ok {
+		service.multimodal = multimodal
 	}
 	for _, option := range options {
 		if option == nil {
@@ -192,6 +196,60 @@ func (service *RunService) SubmitText(
 		return RunSubmission{}, err
 	}
 	return submission, nil
+}
+
+func (service *RunService) SubmitMultimodal(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+	clientMessageID string,
+	content string,
+	imageAssetIDs []string,
+) (RunSubmission, error) {
+	if !actor.Valid() || !core.ValidUUID(threadID) {
+		return RunSubmission{}, ErrNotFound
+	}
+	if service.multimodal == nil ||
+		!core.ValidClientMessageID(clientMessageID) ||
+		!core.ValidMessageContent(content) ||
+		!validMultimodalImageIDs(imageAssetIDs) {
+		return RunSubmission{}, ErrInvalidRequest
+	}
+	submission, err := service.multimodal.CreateInitialMultimodalRun(
+		ctx,
+		actor.UserID,
+		threadID,
+		clientMessageID,
+		content,
+		imageAssetIDs,
+		service.configuration,
+	)
+	if err != nil {
+		return RunSubmission{}, err
+	}
+	submission.Run, err = service.process(ctx, actor, submission.Run)
+	if err != nil {
+		return RunSubmission{}, err
+	}
+	return submission, nil
+}
+
+func validMultimodalImageIDs(imageAssetIDs []string) bool {
+	if len(imageAssetIDs) < 1 ||
+		len(imageAssetIDs) > core.MaxImagesPerMessage {
+		return false
+	}
+	seen := make(map[string]struct{}, len(imageAssetIDs))
+	for _, assetID := range imageAssetIDs {
+		if !core.ValidUUID(assetID) {
+			return false
+		}
+		if _, found := seen[assetID]; found {
+			return false
+		}
+		seen[assetID] = struct{}{}
+	}
+	return true
 }
 
 func (service *RunService) RetryText(
@@ -435,7 +493,7 @@ func (service *RunService) generate(
 	startedAt := time.Now()
 
 	input := lastUserContent(request)
-	service.logRunReceived(run, input)
+	service.logRunReceived(run, input, request)
 	routing := buildModelToolRouting(service.registry, service.logger, run.ID)
 	parsed, explicitCommand, err := service.parseCommand(input)
 	if err != nil {
@@ -852,15 +910,22 @@ func toolSchemaHashes(definitions []ai.ToolDefinition) map[string]string {
 	return hashes
 }
 
-func (service *RunService) logRunReceived(run Run, input string) {
+func (service *RunService) logRunReceived(
+	run Run,
+	input string,
+	request ai.TextRequest,
+) {
 	if service.logger == nil {
 		return
 	}
+	imageCount := textRequestImageCount(request)
 	attrs := []any{
 		"run_id", run.ID,
 		"thread_id", run.ThreadID,
 		"message_id", run.InputMessageID,
 		"input_length", utf8.RuneCountInString(input),
+		"image_count", imageCount,
+		"estimated_visual_tokens", imageCount * 2048,
 	}
 	if service.logOptions.LogUserInput {
 		attrs = append(
@@ -870,6 +935,18 @@ func (service *RunService) logRunReceived(run Run, input string) {
 		)
 	}
 	service.logger.Info("agent.run.received", attrs...)
+}
+
+func textRequestImageCount(request ai.TextRequest) int {
+	count := 0
+	for _, message := range request.Messages {
+		for _, part := range message.ContentParts {
+			if part.Kind == ai.ContentPartImageURL {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func (service *RunService) logLoopIteration(

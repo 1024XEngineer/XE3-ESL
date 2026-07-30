@@ -36,6 +36,7 @@ type IdentityAgentPracticeComposition struct {
 	identityModule         *identity.Module
 	agentModule            RouteRegistrar
 	agentVoiceReclaimer    AgentVoiceObjectReclaimer
+	agentImageReclaimer    AgentImageObjectReclaimer
 	memoryExtraction       memory.ExtractionProcessor
 	summaryProcessor       agentsummary.Processor
 	identityHTTP           *identity.HTTPHandler
@@ -73,6 +74,7 @@ func NewIdentityAgentAndPracticeComposition(
 		catalog,
 		nil,
 		nil,
+		nil,
 		voiceConfigurations...,
 	)
 }
@@ -101,6 +103,7 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 		memorySearcher,
 		catalog,
 		memoryExtractionNotifier,
+		nil,
 		nil,
 		voiceConfigurations...,
 	)
@@ -134,6 +137,36 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 		catalog,
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
+		nil,
+		voiceConfigurations...,
+	)
+}
+
+func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	catalog preparation.CatalogReader,
+	wakeups AgentWorkerWakeups,
+	imageConfiguration *AgentImageConfiguration,
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		wakeups.MemoryExtraction,
+		wakeups.ThreadSummary,
+		imageConfiguration,
 		voiceConfigurations...,
 	)
 }
@@ -149,6 +182,7 @@ func newIdentityAgentAndPracticeComposition(
 	catalog preparation.CatalogReader,
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
+	imageConfiguration *AgentImageConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
 	if catalog == nil {
@@ -164,6 +198,7 @@ func newIdentityAgentAndPracticeComposition(
 		memorySearcher,
 		memoryExtractionNotifier,
 		summaryNotifier,
+		imageConfiguration,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -275,6 +310,7 @@ func newIdentityAgentAndPracticeComposition(
 		identityModule:         base.identity.module,
 		agentModule:            base.agentModule,
 		agentVoiceReclaimer:    base.agentVoiceReclaimer,
+		agentImageReclaimer:    base.agentImageReclaimer,
 		memoryExtraction:       base.memoryExtraction,
 		summaryProcessor:       base.summaryProcessor,
 		identityHTTP:           base.identity.handler,
@@ -309,6 +345,13 @@ func (c *IdentityAgentPracticeComposition) AgentVoiceReclaimer() AgentVoiceObjec
 		return nil
 	}
 	return c.agentVoiceReclaimer
+}
+
+func (c *IdentityAgentPracticeComposition) AgentImageReclaimer() AgentImageObjectReclaimer {
+	if c == nil {
+		return nil
+	}
+	return c.agentImageReclaimer
 }
 
 // MemoryExtractionProcessor exposes only the bounded batch operation required

@@ -383,7 +383,7 @@ func TestGenerateMapsAssistantCallsAndToolResultsBackToProvider(t *testing.T) {
 		t.Fatalf("provider messages = %d, want 3", len(received.Messages))
 	}
 	assistantMessage := received.Messages[1]
-	if assistantMessage.Content != "" ||
+	if assistantMessage.Content != nil ||
 		len(assistantMessage.ToolCalls) != 1 ||
 		assistantMessage.ToolCalls[0].ID != "call-review-1" ||
 		assistantMessage.ToolCalls[0].Index != 0 ||
@@ -395,6 +395,153 @@ func TestGenerateMapsAssistantCallsAndToolResultsBackToProvider(t *testing.T) {
 		toolMessage.ToolCallID != "call-review-1" ||
 		toolMessage.Content != request.Messages[2].Content {
 		t.Fatalf("unexpected tool result message: %#v", toolMessage)
+	}
+}
+
+func TestGenerateMapsMultimodalUserContentWithTools(t *testing.T) {
+	t.Parallel()
+
+	var rawPayload struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+		Tools          []chatTool          `json:"tools"`
+		ResponseFormat *chatResponseFormat `json:"response_format"`
+	}
+	doer := doerFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&rawPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"id":"chatcmpl-vision-1",
+			"model":"qwen3.5-flash",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{
+					"role":"assistant",
+					"tool_calls":[{
+						"id":"call-review-image",
+						"type":"function",
+						"function":{
+							"name":"review_search_v1",
+							"arguments":"{\"limit\":1}"
+						}
+					}]
+				}
+			}],
+			"usage":{"prompt_tokens":1024,"completion_tokens":8,"total_tokens":1032}
+		}`), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+	request := toolRequest()
+	request.ResponseFormat = ai.TextResponseFormatJSON
+	request.Messages[0] = ai.TextMessage{
+		Role: ai.TextRoleUser,
+		ContentParts: []ai.ContentPart{
+			{
+				Kind: ai.ContentPartText,
+				Text: "Review the English in this screenshot.",
+			},
+			{
+				Kind: ai.ContentPartImageURL,
+				ImageURL: "https://private.example.test/image.png" +
+					"?Expires=60&Signature=redacted",
+			},
+			{
+				Kind: ai.ContentPartImageURL,
+				ImageURL: "https://private.example.test/second.png" +
+					"?Expires=60&Signature=redacted-2",
+			},
+		},
+	}
+
+	result, err := generator.Generate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if len(rawPayload.Messages) != 1 ||
+		rawPayload.Messages[0].Role != "user" ||
+		len(rawPayload.Tools) != 1 ||
+		rawPayload.ResponseFormat == nil ||
+		rawPayload.ResponseFormat.Type != "json_object" {
+		t.Fatalf("unexpected multimodal request: %#v", rawPayload)
+	}
+	var parts []chatContentPart
+	if err := json.Unmarshal(rawPayload.Messages[0].Content, &parts); err != nil {
+		t.Fatalf("decode multimodal content: %v", err)
+	}
+	if len(parts) != 3 ||
+		parts[0].Type != "text" ||
+		parts[0].Text != "Review the English in this screenshot." ||
+		parts[0].ImageURL != nil ||
+		parts[1].Type != "image_url" ||
+		parts[1].Text != "" ||
+		parts[1].ImageURL == nil ||
+		parts[1].ImageURL.URL !=
+			"https://private.example.test/image.png?Expires=60&Signature=redacted" ||
+		parts[2].Type != "image_url" ||
+		parts[2].Text != "" ||
+		parts[2].ImageURL == nil ||
+		parts[2].ImageURL.URL !=
+			"https://private.example.test/second.png?Expires=60&Signature=redacted-2" {
+		t.Fatalf("provider content parts = %#v", parts)
+	}
+	if result.FinishReason != "tool_calls" ||
+		len(result.ToolCalls) != 1 ||
+		result.ToolCalls[0].Name != "review.search.v1" {
+		t.Fatalf("multimodal tool result = %#v", result)
+	}
+}
+
+func TestProviderContentPartsMapsSingleImage(t *testing.T) {
+	t.Parallel()
+
+	mapped := providerContentParts([]ai.ContentPart{
+		{Kind: ai.ContentPartText, Text: "Describe this image."},
+		{
+			Kind:     ai.ContentPartImageURL,
+			ImageURL: "https://private.example.test/image.png?Signature=redacted",
+		},
+	})
+	body, err := json.Marshal(mapped)
+	if err != nil {
+		t.Fatalf("marshal content parts: %v", err)
+	}
+	const expected = `[{"type":"text","text":"Describe this image."},` +
+		`{"type":"image_url","image_url":` +
+		`{"url":"https://private.example.test/image.png?Signature=redacted"}}]`
+	if string(body) != expected {
+		t.Fatalf("content parts = %s, want %s", body, expected)
+	}
+}
+
+func TestGenerateMultimodalTransportFailureDoesNotLeakImageURL(t *testing.T) {
+	t.Parallel()
+
+	const imageURL = "https://private.example.test/image.png" +
+		"?AccessKeyId=secret&Signature=sensitive"
+	generator := mustGenerator(t, doerFunc(
+		func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("transport failed while fetching " + imageURL)
+		},
+	), "test-api-key")
+	request := validRequest()
+	request.Messages[0] = ai.TextMessage{
+		Role: ai.TextRoleUser,
+		ContentParts: []ai.ContentPart{
+			{Kind: ai.ContentPartText, Text: "Describe this image."},
+			{Kind: ai.ContentPartImageURL, ImageURL: imageURL},
+		},
+	}
+
+	_, err := generator.Generate(context.Background(), request)
+	if err == nil {
+		t.Fatal("expected transport failure")
+	}
+	if strings.Contains(err.Error(), imageURL) ||
+		strings.Contains(fmt.Sprintf("%+v", err), imageURL) {
+		t.Fatalf("generation error exposed image URL: %v", err)
 	}
 }
 

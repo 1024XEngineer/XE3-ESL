@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/agent/agent_image_client.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_client.dart';
 import 'package:speakup/agent/agent_voice_controller.dart';
@@ -26,12 +27,19 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     AgentVoiceClient? voiceClient,
     AgentVoiceRecorder? voiceRecorder,
     AgentVoiceAudioPlayer? voiceAudioPlayer,
+    AgentImageClient? imageClient,
+    this.imagePicker,
     AgentClientIdFactory? clientIdFactory,
     Duration recordingLimit = const Duration(seconds: 58),
   }) : practiceClient = practiceClient ?? LegacyAgentPracticeClient(client),
        recorder = recorder ?? FakePracticeRecorder(),
        _clientIdFactory = clientIdFactory ?? _createSecureClientId,
        _recordingLimit = recordingLimit {
+    final supportedImageClient = switch (client) {
+      final AgentImageClient supported => supported,
+      _ => null,
+    };
+    this.imageClient = imageClient ?? supportedImageClient;
     if ((mediaClient == null) != (audioPlayer == null)) {
       throw ArgumentError(
         'Practice media client and audio player must be injected together.',
@@ -74,6 +82,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   final AgentClient client;
+  late final AgentImageClient? imageClient;
+  final AgentImagePicker? imagePicker;
   final PracticeClient? practiceClient;
   final PracticeRecorder recorder;
   final PracticeMediaClient? mediaClient;
@@ -132,6 +142,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   String? _mediaErrorMessage;
   int _mediaGeneration = 0;
   Future<void>? _mediaOperation;
+  List<AgentPendingImage> _pendingImages = const <AgentPendingImage>[];
+  bool _imageSelectionInFlight = false;
+  String? _imageErrorMessage;
 
   String? get threadId => _threadId;
   AgentThreadSummary? get currentThreadSummary => _currentThreadSummary;
@@ -161,6 +174,19 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       List.unmodifiable(_practiceMessages);
   AgentVoiceController? get voiceController => _voiceController;
   bool get supportsAgentVoice => _voiceController != null;
+  bool get supportsAgentImages => imageClient != null && imagePicker != null;
+  List<AgentPendingImage> get pendingImages =>
+      List<AgentPendingImage>.unmodifiable(_pendingImages);
+  bool get isImageSelectionInFlight => _imageSelectionInFlight;
+  bool get hasPendingImageUpload => _pendingImages.any(
+    (image) => image.state == AgentPendingImageState.uploading,
+  );
+  bool get canSendPendingImages =>
+      _pendingImages.isNotEmpty &&
+      _pendingImages.every(
+        (image) => image.state == AgentPendingImageState.ready,
+      );
+  String? get imageErrorMessage => _imageErrorMessage;
   PracticeRecordingState get recordingState => _recordingState;
   String? get transcript => _candidate?.text;
   AgentReview? get review => _review;
@@ -379,6 +405,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
     _initialized = true;
     _applyRestoredTextState(thread);
+    unawaited(_hydrateMessageImageContents(fence));
   }
 
   void _applyRestoredTextState(AgentThreadSnapshot thread) {
@@ -388,6 +415,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
           ? _TextRetry(
               text: textRecovery.text,
               clientMessageId: textRecovery.clientMessageId,
+              imageAssetIds: textRecovery.imageAssetIds,
             )
           : null;
       _errorMessage = textRecovery.retryable
@@ -639,6 +667,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _clearFocusedThread(
     AgentThreadHistoryClient historyClient,
   ) async {
+    _discardPendingImages();
     _epoch++;
     _practiceGeneration++;
     _cancelRecordingLimit();
@@ -1031,6 +1060,268 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<void> pickAgentImages() async {
+    final picker = imagePicker;
+    if (!supportsAgentImages ||
+        picker == null ||
+        _imageSelectionInFlight ||
+        _pendingImages.length >= agentMaximumImagesPerMessage ||
+        _disposed) {
+      return;
+    }
+    await _pickAgentImages(
+      () => picker.pickFromGallery(
+        limit: agentMaximumImagesPerMessage - _pendingImages.length,
+      ),
+    );
+  }
+
+  Future<void> takeAgentPhoto() async {
+    final picker = imagePicker;
+    if (!supportsAgentImages ||
+        picker == null ||
+        _imageSelectionInFlight ||
+        _pendingImages.length >= agentMaximumImagesPerMessage ||
+        _disposed) {
+      return;
+    }
+    await _pickAgentImages(() async {
+      final image = await picker.takePhoto();
+      return image == null
+          ? const <AgentLocalImage>[]
+          : <AgentLocalImage>[image];
+    });
+  }
+
+  Future<void> _pickAgentImages(
+    Future<List<AgentLocalImage>> Function() select,
+  ) async {
+    _imageSelectionInFlight = true;
+    _imageErrorMessage = null;
+    notifyListeners();
+    try {
+      var selectionEpoch = _epoch;
+      await _ensureInitialized();
+      if (!_isCurrent(selectionEpoch) || _disposed) {
+        return;
+      }
+      if (_threadId == null) {
+        final created = await createThread();
+        if (!created || _threadId == null || _disposed) {
+          return;
+        }
+        selectionEpoch = _epoch;
+      }
+      final recovered = await imagePicker?.recoverLostImages();
+      if (!_isCurrent(selectionEpoch)) {
+        return;
+      }
+      if (recovered != null && recovered.isNotEmpty) {
+        await _stageAndUploadImages(recovered);
+        return;
+      }
+      final selected = await select();
+      if (!_isCurrent(selectionEpoch) || selected.isEmpty) {
+        return;
+      }
+      await _stageAndUploadImages(selected);
+    } catch (error) {
+      if (!_disposed) {
+        _imageErrorMessage = _imageSelectionFailureMessage(error);
+      }
+    } finally {
+      if (!_disposed) {
+        _imageSelectionInFlight = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _stageAndUploadImages(List<AgentLocalImage> selected) async {
+    final remaining = agentMaximumImagesPerMessage - _pendingImages.length;
+    if (remaining <= 0) {
+      return;
+    }
+    final candidates = selected.take(remaining).toList();
+    final accepted = candidates.where(_validLocalImage).toList();
+    if (accepted.length != candidates.length) {
+      _imageErrorMessage = '仅支持 10 MiB 以内的 JPEG、PNG 或 WebP 图片。';
+    }
+    for (final image in accepted) {
+      final localId = _newClientId('local-image');
+      _pendingImages = <AgentPendingImage>[
+        ..._pendingImages,
+        AgentPendingImage(
+          localId: localId,
+          uploadRequestId: _newClientId('image-upload'),
+          image: image,
+          state: AgentPendingImageState.uploading,
+        ),
+      ];
+      notifyListeners();
+      await _uploadPendingImage(localId);
+    }
+  }
+
+  Future<void> retryPendingImage(String localId) async {
+    final pending = _pendingImages
+        .where((image) => image.localId == localId)
+        .firstOrNull;
+    if (pending == null ||
+        pending.state != AgentPendingImageState.failed ||
+        _disposed) {
+      return;
+    }
+    _replacePendingImage(
+      pending.copyWith(state: AgentPendingImageState.uploading),
+    );
+    _imageErrorMessage = null;
+    notifyListeners();
+    await _uploadPendingImage(localId);
+  }
+
+  Future<void> _uploadPendingImage(String localId) async {
+    final imageClient = this.imageClient;
+    final threadId = _threadId;
+    final pending = _pendingImages
+        .where((image) => image.localId == localId)
+        .firstOrNull;
+    if (imageClient == null || threadId == null || pending == null) {
+      return;
+    }
+    final fence = _captureOperationFence(threadId: threadId);
+    try {
+      final asset = await imageClient.uploadImage(
+        threadId: threadId,
+        image: pending.image,
+        idempotencyKey: pending.uploadRequestId,
+      );
+      if (!_isOperationCurrent(fence) || asset.threadId != threadId) {
+        return;
+      }
+      if (!_pendingImages.any((image) => image.localId == localId)) {
+        try {
+          await imageClient.deleteImage(imageAssetId: asset.id);
+        } catch (_) {
+          // The staged-asset reclaimer handles an interrupted local removal.
+        }
+        return;
+      }
+      _replacePendingImage(
+        pending.copyWith(state: AgentPendingImageState.ready, asset: asset),
+      );
+      _imageErrorMessage = null;
+    } catch (error) {
+      if (_isOperationCurrent(fence)) {
+        _replacePendingImage(
+          pending.copyWith(state: AgentPendingImageState.failed),
+        );
+        _imageErrorMessage = _imageUploadFailureMessage(error);
+      }
+    } finally {
+      if (_isOperationCurrent(fence)) {
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> removePendingImage(String localId) async {
+    final pending = _pendingImages
+        .where((image) => image.localId == localId)
+        .firstOrNull;
+    if (pending == null) {
+      return;
+    }
+    _pendingImages = <AgentPendingImage>[
+      for (final image in _pendingImages)
+        if (image.localId != localId) image,
+    ];
+    _imageErrorMessage = null;
+    notifyListeners();
+    final asset = pending.asset;
+    if (asset != null) {
+      try {
+        await imageClient?.deleteImage(imageAssetId: asset.id);
+      } catch (_) {
+        // The server's staged-asset reclaimer remains the durable fallback.
+      }
+    }
+  }
+
+  void _replacePendingImage(AgentPendingImage replacement) {
+    _pendingImages = <AgentPendingImage>[
+      for (final image in _pendingImages)
+        if (image.localId == replacement.localId) replacement else image,
+    ];
+  }
+
+  bool _validLocalImage(AgentLocalImage image) {
+    return image.sizeBytes >= 1 &&
+        image.sizeBytes <= agentMaximumImageBytes &&
+        (image.contentType == 'image/jpeg' ||
+            image.contentType == 'image/png' ||
+            image.contentType == 'image/webp');
+  }
+
+  Future<void> refreshMessageImage(
+    String messageId,
+    String imageAssetId,
+  ) async {
+    final imageClient = this.imageClient;
+    final message = _messages
+        .where((message) => message.id == messageId)
+        .firstOrNull;
+    if (imageClient == null ||
+        message == null ||
+        !message.images.any((image) => image.id == imageAssetId)) {
+      return;
+    }
+    final fence = _captureOperationFence(threadId: _threadId);
+    try {
+      final content = await imageClient.getImageContent(
+        imageAssetId: imageAssetId,
+      );
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
+      _messages = <AgentMessage>[
+        for (final candidate in _messages)
+          if (candidate.id == messageId)
+            candidate.copyWith(
+              images: <AgentImageAsset>[
+                for (final image in candidate.images)
+                  if (image.id == imageAssetId)
+                    image.withContent(
+                      contentUrl: content.url,
+                      expiresAt: content.expiresAt,
+                    )
+                  else
+                    image,
+              ],
+            )
+          else
+            candidate,
+      ];
+      notifyListeners();
+    } catch (_) {
+      // The bubble remains a safe placeholder and can request another retry.
+    }
+  }
+
+  Future<void> _hydrateMessageImageContents(_AgentOperationFence fence) async {
+    final targets = <({String messageId, String imageId})>[
+      for (final message in _messages)
+        for (final image in message.images)
+          if (!image.isReadable) (messageId: message.id, imageId: image.id),
+    ];
+    for (final target in targets) {
+      if (!_isOperationCurrent(fence)) {
+        return;
+      }
+      await refreshMessageImage(target.messageId, target.imageId);
+    }
+  }
+
   Future<bool> sendText(String value) async {
     final text = value.trim();
     if (text.isEmpty) {
@@ -1047,10 +1338,28 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         return false;
       }
     }
+    if (_imageSelectionInFlight ||
+        _pendingImages.any(
+          (image) => image.state != AgentPendingImageState.ready,
+        )) {
+      _imageErrorMessage = '请等待图片上传完成，或重试失败的图片。';
+      notifyListeners();
+      return false;
+    }
+    final imageAssetIds = <String>[
+      for (final image in _pendingImages) image.asset!.id,
+    ];
     final retry = _retry;
-    final operation = retry is _TextRetry && retry.text == text
+    final operation =
+        retry is _TextRetry &&
+            retry.text == text &&
+            listEquals(retry.imageAssetIds, imageAssetIds)
         ? retry
-        : _TextRetry(text: text, clientMessageId: _newClientId('message'));
+        : _TextRetry(
+            text: text,
+            clientMessageId: _newClientId('message'),
+            imageAssetIds: imageAssetIds,
+          );
     return _sendText(operation);
   }
 
@@ -1064,16 +1373,38 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _errorMessage = null;
     _setBusy(true);
     try {
-      final exchange = await client.sendText(
-        threadId: threadId,
-        text: operation.text,
-        clientMessageId: operation.clientMessageId,
-      );
+      final AgentExchange exchange;
+      if (operation.imageAssetIds.isEmpty) {
+        exchange = await client.sendText(
+          threadId: threadId,
+          text: operation.text,
+          clientMessageId: operation.clientMessageId,
+        );
+      } else if (client case final AgentMultimodalClient multimodal) {
+        exchange = await multimodal.sendMultimodal(
+          threadId: threadId,
+          text: operation.text,
+          clientMessageId: operation.clientMessageId,
+          imageAssetIds: operation.imageAssetIds,
+        );
+      } else {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.unavailable,
+        );
+      }
       if (!_isOperationCurrent(fence)) {
         return false;
       }
       _appendMessages([exchange.userMessage, ?exchange.assistantMessage]);
+      if (listEquals(operation.imageAssetIds, <String>[
+        for (final image in _pendingImages)
+          if (image.asset != null) image.asset!.id,
+      ])) {
+        _pendingImages = const <AgentPendingImage>[];
+        _imageErrorMessage = null;
+      }
       notifyListeners();
+      unawaited(_hydrateMessageImageContents(fence));
       if (client case final AgentThreadHistoryClient historyClient) {
         await _refreshAuthoritativeThreadPage(
           historyClient,
@@ -1282,6 +1613,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final epoch = fence.epoch;
     _deletingAudioAssetId = audioAssetId;
     _mediaErrorMessage = null;
+    _pendingImages = const <AgentPendingImage>[];
+    _imageSelectionInFlight = false;
+    _imageErrorMessage = null;
     notifyListeners();
     try {
       await client.deleteRecording(audioAssetId);
@@ -1999,6 +2333,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
     final cleanup = Future.wait<void>([
       Future<void>.sync(client.clearAccountState),
+      if (imageClient case final images?)
+        if (!identical(images, client))
+          Future<void>.sync(images.clearAccountState),
       if (_voiceController case final voice?)
         Future<void>.sync(
           () => voice.clearPrivateState(
@@ -2073,6 +2410,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _resetSelectedThreadPresentation() {
+    _discardPendingImages();
     _threadId = null;
     _currentThreadSummary = null;
     _nextMessageCursor = null;
@@ -2081,6 +2419,20 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _retry = null;
     _errorMessage = null;
     _applyPracticeSnapshot(null);
+  }
+
+  void _discardPendingImages() {
+    final assets = <AgentImageAsset>[
+      for (final pending in _pendingImages)
+        if (pending.asset != null) pending.asset!,
+    ];
+    _pendingImages = const <AgentPendingImage>[];
+    _imageErrorMessage = null;
+    for (final asset in assets) {
+      unawaited(
+        imageClient?.deleteImage(imageAssetId: asset.id).catchError((_) {}),
+      );
+    }
   }
 
   AgentThreadSummary? _threadSummaryFromSnapshot(AgentThreadSnapshot snapshot) {
@@ -2352,6 +2704,41 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     return '$action暂时不可用，请稍后重试。';
+  }
+
+  String _imageSelectionFailureMessage(Object error) {
+    if (error is AgentClientException &&
+        error.kind == AgentClientFailureKind.authenticationRequired) {
+      return '登录状态已失效，请重新登录。';
+    }
+    return '无法读取所选图片，请检查相册或相机权限后重试。';
+  }
+
+  String _imageUploadFailureMessage(Object error) {
+    if (error is AgentClientException) {
+      if (error.kind == AgentClientFailureKind.invalidRequest) {
+        if (error.errorCode == 'image_too_large') {
+          return '图片文件或分辨率过大，请压缩后重新选择。';
+        }
+        if (error.errorCode == 'unsupported_image_format') {
+          return '暂不支持这种图片格式，请选择 JPEG、PNG 或 WebP。';
+        }
+        if (error.errorCode == 'invalid_image') {
+          return '图片文件已损坏或内容与格式不一致，请重新选择。';
+        }
+        return '图片格式、尺寸或文件大小不符合要求，请重新选择。';
+      }
+      if (error.kind == AgentClientFailureKind.authenticationRequired) {
+        return '登录状态已失效，请重新登录。';
+      }
+      if (error.kind == AgentClientFailureKind.network) {
+        return '图片上传失败，请检查网络后重试。';
+      }
+      if (error.kind == AgentClientFailureKind.rateLimited) {
+        return '图片上传过于频繁，请稍后重试。';
+      }
+    }
+    return '图片暂时无法上传，可以重试或移除。';
   }
 
   void _cancelRecordingLimit() {
@@ -2705,10 +3092,15 @@ final class _SceneRetry extends _AgentRetry {
 }
 
 final class _TextRetry extends _AgentRetry {
-  const _TextRetry({required this.text, required this.clientMessageId});
+  const _TextRetry({
+    required this.text,
+    required this.clientMessageId,
+    this.imageAssetIds = const <String>[],
+  });
 
   final String text;
   final String clientMessageId;
+  final List<String> imageAssetIds;
 }
 
 final Random _clientIdRandom = Random.secure();
