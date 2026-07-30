@@ -1296,7 +1296,7 @@ components:
         status_url:
           type: string
           maxLength: 173
-          pattern: '^/v1/practice-sessions/[A-Za-z][A-Za-z0-9_-]*/ielts-speaking-report$'
+          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/ielts-speaking-report$'
         report:
           $ref: '#/components/schemas/IeltsSpeakingReport'
         stable_failure:
@@ -2071,6 +2071,7 @@ components:
             - EVIDENCE_REF_INVALID
             - VERSION_CONFLICT
             - INTERNAL_RETRYABLE
+            - INTERNAL_NON_RETRYABLE
         retryable:
           type: boolean
       allOf:
@@ -2094,6 +2095,7 @@ components:
                   - POLICY_VIOLATION
                   - EVIDENCE_REF_INVALID
                   - VERSION_CONFLICT
+                  - INTERNAL_NON_RETRYABLE
             required:
               - reason_code
           then:
@@ -2168,7 +2170,7 @@ components:
         status_url:
           type: string
           maxLength: 173
-          pattern: '^/v1/practice-sessions/[A-Za-z][A-Za-z0-9_-]*/ielts-speaking-report$'
+          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/ielts-speaking-report$'
         created_at:
           type: string
           format: date-time

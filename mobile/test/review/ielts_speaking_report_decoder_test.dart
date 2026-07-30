@@ -49,6 +49,39 @@ void main() {
     },
   );
 
+  test('decodes a report for a digit-leading Practice session UUID', () {
+    const practiceSessionId = '20000000-0000-4000-8000-000000000001';
+    final value = _readyClone()
+      ..['practice_session_id'] = practiceSessionId
+      ..['status_url'] =
+          '/v1/practice-sessions/$practiceSessionId/ielts-speaking-report';
+
+    final decoded = decodeIeltsSpeakingReport(value);
+
+    expect(decoded.practiceSessionId, practiceSessionId);
+  });
+
+  test('accepts only false for an explicitly non-retryable failure', () {
+    final value = cloneIeltsSpeakingReportFixture(
+      ieltsSpeakingReportContractFixture()['failed'],
+    );
+    value['stable_failure'] = <String, Object?>{
+      'reason_code': 'INTERNAL_NON_RETRYABLE',
+      'retryable': false,
+    };
+
+    final decoded = decodeIeltsSpeakingReport(value);
+
+    expect(decoded.stableFailure?.reasonCode, 'INTERNAL_NON_RETRYABLE');
+    expect(decoded.stableFailure?.retryable, isFalse);
+
+    (value['stable_failure']! as Map<String, Object?>)['retryable'] = true;
+    expect(
+      () => decodeIeltsSpeakingReport(value),
+      throwsA(isA<IeltsSpeakingReportDecodeException>()),
+    );
+  });
+
   test('rejects fields that invent unsupported IELTS scores or targets', () {
     for (final mutate in <void Function(Map<String, Object?>)>[
       (root) => _criterion(root, 0)['estimated_band'] = 6,

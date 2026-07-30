@@ -467,6 +467,69 @@ void main() {
     expect(reportController.isLoading, isFalse);
   });
 
+  testWidgets('section completion never requests the full-mock report', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(
+      initialCompleted: 7,
+      turnLimit: 8,
+      scenarioModel: 'IELTS_SPEAKING_PART_1',
+    );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    final preparation = PreparationController(
+      client: _EmptyPreparationCatalogClient(),
+    );
+    final reportClient = _PendingReportClient();
+    final reportController = IeltsSpeakingReportController(
+      client: reportClient,
+    );
+    addTearDown(controller.dispose);
+    addTearDown(preparation.dispose);
+    addTearDown(reportController.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsPart1Scene);
+    expect(controller.errorMessage, isNull);
+    expect(controller.practiceSessionId, _sessionId);
+    await preparation.beginIeltsSession(
+      _sessionId,
+      const IeltsPracticeSelection(
+        mode: IeltsPracticeMode.part1,
+        part1SetId: 'p1-set-02',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          preparationController: preparation,
+          reportController: reportController,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(controller.completedTurns, 8);
+    expect(
+      find.byKey(const Key('ielts-section-practice-complete-part1')),
+      findsOneWidget,
+    );
+    expect(reportClient.started.isCompleted, isFalse);
+    expect(reportController.practiceSessionId, isNull);
+  });
+
   testWidgets('restored matter identity still opens the three-part mock flow', (
     tester,
   ) async {
@@ -692,7 +755,11 @@ void main() {
   testWidgets('one-question Part 3 section completes after its original item', (
     tester,
   ) async {
-    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
+    final practice = _IeltsPracticeClient(
+      initialCompleted: 0,
+      turnLimit: 1,
+      scenarioModel: 'IELTS_SPEAKING_PART_3',
+    );
     final controller = AgentController(
       client: FakeAgentClient(),
       practiceClient: practice,

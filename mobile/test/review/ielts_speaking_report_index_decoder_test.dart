@@ -16,6 +16,21 @@ void main() {
     expect(page.nextCursor, 'eyJpZCI6ImlsdHNfMDAxIn0');
   });
 
+  test('decodes a digit-leading Practice session UUID', () {
+    const practiceSessionId = '20000000-0000-4000-8000-000000000001';
+    final value = cloneIeltsSpeakingReportFixture(
+      ieltsSpeakingReportContractFixture()['index_page'],
+    );
+    _first(value)
+      ..['practice_session_id'] = practiceSessionId
+      ..['status_url'] =
+          '/v1/practice-sessions/$practiceSessionId/ielts-speaking-report';
+
+    final page = decodeIeltsSpeakingReportIndex(value);
+
+    expect(page.items.single.practiceSessionId, practiceSessionId);
+  });
+
   test('rejects unknown report kinds and a mismatched resource URL', () {
     final unknownKind = cloneIeltsSpeakingReportFixture(
       ieltsSpeakingReportContractFixture()['index_page'],

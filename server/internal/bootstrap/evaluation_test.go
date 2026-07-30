@@ -610,6 +610,32 @@ func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 		genericResource.StableFailure.Retryable {
 		t.Fatalf("generic failed resource = %#v, %v", genericResource, err)
 	}
+	ieltsFailed := evaluationTestIELTSValue(evaluation.StatusFailed)
+	ieltsResource, err := ieltsSpeakingReportResource(
+		ieltsFailed.PracticeSessionID,
+		evaluation.IELTSSpeakingReportReadState{
+			Evaluation: ieltsFailed,
+			Runtime: evaluation.IELTSSpeakingShadowReadState{
+				ModuleStatus: evaluation.
+					IELTSSpeakingShadowRuntimeFailed,
+				Failure: &evaluation.IELTSSpeakingShadowFailure{
+					Code:      "authentication",
+					Retryable: true,
+				},
+			},
+		},
+	)
+	if err != nil ||
+		ieltsResource.StableFailure == nil ||
+		ieltsResource.StableFailure.ReasonCode !=
+			evaluationtransport.ReasonInternalNonRetryable ||
+		ieltsResource.StableFailure.Retryable {
+		t.Fatalf(
+			"IELTS failed report resource = %#v, %v",
+			ieltsResource,
+			err,
+		)
+	}
 }
 
 func evaluationTestRuntimeConfiguration(

@@ -735,7 +735,7 @@ String _identifier(Object? value) {
       value.isEmpty ||
       value.length > 128 ||
       value != value.trim() ||
-      !RegExp(r'^[A-Za-z][A-Za-z0-9_-]*$').hasMatch(value)) {
+      !RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]*$').hasMatch(value)) {
     throw const IeltsSpeakingReportDecodeException();
   }
   return value;
@@ -953,6 +953,7 @@ const _failureReasonCodes = <String>{
   'EVIDENCE_REF_INVALID',
   'VERSION_CONFLICT',
   'INTERNAL_RETRYABLE',
+  'INTERNAL_NON_RETRYABLE',
 };
 
 const _maximumFeedbackTextBytes = 2048;

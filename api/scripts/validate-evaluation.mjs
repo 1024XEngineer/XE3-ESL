@@ -1444,6 +1444,20 @@ for (const [name, value] of Object.entries(ieltsSpeakingReportFixture)) {
   );
   assertIeltsSpeakingReportSemantics(value);
 }
+const digitLeadingIeltsReport = structuredClone(
+  ieltsSpeakingReportFixture.ready,
+);
+digitLeadingIeltsReport.practice_session_id =
+  '20000000-0000-4000-8000-000000000001';
+digitLeadingIeltsReport.status_url =
+  '/v1/practice-sessions/20000000-0000-4000-8000-000000000001/ielts-speaking-report';
+assertValid(
+  'digit-leading Practice session IELTS Speaking report',
+  'IeltsSpeakingReportEnvelope',
+  digitLeadingIeltsReport,
+);
+assertIeltsSpeakingReportSemantics(digitLeadingIeltsReport);
+
 const ieltsReportWithMissingOpportunity = structuredClone(
   ieltsSpeakingReportFixture.ready,
 );
@@ -1469,11 +1483,25 @@ assertValid(
   ieltsSpeakingReportFixture.index_page,
 );
 assertIeltsSpeakingIndexSemantics(ieltsSpeakingReportFixture.index_page);
+const digitLeadingIeltsReportIndex = structuredClone(
+  ieltsSpeakingReportFixture.index_page,
+);
+digitLeadingIeltsReportIndex.items[0].practice_session_id =
+  '20000000-0000-4000-8000-000000000001';
+digitLeadingIeltsReportIndex.items[0].status_url =
+  '/v1/practice-sessions/20000000-0000-4000-8000-000000000001/ielts-speaking-report';
+assertValid(
+  'digit-leading Practice session IELTS Speaking report index',
+  'IeltsSpeakingReportIndexPage',
+  digitLeadingIeltsReportIndex,
+);
+assertIeltsSpeakingIndexSemantics(digitLeadingIeltsReportIndex);
 
 for (const reasonCode of [
   'POLICY_VIOLATION',
   'EVIDENCE_REF_INVALID',
   'VERSION_CONFLICT',
+  'INTERNAL_NON_RETRYABLE',
 ]) {
   const failure = structuredClone(ieltsSpeakingReportFixture.failed);
   failure.stable_failure = { reason_code: reasonCode, retryable: false };
@@ -1483,6 +1511,18 @@ for (const reasonCode of [
     failure,
   );
 }
+const retryableNonTransientIeltsFailure = structuredClone(
+  ieltsSpeakingReportFixture.failed,
+);
+retryableNonTransientIeltsFailure.stable_failure = {
+  reason_code: 'INTERNAL_NON_RETRYABLE',
+  retryable: true,
+};
+assertSchemaRejected(
+  'retryable non-transient IELTS Speaking failure',
+  'IeltsSpeakingReportEnvelope',
+  retryableNonTransientIeltsFailure,
+);
 
 const ieltsReadyWithoutReport = structuredClone(
   ieltsSpeakingReportFixture.ready,

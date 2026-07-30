@@ -33,6 +33,28 @@ void main() {
     expect(transport.method, 'GET');
   });
 
+  test('wire client accepts a digit-leading Practice session UUID', () async {
+    const practiceSessionId = '20000000-0000-4000-8000-000000000001';
+    final ready = cloneIeltsSpeakingReportFixture(
+      ieltsSpeakingReportContractFixture()['ready'],
+    );
+    ready['practice_session_id'] = practiceSessionId;
+    ready['status_url'] =
+        '/v1/practice-sessions/$practiceSessionId/ielts-speaking-report';
+    final transport = _Transport(
+      IdentityHttpResponse(statusCode: HttpStatus.ok, body: jsonEncode(ready)),
+    );
+    final client = _client(transport);
+
+    final result = await client.getReport(practiceSessionId);
+
+    expect(result.practiceSessionId, practiceSessionId);
+    expect(
+      transport.uri.path,
+      '/v1/practice-sessions/$practiceSessionId/ielts-speaking-report',
+    );
+  });
+
   test('wire client fetches the explicit IELTS report index', () async {
     final transport = _Transport(
       IdentityHttpResponse(

@@ -221,7 +221,7 @@ bool _validPracticeSessionId(String value) =>
     value.isNotEmpty &&
     value.length <= 128 &&
     value == value.trim() &&
-    RegExp(r'^[A-Za-z][A-Za-z0-9_-]*$').hasMatch(value);
+    RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]*$').hasMatch(value);
 
 bool _validCursor(String value) =>
     value.length >= 16 &&
