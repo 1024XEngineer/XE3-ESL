@@ -214,10 +214,14 @@ func (s *Service) Reevaluate(
 	if err != nil {
 		return Evaluation{}, false, err
 	}
-	revisionFingerprint, err := digest(config)
+	configFingerprint, err := digest(config)
 	if err != nil {
 		return Evaluation{}, false, err
 	}
+	revisionFingerprint := sha256.Sum256(append(
+		[]byte("evaluation-revision:reevaluate:v1\x00"),
+		configFingerprint[:]...,
+	))
 	return s.repository.Reevaluate(ctx, ReevaluateCommand{
 		OwnerUserID:         actor.UserID,
 		EvaluationID:        evaluationID,

@@ -15,8 +15,10 @@ import (
 	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
@@ -144,6 +146,205 @@ func TestMapVoiceSessionReviewMarksOnlyScenarioScoresPresent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVoiceReviewAdapterQueuesInterviewShadowAfterFormalReview(
+	t *testing.T,
+) {
+	t.Parallel()
+	events := make([]string, 0, 2)
+	source := bootstrapReviewSource(t)
+	ensurer := &voiceReviewEnsurerStub{
+		result: review.FormalReview{
+			ID:                "review-1",
+			PracticeSessionID: source.PracticeSessionID,
+			SourceTurnID:      source.SourceTurnID,
+		},
+		events: &events,
+	}
+	coordinator := &interviewShadowCoordinatorStub{events: &events}
+	adapter := &voiceReviewAdapter{
+		service:                    ensurer,
+		sourceReader:               voiceReviewSourceReaderStub{source: source},
+		interviewShadowCoordinator: coordinator,
+	}
+	actor := requestcontext.Actor{
+		UserID:    "00000000-0000-4000-8000-000000000001",
+		SessionID: "auth-session-1",
+	}
+
+	checkpoint, err := adapter.EnsureSessionReview(
+		context.Background(),
+		actor,
+		agent.VoiceReviewSource{
+			TurnID:    source.SourceTurnID,
+			SessionID: source.PracticeSessionID,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.ID != ensurer.result.ID ||
+		checkpoint.SessionID != source.PracticeSessionID ||
+		checkpoint.SourceTurnID != source.SourceTurnID {
+		t.Fatalf("checkpoint = %+v", checkpoint)
+	}
+	if !reflect.DeepEqual(events, []string{"formal_review", "shadow"}) {
+		t.Fatalf("completion order = %v", events)
+	}
+	if coordinator.calls != 1 ||
+		coordinator.actor != actor ||
+		coordinator.sessionID != source.PracticeSessionID {
+		t.Fatalf("coordinator call = %+v", coordinator)
+	}
+}
+
+func TestVoiceReviewAdapterSkipsInterviewShadowForOtherContexts(
+	t *testing.T,
+) {
+	t.Parallel()
+	for _, contextType := range []review.EvaluationContextType{
+		review.ContextIELTSSpeakingPart2,
+		review.ContextWorkplaceProgressRisk,
+		review.ContextDailyHotelCheckin,
+		review.ContextGenericPractice,
+		"",
+	} {
+		contextType := contextType
+		t.Run(string(contextType), func(t *testing.T) {
+			t.Parallel()
+			source := bootstrapReviewSource(t)
+			source.EvaluationContext.ContextType = contextType
+			coordinator := &interviewShadowCoordinatorStub{}
+			adapter := &voiceReviewAdapter{
+				service: &voiceReviewEnsurerStub{
+					result: review.FormalReview{
+						ID:                "review-1",
+						PracticeSessionID: source.PracticeSessionID,
+						SourceTurnID:      source.SourceTurnID,
+					},
+				},
+				sourceReader:               voiceReviewSourceReaderStub{source: source},
+				interviewShadowCoordinator: coordinator,
+			}
+			_, err := adapter.EnsureSessionReview(
+				context.Background(),
+				requestcontext.Actor{
+					UserID: "00000000-0000-4000-8000-000000000001",
+				},
+				agent.VoiceReviewSource{
+					TurnID:    source.SourceTurnID,
+					SessionID: source.PracticeSessionID,
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if coordinator.calls != 0 {
+				t.Fatalf(
+					"context %q queued Interview Shadow",
+					contextType,
+				)
+			}
+		})
+	}
+}
+
+func TestVoiceReviewAdapterPropagatesInterviewShadowFailure(
+	t *testing.T,
+) {
+	t.Parallel()
+	source := bootstrapReviewSource(t)
+	triggerErr := errors.New("queue interview shadow")
+	events := make([]string, 0, 2)
+	coordinator := &interviewShadowCoordinatorStub{
+		err:    triggerErr,
+		events: &events,
+	}
+	adapter := &voiceReviewAdapter{
+		service: &voiceReviewEnsurerStub{
+			result: review.FormalReview{
+				ID:                "review-1",
+				PracticeSessionID: source.PracticeSessionID,
+				SourceTurnID:      source.SourceTurnID,
+			},
+			events: &events,
+		},
+		sourceReader:               voiceReviewSourceReaderStub{source: source},
+		interviewShadowCoordinator: coordinator,
+	}
+
+	checkpoint, err := adapter.EnsureSessionReview(
+		context.Background(),
+		requestcontext.Actor{
+			UserID:    "00000000-0000-4000-8000-000000000001",
+			SessionID: "auth-session-1",
+		},
+		agent.VoiceReviewSource{
+			TurnID:    source.SourceTurnID,
+			SessionID: source.PracticeSessionID,
+		},
+	)
+	if !errors.Is(err, triggerErr) {
+		t.Fatalf("error = %v, want %v", err, triggerErr)
+	}
+	if checkpoint != (agent.VoiceReviewCheckpoint{}) {
+		t.Fatalf("checkpoint = %+v, want empty", checkpoint)
+	}
+	if !reflect.DeepEqual(events, []string{"formal_review", "shadow"}) {
+		t.Fatalf("completion order = %v", events)
+	}
+}
+
+type voiceReviewEnsurerStub struct {
+	result review.FormalReview
+	err    error
+	events *[]string
+}
+
+func (stub *voiceReviewEnsurerStub) EnsureReview(
+	context.Context,
+	review.EnsureReviewCommand,
+) (review.FormalReview, error) {
+	if stub.events != nil {
+		*stub.events = append(*stub.events, "formal_review")
+	}
+	return stub.result, stub.err
+}
+
+type voiceReviewSourceReaderStub struct {
+	source review.ReviewSourceSnapshot
+	err    error
+}
+
+func (stub voiceReviewSourceReaderStub) ReadReviewSource(
+	context.Context,
+	review.Actor,
+	string,
+) (review.ReviewSourceSnapshot, error) {
+	return stub.source, stub.err
+}
+
+type interviewShadowCoordinatorStub struct {
+	calls     int
+	actor     requestcontext.Actor
+	sessionID string
+	err       error
+	events    *[]string
+}
+
+func (stub *interviewShadowCoordinatorStub) EnsureForCompletedInterview(
+	_ context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) (evaluation.Evaluation, bool, error) {
+	stub.calls++
+	stub.actor = actor
+	stub.sessionID = sessionID
+	if stub.events != nil {
+		*stub.events = append(*stub.events, "shadow")
+	}
+	return evaluation.Evaluation{}, false, stub.err
 }
 
 func TestLegacyReviewManifestFingerprintRemainsStable(t *testing.T) {

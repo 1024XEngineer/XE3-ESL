@@ -86,6 +86,15 @@ func (r *PostgresRepository) DeleteUserData(
 		return ErrDeletionGenerationStale
 	}
 	if _, err := tx.Exec(ctx, `
+		DELETE FROM evaluation_module_runs
+		WHERE owner_user_id = $1
+	`, command.OwnerUserID); err != nil {
+		return fmt.Errorf(
+			"delete Evaluation module runs: %w",
+			err,
+		)
+	}
+	if _, err := tx.Exec(ctx, `
 		DELETE FROM evaluation_ledgers
 		WHERE owner_user_id = $1
 	`, command.OwnerUserID); err != nil {

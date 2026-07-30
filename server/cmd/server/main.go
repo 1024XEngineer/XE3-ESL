@@ -161,6 +161,26 @@ func run() int {
 	}
 	defer databasePool.Close()
 
+	evaluationComposition, err := bootstrap.NewEvaluationComposition(
+		databasePool.Native(),
+		textGenerator,
+		bootstrap.EvaluationConfiguration{
+			Provider:          textConfig.Provider,
+			Model:             textConfig.Model,
+			MaxOutputTokens:   textConfig.MaxOutputTokens,
+			GenerationTimeout: 20 * time.Second,
+			LeaseDuration:     30 * time.Second,
+			MaxAttempts:       3,
+		},
+	)
+	if err != nil {
+		logger.Error(
+			"evaluation composition failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+
 	memoryIndexComposition, err := bootstrap.NewMemoryIndexComposition(
 		databasePool.Native(),
 		embedder,
@@ -229,6 +249,8 @@ func run() int {
 				ReviewHistoryCursorKey: []byte(
 					reviewHistoryConfig.CursorSigningKey.Reveal(),
 				),
+				InterviewShadowCoordinator: evaluationComposition.
+					InterviewShadowCoordinator(),
 			},
 		)
 	if err != nil {
@@ -284,9 +306,23 @@ func run() int {
 		)
 		return 1
 	}
-	contextRoutes, err := applicationComposition.ProtectedRoutes(avatarHTTP)
+	contextRoutes, err := applicationComposition.ProtectedRoutes(
+		avatarHTTP,
+		evaluationComposition.HTTPHandler(),
+	)
 	if err != nil {
 		logger.Error("context route startup failed", slog.Any("error", err))
+		return 1
+	}
+	evaluationShadow, err := buildEvaluationShadowWorker(
+		evaluationComposition.Worker(),
+		logger,
+	)
+	if err != nil {
+		logger.Error(
+			"evaluation shadow startup failed",
+			slog.String("error_kind", "dependency"),
+		)
 		return 1
 	}
 	agentVoiceCleanup, err := buildAgentVoiceCleanupWorker(
@@ -371,6 +407,11 @@ func run() int {
 	go func() {
 		defer close(threadSummaryDone)
 		threadSummary.Run(ctx)
+	}()
+	evaluationShadowDone := make(chan struct{})
+	go func() {
+		defer close(evaluationShadowDone)
+		evaluationShadow.Run(ctx)
 	}()
 
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
@@ -463,6 +504,15 @@ func run() int {
 	case <-shutdownCtx.Done():
 		logger.Error(
 			"thread summary shutdown failed",
+			slog.String("error_kind", "timeout"),
+		)
+		exitCode = 1
+	}
+	select {
+	case <-evaluationShadowDone:
+	case <-shutdownCtx.Done():
+		logger.Error(
+			"evaluation shadow shutdown failed",
 			slog.String("error_kind", "timeout"),
 		)
 		exitCode = 1

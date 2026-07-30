@@ -205,6 +205,91 @@ func TestPostgresLedgerRevisionIdempotencyAndIsolation(t *testing.T) {
 	}
 }
 
+func TestPostgresServiceReevaluateSameConfigCreatesRevisionThenReplays(
+	t *testing.T,
+) {
+	pool := evaluationDatabase(t)
+	insertEvaluationUsers(t, pool, testOwnerA, integrationOwnerB)
+	service, createRequest := serviceWithEvidenceSnapshot(
+		t,
+		pool,
+		testOwnerA,
+	)
+	created, replayed, err := service.Create(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		createRequest,
+	)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if replayed || created.Revision.Number != 1 {
+		t.Fatalf("created = %#v, replayed = %v", created, replayed)
+	}
+
+	request := ReevaluateRequest{
+		Channels:          createRequest.Channels,
+		SceneStrategyRef:  createRequest.SceneStrategyRef,
+		Core4DStrategyRef: createRequest.Core4DStrategyRef,
+		PipelineVersion:   createRequest.PipelineVersion,
+		ClientRequestID:   "same-config-first-trace",
+	}
+	revisionTwo, replayed, err := service.Reevaluate(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		created.ID,
+		request,
+	)
+	if err != nil {
+		t.Fatalf("same-config Reevaluate: %v", err)
+	}
+	if replayed || revisionTwo.Revision.Number != 2 ||
+		revisionTwo.Revision.SupersedesRevisionID != created.Revision.ID {
+		t.Fatalf("revision two = %#v, replayed = %v", revisionTwo, replayed)
+	}
+
+	request.ClientRequestID = "same-config-retry-trace"
+	retry, replayed, err := service.Reevaluate(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		created.ID,
+		request,
+	)
+	if err != nil {
+		t.Fatalf("retry same-config Reevaluate: %v", err)
+	}
+	if !replayed || retry.Revision.ID != revisionTwo.Revision.ID ||
+		retry.Revision.Number != revisionTwo.Revision.Number ||
+		retry.Revision.ClientRequestID != "same-config-first-trace" {
+		t.Fatalf("retry = %#v, replayed = %v", retry, replayed)
+	}
+
+	if _, _, err := service.Reevaluate(
+		testActorContext(integrationOwnerB),
+		testActor(integrationOwnerB),
+		created.ID,
+		request,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner Reevaluate error = %v", err)
+	}
+	current, err := service.Get(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		created.ID,
+	)
+	if err != nil {
+		t.Fatalf("Get after cross-owner Reevaluate: %v", err)
+	}
+	if current.Revision.ID != revisionTwo.Revision.ID {
+		t.Fatalf(
+			"current revision after cross-owner Reevaluate = %q, want %q",
+			current.Revision.ID,
+			revisionTwo.Revision.ID,
+		)
+	}
+	assertEvaluationCounts(t, pool, created.ID, 2, 2)
+}
+
 func TestPostgresConcurrentReevaluationCreatesOneRevision(t *testing.T) {
 	pool := evaluationDatabase(t)
 	insertEvaluationUsers(t, pool, testOwnerA)
