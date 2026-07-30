@@ -36,7 +36,7 @@ void main() {
         ..add(const AgentAssistantStarted(runId: 'run-1'))
         ..add(const AgentAssistantDelta(runId: 'run-1', delta: '你'))
         ..add(const AgentAssistantDelta(runId: 'run-1', delta: '好，**小花**。'));
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
 
       expect(controller.messages.last.text, '你好，**小花**。');
       expect(controller.messages.last.isStreaming, isTrue);

@@ -18,16 +18,17 @@ import (
 )
 
 const (
-	runPersistenceTimeout  = 5 * time.Second
-	maxPersistedTokenCount = 1<<31 - 1
-	defaultMaxIterations   = 3
-	defaultMaxToolCalls    = 4
-	defaultMaxWriteCalls   = 1
-	defaultToolTimeout     = 5 * time.Second
-	defaultLoopTimeout     = 25 * time.Second
-	defaultMaxToolResult   = 16 * 1024
-	loopFallbackID         = "agent-loop-fallback"
-	toolSchemaVersionV1    = "tool-schema-v1"
+	runPersistenceTimeout    = 5 * time.Second
+	maxPersistedTokenCount   = 1<<31 - 1
+	defaultMaxIterations     = 3
+	defaultMaxToolCalls      = 4
+	defaultMaxWriteCalls     = 1
+	defaultToolTimeout       = 5 * time.Second
+	defaultLoopTimeout       = 25 * time.Second
+	defaultMaxToolResult     = 16 * 1024
+	streamReplayPollInterval = 100 * time.Millisecond
+	loopFallbackID           = "agent-loop-fallback"
+	toolSchemaVersionV1      = "tool-schema-v1"
 )
 
 type RunService struct {
@@ -231,6 +232,13 @@ func (service *RunService) SubmitTextStream(
 	}
 	deltas := &countingDeltaObserver{delegate: observer}
 	submission.Run, err = service.process(ctx, actor, submission.Run, deltas)
+	if err == nil {
+		submission.Run, err = service.waitForTerminalRun(
+			ctx,
+			actor.UserID,
+			submission.Run,
+		)
+	}
 	return submission, err
 }
 
@@ -306,7 +314,45 @@ func (service *RunService) RetryTextStream(
 	}
 	deltas := &countingDeltaObserver{delegate: observer}
 	retry.Run, err = service.process(ctx, actor, retry.Run, deltas)
+	if err == nil {
+		retry.Run, err = service.waitForTerminalRun(
+			ctx,
+			actor.UserID,
+			retry.Run,
+		)
+	}
 	return retry, err
+}
+
+func (service *RunService) waitForTerminalRun(
+	ctx context.Context,
+	ownerID string,
+	run Run,
+) (Run, error) {
+	if run.Status == core.RunStatusCompleted || run.Status == core.RunStatusFailed {
+		return run, nil
+	}
+	ticker := time.NewTicker(streamReplayPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return Run{}, ctx.Err()
+		case <-ticker.C:
+			current, err := service.repository.FindRun(ctx, ownerID, run.ID)
+			if err != nil {
+				return Run{}, err
+			}
+			switch current.Status {
+			case core.RunStatusCompleted, core.RunStatusFailed:
+				return current, nil
+			case core.RunStatusPending, core.RunStatusRunning:
+				continue
+			default:
+				return Run{}, ErrInvalidContext
+			}
+		}
+	}
 }
 
 func (service *RunService) GetRun(
