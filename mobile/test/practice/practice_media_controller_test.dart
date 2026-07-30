@@ -365,6 +365,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('practice-question-audio')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('practice-open-history')));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byKey(const Key('practice-recording-play-audio-1')),
       220,
@@ -392,6 +394,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Practice hides actions without backed data', (tester) async {
+    final controller = _controller(
+      snapshot: _activeSnapshot(audioAssetId: 'audio-1'),
+      media: _MediaClient(),
+      player: _AudioPlayer(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(home: PracticePage(agentController: controller)),
+    );
+
+    expect(find.byKey(const Key('practice-question-audio')), findsOneWidget);
+    expect(find.byKey(const Key('practice-hint-question-2')), findsNothing);
+    expect(find.text('回答框架'), findsNothing);
+    expect(find.text('参考回答'), findsNothing);
+  });
+
   testWidgets('Practice media buttons are disabled while recording', (
     tester,
   ) async {
@@ -409,22 +430,19 @@ void main() {
 
     expect(
       tester
-          .widget<IconButton>(find.byKey(const Key('practice-question-audio')))
+          .widget<TextButton>(find.byKey(const Key('practice-question-audio')))
           .onPressed,
       isNull,
-    );
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('practice-recording-play-audio-1')),
-      220,
-      scrollable: find.byType(Scrollable).first,
     );
     expect(
       tester
-          .widget<IconButton>(
-            find.byKey(const Key('practice-recording-play-audio-1')),
-          )
+          .widget<IconButton>(find.byKey(const Key('practice-open-history')))
           .onPressed,
       isNull,
+    );
+    expect(
+      find.byKey(const Key('practice-recording-play-audio-1')),
+      findsNothing,
     );
     await controller.clearPrivateState();
   });
@@ -696,6 +714,16 @@ final class _SnapshotPracticeClient implements PracticeClient {
     required String sessionId,
     required String questionId,
     required String candidateId,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
     required String idempotencyKey,
   }) {
     throw UnimplementedError();

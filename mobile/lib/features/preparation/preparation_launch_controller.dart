@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:speakup/features/preparation/preparation_launch_client.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/preparation/practice_workspace_controller.dart';
 
 typedef AgentPracticeContextProvider = AgentPracticeContext? Function();
 typedef AgentThreadIdProvider = String? Function();
@@ -29,14 +30,18 @@ final class PreparationLaunchController extends ChangeNotifier {
     required this.threadIdProvider,
     required this.matterActivator,
     required this.voiceActivator,
+    this.workspaceController,
     PreparationLaunchIdFactory? idFactory,
-  }) : _idFactory = idFactory ?? _secureLaunchId;
+  }) : _idFactory = idFactory ?? _secureLaunchId {
+    workspaceController?.addListener(_handleWorkspaceState);
+  }
 
   final PreparationLaunchClient client;
   final AgentPracticeContextProvider contextProvider;
   final AgentThreadIdProvider threadIdProvider;
   final PreparationMatterActivator matterActivator;
   final VoicePracticeActivator voiceActivator;
+  final PracticeWorkspaceController? workspaceController;
   final PreparationLaunchIdFactory _idFactory;
 
   String _backgroundSummary = '';
@@ -53,12 +58,41 @@ final class PreparationLaunchController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   PreparationLaunchStage? get stage => _stage;
   PreparationPracticeBootstrap? get bootstrap => _bootstrap;
-  bool get isStarting => _starting;
+  bool get isStarting => _starting || (workspaceController?.isBusy ?? false);
   bool get isSelectionLocked =>
-      _starting ||
-      (_retry != null && (_bootstrap != null || _commitMayHaveSucceeded));
-  bool get canRetry => _retry != null && !_starting;
+      isStarting ||
+      (_retry != null &&
+          (_bootstrap != null ||
+              _commitMayHaveSucceeded ||
+              (workspaceController != null && _retry!.threadId != null)));
+  bool get canRetry => _retry != null && !isStarting;
   bool get hasValidBackground => _validBackground(_backgroundSummary.trim());
+  bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
+  String? get resumablePracticeTitle => workspaceController?.currentTitle;
+  String? get resumableScenarioId => workspaceController?.currentScenarioId;
+  String? get workspaceErrorMessage => workspaceController?.errorMessage;
+  bool get canRetryWorkspaceActivation =>
+      workspaceController?.canRetryActivation ?? false;
+
+  Future<bool> resumeCurrentPractice() async {
+    final workspace = workspaceController;
+    return workspace == null || await workspace.resumeCurrentPractice();
+  }
+
+  Future<bool> parkCurrentPractice() async {
+    final workspace = workspaceController;
+    return workspace == null ||
+        workspace.currentLease == null ||
+        await workspace.parkCurrentPractice();
+  }
+
+  Future<void> activateAccount(String accountId) async {
+    await workspaceController?.activateAccount(accountId);
+  }
+
+  Future<void> retryWorkspaceActivation() async {
+    await workspaceController?.retryActivation();
+  }
 
   void updateBackgroundSummary(String value) {
     if (_disposed || isSelectionLocked || value == _backgroundSummary) {
@@ -75,8 +109,11 @@ final class PreparationLaunchController extends ChangeNotifier {
     _invalidateAttempt();
   }
 
-  Future<bool> start(PreparationLaunchSelection selection) {
-    if (_disposed || _starting) {
+  Future<bool> start(
+    PreparationLaunchSelection selection, {
+    bool replaceCurrentPractice = false,
+  }) {
+    if (_disposed || isStarting) {
       return Future<bool>.value(false);
     }
     final background = _backgroundSummary.trim();
@@ -91,8 +128,10 @@ final class PreparationLaunchController extends ChangeNotifier {
       notifyListeners();
       return Future<bool>.value(false);
     }
-    final threadId = threadIdProvider();
-    if (threadId == null || !_validResourceId(threadId)) {
+    final workspace = workspaceController;
+    final threadId = workspace == null ? threadIdProvider() : null;
+    if (workspace == null &&
+        (threadId == null || !_validResourceId(threadId))) {
       _errorMessage = 'Agent 对话仍在恢复，请稍后再试。你的背景内容会保留在本机当前页面。';
       _stage = PreparationLaunchStage.context;
       if (!_hasCommittedOrAmbiguousCreate) {
@@ -126,6 +165,9 @@ final class PreparationLaunchController extends ChangeNotifier {
             selection: selection,
             backgroundSummary: background,
             threadId: threadId,
+            workspaceOperationId: _newId('practice-workspace'),
+            workspaceLease: null,
+            replaceCurrentPractice: replaceCurrentPractice,
             context: null,
             matterKey: _newId('agent-matter'),
             profileKey: _newId('prep-profile'),
@@ -139,8 +181,11 @@ final class PreparationLaunchController extends ChangeNotifier {
 
   Future<bool> retry() {
     final attempt = _retry;
-    if (_disposed || _starting || attempt == null) {
+    if (_disposed || isStarting || attempt == null) {
       return Future<bool>.value(false);
+    }
+    if (workspaceController != null) {
+      return _run(attempt);
     }
     final threadId = threadIdProvider();
     if (threadId == null || !_validResourceId(threadId)) {
@@ -163,6 +208,8 @@ final class PreparationLaunchController extends ChangeNotifier {
 
   Future<bool> _run(_LaunchAttempt attempt) async {
     final operationEpoch = _epoch;
+    final workspace = workspaceController;
+    var launchSucceeded = false;
     final preserveCommittedState =
         identical(_retry, attempt) && _hasCommittedOrAmbiguousCreate;
     _starting = true;
@@ -174,22 +221,50 @@ final class PreparationLaunchController extends ChangeNotifier {
     _retry = attempt;
     notifyListeners();
     try {
-      _requireThreadCurrent(operationEpoch, attempt.threadId);
+      var activeAttempt = attempt;
+      if (workspace != null) {
+        _stage = PreparationLaunchStage.context;
+        notifyListeners();
+        final lease = attempt.threadId == null && attempt.replaceCurrentPractice
+            ? await workspace.replaceCurrentPractice(
+                attempt.workspaceOperationId,
+              )
+            : await workspace.acquireThread(attempt.workspaceOperationId);
+        if (lease == null ||
+            (attempt.threadId != null &&
+                attempt.threadId != lease.practiceThreadId)) {
+          throw const PreparationLaunchException(
+            kind: PreparationLaunchFailureKind.contextChanged,
+            stage: PreparationLaunchStage.context,
+            retryable: true,
+          );
+        }
+        activeAttempt = attempt.withWorkspaceLease(lease);
+        _retry = activeAttempt;
+      }
+      final threadId = activeAttempt.threadId;
+      if (threadId == null || !_validResourceId(threadId)) {
+        throw const PreparationLaunchException(
+          kind: PreparationLaunchFailureKind.contextMissing,
+          stage: PreparationLaunchStage.context,
+          retryable: true,
+        );
+      }
+      _requireThreadCurrent(operationEpoch, threadId);
       _stage = PreparationLaunchStage.matter;
       notifyListeners();
       final activeContext = await matterActivator(
-        threadId: attempt.threadId,
-        selection: attempt.selection,
-        clientOperationId: attempt.matterKey,
+        threadId: threadId,
+        selection: activeAttempt.selection,
+        clientOperationId: activeAttempt.matterKey,
       );
-      if (!_validContext(activeContext) ||
-          activeContext.threadId != attempt.threadId) {
+      if (!_validContext(activeContext) || activeContext.threadId != threadId) {
         throw const PreparationLaunchException(
           kind: PreparationLaunchFailureKind.invalidResponse,
           stage: PreparationLaunchStage.matter,
         );
       }
-      final activeAttempt = attempt.withContext(activeContext);
+      activeAttempt = activeAttempt.withContext(activeContext);
       _retry = activeAttempt;
       _requireCurrent(operationEpoch, activeContext);
 
@@ -219,6 +294,7 @@ final class PreparationLaunchController extends ChangeNotifier {
           context: activeContext,
           selection: activeAttempt.selection,
           preparationProfileId: profile.id,
+          preparationSnapshotId: snapshot.id,
           preparationUserId: profile.userId,
         ),
         idempotencyKey: activeAttempt.planKey,
@@ -230,6 +306,7 @@ final class PreparationLaunchController extends ChangeNotifier {
       final bootstrap = await client.createSession(
         planId: plan.id,
         input: CreatePreparationSessionInput(
+          agentThreadId: activeContext.threadId,
           expectedPlanRevision: plan.revision,
           preparationSnapshotId: snapshot.id,
           preparationProfileId: profile.id,
@@ -243,6 +320,25 @@ final class PreparationLaunchController extends ChangeNotifier {
       _requireCurrent(operationEpoch, activeContext);
       _bootstrap = bootstrap;
 
+      final lease = activeAttempt.workspaceLease;
+      if (workspace != null && lease != null) {
+        final committed = await workspace.commitSession(
+          lease: lease,
+          matterId: activeContext.matterId,
+          sessionId: bootstrap.session.id,
+          scenarioId: activeAttempt.selection.scenarioDefinitionId,
+          scenarioTitle: activeAttempt.selection.scenarioDisplayName,
+        );
+        if (!committed) {
+          throw const PreparationLaunchException(
+            kind: PreparationLaunchFailureKind.network,
+            stage: PreparationLaunchStage.session,
+            retryable: true,
+          );
+        }
+        _requireCurrent(operationEpoch, activeContext);
+      }
+
       _stage = PreparationLaunchStage.voice;
       notifyListeners();
       await voiceActivator(
@@ -255,11 +351,12 @@ final class PreparationLaunchController extends ChangeNotifier {
       _retry = null;
       _commitMayHaveSucceeded = false;
       _errorMessage = null;
+      launchSucceeded = true;
       return true;
     } on PreparationLaunchException catch (error) {
       if (_isCurrent(operationEpoch)) {
         _stage = error.stage ?? _stage;
-        _errorMessage = _messageFor(error);
+        _errorMessage = workspaceController?.errorMessage ?? _messageFor(error);
         if (error.kind == PreparationLaunchFailureKind.invalidResponse &&
             error.statusCode == 201) {
           _commitMayHaveSucceeded = true;
@@ -273,12 +370,23 @@ final class PreparationLaunchController extends ChangeNotifier {
       return false;
     } on Object {
       if (_isCurrent(operationEpoch)) {
-        _errorMessage = _stage == PreparationLaunchStage.voice
-            ? '练习已创建，但语音题目暂时无法连接。请重试连接。'
-            : '暂时无法开始练习，请稍后重试。';
+        _errorMessage =
+            workspaceController?.errorMessage ??
+            (_stage == PreparationLaunchStage.voice
+                ? '练习已创建，但语音题目暂时无法连接。请重试连接。'
+                : '暂时无法开始练习，请稍后重试。');
       }
       return false;
     } finally {
+      if (!launchSucceeded &&
+          _isCurrent(operationEpoch) &&
+          workspace != null &&
+          workspace.currentLease?.operationId == attempt.workspaceOperationId) {
+        final parked = await workspace.parkCurrentPractice();
+        if (!parked && _isCurrent(operationEpoch)) {
+          _errorMessage ??= workspace.errorMessage ?? '练习准备已暂停，但暂时无法返回首页。';
+        }
+      }
       if (_isCurrent(operationEpoch)) {
         _starting = false;
         notifyListeners();
@@ -295,7 +403,11 @@ final class PreparationLaunchController extends ChangeNotifier {
     _retry = null;
     _commitMayHaveSucceeded = false;
     _starting = false;
-    await client.clearAccountState();
+    await Future.wait<void>([
+      client.clearAccountState(),
+      if (workspaceController case final workspace?)
+        workspace.clearPrivateState(),
+    ]);
     if (!_disposed) {
       notifyListeners();
     }
@@ -359,7 +471,14 @@ final class PreparationLaunchController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _epoch++;
+    workspaceController?.removeListener(_handleWorkspaceState);
     super.dispose();
+  }
+
+  void _handleWorkspaceState() {
+    if (!_disposed) {
+      notifyListeners();
+    }
   }
 }
 
@@ -368,6 +487,9 @@ final class _LaunchAttempt {
     required this.selection,
     required this.backgroundSummary,
     required this.threadId,
+    required this.workspaceOperationId,
+    required this.workspaceLease,
+    required this.replaceCurrentPractice,
     required this.context,
     required this.matterKey,
     required this.profileKey,
@@ -379,7 +501,10 @@ final class _LaunchAttempt {
 
   final PreparationLaunchSelection selection;
   final String backgroundSummary;
-  final String threadId;
+  final String? threadId;
+  final String workspaceOperationId;
+  final PracticeWorkspaceLease? workspaceLease;
+  final bool replaceCurrentPractice;
   final AgentPracticeContext? context;
   final String matterKey;
   final String profileKey;
@@ -391,17 +516,38 @@ final class _LaunchAttempt {
   bool matches({
     required PreparationLaunchSelection selection,
     required String backgroundSummary,
-    required String threadId,
+    required String? threadId,
   }) =>
       this.selection == selection &&
       this.backgroundSummary == backgroundSummary &&
-      this.threadId == threadId;
+      (this.threadId == threadId || threadId == null);
+
+  _LaunchAttempt withWorkspaceLease(PracticeWorkspaceLease value) {
+    return _LaunchAttempt(
+      selection: selection,
+      backgroundSummary: backgroundSummary,
+      threadId: value.practiceThreadId,
+      workspaceOperationId: workspaceOperationId,
+      workspaceLease: value,
+      replaceCurrentPractice: replaceCurrentPractice,
+      context: context,
+      matterKey: matterKey,
+      profileKey: profileKey,
+      snapshotKey: snapshotKey,
+      planKey: planKey,
+      sessionKey: sessionKey,
+      voiceKey: voiceKey,
+    );
+  }
 
   _LaunchAttempt withContext(AgentPracticeContext value) {
     return _LaunchAttempt(
       selection: selection,
       backgroundSummary: backgroundSummary,
       threadId: threadId,
+      workspaceOperationId: workspaceOperationId,
+      workspaceLease: workspaceLease,
+      replaceCurrentPractice: replaceCurrentPractice,
       context: value,
       matterKey: matterKey,
       profileKey: profileKey,

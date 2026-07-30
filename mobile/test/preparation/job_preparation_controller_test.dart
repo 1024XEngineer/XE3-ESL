@@ -1,14 +1,23 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/preparation/job_preparation_client.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
 import 'package:speakup/features/preparation/job_preparation_models.dart';
+import 'package:speakup/features/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/preparation/practice_workspace_controller.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
+import 'package:speakup/practice/practice_client.dart';
+import 'package:speakup/practice/practice_models.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test(
     'runs JD confirmation and preview before explicit Session start',
     () async {
@@ -282,6 +291,198 @@ void main() {
   );
 
   test(
+    'workspace creates a dedicated practice without a focused home Thread and resumes it exactly',
+    () async {
+      final harness = await _createWorkspaceHarness(
+        _FakeJobPreparationClient(),
+        clearHomeFocus: true,
+      );
+      addTearDown(harness.dispose);
+      expect(harness.agentController.threadId, isNull);
+      final originalThreadCount = harness.agentController.threads.length;
+
+      await _prepareJobPreview(harness.controller);
+
+      final practiceThreadId =
+          harness.workspaceController.currentPracticeThreadId!;
+      expect(practiceThreadId, isNot(_threadId));
+      expect(harness.controller.plan?.context.threadId, practiceThreadId);
+      expect(
+        harness.workspaceController.currentPracticeThreadId,
+        practiceThreadId,
+      );
+      expect(
+        harness.agentController.threads,
+        hasLength(originalThreadCount + 1),
+      );
+      expect(harness.agentController.threadId, isNull);
+
+      expect(await harness.controller.startPractice(), isTrue);
+      final sessionId = harness.agentController.practiceSessionId;
+      final matterId = harness.agentController.activeMatter?.id;
+      expect(sessionId, _sessionId);
+      expect(harness.controller.hasResumablePractice, isTrue);
+      expect(harness.controller.resumablePracticeTitle, _scenario.name);
+      expect(harness.workspaceController.currentSessionId, sessionId);
+
+      expect(await harness.controller.parkCurrentPractice(), isTrue);
+      expect(harness.agentController.threadId, isNull);
+      expect(harness.agentController.hasActivePractice, isFalse);
+
+      expect(await harness.controller.resumeCurrentPractice(), isTrue);
+      expect(harness.agentController.threadId, practiceThreadId);
+      expect(harness.agentController.practiceSessionId, sessionId);
+      expect(harness.agentController.activeMatter?.id, matterId);
+    },
+  );
+
+  test(
+    'workspace preview retry reuses the exact lease and idempotency identities',
+    () async {
+      final client = _FakeJobPreparationClient(failFirstProfile: true);
+      final harness = await _createWorkspaceHarness(client);
+      addTearDown(harness.dispose);
+      final homeThreadId = harness.agentController.threadId;
+      final originalThreadCount = harness.agentController.threads.length;
+      harness.controller.updateInput(_input);
+      await harness.controller.analyze();
+      await harness.controller.confirm();
+
+      expect(await harness.controller.createPreview(), isFalse);
+      final firstLease = harness.workspaceController.currentLease;
+      expect(firstLease, isNotNull);
+      expect(harness.agentController.threadId, homeThreadId);
+      expect(
+        harness.agentController.threads,
+        hasLength(originalThreadCount + 1),
+      );
+
+      expect(await harness.controller.retry(), isTrue);
+
+      expect(harness.workspaceController.currentLease, firstLease);
+      expect(harness.agentController.threadId, homeThreadId);
+      expect(
+        harness.controller.plan?.context.threadId,
+        firstLease?.practiceThreadId,
+      );
+      expect(
+        harness.agentController.threads,
+        hasLength(originalThreadCount + 1),
+      );
+      expect(harness.matterKeys, hasLength(2));
+      expect(harness.matterKeys.toSet(), hasLength(1));
+      expect(client.profileKeys, hasLength(2));
+      expect(client.profileKeys.toSet(), hasLength(1));
+    },
+  );
+
+  test(
+    'workspace voice retry reuses the committed Session and exact lease',
+    () async {
+      final client = _FakeJobPreparationClient();
+      final harness = await _createWorkspaceHarness(
+        client,
+        failFirstVoice: true,
+      );
+      addTearDown(harness.dispose);
+      final homeThreadId = harness.agentController.threadId;
+      await _prepareJobPreview(harness.controller);
+      final lease = harness.workspaceController.currentLease;
+      final practiceThreadId = lease?.practiceThreadId;
+      expect(harness.agentController.threadId, homeThreadId);
+
+      expect(await harness.controller.startPractice(), isFalse);
+      expect(harness.agentController.threadId, homeThreadId);
+      expect(harness.workspaceController.currentLease, lease);
+      expect(harness.workspaceController.currentSessionId, _sessionId);
+      expect(harness.controller.bootstrap, same(_bootstrap));
+
+      expect(await harness.controller.retry(), isTrue);
+
+      expect(client.sessionKeys, hasLength(1));
+      expect(harness.voiceKeys, hasLength(2));
+      expect(harness.voiceKeys.toSet(), hasLength(1));
+      expect(harness.workspaceController.currentLease, lease);
+      expect(harness.agentController.threadId, practiceThreadId);
+      expect(harness.agentController.practiceSessionId, _sessionId);
+    },
+  );
+
+  test(
+    'replacement ends the resumable Session before creating a new workspace',
+    () async {
+      final first = await _createWorkspaceHarness(_FakeJobPreparationClient());
+      addTearDown(first.dispose);
+      final homeThreadId = first.agentController.threadId;
+      await _prepareJobPreview(first.controller);
+      expect(await first.controller.startPractice(), isTrue);
+      final firstPracticeThreadId = first.agentController.threadId!;
+      final firstSessionId = first.agentController.practiceSessionId!;
+      expect(await first.controller.parkCurrentPractice(), isTrue);
+      expect(first.agentController.threadId, homeThreadId);
+
+      final replacementClient = _FakeJobPreparationClient(
+        sessionResult: _replacementBootstrap,
+      );
+      final replacement = _workspaceJobController(
+        client: replacementClient,
+        agentController: first.agentController,
+        practiceClient: first.practiceClient,
+        workspaceController: first.workspaceController,
+        matterKeys: first.matterKeys,
+      );
+      addTearDown(replacement.dispose);
+      await replacement.activateAccount(_userId);
+      replacement.updateInput(_input);
+      await replacement.analyze();
+      await replacement.confirm();
+
+      expect(
+        await replacement.createPreview(replaceCurrentPractice: true),
+        isTrue,
+      );
+
+      final replacementThreadId =
+          first.workspaceController.currentPracticeThreadId!;
+      expect(first.practiceClient.endedSessionIds, <String>[firstSessionId]);
+      expect(replacementThreadId, isNot(firstPracticeThreadId));
+      expect(replacementThreadId, isNot(homeThreadId));
+      expect(replacement.plan?.context.threadId, replacementThreadId);
+      expect(first.workspaceController.hasResumable, isFalse);
+      expect(first.agentController.threads, hasLength(3));
+      expect(first.agentController.threadId, homeThreadId);
+
+      expect(await replacement.startPractice(), isTrue);
+      expect(first.agentController.practiceSessionId, _replacementSessionId);
+      expect(first.workspaceController.currentSessionId, _replacementSessionId);
+      expect(replacement.hasResumablePractice, isTrue);
+    },
+  );
+
+  test(
+    'workspace start reacquires its lease and parks to the latest Home Thread',
+    () async {
+      final harness = await _createWorkspaceHarness(
+        _FakeJobPreparationClient(),
+      );
+      addTearDown(harness.dispose);
+      await _prepareJobPreview(harness.controller);
+      final practiceThreadId =
+          harness.workspaceController.currentPracticeThreadId;
+      final originalHomeThreadId = harness.agentController.threadId;
+
+      expect(await harness.agentController.createThread(), isTrue);
+      final latestHomeThreadId = harness.agentController.threadId;
+      expect(latestHomeThreadId, isNot(originalHomeThreadId));
+
+      expect(await harness.controller.startPractice(), isTrue);
+      expect(harness.agentController.threadId, practiceThreadId);
+      expect(await harness.controller.parkCurrentPractice(), isTrue);
+      expect(harness.agentController.threadId, latestHomeThreadId);
+    },
+  );
+
+  test(
     'Agent intent is only offered until the user explicitly applies it',
     () async {
       final client = _FakeJobPreparationClient();
@@ -301,6 +502,274 @@ void main() {
       expect(client.calls, isEmpty);
     },
   );
+}
+
+Future<void> _prepareJobPreview(JobPreparationController controller) async {
+  controller.updateInput(_input);
+  expect(await controller.analyze(), isTrue);
+  expect(await controller.confirm(), isTrue);
+  expect(await controller.createPreview(), isTrue);
+}
+
+Future<_WorkspaceHarness> _createWorkspaceHarness(
+  _FakeJobPreparationClient client, {
+  bool clearHomeFocus = false,
+  bool failFirstVoice = false,
+}) async {
+  final agentClient = FakeAgentClient();
+  final practiceClient = _WorkspacePracticeClient();
+  final agentController = AgentController(
+    client: agentClient,
+    practiceClient: practiceClient,
+    clientIdFactory: (scope) => '$scope-workspace-stable-key',
+  );
+  await agentController.initialize();
+  if (clearHomeFocus) {
+    await agentController.clearFocusedThread();
+  }
+  final workspaceController = PracticeWorkspaceController(
+    agentController: agentController,
+    recordStore: MemoryPracticeLaunchRecordStore(),
+  );
+  final matterKeys = <String>[];
+  final voiceKeys = <String>[];
+  var voiceCalls = 0;
+  final controller = _workspaceJobController(
+    client: client,
+    agentController: agentController,
+    practiceClient: practiceClient,
+    workspaceController: workspaceController,
+    matterKeys: matterKeys,
+    voiceKeys: voiceKeys,
+    failFirstVoice: failFirstVoice,
+    voiceCalls: () => ++voiceCalls,
+  );
+  await controller.activateAccount(_userId);
+  return _WorkspaceHarness(
+    controller: controller,
+    agentController: agentController,
+    practiceClient: practiceClient,
+    workspaceController: workspaceController,
+    matterKeys: matterKeys,
+    voiceKeys: voiceKeys,
+  );
+}
+
+JobPreparationController _workspaceJobController({
+  required _FakeJobPreparationClient client,
+  required AgentController agentController,
+  required _WorkspacePracticeClient practiceClient,
+  required PracticeWorkspaceController workspaceController,
+  required List<String> matterKeys,
+  List<String>? voiceKeys,
+  bool failFirstVoice = false,
+  int Function()? voiceCalls,
+}) {
+  return JobPreparationController(
+    client: client,
+    workspaceController: workspaceController,
+    threadIdProvider: () => agentController.threadId,
+    matterActivator:
+        ({
+          required threadId,
+          required candidate,
+          required clientOperationId,
+        }) async {
+          matterKeys.add(clientOperationId);
+          final matter = await agentController.activateMatterForScenario(
+            threadId: threadId,
+            scene: const AgentScene(
+              id: _scenarioId,
+              title: 'Technical interview',
+              description: 'Discuss one backend project.',
+            ),
+            clientOperationId: clientOperationId,
+          );
+          return AgentPracticeContext(threadId: threadId, matterId: matter.id);
+        },
+    voiceActivator:
+        ({
+          required context,
+          required bootstrap,
+          required clientOperationId,
+        }) async {
+          voiceKeys?.add(clientOperationId);
+          final call = voiceCalls?.call() ?? 1;
+          if (failFirstVoice && call == 1) {
+            throw StateError('Voice activation unavailable.');
+          }
+          practiceClient.armStart(
+            threadId: context.threadId,
+            sessionId: bootstrap.session.id,
+            planId: bootstrap.session.planId,
+            turnLimit: bootstrap.maxEffectiveTurns,
+          );
+          await agentController.activateCreatedPractice(
+            threadId: context.threadId,
+            matterId: context.matterId,
+            sessionId: bootstrap.session.id,
+            turnLimit: bootstrap.maxEffectiveTurns,
+            clientOperationId: clientOperationId,
+          );
+        },
+    idFactory: (scope) => '$scope-workspace-stable-key',
+    analysisPollInterval: Duration.zero,
+    maxAnalysisPollAttempts: 2,
+  );
+}
+
+final class _WorkspaceHarness {
+  const _WorkspaceHarness({
+    required this.controller,
+    required this.agentController,
+    required this.practiceClient,
+    required this.workspaceController,
+    required this.matterKeys,
+    required this.voiceKeys,
+  });
+
+  final JobPreparationController controller;
+  final AgentController agentController;
+  final _WorkspacePracticeClient practiceClient;
+  final PracticeWorkspaceController workspaceController;
+  final List<String> matterKeys;
+  final List<String> voiceKeys;
+
+  void dispose() {
+    controller.dispose();
+    workspaceController.dispose();
+    agentController.dispose();
+  }
+}
+
+final class _WorkspacePracticeClient
+    implements PracticeClient, PracticeLifecycleClient {
+  final Map<String, PracticeSessionSnapshot> _sessions =
+      <String, PracticeSessionSnapshot>{};
+  final List<String> endedSessionIds = <String>[];
+  _WorkspaceStartSeed? _nextStart;
+
+  void armStart({
+    required String threadId,
+    required String sessionId,
+    required String planId,
+    required int turnLimit,
+  }) {
+    _nextStart = _WorkspaceStartSeed(
+      threadId: threadId,
+      sessionId: sessionId,
+      planId: planId,
+      turnLimit: turnLimit,
+    );
+  }
+
+  @override
+  Future<void> clearAccountState() async {
+    _sessions.clear();
+    endedSessionIds.clear();
+    _nextStart = null;
+  }
+
+  @override
+  Future<PracticeSessionSnapshot?> restorePractice({
+    required String threadId,
+    AgentMatter? activeMatter,
+  }) async {
+    return _sessions[threadId];
+  }
+
+  @override
+  Future<PracticeStartResult> startPractice({
+    required String threadId,
+    required AgentMatter activeMatter,
+    required String clientOperationId,
+  }) async {
+    final seed = _nextStart;
+    if (seed == null || seed.threadId != threadId) {
+      throw StateError('No exact JD-first Session was prepared.');
+    }
+    _nextStart = null;
+    final snapshot = PracticeSessionSnapshot(
+      sessionId: seed.sessionId,
+      planId: seed.planId,
+      threadId: seed.threadId,
+      sessionVersion: 1,
+      matter: activeMatter,
+      completedTurns: 0,
+      turnLimit: seed.turnLimit,
+      sessionCompleted: false,
+      currentQuestion: PracticeQuestion(
+        id: 'question-${seed.sessionId}',
+        sessionId: seed.sessionId,
+        text: 'Tell me about the most relevant project for this role.',
+      ),
+    );
+    _sessions[threadId] = snapshot;
+    return PracticeStartResult(snapshot: snapshot);
+  }
+
+  @override
+  Future<PracticeSessionLifecycle> endEarly({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  }) async {
+    final matches = _sessions.entries
+        .where((entry) => entry.value.sessionId == sessionId)
+        .toList(growable: false);
+    if (matches.length != 1 ||
+        matches.single.value.sessionVersion != expectedSessionVersion) {
+      throw StateError('The exact JD-first Session was not active.');
+    }
+    _sessions.remove(matches.single.key);
+    endedSessionIds.add(sessionId);
+    return PracticeSessionLifecycle(
+      sessionId: sessionId,
+      status: PracticeSessionLifecycleStatus.endedEarly,
+      version: expectedSessionVersion + 1,
+    );
+  }
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
+  }
+}
+
+final class _WorkspaceStartSeed {
+  const _WorkspaceStartSeed({
+    required this.threadId,
+    required this.sessionId,
+    required this.planId,
+    required this.turnLimit,
+  });
+
+  final String threadId;
+  final String sessionId;
+  final String planId;
+  final int turnLimit;
 }
 
 JobPreparationController _controller(
@@ -340,8 +809,10 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   _FakeJobPreparationClient({
     this.analysisCompleter,
     this.sessionCompleter,
+    this.sessionResult,
     this.failFirstCreate = false,
     this.failFirstAnalysis = false,
+    this.failFirstProfile = false,
     this.analyzeAsParsing = false,
     JobTarget? restoredTarget,
   }) : restoredTarget =
@@ -349,18 +820,22 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
 
   final Completer<JobTarget>? analysisCompleter;
   final Completer<PreparationPracticeBootstrap>? sessionCompleter;
+  final PreparationPracticeBootstrap? sessionResult;
   final bool failFirstCreate;
   final bool failFirstAnalysis;
+  final bool failFirstProfile;
   final bool analyzeAsParsing;
   final JobTarget restoredTarget;
 
   final List<String> calls = <String>[];
   final List<String> createTargetKeys = <String>[];
   final List<String> analysisKeys = <String>[];
+  final List<String> profileKeys = <String>[];
   final List<String> sessionKeys = <String>[];
   int clearCount = 0;
   int _createAttempts = 0;
   int _analysisAttempts = 0;
+  int _profileAttempts = 0;
 
   @override
   Future<JobTarget> createJobTarget({
@@ -451,6 +926,15 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
     required String idempotencyKey,
   }) async {
     calls.add('profile');
+    profileKeys.add(idempotencyKey);
+    _profileAttempts++;
+    if (failFirstProfile && _profileAttempts == 1) {
+      throw const JobPreparationException(
+        kind: JobPreparationFailureKind.network,
+        stage: JobPreparationOperationStage.profile,
+        retryable: true,
+      );
+    }
     return _profile;
   }
 
@@ -471,7 +955,7 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
     required String idempotencyKey,
   }) async {
     calls.add('plan');
-    return _plan;
+    return _planWithRevision(1, context: context);
   }
 
   @override
@@ -505,7 +989,7 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
     if (pending != null) {
       return pending.future;
     }
-    return _bootstrap;
+    return sessionResult ?? _bootstrap;
   }
 
   @override
@@ -570,11 +1054,14 @@ JobTarget _target(
   );
 }
 
-JobPracticePlanPreview _planWithRevision(int revision) {
+JobPracticePlanPreview _planWithRevision(
+  int revision, {
+  AgentPracticeContext context = _context,
+}) {
   return JobPracticePlanPreview(
     id: _planId,
     userId: _userId,
-    context: _context,
+    context: context,
     preparationProfileId: _profileId,
     preparationSnapshot: _snapshot,
     catalog: _catalog,
@@ -646,7 +1133,9 @@ final JobPreparationSnapshot _snapshot = JobPreparationSnapshot(
 const _scenario = PreparationScenario(
   id: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   name: 'Technical interview',
+  summary: 'Discuss one backend project.',
   version: 1,
   status: 'active',
 );
@@ -655,10 +1144,22 @@ const _config = PreparationScenarioConfig(
   id: 'config-1',
   scenarioId: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   version: 1,
   jobTitle: 'Backend engineer',
   jobDescription: 'Explain trade-offs.',
+  prompt: _prompt,
+);
+
+const _prompt = PreparationScenarioPrompt(
+  publicSceneBrief: 'Discuss one backend project.',
+  practiceGoal: 'Explain decisions with evidence.',
+  userRole: 'Candidate',
+  aiRole: 'Technical interviewer',
+  personaSummary: 'Precise and evidence seeking.',
   focusAreas: <String>['system_design'],
+  turnBlueprints: <String>['Ask for a project overview.'],
+  suggestedDurationSeconds: 900,
 );
 
 const _role = PreparationRole(
@@ -712,6 +1213,7 @@ final PreparationPracticeBootstrap _bootstrap = PreparationPracticeBootstrap(
     id: _sessionId,
     planId: _planId,
     scenarioType: 'INTERVIEW',
+    scenarioModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
     snapshotId: 'session-snapshot-1',
     status: 'starting',
     version: 1,
@@ -721,6 +1223,22 @@ final PreparationPracticeBootstrap _bootstrap = PreparationPracticeBootstrap(
   maxEffectiveTurns: 5,
 );
 
+final PreparationPracticeBootstrap _replacementBootstrap =
+    PreparationPracticeBootstrap(
+      session: PreparationPracticeSession(
+        id: _replacementSessionId,
+        planId: _planId,
+        scenarioType: 'INTERVIEW',
+        scenarioModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
+        snapshotId: 'session-snapshot-2',
+        status: 'starting',
+        version: 1,
+        createdAt: _now,
+      ),
+      preparationSnapshotId: _snapshotId,
+      maxEffectiveTurns: 5,
+    );
+
 const _context = AgentPracticeContext(threadId: _threadId, matterId: _matterId);
 
 const _userId = 'user-1';
@@ -729,6 +1247,7 @@ const _profileId = 'profile-1';
 const _snapshotId = 'snapshot-1';
 const _planId = 'plan-1';
 const _sessionId = 'session-1';
+const _replacementSessionId = 'session-2';
 const _threadId = 'thread-1';
 const _matterId = 'matter-1';
 const _scenarioId = 'scenario-1';

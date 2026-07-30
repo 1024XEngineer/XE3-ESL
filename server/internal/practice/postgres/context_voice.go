@@ -100,7 +100,7 @@ func (r *Repository) AdvanceContextVoiceTurn(
 		snapshot.ID != snapshotID ||
 		snapshot.SessionID != command.SessionID ||
 		snapshot.SessionPolicy.MaxEffectiveTurns != turnLimit ||
-		turnLimit < 1 || turnLimit > 6 ||
+		turnLimit < 1 || turnLimit > 14 ||
 		effectiveTurns < 0 || effectiveTurns > turnLimit {
 		return persistence.TurnResult{}, persistence.ErrConflict
 	}

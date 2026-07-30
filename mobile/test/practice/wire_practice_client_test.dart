@@ -73,8 +73,17 @@ void main() {
       '$encoded/transcription-candidates',
     );
     expect(
+      endpoints.submitTextPath(opaque, opaque),
+      '/v1/voice-practice-sessions/$encoded/questions/'
+      '$encoded/text-answers',
+    );
+    expect(
       endpoints.confirmPath(opaque),
       '/v1/transcription-candidates/$encoded/confirmations',
+    );
+    expect(
+      endpoints.endEarlyPath(opaque),
+      '/v1/practice-sessions/$encoded/end-early',
     );
   });
 
@@ -191,6 +200,104 @@ void main() {
     expect(confirmation.turnId, _turnId);
     expect(confirmation.nextQuestion?.id, _nextQuestionId);
     expect(confirmation.completedTurns, 1);
+    transport.expectDone();
+  });
+
+  test('submits text through the combined durable answer route', () async {
+    const answer = 'I led the rollout and communicated the risk.';
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path:
+            '/v1/voice-practice-sessions/$_sessionId/questions/'
+            '$_questionId/text-answers',
+        verify: (request) {
+          expect(request.rawFilePath, isNull);
+          expect(jsonDecode(request.jsonBody!), {'answer_text': answer});
+          expect(request.headers['Idempotency-Key'], 'text-operation');
+        },
+        response: _json(HttpStatus.ok, {
+          'practice_session_id': _sessionId,
+          'practice_plan_id': 'plan-1',
+          'thread_id': _threadId,
+          'matter': _matterJson(),
+          'session_version': 2,
+          'effective_turns': 1,
+          'turn_limit': 3,
+          'session_completed': false,
+          'current_question': {
+            'question_id': _nextQuestionId,
+            'practice_session_id': _sessionId,
+            'content': 'What did you learn?',
+            'speaker_participant_id': 'participant-agent',
+            'addressee_participant_ids': ['participant-user'],
+            'speech_path': '/v1/questions/$_nextQuestionId/speech',
+          },
+          'current_turn': {
+            'turn_id': _turnId,
+            'practice_session_id': _sessionId,
+            'question_id': _questionId,
+            'respondent_participant_id': 'participant-user',
+            'candidate_id': 'text-candidate-1',
+            'answer_text': answer,
+            'evidence_version': 1,
+            'effective_turns': 1,
+            'session_completed': false,
+          },
+        }),
+      ),
+    ]);
+
+    final confirmation = await _client(transport).submitText(
+      sessionId: _sessionId,
+      questionId: _questionId,
+      answerText: '  $answer  ',
+      idempotencyKey: 'text-operation',
+    );
+
+    expect(confirmation.answer.text, answer);
+    expect(confirmation.candidateId, 'text-candidate-1');
+    expect(confirmation.nextQuestion?.id, _nextQuestionId);
+    transport.expectDone();
+  });
+
+  test('ends the exact active session with its current version', () async {
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path: '/v1/practice-sessions/$_sessionId/end-early',
+        verify: (request) {
+          expect(request.rawFilePath, isNull);
+          expect(jsonDecode(request.jsonBody!), {
+            'expected_session_version': 3,
+          });
+          expect(request.headers['Idempotency-Key'], 'end-practice-operation');
+        },
+        response: _json(HttpStatus.ok, {
+          'practice_session_id': _sessionId,
+          'practice_plan_id': 'plan-1',
+          'scenario_type': 'INTERVIEW',
+          'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'snapshot_id': 'snapshot-1',
+          'practice_session_status': 'ended_early',
+          'session_version': 4,
+          'started_at': '2026-07-25T09:00:01Z',
+          'ended_at': '2026-07-25T09:10:00Z',
+          'end_reason': 'USER_ENDED',
+          'created_at': _timestamp,
+        }),
+      ),
+    ]);
+
+    final lifecycle = await _client(transport).endEarly(
+      sessionId: _sessionId,
+      expectedSessionVersion: 3,
+      idempotencyKey: 'end-practice-operation',
+    );
+
+    expect(lifecycle.sessionId, _sessionId);
+    expect(lifecycle.status, PracticeSessionLifecycleStatus.endedEarly);
+    expect(lifecycle.version, 4);
     transport.expectDone();
   });
 

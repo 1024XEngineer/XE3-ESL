@@ -1,0 +1,177 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/agent/agent_voice_widgets.dart';
+
+void main() {
+  testWidgets('renders assistant emphasis instead of Markdown markers', (
+    tester,
+  ) async {
+    await _pumpMessage(
+      tester,
+      const AgentMessage(
+        id: 'assistant-markdown',
+        role: AgentMessageRole.assistant,
+        text: 'You are **Xiaohua**.',
+      ),
+    );
+
+    final selectableText = _messageSelectableText(tester, 'assistant-markdown');
+    expect(
+      selectableText.map(_selectablePlainText).join(),
+      contains('You are Xiaohua.'),
+    );
+    expect(
+      selectableText
+          .expand(
+            (widget) => widget.textSpan == null
+                ? const <TextSpan>[]
+                : _flatten(widget.textSpan!),
+          )
+          .any(
+            (span) =>
+                span.text == 'Xiaohua' &&
+                span.style?.fontWeight == FontWeight.w700,
+          ),
+      isTrue,
+    );
+    expect(
+      selectableText.any(
+        (widget) => _selectablePlainText(widget).contains('**'),
+      ),
+      isFalse,
+    );
+  });
+
+  testWidgets('renders assistant block Markdown inside the message bubble', (
+    tester,
+  ) async {
+    await _pumpMessage(
+      tester,
+      const AgentMessage(
+        id: 'assistant-list',
+        role: AgentMessageRole.assistant,
+        text: '## Practice\n\n- First answer\n- Add evidence',
+      ),
+    );
+
+    final text = _messageSelectableText(
+      tester,
+      'assistant-list',
+    ).map(_selectablePlainText).join(' ');
+    expect(text, contains('Practice'));
+    expect(text, contains('First answer'));
+    expect(text, contains('Add evidence'));
+  });
+
+  testWidgets('keeps user Markdown input as literal plain text', (
+    tester,
+  ) async {
+    await _pumpMessage(
+      tester,
+      const AgentMessage(
+        id: 'user-markdown',
+        role: AgentMessageRole.user,
+        text: 'I typed **literal markers**.',
+      ),
+    );
+
+    expect(find.text('I typed **literal markers**.'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('agent-message-user-markdown')),
+        matching: find.byType(SelectableText),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('does not load remote images from assistant Markdown', (
+    tester,
+  ) async {
+    await _pumpMessage(
+      tester,
+      const AgentMessage(
+        id: 'assistant-image',
+        role: AgentMessageRole.assistant,
+        text: '![private diagram](https://example.com/private.png)',
+      ),
+    );
+
+    expect(find.byType(Image), findsNothing);
+    expect(find.text('[图片：private diagram]'), findsOneWidget);
+  });
+
+  testWidgets('renders and dispatches an interview preparation action', (
+    tester,
+  ) async {
+    const action = AgentMessageAction(
+      type: AgentMessageActionType.openInterviewPreparation,
+      label: '配置并开始面试',
+      matterId: '10000000-0000-4000-8000-000000000001',
+      title: 'Java Interview Practice',
+    );
+    AgentMessageAction? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentMessageBubble(
+            message: const AgentMessage(
+              id: 'assistant-interview',
+              role: AgentMessageRole.assistant,
+              text: '面试场景已创建。',
+              actions: <AgentMessageAction>[action],
+            ),
+            onAction: (value) => selected = value,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Java Interview Practice'), findsOneWidget);
+    expect(find.text('配置并开始面试'), findsOneWidget);
+    await tester.tap(
+      find.byKey(
+        const Key(
+          'agent-action-interview-10000000-0000-4000-8000-000000000001',
+        ),
+      ),
+    );
+    expect(selected, same(action));
+  });
+}
+
+Future<void> _pumpMessage(WidgetTester tester, AgentMessage message) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(body: AgentMessageBubble(message: message)),
+    ),
+  );
+  await tester.pump();
+}
+
+Iterable<SelectableText> _messageSelectableText(
+  WidgetTester tester,
+  String messageID,
+) {
+  return tester.widgetList<SelectableText>(
+    find.descendant(
+      of: find.byKey(Key('agent-assistant-text-$messageID')),
+      matching: find.byType(SelectableText),
+    ),
+  );
+}
+
+String _selectablePlainText(SelectableText widget) {
+  return widget.textSpan?.toPlainText() ?? widget.data ?? '';
+}
+
+Iterable<TextSpan> _flatten(InlineSpan span) sync* {
+  if (span is! TextSpan) {
+    return;
+  }
+  yield span;
+  for (final child in span.children ?? const <InlineSpan>[]) {
+    yield* _flatten(child);
+  }
+}

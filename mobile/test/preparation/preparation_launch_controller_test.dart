@@ -1,13 +1,23 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/preparation/preparation_launch_client.dart';
 import 'package:speakup/features/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
+import 'package:speakup/features/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/preparation/practice_workspace_controller.dart';
+import 'package:speakup/practice/practice_client.dart';
+import 'package:speakup/practice/practice_models.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test(
     'runs the typed launch chain and reuses every key after network failure',
     () async {
@@ -376,6 +386,364 @@ void main() {
       expect(controller.canRetry, isFalse);
     },
   );
+
+  test(
+    'workspace launch creates, parks, and resumes an independent practice',
+    () async {
+      final harness = await _createWorkspaceLaunchHarness();
+      addTearDown(harness.dispose);
+      final originalThreadCount = harness.agentController.threads.length;
+
+      expect(await harness.launchController.start(_selection), isTrue);
+
+      final practiceThreadId = harness.agentController.threadId;
+      final matterId = harness.agentController.activeMatter?.id;
+      expect(practiceThreadId, isNotNull);
+      expect(practiceThreadId, isNot(harness.homeThreadId));
+      expect(
+        harness.agentController.threads,
+        hasLength(originalThreadCount + 1),
+      );
+      expect(harness.agentController.hasActivePractice, isTrue);
+      expect(harness.agentController.practiceSessionId, _sessionId);
+      expect(harness.launchController.hasResumablePractice, isTrue);
+
+      final persisted =
+          jsonDecode((await harness.recordStore.read(_userId))!)
+              as Map<String, Object?>;
+      expect(persisted, containsPair('practice_thread_id', practiceThreadId));
+      expect(persisted, containsPair('return_thread_id', harness.homeThreadId));
+      expect(persisted, containsPair('matter_id', matterId));
+      expect(persisted, containsPair('practice_session_id', _sessionId));
+      expect(
+        persisted,
+        containsPair('scenario_definition_id', _selection.scenarioDefinitionId),
+      );
+
+      expect(await harness.launchController.parkCurrentPractice(), isTrue);
+      expect(harness.agentController.threadId, harness.homeThreadId);
+      expect(harness.agentController.hasActivePractice, isFalse);
+      expect(harness.launchController.hasResumablePractice, isTrue);
+
+      expect(await harness.launchController.resumeCurrentPractice(), isTrue);
+      expect(harness.agentController.threadId, practiceThreadId);
+      expect(harness.agentController.activeMatter?.id, matterId);
+      expect(harness.agentController.practiceSessionId, _sessionId);
+      expect(harness.agentController.hasActivePractice, isTrue);
+    },
+  );
+
+  test(
+    'workspace voice retry reuses its Thread and every launch identity',
+    () async {
+      final harness = await _createWorkspaceLaunchHarness(failFirstVoice: true);
+      addTearDown(harness.dispose);
+      final originalThreadCount = harness.agentController.threads.length;
+
+      expect(await harness.launchController.start(_selection), isFalse);
+
+      final practiceThreadId =
+          harness.workspaceController.currentPracticeThreadId;
+      expect(practiceThreadId, isNotNull);
+      expect(practiceThreadId, isNot(harness.homeThreadId));
+      expect(harness.agentController.threadId, harness.homeThreadId);
+      expect(
+        harness.agentController.threads,
+        hasLength(originalThreadCount + 1),
+      );
+      expect(harness.launchController.stage, PreparationLaunchStage.voice);
+      expect(harness.launchController.canRetry, isTrue);
+      expect(harness.launchController.hasResumablePractice, isTrue);
+
+      expect(await harness.launchController.retry(), isTrue);
+
+      expect(harness.agentController.threadId, practiceThreadId);
+      expect(
+        harness.agentController.threads,
+        hasLength(originalThreadCount + 1),
+      );
+      expect(harness.agentController.practiceSessionId, _sessionId);
+      expect(harness.agentController.hasActivePractice, isTrue);
+      expect(harness.matterKeys, hasLength(2));
+      expect(harness.matterKeys.toSet(), hasLength(1));
+      expect(harness.voiceKeys, hasLength(2));
+      expect(harness.voiceKeys.toSet(), hasLength(1));
+      expect(harness.launchClient.profileKeys, hasLength(2));
+      expect(harness.launchClient.profileKeys.toSet(), hasLength(1));
+      expect(harness.launchClient.snapshotKeys, hasLength(2));
+      expect(harness.launchClient.snapshotKeys.toSet(), hasLength(1));
+      expect(harness.launchClient.planKeys, hasLength(2));
+      expect(harness.launchClient.planKeys.toSet(), hasLength(1));
+      expect(harness.launchClient.sessionKeys, hasLength(2));
+      expect(harness.launchClient.sessionKeys.toSet(), hasLength(1));
+    },
+  );
+}
+
+Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
+  bool failFirstVoice = false,
+}) async {
+  final agentClient = FakeAgentClient();
+  final practiceClient = _WorkspacePracticeClient();
+  final agentController = AgentController(
+    client: agentClient,
+    practiceClient: practiceClient,
+    clientIdFactory: (scope) => '$scope-workspace-agent-key',
+  );
+  await agentController.initialize();
+  final homeThreadId = agentController.threadId!;
+  final recordStore = MemoryPracticeLaunchRecordStore();
+  final workspaceController = PracticeWorkspaceController(
+    agentController: agentController,
+    recordStore: recordStore,
+  );
+  await workspaceController.activateAccount(_userId);
+  final launchClient = _WorkspaceLaunchClient();
+  final matterKeys = <String>[];
+  final voiceKeys = <String>[];
+  var voiceCalls = 0;
+  final launchController = PreparationLaunchController(
+    client: launchClient,
+    contextProvider: () {
+      final threadId = agentController.threadId;
+      final matterId = agentController.activeMatter?.id;
+      if (threadId == null || matterId == null) {
+        return null;
+      }
+      return AgentPracticeContext(threadId: threadId, matterId: matterId);
+    },
+    threadIdProvider: () => agentController.threadId,
+    matterActivator:
+        ({
+          required threadId,
+          required selection,
+          required clientOperationId,
+        }) async {
+          matterKeys.add(clientOperationId);
+          final matter = await agentController.activateMatterForScenario(
+            threadId: threadId,
+            scene: AgentScene(
+              id: selection.scenarioDefinitionId,
+              title: selection.scenarioDisplayName,
+              description: selection.scenarioDescription,
+            ),
+            clientOperationId: clientOperationId,
+          );
+          return AgentPracticeContext(threadId: threadId, matterId: matter.id);
+        },
+    voiceActivator:
+        ({
+          required context,
+          required bootstrap,
+          required clientOperationId,
+        }) async {
+          voiceKeys.add(clientOperationId);
+          voiceCalls++;
+          if (failFirstVoice && voiceCalls == 1) {
+            throw const PreparationLaunchException(
+              kind: PreparationLaunchFailureKind.network,
+              stage: PreparationLaunchStage.voice,
+              retryable: true,
+            );
+          }
+          practiceClient.armStart(
+            threadId: context.threadId,
+            sessionId: bootstrap.session.id,
+          );
+          await agentController.activateCreatedPractice(
+            threadId: context.threadId,
+            matterId: context.matterId,
+            sessionId: bootstrap.session.id,
+            turnLimit: bootstrap.maxEffectiveTurns,
+            clientOperationId: clientOperationId,
+          );
+        },
+    workspaceController: workspaceController,
+    idFactory: (scope) => '$scope-workspace-launch-key',
+  );
+  launchController.updateBackgroundSummary(_background);
+  return _WorkspaceLaunchHarness(
+    agentController: agentController,
+    workspaceController: workspaceController,
+    launchController: launchController,
+    launchClient: launchClient,
+    recordStore: recordStore,
+    homeThreadId: homeThreadId,
+    matterKeys: matterKeys,
+    voiceKeys: voiceKeys,
+  );
+}
+
+final class _WorkspaceLaunchHarness {
+  const _WorkspaceLaunchHarness({
+    required this.agentController,
+    required this.workspaceController,
+    required this.launchController,
+    required this.launchClient,
+    required this.recordStore,
+    required this.homeThreadId,
+    required this.matterKeys,
+    required this.voiceKeys,
+  });
+
+  final AgentController agentController;
+  final PracticeWorkspaceController workspaceController;
+  final PreparationLaunchController launchController;
+  final _WorkspaceLaunchClient launchClient;
+  final MemoryPracticeLaunchRecordStore recordStore;
+  final String homeThreadId;
+  final List<String> matterKeys;
+  final List<String> voiceKeys;
+
+  void dispose() {
+    launchController.dispose();
+    workspaceController.dispose();
+    agentController.dispose();
+  }
+}
+
+final class _WorkspaceLaunchClient implements PreparationLaunchClient {
+  final profileKeys = <String>[];
+  final snapshotKeys = <String>[];
+  final planKeys = <String>[];
+  final sessionKeys = <String>[];
+
+  @override
+  Future<PreparationProfile> createProfile({
+    required CreatePreparationProfileInput input,
+    required String idempotencyKey,
+  }) async {
+    profileKeys.add(idempotencyKey);
+    expect(input.backgroundSummary, _background);
+    return _profile;
+  }
+
+  @override
+  Future<PreparationSnapshot> createSnapshot({
+    required String profileId,
+    required int sourceVersion,
+    required String idempotencyKey,
+  }) async {
+    snapshotKeys.add(idempotencyKey);
+    expect(profileId, _profileId);
+    expect(sourceVersion, 1);
+    return _snapshot;
+  }
+
+  @override
+  Future<PreparationPracticePlan> createPlan({
+    required CreatePreparationPlanInput input,
+    required String idempotencyKey,
+  }) async {
+    planKeys.add(idempotencyKey);
+    return PreparationPracticePlan(
+      id: _planId,
+      userId: _userId,
+      context: input.context,
+      selection: input.selection,
+      preparationProfileId: input.preparationProfileId,
+      revision: 1,
+      status: 'ready',
+    );
+  }
+
+  @override
+  Future<PreparationPracticeBootstrap> createSession({
+    required String planId,
+    required CreatePreparationSessionInput input,
+    required String idempotencyKey,
+  }) async {
+    sessionKeys.add(idempotencyKey);
+    expect(planId, _planId);
+    expect(input.selection, _selection);
+    return _bootstrap;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _WorkspacePracticeClient implements PracticeClient {
+  final Map<String, PracticeSessionSnapshot> _sessions =
+      <String, PracticeSessionSnapshot>{};
+  ({String threadId, String sessionId})? _nextStart;
+
+  void armStart({required String threadId, required String sessionId}) {
+    _nextStart = (threadId: threadId, sessionId: sessionId);
+  }
+
+  @override
+  Future<void> clearAccountState() async {
+    _sessions.clear();
+    _nextStart = null;
+  }
+
+  @override
+  Future<PracticeSessionSnapshot?> restorePractice({
+    required String threadId,
+    AgentMatter? activeMatter,
+  }) async {
+    return _sessions[threadId];
+  }
+
+  @override
+  Future<PracticeStartResult> startPractice({
+    required String threadId,
+    required AgentMatter activeMatter,
+    required String clientOperationId,
+  }) async {
+    final next = _nextStart;
+    if (next == null ||
+        next.threadId != threadId ||
+        next.sessionId != _sessionId) {
+      throw StateError('No exact Practice Session was prepared.');
+    }
+    _nextStart = null;
+    final snapshot = PracticeSessionSnapshot(
+      sessionId: next.sessionId,
+      planId: _planId,
+      threadId: threadId,
+      sessionVersion: 1,
+      matter: activeMatter,
+      completedTurns: 0,
+      turnLimit: 3,
+      sessionCompleted: false,
+      currentQuestion: PracticeQuestion(
+        id: 'question-${next.sessionId}',
+        sessionId: next.sessionId,
+        text: 'Tell me about your experience.',
+      ),
+    );
+    _sessions[threadId] = snapshot;
+    return PracticeStartResult(snapshot: snapshot);
+  }
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
+  }
 }
 
 final class _LaunchClient implements PreparationLaunchClient {
@@ -489,6 +857,7 @@ const _selection = PreparationLaunchSelection(
   scenarioDefinitionId: 'scenario-1',
   scenarioDefinitionVersion: 1,
   scenarioType: 'INTERVIEW',
+  scenarioModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   scenarioDisplayName: 'Technical interview',
   scenarioDescription: 'Backend engineer: technical interview practice',
   scenarioConfigId: 'config-1',
@@ -531,6 +900,7 @@ final _bootstrap = PreparationPracticeBootstrap(
     id: _sessionId,
     planId: _planId,
     scenarioType: 'INTERVIEW',
+    scenarioModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
     snapshotId: 'session-snapshot-1',
     status: 'starting',
     version: 1,

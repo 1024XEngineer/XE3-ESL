@@ -12,6 +12,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
 	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
 	agenttransport "github.com/1024XEngineer/XE3-ESL/server/internal/agent/transport"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
@@ -30,8 +31,20 @@ type Message = core.Message
 type MessageAudio = core.MessageAudio
 type RunStatus = core.RunStatus
 type Run = core.Run
+type ToolCallStatus = core.ToolCallStatus
+type ToolCallRecord = core.ToolCallRecord
 type ContextMessageSource = core.ContextMessageSource
+type ContextMemorySource = core.ContextMemorySource
+type ContextStableProfileSource = core.ContextStableProfileSource
+type ContextSummarySource = core.ContextSummarySource
 type ContextManifest = core.ContextManifest
+type ThreadSummaryContent = core.ThreadSummaryContent
+type ThreadSummaryCheckpoint = core.ThreadSummaryCheckpoint
+type CreateThreadSummaryCheckpointCommand = core.CreateThreadSummaryCheckpointCommand
+type ThreadSummaryCheckpointRepository = core.ThreadSummaryCheckpointRepository
+type SummaryConfiguration = agentsummary.Configuration
+type GenerateSummaryCheckpointCommand = agentsummary.GenerateCheckpointCommand
+type SummaryService = agentsummary.Service
 type RunConfiguration = core.RunConfiguration
 type RunSubmission = core.RunSubmission
 type RunRetry = core.RunRetry
@@ -47,6 +60,12 @@ type IDGenerator = core.IDGenerator
 type Service = agentapp.Service
 type ContextRepository = agentruntime.ContextRepository
 type ContextAssembler = agentruntime.ContextAssembler
+type MemorySearchRequest = agentruntime.MemorySearchRequest
+type MemorySearchHit = agentruntime.MemorySearchHit
+type MemorySearcher = agentruntime.MemorySearcher
+type StableProfileReadRequest = agentruntime.StableProfileReadRequest
+type StableProfileMemory = agentruntime.StableProfileMemory
+type StableProfileReader = agentruntime.StableProfileReader
 type RunService = agentruntime.RunService
 type PostgreSQL = agentpersistence.PostgreSQL
 type PostgresRepository = agentpersistence.PostgresRepository
@@ -85,6 +104,11 @@ const (
 	RunStatusRunning             = core.RunStatusRunning
 	RunStatusCompleted           = core.RunStatusCompleted
 	RunStatusFailed              = core.RunStatusFailed
+	ToolCallStatusProposed       = core.ToolCallStatusProposed
+	ToolCallStatusRunning        = core.ToolCallStatusRunning
+	ToolCallStatusSucceeded      = core.ToolCallStatusSucceeded
+	ToolCallStatusFailed         = core.ToolCallStatusFailed
+	ToolCallStatusRejected       = core.ToolCallStatusRejected
 	RunFailureInterrupted        = core.RunFailureInterrupted
 	RunFailureConfigurationDrift = core.RunFailureConfigurationDrift
 	RunFailureInvalidContext     = core.RunFailureInvalidContext
@@ -98,7 +122,15 @@ const (
 	VoiceCleanupAudio            = core.VoiceCleanupAudio
 	contextTrimNone              = "none"
 	contextTrimBudget            = "context_budget"
+	contextTrimSummary           = "summary_checkpoint"
+	contextTrimSummaryAndBudget  = "summary_checkpoint_and_budget"
 	instructionV1                = "speakup_text_v1"
+	memoryContextLimit           = 6
+	memoryContextPolicyV1        = "memory-context-v1"
+	summaryContextPolicyV1       = "summary-context-v1"
+	summaryContextNotAvailable   = "not_available"
+	summaryContextSelected       = "selected"
+	summaryContextOmittedBudget  = "omitted_budget"
 	maxMessageContentRunes       = core.MaxMessageContentRunes
 	maxMessageContentBytes       = core.MaxMessageContentBytes
 	maxAgentPageSize             = core.MaxAgentPageSize
@@ -118,7 +150,9 @@ var (
 	NewService                  = agentapp.NewService
 	NewContextAssembler         = agentruntime.NewContextAssembler
 	NewRunService               = agentruntime.NewRunService
+	WithToolRegistry            = agentruntime.WithToolRegistry
 	NewPostgresRepository       = agentpersistence.NewPostgresRepository
+	NewSummaryService           = agentsummary.NewService
 	NewVoiceMessageService      = agentvoice.NewVoiceMessageService
 	NewHTTPHandler              = agenttransport.NewHTTPHandler
 	NewHTTPHandlerWithRuns      = agenttransport.NewHTTPHandlerWithRuns

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -12,11 +14,13 @@ final class AuthController extends ChangeNotifier {
   AuthController({
     required this.identityClient,
     required this.sessionStore,
+    this.profileClient,
     PrivateStateCleanup? clearPrivateState,
   }) : _clearPrivateState = clearPrivateState ?? _noCleanup;
 
   final IdentityClient identityClient;
   final SessionStore sessionStore;
+  final UserProfileClient? profileClient;
   final PrivateStateCleanup _clearPrivateState;
 
   AuthState _state = const AuthLoading();
@@ -25,8 +29,23 @@ final class AuthController extends ChangeNotifier {
   int _sessionGeneration = 0;
   Future<void> _sessionStoreTail = Future<void>.value();
   Future<bool> _localCleanupTail = Future<bool>.value(true);
+  UserProfile? _profile;
+  bool _profileLoaded = false;
+  bool _profileSaving = false;
+  bool _profilePromptDismissed = false;
+  String? _profileErrorMessage;
+  _PendingProfileUpdate? _pendingProfileUpdate;
 
   AuthState get state => _state;
+  UserProfile? get profile => _profile;
+  bool get profileSaving => _profileSaving;
+  String? get profileErrorMessage => _profileErrorMessage;
+  bool get shouldPromptForProfile =>
+      profileClient != null &&
+      _profileLoaded &&
+      _profile == null &&
+      _profileErrorMessage == null &&
+      !_profilePromptDismissed;
   AuthSessionCredential? get currentCredential {
     if (_state is! AuthAuthenticated) {
       return null;
@@ -68,6 +87,10 @@ final class AuthController extends ChangeNotifier {
       expectedToken = token;
       _setActiveCredential(token);
       final user = await identityClient.currentUser(sessionToken: token);
+      if (!_isCurrentSession(epoch, token)) {
+        return;
+      }
+      await _loadProfile(epoch: epoch, token: token, userId: user.id);
       if (!_isCurrentSession(epoch, token)) {
         return;
       }
@@ -113,6 +136,7 @@ final class AuthController extends ChangeNotifier {
   Future<void> register({
     required String email,
     required String password,
+    String? displayName,
   }) async {
     if (!_beginSubmission(AuthForm.register)) {
       return;
@@ -120,7 +144,19 @@ final class AuthController extends ChangeNotifier {
     final epoch = _authEpoch;
 
     try {
-      await identityClient.register(email: email, password: password);
+      final profileRegistrationClient =
+          identityClient is ProfileRegistrationClient
+          ? identityClient as ProfileRegistrationClient
+          : null;
+      if (displayName != null && profileRegistrationClient != null) {
+        await profileRegistrationClient.registerWithProfile(
+          email: email,
+          password: password,
+          displayName: displayName,
+        );
+      } else {
+        await identityClient.register(email: email, password: password);
+      }
       if (!_isCurrent(epoch)) {
         return;
       }
@@ -198,6 +234,14 @@ final class AuthController extends ChangeNotifier {
         return;
       }
       _setActiveCredential(result.sessionToken);
+      await _loadProfile(
+        epoch: epoch,
+        token: result.sessionToken,
+        userId: result.user.id,
+      );
+      if (!_isCurrentSession(epoch, result.sessionToken)) {
+        return;
+      }
       _setState(AuthAuthenticated(result.user));
     } on IdentityClientException catch (error) {
       if (_isCurrent(epoch)) {
@@ -226,6 +270,97 @@ final class AuthController extends ChangeNotifier {
 
   Future<void> switchAccount() async {
     await _leaveSession(revokeServerSession: true);
+  }
+
+  void dismissProfilePrompt() {
+    if (!shouldPromptForProfile) {
+      return;
+    }
+    _profilePromptDismissed = true;
+    notifyListeners();
+  }
+
+  Future<String?> updateDisplayName(String displayName) async {
+    final client = profileClient;
+    final credential = currentCredential;
+    final currentState = _state;
+    if (client == null ||
+        credential == null ||
+        currentState is! AuthAuthenticated ||
+        _profileSaving) {
+      return '当前账号暂时不能修改昵称。';
+    }
+    final expectedGeneration = credential.generation;
+    final expectedToken = credential.sessionToken;
+    final expectedProfileVersion = _profile?.profileVersion;
+    final pending = _pendingProfileUpdate;
+    final operation =
+        pending != null &&
+            pending.displayName == displayName &&
+            pending.expectedProfileVersion == expectedProfileVersion
+        ? pending
+        : _PendingProfileUpdate(
+            displayName: displayName,
+            expectedProfileVersion: expectedProfileVersion,
+            idempotencyKey: _newProfileIdempotencyKey(),
+          );
+    _pendingProfileUpdate = operation;
+    _profileSaving = true;
+    _profileErrorMessage = null;
+    notifyListeners();
+    try {
+      final updated = await client.updateProfile(
+        sessionToken: expectedToken,
+        displayName: displayName,
+        expectedProfileVersion: operation.expectedProfileVersion,
+        idempotencyKey: operation.idempotencyKey,
+      );
+      _pendingProfileUpdate = null;
+      if (!_matchesCredential(expectedGeneration, expectedToken) ||
+          updated.userId != currentState.user.id) {
+        return null;
+      }
+      _profile = updated;
+      _profileLoaded = true;
+      _profilePromptDismissed = false;
+      return null;
+    } on IdentityClientException catch (error) {
+      if (!_matchesCredential(expectedGeneration, expectedToken)) {
+        return null;
+      }
+      if (error.isAuthenticationFailure) {
+        _pendingProfileUpdate = null;
+        await invalidateSession(
+          expectedSessionToken: expectedToken,
+          expectedGeneration: expectedGeneration,
+        );
+        return '登录状态已失效，请重新登录。';
+      }
+      if (error.kind == IdentityFailureKind.profileVersionConflict) {
+        _pendingProfileUpdate = null;
+        await _loadProfile(
+          epoch: _authEpoch,
+          token: expectedToken,
+          userId: currentState.user.id,
+        );
+        return '昵称已在其他设备修改，已为你刷新。';
+      }
+      if (error.kind == IdentityFailureKind.invalidRequest) {
+        _pendingProfileUpdate = null;
+        return '昵称需要为 1–40 个有效字符。';
+      }
+      if (!error.retryable) {
+        _pendingProfileUpdate = null;
+      }
+      return '昵称保存失败，请稍后重试。';
+    } catch (_) {
+      return '昵称保存失败，请稍后重试。';
+    } finally {
+      if (_matchesCredential(expectedGeneration, expectedToken)) {
+        _profileSaving = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> retry() async {
@@ -345,6 +480,7 @@ final class AuthController extends ChangeNotifier {
     }
     _sessionToken = token;
     _sessionGeneration++;
+    _resetProfileState();
   }
 
   void _clearActiveCredential() {
@@ -353,6 +489,52 @@ final class AuthController extends ChangeNotifier {
     }
     _sessionToken = null;
     _sessionGeneration++;
+    _resetProfileState();
+  }
+
+  Future<void> _loadProfile({
+    required int epoch,
+    required String token,
+    required String userId,
+  }) async {
+    final client = profileClient;
+    if (client == null) {
+      return;
+    }
+    _profileLoaded = false;
+    _profileErrorMessage = null;
+    try {
+      final loaded = await client.currentProfile(sessionToken: token);
+      if (!_isCurrentSession(epoch, token) || loaded.userId != userId) {
+        return;
+      }
+      _profile = loaded;
+      _profileLoaded = true;
+    } on IdentityClientException catch (error) {
+      if (!_isCurrentSession(epoch, token)) {
+        return;
+      }
+      _profileLoaded = true;
+      if (error.kind == IdentityFailureKind.profileNotFound) {
+        _profile = null;
+      } else {
+        _profileErrorMessage = '昵称暂时无法加载，请稍后重试。';
+      }
+    } catch (_) {
+      if (_isCurrentSession(epoch, token)) {
+        _profileLoaded = true;
+        _profileErrorMessage = '昵称暂时无法加载，请稍后重试。';
+      }
+    }
+  }
+
+  void _resetProfileState() {
+    _profile = null;
+    _profileLoaded = false;
+    _profileSaving = false;
+    _profilePromptDismissed = false;
+    _profileErrorMessage = null;
+    _pendingProfileUpdate = null;
   }
 
   Future<T> _withSessionStoreLock<T>(Future<T> Function() action) {
@@ -396,7 +578,25 @@ String _registrationMessage(IdentityClientException error) {
   return switch (error.kind) {
     IdentityFailureKind.registrationUnavailable => '无法使用这些信息创建账号。',
     IdentityFailureKind.rateLimited => '尝试次数过多，请稍后重试。',
-    IdentityFailureKind.invalidRequest => '请输入有效邮箱和 15–128 个字符的密码。',
+    IdentityFailureKind.invalidRequest => '请输入有效邮箱和至少 8 个字符的密码。',
     _ => _tryAgainMessage,
   };
+}
+
+String _newProfileIdempotencyKey() {
+  final random = Random.secure();
+  final bytes = List<int>.generate(18, (_) => random.nextInt(256));
+  return 'profile_${base64Url.encode(bytes).replaceAll('=', '')}';
+}
+
+final class _PendingProfileUpdate {
+  const _PendingProfileUpdate({
+    required this.displayName,
+    required this.expectedProfileVersion,
+    required this.idempotencyKey,
+  });
+
+  final String displayName;
+  final int? expectedProfileVersion;
+  final String idempotencyKey;
 }

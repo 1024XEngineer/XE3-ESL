@@ -60,6 +60,7 @@ func TestCreateSessionReplaysBeforeMutableContextValidation(t *testing.T) {
 		"intent-session-0001",
 		CreateSessionRequest{
 			ExpectedPlanRevision:  1,
+			UserConfirmed:         true,
 			PreparationSnapshotID: "preparation-snapshot-1",
 			PracticeOptionID:      "option_full_simulation",
 			RoleDefinitionIDs:     []string{"role_technical_interviewer"},
@@ -74,6 +75,127 @@ func TestCreateSessionReplaysBeforeMutableContextValidation(t *testing.T) {
 			got,
 			replayed,
 		)
+	}
+}
+
+func TestConfirmAndStartPracticeBindsThreadAndReplaysSession(t *testing.T) {
+	t.Parallel()
+
+	want := persistence.ContextSessionBootstrap{
+		Session: persistence.ContextSession{
+			ID:     "session-existing",
+			PlanID: "plan-existing",
+		},
+		Snapshot: persistence.ContextSessionSnapshot{PlanRevision: 2},
+	}
+	application := newContextTestApplication(t, &contextRepositoryStub{
+		getPlan: func(string) (persistence.Plan, error) {
+			return persistence.Plan{
+				ID:            "plan-existing",
+				AgentThreadID: "thread-1",
+				Revision:      2,
+				Status:        persistence.PlanStatusReady,
+			}, nil
+		},
+		replaySession: func(
+			_ persistence.ContextIdempotencyIntent,
+		) (persistence.ContextSessionBootstrap, bool, error) {
+			return want, true, nil
+		},
+	})
+
+	got, err := application.ConfirmAndStartPractice(
+		context.Background(),
+		contextActorFixture(),
+		"trusted-confirmation-0001",
+		StartConfirmation{
+			AgentThreadID:        "thread-1",
+			PracticePlanID:       "plan-existing",
+			ExpectedPlanRevision: 2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("ConfirmAndStartPractice: %v", err)
+	}
+	if !got.Replayed || got.Bootstrap.Session.ID != want.Session.ID {
+		t.Fatalf("ConfirmAndStartPractice = %#v", got)
+	}
+}
+
+func TestConfirmAndStartPracticeRejectsCrossThreadConfirmation(t *testing.T) {
+	t.Parallel()
+
+	application := newContextTestApplication(t, &contextRepositoryStub{
+		getPlan: func(string) (persistence.Plan, error) {
+			return persistence.Plan{
+				ID:            "plan-1",
+				AgentThreadID: "thread-owner",
+				Revision:      1,
+				Status:        persistence.PlanStatusReady,
+			}, nil
+		},
+	})
+	_, err := application.ConfirmAndStartPractice(
+		context.Background(),
+		contextActorFixture(),
+		"trusted-confirmation-0002",
+		StartConfirmation{
+			AgentThreadID:        "thread-other",
+			PracticePlanID:       "plan-1",
+			ExpectedPlanRevision: 1,
+		},
+	)
+	if !errors.Is(err, persistence.ErrNotFound) {
+		t.Fatalf("cross-Thread confirmation error = %v", err)
+	}
+}
+
+func TestConfirmAndStartPracticeReturnsExistingActiveSession(t *testing.T) {
+	t.Parallel()
+
+	want := persistence.ContextSessionBootstrap{
+		Session: persistence.ContextSession{
+			ID:     "session-active",
+			PlanID: "plan-1",
+			Status: persistence.ContextSessionProgress,
+		},
+		Snapshot: persistence.ContextSessionSnapshot{PlanRevision: 1},
+	}
+	application := newContextTestApplication(t, &contextRepositoryStub{
+		getPlan: func(string) (persistence.Plan, error) {
+			return persistence.Plan{
+				ID:            "plan-1",
+				AgentThreadID: "thread-1",
+				Revision:      1,
+				Status:        persistence.PlanStatusReady,
+			}, nil
+		},
+		replaySession: func(
+			persistence.ContextIdempotencyIntent,
+		) (persistence.ContextSessionBootstrap, bool, error) {
+			return persistence.ContextSessionBootstrap{}, false,
+				persistence.ErrActiveSessionConflict
+		},
+		resolveSession: func(string) (
+			persistence.ContextSessionBootstrap,
+			error,
+		) {
+			return want, nil
+		},
+	})
+	got, err := application.ConfirmAndStartPractice(
+		context.Background(),
+		contextActorFixture(),
+		"trusted-confirmation-0003",
+		StartConfirmation{
+			AgentThreadID:        "thread-1",
+			PracticePlanID:       "plan-1",
+			ExpectedPlanRevision: 1,
+		},
+	)
+	if err != nil || !got.ActiveConflict ||
+		got.Bootstrap.Session.ID != want.Session.ID {
+		t.Fatalf("active conflict = (%#v, %v)", got, err)
 	}
 }
 
@@ -97,6 +219,7 @@ func TestInterviewSessionRequiresExactlyOneInterviewerRole(t *testing.T) {
 		"intent-session-0002",
 		CreateSessionRequest{
 			ExpectedPlanRevision:  1,
+			UserConfirmed:         true,
 			PreparationSnapshotID: "preparation-snapshot-1",
 			PracticeOptionID:      "option_full_simulation",
 			RoleDefinitionIDs: []string{
@@ -133,6 +256,23 @@ func TestSessionPolicyIsFrozenByPracticeOptionType(t *testing.T) {
 		focus.CoverageCheckpointTurn != 1 ||
 		focus.MaxEffectiveTurns != 3 {
 		t.Fatalf("FOCUS policy = %+v", focus)
+	}
+
+	ieltsFull := defaultContextSessionPolicy(
+		persistence.ScenarioConfigSnapshot{
+			Model: persistence.ScenarioModelIELTSSpeakingFullMock,
+			PromptModel: persistence.ScenarioPromptModel{
+				FocusAreas:               []string{"part_1", "part_2", "part_3"},
+				SuggestedDurationSeconds: 900,
+			},
+		},
+		persistence.PracticeOptionSnapshot{Type: "FULL_SIMULATION"},
+	)
+	if ieltsFull.MinEffectiveTurns != 14 ||
+		ieltsFull.CoverageCheckpointTurn != 14 ||
+		ieltsFull.MaxEffectiveTurns != 14 ||
+		ieltsFull.MaxFollowUpsPerQuestion != 0 {
+		t.Fatalf("IELTS full mock policy = %+v", ieltsFull)
 	}
 }
 
@@ -274,6 +414,7 @@ type contextRepositoryStub struct {
 	getPlan           func(string) (persistence.Plan, error)
 	replaySession     func(persistence.ContextIdempotencyIntent) (persistence.ContextSessionBootstrap, bool, error)
 	createSession     func(persistence.CreateContextSessionCommand) (persistence.ContextSessionBootstrap, bool, error)
+	resolveSession    func(string) (persistence.ContextSessionBootstrap, error)
 	transitionSession func(persistence.TransitionContextSessionCommand) (persistence.ContextSession, bool, error)
 }
 
@@ -362,10 +503,13 @@ func (s *contextRepositoryStub) GetContextSessionSnapshot(
 }
 
 func (s *contextRepositoryStub) ResolveContextSessionByThread(
-	context.Context,
-	persistence.Actor,
-	string,
+	_ context.Context,
+	_ persistence.Actor,
+	threadID string,
 ) (persistence.ContextSessionBootstrap, error) {
+	if s.resolveSession != nil {
+		return s.resolveSession(threadID)
+	}
 	return persistence.ContextSessionBootstrap{},
 		errors.New("unexpected ResolveContextSessionByThread")
 }

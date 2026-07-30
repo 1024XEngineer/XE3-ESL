@@ -37,6 +37,7 @@ void main() {
           context: _context,
           selection: _selection,
           preparationProfileId: profile.id,
+          preparationSnapshotId: snapshot.id,
           preparationUserId: profile.userId,
         ),
         idempotencyKey: 'plan-key-123456',
@@ -44,6 +45,7 @@ void main() {
       final bootstrap = await client.createSession(
         planId: plan.id,
         input: CreatePreparationSessionInput(
+          agentThreadId: _threadId,
           expectedPlanRevision: plan.revision,
           preparationSnapshotId: snapshot.id,
           preparationProfileId: profile.id,
@@ -60,7 +62,7 @@ void main() {
         '/v1/preparation-profiles',
         '/v1/preparation-profiles/$_profileId/snapshots',
         '/v1/practice-plans',
-        '/v1/practice-plans/$_planId/practice-sessions',
+        '/v1/agent-threads/$_threadId/practice-start-confirmations',
       ]);
       expect(jsonDecode(transport.calls.first.body!), {
         'background_summary': _background,
@@ -73,13 +75,16 @@ void main() {
         'scenario_config_id': _configId,
         'scenario_config_version': 1,
         'preparation_profile_id': _profileId,
+        'preparation_snapshot_id': _preparationSnapshotId,
         'selected_role_ids': [_roleId],
+        'practice_option_id': _optionId,
+        'practice_option_version': 1,
+        'max_effective_turns': 3,
       });
       expect(jsonDecode(transport.calls.last.body!), {
         'expected_plan_revision': 1,
-        'preparation_snapshot_id': _preparationSnapshotId,
-        'practice_option_id': _optionId,
-        'role_definition_ids': [_roleId],
+        'user_confirmed': true,
+        'practice_plan_id': _planId,
       });
       for (final call in transport.calls) {
         expect(
@@ -104,6 +109,7 @@ void main() {
       ]);
       final client = _client(transport);
       const sessionInput = CreatePreparationSessionInput(
+        agentThreadId: _threadId,
         expectedPlanRevision: 1,
         preparationSnapshotId: _preparationSnapshotId,
         preparationProfileId: _profileId,
@@ -138,6 +144,7 @@ void main() {
                   context: _context,
                   selection: _selection,
                   preparationProfileId: _profileId,
+                  preparationSnapshotId: _preparationSnapshotId,
                   preparationUserId: _userId,
                 ),
                 idempotencyKey: 'plan-malformed-key',
@@ -182,7 +189,7 @@ void main() {
 
       expect(bootstrap.session.id, _sessionId);
       final sessionCalls = transport.calls.where(
-        (call) => call.uri.path.endsWith('/practice-sessions'),
+        (call) => call.uri.path.endsWith('/practice-start-confirmations'),
       );
       expect(sessionCalls, hasLength(2));
       expect(
@@ -237,6 +244,7 @@ void main() {
           context: _context,
           selection: _selection,
           preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
           preparationUserId: _userId,
         ),
         idempotencyKey: 'plan-key-123456',
@@ -255,6 +263,7 @@ void main() {
           context: _context,
           selection: _selection,
           preparationProfileId: _profileId,
+          preparationSnapshotId: _preparationSnapshotId,
           preparationUserId: _userId,
         ),
         idempotencyKey: 'plan-key-123456',
@@ -289,6 +298,12 @@ void main() {
       'option turn budget': (root) {
         _sessionPolicy(root)['max_effective_turns'] = 6;
       },
+      'missing turn policy reference': (root) {
+        _scenarioDefinitionSnapshot(root).remove('turn_policy_ref');
+      },
+      'invalid session policy reference': (root) {
+        _scenarioDefinitionSnapshot(root)['session_policy_ref'] = '';
+      },
     };
 
     for (final entry in cases.entries) {
@@ -301,6 +316,7 @@ void main() {
           client.createSession(
             planId: _planId,
             input: const CreatePreparationSessionInput(
+              agentThreadId: _threadId,
               expectedPlanRevision: 1,
               preparationSnapshotId: _preparationSnapshotId,
               preparationProfileId: _profileId,
@@ -336,6 +352,7 @@ void main() {
     final bootstrap = await client.createSession(
       planId: _planId,
       input: const CreatePreparationSessionInput(
+        agentThreadId: _threadId,
         expectedPlanRevision: 1,
         preparationSnapshotId: _preparationSnapshotId,
         preparationProfileId: _profileId,
@@ -348,6 +365,74 @@ void main() {
     );
 
     expect(bootstrap.maxEffectiveTurns, 6);
+  });
+
+  test('accepts the dedicated fourteen-turn IELTS full mock budget', () async {
+    final response = _bootstrapJson();
+    final session = response['practice_session']! as Map<String, Object?>;
+    session
+      ..['scenario_type'] = 'EXAM'
+      ..['scenario_model'] = 'IELTS_SPEAKING_FULL_MOCK';
+    final snapshot = response['snapshot']! as Map<String, Object?>;
+    snapshot
+      ..['scenario_type'] = 'EXAM'
+      ..['scenario_model'] = 'IELTS_SPEAKING_FULL_MOCK';
+    final scenario =
+        snapshot['scenario_definition_snapshot']! as Map<String, Object?>;
+    scenario
+      ..['scenario_definition_id'] = _ieltsScenarioId
+      ..['scenario_type'] = 'EXAM'
+      ..['scenario_model'] = 'IELTS_SPEAKING_FULL_MOCK'
+      ..['name'] = 'IELTS 口语完整模拟'
+      ..['version'] = 2;
+    final config =
+        snapshot['scenario_config_snapshot']! as Map<String, Object?>;
+    config
+      ..['scenario_config_id'] = _ieltsConfigId
+      ..['scenario_definition_id'] = _ieltsScenarioId
+      ..['config_type'] = 'EXAM'
+      ..['scenario_model'] = 'IELTS_SPEAKING_FULL_MOCK'
+      ..['version'] = 2
+      ..remove('job_title')
+      ..remove('job_description');
+    final participants = snapshot['participants']! as List<Object?>;
+    final examiner = participants.first as Map<String, Object?>;
+    final role = examiner['role_snapshot']! as Map<String, Object?>;
+    role['scenario_definition_id'] = _ieltsScenarioId;
+    final option = snapshot['practice_option']! as Map<String, Object?>;
+    option
+      ..remove('role_definition_id')
+      ..['practice_option_id'] = _ieltsFullOptionId
+      ..['scenario_definition_id'] = _ieltsScenarioId
+      ..['practice_option_type'] = 'FULL_SIMULATION'
+      ..['display_name'] = '完整模考'
+      ..['version'] = 2;
+    final policy = _sessionPolicy(response);
+    policy
+      ..['suggested_duration_seconds'] = 900
+      ..['min_effective_turns'] = 14
+      ..['max_effective_turns'] = 14
+      ..['coverage_checkpoint_turn'] = 14
+      ..['max_follow_ups_per_question'] = 0;
+    final client = _client(_QueueTransport([_response(response)]));
+
+    final bootstrap = await client.createSession(
+      planId: _planId,
+      input: const CreatePreparationSessionInput(
+        agentThreadId: _threadId,
+        expectedPlanRevision: 1,
+        preparationSnapshotId: _preparationSnapshotId,
+        preparationProfileId: _profileId,
+        preparationProfileVersion: 1,
+        preparationUserId: _userId,
+        backgroundSummary: _background,
+        selection: _ieltsFullSelection,
+      ),
+      idempotencyKey: 'session-ielts-full-key',
+    );
+
+    expect(bootstrap.maxEffectiveTurns, 14);
+    expect(bootstrap.session.scenarioModel, 'IELTS_SPEAKING_FULL_MOCK');
   });
 
   test('fences a response that completes after account cleanup', () async {
@@ -488,6 +573,7 @@ Map<String, Object?> _planJson() => {
   'scenario_definition_id': _scenarioId,
   'scenario_definition_version': 1,
   'scenario_type': 'INTERVIEW',
+  'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
   'scenario_config_id': _configId,
   'scenario_config_version': 1,
   'preparation_profile_id': _profileId,
@@ -503,6 +589,7 @@ Map<String, Object?> _bootstrapJson() => {
     'practice_session_id': _sessionId,
     'practice_plan_id': _planId,
     'scenario_type': 'INTERVIEW',
+    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'snapshot_id': _sessionSnapshotId,
     'practice_session_status': 'starting',
     'session_version': 1,
@@ -513,28 +600,42 @@ Map<String, Object?> _bootstrapJson() => {
     'practice_session_id': _sessionId,
     'plan_revision': 1,
     'scenario_type': 'INTERVIEW',
+    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'scenario_definition_snapshot': {
       'scenario_definition_id': _scenarioId,
       'scenario_type': 'INTERVIEW',
+      'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
       'name': 'Technical interview',
       'version': 1,
       'status': 'active',
+      'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
+      'session_policy_ref': 'interview.project_deep_dive.session.v1',
     },
     'scenario_config_snapshot': {
       'scenario_config_id': _configId,
       'scenario_definition_id': _scenarioId,
       'config_type': 'INTERVIEW',
+      'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
       'version': 1,
       'job_title': 'Backend engineer',
       'job_description': 'Explain engineering decisions.',
-      'focus_areas': ['system_design'],
+      'prompt_model': {
+        'public_scene_brief': 'Discuss one backend project.',
+        'practice_goal': 'Explain decisions with evidence.',
+        'user_role': 'Candidate',
+        'ai_role': 'Technical interviewer',
+        'persona_summary': 'Precise and evidence seeking.',
+        'focus_areas': ['system_design'],
+        'turn_blueprints': ['Ask for a project overview.'],
+        'suggested_duration_seconds': 900,
+      },
     },
     'preparation_snapshot': _snapshotJson(),
     'participants': [
       {
         'practice_participant_id': 'participant-interviewer',
         'practice_session_id': _sessionId,
-        'participant_role': 'INTERVIEWER',
+        'participant_role': 'FACILITATOR',
         'subject_ref': {
           'namespace': 'mock.actor',
           'subject_id': 'interviewer-technical',
@@ -555,7 +656,7 @@ Map<String, Object?> _bootstrapJson() => {
       {
         'practice_participant_id': 'participant-candidate',
         'practice_session_id': _sessionId,
-        'participant_role': 'CANDIDATE',
+        'participant_role': 'LEARNER',
         'subject_ref': {'namespace': 'speakup.user', 'subject_id': _userId},
         'participant_order': 2,
       },
@@ -599,6 +700,11 @@ Map<String, Object?> _roleSnapshot(Map<String, Object?> root) {
   return interviewer['role_snapshot']! as Map<String, Object?>;
 }
 
+Map<String, Object?> _scenarioDefinitionSnapshot(Map<String, Object?> root) {
+  final snapshot = root['snapshot']! as Map<String, Object?>;
+  return snapshot['scenario_definition_snapshot']! as Map<String, Object?>;
+}
+
 Map<String, Object?> _preparationSnapshot(Map<String, Object?> root) {
   final snapshot = root['snapshot']! as Map<String, Object?>;
   return snapshot['preparation_snapshot']! as Map<String, Object?>;
@@ -630,6 +736,9 @@ const _configId = 'config-1';
 const _roleId = 'role-1';
 const _optionId = 'option-1';
 const _fullOptionId = 'option-full';
+const _ieltsScenarioId = 'scn_ielts_speaking_full';
+const _ieltsConfigId = 'scfg_ielts_speaking_full';
+const _ieltsFullOptionId = 'option_ielts_speaking_full_full';
 const _background = 'Backend engineer preparing a technical interview.';
 
 const _context = AgentPracticeContext(threadId: _threadId, matterId: _matterId);
@@ -638,6 +747,7 @@ const _selection = PreparationLaunchSelection(
   scenarioDefinitionId: _scenarioId,
   scenarioDefinitionVersion: 1,
   scenarioType: 'INTERVIEW',
+  scenarioModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   scenarioDisplayName: 'Technical interview',
   scenarioDescription: 'Backend engineer: technical interview practice',
   scenarioConfigId: _configId,
@@ -653,6 +763,7 @@ const _fullSelection = PreparationLaunchSelection(
   scenarioDefinitionId: _scenarioId,
   scenarioDefinitionVersion: 1,
   scenarioType: 'INTERVIEW',
+  scenarioModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   scenarioDisplayName: 'Technical interview',
   scenarioDescription: 'Backend engineer: technical interview practice',
   scenarioConfigId: _configId,
@@ -662,4 +773,20 @@ const _fullSelection = PreparationLaunchSelection(
   practiceOptionId: _fullOptionId,
   practiceOptionType: PreparationOptionType.fullSimulation,
   practiceOptionVersion: 1,
+);
+
+const _ieltsFullSelection = PreparationLaunchSelection(
+  scenarioDefinitionId: _ieltsScenarioId,
+  scenarioDefinitionVersion: 2,
+  scenarioType: 'EXAM',
+  scenarioModel: 'IELTS_SPEAKING_FULL_MOCK',
+  scenarioDisplayName: 'IELTS 口语完整模拟',
+  scenarioDescription: '按 Part 1、Part 2、Part 3 连续完成。',
+  scenarioConfigId: _ieltsConfigId,
+  scenarioConfigVersion: 2,
+  roleDefinitionId: _roleId,
+  roleDefinitionVersion: 2,
+  practiceOptionId: _ieltsFullOptionId,
+  practiceOptionType: PreparationOptionType.fullSimulation,
+  practiceOptionVersion: 2,
 );

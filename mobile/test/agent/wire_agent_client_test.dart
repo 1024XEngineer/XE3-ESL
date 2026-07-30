@@ -18,7 +18,7 @@ void main() {
           method: 'GET',
           path: '/v1/agent-threads',
           response: _jsonResponse(HttpStatus.ok, {
-            'threads': [_threadJson()],
+            'threads': [_threadJson(title: '英文面试准备')],
           }),
         ),
         _Step(
@@ -39,6 +39,14 @@ void main() {
                 role: 'assistant',
                 content: 'Start with the result.',
                 producedByRunId: _runId,
+                actions: const <Object?>[
+                  {
+                    'type': 'open_interview_preparation',
+                    'label': '配置并开始面试',
+                    'matter_id': _matterId,
+                    'title': 'Java Interview Practice',
+                  },
+                ],
               ),
             ],
           }),
@@ -49,9 +57,12 @@ void main() {
       final snapshot = await harness.client.restoreThread();
 
       expect(snapshot.threadId, _threadId);
+      expect(snapshot.title, '英文面试准备');
       expect(snapshot.messages, hasLength(2));
       expect(snapshot.messages.first.text, 'Help me explain this.');
       expect(snapshot.messages.last.role, AgentMessageRole.assistant);
+      expect(snapshot.messages.last.actions, hasLength(1));
+      expect(snapshot.messages.last.actions.single.matterId, _matterId);
       expect(
         transport.calls.every(
           (call) =>
@@ -248,6 +259,60 @@ void main() {
           path: '/v1/agent-threads',
           response: _jsonResponse(HttpStatus.ok, {
             'threads': [malformedThread],
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      await expectLater(
+        harness.client.restoreThread(),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+      transport.expectDone();
+    });
+
+    test(
+      'rejects a Thread response that omits the required title field',
+      () async {
+        final malformedThread = _threadJson()..remove('title');
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            response: _jsonResponse(HttpStatus.ok, {
+              'threads': [malformedThread],
+            }),
+          ),
+        ]);
+        final harness = _Harness(transport);
+
+        await expectLater(
+          harness.client.restoreThread(),
+          throwsA(
+            isA<AgentClientException>().having(
+              (error) => error.kind,
+              'kind',
+              AgentClientFailureKind.invalidResponse,
+            ),
+          ),
+        );
+        transport.expectDone();
+      },
+    );
+
+    test('rejects a Thread title beyond the server contract limit', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads',
+          response: _jsonResponse(HttpStatus.ok, {
+            'threads': [_threadJson(title: List.filled(26, '一').join())],
           }),
         ),
       ]);
@@ -2106,10 +2171,12 @@ Map<String, Object?> _threadJson({
   String id = _threadId,
   String createdAt = _createdAt,
   String updatedAt = _updatedAt,
+  String? title,
   String? activeMatterId,
 }) {
   return {
     'thread_id': id,
+    'title': title,
     'active_matter_id': ?activeMatterId,
     'created_at': createdAt,
     'updated_at': updatedAt,
@@ -2148,6 +2215,7 @@ Map<String, Object?> _messageJson({
   required String content,
   String? clientMessageId,
   String? producedByRunId,
+  List<Object?>? actions,
 }) {
   return {
     'message_id': id,
@@ -2156,6 +2224,7 @@ Map<String, Object?> _messageJson({
     'role': role,
     'client_message_id': ?clientMessageId,
     'produced_by_run_id': ?producedByRunId,
+    'actions': ?actions,
     'content': content,
     'created_at': _createdAt,
   };

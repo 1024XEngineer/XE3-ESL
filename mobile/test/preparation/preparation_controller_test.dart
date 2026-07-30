@@ -36,6 +36,37 @@ void main() {
     },
   );
 
+  test(
+    'selects the interview specialty configuration without another prompt',
+    () async {
+      final controller = PreparationController(client: _FixtureCatalogClient());
+      addTearDown(controller.dispose);
+
+      await controller.loadIfNeeded();
+      await controller.selectScenario(_scenario);
+
+      expect(controller.selectRecommendedConfiguration(), isTrue);
+      expect(controller.selectedRole, _technicalRole);
+      expect(controller.selectedOption, _technicalFocus);
+      expect(controller.hasCompleteSelection, isTrue);
+    },
+  );
+
+  test(
+    'keeps the IELTS full mock entry on the full simulation option',
+    () async {
+      final controller = PreparationController(client: _IeltsCatalogClient());
+      addTearDown(controller.dispose);
+
+      await controller.loadIfNeeded();
+      await controller.selectScenario(_ieltsScenario);
+
+      expect(controller.selectRecommendedConfiguration(), isTrue);
+      expect(controller.selectedRole, _ieltsRole);
+      expect(controller.selectedOption, _ieltsFullOption);
+    },
+  );
+
   test('retries the failed directory request', () async {
     final client = _FailOnceCatalogClient();
     final controller = PreparationController(client: client);
@@ -152,12 +183,33 @@ final class _ControlledCatalogClient implements PreparationCatalogClient {
   }
 }
 
+final class _IeltsCatalogClient implements PreparationCatalogClient {
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<PreparationScenarioDetail> getScenario(String scenarioId) async =>
+      _ieltsDetail;
+
+  @override
+  Future<List<PreparationScenario>> listScenarios() async => const [
+    _ieltsScenario,
+  ];
+
+  @override
+  Future<List<PreparationRole>> listRoles(String scenarioId) async => const [
+    _ieltsRole,
+  ];
+}
+
 const _scenarioId = 'scn_programmer_interview';
 
 const _scenario = PreparationScenario(
   id: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   name: 'English interview for technical roles',
+  summary: 'Discuss one backend project.',
   version: 1,
   status: 'active',
 );
@@ -166,10 +218,22 @@ const _config = PreparationScenarioConfig(
   id: 'scfg_backend_engineer',
   scenarioId: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   version: 1,
   jobTitle: 'Backend engineer',
   jobDescription: 'Build reliable APIs.',
+  prompt: _prompt,
+);
+
+const _prompt = PreparationScenarioPrompt(
+  publicSceneBrief: 'Discuss one backend project.',
+  practiceGoal: 'Explain decisions with evidence.',
+  userRole: 'Candidate',
+  aiRole: 'Technical interviewer',
+  personaSummary: 'Precise and evidence seeking.',
   focusAreas: ['system_design'],
+  turnBlueprints: ['Ask for a project overview.'],
+  suggestedDurationSeconds: 900,
 );
 
 const _technicalRole = PreparationRole(
@@ -224,4 +288,61 @@ const _detail = PreparationScenarioDetail(
   scenario: _scenario,
   config: _config,
   options: [_fullOption, _technicalFocus, _recruiterFocus],
+);
+
+const _ieltsScenarioId = 'scn_ielts_speaking_full';
+
+const _ieltsScenario = PreparationScenario(
+  id: _ieltsScenarioId,
+  type: 'EXAM',
+  model: 'IELTS_SPEAKING_FULL_MOCK',
+  name: 'IELTS 口语完整模拟',
+  summary: '按 Part 1、Part 2、Part 3 完成一轮练习。',
+  version: 2,
+  status: 'active',
+);
+
+const _ieltsConfig = PreparationScenarioConfig(
+  id: 'scfg_ielts_speaking_full',
+  scenarioId: _ieltsScenarioId,
+  type: 'EXAM',
+  model: 'IELTS_SPEAKING_FULL_MOCK',
+  version: 2,
+  jobTitle: null,
+  jobDescription: null,
+  prompt: _prompt,
+);
+
+const _ieltsRole = PreparationRole(
+  id: 'role_ielts_examiner',
+  scenarioId: _ieltsScenarioId,
+  type: 'IELTS_EXAMINER',
+  displayName: 'IELTS 口语考官',
+  responsibilities: 'Run the complete mock test.',
+  style: 'Neutral and concise.',
+  focusAreas: ['part_1', 'part_2', 'part_3'],
+  version: 2,
+);
+
+const _ieltsFullOption = PreparationOption(
+  id: 'option_ielts_speaking_full_full',
+  scenarioId: _ieltsScenarioId,
+  type: PreparationOptionType.fullSimulation,
+  displayName: '完整模考',
+  version: 2,
+);
+
+const _ieltsFocusOption = PreparationOption(
+  id: 'option_ielts_speaking_full_focus',
+  scenarioId: _ieltsScenarioId,
+  roleId: 'role_ielts_examiner',
+  type: PreparationOptionType.focus,
+  displayName: '专项练习',
+  version: 2,
+);
+
+const _ieltsDetail = PreparationScenarioDetail(
+  scenario: _ieltsScenario,
+  config: _ieltsConfig,
+  options: [_ieltsFullOption, _ieltsFocusOption],
 );

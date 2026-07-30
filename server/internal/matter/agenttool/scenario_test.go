@@ -18,17 +18,16 @@ func (port *fakeScenarioPort) CreateScenario(
 	ctx context.Context,
 	call CallContext,
 	input ScenarioCreateInput,
-) (ScenarioResult, error) {
+) (MatterResult, error) {
 	port.createInput = input
-	return ScenarioResult{
-		ID:      "scenario-1",
-		Title:   input.Title,
-		Type:    input.Type,
-		Status:  "active",
-		Summary: input.Goal,
-		SourceRef: []SourceRef{{
-			Type: "scenario",
-			ID:   "scenario-1",
+	return MatterResult{
+		MatterID: "matter-1",
+		Title:    input.Title,
+		Status:   "active",
+		Version:  1,
+		SourceRefs: []SourceRef{{
+			Type: "matter",
+			ID:   "matter-1",
 		}},
 	}, nil
 }
@@ -37,13 +36,13 @@ func (port *fakeScenarioPort) SearchScenarios(
 	ctx context.Context,
 	call CallContext,
 	input ScenarioSearchInput,
-) ([]ScenarioResult, error) {
+) ([]MatterResult, error) {
 	port.searchInput = input
-	return []ScenarioResult{{
-		ID:     "scenario-1",
-		Title:  "PM interview",
-		Type:   "interview",
-		Status: "active",
+	return []MatterResult{{
+		MatterID: "matter-1",
+		Title:    "PM interview",
+		Status:   "active",
+		Version:  1,
 	}}, nil
 }
 
@@ -52,16 +51,16 @@ func TestScenarioCreateToolMapsInput(t *testing.T) {
 	result, err := NewScenarioCreateTool(port).Execute(
 		context.Background(),
 		validCallContext(),
-		json.RawMessage(`{"type":"interview","title":"PM interview","goal":"prepare self introduction"}`),
+		json.RawMessage(`{"title":"PM interview"}`),
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if got, want := port.createInput.Type, "interview"; got != want {
-		t.Fatalf("createInput.Type = %q, want %q", got, want)
+	if got, want := port.createInput.Title, "PM interview"; got != want {
+		t.Fatalf("createInput.Title = %q, want %q", got, want)
 	}
-	if result.Content["scenario"] == nil {
-		t.Fatalf("result.Content = %#v, want scenario", result.Content)
+	if result.Content["matter"] == nil {
+		t.Fatalf("result.Content = %#v, want matter", result.Content)
 	}
 }
 
@@ -78,8 +77,20 @@ func TestScenarioSearchToolMapsInput(t *testing.T) {
 	if got, want := port.searchInput.Query, "上次面试"; got != want {
 		t.Fatalf("searchInput.Query = %q, want %q", got, want)
 	}
-	if result.Content["scenarios"] == nil {
-		t.Fatalf("result.Content = %#v, want scenarios", result.Content)
+	if result.Content["matters"] == nil {
+		t.Fatalf("result.Content = %#v, want matters", result.Content)
+	}
+}
+
+func TestScenarioCreateDefinitionOnlyAcceptsMatterTitle(t *testing.T) {
+	definition := NewScenarioCreateTool(&fakeScenarioPort{}).Definition()
+	properties := definition.InputSchema["properties"].(map[string]any)
+	if len(properties) != 1 || properties["title"] == nil {
+		t.Fatalf("properties = %#v, want only title", properties)
+	}
+	required := definition.InputSchema["required"].([]string)
+	if len(required) != 1 || required[0] != "title" {
+		t.Fatalf("required = %#v, want title", required)
 	}
 }
 

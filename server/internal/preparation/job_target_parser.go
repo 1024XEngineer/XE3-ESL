@@ -147,7 +147,7 @@ type jobTargetCatalogManifestDocument struct {
 type jobTargetCatalogScenario struct {
 	ScenarioDefinitionID string                     `json:"scenario_definition_id"`
 	Version              int                        `json:"version"`
-	Type                 ScenarioType               `json:"scenario_type"`
+	Type                 ScenarioFamily             `json:"scenario_type"`
 	Roles                []jobTargetCatalogRole     `json:"roles"`
 	PracticeOptions      []PracticeOptionDefinition `json:"practice_options"`
 }
@@ -173,6 +173,10 @@ func jobTargetCatalogManifest(catalog CatalogReader) (string, error) {
 		),
 	}
 	for _, definition := range definitions {
+		if definition.Type != ScenarioFamilyInterview ||
+			definition.Model != ScenarioModelProjectExperienceDeepDive {
+			continue
+		}
 		detail, err := catalog.GetScenarioDetail(definition.ID)
 		if err != nil ||
 			detail.ScenarioDefinition.Version != definition.Version {
@@ -213,6 +217,11 @@ func jobTargetCatalogManifest(catalog CatalogReader) (string, error) {
 			)
 		}
 		document.Scenarios = append(document.Scenarios, scenario)
+	}
+	if len(document.Scenarios) == 0 {
+		return "", errors.New(
+			"preparation: job target parser catalog has no interview scenario",
+		)
 	}
 	encoded, err := json.Marshal(document)
 	if err != nil {

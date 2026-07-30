@@ -149,6 +149,7 @@ func (r *Runtime) createPlan(command practice.CreatePracticePlanCommand) (practi
 		ScenarioDefinitionID:      DemoScenarioDefinition,
 		ScenarioDefinitionVersion: 1,
 		ScenarioType:              practice.ScenarioTypeInterview,
+		ScenarioModel:             practice.ScenarioModelProjectExperienceDeepDive,
 		ScenarioConfigID:          preparation.BackendEngineerConfigID,
 		ScenarioConfigVersion:     1,
 		PreparationProfileID:      demoPreparationProfile,
@@ -180,13 +181,14 @@ func (r *Runtime) createSession() (practice.CreatePracticeSessionResult, error) 
 
 func (r *Runtime) sessionLocked() practice.PracticeSession {
 	session := practice.PracticeSession{
-		ID:           demoPracticeSession,
-		PlanID:       demoPracticePlan,
-		ScenarioType: practice.ScenarioTypeInterview,
-		SnapshotID:   "snapshot_session_demo_001",
-		Status:       practice.PracticeSessionStatus(r.sessionStatus),
-		Version:      r.sessionVersion,
-		CreatedAt:    r.now.Add(4 * time.Second),
+		ID:            demoPracticeSession,
+		PlanID:        demoPracticePlan,
+		ScenarioType:  practice.ScenarioTypeInterview,
+		ScenarioModel: practice.ScenarioModelProjectExperienceDeepDive,
+		SnapshotID:    "snapshot_session_demo_001",
+		Status:        practice.PracticeSessionStatus(r.sessionStatus),
+		Version:       r.sessionVersion,
+		CreatedAt:     r.now.Add(4 * time.Second),
 	}
 	if r.sessionStatus != string(practice.PracticeSessionStarting) {
 		startedAt := r.now.Add(5 * time.Second)
@@ -502,13 +504,15 @@ func (r *Runtime) snapshotLocked() practice.PracticeSessionSnapshot {
 		Version:              catalogSnapshot.SelectedRoles[0].Version,
 	}
 	return practice.PracticeSessionSnapshot{
-		ID:           "snapshot_session_demo_001",
-		SessionID:    demoPracticeSession,
-		PlanRevision: 1,
-		ScenarioType: practice.ScenarioTypeInterview,
+		ID:            "snapshot_session_demo_001",
+		SessionID:     demoPracticeSession,
+		PlanRevision:  1,
+		ScenarioType:  practice.ScenarioTypeInterview,
+		ScenarioModel: practice.ScenarioModelProjectExperienceDeepDive,
 		ScenarioDefinition: practice.ScenarioDefinitionSnapshot{
 			ID:      catalogSnapshot.ScenarioDefinition.ID,
 			Type:    practice.ScenarioType(catalogSnapshot.ScenarioDefinition.Type),
+			Model:   practice.ScenarioModel(catalogSnapshot.ScenarioDefinition.Model),
 			Name:    catalogSnapshot.ScenarioDefinition.Name,
 			Version: catalogSnapshot.ScenarioDefinition.Version,
 			Status:  string(catalogSnapshot.ScenarioDefinition.Status),
@@ -517,10 +521,26 @@ func (r *Runtime) snapshotLocked() practice.PracticeSessionSnapshot {
 			ID:                   catalogSnapshot.ScenarioConfig.ID,
 			ScenarioDefinitionID: catalogSnapshot.ScenarioConfig.ScenarioDefinitionID,
 			Type:                 practice.ScenarioType(catalogSnapshot.ScenarioConfig.Type),
+			Model:                practice.ScenarioModel(catalogSnapshot.ScenarioConfig.Model),
 			Version:              catalogSnapshot.ScenarioConfig.Version,
 			JobTitle:             catalogSnapshot.ScenarioConfig.JobTitle,
 			JobDescription:       catalogSnapshot.ScenarioConfig.JobDescription,
-			FocusAreas:           catalogSnapshot.ScenarioConfig.FocusAreas,
+			PromptModel: practice.ScenarioPromptModel{
+				PublicSceneBrief: catalogSnapshot.ScenarioConfig.PromptModel.PublicSceneBrief,
+				PracticeGoal:     catalogSnapshot.ScenarioConfig.PromptModel.PracticeGoal,
+				UserRole:         catalogSnapshot.ScenarioConfig.PromptModel.UserRole,
+				AIRole:           catalogSnapshot.ScenarioConfig.PromptModel.AIRole,
+				PersonaSummary:   catalogSnapshot.ScenarioConfig.PromptModel.PersonaSummary,
+				FocusAreas: append(
+					[]string(nil),
+					catalogSnapshot.ScenarioConfig.PromptModel.FocusAreas...,
+				),
+				TurnBlueprints: append(
+					[]string(nil),
+					catalogSnapshot.ScenarioConfig.PromptModel.TurnBlueprints...,
+				),
+				SuggestedDurationSeconds: catalogSnapshot.ScenarioConfig.PromptModel.SuggestedDurationSeconds,
+			},
 		},
 		Preparation: practice.PreparationSnapshot{
 			ID:                     demoPreparationSnapshot,

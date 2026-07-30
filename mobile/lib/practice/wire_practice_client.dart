@@ -23,13 +23,19 @@ final class PracticeWireEndpoints {
     this.transcribe =
         '/v1/voice-practice-sessions/{practice_session_id}/questions/'
         '{question_id}/transcription-candidates',
+    this.submitText =
+        '/v1/voice-practice-sessions/{practice_session_id}/questions/'
+        '{question_id}/text-answers',
     this.confirm = '/v1/transcription-candidates/{candidate_id}/confirmations',
+    this.endEarly = '/v1/practice-sessions/{practice_session_id}/end-early',
   });
 
   final String restoreByThread;
   final String startByThread;
   final String transcribe;
+  final String submitText;
   final String confirm;
+  final String endEarly;
 
   String restorePath(String threadId) =>
       restoreByThread.replaceAll('{thread_id}', _pathSegment(threadId));
@@ -43,6 +49,13 @@ final class PracticeWireEndpoints {
 
   String confirmPath(String candidateId) =>
       confirm.replaceAll('{candidate_id}', _pathSegment(candidateId));
+
+  String submitTextPath(String sessionId, String questionId) => submitText
+      .replaceAll('{practice_session_id}', _pathSegment(sessionId))
+      .replaceAll('{question_id}', _pathSegment(questionId));
+
+  String endEarlyPath(String sessionId) =>
+      endEarly.replaceAll('{practice_session_id}', _pathSegment(sessionId));
 }
 
 String _pathSegment(String value) => Uri.encodeComponent(value);
@@ -81,7 +94,8 @@ abstract interface class PracticeWireTransport {
   void close({bool force = false});
 }
 
-final class WirePracticeClient implements PracticeClient {
+final class WirePracticeClient
+    implements PracticeClient, PracticeLifecycleClient {
   factory WirePracticeClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -283,11 +297,89 @@ final class WirePracticeClient implements PracticeClient {
     });
   }
 
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(sessionId);
+      _requireOpaqueId(questionId);
+      _requireClientId(idempotencyKey);
+      final text = answerText.trim();
+      if (text.isEmpty || text.length > 8000) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidRequest,
+          errorCode: 'invalid_answer_text',
+        );
+      }
+      final response = await _sendJson(
+        generation: generation,
+        method: 'POST',
+        path: _endpoints.submitTextPath(sessionId, questionId),
+        body: <String, Object?>{'answer_text': text},
+        extraHeaders: <String, String>{'Idempotency-Key': idempotencyKey},
+      );
+      _requireStatus(response, const {HttpStatus.ok});
+      final state = _decodeSessionState(
+        response.body,
+        expectedSessionId: sessionId,
+      );
+      final confirmation = _confirmationFromState(
+        state,
+        expectedQuestionId: questionId,
+      );
+      if (confirmation.answer.text != text) {
+        throw _invalidResponse();
+      }
+      return confirmation;
+    });
+  }
+
+  @override
+  Future<PracticeSessionLifecycle> endEarly({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(sessionId);
+      _requireClientId(idempotencyKey);
+      if (expectedSessionVersion < 1) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidRequest,
+        );
+      }
+      final response = await _sendJson(
+        generation: generation,
+        method: 'POST',
+        path: _endpoints.endEarlyPath(sessionId),
+        body: <String, Object?>{
+          'expected_session_version': expectedSessionVersion,
+        },
+        extraHeaders: <String, String>{'Idempotency-Key': idempotencyKey},
+      );
+      _requireStatus(response, const {HttpStatus.ok});
+      final lifecycle = _decodeSessionLifecycle(
+        response.body,
+        expectedSessionId: sessionId,
+      );
+      if (lifecycle.status != PracticeSessionLifecycleStatus.endedEarly ||
+          lifecycle.version <= expectedSessionVersion) {
+        throw _invalidResponse();
+      }
+      return lifecycle;
+    });
+  }
+
   Future<PracticeWireResponse> _sendJson({
     required int generation,
     required String method,
     required String path,
     Map<String, Object?>? body,
+    Map<String, String>? extraHeaders,
   }) {
     return _send(
       generation: generation,
@@ -295,6 +387,7 @@ final class WirePracticeClient implements PracticeClient {
       method: method,
       path: path,
       jsonBody: body == null ? null : jsonEncode(body),
+      extraHeaders: extraHeaders,
     );
   }
 
@@ -542,7 +635,7 @@ PracticeSessionSnapshot _decodeSessionState(
       sessionVersion < 1 ||
       effectiveTurns < 0 ||
       turnLimit < 1 ||
-      turnLimit > 6 ||
+      turnLimit > 14 ||
       effectiveTurns > turnLimit ||
       (!completed && (question == null || formalReview != null)) ||
       (completed && (question != null || turn == null)) ||
@@ -572,6 +665,68 @@ PracticeSessionSnapshot _decodeSessionState(
     currentQuestion: question,
     currentTurn: turn,
     review: formalReview?.presentation,
+  );
+}
+
+PracticeSessionLifecycle _decodeSessionLifecycle(
+  String body, {
+  required String expectedSessionId,
+}) {
+  final root = _exactObject(
+    jsonDecode(body),
+    required: const {
+      'practice_session_id',
+      'practice_plan_id',
+      'scenario_type',
+      'scenario_model',
+      'snapshot_id',
+      'practice_session_status',
+      'session_version',
+      'created_at',
+    },
+    optional: const {'started_at', 'ended_at', 'end_reason'},
+  );
+  final sessionId = _string(root, 'practice_session_id');
+  _string(root, 'practice_plan_id');
+  _string(root, 'scenario_type', maxLength: 32);
+  _string(root, 'scenario_model', maxLength: 64);
+  _string(root, 'snapshot_id');
+  final rawStatus = _string(root, 'practice_session_status', maxLength: 32);
+  final status = switch (rawStatus) {
+    'starting' => PracticeSessionLifecycleStatus.starting,
+    'in_progress' => PracticeSessionLifecycleStatus.inProgress,
+    'paused' => PracticeSessionLifecycleStatus.paused,
+    'completed' => PracticeSessionLifecycleStatus.completed,
+    'ended_early' => PracticeSessionLifecycleStatus.endedEarly,
+    _ => throw _invalidResponse(),
+  };
+  final version = _integer(root, 'session_version');
+  final createdAt = _dateTime(root, 'created_at');
+  final startedAt = root.containsKey('started_at')
+      ? _dateTime(root, 'started_at')
+      : null;
+  final endedAt = root.containsKey('ended_at')
+      ? _dateTime(root, 'ended_at')
+      : null;
+  final endReason = root.containsKey('end_reason')
+      ? _string(root, 'end_reason', maxLength: 64)
+      : null;
+  final terminal =
+      status == PracticeSessionLifecycleStatus.completed ||
+      status == PracticeSessionLifecycleStatus.endedEarly;
+  if (sessionId != expectedSessionId ||
+      version < 1 ||
+      (startedAt != null && startedAt.isBefore(createdAt)) ||
+      (terminal &&
+          (startedAt == null || endedAt == null || endReason == null)) ||
+      (!terminal && (endedAt != null || endReason != null)) ||
+      (endedAt != null && endedAt.isBefore(startedAt!))) {
+    throw _invalidResponse();
+  }
+  return PracticeSessionLifecycle(
+    sessionId: sessionId,
+    status: status,
+    version: version,
   );
 }
 
@@ -614,12 +769,13 @@ TranscriptionCandidate _decodeCandidate(
 PracticeTurnConfirmation _confirmationFromState(
   PracticeSessionSnapshot state, {
   required String expectedQuestionId,
-  required String expectedCandidateId,
+  String? expectedCandidateId,
 }) {
   final turn = state.currentTurn;
   if (turn == null ||
       turn.questionId != expectedQuestionId ||
-      turn.candidateId != expectedCandidateId) {
+      (expectedCandidateId != null &&
+          turn.candidateId != expectedCandidateId)) {
     throw _invalidResponse();
   }
   return PracticeTurnConfirmation(
@@ -635,6 +791,7 @@ PracticeTurnConfirmation _confirmationFromState(
     completedTurns: state.completedTurns,
     turnLimit: state.turnLimit,
     sessionCompleted: state.sessionCompleted,
+    sessionVersion: state.sessionVersion,
     nextQuestion: state.currentQuestion,
     review: state.review,
     audioAssetId: turn.audioAssetId,

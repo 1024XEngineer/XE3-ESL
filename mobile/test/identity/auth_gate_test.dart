@@ -11,9 +11,9 @@ import 'package:speakup/identity/session_store.dart';
 void main() {
   const user = User(id: 'user-1', email: 'learner@example.com');
 
-  for (final scalarCount in [14, 15, 128, 129]) {
+  for (final scalarCount in [4, 8, 128, 129]) {
     testWidgets(
-      'password validation counts $scalarCount Unicode scalars and preserves input',
+      'login validation accepts $scalarCount Unicode scalars without applying registration minimum',
       (tester) async {
         final client = GateIdentityClient(user: user);
         final controller = AuthController(
@@ -36,13 +36,13 @@ void main() {
         await tester.tap(find.text('登录'));
         await tester.pumpAndSettle();
 
-        if (scalarCount >= 15 && scalarCount <= 128) {
+        if (scalarCount <= 128) {
           expect(client.lastLoginPassword, password);
           expect(client.lastLoginPassword!.codeUnits, password.codeUnits);
-          expect(find.text('密码长度需为 15–128 个字符。'), findsNothing);
+          expect(find.text('密码不能超过 128 个字符。'), findsNothing);
         } else {
           expect(client.lastLoginPassword, isNull);
-          expect(find.text('密码长度需为 15–128 个字符。'), findsOneWidget);
+          expect(find.text('密码不能超过 128 个字符。'), findsOneWidget);
         }
       },
     );
@@ -82,6 +82,33 @@ void main() {
     expect(find.text('欢迎回来'), findsOneWidget);
   });
 
+  testWidgets('signed-out pages expose only supported authentication actions', (
+    tester,
+  ) async {
+    final controller = AuthController(
+      identityClient: GateIdentityClient(user: user),
+      sessionStore: MemorySessionStore(),
+    );
+
+    await tester.pumpWidget(testApp(controller));
+    await tester.pumpAndSettle();
+
+    expect(find.bySemanticsLabel('SpeakUp'), findsOneWidget);
+    expect(find.text('Google'), findsNothing);
+    expect(find.text('Facebook'), findsNothing);
+    expect(find.text('Apple'), findsNothing);
+    expect(find.text('忘记密码'), findsNothing);
+    expect(find.text('SSO'), findsNothing);
+    expect(find.widgetWithText(TextButton, '创建账号'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '创建账号'));
+    await tester.pump();
+
+    expect(find.bySemanticsLabel('SpeakUp'), findsOneWidget);
+    expect(find.byKey(const Key('register-display-name')), findsOneWidget);
+    expect(find.widgetWithText(TextButton, '返回登录'), findsOneWidget);
+  });
+
   testWidgets('registration returns to login and does not authenticate', (
     tester,
   ) async {
@@ -95,6 +122,10 @@ void main() {
     await tester.tap(find.text('创建账号'));
     await tester.pump();
 
+    await tester.enterText(
+      find.byKey(const Key('register-display-name')),
+      '小林',
+    );
     await tester.enterText(
       find.widgetWithText(TextFormField, '邮箱'),
       'learner@example.com',
@@ -110,6 +141,47 @@ void main() {
     expect(find.text('账号创建成功，请登录后继续。'), findsOneWidget);
     expect(store.token, isNull);
   });
+
+  for (final scalarCount in [7, 8, 128, 129]) {
+    testWidgets('registration enforces the $scalarCount scalar boundary', (
+      tester,
+    ) async {
+      final client = GateIdentityClient(user: user);
+      final controller = AuthController(
+        identityClient: client,
+        sessionStore: MemorySessionStore(),
+      );
+      final password = scalarPassword(scalarCount);
+
+      await tester.pumpWidget(testApp(controller));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('创建账号'));
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const Key('register-display-name')),
+        '小林',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, '邮箱'),
+        'learner@example.com',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, '密码'),
+        password,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '创建账号'));
+      await tester.pumpAndSettle();
+
+      if (scalarCount >= 8 && scalarCount <= 128) {
+        expect(client.lastRegistrationPassword, password);
+        expect(client.lastRegistrationPassword!.codeUnits, password.codeUnits);
+      } else {
+        expect(client.lastRegistrationPassword, isNull);
+        final message = scalarCount < 8 ? '密码至少需要 8 个字符。' : '密码不能超过 128 个字符。';
+        expect(find.text(message), findsOneWidget);
+      }
+    });
+  }
 
   testWidgets('shows retry without deleting token after a network error', (
     tester,
@@ -214,6 +286,40 @@ void main() {
     expect(createAccount.hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('registration remains usable at 320pt with 3x text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final controller = AuthController(
+      identityClient: GateIdentityClient(user: user),
+      sessionStore: MemorySessionStore(),
+    );
+    await tester.pumpWidget(testApp(controller));
+    await tester.pumpAndSettle();
+    final createAccount = find.widgetWithText(TextButton, '创建账号');
+    await tester.ensureVisible(createAccount);
+    await tester.pumpAndSettle();
+    await tester.tap(createAccount);
+    await tester.pumpAndSettle();
+
+    final displayName = find.byKey(const Key('register-display-name'));
+    await tester.ensureVisible(displayName);
+    await tester.pumpAndSettle();
+    expect(displayName.hitTestable(), findsOneWidget);
+
+    final submit = find.widgetWithText(FilledButton, '创建账号');
+    await tester.ensureVisible(submit);
+    await tester.pumpAndSettle();
+    expect(submit.hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Widget testApp(AuthController controller) {
@@ -260,6 +366,7 @@ final class GateIdentityClient implements IdentityClient {
   final User user;
   IdentityClientException? currentUserError;
   String? lastLoginPassword;
+  String? lastRegistrationPassword;
 
   @override
   Future<User> currentUser({required String sessionToken}) async {
@@ -291,6 +398,7 @@ final class GateIdentityClient implements IdentityClient {
     required String email,
     required String password,
   }) async {
+    lastRegistrationPassword = password;
     return user;
   }
 }

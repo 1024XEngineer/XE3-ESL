@@ -25,6 +25,7 @@ const (
 	maxTimeout              = 5 * time.Minute
 	maxOutputTokens         = 1_000_000
 	maxProviderIdentifier   = 128
+	maxProviderToolName     = 64
 	authorizationHeaderName = "Authorization"
 )
 
@@ -132,18 +133,69 @@ func (generator *Generator) Generate(
 			err,
 		)
 	}
+	internalToProvider, providerToInternal, err := toolNameMappings(request)
+	if err != nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			err,
+		)
+	}
 
 	payload := chatCompletionRequest{
 		Model:          generator.model,
 		Messages:       make([]chatMessage, 0, len(request.Messages)),
+		Tools:          make([]chatTool, 0, len(request.Tools)),
 		Stream:         false,
 		EnableThinking: false,
 		MaxTokens:      generator.maxOutputTokens,
 	}
+	if request.ResponseFormat == ai.TextResponseFormatJSON {
+		payload.ResponseFormat = &chatResponseFormat{
+			Type: string(ai.TextResponseFormatJSON),
+		}
+	}
+	toolChoice, err := providerToolChoice(request.ToolChoice, internalToProvider)
+	if err != nil {
+		return ai.TextResult{}, ai.NewGenerationError(
+			ai.ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			err,
+		)
+	}
+	payload.ToolChoice = toolChoice
 	for _, message := range request.Messages {
-		payload.Messages = append(payload.Messages, chatMessage{
-			Role:    string(message.Role),
-			Content: message.Content,
+		providerMessage := chatMessage{
+			Role:       string(message.Role),
+			Content:    message.Content,
+			ToolCallID: message.ToolCallID,
+			ToolCalls:  make([]chatToolCall, 0, len(message.ToolCalls)),
+		}
+		for index, call := range message.ToolCalls {
+			providerMessage.ToolCalls = append(providerMessage.ToolCalls, chatToolCall{
+				ID:    call.ID,
+				Type:  "function",
+				Index: index,
+				Function: chatFunctionCall{
+					Name:      internalToProvider[call.Name],
+					Arguments: string(call.Arguments),
+				},
+			})
+		}
+		payload.Messages = append(payload.Messages, providerMessage)
+	}
+	for _, definition := range request.Tools {
+		payload.Tools = append(payload.Tools, chatTool{
+			Type: "function",
+			Function: chatToolFunction{
+				Name:        internalToProvider[definition.Name],
+				Description: definition.Description,
+				Parameters:  definition.InputSchema,
+			},
 		})
 	}
 	body, err := json.Marshal(payload)
@@ -229,7 +281,7 @@ func (generator *Generator) Generate(
 			errors.New("decode Qianwen response"),
 		)
 	}
-	result, err := completion.result()
+	result, err := completion.result(providerToInternal)
 	if err != nil {
 		return ai.TextResult{}, ai.NewGenerationError(
 			ai.ErrorInvalidResponse,
@@ -261,19 +313,60 @@ func (generator *Generator) Generate(
 }
 
 type chatCompletionRequest struct {
-	Model          string        `json:"model"`
-	Messages       []chatMessage `json:"messages"`
-	Stream         bool          `json:"stream"`
-	EnableThinking bool          `json:"enable_thinking"`
+	Model          string              `json:"model"`
+	Messages       []chatMessage       `json:"messages"`
+	Tools          []chatTool          `json:"tools,omitempty"`
+	ToolChoice     any                 `json:"tool_choice,omitempty"`
+	Stream         bool                `json:"stream"`
+	EnableThinking bool                `json:"enable_thinking"`
+	ResponseFormat *chatResponseFormat `json:"response_format,omitempty"`
 	// The current compatibility overview lists max_completion_tokens as
 	// silently ignored. The endpoint-specific Chat API still honors the
 	// deprecated max_tokens field, so it remains the enforceable budget.
 	MaxTokens int `json:"max_tokens"`
 }
 
+type chatResponseFormat struct {
+	Type string `json:"type"`
+}
+
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+}
+
+type chatTool struct {
+	Type     string           `json:"type"`
+	Function chatToolFunction `json:"function"`
+}
+
+type chatToolFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+type chatToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Index    int              `json:"index"`
+	Function chatFunctionCall `json:"function"`
+}
+
+type chatSpecificToolChoice struct {
+	Type     string                         `json:"type"`
+	Function chatSpecificToolChoiceFunction `json:"function"`
+}
+
+type chatSpecificToolChoiceFunction struct {
+	Name string `json:"name"`
+}
+
+type chatFunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type chatCompletionResponse struct {
@@ -282,8 +375,9 @@ type chatCompletionResponse struct {
 	Choices []struct {
 		FinishReason string `json:"finish_reason"`
 		Message      struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
+			Role      string         `json:"role"`
+			Content   string         `json:"content"`
+			ToolCalls []chatToolCall `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
 	Usage *struct {
@@ -293,7 +387,9 @@ type chatCompletionResponse struct {
 	} `json:"usage"`
 }
 
-func (response chatCompletionResponse) result() (ai.TextResult, error) {
+func (response chatCompletionResponse) result(
+	providerToInternal map[string]string,
+) (ai.TextResult, error) {
 	id := sanitizeIdentifier(response.ID)
 	if id == "" {
 		return ai.TextResult{}, errors.New("Qianwen response has no valid completion ID")
@@ -310,13 +406,52 @@ func (response chatCompletionResponse) result() (ai.TextResult, error) {
 		return ai.TextResult{}, errors.New("Qianwen response choice has an invalid role")
 	}
 	content := strings.TrimSpace(choice.Message.Content)
-	if content == "" {
-		return ai.TextResult{}, errors.New("Qianwen response choice has no visible content")
+	finishReason := choice.FinishReason
+	if len(choice.Message.ToolCalls) > 0 && finishReason == "stop" {
+		finishReason = "tool_calls"
 	}
-	switch choice.FinishReason {
+	switch finishReason {
 	case "stop", "length":
+		if content == "" {
+			return ai.TextResult{}, errors.New("Qianwen response choice has no visible content")
+		}
+		if len(choice.Message.ToolCalls) != 0 {
+			return ai.TextResult{}, errors.New("Qianwen text response contains unexpected tool calls")
+		}
+	case "tool_calls":
+		if len(choice.Message.ToolCalls) == 0 {
+			return ai.TextResult{}, errors.New("Qianwen tool response contains no tool calls")
+		}
 	default:
 		return ai.TextResult{}, errors.New("Qianwen response has an unsupported finish reason")
+	}
+	var toolCalls []ai.ToolCall
+	if len(choice.Message.ToolCalls) > 0 {
+		toolCalls = make([]ai.ToolCall, 0, len(choice.Message.ToolCalls))
+	}
+	seenCallIDs := make(map[string]struct{}, len(choice.Message.ToolCalls))
+	for _, providerCall := range choice.Message.ToolCalls {
+		if providerCall.Type != "function" ||
+			sanitizeIdentifier(providerCall.ID) != providerCall.ID {
+			return ai.TextResult{}, errors.New("Qianwen response contains an invalid tool call")
+		}
+		if _, exists := seenCallIDs[providerCall.ID]; exists {
+			return ai.TextResult{}, errors.New("Qianwen response contains duplicate tool call IDs")
+		}
+		internalName, exists := providerToInternal[providerCall.Function.Name]
+		if !exists {
+			return ai.TextResult{}, errors.New("Qianwen response selected an unknown tool")
+		}
+		call := ai.ToolCall{
+			ID:        providerCall.ID,
+			Name:      internalName,
+			Arguments: json.RawMessage(providerCall.Function.Arguments),
+		}
+		if err := ai.ValidateToolCall(call); err != nil {
+			return ai.TextResult{}, errors.New("Qianwen response contains invalid tool arguments")
+		}
+		seenCallIDs[providerCall.ID] = struct{}{}
+		toolCalls = append(toolCalls, call)
 	}
 	if response.Usage == nil ||
 		response.Usage.PromptTokens == nil ||
@@ -336,13 +471,84 @@ func (response chatCompletionResponse) result() (ai.TextResult, error) {
 		Provider:     providerName,
 		Model:        model,
 		Content:      content,
-		FinishReason: choice.FinishReason,
+		ToolCalls:    toolCalls,
+		FinishReason: finishReason,
 		Usage: ai.TokenUsage{
 			InputTokens:  *response.Usage.PromptTokens,
 			OutputTokens: *response.Usage.CompletionTokens,
 			TotalTokens:  *response.Usage.TotalTokens,
 		},
 	}, nil
+}
+
+func toolNameMappings(request ai.TextRequest) (map[string]string, map[string]string, error) {
+	internalToProvider := make(map[string]string)
+	providerToInternal := make(map[string]string)
+	providerOwners := make(map[string]string)
+	add := func(internalName string, selectable bool) error {
+		if _, exists := internalToProvider[internalName]; exists {
+			if selectable {
+				providerToInternal[internalToProvider[internalName]] = internalName
+			}
+			return nil
+		}
+		providerName := strings.NewReplacer(".", "_", ":", "_").Replace(internalName)
+		if len(providerName) == 0 || len(providerName) > maxProviderToolName {
+			return errors.New("Qianwen tool name exceeds the provider limit")
+		}
+		if existing, exists := providerOwners[providerName]; exists &&
+			existing != internalName {
+			return errors.New("Qianwen tool names collide after provider normalization")
+		}
+		internalToProvider[internalName] = providerName
+		providerOwners[providerName] = internalName
+		if selectable {
+			providerToInternal[providerName] = internalName
+		}
+		return nil
+	}
+	for _, definition := range request.Tools {
+		if err := add(definition.Name, true); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, message := range request.Messages {
+		for _, call := range message.ToolCalls {
+			if err := add(call.Name, false); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return internalToProvider, providerToInternal, nil
+}
+
+func providerToolChoice(
+	choice ai.ToolChoice,
+	internalToProvider map[string]string,
+) (any, error) {
+	switch choice.Mode {
+	case "":
+		return nil, nil
+	case ai.ToolChoiceAuto:
+		return "auto", nil
+	case ai.ToolChoiceNone:
+		return "none", nil
+	case ai.ToolChoiceRequired:
+		return "required", nil
+	case ai.ToolChoiceSpecific:
+		providerName, exists := internalToProvider[choice.Name]
+		if !exists {
+			return nil, errors.New("Qianwen specific tool choice is unavailable")
+		}
+		return chatSpecificToolChoice{
+			Type: "function",
+			Function: chatSpecificToolChoiceFunction{
+				Name: providerName,
+			},
+		}, nil
+	default:
+		return nil, errors.New("Qianwen tool choice mode is unsupported")
+	}
 }
 
 type errorEnvelope struct {

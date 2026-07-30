@@ -1,6 +1,5 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
+import 'package:speakup/design/speak_up_design.dart';
 
 class GlassNavigationDestination {
   const GlassNavigationDestination({
@@ -19,6 +18,7 @@ class GlassNavigationBar extends StatelessWidget {
     required this.destinations,
     required this.selectedIndex,
     required this.onDestinationSelected,
+    this.solid = false,
     super.key,
   });
 
@@ -29,6 +29,7 @@ class GlassNavigationBar extends StatelessWidget {
   final List<GlassNavigationDestination> destinations;
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
+  final bool solid;
 
   static double heightFor(BuildContext context) {
     final labelScale = _labelScaleFor(context);
@@ -43,13 +44,39 @@ class GlassNavigationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final highContrast = MediaQuery.highContrastOf(context);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final navigationHeight = heightFor(context);
     final horizontalInset = MediaQuery.sizeOf(context).width >= 390
         ? 20.0
         : 16.0;
 
+    final navigation = Container(
+      key: const Key('primary-navigation'),
+      height: navigationHeight,
+      padding: const EdgeInsets.all(SpeakUpDesign.space4),
+      decoration: BoxDecoration(
+        color: SpeakUpDesign.surface,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusMedia),
+        border: Border.all(color: SpeakUpDesign.border),
+      ),
+      child: Semantics(
+        container: true,
+        label: '主导航',
+        child: Row(
+          children: [
+            for (var index = 0; index < destinations.length; index++)
+              Expanded(
+                child: _NavigationItem(
+                  destination: destinations[index],
+                  selected: selectedIndex == index,
+                  reduceMotion: reduceMotion,
+                  onTap: () => onDestinationSelected(index),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
     return SafeArea(
       minimum: EdgeInsets.fromLTRB(
         horizontalInset,
@@ -57,56 +84,9 @@ class GlassNavigationBar extends StatelessWidget {
         horizontalInset,
         minimumBottomInset,
       ),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x12000000),
-              blurRadius: 18,
-              offset: Offset(0, 6),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: Container(
-              key: const Key('primary-navigation'),
-              height: navigationHeight,
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: highContrast
-                    ? const Color(0xFFF8F8F6)
-                    : const Color(0xDEFFFFFF),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: highContrast
-                      ? const Color(0xFFD8DAE2)
-                      : const Color(0xBFFFFFFF),
-                ),
-              ),
-              child: Semantics(
-                container: true,
-                label: '主导航',
-                child: Row(
-                  children: [
-                    for (var index = 0; index < destinations.length; index++)
-                      Expanded(
-                        child: _NavigationItem(
-                          destination: destinations[index],
-                          selected: selectedIndex == index,
-                          reduceMotion: reduceMotion,
-                          onTap: () => onDestinationSelected(index),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusMedia),
+        child: navigation,
       ),
     );
   }
@@ -139,7 +119,7 @@ class _NavigationItem extends StatelessWidget {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
             onTap: onTap,
             child: AnimatedContainer(
               duration: reduceMotion
@@ -147,11 +127,10 @@ class _NavigationItem extends StatelessWidget {
                   : const Duration(milliseconds: 180),
               curve: Curves.easeOutCubic,
               decoration: BoxDecoration(
-                color: selected ? const Color(0xD9E8E8E5) : Colors.transparent,
-                borderRadius: BorderRadius.circular(20),
-                border: selected
-                    ? Border.all(color: const Color(0xCFFFFFFF))
-                    : null,
+                color: selected
+                    ? SpeakUpDesign.primaryMuted
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -160,8 +139,8 @@ class _NavigationItem extends StatelessWidget {
                     destination.icon,
                     size: 21,
                     color: selected
-                        ? const Color(0xFF111217)
-                        : const Color(0xFF686A72),
+                        ? SpeakUpDesign.primary
+                        : SpeakUpDesign.secondary,
                   ),
                   const SizedBox(height: 2),
                   FittedBox(
@@ -172,8 +151,8 @@ class _NavigationItem extends StatelessWidget {
                       textScaler: TextScaler.linear(labelScale),
                       style: TextStyle(
                         color: selected
-                            ? const Color(0xFF111217)
-                            : const Color(0xFF686A72),
+                            ? SpeakUpDesign.primary
+                            : SpeakUpDesign.secondary,
                         fontSize: 11,
                         fontWeight: selected
                             ? FontWeight.w600

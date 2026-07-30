@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"time"
@@ -9,7 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const transactionRollbackTimeout = 5 * time.Second
+const (
+	transactionRollbackTimeout       = 5 * time.Second
+	profileIdempotencyRetention      = 24 * time.Hour
+	profileIdempotencyRecordsPerUser = 64
+)
 
 type PostgreSQL interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -37,7 +42,15 @@ func (r *PostgresRepository) CreateUserWithCredential(
 	ctx context.Context,
 	canonicalEmail string,
 	passwordHash string,
+	displayNameInput ...*string,
 ) (_ User, resultErr error) {
+	if len(displayNameInput) > 1 {
+		return User{}, ErrRepository
+	}
+	var displayName *string
+	if len(displayNameInput) == 1 {
+		displayName = displayNameInput[0]
+	}
 	userID, err := r.ids.NewID()
 	if err != nil {
 		return User{}, ErrRepository
@@ -76,6 +89,21 @@ VALUES ($1, $2, CURRENT_TIMESTAMP)`,
 	); err != nil {
 		return User{}, mapPostgresError(err)
 	}
+	if displayName != nil {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO identity_user_profiles (
+    user_id,
+    display_name,
+    profile_version,
+    created_at,
+    updated_at
+) VALUES ($1, $2, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+			userID,
+			*displayName,
+		); err != nil {
+			return User{}, mapPostgresError(err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return User{}, ErrRepository
 	}
@@ -86,6 +114,257 @@ VALUES ($1, $2, CURRENT_TIMESTAMP)`,
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
 	}, nil
+}
+
+func (r *PostgresRepository) FindProfileByUserID(
+	ctx context.Context,
+	userID string,
+) (UserProfile, error) {
+	var profile UserProfile
+	err := r.database.QueryRow(ctx, `
+SELECT
+    user_id::text,
+    display_name,
+    profile_version,
+    created_at,
+    updated_at
+FROM identity_user_profiles
+WHERE user_id = $1`,
+		userID,
+	).Scan(
+		&profile.UserID,
+		&profile.DisplayName,
+		&profile.ProfileVersion,
+		&profile.CreatedAt,
+		&profile.UpdatedAt,
+	)
+	if err != nil {
+		return UserProfile{}, mapPostgresError(err)
+	}
+	return profile, nil
+}
+
+func (r *PostgresRepository) PersistProfile(
+	ctx context.Context,
+	command PersistProfileCommand,
+) (_ UserProfile, resultErr error) {
+	if len(command.RequestDigest) != sha256DigestBytes {
+		return UserProfile{}, ErrRepository
+	}
+	tx, err := r.database.Begin(ctx)
+	if err != nil {
+		return UserProfile{}, ErrRepository
+	}
+	defer func() {
+		if resultErr != nil {
+			rollback(tx)
+		}
+	}()
+
+	if _, err := tx.Exec(ctx, `
+SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`,
+		command.UserID,
+		command.IdempotencyKey,
+	); err != nil {
+		return UserProfile{}, mapPostgresError(err)
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM identity_profile_idempotency
+WHERE user_id = $1
+  AND created_at < CURRENT_TIMESTAMP - make_interval(secs => $2)`,
+		command.UserID,
+		int64(profileIdempotencyRetention/time.Second),
+	); err != nil {
+		return UserProfile{}, mapPostgresError(err)
+	}
+
+	var replay UserProfile
+	var replayDigest []byte
+	err = tx.QueryRow(ctx, `
+SELECT
+    user_id::text,
+    request_digest,
+    response_display_name,
+    response_profile_version,
+    response_created_at,
+    response_updated_at
+FROM identity_profile_idempotency
+WHERE user_id = $1 AND idempotency_key = $2`,
+		command.UserID,
+		command.IdempotencyKey,
+	).Scan(
+		&replay.UserID,
+		&replayDigest,
+		&replay.DisplayName,
+		&replay.ProfileVersion,
+		&replay.CreatedAt,
+		&replay.UpdatedAt,
+	)
+	switch {
+	case err == nil:
+		if !bytes.Equal(replayDigest, command.RequestDigest) {
+			return UserProfile{}, ErrIdempotencyKeyConflict
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return UserProfile{}, ErrRepository
+		}
+		return replay, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return UserProfile{}, mapPostgresError(err)
+	}
+
+	var accountStatus string
+	if err := tx.QueryRow(ctx, `
+SELECT account_status
+FROM identity_users
+WHERE id = $1
+FOR UPDATE`,
+		command.UserID,
+	).Scan(&accountStatus); err != nil {
+		return UserProfile{}, mapPostgresError(err)
+	}
+	if AccountStatus(accountStatus) != AccountActive {
+		return UserProfile{}, ErrAuthenticationRequired
+	}
+
+	var current UserProfile
+	err = tx.QueryRow(ctx, `
+SELECT
+    user_id::text,
+    display_name,
+    profile_version,
+    created_at,
+    updated_at
+FROM identity_user_profiles
+WHERE user_id = $1
+FOR UPDATE`,
+		command.UserID,
+	).Scan(
+		&current.UserID,
+		&current.DisplayName,
+		&current.ProfileVersion,
+		&current.CreatedAt,
+		&current.UpdatedAt,
+	)
+
+	var persisted UserProfile
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if command.ExpectedProfileVersion != nil {
+			return UserProfile{}, ErrProfileVersionConflict
+		}
+		if err := tx.QueryRow(ctx, `
+INSERT INTO identity_user_profiles (
+    user_id,
+    display_name,
+    profile_version,
+    created_at,
+    updated_at
+) VALUES ($1, $2, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+RETURNING
+    user_id::text,
+    display_name,
+    profile_version,
+    created_at,
+    updated_at`,
+			command.UserID,
+			command.DisplayName,
+		).Scan(
+			&persisted.UserID,
+			&persisted.DisplayName,
+			&persisted.ProfileVersion,
+			&persisted.CreatedAt,
+			&persisted.UpdatedAt,
+		); err != nil {
+			if errors.Is(mapPostgresError(err), ErrConflict) {
+				return UserProfile{}, ErrProfileVersionConflict
+			}
+			return UserProfile{}, mapPostgresError(err)
+		}
+	case err != nil:
+		return UserProfile{}, mapPostgresError(err)
+	default:
+		if command.ExpectedProfileVersion == nil ||
+			*command.ExpectedProfileVersion != current.ProfileVersion {
+			return UserProfile{}, ErrProfileVersionConflict
+		}
+		if err := tx.QueryRow(ctx, `
+UPDATE identity_user_profiles
+SET
+    display_name = $2,
+    profile_version = profile_version + 1,
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE user_id = $1 AND profile_version = $3
+RETURNING
+    user_id::text,
+    display_name,
+    profile_version,
+    created_at,
+    updated_at`,
+			command.UserID,
+			command.DisplayName,
+			*command.ExpectedProfileVersion,
+		).Scan(
+			&persisted.UserID,
+			&persisted.DisplayName,
+			&persisted.ProfileVersion,
+			&persisted.CreatedAt,
+			&persisted.UpdatedAt,
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return UserProfile{}, ErrProfileVersionConflict
+			}
+			return UserProfile{}, mapPostgresError(err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+INSERT INTO identity_profile_idempotency (
+    user_id,
+    idempotency_key,
+    request_digest,
+    response_display_name,
+    response_profile_version,
+    response_created_at,
+    response_updated_at,
+    created_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
+		command.UserID,
+		command.IdempotencyKey,
+		command.RequestDigest,
+		persisted.DisplayName,
+		persisted.ProfileVersion,
+		persisted.CreatedAt,
+		persisted.UpdatedAt,
+	); err != nil {
+		if errors.Is(mapPostgresError(err), ErrConflict) {
+			return UserProfile{}, ErrIdempotencyKeyConflict
+		}
+		return UserProfile{}, mapPostgresError(err)
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM identity_profile_idempotency AS records
+USING (
+    SELECT idempotency_key
+    FROM identity_profile_idempotency
+    WHERE user_id = $1
+    ORDER BY created_at DESC, idempotency_key DESC
+    OFFSET $2
+) AS overflow
+WHERE records.user_id = $1
+  AND records.idempotency_key = overflow.idempotency_key`,
+		command.UserID,
+		profileIdempotencyRecordsPerUser,
+	); err != nil {
+		return UserProfile{}, mapPostgresError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return UserProfile{}, ErrRepository
+	}
+	return persisted, nil
 }
 
 func (r *PostgresRepository) FindCredentialByEmail(

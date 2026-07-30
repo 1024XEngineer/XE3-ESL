@@ -21,6 +21,7 @@ final class PreparationLaunchSelection {
     required this.scenarioDefinitionId,
     required this.scenarioDefinitionVersion,
     required this.scenarioType,
+    required this.scenarioModel,
     required this.scenarioDisplayName,
     required this.scenarioDescription,
     required this.scenarioConfigId,
@@ -42,8 +43,9 @@ final class PreparationLaunchSelection {
       scenarioDefinitionId: scenario.id,
       scenarioDefinitionVersion: scenario.version,
       scenarioType: scenario.type,
+      scenarioModel: scenario.model,
       scenarioDisplayName: scenario.name,
-      scenarioDescription: '${config.jobTitle}: ${config.jobDescription}',
+      scenarioDescription: config.prompt.publicSceneBrief,
       scenarioConfigId: config.id,
       scenarioConfigVersion: config.version,
       roleDefinitionId: role.id,
@@ -57,6 +59,7 @@ final class PreparationLaunchSelection {
   final String scenarioDefinitionId;
   final int scenarioDefinitionVersion;
   final String scenarioType;
+  final String scenarioModel;
   final String scenarioDisplayName;
   final String scenarioDescription;
   final String scenarioConfigId;
@@ -73,6 +76,7 @@ final class PreparationLaunchSelection {
       other.scenarioDefinitionId == scenarioDefinitionId &&
       other.scenarioDefinitionVersion == scenarioDefinitionVersion &&
       other.scenarioType == scenarioType &&
+      other.scenarioModel == scenarioModel &&
       other.scenarioDisplayName == scenarioDisplayName &&
       other.scenarioDescription == scenarioDescription &&
       other.scenarioConfigId == scenarioConfigId &&
@@ -88,6 +92,7 @@ final class PreparationLaunchSelection {
     scenarioDefinitionId,
     scenarioDefinitionVersion,
     scenarioType,
+    scenarioModel,
     scenarioDisplayName,
     scenarioDescription,
     scenarioConfigId,
@@ -157,6 +162,7 @@ final class PreparationPracticeSession {
     required this.id,
     required this.planId,
     required this.scenarioType,
+    required this.scenarioModel,
     required this.snapshotId,
     required this.status,
     required this.version,
@@ -166,6 +172,7 @@ final class PreparationPracticeSession {
   final String id;
   final String planId;
   final String scenarioType;
+  final String scenarioModel;
   final String snapshotId;
   final String status;
   final int version;
@@ -195,17 +202,20 @@ final class CreatePreparationPlanInput {
     required this.context,
     required this.selection,
     required this.preparationProfileId,
+    required this.preparationSnapshotId,
     required this.preparationUserId,
   });
 
   final AgentPracticeContext context;
   final PreparationLaunchSelection selection;
   final String preparationProfileId;
+  final String preparationSnapshotId;
   final String preparationUserId;
 }
 
 final class CreatePreparationSessionInput {
   const CreatePreparationSessionInput({
+    required this.agentThreadId,
     required this.expectedPlanRevision,
     required this.preparationSnapshotId,
     required this.preparationProfileId,
@@ -215,6 +225,7 @@ final class CreatePreparationSessionInput {
     required this.selection,
   });
 
+  final String agentThreadId;
   final int expectedPlanRevision;
   final String preparationSnapshotId;
   final String preparationProfileId;

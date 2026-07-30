@@ -783,6 +783,7 @@ final class FakeAgentClient
     final thread = _threads[threadId]!;
     return AgentThreadSnapshot(
       threadId: thread.id,
+      title: thread.title,
       activeMatter: _threadMatters[threadId],
       messages: List<AgentMessage>.unmodifiable(
         _threadMessages[threadId] ?? const <AgentMessage>[],
@@ -807,6 +808,7 @@ final class FakeAgentClient
     final now = DateTime.now().toUtc();
     _threads[threadId] = AgentThreadSummary(
       id: thread.id,
+      title: thread.title,
       activeMatterId: _threadMatters[threadId]?.id,
       createdAt: thread.createdAt,
       updatedAt: now.isBefore(thread.updatedAt) ? thread.updatedAt : now,

@@ -6,11 +6,15 @@ import (
 	"fmt"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
+	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
@@ -32,6 +36,8 @@ type IdentityAgentPracticeComposition struct {
 	identityModule         *identity.Module
 	agentModule            RouteRegistrar
 	agentVoiceReclaimer    AgentVoiceObjectReclaimer
+	memoryExtraction       memory.ExtractionProcessor
+	summaryProcessor       agentsummary.Processor
 	identityHTTP           *identity.HTTPHandler
 	preparationApplication *preparation.PersistenceService
 	preparationHTTP        *preparation.ProfileHTTPHandler
@@ -39,6 +45,7 @@ type IdentityAgentPracticeComposition struct {
 	jobTargetHTTP          *preparation.JobTargetHTTPHandler
 	practiceApplication    *practice.ContextApplication
 	practiceHTTP           *practice.ContextHTTPHandler
+	productionTools        *tool.Registry
 }
 
 // NewIdentityAgentAndPracticeComposition builds the production Identity,
@@ -51,7 +58,97 @@ func NewIdentityAgentAndPracticeComposition(
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
 	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
 	catalog preparation.CatalogReader,
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		nil,
+		nil,
+		voiceConfigurations...,
+	)
+}
+
+// NewIdentityAgentAndPracticeCompositionWithMemoryWakeup wires a payload-free
+// notification emitted only after a completed Agent Run has been committed.
+func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	catalog preparation.CatalogReader,
+	memoryExtractionNotifier interface{ Notify() },
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		memoryExtractionNotifier,
+		nil,
+		voiceConfigurations...,
+	)
+}
+
+type AgentWorkerWakeups struct {
+	MemoryExtraction interface{ Notify() }
+	ThreadSummary    interface{ Notify() }
+}
+
+func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	catalog preparation.CatalogReader,
+	wakeups AgentWorkerWakeups,
+	voiceConfigurations ...VoiceConfiguration,
+) (*IdentityAgentPracticeComposition, error) {
+	return newIdentityAgentAndPracticeComposition(
+		ctx,
+		database,
+		trustedProxyCIDRs,
+		trustedProxyHeader,
+		generator,
+		runConfiguration,
+		memorySearcher,
+		catalog,
+		wakeups.MemoryExtraction,
+		wakeups.ThreadSummary,
+		voiceConfigurations...,
+	)
+}
+
+func newIdentityAgentAndPracticeComposition(
+	ctx context.Context,
+	database *pgxpool.Pool,
+	trustedProxyCIDRs []string,
+	trustedProxyHeader string,
+	generator ai.TextGenerator,
+	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	catalog preparation.CatalogReader,
+	memoryExtractionNotifier interface{ Notify() },
+	summaryNotifier interface{ Notify() },
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
 	if catalog == nil {
@@ -64,6 +161,9 @@ func NewIdentityAgentAndPracticeComposition(
 		trustedProxyHeader,
 		generator,
 		runConfiguration,
+		memorySearcher,
+		memoryExtractionNotifier,
+		summaryNotifier,
 		voiceConfigurations...,
 	)
 	if err != nil {
@@ -134,8 +234,40 @@ func NewIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
+	if base.productionTools != nil {
+		previewCatalog, err := preparation.NewCatalogPreviewResolver(catalog)
+		if err != nil {
+			return nil, err
+		}
+		previewPort, err := practiceagenttool.NewServicePort(
+			practiceApplication,
+			previewCatalog,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if err := base.productionTools.Register(
+			practiceagenttool.NewPreviewTool(previewPort),
+		); err != nil {
+			return nil, err
+		}
+		startPort, err := practiceagenttool.NewStartServicePort(
+			practiceApplication,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if err := base.productionTools.Register(
+			practiceagenttool.NewStartTool(startPort),
+		); err != nil {
+			return nil, err
+		}
+	}
 	practiceHTTP, err := practice.NewContextHTTPHandler(practiceApplication)
 	if err != nil {
+		return nil, err
+	}
+	if err := base.recoverInterruptedRuns(ctx); err != nil {
 		return nil, err
 	}
 
@@ -143,6 +275,8 @@ func NewIdentityAgentAndPracticeComposition(
 		identityModule:         base.identity.module,
 		agentModule:            base.agentModule,
 		agentVoiceReclaimer:    base.agentVoiceReclaimer,
+		memoryExtraction:       base.memoryExtraction,
+		summaryProcessor:       base.summaryProcessor,
 		identityHTTP:           base.identity.handler,
 		preparationApplication: preparationApplication,
 		preparationHTTP:        preparationHTTP,
@@ -150,6 +284,7 @@ func NewIdentityAgentAndPracticeComposition(
 		jobTargetHTTP:          jobTargetHTTP,
 		practiceApplication:    practiceApplication,
 		practiceHTTP:           practiceHTTP,
+		productionTools:        base.productionTools,
 	}, nil
 }
 
@@ -174,6 +309,22 @@ func (c *IdentityAgentPracticeComposition) AgentVoiceReclaimer() AgentVoiceObjec
 		return nil
 	}
 	return c.agentVoiceReclaimer
+}
+
+// MemoryExtractionProcessor exposes only the bounded batch operation required
+// by the server scheduler. Memory keeps job, provider, and persistence details.
+func (c *IdentityAgentPracticeComposition) MemoryExtractionProcessor() memory.ExtractionProcessor {
+	if c == nil {
+		return nil
+	}
+	return c.memoryExtraction
+}
+
+func (c *IdentityAgentPracticeComposition) ThreadSummaryProcessor() agentsummary.Processor {
+	if c == nil {
+		return nil
+	}
+	return c.summaryProcessor
 }
 
 func (c *IdentityAgentPracticeComposition) PreparationApplication() *preparation.PersistenceService {
@@ -303,6 +454,9 @@ func (r *agentPracticeContextReader) ValidatePracticeAnchor(
 	}
 	if thread.ID != threadID || thread.OwnerID != actor.UserID {
 		return practice.PracticeAnchor{}, practicepersistence.ErrNotFound
+	}
+	if matterID == "" {
+		return practice.PracticeAnchor{ThreadID: thread.ID}, nil
 	}
 	if thread.ActiveMatterID == "" || thread.ActiveMatterID != matterID {
 		return practice.PracticeAnchor{}, practicepersistence.ErrConflict
@@ -645,24 +799,44 @@ func mapPlanCatalogSelection(
 	}
 	return practice.PlanCatalogSelection{
 		ScenarioDefinition: practicepersistence.ScenarioDefinitionSnapshot{
-			ID:      snapshot.ScenarioDefinition.ID,
-			Type:    string(snapshot.ScenarioDefinition.Type),
-			Name:    snapshot.ScenarioDefinition.Name,
-			Version: snapshot.ScenarioDefinition.Version,
-			Status:  string(snapshot.ScenarioDefinition.Status),
+			ID: snapshot.ScenarioDefinition.ID,
+			Type: practicepersistence.ScenarioFamily(
+				snapshot.ScenarioDefinition.Type,
+			),
+			Model: practicepersistence.ScenarioModel(
+				snapshot.ScenarioDefinition.Model,
+			),
+			Name:             snapshot.ScenarioDefinition.Name,
+			Version:          snapshot.ScenarioDefinition.Version,
+			Status:           string(snapshot.ScenarioDefinition.Status),
+			TurnPolicyRef:    snapshot.ScenarioDefinition.TurnPolicyRef,
+			SessionPolicyRef: snapshot.ScenarioDefinition.SessionPolicyRef,
 		},
 		ScenarioConfig: practicepersistence.ScenarioConfigSnapshot{
 			ID: snapshot.ScenarioConfig.ID,
 			ScenarioDefinitionID: snapshot.ScenarioConfig.
 				ScenarioDefinitionID,
-			Type:           string(snapshot.ScenarioConfig.Type),
+			Type:           practicepersistence.ScenarioFamily(snapshot.ScenarioConfig.Type),
+			Model:          practicepersistence.ScenarioModel(snapshot.ScenarioConfig.Model),
 			Version:        snapshot.ScenarioConfig.Version,
 			JobTitle:       snapshot.ScenarioConfig.JobTitle,
 			JobDescription: snapshot.ScenarioConfig.JobDescription,
-			FocusAreas: append(
-				[]string(nil),
-				snapshot.ScenarioConfig.FocusAreas...,
-			),
+			PromptModel: practicepersistence.ScenarioPromptModel{
+				PublicSceneBrief: snapshot.ScenarioConfig.PromptModel.PublicSceneBrief,
+				PracticeGoal:     snapshot.ScenarioConfig.PromptModel.PracticeGoal,
+				UserRole:         snapshot.ScenarioConfig.PromptModel.UserRole,
+				AIRole:           snapshot.ScenarioConfig.PromptModel.AIRole,
+				PersonaSummary:   snapshot.ScenarioConfig.PromptModel.PersonaSummary,
+				FocusAreas: append(
+					[]string(nil),
+					snapshot.ScenarioConfig.PromptModel.FocusAreas...,
+				),
+				TurnBlueprints: append(
+					[]string(nil),
+					snapshot.ScenarioConfig.PromptModel.TurnBlueprints...,
+				),
+				SuggestedDurationSeconds: snapshot.ScenarioConfig.PromptModel.SuggestedDurationSeconds,
+			},
 		},
 		SelectedRoles:  roles,
 		PracticeOption: mapPracticeOption(snapshot.PracticeOption),

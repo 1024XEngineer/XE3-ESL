@@ -30,6 +30,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('primary-tab-scenes')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('practice-hub-interview')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('scene-self-introduction')));
     await tester.pumpAndSettle();
 
@@ -67,29 +69,64 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('practice-page')), findsOneWidget);
 
-    for (var turn = 1; turn <= 3; turn++) {
-      await tester.tap(find.byKey(const Key('practice-record')));
-      await tester.pump();
-      expect(find.byKey(const Key('practice-stop-recording')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('practice-record')));
+    await tester.pumpAndSettle();
+    expect(agentController.recordingState, PracticeRecordingState.recording);
+    expect(find.text('再次点击结束'), findsOneWidget);
+    expect(
+      find.byKey(const Key('practice-cancel-tap-recording')),
+      findsOneWidget,
+    );
 
-      await tester.tap(find.byKey(const Key('practice-stop-recording')));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('practice-cancel-tap-recording')));
+    await tester.pumpAndSettle();
+    expect(agentController.recordingState, PracticeRecordingState.idle);
+    expect(find.byKey(const Key('practice-transcript')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('practice-record')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('practice-stop-recording')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('practice-rerecord')));
+    await tester.pumpAndSettle();
+    expect(agentController.recordingState, PracticeRecordingState.idle);
+
+    final cancelledGesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('practice-record'))),
+    );
+    await tester.pump(const Duration(milliseconds: 220));
+    await cancelledGesture.moveBy(const Offset(0, -90));
+    await tester.pump();
+    expect(find.text('松开取消'), findsOneWidget);
+    await cancelledGesture.up();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('practice-transcript')), findsNothing);
+    expect(agentController.recordingState, PracticeRecordingState.idle);
+
+    for (var turn = 1; turn <= 3; turn++) {
+      await _holdAndReleaseAnswer(tester);
       expect(find.byKey(const Key('practice-transcript')), findsOneWidget);
+      expect(find.text('取消'), findsOneWidget);
+      expect(
+        find
+            .byKey(Key('practice-ai-message-${agentController.questionId}'))
+            .hitTestable(),
+        findsOneWidget,
+      );
 
       if (turn == 1) {
         await tester.tap(find.byKey(const Key('practice-rerecord')));
         await tester.pumpAndSettle();
-        expect(find.text('0 / 3'), findsOneWidget);
-        await tester.tap(find.byKey(const Key('practice-record')));
-        await tester.pump();
-        await tester.tap(find.byKey(const Key('practice-stop-recording')));
-        await tester.pumpAndSettle();
+        expect(agentController.practiceMessages, hasLength(1));
+        await _holdAndReleaseAnswer(tester);
       }
 
       await tester.tap(find.byKey(const Key('practice-confirm-turn')));
       await tester.pumpAndSettle();
       if (turn < 3) {
-        expect(find.text('$turn / 3'), findsOneWidget);
+        expect(agentController.practiceMessages, hasLength(turn * 2 + 1));
       }
     }
 
@@ -213,13 +250,18 @@ void main() {
 
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('practice-hub-interview')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('scene-self-introduction')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('scene-operation-error')), findsOneWidget);
       expect(find.byKey(const Key('scene-retry-operation')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('scene-retry-operation')));
+      final retry = find.byKey(const Key('scene-retry-operation'));
+      await tester.ensureVisible(retry);
+      await tester.pumpAndSettle();
+      await tester.tap(retry);
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('agent-thread-title')), findsOneWidget);
@@ -447,6 +489,15 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+Future<void> _holdAndReleaseAnswer(WidgetTester tester) async {
+  final holdTarget = find.byKey(const Key('practice-record'));
+  final gesture = await tester.startGesture(tester.getCenter(holdTarget));
+  await tester.pump(const Duration(milliseconds: 220));
+  expect(find.byKey(const Key('practice-stop-recording')), findsOneWidget);
+  await gesture.up();
+  await tester.pumpAndSettle();
 }
 
 final class _CurrentReviewHistoryClient implements ReviewHistoryClient {

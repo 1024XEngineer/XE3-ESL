@@ -75,12 +75,17 @@ final class WirePreparationCatalogClient implements PreparationCatalogClient {
         'practice_options',
       },
     );
-    final scenario = _scenario(root['scenario_definition']);
+    final config = _scenarioConfig(root['scenario_config']);
+    final scenario = _scenario(
+      root['scenario_definition'],
+      summary: config.prompt.publicSceneBrief,
+    );
     if (scenario.id != scenarioId || scenario.status != 'active') {
       throw _invalidResponse();
     }
-    final config = _scenarioConfig(root['scenario_config']);
-    if (config.scenarioId != scenarioId || config.type != scenario.type) {
+    if (config.scenarioId != scenarioId ||
+        config.type != scenario.type ||
+        config.model != scenario.model) {
       throw _invalidResponse();
     }
     final rawOptions = root['practice_options'];
@@ -228,15 +233,19 @@ Map<String, Object?> _object(
   return value;
 }
 
-PreparationScenario _scenario(Object? value) {
+PreparationScenario _scenario(Object? value, {String? summary}) {
   final object = _object(
     value,
-    required: const <String>{
+    required: <String>{
       'scenario_definition_id',
       'scenario_type',
+      'scenario_model',
       'name',
       'version',
       'status',
+      'turn_policy_ref',
+      'session_policy_ref',
+      if (summary == null) 'summary',
     },
   );
   final status = _string(object['status'], maximumBytes: 16);
@@ -244,13 +253,18 @@ PreparationScenario _scenario(Object? value) {
     throw _invalidResponse();
   }
   final type = _wireEnum(object['scenario_type']);
-  if (type != 'INTERVIEW') {
+  final model = _wireEnum(object['scenario_model']);
+  if (!_validScenarioFamilyModel(type, model)) {
     throw _invalidResponse();
   }
+  _resourceId(object['turn_policy_ref']);
+  _resourceId(object['session_policy_ref']);
   return PreparationScenario(
     id: _resourceId(object['scenario_definition_id']),
     type: type,
+    model: model,
     name: _string(object['name']),
+    summary: summary ?? _string(object['summary']),
     version: _version(object['version']),
     status: status,
   );
@@ -263,25 +277,80 @@ PreparationScenarioConfig _scenarioConfig(Object? value) {
       'scenario_config_id',
       'scenario_definition_id',
       'config_type',
+      'scenario_model',
       'version',
-      'job_title',
-      'job_description',
-      'focus_areas',
+      'prompt_model',
     },
+    optional: const <String>{'job_title', 'job_description'},
   );
   final type = _wireEnum(object['config_type']);
-  if (type != 'INTERVIEW') {
+  final model = _wireEnum(object['scenario_model']);
+  if (!_validScenarioFamilyModel(type, model)) {
     throw _invalidResponse();
   }
+  final prompt = _scenarioPrompt(object['prompt_model']);
   return PreparationScenarioConfig(
     id: _resourceId(object['scenario_config_id']),
     scenarioId: _resourceId(object['scenario_definition_id']),
     type: type,
+    model: model,
     version: _version(object['version']),
-    jobTitle: _string(object['job_title']),
-    jobDescription: _string(object['job_description']),
-    focusAreas: _stringList(object['focus_areas']),
+    jobTitle: object.containsKey('job_title')
+        ? _string(object['job_title'])
+        : null,
+    jobDescription: object.containsKey('job_description')
+        ? _string(object['job_description'])
+        : null,
+    prompt: prompt,
   );
+}
+
+PreparationScenarioPrompt _scenarioPrompt(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'public_scene_brief',
+      'practice_goal',
+      'user_role',
+      'ai_role',
+      'persona_summary',
+      'focus_areas',
+      'turn_blueprints',
+      'suggested_duration_seconds',
+    },
+  );
+  final duration = object['suggested_duration_seconds'];
+  if (duration is! int || duration < 1 || duration > 3600) {
+    throw _invalidResponse();
+  }
+  return PreparationScenarioPrompt(
+    publicSceneBrief: _string(object['public_scene_brief']),
+    practiceGoal: _string(object['practice_goal']),
+    userRole: _string(object['user_role']),
+    aiRole: _string(object['ai_role']),
+    personaSummary: _string(object['persona_summary']),
+    focusAreas: _stringList(object['focus_areas']),
+    turnBlueprints: _stringList(
+      object['turn_blueprints'],
+      maximumItemBytes: 4096,
+    ),
+    suggestedDurationSeconds: duration,
+  );
+}
+
+bool _validScenarioFamilyModel(String family, String model) {
+  return switch ((family, model)) {
+    ('INTERVIEW', 'PROJECT_EXPERIENCE_DEEP_DIVE') ||
+    ('INTERVIEW', 'INTERVIEW_BASIC_DIALOGUE') ||
+    ('EXAM', 'IELTS_SPEAKING_PART_2') ||
+    ('EXAM', 'IELTS_SPEAKING_FULL_MOCK') ||
+    ('EXAM', 'EXAM_BASIC_DIALOGUE') ||
+    ('WORKPLACE', 'PROGRESS_AND_RISK_UPDATE') ||
+    ('WORKPLACE', 'WORKPLACE_BASIC_DIALOGUE') ||
+    ('DAILY', 'HOTEL_CHECKIN_AND_ISSUE_HANDLING') ||
+    ('DAILY', 'DAILY_BASIC_DIALOGUE') => true,
+    _ => false,
+  };
 }
 
 PreparationRole _role(Object? value) {
@@ -375,14 +444,14 @@ String _string(Object? value, {int maximumBytes = 4096}) {
   return value;
 }
 
-List<String> _stringList(Object? value) {
+List<String> _stringList(Object? value, {int maximumItemBytes = 128}) {
   if (value is! List<Object?> || value.isEmpty || value.length > 50) {
     throw _invalidResponse();
   }
   final seen = <String>{};
   final result = <String>[];
   for (final item in value) {
-    final text = _string(item, maximumBytes: 128);
+    final text = _string(item, maximumBytes: maximumItemBytes);
     if (!seen.add(text)) {
       throw _invalidResponse();
     }

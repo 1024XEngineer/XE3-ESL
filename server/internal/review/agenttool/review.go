@@ -13,9 +13,9 @@ const (
 )
 
 type ReviewSearchInput struct {
-	Query      string `json:"query"`
-	ScenarioID string `json:"scenario_id,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
+	Query             string `json:"query"`
+	PracticeSessionID string `json:"practice_session_id,omitempty"`
+	Limit             int    `json:"limit,omitempty"`
 }
 
 type ReviewGetInput struct {
@@ -23,16 +23,48 @@ type ReviewGetInput struct {
 }
 
 type ReviewSummary struct {
-	ID         string      `json:"id"`
-	Title      string      `json:"title"`
-	Summary    string      `json:"summary"`
-	ScenarioID string      `json:"scenario_id,omitempty"`
-	SourceRefs []SourceRef `json:"source_refs,omitempty"`
+	ID                   string      `json:"review_id"`
+	PracticeSessionID    string      `json:"practice_session_id"`
+	ScenarioDefinitionID string      `json:"scenario_definition_id,omitempty"`
+	Summary              string      `json:"summary"`
+	CompletedAt          string      `json:"completed_at,omitempty"`
+	SourceRefs           []SourceRef `json:"-"`
+}
+
+type ReviewConclusion struct {
+	Key        string `json:"key"`
+	Category   string `json:"category"`
+	Score      int    `json:"score,omitempty"`
+	Message    string `json:"message"`
+	Suggestion string `json:"suggestion,omitempty"`
+}
+
+type ReviewFeedbackItem struct {
+	Key        string `json:"key"`
+	Kind       string `json:"kind"`
+	Message    string `json:"message"`
+	Suggestion string `json:"suggestion,omitempty"`
+}
+
+type ReviewDetail struct {
+	ID                          string               `json:"review_id"`
+	PracticeSessionID           string               `json:"practice_session_id"`
+	ScenarioDefinitionID        string               `json:"scenario_definition_id,omitempty"`
+	Status                      string               `json:"status"`
+	SummaryEligibility          string               `json:"summary_eligibility"`
+	OverallScore                *int                 `json:"overall_score,omitempty"`
+	Summary                     string               `json:"summary"`
+	Conclusions                 []ReviewConclusion   `json:"conclusions"`
+	FeedbackItems               []ReviewFeedbackItem `json:"feedback_items,omitempty"`
+	RepracticeSuggestionRefs    []string             `json:"repractice_suggestion_refs,omitempty"`
+	InsufficientEvidenceReasons []string             `json:"insufficient_evidence_reasons,omitempty"`
+	CompletedAt                 string               `json:"completed_at,omitempty"`
+	SourceRefs                  []SourceRef          `json:"-"`
 }
 
 type ReviewPort interface {
 	SearchReviews(ctx context.Context, call CallContext, input ReviewSearchInput) ([]ReviewSummary, error)
-	GetReview(ctx context.Context, call CallContext, input ReviewGetInput) (ReviewSummary, error)
+	GetReview(ctx context.Context, call CallContext, input ReviewGetInput) (ReviewDetail, error)
 }
 
 type ReviewSearchTool struct {
@@ -48,14 +80,20 @@ func NewReviewSearchTool(port ReviewPort) ReviewSearchTool {
 func (tool ReviewSearchTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewSearchToolName,
-		Description: "Search the user's historical practice reviews or interview evaluations.",
+		Description: "Search the current user's historical practice reviews and interview evaluations, returning summary records with review ids. Use when the user asks about previous feedback, performance, recurring review themes, or wants to locate a review before opening it. Do not use for correcting only the current sentence, searching scenarios, or reading one known review id.",
 		InputSchema: ObjectSchema(map[string]any{
-			"query":       StringSchema("What review or evaluation the user wants to find."),
-			"scenario_id": StringSchema("Optional scenario id to restrict the search."),
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Maximum number of reviews to return.",
-			},
+			"query": TextSchema(
+				"Words describing the review or evaluation to find.",
+				500,
+			),
+			"practice_session_id": IdentifierSchema(
+				"Optional exact practice session id used to narrow the review search.",
+			),
+			"limit": IntegerRangeSchema(
+				"Maximum number of review summaries to return.",
+				1,
+				20,
+			),
 		}, []string{"query"}),
 		ReadOnly: true,
 		Risk:     RiskReadOnly,
@@ -69,7 +107,7 @@ func (tool ReviewSearchTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ReviewSearchInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.Query == "" {
@@ -104,9 +142,11 @@ func NewReviewGetTool(port ReviewPort) ReviewGetTool {
 func (tool ReviewGetTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewGetToolName,
-		Description: "Read one structured review or interview evaluation by id.",
+		Description: "Read the full structured details of exactly one review by review_id. Use after review.search.v1 returned an id or when the conversation already contains a specific review id and the user asks to expand that item. Do not use for broad historical review searches or guess a review id from natural language.",
 		InputSchema: ObjectSchema(map[string]any{
-			"review_id": StringSchema("Review id to read."),
+			"review_id": IdentifierSchema(
+				"Exact review id returned by a previous review search.",
+			),
 		}, []string{"review_id"}),
 		ReadOnly: true,
 		Risk:     RiskReadOnly,
@@ -120,7 +160,7 @@ func (tool ReviewGetTool) Execute(
 	input json.RawMessage,
 ) (Result, error) {
 	if tool.port == nil {
-		return Result{}, ErrToolRejected
+		return Result{}, ErrExecutionRejected
 	}
 	var parsed ReviewGetInput
 	if err := json.Unmarshal(input, &parsed); err != nil || parsed.ReviewID == "" {
@@ -131,17 +171,36 @@ func (tool ReviewGetTool) Execute(
 		return Result{}, err
 	}
 	return Result{
-		Content:    map[string]any{"review": reviewMap(review)},
+		Content:    map[string]any{"review": reviewDetailMap(review)},
 		SourceRefs: review.SourceRefs,
 	}, nil
 }
 
-// reviewMap 返回暴露给模型的精简 Review JSON 对象。
+// reviewMap 返回暴露给模型的 Review 搜索摘要。
 func reviewMap(review ReviewSummary) map[string]any {
 	return map[string]any{
-		"id":          review.ID,
-		"title":       review.Title,
-		"summary":     review.Summary,
-		"scenario_id": review.ScenarioID,
+		"review_id":              review.ID,
+		"practice_session_id":    review.PracticeSessionID,
+		"scenario_definition_id": review.ScenarioDefinitionID,
+		"summary":                review.Summary,
+		"completed_at":           review.CompletedAt,
+	}
+}
+
+// reviewDetailMap 返回正式 FormalReview 的结构化结果，不暴露所有者和生成租约。
+func reviewDetailMap(review ReviewDetail) map[string]any {
+	return map[string]any{
+		"review_id":                     review.ID,
+		"practice_session_id":           review.PracticeSessionID,
+		"scenario_definition_id":        review.ScenarioDefinitionID,
+		"status":                        review.Status,
+		"summary_eligibility":           review.SummaryEligibility,
+		"overall_score":                 review.OverallScore,
+		"summary":                       review.Summary,
+		"conclusions":                   review.Conclusions,
+		"feedback_items":                review.FeedbackItems,
+		"repractice_suggestion_refs":    review.RepracticeSuggestionRefs,
+		"insufficient_evidence_reasons": review.InsufficientEvidenceReasons,
+		"completed_at":                  review.CompletedAt,
 	}
 }

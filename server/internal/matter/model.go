@@ -25,9 +25,25 @@ type Matter struct {
 	UpdatedAt time.Time
 }
 
+type SearchQuery struct {
+	Query string
+	Limit int
+}
+
 type Repository interface {
 	Create(ctx context.Context, ownerID, title string) (Matter, error)
+	CreateIdempotent(
+		ctx context.Context,
+		ownerID string,
+		requestID string,
+		title string,
+	) (Matter, error)
 	ListOwned(ctx context.Context, ownerID string) ([]Matter, error)
+	SearchOwned(
+		ctx context.Context,
+		ownerID string,
+		query SearchQuery,
+	) ([]Matter, error)
 	FindOwned(ctx context.Context, ownerID, matterID string) (Matter, error)
 	UpdateStatus(
 		ctx context.Context,
@@ -55,9 +71,20 @@ type Application interface {
 		actor requestcontext.Actor,
 		title string,
 	) (Matter, error)
+	CreateIdempotent(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		requestID string,
+		title string,
+	) (Matter, error)
 	List(
 		ctx context.Context,
 		actor requestcontext.Actor,
+	) ([]Matter, error)
+	Search(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		query SearchQuery,
 	) ([]Matter, error)
 	ChangeStatus(
 		ctx context.Context,

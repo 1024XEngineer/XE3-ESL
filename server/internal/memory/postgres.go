@@ -254,6 +254,88 @@ LIMIT $3`
 	return items, nil
 }
 
+func (repository *PostgresRepository) ListStableProfile(
+	ctx context.Context,
+	actor requestcontext.Actor,
+) ([]Memory, error) {
+	if ctx == nil || !validActor(actor) {
+		return nil, ErrInvalidArgument
+	}
+	fields := StableProfileV1Fields()
+	canonicalKeys := make([]string, 0, len(fields))
+	for _, field := range fields {
+		canonicalKeys = append(canonicalKeys, field.CanonicalKey)
+	}
+	rows, err := repository.database.Query(ctx, `
+SELECT
+    memories.id::text,
+    memories.owner_user_id::text,
+    memories.memory_type,
+    memories.canonical_key,
+    memories.content,
+    memories.scope_type,
+    coalesce(memories.matter_id::text, ''),
+    memories.status,
+    memories.version,
+    memories.policy_version,
+    memories.expires_at,
+    memories.created_at,
+    memories.updated_at,
+    memories.inactivated_at
+FROM agent_memories AS memories
+JOIN identity_users AS users
+  ON users.id = memories.owner_user_id
+ AND users.account_status = 'active'
+WHERE memories.owner_user_id = $1
+  AND memories.scope_type = 'user'
+  AND memories.matter_id IS NULL
+  AND memories.status = 'active'
+  AND (memories.expires_at IS NULL OR memories.expires_at > CURRENT_TIMESTAMP)
+  AND memories.canonical_key = ANY($2::text[])`,
+		actor.UserID,
+		canonicalKeys,
+	)
+	if err != nil {
+		return nil, ErrRepository
+	}
+	defer rows.Close()
+
+	byCanonicalKey := make(map[string]Memory, len(fields))
+	for rows.Next() {
+		item, scanErr := scanMemory(rows)
+		if scanErr != nil {
+			return nil, ErrRepository
+		}
+		field, found := stableProfileField(item.CanonicalKey)
+		if !found ||
+			field.Type != item.Type ||
+			item.OwnerID != actor.UserID ||
+			item.Scope != ScopeUser ||
+			item.MatterID != "" ||
+			item.Status != StatusActive {
+			return nil, ErrRepository
+		}
+		if _, duplicate := byCanonicalKey[item.CanonicalKey]; duplicate {
+			return nil, ErrRepository
+		}
+		byCanonicalKey[item.CanonicalKey] = item
+	}
+	if rows.Err() != nil {
+		return nil, ErrRepository
+	}
+
+	items := make([]Memory, 0, len(byCanonicalKey))
+	for _, field := range fields {
+		if item, found := byCanonicalKey[field.CanonicalKey]; found {
+			items = append(items, item)
+		}
+	}
+	if !ValidStableProfileMemories(items, actor.UserID) {
+		return nil, ErrRepository
+	}
+	return items, nil
+}
+
 func (repository *PostgresRepository) ListSources(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -592,6 +674,12 @@ SET
     END`,
 		command.UserID,
 		command.Generation,
+	); err != nil {
+		return mapPostgresError(err)
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM agent_memory_extraction_jobs WHERE owner_user_id = $1`,
+		command.UserID,
 	); err != nil {
 		return mapPostgresError(err)
 	}

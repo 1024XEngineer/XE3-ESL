@@ -53,6 +53,8 @@ components:
         - authentication_required
         - invalid_credentials
         - account_registration_unavailable
+        - profile_not_found
+        - profile_version_conflict
         - rate_limited
         - resource_not_found
         - resource_conflict
@@ -81,6 +83,9 @@ components:
         - practice_participant_invalid
         - practice_participant_not_authorized
         - practice_option_invalid
+        - confirmation_required
+        - version_conflict
+        - active_session_conflict
         - question_not_found
         - answer_invalid
         - turn_not_found
@@ -92,6 +97,11 @@ components:
         - retry_request_not_found
         - retry_request_conflict
         - transcript_unavailable
+        - evaluation_not_found
+        - evaluation_strategy_not_available
+        - evaluation_version_conflict
+        - evaluation_policy_violation
+        - evaluation_retryable_failure
         - unsupported_message
         - internal_error
       x-http-status-map:
@@ -99,6 +109,9 @@ components:
         answer_invalid: 400
         unsupported_message: 400
         authentication_required: 401
+        confirmation_required: 409
+        version_conflict: 409
+        active_session_conflict: 409
         invalid_credentials: 401
         practice_participant_not_authorized: 403
         scenario_definition_not_found: 404
@@ -113,7 +126,9 @@ components:
         feedback_item_not_found: 404
         retry_request_not_found: 404
         resource_not_found: 404
+        profile_not_found: 404
         account_registration_unavailable: 409
+        profile_version_conflict: 409
         idempotency_key_conflict: 409
         resource_conflict: 409
         resource_processing: 409
@@ -134,6 +149,11 @@ components:
         turn_analysis_conflict: 409
         retry_request_conflict: 409
         transcript_unavailable: 422
+        evaluation_not_found: 404
+        evaluation_strategy_not_available: 422
+        evaluation_version_conflict: 409
+        evaluation_policy_violation: 422
+        evaluation_retryable_failure: 503
         rate_limited: 429
         provider_unavailable: 503
         quota_exhausted: 503

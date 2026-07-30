@@ -4,17 +4,24 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
 	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	agenttransport "github.com/1024XEngineer/XE3-ESL/server/internal/agent/transport"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	matteragenttool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,6 +36,7 @@ func NewIdentityAndAgentModules(
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
 	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identity.Module, RouteRegistrar, error) {
 	if len(voiceConfigurations) == 1 &&
@@ -44,9 +52,15 @@ func NewIdentityAndAgentModules(
 		trustedProxyHeader,
 		generator,
 		runConfiguration,
+		memorySearcher,
+		nil,
+		nil,
 		voiceConfigurations...,
 	)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := composition.recoverInterruptedRuns(ctx); err != nil {
 		return nil, nil, err
 	}
 	return composition.identity.module, composition.agentModule, nil
@@ -58,6 +72,10 @@ type identityAgentComposition struct {
 	agentService        *agentapp.Service
 	agentVoiceReclaimer AgentVoiceObjectReclaimer
 	matterService       *matter.Service
+	productionTools     *tool.Registry
+	runService          *agentruntime.RunService
+	memoryExtraction    memory.ExtractionProcessor
+	summaryProcessor    agentsummary.Processor
 	ids                 *identity.UUIDv4Generator
 }
 
@@ -78,10 +96,13 @@ func buildIdentityAgentComposition(
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
 	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
+	memoryExtractionNotifier interface{ Notify() },
+	summaryNotifier interface{ Notify() },
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identityAgentComposition, error) {
 	if ctx == nil || database == nil || generator == nil ||
-		len(voiceConfigurations) > 1 {
+		memorySearcher == nil || len(voiceConfigurations) > 1 {
 		return nil, errors.New(
 			"bootstrap: Agent Run dependencies are required",
 		)
@@ -111,23 +132,119 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	contextAssembler, err := agentruntime.NewContextAssembler(
-		agentRepository,
+	reviewRepository := review.NewPostgresRepository(database)
+	reviewHistory := review.NewHistoryService(reviewRepository)
+	matterTools, err := matteragenttool.NewServicePort(
 		matterService,
+		agentService,
 	)
 	if err != nil {
 		return nil, err
 	}
-	runService, err := agentruntime.NewRunService(
+	reviewTools, err := reviewagenttool.NewServicePort(reviewHistory)
+	if err != nil {
+		return nil, err
+	}
+	productionTools, err := tool.NewRegistry(
+		matteragenttool.NewScenarioCreateTool(matterTools),
+		matteragenttool.NewScenarioSearchTool(matterTools),
+		reviewagenttool.NewReviewSearchTool(reviewTools),
+		reviewagenttool.NewReviewGetTool(reviewTools),
+	)
+	if err != nil {
+		return nil, err
+	}
+	contextMemorySearcher, err := newAgentMemoryContextSearcher(memorySearcher)
+	if err != nil {
+		return nil, err
+	}
+	memoryRepository, err := memory.NewPostgresRepository(database, ids)
+	if err != nil {
+		return nil, err
+	}
+	stableProfileReader, err := newAgentStableProfileReader(memoryRepository)
+	if err != nil {
+		return nil, err
+	}
+	contextAssembler, err := agentruntime.NewContextAssembler(
 		agentRepository,
+		matterService,
+		stableProfileReader,
+		contextMemorySearcher,
+	)
+	if err != nil {
+		return nil, err
+	}
+	toolOptions, err := agentRunServiceOptions(productionTools)
+	if err != nil {
+		return nil, err
+	}
+	runRepository := core.RunRepository(agentRepository)
+	notifiers := make([]interface{ Notify() }, 0, 2)
+	if memoryExtractionNotifier != nil {
+		notifiers = append(notifiers, memoryExtractionNotifier)
+	}
+	if summaryNotifier != nil {
+		notifiers = append(notifiers, summaryNotifier)
+	}
+	if len(notifiers) > 0 {
+		runRepository = &runCompletionNotifyingRepository{
+			RunRepository: agentRepository,
+			notifiers:     notifiers,
+		}
+	}
+	runService, err := agentruntime.NewRunService(
+		runRepository,
 		contextAssembler,
+		generator,
+		runConfiguration,
+		toolOptions.runOptions...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	memoryExtraction, err := buildMemoryExtractionProcessor(
+		database,
+		ids,
+		agentRepository,
 		generator,
 		runConfiguration,
 	)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := runService.RecoverInterruptedRuns(ctx); err != nil {
+	summaryService, err := agentsummary.NewService(
+		agentRepository,
+		generator,
+		agentsummary.Configuration{
+			PolicyVersion: "summary-policy-v1",
+			PromptVersion: "summary-prompt-v1",
+			Provider:      runConfiguration.Provider,
+			Model:         runConfiguration.Model,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	summaryProcessor, err := agentsummary.NewWorker(
+		agentRepository,
+		agentRepository,
+		summaryService,
+		agentsummary.WorkerConfiguration{
+			TriggerPolicyVersion: agentsummary.TriggerPolicyV2,
+			TriggerMessages:      agentsummary.DefaultTriggerMessages,
+			RetainRecentMessages: agentsummary.DefaultRetainedMessages,
+			LeaseDuration:        2 * time.Minute,
+			MaxAttempts:          agentsummary.DefaultWorkerMaxAttempts,
+			Summary: agentsummary.Configuration{
+				PolicyVersion: "summary-policy-v1",
+				PromptVersion: "summary-prompt-v1",
+				Provider:      runConfiguration.Provider,
+				Model:         runConfiguration.Model,
+			},
+		},
+	)
+	if err != nil {
 		return nil, err
 	}
 	agentVoiceMessages, err := buildAgentVoiceMessageApplication(
@@ -147,6 +264,8 @@ func buildIdentityAgentComposition(
 			database,
 			generator,
 			matterService,
+			reviewRepository,
+			reviewHistory,
 			voiceConfigurations[0],
 		)
 		if err != nil {
@@ -193,6 +312,10 @@ func buildIdentityAgentComposition(
 		agentService:        agentService,
 		agentVoiceReclaimer: agentVoiceReclaimer,
 		matterService:       matterService,
+		productionTools:     toolOptions.productionRegistry,
+		runService:          runService,
+		memoryExtraction:    memoryExtraction,
+		summaryProcessor:    summaryProcessor,
 		ids:                 ids,
 	}, nil
 }
@@ -206,6 +329,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
 	runConfiguration core.RunConfiguration,
+	memorySearcher memory.Searcher,
 	voiceConfigurations ...VoiceConfiguration,
 ) (
 	*identity.Module,
@@ -220,15 +344,31 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 		trustedProxyHeader,
 		generator,
 		runConfiguration,
+		memorySearcher,
+		nil,
+		nil,
 		voiceConfigurations...,
 	)
 	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := composition.recoverInterruptedRuns(ctx); err != nil {
 		return nil, nil, nil, err
 	}
 	return composition.identity.module,
 		composition.agentModule,
 		composition.agentVoiceReclaimer,
 		nil
+}
+
+func (composition *identityAgentComposition) recoverInterruptedRuns(
+	ctx context.Context,
+) error {
+	if composition == nil || composition.runService == nil {
+		return errors.New("bootstrap: Agent Run service is required")
+	}
+	_, err := composition.runService.RecoverInterruptedRuns(ctx)
+	return err
 }
 
 func buildAgentVoiceMessageApplication(

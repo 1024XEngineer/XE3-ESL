@@ -30,8 +30,22 @@ func main() {
 }
 
 func run() int {
+	if err := config.LoadDotEnvUpwards(); err != nil {
+		_, _ = os.Stderr.WriteString("load .env failed: " + err.Error() + "\n")
+		return 1
+	}
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
+	slog.SetDefault(logger)
+	toolConfig, err := config.LoadAgentTool()
+	if err != nil {
+		logger.Error("agent tool configuration failed")
+		return 1
+	}
+	if toolConfig.Mode == config.AgentToolModeMock {
+		logger.Error("agent tool mock mode is not supported by production server")
+		return 1
+	}
 	textConfig, err := config.LoadTextGeneration()
 	if err != nil {
 		logger.Error("text generation configuration failed")
@@ -40,6 +54,16 @@ func run() int {
 	textGenerator, err := bootstrap.NewTextGenerator(textConfig)
 	if err != nil {
 		logger.Error("text generation startup failed")
+		return 1
+	}
+	embeddingConfig, err := config.LoadEmbedding()
+	if err != nil {
+		logger.Error("embedding configuration failed")
+		return 1
+	}
+	embedder, err := bootstrap.NewEmbedder(embeddingConfig)
+	if err != nil {
+		logger.Error("embedding startup failed")
 		return 1
 	}
 	asrConfig, err := config.LoadSpeechRecognition()
@@ -128,6 +152,22 @@ func run() int {
 	}
 	defer databasePool.Close()
 
+	memoryIndexComposition, err := bootstrap.NewMemoryIndexComposition(
+		databasePool.Native(),
+		embedder,
+		embeddingConfig,
+	)
+	if err != nil {
+		logger.Error(
+			"memory index composition failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	memoryExtractionWakeup := newWorkerWakeup()
+	memoryIndexWakeup := newWorkerWakeup()
+	threadSummaryWakeup := newWorkerWakeup()
+
 	var recordingStore objectstore.Store
 	if storageConfig.Enabled {
 		recordingStore, err = productionAudioCleanupFactories.newStore(
@@ -144,7 +184,7 @@ func run() int {
 	}
 
 	applicationComposition, err :=
-		bootstrap.NewIdentityAgentAndPracticeComposition(
+		bootstrap.NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 			ctx,
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
@@ -156,7 +196,12 @@ func run() int {
 				MaxOutputTokens:    textConfig.MaxOutputTokens,
 				MaxInputCharacters: textConfig.MaxContextChars,
 			},
+			memoryIndexComposition.Searcher(),
 			preparationCatalog,
+			bootstrap.AgentWorkerWakeups{
+				MemoryExtraction: memoryExtractionWakeup,
+				ThreadSummary:    threadSummaryWakeup,
+			},
 			bootstrap.VoiceConfiguration{
 				Recognizer:                recognizer,
 				Synthesizer:               synthesizer,
@@ -181,6 +226,18 @@ func run() int {
 		logger.Error("application startup failed", slog.Any("error", err))
 		return 1
 	}
+	threadSummary, err := buildThreadSummaryWorker(
+		applicationComposition.ThreadSummaryProcessor(),
+		logger,
+		threadSummaryWakeup.Events(),
+	)
+	if err != nil {
+		logger.Error(
+			"thread summary startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
 	contextRoutes, err := applicationComposition.ProtectedRoutes()
 	if err != nil {
 		logger.Error("context route startup failed", slog.Any("error", err))
@@ -194,6 +251,31 @@ func run() int {
 	if err != nil {
 		logger.Error(
 			"agent voice cleanup startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	memoryExtraction, err := buildMemoryExtractionWorker(
+		applicationComposition.MemoryExtractionProcessor(),
+		logger,
+		memoryExtractionWakeup.Events(),
+		memoryIndexWakeup,
+	)
+	if err != nil {
+		logger.Error(
+			"memory extraction startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	memoryIndex, err := buildMemoryIndexWorker(
+		memoryIndexComposition.Processor(),
+		logger,
+		memoryIndexWakeup.Events(),
+	)
+	if err != nil {
+		logger.Error(
+			"memory index startup failed",
 			slog.String("error_kind", "dependency"),
 		)
 		return 1
@@ -229,6 +311,21 @@ func run() int {
 			agentVoiceCleanup.Run(ctx)
 		}()
 	}
+	memoryExtractionDone := make(chan struct{})
+	go func() {
+		defer close(memoryExtractionDone)
+		memoryExtraction.Run(ctx)
+	}()
+	memoryIndexDone := make(chan struct{})
+	go func() {
+		defer close(memoryIndexDone)
+		memoryIndex.Run(ctx)
+	}()
+	threadSummaryDone := make(chan struct{})
+	go func() {
+		defer close(threadSummaryDone)
+		threadSummary.Run(ctx)
+	}()
 
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
 		logger,
@@ -296,6 +393,33 @@ func run() int {
 			)
 			exitCode = 1
 		}
+	}
+	select {
+	case <-memoryExtractionDone:
+	case <-shutdownCtx.Done():
+		logger.Error(
+			"memory extraction shutdown failed",
+			slog.String("error_kind", "timeout"),
+		)
+		exitCode = 1
+	}
+	select {
+	case <-memoryIndexDone:
+	case <-shutdownCtx.Done():
+		logger.Error(
+			"memory index shutdown failed",
+			slog.String("error_kind", "timeout"),
+		)
+		exitCode = 1
+	}
+	select {
+	case <-threadSummaryDone:
+	case <-shutdownCtx.Done():
+		logger.Error(
+			"thread summary shutdown failed",
+			slog.String("error_kind", "timeout"),
+		)
+		exitCode = 1
 	}
 
 	return exitCode

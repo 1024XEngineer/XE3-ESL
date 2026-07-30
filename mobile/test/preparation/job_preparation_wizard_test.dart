@@ -2,14 +2,53 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/preparation/job_preparation_client.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
 import 'package:speakup/features/preparation/job_preparation_models.dart';
 import 'package:speakup/features/preparation/job_preparation_wizard.dart';
 import 'package:speakup/features/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
 void main() {
+  testWidgets('restorable draft actions fit the shared button theme', (
+    tester,
+  ) async {
+    final store = MemoryJobPreparationDraftStore();
+    final first = _controller(_WizardClient(), draftStore: store);
+    await first.activateAccount('user-1');
+    first.updateInput(_input);
+    await tester.runAsync(() async {
+      while (await store.read('user-1') == null) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+    });
+    first.dispose();
+
+    final restored = _controller(_WizardClient(), draftStore: store);
+    addTearDown(restored.dispose);
+    await restored.activateAccount('user-1');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: JobPreparationWizard(controller: restored),
+      ),
+    );
+    await tester.pump();
+
+    expect(restored.hasRestorableDraft, isTrue);
+    await _scrollTo(
+      tester,
+      target: const Key('job-draft-card'),
+      scrollable: const Key('job-wizard-input-step'),
+    );
+    expect(find.byKey(const Key('job-draft-card')), findsOneWidget);
+    expect(find.byKey(const Key('resume-job-draft-button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('starts with JD-first input and labels quick start honestly', (
     tester,
   ) async {
@@ -234,11 +273,13 @@ Future<void> _scrollTo(
 
 JobPreparationController _controller(
   _WizardClient client, {
+  JobPreparationDraftStore? draftStore,
   JobPreparationVoiceActivator? voiceActivator,
 }) {
   var sequence = 0;
   return JobPreparationController(
     client: client,
+    draftStore: draftStore,
     threadIdProvider: () => _threadId,
     matterActivator:
         ({
@@ -541,7 +582,9 @@ final _snapshot = JobPreparationSnapshot(
 const _scenario = PreparationScenario(
   id: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   name: 'Technical interview',
+  summary: 'Discuss one backend project.',
   version: 1,
   status: 'active',
 );
@@ -550,10 +593,22 @@ const _config = PreparationScenarioConfig(
   id: 'config-1',
   scenarioId: _scenarioId,
   type: 'INTERVIEW',
+  model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   version: 1,
   jobTitle: 'Backend engineer',
   jobDescription: 'Explain trade-offs.',
+  prompt: _prompt,
+);
+
+const _prompt = PreparationScenarioPrompt(
+  publicSceneBrief: 'Discuss one backend project.',
+  practiceGoal: 'Explain decisions with evidence.',
+  userRole: 'Candidate',
+  aiRole: 'Technical interviewer',
+  personaSummary: 'Precise and evidence seeking.',
   focusAreas: ['system_design'],
+  turnBlueprints: ['Ask for a project overview.'],
+  suggestedDurationSeconds: 900,
 );
 
 const _role = PreparationRole(
@@ -607,6 +662,7 @@ final _bootstrap = PreparationPracticeBootstrap(
     id: _sessionId,
     planId: _planId,
     scenarioType: 'INTERVIEW',
+    scenarioModel: 'PROJECT_EXPERIENCE_DEEP_DIVE',
     snapshotId: _snapshotId,
     status: 'starting',
     version: 1,

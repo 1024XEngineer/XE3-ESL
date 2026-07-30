@@ -68,7 +68,8 @@ func NewHTTPHandler(
 	if application == nil || authenticator == nil ||
 		rateLimits.RegistrationIP == nil ||
 		rateLimits.LoginIP == nil ||
-		rateLimits.LoginAccount == nil {
+		rateLimits.LoginAccount == nil ||
+		rateLimits.ProfileUser == nil {
 		return nil, errors.New("identity: HTTP dependency is required")
 	}
 	logoutSessions, ok := authenticator.(LogoutSessionResolver)
@@ -107,6 +108,8 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 	protected := router.Group("")
 	protected.Use(h.AuthenticationMiddleware())
 	protected.GET("/v1/me", h.currentUser)
+	protected.GET("/v1/me/profile", h.currentProfile)
+	protected.PATCH("/v1/me/profile", h.updateProfile)
 }
 
 func (h *HTTPHandler) register(c *gin.Context) {
@@ -117,7 +120,7 @@ func (h *HTTPHandler) register(c *gin.Context) {
 	) {
 		return
 	}
-	request, ok := h.decodeCredentials(c)
+	request, ok := h.decodeCredentials(c, true)
 	if !ok {
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
 		return
@@ -126,6 +129,7 @@ func (h *HTTPHandler) register(c *gin.Context) {
 		c.Request.Context(),
 		request.Email,
 		request.Password,
+		request.DisplayName,
 	)
 	if err != nil {
 		h.writeApplicationError(c, err)
@@ -139,7 +143,7 @@ func (h *HTTPHandler) login(c *gin.Context) {
 	if !h.enforceLimit(c, h.rateLimits.LoginIP, "login-ip:"+sourceIP) {
 		return
 	}
-	request, ok := h.decodeCredentials(c)
+	request, ok := h.decodeCredentials(c, false)
 	if !ok {
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
 		return
@@ -168,6 +172,63 @@ func (h *HTTPHandler) login(c *gin.Context) {
 		"token_type":    "Bearer",
 		"expires_at":    result.ExpiresAt.UTC().Format(time.RFC3339Nano),
 	})
+}
+
+func (h *HTTPHandler) currentProfile(c *gin.Context) {
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	profile, err := h.application.CurrentProfile(c.Request.Context(), actor)
+	if err != nil {
+		h.writeApplicationError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, profileResponse(profile))
+}
+
+func (h *HTTPHandler) updateProfile(c *gin.Context) {
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	if !h.enforceLimit(
+		c,
+		h.rateLimits.ProfileUser,
+		"profile-user:"+actor.UserID,
+	) {
+		return
+	}
+	idempotencyKey, ok := singleHeaderValue(
+		c.Request.Header.Values("Idempotency-Key"),
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	request, ok := h.decodeProfileUpdate(c)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	profile, err := h.application.UpdateProfile(
+		c.Request.Context(),
+		actor,
+		UpdateProfileCommand{
+			DisplayName:            request.DisplayName,
+			ExpectedProfileVersion: request.ExpectedProfileVersion,
+			IdempotencyKey:         idempotencyKey,
+		},
+	)
+	if err != nil {
+		h.writeApplicationError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, profileResponse(profile))
 }
 
 func (h *HTTPHandler) logout(c *gin.Context) {
@@ -286,6 +347,12 @@ func (h *HTTPHandler) writeApplicationError(c *gin.Context, err error) {
 		)
 	case errors.Is(err, ErrAuthenticationRequired):
 		h.writeAuthenticationRequired(c)
+	case errors.Is(err, ErrProfileNotFound):
+		h.writeError(c, http.StatusNotFound, "profile_not_found", false)
+	case errors.Is(err, ErrProfileVersionConflict):
+		h.writeError(c, http.StatusConflict, "profile_version_conflict", false)
+	case errors.Is(err, ErrIdempotencyKeyConflict):
+		h.writeError(c, http.StatusConflict, "idempotency_key_conflict", false)
 	case errors.Is(err, ErrPasswordUnavailable):
 		c.Header("Retry-After", "1")
 		h.writeError(c, http.StatusTooManyRequests, "rate_limited", true)
@@ -311,6 +378,9 @@ func (h *HTTPHandler) writeError(
 		"invalid_credentials":              "Email or password is invalid.",
 		"account_registration_unavailable": "Account registration is unavailable.",
 		"rate_limited":                     "Too many requests. Try again later.",
+		"profile_not_found":                "User profile was not found.",
+		"profile_version_conflict":         "User profile changed before this update.",
+		"idempotency_key_conflict":         "Idempotency key was already used for a different request.",
 		"internal_error":                   "An internal error occurred.",
 	}
 	c.JSON(status, gin.H{
@@ -324,33 +394,59 @@ func (h *HTTPHandler) writeError(
 }
 
 type credentialsRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email       string  `json:"email"`
+	Password    string  `json:"password"`
+	DisplayName *string `json:"display_name,omitempty"`
 }
 
-func (h *HTTPHandler) decodeCredentials(c *gin.Context) (credentialsRequest, bool) {
-	var request credentialsRequest
+type profileUpdateRequest struct {
+	DisplayName            string
+	ExpectedProfileVersion *int64
+}
+
+func (h *HTTPHandler) decodeCredentials(
+	c *gin.Context,
+	allowDisplayName bool,
+) (credentialsRequest, bool) {
+	raw, ok := h.readJSONObject(c)
+	if !ok {
+		return credentialsRequest{}, false
+	}
+	return decodeCredentialObject(raw, allowDisplayName)
+}
+
+func (h *HTTPHandler) decodeProfileUpdate(
+	c *gin.Context,
+) (profileUpdateRequest, bool) {
+	raw, ok := h.readJSONObject(c)
+	if !ok {
+		return profileUpdateRequest{}, false
+	}
+	return decodeProfileUpdateObject(raw)
+}
+
+func (h *HTTPHandler) readJSONObject(c *gin.Context) ([]byte, bool) {
 	if !validJSONContentType(c.GetHeader("Content-Type")) {
-		return request, false
+		return nil, false
 	}
 	controller := http.NewResponseController(c.Writer)
 	if err := controller.SetReadDeadline(time.Now().Add(h.bodyReadTimeout)); err != nil &&
 		!errors.Is(err, http.ErrNotSupported) {
-		return request, false
+		return nil, false
 	}
 	body := http.MaxBytesReader(c.Writer, c.Request.Body, maxIdentityRequestBody)
 	raw, err := io.ReadAll(body)
 	if err != nil {
-		return credentialsRequest{}, false
+		return nil, false
 	}
 	if err := controller.SetReadDeadline(time.Time{}); err != nil &&
 		!errors.Is(err, http.ErrNotSupported) {
-		return credentialsRequest{}, false
+		return nil, false
 	}
 	if !utf8.Valid(raw) || !validJSONSurrogates(raw) {
-		return credentialsRequest{}, false
+		return nil, false
 	}
-	return decodeCredentialObject(raw)
+	return raw, true
 }
 
 func validJSONContentType(value string) bool {
@@ -367,7 +463,10 @@ func validJSONContentType(value string) bool {
 	return true
 }
 
-func decodeCredentialObject(raw []byte) (credentialsRequest, bool) {
+func decodeCredentialObject(
+	raw []byte,
+	allowDisplayName bool,
+) (credentialsRequest, bool) {
 	var request credentialsRequest
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	token, err := decoder.Token()
@@ -378,7 +477,9 @@ func decodeCredentialObject(raw []byte) (credentialsRequest, bool) {
 	for decoder.More() {
 		token, err := decoder.Token()
 		key, ok := token.(string)
-		if err != nil || !ok || seen[key] || (key != "email" && key != "password") {
+		allowed := key == "email" || key == "password" ||
+			(allowDisplayName && key == "display_name")
+		if err != nil || !ok || seen[key] || !allowed {
 			return credentialsRequest{}, false
 		}
 		seen[key] = true
@@ -388,8 +489,10 @@ func decodeCredentialObject(raw []byte) (credentialsRequest, bool) {
 		}
 		if key == "email" {
 			request.Email = value
-		} else {
+		} else if key == "password" {
 			request.Password = value
+		} else {
+			request.DisplayName = &value
 		}
 	}
 	if token, err = decoder.Token(); err != nil || token != json.Delim('}') {
@@ -403,6 +506,62 @@ func decodeCredentialObject(raw []byte) (credentialsRequest, bool) {
 		return credentialsRequest{}, false
 	}
 	return request, true
+}
+
+func decodeProfileUpdateObject(raw []byte) (profileUpdateRequest, bool) {
+	var request profileUpdateRequest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return profileUpdateRequest{}, false
+	}
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] ||
+			(key != "display_name" && key != "expected_profile_version") {
+			return profileUpdateRequest{}, false
+		}
+		seen[key] = true
+		switch key {
+		case "display_name":
+			if err := decoder.Decode(&request.DisplayName); err != nil {
+				return profileUpdateRequest{}, false
+			}
+		case "expected_profile_version":
+			var rawVersion json.RawMessage
+			if err := decoder.Decode(&rawVersion); err != nil {
+				return profileUpdateRequest{}, false
+			}
+			if bytes.Equal(bytes.TrimSpace(rawVersion), []byte("null")) {
+				return profileUpdateRequest{}, false
+			}
+			var version int64
+			if err := json.Unmarshal(rawVersion, &version); err != nil {
+				return profileUpdateRequest{}, false
+			}
+			request.ExpectedProfileVersion = &version
+		}
+	}
+	if token, err = decoder.Token(); err != nil || token != json.Delim('}') {
+		return profileUpdateRequest{}, false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return profileUpdateRequest{}, false
+	}
+	if !seen["display_name"] {
+		return profileUpdateRequest{}, false
+	}
+	return request, true
+}
+
+func singleHeaderValue(values []string) (string, bool) {
+	if len(values) != 1 || values[0] != strings.TrimSpace(values[0]) ||
+		strings.Contains(values[0], ",") {
+		return "", false
+	}
+	return values[0], true
 }
 
 func validJSONSurrogates(raw []byte) bool {
@@ -473,6 +632,16 @@ func userResponse(user User) gin.H {
 	return gin.H{
 		"user_id": user.ID,
 		"email":   user.Email,
+	}
+}
+
+func profileResponse(profile UserProfile) gin.H {
+	return gin.H{
+		"user_id":         profile.UserID,
+		"display_name":    profile.DisplayName,
+		"profile_version": profile.ProfileVersion,
+		"created_at":      profile.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at":      profile.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 

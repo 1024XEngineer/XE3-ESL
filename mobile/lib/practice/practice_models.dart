@@ -137,6 +137,7 @@ final class PracticeTurnConfirmation {
     required this.completedTurns,
     required this.turnLimit,
     required this.sessionCompleted,
+    this.sessionVersion,
     this.nextQuestion,
     this.review,
     this.audioAssetId,
@@ -150,9 +151,30 @@ final class PracticeTurnConfirmation {
   final int completedTurns;
   final int turnLimit;
   final bool sessionCompleted;
+  final int? sessionVersion;
   final PracticeQuestion? nextQuestion;
   final AgentReview? review;
   final String? audioAssetId;
+}
+
+enum PracticeSessionLifecycleStatus {
+  starting,
+  inProgress,
+  paused,
+  completed,
+  endedEarly,
+}
+
+final class PracticeSessionLifecycle {
+  const PracticeSessionLifecycle({
+    required this.sessionId,
+    required this.status,
+    required this.version,
+  });
+
+  final String sessionId;
+  final PracticeSessionLifecycleStatus status;
+  final int version;
 }
 
 final class PracticeTranscriptionRequest {

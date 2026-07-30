@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	minPasswordCharacters  = 15
+	minPasswordCharacters  = 8
 	maxPasswordCharacters  = 128
 	defaultHashConcurrency = 2
 	defaultHashQueue       = 4
@@ -109,11 +109,19 @@ func NewDefaultArgon2idHasher() (*Argon2idHasher, error) {
 }
 
 func ValidatePassword(password string) error {
+	return validatePasswordLength(password, minPasswordCharacters)
+}
+
+func ValidateLoginPassword(password string) error {
+	return validatePasswordLength(password, 1)
+}
+
+func validatePasswordLength(password string, minimumCharacters int) error {
 	if !utf8.ValidString(password) {
 		return ErrInvalidRequest
 	}
 	characters := utf8.RuneCountInString(password)
-	if characters < minPasswordCharacters || characters > maxPasswordCharacters {
+	if characters < minimumCharacters || characters > maxPasswordCharacters {
 		return ErrInvalidRequest
 	}
 	return nil

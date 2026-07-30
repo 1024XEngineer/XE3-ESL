@@ -59,10 +59,22 @@ func (s *Service) Register(
 	ctx context.Context,
 	email string,
 	password string,
+	displayNameInput ...*string,
 ) (User, error) {
+	if len(displayNameInput) > 1 {
+		return User{}, ErrInvalidRequest
+	}
 	canonicalEmail, err := NormalizeEmail(email)
 	if err != nil || ValidatePassword(password) != nil {
 		return User{}, ErrInvalidRequest
+	}
+	var displayName *string
+	if len(displayNameInput) == 1 && displayNameInput[0] != nil {
+		normalized, normalizeErr := NormalizeDisplayName(*displayNameInput[0])
+		if normalizeErr != nil {
+			return User{}, ErrInvalidRequest
+		}
+		displayName = &normalized
 	}
 	passwordHash, err := s.passwords.Hash(ctx, password)
 	if err != nil {
@@ -73,6 +85,7 @@ func (s *Service) Register(
 		ctx,
 		canonicalEmail,
 		passwordHash,
+		displayName,
 	)
 	if errors.Is(err, ErrConflict) {
 		return User{}, ErrRegistrationUnavailable
@@ -83,13 +96,58 @@ func (s *Service) Register(
 	return user, nil
 }
 
+func (s *Service) CurrentProfile(
+	ctx context.Context,
+	actor requestcontext.Actor,
+) (UserProfile, error) {
+	if !actor.Valid() {
+		return UserProfile{}, ErrAuthenticationRequired
+	}
+	profile, err := s.repository.FindProfileByUserID(ctx, actor.UserID)
+	if errors.Is(err, ErrNotFound) {
+		return UserProfile{}, ErrProfileNotFound
+	}
+	if err != nil {
+		return UserProfile{}, err
+	}
+	return profile, nil
+}
+
+func (s *Service) UpdateProfile(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command UpdateProfileCommand,
+) (UserProfile, error) {
+	if !actor.Valid() || !validIdempotencyKey(command.IdempotencyKey) {
+		return UserProfile{}, ErrInvalidRequest
+	}
+	displayName, err := NormalizeDisplayName(command.DisplayName)
+	if err != nil {
+		return UserProfile{}, ErrInvalidRequest
+	}
+	if command.ExpectedProfileVersion != nil &&
+		*command.ExpectedProfileVersion < 1 {
+		return UserProfile{}, ErrInvalidRequest
+	}
+	return s.repository.PersistProfile(ctx, PersistProfileCommand{
+		UserID:                 actor.UserID,
+		DisplayName:            displayName,
+		ExpectedProfileVersion: command.ExpectedProfileVersion,
+		IdempotencyKey:         command.IdempotencyKey,
+		RequestDigest: profileRequestDigest(
+			displayName,
+			command.ExpectedProfileVersion,
+		),
+	})
+}
+
 func (s *Service) Login(
 	ctx context.Context,
 	email string,
 	password string,
 ) (LoginResult, error) {
 	canonicalEmail, err := NormalizeEmail(email)
-	if err != nil || ValidatePassword(password) != nil {
+	if err != nil || ValidateLoginPassword(password) != nil {
 		return LoginResult{}, ErrInvalidRequest
 	}
 

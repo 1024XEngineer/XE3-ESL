@@ -283,6 +283,52 @@ func TestPracticeCatalogContextReaderRejectsStaleAndForgedSelections(
 	}
 }
 
+func TestPracticeCatalogContextReaderAcceptsIELTSFullMockSelection(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	catalog, err := preparation.NewBuiltinCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := newPracticeCatalogContextReader(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := catalog.GetScenarioDetail(
+		preparation.IELTSSpeakingFullMockScenarioID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles, err := catalog.ListRoles(
+		preparation.IELTSSpeakingFullMockScenarioID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) != 1 {
+		t.Fatalf("IELTS full mock roles = %d, want 1", len(roles))
+	}
+
+	selection, err := reader.ReadPlanCatalog(practice.PlanCatalogRequest{
+		ScenarioDefinitionID:      detail.ScenarioDefinition.ID,
+		ScenarioDefinitionVersion: detail.ScenarioDefinition.Version,
+		ScenarioConfigID:          detail.ScenarioConfig.ID,
+		ScenarioConfigVersion:     detail.ScenarioConfig.Version,
+		SelectedRoleIDs:           []string{roles[0].ID},
+	})
+	if err != nil {
+		t.Fatalf("ReadPlanCatalog: %v", err)
+	}
+	if selection.ScenarioDefinition.ID !=
+		preparation.IELTSSpeakingFullMockScenarioID ||
+		selection.PracticeOption.Type != "FULL_SIMULATION" {
+		t.Fatalf("selection = %+v", selection)
+	}
+}
+
 type agentThreadReaderStub struct {
 	thread agent.Thread
 	err    error

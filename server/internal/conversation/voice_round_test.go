@@ -105,6 +105,90 @@ func TestVoiceRoundTranscriptionAndConfirmationAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestVoiceRoundTextAnswerUsesDurableCandidateWithoutASR(t *testing.T) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	recognizer := &voiceTestRecognizer{}
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(),
+			Lifetime:         time.Minute,
+			MaxItems:         1,
+			MaxBytes:         platformmedia.MaxAudioBytes,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	recordings := newVoiceTestRecordings()
+	service, err := NewVoiceRoundServiceWithRecordings(
+		store,
+		vault,
+		recognizer,
+		&voiceTestSynthesizer{},
+		recordings,
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	command := SubmitTextAnswerCommand{
+		SessionID:      "session-1",
+		QuestionID:     "question-1",
+		IdempotencyKey: "text-question-1",
+		AnswerText:     "  I led the rollout and communicated the risk.  ",
+	}
+	actor := voiceTestActor("a")
+	candidate, err := service.SubmitTextAnswer(
+		context.Background(),
+		actor,
+		"participant-a",
+		command,
+	)
+	if err != nil {
+		t.Fatalf("submit text: %v", err)
+	}
+	if candidate.Transcript != "I led the rollout and communicated the risk." ||
+		candidate.Provider != "speakup" ||
+		candidate.Model != "direct_text" ||
+		recognizer.calls != 0 {
+		t.Fatalf("text candidate = %#v, ASR calls = %d", candidate, recognizer.calls)
+	}
+	turn, err := service.ConfirmText(
+		context.Background(),
+		actor,
+		ConfirmVoiceTurnCommand{
+			CandidateID:    candidate.ID,
+			IdempotencyKey: command.IdempotencyKey,
+		},
+	)
+	if err != nil {
+		t.Fatalf("confirm text: %v", err)
+	}
+	if turn.AnswerText != candidate.Transcript || turn.AudioAssetID != "" {
+		t.Fatalf("text turn = %#v", turn)
+	}
+	progress, err := service.SaveTurnProgress(
+		context.Background(),
+		actor,
+		turn.ID,
+		VoiceTurnProgress{EffectiveTurns: 1},
+	)
+	if err != nil || progress.AudioAssetID != "" {
+		t.Fatalf("text progress = %#v, %v", progress, err)
+	}
+
+	replayed, err := service.SubmitTextAnswer(
+		context.Background(),
+		actor,
+		"participant-a",
+		command,
+	)
+	if err != nil || replayed.ID != candidate.ID || store.nextCandidate != 1 {
+		t.Fatalf("text replay = %#v, %v", replayed, err)
+	}
+}
+
 func TestVoiceRoundPersistsRecordingThroughReservationAndTurn(t *testing.T) {
 	store := newVoiceTestStore()
 	store.addQuestion("question-1")

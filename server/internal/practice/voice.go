@@ -39,6 +39,29 @@ type VoiceTurnProgress struct {
 	SessionCompleted bool
 }
 
+// RequiresSessionReview reports whether completing this frozen Session must
+// synchronously create a formal Review. IELTS full mock reports are delivered
+// separately, so their speaking flow must not depend on Review generation.
+func (a *VoiceApplication) RequiresSessionReview(
+	ctx context.Context,
+	actor persistence.Actor,
+	sessionID string,
+) (bool, error) {
+	if a == nil || a.repository == nil || ctx == nil ||
+		sessionID == "" || sessionID != strings.TrimSpace(sessionID) {
+		return false, persistence.ErrInvalidArgument
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	session, err := a.repository.GetContextSession(ctx, actor, sessionID)
+	if err != nil {
+		return false, err
+	}
+	return session.ScenarioModel !=
+		persistence.ScenarioModelIELTSSpeakingFullMock, nil
+}
+
 // VoiceApplication exposes Practice capabilities without leaking its
 // Repository to Agent or Conversation. actorSubjectNamespace is supplied by
 // composition because Practice treats SubjectRef namespaces as opaque.
@@ -98,7 +121,7 @@ func (a *VoiceApplication) ResolveActorParticipant(
 	}
 
 	participantID := ""
-	interviewers := 0
+	facilitators := 0
 	participantIDs := make(map[string]struct{}, len(snapshot.Participants))
 	participantOrders := make(map[int]struct{}, len(snapshot.Participants))
 	for _, participant := range snapshot.Participants {
@@ -116,7 +139,7 @@ func (a *VoiceApplication) ResolveActorParticipant(
 		participantIDs[participant.ID] = struct{}{}
 		participantOrders[participant.Order] = struct{}{}
 		switch participant.Role {
-		case "INTERVIEWER":
+		case "FACILITATOR", "INTERVIEWER":
 			if participant.SubjectRef.Namespace != "speakup.role" ||
 				participant.SubjectRef.SubjectID !=
 					participant.RoleDefinitionID ||
@@ -126,8 +149,8 @@ func (a *VoiceApplication) ResolveActorParticipant(
 					participant.RoleDefinitionID {
 				return "", persistence.ErrConflict
 			}
-			interviewers++
-		case "CANDIDATE":
+			facilitators++
+		case "LEARNER", "CANDIDATE":
 			if participantID != "" {
 				return "", persistence.ErrConflict
 			}
@@ -143,7 +166,7 @@ func (a *VoiceApplication) ResolveActorParticipant(
 			return "", persistence.ErrConflict
 		}
 	}
-	if participantID == "" || interviewers == 0 {
+	if participantID == "" || facilitators == 0 {
 		return "", persistence.ErrNotFound
 	}
 	return participantID, nil
@@ -185,7 +208,7 @@ func (a *VoiceApplication) ApplyEffectiveTurn(
 		result.EffectiveTurns < 1 ||
 		result.SessionVersion <= 1 ||
 		result.TurnLimit < 1 ||
-		result.TurnLimit > 6 ||
+		result.TurnLimit > 14 ||
 		result.TurnLimit < result.EffectiveTurns ||
 		result.Completed != (result.EffectiveTurns == result.TurnLimit) {
 		return VoiceTurnProgress{}, persistence.ErrConflict

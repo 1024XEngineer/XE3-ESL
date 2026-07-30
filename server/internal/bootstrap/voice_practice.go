@@ -25,6 +25,11 @@ type PracticeVoiceApplication interface {
 		string,
 		string,
 	) (practice.VoiceTurnProgress, error)
+	RequiresSessionReview(
+		context.Context,
+		persistence.Actor,
+		string,
+	) (bool, error)
 }
 
 type practiceVoicePort struct {
@@ -76,7 +81,7 @@ func (p *practiceVoicePort) ApplyEffectiveTurn(
 	if progress.EffectiveTurns < 1 ||
 		progress.SessionVersion <= 1 ||
 		progress.TurnLimit < 1 ||
-		progress.TurnLimit > 6 ||
+		progress.TurnLimit > 14 ||
 		progress.TurnLimit < progress.EffectiveTurns ||
 		progress.SessionCompleted !=
 			(progress.EffectiveTurns == progress.TurnLimit) {
@@ -88,6 +93,21 @@ func (p *practiceVoicePort) ApplyEffectiveTurn(
 		TurnLimit:        progress.TurnLimit,
 		SessionCompleted: progress.SessionCompleted,
 	}, nil
+}
+
+func (p *practiceVoicePort) RequiresSessionReview(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) (bool, error) {
+	if p == nil || p.application == nil || ctx == nil || !actor.Valid() {
+		return false, persistence.ErrInvalidArgument
+	}
+	return p.application.RequiresSessionReview(
+		ctx,
+		practiceVoiceActor(actor),
+		sessionID,
+	)
 }
 
 func practiceVoiceActor(actor requestcontext.Actor) persistence.Actor {

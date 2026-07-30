@@ -728,6 +728,12 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		    count(*)::int,
 		    count(*) FILTER (
 		        WHERE evidence.source_type = 'conversation_turn'
+		          AND evidence.target_kind IN ('conclusion', 'feedback_item')
+		          AND evidence.field = 'answer_text'
+		          AND evidence.anchor_kind = 'exact_quote'
+		          AND evidence.quote <> ''
+		          AND evidence.start_utf8_byte >= 0
+		          AND evidence.end_utf8_byte > evidence.start_utf8_byte
 		          AND evidence.source_checksum ~ '^[0-9a-f]{64}$'
 		          AND evidence.evidence_snapshot ? 'question_id'
 		          AND evidence.evidence_snapshot ? 'answer_text'
@@ -749,13 +755,14 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	).Scan(&evidenceCount, &matchedEvidenceCount); err != nil {
 		t.Fatalf("read formal Review evidence: %v", err)
 	}
-	if evidenceCount != 3 ||
-		matchedEvidenceCount != 3 {
+	const expectedEvidenceCount = 6
+	if evidenceCount != expectedEvidenceCount ||
+		matchedEvidenceCount != expectedEvidenceCount {
 		t.Fatalf(
 			"formal Review evidence = %d/%d, want %d matched",
 			matchedEvidenceCount,
 			evidenceCount,
-			3,
+			expectedEvidenceCount,
 		)
 	}
 	playback := voiceJSONRequest(
@@ -1609,6 +1616,7 @@ func newVoiceProductionIntegrationServer(
 			MaxOutputTokens:    256,
 			MaxInputCharacters: 12000,
 		},
+		emptyBootstrapMemorySearcher{},
 		catalog,
 		configuration,
 	)
@@ -1764,6 +1772,7 @@ func createVoiceFormalContextSession(
 		"/v1/practice-plans/"+formalContext.PlanID+"/practice-sessions",
 		fmt.Sprintf(`{
 			"expected_plan_revision":1,
+			"user_confirmed":true,
 			"preparation_snapshot_id":%q,
 			"practice_option_id":%q,
 			"role_definition_ids":[%q]
@@ -1870,7 +1879,7 @@ func completeBootstrapHistoryReview(
 		review.EnsureReviewCommand{
 			Actor:                     actor,
 			PracticeSessionID:         sessionID,
-			ImplementationVersion:     voiceReviewImplementation,
+			ImplementationVersion:     "qianwen-voice-review-v1",
 			SourceTurnID:              sourceTurnID,
 			SourceTurnVersion:         sourceTurnVersion,
 			SourceManifestFingerprint: "manifest-" + sessionID,
@@ -2103,7 +2112,7 @@ func (generator *voiceTextGenerator) Generate(
 	request ai.TextRequest,
 ) (ai.TextResult, error) {
 	last := request.Messages[len(request.Messages)-1].Content
-	if strings.HasPrefix(last, "Review these ") {
+	if strings.HasPrefix(last, "RUBRIC=") {
 		generator.reviewCalls.Add(1)
 		if generator.quotaReviewPending.CompareAndSwap(true, false) {
 			return ai.TextResult{}, ai.NewGenerationError(
@@ -2128,11 +2137,15 @@ func (generator *voiceTextGenerator) Generate(
 				)
 			}
 		}
+		content, err := voiceReviewFixture(last)
+		if err != nil {
+			return ai.TextResult{}, err
+		}
 		return ai.TextResult{
 			ID:       "review-completion",
 			Provider: "fake",
 			Model:    "fake-text-v1",
-			Content:  `{"overall_score":86,"summary":"Clear answers with useful examples.","conclusions":[{"key":"overall","category":"STRUCTURE","message":"The answers are clear and evidence based.","suggestion":"Make each result more measurable."}]}`,
+			Content:  content,
 		}, nil
 	}
 	call := generator.questionCalls.Add(1)
@@ -2142,6 +2155,69 @@ func (generator *voiceTextGenerator) Generate(
 		Model:    "fake-text-v1",
 		Content:  fmt.Sprintf("Tell me about professional example %d?", call),
 	}, nil
+}
+
+func voiceReviewFixture(prompt string) (string, error) {
+	const marker = "\nCONFIRMED_EVIDENCE="
+	index := strings.LastIndex(prompt, marker)
+	if index < 0 {
+		return "", errors.New("review prompt has no confirmed evidence")
+	}
+	var sources []struct {
+		SourceID      string `json:"source_id"`
+		SourceVersion string `json:"source_version"`
+		Answer        string `json:"answer"`
+	}
+	if err := json.Unmarshal(
+		[]byte(prompt[index+len(marker):]),
+		&sources,
+	); err != nil || len(sources) == 0 {
+		return "", errors.New("review prompt has invalid confirmed evidence")
+	}
+	dimensions := []string{
+		"relevance_structure",
+		"technical_depth",
+		"ownership_decisions",
+		"evidence_impact",
+		"language_clarity",
+	}
+	conclusions := make([]map[string]any, len(dimensions))
+	for dimensionIndex, dimension := range dimensions {
+		source := sources[dimensionIndex%len(sources)]
+		conclusions[dimensionIndex] = map[string]any{
+			"key":        "conclusion-" + dimension,
+			"category":   dimension,
+			"score":      80,
+			"message":    "The answer is grounded in the confirmed response.",
+			"suggestion": "Make the result more measurable.",
+			"evidence": []map[string]any{{
+				"source_id":      source.SourceID,
+				"source_version": source.SourceVersion,
+				"quote":          source.Answer,
+				"occurrence":     1,
+			}},
+		}
+	}
+	feedbackSource := sources[len(sources)-1]
+	payload := map[string]any{
+		"summary":     "Clear answers with useful examples.",
+		"conclusions": conclusions,
+		"feedback_items": []map[string]any{{
+			"key":        "feedback-impact",
+			"kind":       "improvement",
+			"message":    "The impact can be more specific.",
+			"suggestion": "Add one measurable outcome.",
+			"evidence": []map[string]any{{
+				"source_id":      feedbackSource.SourceID,
+				"source_version": feedbackSource.SourceVersion,
+				"quote":          feedbackSource.Answer,
+				"occurrence":     1,
+			}},
+		}},
+		"repractice_suggestion_refs": []string{"feedback-impact"},
+	}
+	encoded, err := json.Marshal(payload)
+	return string(encoded), err
 }
 
 func (generator *voiceTextGenerator) ReviewCalls() int64 {

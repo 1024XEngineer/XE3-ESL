@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
@@ -33,6 +34,7 @@ const (
 type Thread struct {
 	ID             string
 	OwnerID        string
+	Title          string
 	ActiveMatterID string
 	NextMessageSeq int64
 	CreatedAt      time.Time
@@ -127,29 +129,105 @@ type Run struct {
 	UpdatedAt            time.Time
 }
 
+type ToolCallStatus string
+
+const (
+	ToolCallStatusProposed  ToolCallStatus = "proposed"
+	ToolCallStatusRunning   ToolCallStatus = "running"
+	ToolCallStatusSucceeded ToolCallStatus = "succeeded"
+	ToolCallStatusFailed    ToolCallStatus = "failed"
+	ToolCallStatusRejected  ToolCallStatus = "rejected"
+)
+
+type ToolCallRecord struct {
+	ID            string
+	RunID         string
+	OwnerID       string
+	ThreadID      string
+	Name          string
+	SchemaVersion string
+	Input         json.RawMessage
+	Status        ToolCallStatus
+	Result        json.RawMessage
+	ErrorCategory string
+	RequestID     string
+	SourceRefs    []ToolSourceRef
+	ProposedAt    time.Time
+	StartedAt     time.Time
+	CompletedAt   time.Time
+	UpdatedAt     time.Time
+}
+
+type ToolSourceRef struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
 type ContextMessageSource struct {
 	MessageID string      `json:"message_id"`
 	Sequence  int64       `json:"sequence"`
 	Role      MessageRole `json:"role"`
 }
 
+type ContextMemorySource struct {
+	MemoryID               string  `json:"memory_id"`
+	MemoryVersion          int64   `json:"memory_version"`
+	Type                   string  `json:"type"`
+	Scope                  string  `json:"scope"`
+	MatterID               string  `json:"matter_id,omitempty"`
+	Similarity             float64 `json:"similarity"`
+	Score                  float64 `json:"score"`
+	EmbeddingProvider      string  `json:"embedding_provider"`
+	EmbeddingModel         string  `json:"embedding_model"`
+	EmbeddingDimensions    int     `json:"embedding_dimensions"`
+	EmbeddingPolicyVersion string  `json:"embedding_policy_version"`
+	RetrievalPolicyVersion string  `json:"retrieval_policy_version"`
+}
+
+type ContextStableProfileSource struct {
+	MemoryID      string `json:"memory_id"`
+	MemoryVersion int64  `json:"memory_version"`
+	CanonicalKey  string `json:"canonical_key"`
+	Type          string `json:"type"`
+	Scope         string `json:"scope"`
+}
+
+type ContextSummarySource struct {
+	CheckpointID           string `json:"checkpoint_id"`
+	SourceFromSequence     int64  `json:"source_from_sequence"`
+	CoveredThroughSequence int64  `json:"covered_through_sequence"`
+	PolicyVersion          string `json:"policy_version"`
+	PromptVersion          string `json:"prompt_version"`
+	Provider               string `json:"provider"`
+	Model                  string `json:"model"`
+}
+
 type ContextManifest struct {
-	RunID               string
-	OwnerID             string
-	ThreadID            string
-	InputMessageID      string
-	ActiveMatterID      string
-	ActiveMatterVersion int64
-	InstructionVersion  string
-	SelectedMessages    []ContextMessageSource
-	OmittedMessageCount int
-	TrimReason          string
-	MaxInputCharacters  int
-	UsedInputCharacters int
-	RequestedProvider   string
-	RequestedModel      string
-	MaxOutputTokens     int
-	CreatedAt           time.Time
+	RunID                             string
+	OwnerID                           string
+	ThreadID                          string
+	InputMessageID                    string
+	ActiveMatterID                    string
+	ActiveMatterVersion               int64
+	InstructionVersion                string
+	StableProfileContextPolicyVersion string
+	SelectedStableProfile             []ContextStableProfileSource
+	MemoryContextPolicyVersion        string
+	SelectedMemories                  []ContextMemorySource
+	SummaryContextPolicyVersion       string
+	SummaryContextStatus              string
+	SelectedSummary                   *ContextSummarySource
+	SelectedMessages                  []ContextMessageSource
+	OmittedMessageCount               int
+	TrimReason                        string
+	MaxInputCharacters                int
+	UsedInputCharacters               int
+	RequestedProvider                 string
+	RequestedModel                    string
+	MaxOutputTokens                   int
+	ExposedTools                      []string
+	ToolSchemaHashes                  map[string]string
+	CreatedAt                         time.Time
 }
 
 type RunConfiguration struct {
@@ -340,6 +418,42 @@ type RunRepository interface {
 		ownerID string,
 		runID string,
 	) (ContextManifest, error)
+	SaveContextToolSnapshot(
+		ctx context.Context,
+		manifest ContextManifest,
+	) (ContextManifest, error)
+	SaveToolCallProposed(
+		ctx context.Context,
+		record ToolCallRecord,
+	) (ToolCallRecord, error)
+	MarkToolCallRunning(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+		toolCallID string,
+		requestID string,
+	) (ToolCallRecord, error)
+	MarkToolCallSucceeded(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+		toolCallID string,
+		result json.RawMessage,
+		sourceRefs []ToolSourceRef,
+	) (ToolCallRecord, error)
+	MarkToolCallFailed(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+		toolCallID string,
+		status ToolCallStatus,
+		errorCategory string,
+	) (ToolCallRecord, error)
+	ListToolCalls(
+		ctx context.Context,
+		ownerID string,
+		runID string,
+	) ([]ToolCallRecord, error)
 	CompleteRun(
 		ctx context.Context,
 		ownerID string,
@@ -383,6 +497,11 @@ type RunApplication interface {
 		actor requestcontext.Actor,
 		runID string,
 	) (ContextManifest, error)
+	GetToolCalls(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		runID string,
+	) ([]ToolCallRecord, error)
 }
 
 type IDGenerator interface {

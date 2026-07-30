@@ -396,7 +396,10 @@ final class WireJobPreparationClient implements JobPreparationClient {
           '/v1/practice-plans/${Uri.encodeComponent(plan.id)}'
           '/practice-sessions',
       idempotencyKey: idempotencyKey,
-      body: <String, Object?>{'expected_plan_revision': plan.revision},
+      body: <String, Object?>{
+        'expected_plan_revision': plan.revision,
+        'user_confirmed': true,
+      },
       acceptedStatuses: const <int>{HttpStatus.created},
       stage: JobPreparationOperationStage.session,
     );
@@ -934,6 +937,7 @@ JobPracticePlanPreview _decodeJobPracticePlan(String body) {
       'scenario_definition_id',
       'scenario_definition_version',
       'scenario_type',
+      'scenario_model',
       'scenario_config_id',
       'scenario_config_version',
       'preparation_profile_id',
@@ -965,6 +969,10 @@ JobPracticePlanPreview _decodeJobPracticePlan(String body) {
           catalog.scenario.version ||
       _enumText(object['scenario_type'], const <String>{'INTERVIEW'}) !=
           catalog.scenario.type ||
+      _enumText(object['scenario_model'], const <String>{
+            'PROJECT_EXPERIENCE_DEEP_DIVE',
+          }) !=
+          catalog.scenario.model ||
       _resourceId(object['scenario_config_id']) != catalog.config.id ||
       _version(object['scenario_config_version']) != catalog.config.version ||
       _resourceId(object['preparation_profile_id']) !=
@@ -1008,19 +1016,13 @@ JobPlanCatalog _jobPlanCatalog(Object? value) {
     required: const <String>{
       'scenario_definition_id',
       'scenario_type',
+      'scenario_model',
       'name',
       'version',
       'status',
+      'turn_policy_ref',
+      'session_policy_ref',
     },
-  );
-  final scenario = PreparationScenario(
-    id: _resourceId(scenarioObject['scenario_definition_id']),
-    type: _enumText(scenarioObject['scenario_type'], const <String>{
-      'INTERVIEW',
-    }),
-    name: _text(scenarioObject['name']),
-    version: _version(scenarioObject['version']),
-    status: _enumText(scenarioObject['status'], const <String>{'active'}),
   );
   final configObject = _object(
     object['scenario_config'],
@@ -1028,21 +1030,40 @@ JobPlanCatalog _jobPlanCatalog(Object? value) {
       'scenario_config_id',
       'scenario_definition_id',
       'config_type',
+      'scenario_model',
       'version',
       'job_title',
       'job_description',
-      'focus_areas',
+      'prompt_model',
     },
   );
   final config = PreparationScenarioConfig(
     id: _resourceId(configObject['scenario_config_id']),
     scenarioId: _resourceId(configObject['scenario_definition_id']),
     type: _enumText(configObject['config_type'], const <String>{'INTERVIEW'}),
+    model: _enumText(configObject['scenario_model'], const <String>{
+      'PROJECT_EXPERIENCE_DEEP_DIVE',
+    }),
     version: _version(configObject['version']),
     jobTitle: _text(configObject['job_title']),
     jobDescription: _text(configObject['job_description']),
-    focusAreas: _nonEmptyTextList(configObject['focus_areas'], max: 100),
+    prompt: _scenarioPrompt(configObject['prompt_model']),
   );
+  final scenario = PreparationScenario(
+    id: _resourceId(scenarioObject['scenario_definition_id']),
+    type: _enumText(scenarioObject['scenario_type'], const <String>{
+      'INTERVIEW',
+    }),
+    model: _enumText(scenarioObject['scenario_model'], const <String>{
+      'PROJECT_EXPERIENCE_DEEP_DIVE',
+    }),
+    name: _text(scenarioObject['name']),
+    summary: config.prompt.publicSceneBrief,
+    version: _version(scenarioObject['version']),
+    status: _enumText(scenarioObject['status'], const <String>{'active'}),
+  );
+  _resourceId(scenarioObject['turn_policy_ref']);
+  _resourceId(scenarioObject['session_policy_ref']);
   final rolesValue = object['selected_roles'];
   if (rolesValue is! List<Object?> || rolesValue.length != 1) {
     throw _invalidResponse();
@@ -1051,6 +1072,7 @@ JobPlanCatalog _jobPlanCatalog(Object? value) {
   final option = _preparationOption(object['practice_option']);
   if (config.scenarioId != scenario.id ||
       config.type != scenario.type ||
+      config.model != scenario.model ||
       role.scenarioId != scenario.id ||
       option.scenarioId != scenario.id ||
       (option.type == PreparationOptionType.focus &&
@@ -1207,6 +1229,7 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
       'practice_session_id',
       'practice_plan_id',
       'scenario_type',
+      'scenario_model',
       'snapshot_id',
       'practice_session_status',
       'session_version',
@@ -1219,8 +1242,13 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
   final scenarioType = _enumText(sessionObject['scenario_type'], const <String>{
     'INTERVIEW',
   });
+  final scenarioModel = _enumText(
+    sessionObject['scenario_model'],
+    const <String>{'PROJECT_EXPERIENCE_DEEP_DIVE'},
+  );
   if (_resourceId(sessionObject['practice_plan_id']) != expectedPlan.id ||
       scenarioType != expectedPlan.catalog.scenario.type ||
+      scenarioModel != expectedPlan.catalog.scenario.model ||
       _enumText(sessionObject['practice_session_status'], const <String>{
             'starting',
           }) !=
@@ -1238,6 +1266,7 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
       'practice_session_id',
       'plan_revision',
       'scenario_type',
+      'scenario_model',
       'scenario_definition_snapshot',
       'scenario_config_snapshot',
       'preparation_snapshot',
@@ -1248,10 +1277,11 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
       'created_at',
     },
   );
+  final config = _configSnapshot(snapshotObject['scenario_config_snapshot']);
   final scenario = _scenarioSnapshot(
     snapshotObject['scenario_definition_snapshot'],
+    summary: config.prompt.publicSceneBrief,
   );
-  final config = _configSnapshot(snapshotObject['scenario_config_snapshot']);
   final preparation = _jobPreparationSnapshot(
     snapshotObject['preparation_snapshot'],
   );
@@ -1263,6 +1293,10 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
       _version(snapshotObject['plan_revision']) != expectedPlan.revision ||
       _enumText(snapshotObject['scenario_type'], const <String>{'INTERVIEW'}) !=
           scenarioType ||
+      _enumText(snapshotObject['scenario_model'], const <String>{
+            'PROJECT_EXPERIENCE_DEEP_DIVE',
+          }) !=
+          scenarioModel ||
       !_sameScenario(scenario, expectedPlan.catalog.scenario) ||
       !_sameConfig(config, expectedPlan.catalog.config) ||
       !_samePreparationSnapshot(
@@ -1284,6 +1318,7 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
       id: sessionId,
       planId: expectedPlan.id,
       scenarioType: scenarioType,
+      scenarioModel: scenarioModel,
       snapshotId: snapshotId,
       status: 'starting',
       version: _version(sessionObject['session_version']),
@@ -1294,21 +1329,33 @@ PreparationPracticeBootstrap _decodeJobPracticeBootstrap(
   );
 }
 
-PreparationScenario _scenarioSnapshot(Object? value) {
+PreparationScenario _scenarioSnapshot(
+  Object? value, {
+  required String summary,
+}) {
   final object = _object(
     value,
     required: const <String>{
       'scenario_definition_id',
       'scenario_type',
+      'scenario_model',
       'name',
       'version',
       'status',
+      'turn_policy_ref',
+      'session_policy_ref',
     },
   );
+  _resourceId(object['turn_policy_ref']);
+  _resourceId(object['session_policy_ref']);
   return PreparationScenario(
     id: _resourceId(object['scenario_definition_id']),
     type: _enumText(object['scenario_type'], const <String>{'INTERVIEW'}),
+    model: _enumText(object['scenario_model'], const <String>{
+      'PROJECT_EXPERIENCE_DEEP_DIVE',
+    }),
     name: _text(object['name']),
+    summary: summary,
     version: _version(object['version']),
     status: _enumText(object['status'], const <String>{'active'}),
   );
@@ -1321,20 +1368,54 @@ PreparationScenarioConfig _configSnapshot(Object? value) {
       'scenario_config_id',
       'scenario_definition_id',
       'config_type',
+      'scenario_model',
       'version',
       'job_title',
       'job_description',
-      'focus_areas',
+      'prompt_model',
     },
   );
   return PreparationScenarioConfig(
     id: _resourceId(object['scenario_config_id']),
     scenarioId: _resourceId(object['scenario_definition_id']),
     type: _enumText(object['config_type'], const <String>{'INTERVIEW'}),
+    model: _enumText(object['scenario_model'], const <String>{
+      'PROJECT_EXPERIENCE_DEEP_DIVE',
+    }),
     version: _version(object['version']),
     jobTitle: _text(object['job_title']),
     jobDescription: _text(object['job_description']),
+    prompt: _scenarioPrompt(object['prompt_model']),
+  );
+}
+
+PreparationScenarioPrompt _scenarioPrompt(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'public_scene_brief',
+      'practice_goal',
+      'user_role',
+      'ai_role',
+      'persona_summary',
+      'focus_areas',
+      'turn_blueprints',
+      'suggested_duration_seconds',
+    },
+  );
+  final duration = object['suggested_duration_seconds'];
+  if (duration is! int || duration < 1 || duration > 3600) {
+    throw _invalidResponse();
+  }
+  return PreparationScenarioPrompt(
+    publicSceneBrief: _text(object['public_scene_brief']),
+    practiceGoal: _text(object['practice_goal']),
+    userRole: _text(object['user_role']),
+    aiRole: _text(object['ai_role']),
+    personaSummary: _text(object['persona_summary']),
     focusAreas: _nonEmptyTextList(object['focus_areas'], max: 100),
+    turnBlueprints: _nonEmptyTextList(object['turn_blueprints'], max: 100),
+    suggestedDurationSeconds: duration,
   );
 }
 
@@ -1373,9 +1454,9 @@ void _validateParticipants(
     );
     final participantRole = _enumText(
       object['participant_role'],
-      const <String>{'INTERVIEWER', 'CANDIDATE'},
+      const <String>{'FACILITATOR', 'LEARNER', 'INTERVIEWER', 'CANDIDATE'},
     );
-    if (participantRole == 'CANDIDATE') {
+    if (participantRole == 'LEARNER' || participantRole == 'CANDIDATE') {
       candidateCount++;
       if (object.containsKey('role_definition_id') ||
           object.containsKey('role_snapshot') ||
@@ -1403,7 +1484,9 @@ void _validateParticipants(
 bool _sameScenario(PreparationScenario left, PreparationScenario right) {
   return left.id == right.id &&
       left.type == right.type &&
+      left.model == right.model &&
       left.name == right.name &&
+      left.summary == right.summary &&
       left.version == right.version &&
       left.status == right.status;
 }
@@ -1415,10 +1498,11 @@ bool _sameConfig(
   return left.id == right.id &&
       left.scenarioId == right.scenarioId &&
       left.type == right.type &&
+      left.model == right.model &&
       left.version == right.version &&
       left.jobTitle == right.jobTitle &&
       left.jobDescription == right.jobDescription &&
-      _sameStrings(left.focusAreas, right.focusAreas);
+      _samePrompt(left.prompt, right.prompt);
 }
 
 bool _sameRole(PreparationRole left, PreparationRole right) {
@@ -1431,6 +1515,20 @@ bool _sameRole(PreparationRole left, PreparationRole right) {
       left.version == right.version &&
       left.voiceConfigRef == right.voiceConfigRef &&
       _sameStrings(left.focusAreas, right.focusAreas);
+}
+
+bool _samePrompt(
+  PreparationScenarioPrompt left,
+  PreparationScenarioPrompt right,
+) {
+  return left.publicSceneBrief == right.publicSceneBrief &&
+      left.practiceGoal == right.practiceGoal &&
+      left.userRole == right.userRole &&
+      left.aiRole == right.aiRole &&
+      left.personaSummary == right.personaSummary &&
+      left.suggestedDurationSeconds == right.suggestedDurationSeconds &&
+      _sameStrings(left.focusAreas, right.focusAreas) &&
+      _sameStrings(left.turnBlueprints, right.turnBlueprints);
 }
 
 bool _sameOption(PreparationOption left, PreparationOption right) {

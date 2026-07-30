@@ -9,6 +9,19 @@ import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 
+const _scenarioFamilies = <String>{'INTERVIEW', 'EXAM', 'WORKPLACE', 'DAILY'};
+const _scenarioModels = <String>{
+  'PROJECT_EXPERIENCE_DEEP_DIVE',
+  'INTERVIEW_BASIC_DIALOGUE',
+  'IELTS_SPEAKING_PART_2',
+  'IELTS_SPEAKING_FULL_MOCK',
+  'EXAM_BASIC_DIALOGUE',
+  'PROGRESS_AND_RISK_UPDATE',
+  'WORKPLACE_BASIC_DIALOGUE',
+  'HOTEL_CHECKIN_AND_ISSUE_HANDLING',
+  'DAILY_BASIC_DIALOGUE',
+};
+
 final class WirePreparationLaunchClient implements PreparationLaunchClient {
   factory WirePreparationLaunchClient({
     required Uri baseUri,
@@ -104,6 +117,7 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     _requireContext(input.context);
     _requireSelection(input.selection);
     _requireResourceId(input.preparationProfileId);
+    _requireResourceId(input.preparationSnapshotId);
     _requireResourceId(input.preparationUserId);
     final response = await _post(
       path: '/v1/practice-plans',
@@ -117,7 +131,15 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
         'scenario_config_id': input.selection.scenarioConfigId,
         'scenario_config_version': input.selection.scenarioConfigVersion,
         'preparation_profile_id': input.preparationProfileId,
+        'preparation_snapshot_id': input.preparationSnapshotId,
         'selected_role_ids': <String>[input.selection.roleDefinitionId],
+        'practice_option_id': input.selection.practiceOptionId,
+        'practice_option_version': input.selection.practiceOptionVersion,
+        'max_effective_turns':
+            input.selection.practiceOptionType ==
+                PreparationOptionType.fullSimulation
+            ? 6
+            : 3,
       },
       stage: PreparationLaunchStage.plan,
     );
@@ -134,6 +156,7 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     required String idempotencyKey,
   }) async {
     _requireResourceId(planId);
+    _requireResourceId(input.agentThreadId);
     _requireSelection(input.selection);
     _requireResourceId(input.preparationSnapshotId);
     _requireResourceId(input.preparationProfileId);
@@ -147,14 +170,13 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     }
     final response = await _post(
       path:
-          '/v1/practice-plans/${Uri.encodeComponent(planId)}'
-          '/practice-sessions',
+          '/v1/agent-threads/${Uri.encodeComponent(input.agentThreadId)}'
+          '/practice-start-confirmations',
       idempotencyKey: idempotencyKey,
       body: <String, Object?>{
         'expected_plan_revision': input.expectedPlanRevision,
-        'preparation_snapshot_id': input.preparationSnapshotId,
-        'practice_option_id': input.selection.practiceOptionId,
-        'role_definition_ids': <String>[input.selection.roleDefinitionId],
+        'user_confirmed': true,
+        'practice_plan_id': planId,
       },
       stage: PreparationLaunchStage.session,
     );
@@ -392,6 +414,7 @@ PreparationPracticePlan _plan(
       'scenario_definition_id',
       'scenario_definition_version',
       'scenario_type',
+      'scenario_model',
       'scenario_config_id',
       'scenario_config_version',
       'preparation_profile_id',
@@ -414,8 +437,10 @@ PreparationPracticePlan _plan(
           expected.selection.scenarioDefinitionId ||
       _version(object['scenario_definition_version']) !=
           expected.selection.scenarioDefinitionVersion ||
-      _enumText(object['scenario_type'], const {'INTERVIEW'}) !=
+      _enumText(object['scenario_type'], _scenarioFamilies) !=
           expected.selection.scenarioType ||
+      _enumText(object['scenario_model'], _scenarioModels) !=
+          expected.selection.scenarioModel ||
       _resourceId(object['scenario_config_id']) !=
           expected.selection.scenarioConfigId ||
       _version(object['scenario_config_version']) !=
@@ -454,6 +479,7 @@ PreparationPracticeBootstrap _bootstrap(
       'practice_session_id',
       'practice_plan_id',
       'scenario_type',
+      'scenario_model',
       'snapshot_id',
       'practice_session_status',
       'session_version',
@@ -466,11 +492,17 @@ PreparationPracticeBootstrap _bootstrap(
   final status = _enumText(sessionObject['practice_session_status'], const {
     'starting',
   });
-  final scenarioType = _enumText(sessionObject['scenario_type'], const {
-    'INTERVIEW',
-  });
+  final scenarioType = _enumText(
+    sessionObject['scenario_type'],
+    _scenarioFamilies,
+  );
+  final scenarioModel = _enumText(
+    sessionObject['scenario_model'],
+    _scenarioModels,
+  );
   if (_resourceId(sessionObject['practice_plan_id']) != expectedPlanId ||
       scenarioType != expected.selection.scenarioType ||
+      scenarioModel != expected.selection.scenarioModel ||
       sessionObject['started_at'] != null ||
       sessionObject['ended_at'] != null ||
       sessionObject['end_reason'] != null) {
@@ -483,6 +515,7 @@ PreparationPracticeBootstrap _bootstrap(
       'practice_session_id',
       'plan_revision',
       'scenario_type',
+      'scenario_model',
       'scenario_definition_snapshot',
       'scenario_config_snapshot',
       'preparation_snapshot',
@@ -497,8 +530,10 @@ PreparationPracticeBootstrap _bootstrap(
       _resourceId(snapshotObject['practice_session_id']) != sessionId ||
       _version(snapshotObject['plan_revision']) !=
           expected.expectedPlanRevision ||
-      _enumText(snapshotObject['scenario_type'], const {'INTERVIEW'}) !=
-          expected.selection.scenarioType) {
+      _enumText(snapshotObject['scenario_type'], _scenarioFamilies) !=
+          expected.selection.scenarioType ||
+      _enumText(snapshotObject['scenario_model'], _scenarioModels) !=
+          expected.selection.scenarioModel) {
     throw _invalidResponse();
   }
   _validateScenarioSnapshot(
@@ -533,6 +568,7 @@ PreparationPracticeBootstrap _bootstrap(
   final maxEffectiveTurns = _validateSessionPolicy(
     snapshotObject['session_policy'],
     optionType: expected.selection.practiceOptionType,
+    scenarioModel: expected.selection.scenarioModel,
   );
   _validateObjectives(snapshotObject['practice_focuses'], allowEmpty: true);
   _dateTime(snapshotObject['created_at']);
@@ -541,6 +577,7 @@ PreparationPracticeBootstrap _bootstrap(
       id: sessionId,
       planId: expectedPlanId,
       scenarioType: scenarioType,
+      scenarioModel: scenarioModel,
       snapshotId: snapshotId,
       status: status,
       version: _version(sessionObject['session_version']),
@@ -560,20 +597,27 @@ void _validateScenarioSnapshot(
     required: const <String>{
       'scenario_definition_id',
       'scenario_type',
+      'scenario_model',
       'name',
       'version',
       'status',
+      'turn_policy_ref',
+      'session_policy_ref',
     },
   );
   if (_resourceId(object['scenario_definition_id']) !=
           expected.scenarioDefinitionId ||
-      _enumText(object['scenario_type'], const {'INTERVIEW'}) !=
+      _enumText(object['scenario_type'], _scenarioFamilies) !=
           expected.scenarioType ||
+      _enumText(object['scenario_model'], _scenarioModels) !=
+          expected.scenarioModel ||
       _version(object['version']) != expected.scenarioDefinitionVersion ||
       _enumText(object['status'], const {'active'}) != 'active') {
     throw _invalidResponse();
   }
   _text(object['name']);
+  _resourceId(object['turn_policy_ref']);
+  _resourceId(object['session_policy_ref']);
 }
 
 void _validateConfigSnapshot(
@@ -586,23 +630,56 @@ void _validateConfigSnapshot(
       'scenario_config_id',
       'scenario_definition_id',
       'config_type',
+      'scenario_model',
       'version',
-      'job_title',
-      'job_description',
-      'focus_areas',
+      'prompt_model',
     },
+    optional: const <String>{'job_title', 'job_description'},
   );
   if (_resourceId(object['scenario_config_id']) != expected.scenarioConfigId ||
       _resourceId(object['scenario_definition_id']) !=
           expected.scenarioDefinitionId ||
-      _enumText(object['config_type'], const {'INTERVIEW'}) !=
+      _enumText(object['config_type'], _scenarioFamilies) !=
           expected.scenarioType ||
+      _enumText(object['scenario_model'], _scenarioModels) !=
+          expected.scenarioModel ||
       _version(object['version']) != expected.scenarioConfigVersion) {
     throw _invalidResponse();
   }
-  _text(object['job_title']);
-  _text(object['job_description']);
+  if (object['job_title'] case final value?) {
+    _text(value);
+  }
+  if (object['job_description'] case final value?) {
+    _text(value);
+  }
+  _validatePromptModel(object['prompt_model']);
+}
+
+void _validatePromptModel(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'public_scene_brief',
+      'practice_goal',
+      'user_role',
+      'ai_role',
+      'persona_summary',
+      'focus_areas',
+      'turn_blueprints',
+      'suggested_duration_seconds',
+    },
+  );
+  _text(object['public_scene_brief']);
+  _text(object['practice_goal']);
+  _text(object['user_role']);
+  _text(object['ai_role']);
+  _text(object['persona_summary']);
   _nonEmptyTextList(object['focus_areas']);
+  _nonEmptyTextList(object['turn_blueprints']);
+  final duration = object['suggested_duration_seconds'];
+  if (duration is! int || duration < 1 || duration > 3600) {
+    throw _invalidResponse();
+  }
 }
 
 void _validateParticipants(
@@ -641,6 +718,8 @@ void _validateParticipants(
       throw _invalidResponse();
     }
     final role = _enumText(object['participant_role'], const {
+      'FACILITATOR',
+      'LEARNER',
       'INTERVIEWER',
       'CANDIDATE',
     });
@@ -650,7 +729,7 @@ void _validateParticipants(
     );
     final subjectNamespace = _text(subject['namespace']);
     final subjectId = _resourceId(subject['subject_id']);
-    if (role == 'CANDIDATE') {
+    if (role == 'LEARNER' || role == 'CANDIDATE') {
       candidateCount++;
       if (object['role_definition_id'] != null ||
           object['role_snapshot'] != null ||
@@ -751,6 +830,7 @@ void _validatePracticeOption(
 int _validateSessionPolicy(
   Object? value, {
   required PreparationOptionType optionType,
+  required String scenarioModel,
 }) {
   final object = _object(
     value,
@@ -767,14 +847,23 @@ int _validateSessionPolicy(
   final minimum = _version(object['min_effective_turns']);
   final maximum = _version(object['max_effective_turns']);
   final checkpoint = _version(object['coverage_checkpoint_turn']);
-  final expectedMaximum = switch (optionType) {
-    PreparationOptionType.fullSimulation => 6,
-    PreparationOptionType.focus => 3,
-  };
+  final isIeltsFullMock =
+      scenarioModel == 'IELTS_SPEAKING_FULL_MOCK' &&
+      optionType == PreparationOptionType.fullSimulation;
+  final expectedMaximum = isIeltsFullMock
+      ? 14
+      : switch (optionType) {
+          PreparationOptionType.fullSimulation => 6,
+          PreparationOptionType.focus => 3,
+        };
   if (_version(object['suggested_duration_seconds']) < 1 ||
       minimum > checkpoint ||
       checkpoint > maximum ||
       maximum != expectedMaximum ||
+      (isIeltsFullMock &&
+          (minimum != 14 ||
+              checkpoint != 14 ||
+              object['max_follow_ups_per_question'] != 0)) ||
       object['max_follow_ups_per_question'] is! int ||
       (object['max_follow_ups_per_question'] as int) < 0) {
     throw _invalidResponse();
@@ -954,11 +1043,26 @@ void _requireSelection(PreparationLaunchSelection value) {
       value.scenarioConfigVersion < 1 ||
       value.roleDefinitionVersion < 1 ||
       value.practiceOptionVersion < 1 ||
-      value.scenarioType != 'INTERVIEW') {
+      !_validScenarioFamilyModel(value.scenarioType, value.scenarioModel)) {
     throw const PreparationLaunchException(
       kind: PreparationLaunchFailureKind.invalidRequest,
     );
   }
+}
+
+bool _validScenarioFamilyModel(String family, String model) {
+  return switch ((family, model)) {
+    ('INTERVIEW', 'PROJECT_EXPERIENCE_DEEP_DIVE') ||
+    ('INTERVIEW', 'INTERVIEW_BASIC_DIALOGUE') ||
+    ('EXAM', 'IELTS_SPEAKING_PART_2') ||
+    ('EXAM', 'IELTS_SPEAKING_FULL_MOCK') ||
+    ('EXAM', 'EXAM_BASIC_DIALOGUE') ||
+    ('WORKPLACE', 'PROGRESS_AND_RISK_UPDATE') ||
+    ('WORKPLACE', 'WORKPLACE_BASIC_DIALOGUE') ||
+    ('DAILY', 'HOTEL_CHECKIN_AND_ISSUE_HANDLING') ||
+    ('DAILY', 'DAILY_BASIC_DIALOGUE') => true,
+    _ => false,
+  };
 }
 
 void _requireDisplayText(String value) {

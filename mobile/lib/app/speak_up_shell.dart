@@ -6,7 +6,10 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
+import 'package:speakup/design/speak_up_components.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/conversation/conversation.dart';
+import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/preparation/preparation.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
@@ -71,6 +74,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
   bool _reviewPresented = false;
+  bool _practiceRouteInFlight = false;
+  int _navigationGeneration = 0;
+  int _openInterviewRequestGeneration = 0;
 
   @override
   void initState() {
@@ -102,10 +108,39 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _selectDestination(int index) {
+    unawaited(_selectDestinationAfterParking(index));
+  }
+
+  Future<void> _selectDestinationAfterParking(int index) async {
     if (_selectedIndex == index) {
       if (index == 2) {
         unawaited(widget.reviewHistoryController?.refresh());
       }
+      return;
+    }
+    if (_practiceRouteInFlight) {
+      _showMockNotice('正在恢复上次练习，请稍候');
+      return;
+    }
+    final navigationGeneration = ++_navigationGeneration;
+    if (_selectedIndex == 1 && index != 1) {
+      final launch = widget.preparationLaunchController;
+      if (launch?.isStarting ?? false) {
+        _showMockNotice('练习正在准备，请完成后再离开训练页');
+        return;
+      }
+      if (launch?.workspaceController?.currentLease != null) {
+        final parked = await launch!.parkCurrentPractice();
+        if (!mounted || navigationGeneration != _navigationGeneration) {
+          return;
+        }
+        if (!parked) {
+          _showMockNotice(launch.workspaceErrorMessage ?? '暂时无法安全离开训练页');
+          return;
+        }
+      }
+    }
+    if (!mounted || navigationGeneration != _navigationGeneration) {
       return;
     }
     unawaited(widget.agentController.stopPracticeAudio());
@@ -130,15 +165,78 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _openPractice() {
-    if (!widget.agentController.supportsPracticeFlow) {
-      _showMockNotice('场景、语音练习与复盘尚未开放，当前可以使用 Agent 文本对话');
+    unawaited(_openPracticeRoute());
+  }
+
+  Future<void> _openAgentCreatedInterview(AgentMessageAction action) async {
+    if (action.type != AgentMessageActionType.openInterviewPreparation ||
+        widget.agentController.isBusy) {
       return;
     }
-    if (widget.agentController.review != null) {
-      _selectDestination(2);
+    final reloaded = await widget.agentController.reloadCurrentThread();
+    if (!mounted) {
       return;
     }
-    Navigator.of(context).pushNamed(AppRoutes.practice);
+    if (!reloaded ||
+        !widget.agentController.prepareActiveMatterForScenario(
+          action.matterId,
+        )) {
+      _showMockNotice('这场面试暂时无法打开，请稍后重试');
+      return;
+    }
+    setState(() {
+      _selectedIndex = 1;
+      _openInterviewRequestGeneration++;
+    });
+  }
+
+  Future<void> _openPracticeRoute() async {
+    if (_practiceRouteInFlight) {
+      return;
+    }
+    _practiceRouteInFlight = true;
+    final navigationGeneration = _navigationGeneration;
+    final selectedIndex = _selectedIndex;
+    try {
+      if (!widget.agentController.supportsPracticeFlow) {
+        _showMockNotice('场景、语音练习与复盘尚未开放，当前可以使用 Agent 文本对话');
+        return;
+      }
+      final launch = widget.preparationLaunchController;
+      if (launch?.hasResumablePractice ?? false) {
+        final resumed = await launch!.resumeCurrentPractice();
+        final navigationChanged =
+            !mounted ||
+            navigationGeneration != _navigationGeneration ||
+            selectedIndex != _selectedIndex;
+        if (navigationChanged) {
+          if (resumed) {
+            await launch.parkCurrentPractice();
+          }
+          return;
+        }
+        if (!resumed) {
+          if (mounted) {
+            _showMockNotice(launch.workspaceErrorMessage ?? '暂时无法继续上次练习');
+          }
+          return;
+        }
+      }
+      if (widget.agentController.review != null) {
+        _selectDestination(2);
+        return;
+      }
+      if (!widget.agentController.hasActivePractice) {
+        _showMockNotice('请先从训练页选择一项练习');
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      await Navigator.of(context).pushNamed(AppRoutes.practice);
+    } finally {
+      _practiceRouteInFlight = false;
+    }
   }
 
   void _handleAgentState() {
@@ -146,7 +244,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     final review = widget.agentController.review;
-    if (review == null) {
+    final suppressReview = isIeltsSpeakingFullMockSession(
+      widget.agentController,
+    );
+    if (review == null || suppressReview) {
       _reviewPresented = false;
     } else if (!_reviewPresented) {
       _reviewPresented = true;
@@ -157,7 +258,8 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 
   void _restorePresentedReview() {
-    if (widget.agentController.review == null) {
+    if (widget.agentController.review == null ||
+        isIeltsSpeakingFullMockSession(widget.agentController)) {
       _reviewPresented = false;
       return;
     }
@@ -169,7 +271,11 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   @override
   Widget build(BuildContext context) {
     final practiceAvailable = widget.agentController.supportsPracticeFlow;
+    final canContinuePractice =
+        widget.agentController.hasActivePractice ||
+        (widget.preparationLaunchController?.hasResumablePractice ?? false);
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final practiceSelected = _selectedIndex == 1;
     final safeBottom = math.max(
       MediaQuery.viewPaddingOf(context).bottom,
       GlassNavigationBar.minimumBottomInset,
@@ -182,20 +288,25 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         practiceAvailable: practiceAvailable,
         restingComposerBottom: composerBottomInset,
         threadId: widget.agentController.threadId,
+        displayName: widget.authController?.profile?.displayName,
         onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
             : null,
         onCreatePlan: () => _selectDestination(1),
-        onContinuePractice: _openPractice,
+        onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
+        onMessageAction: (action) =>
+            unawaited(_openAgentCreatedInterview(action)),
         onStartVoice: widget.agentController.supportsAgentVoice
-            ? () => unawaited(widget.agentController.startAgentVoiceRecording())
+            ? widget.agentController.startAgentVoiceRecording
             : null,
         voiceController: widget.agentController.voiceController,
         onCreateConversation: widget.agentController.supportsThreadHistory
             ? () => unawaited(widget.agentController.createThread())
             : null,
+        draftThreadRecoveryGeneration:
+            widget.agentController.draftThreadRecoveryGeneration,
         messages: widget.agentController.messages,
         activeScene: widget.agentController.scene,
         hasFocusedThread:
@@ -207,9 +318,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         isBusy: widget.agentController.isBusy,
         errorMessage:
             widget.agentController.errorMessage ??
-            (widget.agentController.canRetryThreadHistory
-                ? widget.agentController.threadHistoryErrorMessage
-                : null),
+            widget.agentController.threadHistoryErrorMessage,
         onSubmitText: widget.agentController.sendText,
         onRetryOperation: widget.agentController.canRetry
             ? widget.agentController.retryLastOperation
@@ -232,6 +341,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             : _openJobPreparation,
         onSceneSelected: () => _selectDestination(0),
         onPracticeStarted: _openPractice,
+        openInterviewRequestGeneration: _openInterviewRequestGeneration,
       ),
       ReviewPage(
         showBackButton: widget.showBackButton,
@@ -244,20 +354,32 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       _ProfilePage(
         showBackButton: widget.showBackButton,
         user: widget.user,
+        profile: widget.authController?.profile,
+        profileErrorMessage: widget.authController?.profileErrorMessage,
+        profileSaving: widget.authController?.profileSaving ?? false,
+        onSaveDisplayName: widget.authController?.updateDisplayName,
         onLogout: widget.authController?.logout,
       ),
     ];
 
     return Scaffold(
       key: _scaffoldKey,
-      extendBody: true,
+      extendBody: !practiceSelected,
       resizeToAvoidBottomInset: false,
-      backgroundColor: Colors.transparent,
+      backgroundColor: practiceSelected
+          ? SpeakUpDesign.canvas
+          : Colors.transparent,
       drawer: _ConversationDrawer(
         previewMode: widget.previewMode,
         controller: widget.agentController,
+        hiddenThreadIds: {
+          ?widget
+              .preparationLaunchController
+              ?.workspaceController
+              ?.currentPracticeThreadId,
+        },
       ),
-      drawerScrimColor: const Color(0x330E1120),
+      drawerScrimColor: const Color(0x52000000),
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: keyboardVisible
           ? null
@@ -265,6 +387,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
               destinations: _destinations,
               selectedIndex: _selectedIndex,
               onDestinationSelected: _selectDestination,
+              solid: practiceSelected,
             ),
     );
   }
@@ -274,10 +397,12 @@ class _ConversationDrawer extends StatelessWidget {
   const _ConversationDrawer({
     required this.previewMode,
     required this.controller,
+    this.hiddenThreadIds = const <String>{},
   });
 
   final bool previewMode;
   final AgentController controller;
+  final Set<String> hiddenThreadIds;
 
   @override
   Widget build(BuildContext context) {
@@ -285,11 +410,13 @@ class _ConversationDrawer extends StatelessWidget {
     final currentThreadId = controller.threadId;
     final recentThreads = <AgentThreadSummary>[
       for (final thread in controller.threads)
-        if (thread.id != currentThreadId) thread,
+        if (thread.id != currentThreadId &&
+            !hiddenThreadIds.contains(thread.id))
+          thread,
     ];
     return Drawer(
       width: 300,
-      backgroundColor: const Color(0xFFF5F5F2),
+      backgroundColor: SpeakUpDesign.canvas,
       child: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
@@ -297,10 +424,7 @@ class _ConversationDrawer extends StatelessWidget {
             Row(
               children: [
                 const Expanded(
-                  child: Text(
-                    'SpeakUp',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-                  ),
+                  child: Text('SpeakUp', style: SpeakUpDesign.sectionTitle),
                 ),
                 IconButton(
                   tooltip: '关闭对话菜单',
@@ -311,7 +435,7 @@ class _ConversationDrawer extends StatelessWidget {
             ),
             Text(
               previewMode ? '本地 Fake 预览，未连接正式账号' : '已连接当前账号',
-              style: const TextStyle(color: Color(0xFF6B6D74), fontSize: 13),
+              style: SpeakUpDesign.meta,
             ),
             const SizedBox(height: 20),
             FilledButton.tonalIcon(
@@ -330,8 +454,8 @@ class _ConversationDrawer extends StatelessWidget {
               style: FilledButton.styleFrom(
                 alignment: Alignment.centerLeft,
                 minimumSize: const Size.fromHeight(48),
-                backgroundColor: const Color(0xFFE8E8E4),
-                foregroundColor: const Color(0xFF202124),
+                backgroundColor: SpeakUpDesign.primaryMuted,
+                foregroundColor: SpeakUpDesign.primary,
               ),
             ),
             if (controller.isBusy) ...[
@@ -342,41 +466,28 @@ class _ConversationDrawer extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 28),
-            const Text(
-              '当前对话',
-              style: TextStyle(
-                color: Color(0xFF777983),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+            const Text('当前对话', style: SpeakUpDesign.label),
             const SizedBox(height: 8),
             if (currentThreadId == null)
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                 child: Text(
-                  '尚未选择对话',
+                  '新对话 · 未发送',
                   key: Key('no-focused-conversation'),
-                  style: TextStyle(color: Color(0xFF777983)),
+                  style: SpeakUpDesign.body,
                 ),
               )
             else
               _ConversationThreadTile(
                 threadId: currentThreadId,
+                title: current?.title,
                 updatedAt: current?.updatedAt,
                 selected: true,
                 enabled: !controller.isBusy,
                 onTap: () => Navigator.of(context).pop(),
               ),
             const SizedBox(height: 24),
-            const Text(
-              '近期对话',
-              style: TextStyle(
-                color: Color(0xFF777983),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+            const Text('近期对话', style: SpeakUpDesign.label),
             const SizedBox(height: 8),
             if (recentThreads.isEmpty)
               const Padding(
@@ -384,13 +495,14 @@ class _ConversationDrawer extends StatelessWidget {
                 child: Text(
                   '暂无其他对话',
                   key: Key('no-recent-conversations'),
-                  style: TextStyle(color: Color(0xFF777983)),
+                  style: SpeakUpDesign.body,
                 ),
               )
             else
               for (final thread in recentThreads)
                 _ConversationThreadTile(
                   threadId: thread.id,
+                  title: thread.title,
                   updatedAt: thread.updatedAt,
                   selected: false,
                   enabled: !controller.isBusy,
@@ -407,11 +519,7 @@ class _ConversationDrawer extends StatelessWidget {
               Text(
                 message,
                 key: const Key('conversation-history-error'),
-                style: const TextStyle(
-                  color: Color(0xFF9B2C24),
-                  fontSize: 13,
-                  height: 1.35,
-                ),
+                style: SpeakUpDesign.meta.copyWith(color: SpeakUpDesign.error),
               ),
             ],
             if (controller.hasMoreThreads) ...[
@@ -434,6 +542,7 @@ class _ConversationDrawer extends StatelessWidget {
 class _ConversationThreadTile extends StatelessWidget {
   const _ConversationThreadTile({
     required this.threadId,
+    required this.title,
     required this.updatedAt,
     required this.selected,
     required this.enabled,
@@ -441,6 +550,7 @@ class _ConversationThreadTile extends StatelessWidget {
   });
 
   final String threadId;
+  final String? title;
   final DateTime? updatedAt;
   final bool selected;
   final bool enabled;
@@ -449,18 +559,21 @@ class _ConversationThreadTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lastUpdatedAt = updatedAt;
+    final displayTitle = title ?? '新对话';
     return Semantics(
       selected: selected,
       button: true,
-      label: selected ? '当前 Agent 对话' : 'Agent 对话',
+      label: selected ? '当前对话：$displayTitle' : displayTitle,
       child: ListTile(
         key: Key('conversation-thread-$threadId'),
         contentPadding: const EdgeInsets.symmetric(horizontal: 8),
         selected: selected,
-        selectedTileColor: const Color(0xFFE8E8E4),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        selectedTileColor: SpeakUpDesign.primaryMuted,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+        ),
         leading: const Icon(Icons.chat_bubble_outline_rounded),
-        title: const Text('Agent 对话'),
+        title: Text(displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: lastUpdatedAt == null
             ? null
             : Text('更新于 ${_formatThreadUpdatedAt(lastUpdatedAt)}'),
@@ -488,24 +601,27 @@ class _ProfilePage extends StatelessWidget {
   const _ProfilePage({
     required this.showBackButton,
     required this.user,
+    required this.profile,
+    required this.profileErrorMessage,
+    required this.profileSaving,
+    required this.onSaveDisplayName,
     required this.onLogout,
   });
 
   final bool showBackButton;
   final User? user;
+  final UserProfile? profile;
+  final String? profileErrorMessage;
+  final bool profileSaving;
+  final Future<String?> Function(String)? onSaveDisplayName;
   final VoidCallback? onLogout;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('profile-page'),
-      backgroundColor: const Color(0xFFF3F3F0),
       appBar: showBackButton
           ? AppBar(
-              backgroundColor: const Color(0xFFF3F3F0),
-              surfaceTintColor: Colors.transparent,
-              elevation: 0,
-              scrolledUnderElevation: 0,
               leading: IconButton(
                 key: const Key('profile-route-back-button'),
                 tooltip: '返回',
@@ -517,32 +633,53 @@ class _ProfilePage extends StatelessWidget {
       body: SafeArea(
         bottom: false,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 28, 20, 140),
+          padding: EdgeInsets.fromLTRB(
+            SpeakUpDesign.horizontalInset(context),
+            SpeakUpDesign.space24,
+            SpeakUpDesign.horizontalInset(context),
+            140,
+          ),
           children: [
-            const Text(
-              '我的',
-              style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '当前账号与本机登录状态。',
-              style: TextStyle(color: Color(0xFF696B73), fontSize: 15),
-            ),
-            const SizedBox(height: 28),
+            const SpeakUpPageHeader(title: '我的', subtitle: '管理账号与练习身份。'),
+            const SizedBox(height: SpeakUpDesign.space24),
             Card(
-              elevation: 0,
-              color: Colors.white,
               child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Color(0xFFE8E8E5),
-                  foregroundColor: Color(0xFF35363A),
-                  child: Icon(Icons.person_rounded),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: SpeakUpDesign.space16,
+                  vertical: SpeakUpDesign.space8,
                 ),
-                title: Text(user?.email ?? '本地界面预览'),
-                subtitle: Text(user == null ? '尚未连接正式账号' : '当前登录账号'),
+                leading: CircleAvatar(
+                  backgroundColor: SpeakUpDesign.primaryMuted,
+                  foregroundColor: SpeakUpDesign.primary,
+                  child: Text(
+                    _profileInitial(profile?.displayName),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                title: Text(
+                  profile?.displayName ?? (user == null ? '本地界面预览' : '尚未设置昵称'),
+                ),
+                subtitle: Text(user?.email ?? '尚未连接正式账号'),
+                trailing: user == null
+                    ? null
+                    : IconButton(
+                        key: const Key('profile-edit-display-name'),
+                        tooltip: '编辑昵称',
+                        onPressed: profileSaving || onSaveDisplayName == null
+                            ? null
+                            : () => _editDisplayName(context),
+                        icon: const Icon(Icons.edit_rounded),
+                      ),
               ),
             ),
-            const SizedBox(height: 16),
+            if (profileErrorMessage != null) ...[
+              const SizedBox(height: SpeakUpDesign.space8),
+              Text(
+                profileErrorMessage!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: SpeakUpDesign.space16),
             OutlinedButton.icon(
               key: const Key('profile-logout-button'),
               onPressed: onLogout,
@@ -554,4 +691,104 @@ class _ProfilePage extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _editDisplayName(BuildContext context) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _DisplayNameDialog(
+        initialName: profile?.displayName ?? '',
+        onSave: onSaveDisplayName!,
+      ),
+    );
+    if (saved == true && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('昵称已更新')));
+    }
+  }
+}
+
+class _DisplayNameDialog extends StatefulWidget {
+  const _DisplayNameDialog({required this.initialName, required this.onSave});
+
+  final String initialName;
+  final Future<String?> Function(String) onSave;
+
+  @override
+  State<_DisplayNameDialog> createState() => _DisplayNameDialogState();
+}
+
+class _DisplayNameDialogState extends State<_DisplayNameDialog> {
+  late final TextEditingController _controller;
+  String? _errorMessage;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('编辑昵称'),
+      content: TextField(
+        key: const Key('profile-display-name-input'),
+        controller: _controller,
+        autofocus: true,
+        enabled: !_saving,
+        maxLength: 40,
+        decoration: InputDecoration(labelText: '昵称', errorText: _errorMessage),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('profile-save-display-name'),
+          onPressed: _saving ? null : _save,
+          child: Text(_saving ? '正在保存…' : '保存'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _save() async {
+    final value = _controller.text.trim();
+    if (value.isEmpty) {
+      setState(() => _errorMessage = '请输入昵称');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _errorMessage = null;
+    });
+    final error = await widget.onSave(value);
+    if (!mounted) {
+      return;
+    }
+    if (error != null) {
+      setState(() {
+        _saving = false;
+        _errorMessage = error;
+      });
+      return;
+    }
+    Navigator.of(context).pop(true);
+  }
+}
+
+String _profileInitial(String? displayName) {
+  if (displayName == null || displayName.isEmpty) {
+    return '我';
+  }
+  return String.fromCharCode(displayName.runes.first).toUpperCase();
 }

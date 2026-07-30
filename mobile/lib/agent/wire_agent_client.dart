@@ -265,6 +265,7 @@ final class WireAgentClient
     );
     return AgentThreadSnapshot(
       threadId: thread.id,
+      title: thread.title,
       activeMatter: activeMatter,
       textRecovery: recovery.failure,
       messages: <AgentMessage>[
@@ -1295,16 +1296,19 @@ final class _WireThread {
     required this.id,
     required this.createdAt,
     required this.updatedAt,
+    this.title,
     this.activeMatterId,
   });
 
   final String id;
+  final String? title;
   final String? activeMatterId;
   final DateTime createdAt;
   final DateTime updatedAt;
 
   AgentThreadSummary get presentation => AgentThreadSummary(
     id: id,
+    title: title,
     activeMatterId: activeMatterId,
     createdAt: createdAt,
     updatedAt: updatedAt,
@@ -1342,6 +1346,7 @@ final class _WireMessage {
     this.clientMessageId,
     this.producedByRunId,
     this.audio,
+    this.actions = const <AgentMessageAction>[],
   });
 
   final String id;
@@ -1353,6 +1358,7 @@ final class _WireMessage {
   final String? clientMessageId;
   final String? producedByRunId;
   final AgentMessageAudio? audio;
+  final List<AgentMessageAction> actions;
 
   AgentMessage get presentation => AgentMessage(
     id: id,
@@ -1362,6 +1368,7 @@ final class _WireMessage {
     createdAt: createdAt,
     modality: modality,
     audio: audio,
+    actions: actions,
   );
 }
 
@@ -1551,13 +1558,18 @@ _WireThread _decodeThreadObject(Object? value) {
     value,
     allowed: const <String>{
       'thread_id',
+      'title',
       'active_matter_id',
       'created_at',
       'updated_at',
     },
-    required: const <String>{'thread_id', 'created_at', 'updated_at'},
+    required: const <String>{'thread_id', 'title', 'created_at', 'updated_at'},
   );
   final id = _strictUuid(object['thread_id']);
+  final titleValue = object['title'];
+  final title = titleValue == null
+      ? null
+      : _strictString(titleValue, minLength: 1, maxLength: 25);
   final activeMatterId = _absentOnlyOptional(
     object,
     'active_matter_id',
@@ -1570,6 +1582,7 @@ _WireThread _decodeThreadObject(Object? value) {
   }
   return _WireThread(
     id: id,
+    title: title,
     activeMatterId: activeMatterId,
     createdAt: createdAt,
     updatedAt: updatedAt,
@@ -1628,6 +1641,7 @@ _WireMessage _decodeMessageObject(
       'modality',
       'content',
       'audio',
+      'actions',
       'created_at',
     },
     required: const <String>{
@@ -1679,8 +1693,13 @@ _WireMessage _decodeMessageObject(
     'produced_by_run_id',
     _strictUuid,
   );
+  final actions =
+      _absentOnlyOptional(object, 'actions', _decodeMessageActions) ??
+      const <AgentMessageAction>[];
   if ((role == AgentMessageRole.user &&
-          (clientMessageId == null || producedByRunId != null)) ||
+          (clientMessageId == null ||
+              producedByRunId != null ||
+              actions.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientMessageId != null || producedByRunId == null)) ||
       (effectiveModality == AgentMessageModality.voice && audio == null) ||
@@ -1699,6 +1718,35 @@ _WireMessage _decodeMessageObject(
     clientMessageId: clientMessageId,
     producedByRunId: producedByRunId,
     audio: audio,
+    actions: actions,
+  );
+}
+
+List<AgentMessageAction> _decodeMessageActions(Object? value) {
+  final values = _strictList(value, maxLength: 4);
+  return List<AgentMessageAction>.unmodifiable(
+    values.map((item) {
+      final object = _strictObject(
+        item,
+        allowed: const <String>{'type', 'label', 'matter_id', 'title'},
+        required: const <String>{'type', 'label', 'matter_id', 'title'},
+      );
+      final type = switch (_strictString(
+        object['type'],
+        minLength: 1,
+        maxLength: 64,
+      )) {
+        'open_interview_preparation' =>
+          AgentMessageActionType.openInterviewPreparation,
+        _ => throw const _InvalidAgentResponse(),
+      };
+      return AgentMessageAction(
+        type: type,
+        label: _strictString(object['label'], minLength: 1, maxLength: 64),
+        matterId: _strictUuid(object['matter_id']),
+        title: _strictString(object['title'], minLength: 1, maxLength: 200),
+      );
+    }),
   );
 }
 

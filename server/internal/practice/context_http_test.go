@@ -45,6 +45,12 @@ type contextHTTPApplicationStub struct {
 		string,
 		CreateSessionRequest,
 	) (persistence.ContextSessionBootstrap, bool, error)
+	confirmAndStart func(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		StartConfirmation,
+	) (ConfirmAndStartResult, error)
 	getSession func(
 		context.Context,
 		requestcontext.Actor,
@@ -113,6 +119,19 @@ func (s contextHTTPApplicationStub) CreateSession(
 			errors.New("unexpected CreateSession")
 	}
 	return s.createSession(ctx, actor, planID, key, request)
+}
+
+func (s contextHTTPApplicationStub) ConfirmAndStartPractice(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	key string,
+	confirmation StartConfirmation,
+) (ConfirmAndStartResult, error) {
+	if s.confirmAndStart == nil {
+		return ConfirmAndStartResult{},
+			errors.New("unexpected ConfirmAndStartPractice")
+	}
+	return s.confirmAndStart(ctx, actor, key, confirmation)
 }
 
 func (s contextHTTPApplicationStub) GetSession(
@@ -260,6 +279,7 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		"scenario_definition_id",
 		"scenario_definition_version",
 		"scenario_type",
+		"scenario_model",
 		"scenario_config_id",
 		"scenario_config_version",
 		"preparation_profile_id",
@@ -331,6 +351,7 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		"practice_session_id",
 		"practice_plan_id",
 		"scenario_type",
+		"scenario_model",
 		"snapshot_id",
 		"practice_session_status",
 		"session_version",
@@ -371,6 +392,7 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		"practice_session_id",
 		"practice_plan_id",
 		"scenario_type",
+		"scenario_model",
 		"snapshot_id",
 		"practice_session_status",
 		"session_version",
@@ -397,6 +419,7 @@ func TestContextHTTPRoutesUseTrustedActorAndCanonicalShapes(t *testing.T) {
 		"practice_session_id",
 		"plan_revision",
 		"scenario_type",
+		"scenario_model",
 		"scenario_definition_snapshot",
 		"scenario_config_snapshot",
 		"preparation_snapshot",
@@ -423,6 +446,7 @@ func TestContextHTTPAllowsPlanOwnedExplicitStart(t *testing.T) {
 				key != "targeted-start-intent" ||
 				!reflect.DeepEqual(request, CreateSessionRequest{
 					ExpectedPlanRevision: 2,
+					UserConfirmed:        true,
 				}) {
 				t.Fatalf("targeted start request = %+v", request)
 			}
@@ -435,7 +459,7 @@ func TestContextHTTPAllowsPlanOwnedExplicitStart(t *testing.T) {
 			method: http.MethodPost,
 			path: "/v1/practice-plans/plan-targeted/" +
 				"practice-sessions",
-			body:        `{"expected_plan_revision":2}`,
+			body:        `{"expected_plan_revision":2,"user_confirmed":true}`,
 			contentType: "application/json",
 			keyValues:   []string{"targeted-start-intent"},
 			actor:       &actor,
@@ -1038,6 +1062,84 @@ func TestNewContextHTTPHandlerRejectsNilApplication(t *testing.T) {
 	}
 }
 
+func TestContextHTTPTrustedPracticeStartConfirmation(t *testing.T) {
+	actor := contextHTTPActor()
+	want := contextHTTPBootstrap()
+	want.Session.ID = "practice-session-1"
+	want.Session.PlanID = "practice-plan-1"
+	want.Snapshot.SessionID = want.Session.ID
+	want.Snapshot.PlanRevision = 3
+	calls := 0
+	router := newContextHTTPTestRouter(t, contextHTTPApplicationStub{
+		confirmAndStart: func(
+			_ context.Context,
+			gotActor requestcontext.Actor,
+			key string,
+			confirmation StartConfirmation,
+		) (ConfirmAndStartResult, error) {
+			calls++
+			if gotActor != actor || key != "start-confirmation-0001" ||
+				confirmation.AgentThreadID != "agent-thread-1" ||
+				confirmation.PracticePlanID != "practice-plan-1" ||
+				confirmation.ExpectedPlanRevision != 3 {
+				t.Fatalf("trusted confirmation = %#v", confirmation)
+			}
+			return ConfirmAndStartResult{Bootstrap: want}, nil
+		},
+	})
+	response := serveContextHTTPRequest(router, contextHTTPRequest{
+		method: http.MethodPost,
+		path: "/v1/agent-threads/agent-thread-1/" +
+			"practice-start-confirmations",
+		body: `{
+			"practice_plan_id":"practice-plan-1",
+			"expected_plan_revision":3,
+			"user_confirmed":true
+		}`,
+		contentType: "application/json",
+		keyValues:   []string{"start-confirmation-0001"},
+		actor:       &actor,
+	})
+	assertContextHTTPSuccess(t, response, http.StatusCreated, want)
+	if calls != 1 {
+		t.Fatalf("ConfirmAndStartPractice calls = %d", calls)
+	}
+}
+
+func TestContextHTTPRejectsMissingExplicitPracticeConfirmation(t *testing.T) {
+	actor := contextHTTPActor()
+	router := newContextHTTPTestRouter(t, contextHTTPApplicationStub{
+		confirmAndStart: func(
+			context.Context,
+			requestcontext.Actor,
+			string,
+			StartConfirmation,
+		) (ConfirmAndStartResult, error) {
+			t.Fatal("unconfirmed request reached application")
+			return ConfirmAndStartResult{}, nil
+		},
+	})
+	response := serveContextHTTPRequest(router, contextHTTPRequest{
+		method: http.MethodPost,
+		path: "/v1/agent-threads/agent-thread-1/" +
+			"practice-start-confirmations",
+		body: `{
+			"practice_plan_id":"practice-plan-1",
+			"expected_plan_revision":3,
+			"user_confirmed":false
+		}`,
+		contentType: "application/json",
+		keyValues:   []string{"start-confirmation-0002"},
+		actor:       &actor,
+	})
+	assertContextHTTPError(
+		t,
+		response,
+		http.StatusConflict,
+		"confirmation_required",
+	)
+}
+
 type contextHTTPRequest struct {
 	method        string
 	path          string
@@ -1277,6 +1379,7 @@ func contextHTTPPlanRequest() CreatePlanRequest {
 func contextHTTPSessionRequest() CreateSessionRequest {
 	return CreateSessionRequest{
 		ExpectedPlanRevision:  1,
+		UserConfirmed:         true,
 		PreparationSnapshotID: "preparation-snapshot-1",
 		PracticeOptionID:      "option-1",
 		RoleDefinitionIDs:     []string{"role-1"},
@@ -1304,6 +1407,7 @@ func contextHTTPPlan(userID string) persistence.Plan {
 		ScenarioDefinitionID:      request.ScenarioDefinitionID,
 		ScenarioDefinitionVersion: request.ScenarioDefinitionVersion,
 		ScenarioType:              "INTERVIEW",
+		ScenarioModel:             persistence.ScenarioModelProjectExperienceDeepDive,
 		ScenarioConfigID:          request.ScenarioConfigID,
 		ScenarioConfigVersion:     request.ScenarioConfigVersion,
 		PreparationProfileID:      request.PreparationProfileID,
@@ -1328,13 +1432,15 @@ func contextHTTPBootstrap() persistence.ContextSessionBootstrap {
 		Version:              1,
 	}
 	snapshot := persistence.ContextSessionSnapshot{
-		ID:           "snapshot-1",
-		SessionID:    "session-1",
-		PlanRevision: 1,
-		ScenarioType: "INTERVIEW",
+		ID:            "snapshot-1",
+		SessionID:     "session-1",
+		PlanRevision:  1,
+		ScenarioType:  "INTERVIEW",
+		ScenarioModel: persistence.ScenarioModelProjectExperienceDeepDive,
 		ScenarioDefinition: persistence.ScenarioDefinitionSnapshot{
 			ID:      "scenario-1",
 			Type:    "INTERVIEW",
+			Model:   persistence.ScenarioModelProjectExperienceDeepDive,
 			Name:    "English interview",
 			Version: 1,
 			Status:  "active",
@@ -1343,10 +1449,20 @@ func contextHTTPBootstrap() persistence.ContextSessionBootstrap {
 			ID:                   "config-1",
 			ScenarioDefinitionID: "scenario-1",
 			Type:                 "INTERVIEW",
+			Model:                persistence.ScenarioModelProjectExperienceDeepDive,
 			Version:              1,
 			JobTitle:             "Backend engineer",
 			JobDescription:       "Build reliable services.",
-			FocusAreas:           []string{"system_design"},
+			PromptModel: persistence.ScenarioPromptModel{
+				PublicSceneBrief:         "Discuss one backend project.",
+				PracticeGoal:             "Explain decisions with evidence.",
+				UserRole:                 "Candidate",
+				AIRole:                   "Technical interviewer",
+				PersonaSummary:           "A precise interviewer.",
+				FocusAreas:               []string{"system_design"},
+				TurnBlueprints:           []string{"Clarify the project"},
+				SuggestedDurationSeconds: 900,
+			},
 		},
 		Preparation: persistence.PreparationSnapshot{
 			ID:                 "preparation-snapshot-1",
@@ -1407,13 +1523,14 @@ func contextHTTPBootstrap() persistence.ContextSessionBootstrap {
 	}
 	return persistence.ContextSessionBootstrap{
 		Session: persistence.ContextSession{
-			ID:           snapshot.SessionID,
-			PlanID:       "plan-1",
-			ScenarioType: snapshot.ScenarioType,
-			SnapshotID:   snapshot.ID,
-			Status:       persistence.ContextSessionStarting,
-			Version:      1,
-			CreatedAt:    createdAt,
+			ID:            snapshot.SessionID,
+			PlanID:        "plan-1",
+			ScenarioType:  snapshot.ScenarioType,
+			ScenarioModel: snapshot.ScenarioModel,
+			SnapshotID:    snapshot.ID,
+			Status:        persistence.ContextSessionStarting,
+			Version:       1,
+			CreatedAt:     createdAt,
 		},
 		Snapshot: snapshot,
 	}

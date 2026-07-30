@@ -832,12 +832,20 @@ components:
       additionalProperties: false
       required:
         - thread_id
+        - title
         - created_at
         - updated_at
       properties:
         thread_id:
           type: string
           format: uuid
+          readOnly: true
+        title:
+          type:
+            - string
+            - "null"
+          minLength: 1
+          maxLength: 25
           readOnly: true
         active_matter_id:
           type: string
@@ -980,9 +988,45 @@ components:
           x-max-utf8-bytes: 16384
         audio:
           $ref: '#/components/schemas/AgentMessageAudio'
+        actions:
+          type: array
+          maxItems: 4
+          description: |
+            Server-derived actions backed by succeeded ToolCalls. The client
+            must use these opaque resource identities instead of parsing
+            assistant prose.
+          items:
+            $ref: '#/components/schemas/AgentMessageAction'
         created_at:
           type: string
           format: date-time
+          readOnly: true
+    AgentMessageAction:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - label
+        - matter_id
+        - title
+      properties:
+        type:
+          type: string
+          const: open_interview_preparation
+          readOnly: true
+        label:
+          type: string
+          minLength: 1
+          maxLength: 64
+          readOnly: true
+        matter_id:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
           readOnly: true
     AgentMessageModality:
       type: string
@@ -1461,6 +1505,119 @@ components:
           format: int64
           minimum: 1
           readOnly: true
+    ContextMemorySource:
+      type: object
+      additionalProperties: false
+      required:
+        - memory_id
+        - memory_version
+        - type
+        - scope
+        - similarity
+        - score
+        - embedding_provider
+        - embedding_model
+        - embedding_dimensions
+        - embedding_policy_version
+        - retrieval_policy_version
+      properties:
+        memory_id:
+          type: string
+          format: uuid
+          readOnly: true
+        memory_version:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        type:
+          type: string
+          minLength: 1
+          maxLength: 32
+          readOnly: true
+        scope:
+          type: string
+          enum:
+            - user
+            - matter
+          readOnly: true
+        matter_id:
+          type: string
+          format: uuid
+          readOnly: true
+        similarity:
+          type: number
+          format: double
+          minimum: -1
+          maximum: 1
+          readOnly: true
+        score:
+          type: number
+          format: double
+          readOnly: true
+        embedding_provider:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,63}$'
+          readOnly: true
+        embedding_model:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
+        embedding_dimensions:
+          type: integer
+          enum:
+            - 1024
+          readOnly: true
+        embedding_policy_version:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'
+          readOnly: true
+        retrieval_policy_version:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'
+          readOnly: true
+    ContextStableProfileSource:
+      type: object
+      additionalProperties: false
+      required:
+        - memory_id
+        - memory_version
+        - canonical_key
+        - type
+        - scope
+      properties:
+        memory_id:
+          type: string
+          format: uuid
+          readOnly: true
+        memory_version:
+          type: integer
+          format: int64
+          minimum: 1
+          readOnly: true
+        canonical_key:
+          type: string
+          enum:
+            - profile.preferred_name
+            - preference.form_of_address
+            - profile.gender
+            - career.occupation
+            - career.experience_years
+            - coaching.style
+          readOnly: true
+        type:
+          type: string
+          enum:
+            - profile
+            - preference
+          readOnly: true
+        scope:
+          type: string
+          enum:
+            - user
+          readOnly: true
     ContextManifest:
       type: object
       additionalProperties: false
@@ -1469,6 +1626,10 @@ components:
         - thread_id
         - input_message_id
         - instruction_version
+        - stable_profile_context_policy_version
+        - selected_stable_profile
+        - memory_context_policy_version
+        - selected_memories
         - selected_messages
         - omitted_message_count
         - trim_reason
@@ -1497,6 +1658,23 @@ components:
           type: string
           pattern: '^[a-z][a-z0-9._-]{0,63}$'
           readOnly: true
+        stable_profile_context_policy_version:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'
+          readOnly: true
+        selected_stable_profile:
+          type: array
+          maxItems: 6
+          items:
+            $ref: '#/components/schemas/ContextStableProfileSource'
+        memory_context_policy_version:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'
+          readOnly: true
+        selected_memories:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContextMemorySource'
         selected_messages:
           type: array
           minItems: 1

@@ -27,11 +27,33 @@ void main() {
       expect(scenarios, hasLength(1));
       expect(scenarios.single.id, _scenarioId);
       expect(scenarios.single.name, 'English interview for technical roles');
+      expect(scenarios.single.summary, 'Discuss one backend project.');
       expect(transport.calls.single.path, '/v1/scenario-definitions');
       expect(transport.calls.single.authorization, isNull);
       transport.expectDone();
     },
   );
+
+  test('accepts a server-provided summary for each directory item', () async {
+    final client = WirePreparationCatalogClient(
+      baseUri: Uri.parse('https://api.speak-up.test'),
+      transport: _QueueTransport([
+        _response(<String, Object?>{
+          'scenarios': [
+            <String, Object?>{
+              ..._scenarioJson,
+              'summary': 'Discuss one real backend project.',
+            },
+          ],
+        }),
+      ]),
+    );
+
+    final scenarios = await client.listScenarios();
+
+    expect(scenarios, hasLength(1));
+    expect(scenarios.single.summary, 'Discuss one real backend project.');
+  });
 
   test('decodes detail and preserves server role and option order', () async {
     final transport = _QueueTransport([
@@ -64,6 +86,76 @@ void main() {
     ]);
     expect(transport.calls.every((call) => call.authorization == null), isTrue);
     transport.expectDone();
+  });
+
+  test('accepts a complete IELTS cue card as one turn blueprint', () async {
+    const cueCard =
+        'Part 2 cue card: Describe a skill you would like to learn.\n'
+        'You should say:\n'
+        '• What the skill is\n'
+        '• Why you want to learn it\n'
+        '• How you would learn it\n'
+        '• And explain how learning this skill would benefit you';
+    final config = <String, Object?>{
+      ..._configJson,
+      'prompt_model': <String, Object?>{
+        ..._configJson['prompt_model']! as Map<String, Object?>,
+        'turn_blueprints': [cueCard],
+      },
+    };
+    final client = WirePreparationCatalogClient(
+      baseUri: Uri.parse('https://api.speak-up.test'),
+      transport: _QueueTransport([
+        _response(<String, Object?>{..._detailJson, 'scenario_config': config}),
+      ]),
+    );
+
+    final detail = await client.getScenario(_scenarioId);
+
+    expect(detail.config.prompt.turnBlueprints, [cueCard]);
+    expect(utf8.encode(cueCard).length, greaterThan(128));
+  });
+
+  test('accepts the four supported scenario family and model pairs', () async {
+    final scenarios = <Map<String, Object?>>[
+      _scenarioJson,
+      {
+        ..._scenarioJson,
+        'scenario_definition_id': 'scn_ielts_speaking_part_2',
+        'scenario_type': 'EXAM',
+        'scenario_model': 'IELTS_SPEAKING_PART_2',
+        'name': 'IELTS Speaking Part 2',
+      },
+      {
+        ..._scenarioJson,
+        'scenario_definition_id': 'scn_workplace_progress_risk_update',
+        'scenario_type': 'WORKPLACE',
+        'scenario_model': 'PROGRESS_AND_RISK_UPDATE',
+        'name': 'Progress and risk update',
+      },
+      {
+        ..._scenarioJson,
+        'scenario_definition_id': 'scn_daily_hotel_checkin_issue',
+        'scenario_type': 'DAILY',
+        'scenario_model': 'HOTEL_CHECKIN_AND_ISSUE_HANDLING',
+        'name': 'Hotel check-in and issue handling',
+      },
+    ];
+    final client = WirePreparationCatalogClient(
+      baseUri: Uri.parse('https://api.speak-up.test'),
+      transport: _QueueTransport([
+        _response(<String, Object?>{'scenarios': scenarios}),
+      ]),
+    );
+
+    final result = await client.listScenarios();
+
+    expect(result.map((scenario) => scenario.type), [
+      'INTERVIEW',
+      'EXAM',
+      'WORKPLACE',
+      'DAILY',
+    ]);
   });
 
   test(
@@ -207,22 +299,40 @@ IdentityHttpResponse _response(Object body) =>
 
 const _scenarioId = 'scn_programmer_interview';
 
-const _scenarioJson = <String, Object?>{
+const _scenarioDefinitionJson = <String, Object?>{
   'scenario_definition_id': _scenarioId,
   'scenario_type': 'INTERVIEW',
+  'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
   'name': 'English interview for technical roles',
   'version': 1,
   'status': 'active',
+  'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
+  'session_policy_ref': 'interview.project_deep_dive.session.v1',
+};
+
+const _scenarioJson = <String, Object?>{
+  ..._scenarioDefinitionJson,
+  'summary': 'Discuss one backend project.',
 };
 
 const _configJson = <String, Object?>{
   'scenario_config_id': 'scfg_backend_engineer',
   'scenario_definition_id': _scenarioId,
   'config_type': 'INTERVIEW',
+  'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
   'version': 1,
   'job_title': 'Backend engineer',
   'job_description': 'Build reliable APIs and explain engineering trade-offs.',
-  'focus_areas': ['introduction', 'system_design'],
+  'prompt_model': {
+    'public_scene_brief': 'Discuss one backend project.',
+    'practice_goal': 'Explain decisions with evidence.',
+    'user_role': 'Candidate',
+    'ai_role': 'Technical interviewer',
+    'persona_summary': 'Precise and evidence seeking.',
+    'focus_areas': ['introduction', 'system_design'],
+    'turn_blueprints': ['Ask for a project overview.'],
+    'suggested_duration_seconds': 900,
+  },
 };
 
 const _fullOptionJson = <String, Object?>{
@@ -252,7 +362,7 @@ const _recruiterOptionJson = <String, Object?>{
 };
 
 const _detailJson = <String, Object?>{
-  'scenario_definition': _scenarioJson,
+  'scenario_definition': _scenarioDefinitionJson,
   'scenario_config': _configJson,
   'practice_options': [
     _fullOptionJson,

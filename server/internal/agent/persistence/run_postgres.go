@@ -44,6 +44,24 @@ const runSelectColumns = `
     completed_at,
     updated_at`
 
+const toolCallSelectColumns = `
+    id,
+    run_id::text,
+    owner_user_id::text,
+    thread_id::text,
+    tool_name,
+    schema_version,
+    input,
+    status,
+    result,
+    COALESCE(error_category, ''),
+    COALESCE(request_id, ''),
+    source_refs,
+    proposed_at,
+    started_at,
+    completed_at,
+    updated_at`
+
 func (r *PostgresRepository) CreateInitialRun(
 	ctx context.Context,
 	ownerID string,
@@ -388,6 +406,7 @@ func (r *PostgresRepository) ListMessagesForContext(
 	ctx context.Context,
 	ownerID string,
 	threadID string,
+	minSequenceExclusive int64,
 	maxSequence int64,
 	characterBudget int,
 ) ([]Message, int, error) {
@@ -410,9 +429,10 @@ WITH recent AS (
     FROM agent_messages
     WHERE owner_user_id = $1
       AND thread_id = $2
-      AND sequence_no <= $3
+      AND sequence_no > $3
+      AND sequence_no <= $4
     ORDER BY sequence_no DESC
-    LIMIT $4
+    LIMIT $5
 ),
 eligible AS (
     SELECT
@@ -426,7 +446,7 @@ eligible AS (
 selected AS (
     SELECT *
     FROM eligible
-    WHERE cumulative_characters <= $4
+    WHERE cumulative_characters <= $5
 )
 SELECT
     id::text,
@@ -442,6 +462,7 @@ FROM selected
 ORDER BY sequence_no ASC`,
 		ownerID,
 		threadID,
+		minSequenceExclusive,
 		maxSequence,
 		characterBudget,
 	)
@@ -484,16 +505,53 @@ func (r *PostgresRepository) SaveContextManifest(
 	if err != nil {
 		return ContextManifest{}, ErrInvalidRequest
 	}
+	selectedMemories, err := json.Marshal(manifest.SelectedMemories)
+	if err != nil {
+		return ContextManifest{}, ErrInvalidRequest
+	}
+	selectedStableProfile, err := json.Marshal(manifest.SelectedStableProfile)
+	if err != nil {
+		return ContextManifest{}, ErrInvalidRequest
+	}
 	var activeMatterID any
 	var activeMatterVersion any
 	if manifest.ActiveMatterID != "" {
 		activeMatterID = manifest.ActiveMatterID
 		activeMatterVersion = manifest.ActiveMatterVersion
 	}
+	var summaryCheckpointID any
+	var summarySourceFromSequence any
+	var summaryCoveredThroughSequence any
+	var summaryPolicyVersion any
+	var summaryPromptVersion any
+	var summaryProvider any
+	var summaryModel any
+	if manifest.SelectedSummary != nil {
+		summaryCheckpointID = manifest.SelectedSummary.CheckpointID
+		summarySourceFromSequence =
+			manifest.SelectedSummary.SourceFromSequence
+		summaryCoveredThroughSequence =
+			manifest.SelectedSummary.CoveredThroughSequence
+		summaryPolicyVersion = manifest.SelectedSummary.PolicyVersion
+		summaryPromptVersion = manifest.SelectedSummary.PromptVersion
+		summaryProvider = manifest.SelectedSummary.Provider
+		summaryModel = manifest.SelectedSummary.Model
+	}
 	var result ContextManifest
 	var selectedJSON []byte
+	var selectedMemoriesJSON []byte
+	var selectedStableProfileJSON []byte
+	var exposedToolsJSON []byte
+	var toolSchemaHashesJSON []byte
 	var persistedMatterID pgtype.Text
 	var persistedMatterVersion pgtype.Int8
+	var persistedSummaryCheckpointID pgtype.Text
+	var persistedSummarySourceFromSequence pgtype.Int8
+	var persistedSummaryCoveredThroughSequence pgtype.Int8
+	var persistedSummaryPolicyVersion pgtype.Text
+	var persistedSummaryPromptVersion pgtype.Text
+	var persistedSummaryProvider pgtype.Text
+	var persistedSummaryModel pgtype.Text
 	err = r.database.QueryRow(ctx, `
 INSERT INTO agent_context_manifests (
     run_id,
@@ -503,6 +561,19 @@ INSERT INTO agent_context_manifests (
     active_matter_id,
     active_matter_version,
     instruction_version,
+    stable_profile_context_policy_version,
+    selected_stable_profile,
+    memory_context_policy_version,
+    selected_memories,
+    summary_context_policy_version,
+    summary_context_status,
+    selected_summary_checkpoint_id,
+    selected_summary_source_from_sequence,
+    selected_summary_covered_through_sequence,
+    selected_summary_policy_version,
+    selected_summary_prompt_version,
+    selected_summary_provider,
+    selected_summary_model,
     selected_messages,
     omitted_message_count,
     trim_reason,
@@ -513,8 +584,10 @@ INSERT INTO agent_context_manifests (
     max_output_tokens,
     created_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13,
-    $14, $15,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
+    $10, $11::jsonb, $12, $13, $14, $15, $16, $17, $18,
+    $19, $20,
+    $21::jsonb, $22, $23, $24, $25, $26, $27, $28,
     CURRENT_TIMESTAMP
 )
 RETURNING
@@ -525,6 +598,19 @@ RETURNING
     active_matter_id::text,
     active_matter_version,
     instruction_version,
+    stable_profile_context_policy_version,
+    selected_stable_profile,
+    memory_context_policy_version,
+    selected_memories,
+    summary_context_policy_version,
+    summary_context_status,
+    selected_summary_checkpoint_id::text,
+    selected_summary_source_from_sequence,
+    selected_summary_covered_through_sequence,
+    selected_summary_policy_version,
+    selected_summary_prompt_version,
+    selected_summary_provider,
+    selected_summary_model,
     selected_messages,
     omitted_message_count,
     trim_reason,
@@ -533,6 +619,8 @@ RETURNING
     requested_provider,
     requested_model,
     max_output_tokens,
+    exposed_tools,
+    tool_schema_hashes,
     created_at`,
 		manifest.RunID,
 		manifest.OwnerID,
@@ -541,6 +629,19 @@ RETURNING
 		activeMatterID,
 		activeMatterVersion,
 		manifest.InstructionVersion,
+		manifest.StableProfileContextPolicyVersion,
+		selectedStableProfile,
+		manifest.MemoryContextPolicyVersion,
+		selectedMemories,
+		manifest.SummaryContextPolicyVersion,
+		manifest.SummaryContextStatus,
+		summaryCheckpointID,
+		summarySourceFromSequence,
+		summaryCoveredThroughSequence,
+		summaryPolicyVersion,
+		summaryPromptVersion,
+		summaryProvider,
+		summaryModel,
 		selectedMessages,
 		manifest.OmittedMessageCount,
 		manifest.TrimReason,
@@ -557,6 +658,19 @@ RETURNING
 		&persistedMatterID,
 		&persistedMatterVersion,
 		&result.InstructionVersion,
+		&result.StableProfileContextPolicyVersion,
+		&selectedStableProfileJSON,
+		&result.MemoryContextPolicyVersion,
+		&selectedMemoriesJSON,
+		&result.SummaryContextPolicyVersion,
+		&result.SummaryContextStatus,
+		&persistedSummaryCheckpointID,
+		&persistedSummarySourceFromSequence,
+		&persistedSummaryCoveredThroughSequence,
+		&persistedSummaryPolicyVersion,
+		&persistedSummaryPromptVersion,
+		&persistedSummaryProvider,
+		&persistedSummaryModel,
 		&selectedJSON,
 		&result.OmittedMessageCount,
 		&result.TrimReason,
@@ -565,6 +679,8 @@ RETURNING
 		&result.RequestedProvider,
 		&result.RequestedModel,
 		&result.MaxOutputTokens,
+		&exposedToolsJSON,
+		&toolSchemaHashesJSON,
 		&result.CreatedAt,
 	)
 	if err != nil {
@@ -574,7 +690,18 @@ RETURNING
 		&result,
 		persistedMatterID,
 		persistedMatterVersion,
+		persistedSummaryCheckpointID,
+		persistedSummarySourceFromSequence,
+		persistedSummaryCoveredThroughSequence,
+		persistedSummaryPolicyVersion,
+		persistedSummaryPromptVersion,
+		persistedSummaryProvider,
+		persistedSummaryModel,
 		selectedJSON,
+		selectedStableProfileJSON,
+		selectedMemoriesJSON,
+		exposedToolsJSON,
+		toolSchemaHashesJSON,
 	); err != nil {
 		return ContextManifest{}, err
 	}
@@ -588,8 +715,19 @@ func (r *PostgresRepository) FindContextManifest(
 ) (ContextManifest, error) {
 	var result ContextManifest
 	var selectedJSON []byte
+	var selectedMemoriesJSON []byte
+	var selectedStableProfileJSON []byte
+	var exposedToolsJSON []byte
+	var toolSchemaHashesJSON []byte
 	var activeMatterID pgtype.Text
 	var activeMatterVersion pgtype.Int8
+	var selectedSummaryCheckpointID pgtype.Text
+	var selectedSummarySourceFromSequence pgtype.Int8
+	var selectedSummaryCoveredThroughSequence pgtype.Int8
+	var selectedSummaryPolicyVersion pgtype.Text
+	var selectedSummaryPromptVersion pgtype.Text
+	var selectedSummaryProvider pgtype.Text
+	var selectedSummaryModel pgtype.Text
 	err := r.database.QueryRow(ctx, `
 SELECT
     run_id::text,
@@ -599,6 +737,19 @@ SELECT
     active_matter_id::text,
     active_matter_version,
     instruction_version,
+    stable_profile_context_policy_version,
+    selected_stable_profile,
+    memory_context_policy_version,
+    selected_memories,
+    summary_context_policy_version,
+    summary_context_status,
+    selected_summary_checkpoint_id::text,
+    selected_summary_source_from_sequence,
+    selected_summary_covered_through_sequence,
+    selected_summary_policy_version,
+    selected_summary_prompt_version,
+    selected_summary_provider,
+    selected_summary_model,
     selected_messages,
     omitted_message_count,
     trim_reason,
@@ -607,6 +758,8 @@ SELECT
     requested_provider,
     requested_model,
     max_output_tokens,
+    exposed_tools,
+    tool_schema_hashes,
     created_at
 FROM agent_context_manifests
 WHERE run_id = $1 AND owner_user_id = $2`,
@@ -620,6 +773,19 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&activeMatterID,
 		&activeMatterVersion,
 		&result.InstructionVersion,
+		&result.StableProfileContextPolicyVersion,
+		&selectedStableProfileJSON,
+		&result.MemoryContextPolicyVersion,
+		&selectedMemoriesJSON,
+		&result.SummaryContextPolicyVersion,
+		&result.SummaryContextStatus,
+		&selectedSummaryCheckpointID,
+		&selectedSummarySourceFromSequence,
+		&selectedSummaryCoveredThroughSequence,
+		&selectedSummaryPolicyVersion,
+		&selectedSummaryPromptVersion,
+		&selectedSummaryProvider,
+		&selectedSummaryModel,
 		&selectedJSON,
 		&result.OmittedMessageCount,
 		&result.TrimReason,
@@ -628,6 +794,8 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result.RequestedProvider,
 		&result.RequestedModel,
 		&result.MaxOutputTokens,
+		&exposedToolsJSON,
+		&toolSchemaHashesJSON,
 		&result.CreatedAt,
 	)
 	if err != nil {
@@ -637,11 +805,255 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result,
 		activeMatterID,
 		activeMatterVersion,
+		selectedSummaryCheckpointID,
+		selectedSummarySourceFromSequence,
+		selectedSummaryCoveredThroughSequence,
+		selectedSummaryPolicyVersion,
+		selectedSummaryPromptVersion,
+		selectedSummaryProvider,
+		selectedSummaryModel,
 		selectedJSON,
+		selectedStableProfileJSON,
+		selectedMemoriesJSON,
+		exposedToolsJSON,
+		toolSchemaHashesJSON,
 	); err != nil {
 		return ContextManifest{}, err
 	}
 	return result, nil
+}
+
+func (r *PostgresRepository) SaveContextToolSnapshot(
+	ctx context.Context,
+	manifest ContextManifest,
+) (ContextManifest, error) {
+	exposedTools, err := json.Marshal(nonNilStrings(manifest.ExposedTools))
+	if err != nil {
+		return ContextManifest{}, ErrInvalidRequest
+	}
+	schemaHashes, err := json.Marshal(nonNilStringMap(manifest.ToolSchemaHashes))
+	if err != nil {
+		return ContextManifest{}, ErrInvalidRequest
+	}
+	command, err := r.database.Exec(ctx, `
+UPDATE agent_context_manifests
+SET
+    exposed_tools = $3::jsonb,
+    tool_schema_hashes = $4::jsonb
+WHERE run_id = $1 AND owner_user_id = $2`,
+		manifest.RunID,
+		manifest.OwnerID,
+		exposedTools,
+		schemaHashes,
+	)
+	if err != nil {
+		return ContextManifest{}, mapPostgresError(err)
+	}
+	if command.RowsAffected() == 0 {
+		return ContextManifest{}, ErrNotFound
+	}
+	return r.FindContextManifest(ctx, manifest.OwnerID, manifest.RunID)
+}
+
+func (r *PostgresRepository) SaveToolCallProposed(
+	ctx context.Context,
+	record ToolCallRecord,
+) (ToolCallRecord, error) {
+	input, err := json.Marshal(record.Input)
+	if err != nil {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	if !validToolCallRecordIdentity(record) ||
+		record.Name == "" ||
+		record.SchemaVersion == "" ||
+		len(record.Input) == 0 {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	return scanToolCall(r.database.QueryRow(ctx, `
+INSERT INTO agent_tool_calls (
+    id,
+    run_id,
+    owner_user_id,
+    thread_id,
+    tool_name,
+    schema_version,
+    input,
+    status,
+    source_refs,
+    proposed_at,
+    updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7::jsonb, 'proposed', '[]'::jsonb,
+    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+ON CONFLICT (run_id, id) DO UPDATE
+SET
+    updated_at = agent_tool_calls.updated_at
+RETURNING `+toolCallSelectColumns,
+		record.ID,
+		record.RunID,
+		record.OwnerID,
+		record.ThreadID,
+		record.Name,
+		record.SchemaVersion,
+		input,
+	))
+}
+
+func (r *PostgresRepository) MarkToolCallRunning(
+	ctx context.Context,
+	ownerID string,
+	runID string,
+	toolCallID string,
+	requestID string,
+) (ToolCallRecord, error) {
+	record, err := scanToolCall(r.database.QueryRow(ctx, `
+UPDATE agent_tool_calls
+SET
+    status = 'running',
+    request_id = $4,
+    started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE run_id = $1
+  AND owner_user_id = $2
+  AND id = $3
+  AND status IN ('proposed', 'running')
+RETURNING `+toolCallSelectColumns,
+		runID,
+		ownerID,
+		toolCallID,
+		requestID,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ToolCallRecord{}, ErrConflict
+	}
+	if err != nil {
+		return ToolCallRecord{}, mapPostgresError(err)
+	}
+	return record, nil
+}
+
+func (r *PostgresRepository) MarkToolCallSucceeded(
+	ctx context.Context,
+	ownerID string,
+	runID string,
+	toolCallID string,
+	result json.RawMessage,
+	sourceRefs []ToolSourceRef,
+) (ToolCallRecord, error) {
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	refsJSON, err := json.Marshal(sourceRefs)
+	if err != nil {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	record, err := scanToolCall(r.database.QueryRow(ctx, `
+UPDATE agent_tool_calls
+SET
+    status = 'succeeded',
+    result = $4::jsonb,
+    source_refs = $5::jsonb,
+    completed_at = GREATEST(CURRENT_TIMESTAMP, started_at),
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE run_id = $1
+  AND owner_user_id = $2
+  AND id = $3
+  AND status = 'running'
+RETURNING `+toolCallSelectColumns,
+		runID,
+		ownerID,
+		toolCallID,
+		resultJSON,
+		refsJSON,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ToolCallRecord{}, ErrConflict
+	}
+	if err != nil {
+		return ToolCallRecord{}, mapPostgresError(err)
+	}
+	return record, nil
+}
+
+func (r *PostgresRepository) MarkToolCallFailed(
+	ctx context.Context,
+	ownerID string,
+	runID string,
+	toolCallID string,
+	status ToolCallStatus,
+	errorCategory string,
+) (ToolCallRecord, error) {
+	if status != ToolCallStatusFailed && status != ToolCallStatusRejected {
+		return ToolCallRecord{}, ErrInvalidRequest
+	}
+	record, err := scanToolCall(r.database.QueryRow(ctx, `
+UPDATE agent_tool_calls
+SET
+    status = $4,
+    error_category = $5,
+    started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+    completed_at = GREATEST(CURRENT_TIMESTAMP, COALESCE(started_at, proposed_at)),
+    updated_at = GREATEST(
+        CURRENT_TIMESTAMP,
+        updated_at + INTERVAL '1 microsecond'
+    )
+WHERE run_id = $1
+  AND owner_user_id = $2
+  AND id = $3
+  AND status IN ('proposed', 'running')
+RETURNING `+toolCallSelectColumns,
+		runID,
+		ownerID,
+		toolCallID,
+		string(status),
+		errorCategory,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ToolCallRecord{}, ErrConflict
+	}
+	if err != nil {
+		return ToolCallRecord{}, mapPostgresError(err)
+	}
+	return record, nil
+}
+
+func (r *PostgresRepository) ListToolCalls(
+	ctx context.Context,
+	ownerID string,
+	runID string,
+) ([]ToolCallRecord, error) {
+	rows, err := r.database.Query(ctx, `
+SELECT `+toolCallSelectColumns+`
+FROM agent_tool_calls
+WHERE owner_user_id = $1 AND run_id = $2
+ORDER BY proposed_at ASC, id ASC`,
+		ownerID,
+		runID,
+	)
+	if err != nil {
+		return nil, ErrRepository
+	}
+	defer rows.Close()
+	records := make([]ToolCallRecord, 0)
+	for rows.Next() {
+		record, err := scanToolCall(rows)
+		if err != nil {
+			return nil, mapPostgresError(err)
+		}
+		records = append(records, record)
+	}
+	if rows.Err() != nil {
+		return nil, ErrRepository
+	}
+	return records, nil
 }
 
 func (r *PostgresRepository) CompleteRun(
@@ -1043,11 +1455,77 @@ func scanRun(row rowScanner) (Run, error) {
 	return result, nil
 }
 
+func scanToolCall(row rowScanner) (ToolCallRecord, error) {
+	var result ToolCallRecord
+	var status string
+	var inputJSON []byte
+	var resultJSON []byte
+	var sourceRefsJSON []byte
+	var startedAt pgtype.Timestamptz
+	var completedAt pgtype.Timestamptz
+	err := row.Scan(
+		&result.ID,
+		&result.RunID,
+		&result.OwnerID,
+		&result.ThreadID,
+		&result.Name,
+		&result.SchemaVersion,
+		&inputJSON,
+		&status,
+		&resultJSON,
+		&result.ErrorCategory,
+		&result.RequestID,
+		&sourceRefsJSON,
+		&result.ProposedAt,
+		&startedAt,
+		&completedAt,
+		&result.UpdatedAt,
+	)
+	if err != nil {
+		return ToolCallRecord{}, err
+	}
+	result.Status = ToolCallStatus(status)
+	result.Input = append(json.RawMessage(nil), inputJSON...)
+	if len(resultJSON) > 0 {
+		result.Result = append(json.RawMessage(nil), resultJSON...)
+	}
+	if len(sourceRefsJSON) > 0 {
+		if err := json.Unmarshal(sourceRefsJSON, &result.SourceRefs); err != nil {
+			return ToolCallRecord{}, ErrRepository
+		}
+	}
+	if startedAt.Valid {
+		result.StartedAt = startedAt.Time
+	}
+	if completedAt.Valid {
+		result.CompletedAt = completedAt.Time
+	}
+	return result, nil
+}
+
+func validToolCallRecordIdentity(record ToolCallRecord) bool {
+	return ValidModelID(record.ID) &&
+		ValidUUID(record.RunID) &&
+		ValidUUID(record.OwnerID) &&
+		ValidUUID(record.ThreadID)
+}
+
 func decodeManifestOptionals(
 	manifest *ContextManifest,
 	activeMatterID pgtype.Text,
 	activeMatterVersion pgtype.Int8,
+	selectedSummaryCheckpointID pgtype.Text,
+	selectedSummarySourceFromSequence pgtype.Int8,
+	selectedSummaryCoveredThroughSequence pgtype.Int8,
+	selectedSummaryPolicyVersion pgtype.Text,
+	selectedSummaryPromptVersion pgtype.Text,
+	selectedSummaryProvider pgtype.Text,
+	selectedSummaryModel pgtype.Text,
 	selectedJSON []byte,
+	selectedStableProfileJSON []byte,
+	selectedMemoriesJSON []byte,
+	exposedToolsJSON []byte,
+	toolSchemaHashesJSON []byte,
 ) error {
 	if activeMatterID.Valid {
 		manifest.ActiveMatterID = activeMatterID.String
@@ -1055,8 +1533,75 @@ func decodeManifestOptionals(
 	if activeMatterVersion.Valid {
 		manifest.ActiveMatterVersion = activeMatterVersion.Int64
 	}
+	summaryFieldsValid := selectedSummaryCheckpointID.Valid &&
+		selectedSummarySourceFromSequence.Valid &&
+		selectedSummaryCoveredThroughSequence.Valid &&
+		selectedSummaryPolicyVersion.Valid &&
+		selectedSummaryPromptVersion.Valid &&
+		selectedSummaryProvider.Valid &&
+		selectedSummaryModel.Valid
+	summaryFieldsEmpty := !selectedSummaryCheckpointID.Valid &&
+		!selectedSummarySourceFromSequence.Valid &&
+		!selectedSummaryCoveredThroughSequence.Valid &&
+		!selectedSummaryPolicyVersion.Valid &&
+		!selectedSummaryPromptVersion.Valid &&
+		!selectedSummaryProvider.Valid &&
+		!selectedSummaryModel.Valid
+	switch {
+	case summaryFieldsValid:
+		manifest.SelectedSummary = &ContextSummarySource{
+			CheckpointID:           selectedSummaryCheckpointID.String,
+			SourceFromSequence:     selectedSummarySourceFromSequence.Int64,
+			CoveredThroughSequence: selectedSummaryCoveredThroughSequence.Int64,
+			PolicyVersion:          selectedSummaryPolicyVersion.String,
+			PromptVersion:          selectedSummaryPromptVersion.String,
+			Provider:               selectedSummaryProvider.String,
+			Model:                  selectedSummaryModel.String,
+		}
+	case !summaryFieldsEmpty:
+		return ErrRepository
+	}
 	if err := json.Unmarshal(selectedJSON, &manifest.SelectedMessages); err != nil {
 		return ErrRepository
 	}
+	if err := json.Unmarshal(
+		selectedStableProfileJSON,
+		&manifest.SelectedStableProfile,
+	); err != nil {
+		return ErrRepository
+	}
+	if err := json.Unmarshal(
+		selectedMemoriesJSON,
+		&manifest.SelectedMemories,
+	); err != nil {
+		return ErrRepository
+	}
+	if len(exposedToolsJSON) > 0 {
+		if err := json.Unmarshal(exposedToolsJSON, &manifest.ExposedTools); err != nil {
+			return ErrRepository
+		}
+	}
+	if len(toolSchemaHashesJSON) > 0 {
+		if err := json.Unmarshal(
+			toolSchemaHashesJSON,
+			&manifest.ToolSchemaHashes,
+		); err != nil {
+			return ErrRepository
+		}
+	}
 	return nil
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func nonNilStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return map[string]string{}
+	}
+	return values
 }

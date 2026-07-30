@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:speakup/design/speak_up_design.dart';
 
 import 'agent_models.dart';
 import 'agent_voice_controller.dart';
@@ -7,11 +9,13 @@ class AgentMessageBubble extends StatefulWidget {
   const AgentMessageBubble({
     required this.message,
     this.voiceController,
+    this.onAction,
     super.key,
   });
 
   final AgentMessage message;
   final AgentVoiceController? voiceController;
+  final ValueChanged<AgentMessageAction>? onAction;
 
   @override
   State<AgentMessageBubble> createState() => _AgentMessageBubbleState();
@@ -84,7 +88,10 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   Widget build(BuildContext context) {
     final message = widget.message;
     final isUser = message.role == AgentMessageRole.user;
-    const foreground = Color(0xFF25262A);
+    const foreground = SpeakUpDesign.ink;
+    final content = message.modality == AgentMessageModality.voice
+        ? _buildUserVoice(context, foreground)
+        : _buildTextMessage(context, foreground);
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -95,13 +102,27 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             ? const EdgeInsets.fromLTRB(14, 11, 12, 11)
             : const EdgeInsets.fromLTRB(2, 7, 12, 9),
         decoration: BoxDecoration(
-          color: isUser ? const Color(0xFFE7E7E3) : Colors.transparent,
-          borderRadius: BorderRadius.circular(18),
-          border: isUser ? Border.all(color: const Color(0xFFDCDCD7)) : null,
+          color: isUser ? SpeakUpDesign.primaryMuted : Colors.transparent,
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+          border: isUser ? Border.all(color: SpeakUpDesign.border) : null,
         ),
-        child: message.modality == AgentMessageModality.voice
-            ? _buildUserVoice(context, foreground)
-            : _buildTextMessage(context, foreground),
+        child: message.actions.isEmpty
+            ? content
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  content,
+                  const SizedBox(height: 10),
+                  for (final action in message.actions)
+                    _InterviewPreparationAction(
+                      action: action,
+                      onPressed: widget.onAction == null
+                          ? null
+                          : () => widget.onAction!(action),
+                    ),
+                ],
+              ),
       ),
     );
   }
@@ -109,11 +130,19 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   Widget _buildTextMessage(BuildContext context, Color foreground) {
     final message = widget.message;
     final voice = widget.voiceController;
-    if (message.role == AgentMessageRole.user || voice == null) {
+    if (message.role == AgentMessageRole.user) {
       return Text(
         message.text,
         style: TextStyle(color: foreground, fontSize: 15, height: 1.45),
       );
+    }
+    final markdown = _AssistantMarkdown(
+      key: Key('agent-assistant-text-${message.id}'),
+      data: message.text,
+      foreground: foreground,
+    );
+    if (voice == null) {
+      return markdown;
     }
     final loading = voice.loadingMessageId == message.id;
     final playing = voice.playingMessageId == message.id;
@@ -123,11 +152,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          message.text,
-          key: Key('agent-assistant-text-${message.id}'),
-          style: TextStyle(color: foreground, fontSize: 15, height: 1.48),
-        ),
+        markdown,
         const SizedBox(height: 6),
         Wrap(
           spacing: 4,
@@ -138,8 +163,8 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
               key: Key('agent-assistant-tts-${message.id}'),
               onPressed: () => voice.toggleMessagePlayback(message),
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF55575E),
-                backgroundColor: const Color(0xFFE8E8E4),
+                foregroundColor: SpeakUpDesign.primary,
+                backgroundColor: SpeakUpDesign.surfaceMuted,
                 minimumSize: const Size(0, 32),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 visualDensity: VisualDensity.compact,
@@ -171,7 +196,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
               key: Key('agent-assistant-speed-${message.id}'),
               onPressed: voice.cycleSpeechSpeed,
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF66686F),
+                foregroundColor: SpeakUpDesign.secondary,
                 minimumSize: const Size(0, 32),
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 visualDensity: VisualDensity.compact,
@@ -190,7 +215,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             error,
             key: Key('agent-message-media-error-${message.id}'),
             style: const TextStyle(
-              color: Color(0xFF8B2E26),
+              color: SpeakUpDesign.error,
               fontSize: 12,
               height: 1.35,
             ),
@@ -230,10 +255,10 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                   ? () => voice.toggleMessagePlayback(message)
                   : null,
               style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFFD6D6D1),
+                backgroundColor: SpeakUpDesign.surfaceMuted,
                 foregroundColor: foreground,
-                disabledBackgroundColor: const Color(0xFFDCDCD7),
-                disabledForegroundColor: const Color(0xFF8A8B90),
+                disabledBackgroundColor: SpeakUpDesign.surfaceMuted,
+                disabledForegroundColor: SpeakUpDesign.tertiary,
                 minimumSize: const Size.square(36),
                 maximumSize: const Size.square(36),
                 padding: EdgeInsets.zero,
@@ -243,7 +268,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                       dimension: 15,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Color(0xFF55575E),
+                        color: SpeakUpDesign.secondary,
                       ),
                     )
                   : Icon(
@@ -280,7 +305,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                     : null,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Color(0xFF6B6D73), fontSize: 13),
+                style: SpeakUpDesign.meta,
               ),
             ),
             if (!audio.isReadable) const SizedBox(width: 2),
@@ -298,7 +323,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
                 ),
                 padding: EdgeInsets.zero,
                 visualDensity: VisualDensity.compact,
-                color: const Color(0xFF686A70),
+                color: SpeakUpDesign.secondary,
                 icon: deleting
                     ? const SizedBox.square(
                         dimension: 14,
@@ -315,15 +340,17 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             value: playing ? progress : 0,
             minHeight: 2,
             borderRadius: BorderRadius.circular(1),
-            backgroundColor: const Color(0xFFCECEC9),
-            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF55575E)),
+            backgroundColor: SpeakUpDesign.border,
+            valueColor: const AlwaysStoppedAnimation<Color>(
+              SpeakUpDesign.primary,
+            ),
           ),
         ],
         const SizedBox(height: 4),
         TextButton.icon(
           key: Key('agent-user-voice-transcript-toggle-${message.id}'),
           style: TextButton.styleFrom(
-            foregroundColor: const Color(0xFF5F6167),
+            foregroundColor: SpeakUpDesign.secondary,
             minimumSize: const Size(0, 30),
             padding: const EdgeInsets.symmetric(horizontal: 2),
             visualDensity: VisualDensity.compact,
@@ -357,13 +384,130 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             error,
             key: Key('agent-message-media-error-${message.id}'),
             style: const TextStyle(
-              color: Color(0xFF8B2E26),
+              color: SpeakUpDesign.error,
               fontSize: 12,
               height: 1.35,
             ),
           ),
         ],
       ],
+    );
+  }
+}
+
+class _InterviewPreparationAction extends StatelessWidget {
+  const _InterviewPreparationAction({
+    required this.action,
+    required this.onPressed,
+  });
+
+  final AgentMessageAction action;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: SpeakUpDesign.surface,
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: SpeakUpDesign.border),
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: Key('agent-action-interview-${action.matterId}'),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.work_outline_rounded,
+                size: 22,
+                color: SpeakUpDesign.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      action.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: SpeakUpDesign.cardTitle,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(action.label, style: SpeakUpDesign.meta),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: SpeakUpDesign.secondary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AssistantMarkdown extends StatelessWidget {
+  const _AssistantMarkdown({
+    required this.data,
+    required this.foreground,
+    super.key,
+  });
+
+  final String data;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    final body = TextStyle(color: foreground, fontSize: 15, height: 1.48);
+    return MarkdownBody(
+      data: data,
+      selectable: true,
+      fitContent: true,
+      styleSheet: MarkdownStyleSheet(
+        a: body,
+        p: body,
+        pPadding: EdgeInsets.zero,
+        em: body.copyWith(fontStyle: FontStyle.italic),
+        strong: body.copyWith(fontWeight: FontWeight.w700),
+        code: body.copyWith(
+          fontFamily: 'monospace',
+          fontSize: 13.5,
+          backgroundColor: SpeakUpDesign.surfaceMuted,
+        ),
+        h1: body.copyWith(fontSize: 20, fontWeight: FontWeight.w700),
+        h2: body.copyWith(fontSize: 18, fontWeight: FontWeight.w700),
+        h3: body.copyWith(fontSize: 16, fontWeight: FontWeight.w700),
+        h4: body.copyWith(fontWeight: FontWeight.w700),
+        h5: body.copyWith(fontWeight: FontWeight.w700),
+        h6: body.copyWith(fontWeight: FontWeight.w700),
+        blockquote: body.copyWith(color: SpeakUpDesign.secondary),
+        listBullet: body,
+        listIndent: 20,
+        blockSpacing: 8,
+        blockquotePadding: const EdgeInsets.fromLTRB(10, 5, 8, 5),
+        blockquoteDecoration: const BoxDecoration(
+          color: SpeakUpDesign.surfaceMuted,
+          border: Border(
+            left: BorderSide(color: SpeakUpDesign.primary, width: 3),
+          ),
+        ),
+        codeblockPadding: const EdgeInsets.all(10),
+        codeblockDecoration: BoxDecoration(
+          color: SpeakUpDesign.surfaceMuted,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+      imageBuilder: (uri, title, alt) => Text(
+        alt == null || alt.trim().isEmpty ? '[图片已隐藏]' : '[图片：$alt]',
+        style: body.copyWith(color: SpeakUpDesign.secondary),
+      ),
     );
   }
 }

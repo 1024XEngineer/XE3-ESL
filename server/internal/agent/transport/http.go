@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -17,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -37,6 +39,7 @@ const (
 	reviewCursorVersion     = 1
 	reviewCursorKind        = "formal_reviews"
 	minReviewCursorKeyBytes = 32
+	scenarioCreateToolName  = "scenario.create.v1"
 )
 
 type CorrelationIDGenerator func() string
@@ -232,6 +235,10 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 		protected.POST(
 			"/v1/voice-practice-sessions/:practice_session_id/questions/:question_id/transcription-candidates",
 			h.transcribeVoiceCandidate,
+		)
+		protected.POST(
+			"/v1/voice-practice-sessions/:practice_session_id/questions/:question_id/text-answers",
+			h.submitPracticeText,
 		)
 		protected.POST(
 			"/v1/transcription-candidates/:candidate_id/confirmations",
@@ -606,7 +613,16 @@ func (h *HTTPHandler) listMessages(c *gin.Context) {
 	}
 	messages := make([]gin.H, 0, len(page.Messages))
 	for _, message := range page.Messages {
-		messages = append(messages, messageResponse(message))
+		response, err := h.messageResponseWithActions(
+			c.Request.Context(),
+			actor,
+			message,
+		)
+		if err != nil {
+			h.writeAgentError(c, err)
+			return
+		}
+		messages = append(messages, response)
 	}
 	result := gin.H{"messages": messages}
 	if page.NextCursor != "" {
@@ -909,6 +925,48 @@ func (h *HTTPHandler) confirmVoiceCandidate(c *gin.Context) {
 		conversation.ConfirmVoiceTurnCommand{
 			CandidateID:    c.Param("candidate_id"),
 			IdempotencyKey: key,
+		},
+	)
+	if err != nil {
+		h.writeVoiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, voiceSessionStateResponse(state))
+}
+
+func (h *HTTPHandler) submitPracticeText(c *gin.Context) {
+	key, ok := voiceIdempotencyKey(c)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	values, ok := decodeObject(
+		c,
+		[]string{"answer_text"},
+		[]string{"answer_text"},
+	)
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	answerText, ok := decodeString(values["answer_text"])
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	state, err := h.voice.SubmitText(
+		c.Request.Context(),
+		actor,
+		conversation.SubmitTextAnswerCommand{
+			SessionID:      c.Param("practice_session_id"),
+			QuestionID:     c.Param("question_id"),
+			IdempotencyKey: key,
+			AnswerText:     answerText,
 		},
 	)
 	if err != nil {
@@ -1595,6 +1653,12 @@ func formalReviewResponse(item VoiceSessionReview) gin.H {
 		"created_at":             item.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at":             item.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if item.EvaluationContextType != "" {
+		result["evaluation_context_type"] = item.EvaluationContextType
+	}
+	if len(item.EvaluationContext) > 0 {
+		result["evaluation_context"] = item.EvaluationContext
+	}
 	if item.Result != nil {
 		result["result"] = item.Result
 	}
@@ -1760,8 +1824,12 @@ func matterResponse(item matter.Matter) gin.H {
 func threadResponse(thread Thread) gin.H {
 	result := gin.H{
 		"thread_id":  thread.ID,
+		"title":      nil,
 		"created_at": thread.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at": thread.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if thread.Title != "" {
+		result["title"] = thread.Title
 	}
 	if thread.ActiveMatterID != "" {
 		result["active_matter_id"] = thread.ActiveMatterID
@@ -1799,6 +1867,74 @@ func messageResponse(message Message) gin.H {
 		result["audio"] = agentMessageAudioResponse(*message.Audio)
 	}
 	return result
+}
+
+func (h *HTTPHandler) messageResponseWithActions(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	message Message,
+) (gin.H, error) {
+	response := messageResponse(message)
+	if h.runs == nil || message.Role != MessageRoleAssistant ||
+		message.ProducedByRunID == "" {
+		return response, nil
+	}
+	records, err := h.runs.GetToolCalls(
+		ctx,
+		actor,
+		message.ProducedByRunID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	actions := interviewPreparationActions(records)
+	if len(actions) > 0 {
+		response["actions"] = actions
+	}
+	return response, nil
+}
+
+func interviewPreparationActions(
+	records []core.ToolCallRecord,
+) []gin.H {
+	actions := make([]gin.H, 0, 1)
+	for _, record := range records {
+		if record.Name != scenarioCreateToolName ||
+			record.Status != core.ToolCallStatusSucceeded {
+			continue
+		}
+		var result struct {
+			Content struct {
+				Matter struct {
+					ID    string `json:"matter_id"`
+					Title string `json:"title"`
+				} `json:"matter"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(record.Result, &result) != nil ||
+			!core.ValidUUID(result.Content.Matter.ID) ||
+			strings.TrimSpace(result.Content.Matter.Title) == "" {
+			continue
+		}
+		hasMatterSource := false
+		for _, source := range record.SourceRefs {
+			if source.Type == "matter" &&
+				source.ID == result.Content.Matter.ID {
+				hasMatterSource = true
+				break
+			}
+		}
+		if !hasMatterSource {
+			continue
+		}
+		actions = append(actions, gin.H{
+			"type":      "open_interview_preparation",
+			"label":     "配置并开始面试",
+			"matter_id": result.Content.Matter.ID,
+			"title":     result.Content.Matter.Title,
+		})
+	}
+	return actions
 }
 
 func agentVoiceCandidateResponse(candidate VoiceCandidate) gin.H {
@@ -1951,20 +2087,71 @@ func contextManifestResponse(manifest ContextManifest) gin.H {
 			"role":       message.Role,
 		})
 	}
+	memories := make([]gin.H, 0, len(manifest.SelectedMemories))
+	for _, item := range manifest.SelectedMemories {
+		memory := gin.H{
+			"memory_id":                item.MemoryID,
+			"memory_version":           item.MemoryVersion,
+			"type":                     item.Type,
+			"scope":                    item.Scope,
+			"similarity":               item.Similarity,
+			"score":                    item.Score,
+			"embedding_provider":       item.EmbeddingProvider,
+			"embedding_model":          item.EmbeddingModel,
+			"embedding_dimensions":     item.EmbeddingDimensions,
+			"embedding_policy_version": item.EmbeddingPolicyVersion,
+			"retrieval_policy_version": item.RetrievalPolicyVersion,
+		}
+		if item.MatterID != "" {
+			memory["matter_id"] = item.MatterID
+		}
+		memories = append(memories, memory)
+	}
+	stableProfile := make(
+		[]gin.H,
+		0,
+		len(manifest.SelectedStableProfile),
+	)
+	for _, item := range manifest.SelectedStableProfile {
+		stableProfile = append(stableProfile, gin.H{
+			"memory_id":      item.MemoryID,
+			"memory_version": item.MemoryVersion,
+			"canonical_key":  item.CanonicalKey,
+			"type":           item.Type,
+			"scope":          item.Scope,
+		})
+	}
 	result := gin.H{
-		"run_id":                manifest.RunID,
-		"thread_id":             manifest.ThreadID,
-		"input_message_id":      manifest.InputMessageID,
-		"instruction_version":   manifest.InstructionVersion,
-		"selected_messages":     messages,
-		"omitted_message_count": manifest.OmittedMessageCount,
-		"trim_reason":           manifest.TrimReason,
-		"max_input_characters":  manifest.MaxInputCharacters,
-		"used_input_characters": manifest.UsedInputCharacters,
-		"requested_provider":    manifest.RequestedProvider,
-		"requested_model":       manifest.RequestedModel,
-		"max_output_tokens":     manifest.MaxOutputTokens,
-		"created_at":            manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"run_id":                                manifest.RunID,
+		"thread_id":                             manifest.ThreadID,
+		"input_message_id":                      manifest.InputMessageID,
+		"instruction_version":                   manifest.InstructionVersion,
+		"stable_profile_context_policy_version": manifest.StableProfileContextPolicyVersion,
+		"selected_stable_profile":               stableProfile,
+		"memory_context_policy_version":         manifest.MemoryContextPolicyVersion,
+		"selected_memories":                     memories,
+		"summary_context_policy_version":        manifest.SummaryContextPolicyVersion,
+		"summary_context_status":                manifest.SummaryContextStatus,
+		"selected_messages":                     messages,
+		"omitted_message_count":                 manifest.OmittedMessageCount,
+		"trim_reason":                           manifest.TrimReason,
+		"max_input_characters":                  manifest.MaxInputCharacters,
+		"used_input_characters":                 manifest.UsedInputCharacters,
+		"requested_provider":                    manifest.RequestedProvider,
+		"requested_model":                       manifest.RequestedModel,
+		"max_output_tokens":                     manifest.MaxOutputTokens,
+		"created_at":                            manifest.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if manifest.SelectedSummary != nil {
+		result["selected_summary"] = gin.H{
+			"checkpoint_id":            manifest.SelectedSummary.CheckpointID,
+			"source_from_sequence":     manifest.SelectedSummary.SourceFromSequence,
+			"covered_through_sequence": manifest.SelectedSummary.CoveredThroughSequence,
+			"policy_version":           manifest.SelectedSummary.PolicyVersion,
+			"prompt_version":           manifest.SelectedSummary.PromptVersion,
+			"provider":                 manifest.SelectedSummary.Provider,
+			"model":                    manifest.SelectedSummary.Model,
+		}
 	}
 	if manifest.ActiveMatterID != "" {
 		result["active_matter"] = gin.H{

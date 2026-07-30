@@ -483,12 +483,16 @@ const register = requireOperation('POST /v1/auth/register');
 const login = requireOperation('POST /v1/auth/login');
 const logout = requireOperation('POST /v1/auth/logout');
 const me = requireOperation('GET /v1/me');
+const getProfile = requireOperation('GET /v1/me/profile');
+const updateProfile = requireOperation('PATCH /v1/me/profile');
 const createPracticePlan = requireOperation('POST /v1/practice-plans');
 
 assert.equal(register.operationId, 'registerUser');
 assert.equal(login.operationId, 'loginUser');
 assert.equal(logout.operationId, 'logoutCurrentSession');
 assert.equal(me.operationId, 'getCurrentUser');
+assert.equal(getProfile.operationId, 'getCurrentUserProfile');
+assert.equal(updateProfile.operationId, 'updateCurrentUserProfile');
 assert.equal(createPracticePlan.operationId, 'createPracticePlan');
 assert.ok(register.requestBody?.required);
 assert.ok(login.requestBody?.required);
@@ -518,6 +522,22 @@ assert.ok(login.responses?.['401']);
 assert.ok(login.responses?.['429']);
 assert.ok(logout.responses?.['204']);
 assert.ok(me.responses?.['200']);
+assert.ok(getProfile.responses?.['200']);
+assert.ok(getProfile.responses?.['404']);
+assert.ok(updateProfile.responses?.['200']);
+assert.ok(updateProfile.responses?.['409']);
+assert.ok(updateProfile.requestBody?.required);
+assert.equal(
+  getJsonSchema(updateProfile.requestBody)?.$ref,
+  '#/components/schemas/UpdateUserProfileRequest',
+);
+assert.ok(
+  updateProfile.parameters?.some(
+    (parameter) =>
+      parameter?.$ref === '#/components/parameters/IdempotencyKey',
+  ),
+  'Profile updates must require the shared Idempotency-Key parameter.',
+);
 assert.ok(createPracticePlan.responses?.['201']);
 assert.equal(logout.requestBody, undefined);
 assert.equal(logout.responses?.['429'], undefined);
@@ -594,7 +614,6 @@ assert.ok(
 const createPracticePlanRequestSchema = schemas.CreatePracticePlanRequest;
 assert.deepEqual(sorted(createPracticePlanRequestSchema?.required ?? []), [
   'agent_thread_id',
-  'matter_id',
 ]);
 assert.deepEqual(
   sorted(Object.keys(createPracticePlanRequestSchema?.properties ?? {})),
@@ -621,11 +640,9 @@ for (const anchorField of ['agent_thread_id', 'matter_id']) {
 }
 
 const practicePlanSchema = schemas.PracticePlan;
+assert.ok(practicePlanSchema?.required?.includes('agent_thread_id'));
+assert.ok(!practicePlanSchema?.required?.includes('matter_id'));
 for (const anchorField of ['agent_thread_id', 'matter_id']) {
-  assert.ok(
-    practicePlanSchema?.required?.includes(anchorField),
-    `PracticePlan must require ${anchorField}.`,
-  );
   assert.equal(
     practicePlanSchema?.properties?.[anchorField]?.$ref,
     '#/components/schemas/ResourceId',
@@ -643,16 +660,45 @@ for (const requestSchemaName of ['RegisterRequest', 'LoginRequest']) {
     'email',
     'password',
   ]);
-  assert.deepEqual(sorted(Object.keys(requestSchema?.properties ?? {})), [
-    'email',
-    'password',
-  ]);
+  const expectedProperties =
+    requestSchemaName === 'RegisterRequest'
+      ? ['display_name', 'email', 'password']
+      : ['email', 'password'];
+  assert.deepEqual(
+    sorted(Object.keys(requestSchema?.properties ?? {})),
+    expectedProperties,
+  );
   assert.equal(requestSchema?.additionalProperties, false);
 }
+const userProfileSchema = schemas.UserProfile;
+assert.deepEqual(sorted(userProfileSchema?.required ?? []), [
+  'created_at',
+  'display_name',
+  'profile_version',
+  'updated_at',
+  'user_id',
+]);
+assert.equal(userProfileSchema?.additionalProperties, false);
+assert.equal(userProfileSchema?.properties?.user_id?.readOnly, true);
+assert.equal(
+  userProfileSchema?.properties?.profile_version?.readOnly,
+  true,
+);
+const updateProfileRequestSchema = schemas.UpdateUserProfileRequest;
+assert.deepEqual(updateProfileRequestSchema?.required, ['display_name']);
+assert.deepEqual(
+  sorted(Object.keys(updateProfileRequestSchema?.properties ?? {})),
+  ['display_name', 'expected_profile_version'],
+);
+assert.equal(updateProfileRequestSchema?.additionalProperties, false);
 const passwordSchema = schemas.Password;
 assert.equal(passwordSchema?.writeOnly, true);
-assert.equal(passwordSchema?.minLength, 15);
+assert.equal(passwordSchema?.minLength, 8);
 assert.equal(passwordSchema?.maxLength, 128);
+const loginPasswordSchema = schemas.LoginPassword;
+assert.equal(loginPasswordSchema?.writeOnly, true);
+assert.equal(loginPasswordSchema?.minLength, 1);
+assert.equal(loginPasswordSchema?.maxLength, 128);
 const emailInputPattern = new RegExp(schemas.EmailInput?.pattern, 'u');
 for (const email of [
   'learner@example.com',

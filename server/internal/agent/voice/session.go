@@ -21,6 +21,7 @@ const (
 	maxVoiceReviewConclusions       = 8
 	maxVoiceReviewLabelUTF8Bytes    = 64
 	maxVoiceReviewTextUTF8Bytes     = 2048
+	ieltsSpeakingFullMockModel      = "IELTS_SPEAKING_FULL_MOCK"
 )
 
 // VoicePracticeSession is the Agent application view of Practice state. It
@@ -32,6 +33,10 @@ type VoicePracticeSession struct {
 	ThreadID                 string
 	MatterID                 string
 	MatterTitle              string
+	ScenarioType             string
+	ScenarioModel            string
+	PromptModel              VoiceScenarioPrompt
+	PreviousUserResponse     string
 	SessionVersion           int
 	EffectiveTurns           int
 	TurnLimit                int
@@ -39,6 +44,18 @@ type VoicePracticeSession struct {
 	Status                   string
 	InterviewerParticipantID string
 	CandidateParticipantID   string
+}
+
+// VoiceScenarioPrompt is copied from the immutable Practice Session snapshot.
+// Voice uses this contract instead of inferring a dialogue from a Matter title.
+type VoiceScenarioPrompt struct {
+	PublicSceneBrief string
+	PracticeGoal     string
+	UserRole         string
+	AIRole           string
+	PersonaSummary   string
+	FocusAreas       []string
+	TurnBlueprints   []string
 }
 
 type VoiceSessionPort interface {
@@ -106,6 +123,8 @@ type VoiceSessionReview struct {
 	ImplementationVersion string
 	SourceTurnID          string
 	SourceTurnVersion     string
+	EvaluationContextType string
+	EvaluationContext     json.RawMessage
 	Result                *VoiceReviewResult
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
@@ -113,16 +132,55 @@ type VoiceSessionReview struct {
 }
 
 type VoiceReviewResult struct {
-	OverallScore int                     `json:"overall_score"`
-	Summary      string                  `json:"summary"`
-	Conclusions  []VoiceReviewConclusion `json:"conclusions"`
+	SummaryEligibility          string                    `json:"summary_eligibility,omitempty"`
+	OverallScore                int                       `json:"overall_score"`
+	OverallScorePresent         bool                      `json:"-"`
+	Summary                     string                    `json:"summary"`
+	Conclusions                 []VoiceReviewConclusion   `json:"conclusions"`
+	FeedbackItems               []VoiceReviewFeedbackItem `json:"feedback_items,omitempty"`
+	RepracticeSuggestionRefs    []string                  `json:"repractice_suggestion_refs,omitempty"`
+	InsufficientEvidenceReasons []string                  `json:"insufficient_evidence_reasons,omitempty"`
 }
 
 type VoiceReviewConclusion struct {
 	Key        string `json:"key"`
 	Category   string `json:"category"`
+	Score      int    `json:"score,omitempty"`
 	Message    string `json:"message"`
 	Suggestion string `json:"suggestion,omitempty"`
+}
+
+type VoiceReviewFeedbackItem struct {
+	Key        string `json:"key"`
+	Kind       string `json:"kind"`
+	Message    string `json:"message"`
+	Suggestion string `json:"suggestion,omitempty"`
+}
+
+func (r VoiceReviewResult) MarshalJSON() ([]byte, error) {
+	type wireResult struct {
+		SummaryEligibility          string                    `json:"summary_eligibility,omitempty"`
+		OverallScore                *int                      `json:"overall_score,omitempty"`
+		Summary                     string                    `json:"summary"`
+		Conclusions                 []VoiceReviewConclusion   `json:"conclusions"`
+		FeedbackItems               []VoiceReviewFeedbackItem `json:"feedback_items,omitempty"`
+		RepracticeSuggestionRefs    []string                  `json:"repractice_suggestion_refs,omitempty"`
+		InsufficientEvidenceReasons []string                  `json:"insufficient_evidence_reasons,omitempty"`
+	}
+	var score *int
+	if r.OverallScorePresent || r.OverallScore != 0 {
+		value := r.OverallScore
+		score = &value
+	}
+	return json.Marshal(wireResult{
+		SummaryEligibility:          r.SummaryEligibility,
+		OverallScore:                score,
+		Summary:                     r.Summary,
+		Conclusions:                 r.Conclusions,
+		FeedbackItems:               r.FeedbackItems,
+		RepracticeSuggestionRefs:    r.RepracticeSuggestionRefs,
+		InsufficientEvidenceReasons: r.InsufficientEvidenceReasons,
+	})
 }
 
 type VoiceReviewHistoryCursor struct {
@@ -201,12 +259,9 @@ func (application *VoiceSessionApplication) Start(
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
-	// Start is idempotent: an existing Session keeps its immutable Matter
-	// snapshot even if the Thread selected another Matter after the first
-	// successful request. The Practice-owned Port validates the requested
-	// Matter when creating; state() re-authorizes the frozen Matter on replay.
-	if session.ThreadID != threadID ||
-		strings.TrimSpace(session.MatterID) == "" {
+	// Start is idempotent: an existing Session keeps its immutable optional
+	// Matter binding even if the Thread selection changes after creation.
+	if session.ThreadID != threadID {
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return application.state(ctx, actor, session)
@@ -252,6 +307,27 @@ func (application *VoiceSessionApplication) Confirm(
 	command conversation.ConfirmVoiceTurnCommand,
 ) (VoiceSessionState, error) {
 	turn, err := application.orchestrator.Confirm(ctx, actor, command)
+	if err != nil {
+		return VoiceSessionState{}, err
+	}
+	session, err := application.sessions.GetByID(ctx, actor, turn.SessionID)
+	if err != nil {
+		return VoiceSessionState{}, err
+	}
+	state, err := application.state(ctx, actor, session)
+	if err != nil {
+		return VoiceSessionState{}, err
+	}
+	state.Turn = &turn
+	return state, nil
+}
+
+func (application *VoiceSessionApplication) SubmitText(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command conversation.SubmitTextAnswerCommand,
+) (VoiceSessionState, error) {
+	turn, err := application.orchestrator.SubmitText(ctx, actor, command)
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
@@ -384,10 +460,10 @@ func (application *VoiceSessionApplication) state(
 	if session.ID == "" ||
 		session.PlanID == "" ||
 		session.ThreadID == "" ||
-		session.MatterID == "" ||
+		!validVoiceScenarioPrompt(session) ||
 		session.SessionVersion < 1 ||
 		session.TurnLimit < 1 ||
-		session.TurnLimit > 6 ||
+		session.TurnLimit > 14 ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > session.TurnLimit ||
 		!validVoiceSessionLifecycle(session) ||
@@ -397,16 +473,18 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	state := VoiceSessionState{Session: session}
-	currentMatter, err := application.matters.ReadOwned(
-		ctx,
-		actor,
-		session.MatterID,
-	)
-	if err != nil || currentMatter.ID != session.MatterID {
-		return VoiceSessionState{}, ErrNotFound
+	if session.MatterID != "" {
+		currentMatter, err := application.matters.ReadOwned(
+			ctx,
+			actor,
+			session.MatterID,
+		)
+		if err != nil || currentMatter.ID != session.MatterID {
+			return VoiceSessionState{}, ErrNotFound
+		}
+		state.Matter = currentMatter
+		state.Session.MatterTitle = currentMatter.Title
 	}
-	state.Matter = currentMatter
-	state.Session.MatterTitle = currentMatter.Title
 	if session.Status == "paused" || session.Status == "ended_early" {
 		return state, nil
 	}
@@ -425,7 +503,8 @@ func (application *VoiceSessionApplication) state(
 		state.Turn = &latest
 	}
 	if found && (latest.EffectiveTurns == 0 ||
-		(latest.SessionCompleted && latest.ReviewID == "")) {
+		(latest.SessionCompleted && latest.ReviewID == "" &&
+			requiresSynchronousSessionReview(session))) {
 		recovered, recoveryErr := application.orchestrator.Confirm(
 			ctx,
 			actor,
@@ -440,7 +519,7 @@ func (application *VoiceSessionApplication) state(
 			return VoiceSessionState{}, err
 		}
 		state.Session = session
-		state.Session.MatterTitle = currentMatter.Title
+		state.Session.MatterTitle = state.Matter.Title
 		latest, found, err = application.checkpoints.LatestTurn(
 			ctx,
 			actor,
@@ -482,10 +561,15 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	if state.Session.Completed {
-		if state.Turn == nil || state.Review == nil {
+		if state.Turn == nil ||
+			(requiresSynchronousSessionReview(session) &&
+				state.Review == nil) {
 			return VoiceSessionState{}, ErrInvalidContext
 		}
 		return state, nil
+	}
+	if state.Turn != nil {
+		state.Session.PreviousUserResponse = state.Turn.AnswerText
 	}
 	question, err := application.questions.EnsureQuestion(
 		ctx,
@@ -508,6 +592,23 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	return state, nil
+}
+
+func requiresSynchronousSessionReview(session VoicePracticeSession) bool {
+	return session.ScenarioModel != ieltsSpeakingFullMockModel
+}
+
+func validVoiceScenarioPrompt(session VoicePracticeSession) bool {
+	prompt := session.PromptModel
+	return strings.TrimSpace(session.ScenarioType) != "" &&
+		strings.TrimSpace(session.ScenarioModel) != "" &&
+		strings.TrimSpace(prompt.PublicSceneBrief) != "" &&
+		strings.TrimSpace(prompt.PracticeGoal) != "" &&
+		strings.TrimSpace(prompt.UserRole) != "" &&
+		strings.TrimSpace(prompt.AIRole) != "" &&
+		strings.TrimSpace(prompt.PersonaSummary) != "" &&
+		len(prompt.FocusAreas) > 0 &&
+		len(prompt.TurnBlueprints) > 0
 }
 
 func validVoiceSessionLifecycle(session VoicePracticeSession) bool {
@@ -564,6 +665,14 @@ func validVoiceSessionReviewWithResult(
 		!validVoiceReviewMetadata(item.SourceTurnID) ||
 		!validVoiceReviewMetadata(item.SourceTurnVersion) ||
 		!validVoiceSourceTurnVersion(item.SourceTurnVersion) ||
+		(item.ImplementationVersion == "qianwen-scenario-review-v2" &&
+			(!validEvaluationContextType(item.EvaluationContextType) ||
+				!validVoiceEvaluationContext(item.EvaluationContext))) ||
+		(item.ImplementationVersion != "qianwen-scenario-review-v2" &&
+			((item.EvaluationContextType != "" &&
+				!validEvaluationContextType(item.EvaluationContextType)) ||
+				(len(item.EvaluationContext) > 0 &&
+					!validVoiceEvaluationContext(item.EvaluationContext)))) ||
 		item.CreatedAt.IsZero() ||
 		item.UpdatedAt.Before(item.CreatedAt) {
 		return false
@@ -584,8 +693,23 @@ func validVoiceSessionReviewWithResult(
 }
 
 func validPersistedVoiceReviewResult(result *VoiceReviewResult) bool {
-	if result == nil ||
-		result.OverallScore < 0 ||
+	if result == nil {
+		return false
+	}
+	if result.SummaryEligibility == "insufficient_evidence" {
+		return !result.OverallScorePresent &&
+			result.OverallScore == 0 &&
+			strings.TrimSpace(result.Summary) != "" &&
+			len(result.Conclusions) == 0 &&
+			len(result.FeedbackItems) == 0 &&
+			len(result.InsufficientEvidenceReasons) > 0
+	}
+	if result.SummaryEligibility != "" &&
+		result.SummaryEligibility != "eligible" &&
+		result.SummaryEligibility != "provisional" {
+		return false
+	}
+	if result.OverallScore < 0 ||
 		result.OverallScore > 100 ||
 		strings.TrimSpace(result.Summary) == "" ||
 		len(result.Conclusions) == 0 {
@@ -609,8 +733,26 @@ func validPersistedVoiceReviewResult(result *VoiceReviewResult) bool {
 }
 
 func validVoiceReviewResult(result *VoiceReviewResult) bool {
-	if result == nil ||
-		result.OverallScore < 0 ||
+	if result == nil {
+		return false
+	}
+	if result.SummaryEligibility == "insufficient_evidence" {
+		return !result.OverallScorePresent &&
+			result.OverallScore == 0 &&
+			validVoiceReviewText(
+				result.Summary,
+				maxVoiceReviewSummaryUTF8Bytes,
+			) &&
+			len(result.Conclusions) == 0 &&
+			len(result.FeedbackItems) == 0 &&
+			len(result.InsufficientEvidenceReasons) > 0
+	}
+	if result.SummaryEligibility != "" &&
+		result.SummaryEligibility != "eligible" &&
+		result.SummaryEligibility != "provisional" {
+		return false
+	}
+	if result.OverallScore < 0 ||
 		result.OverallScore > 100 ||
 		!validVoiceReviewText(
 			result.Summary,
@@ -650,6 +792,25 @@ func validVoiceReviewResult(result *VoiceReviewResult) bool {
 	}
 	encoded, err := json.Marshal(result)
 	return err == nil && len(encoded) <= maxVoiceReviewResultJSONBytes
+}
+
+func validEvaluationContextType(value string) bool {
+	switch value {
+	case "interview.project_deep_dive",
+		"ielts.speaking_part2",
+		"workplace.progress_risk_update",
+		"daily.hotel_checkin_issue",
+		"generic.practice":
+		return true
+	default:
+		return false
+	}
+}
+
+func validVoiceEvaluationContext(value json.RawMessage) bool {
+	return len(value) > 0 &&
+		len(value) <= maxVoiceReviewResultJSONBytes &&
+		json.Valid(value)
 }
 
 func validVoiceReviewMetadata(value string) bool {

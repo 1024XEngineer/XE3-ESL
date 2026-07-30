@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:speakup/features/preparation/preparation_client.dart';
 import 'package:speakup/features/preparation/preparation_models.dart';
 
+const _ieltsSpeakingFullMockScenarioId = 'scn_ielts_speaking_full';
+
 final class PreparationController extends ChangeNotifier {
   PreparationController({required this.client});
 
@@ -154,6 +156,14 @@ final class PreparationController extends ChangeNotifier {
       );
       _detail = detail;
       _roles = List<PreparationRole>.unmodifiable(roles);
+      if (roles.length == 1) {
+        _selectedRole = roles.single;
+        _selectedOption = detail.options
+            .where(
+              (option) => option.type == PreparationOptionType.fullSimulation,
+            )
+            .firstOrNull;
+      }
     } on PreparationCatalogException catch (error) {
       if (_isCurrentSelection(
             accountEpoch,
@@ -212,6 +222,49 @@ final class PreparationController extends ChangeNotifier {
     }
     _selectedOption = canonicalOption;
     notifyListeners();
+  }
+
+  bool selectRecommendedConfiguration() {
+    if (_disposed ||
+        _selectedScenario == null ||
+        _detail == null ||
+        _roles.isEmpty) {
+      return false;
+    }
+    final preferredRoleType = switch (_selectedScenario!.id) {
+      'scn_interview_recruiter_screening' ||
+      'scn_interview_self_introduction' => 'HR_INTERVIEWER',
+      'scn_interview_behavioral' => 'BEHAVIORAL_INTERVIEWER',
+      'scn_interview_system_design_spoken' => 'SYSTEM_DESIGN_INTERVIEWER',
+      'scn_interview_hiring_manager' => 'HIRING_MANAGER',
+      _ => 'TECHNICAL_INTERVIEWER',
+    };
+    final role =
+        _roles.where((item) => item.type == preferredRoleType).firstOrNull ??
+        _roles.first;
+    _selectedRole = role;
+    final compatibleOptions = _detail!.options
+        .where(
+          (option) =>
+              option.type == PreparationOptionType.fullSimulation ||
+              option.roleId == role.id,
+        )
+        .toList(growable: false);
+    final fullSimulation = compatibleOptions
+        .where((option) => option.type == PreparationOptionType.fullSimulation)
+        .firstOrNull;
+    final roleFocus = compatibleOptions
+        .where(
+          (option) =>
+              option.type == PreparationOptionType.focus &&
+              option.roleId == role.id,
+        )
+        .firstOrNull;
+    _selectedOption = _selectedScenario!.id == _ieltsSpeakingFullMockScenarioId
+        ? fullSimulation ?? roleFocus ?? compatibleOptions.firstOrNull
+        : roleFocus ?? fullSimulation ?? compatibleOptions.firstOrNull;
+    notifyListeners();
+    return hasCompleteSelection;
   }
 
   void showScenarioList() {
@@ -286,10 +339,12 @@ void _validateAggregate({
   if (scenario.id != summary.id ||
       scenario.version != summary.version ||
       scenario.type != summary.type ||
+      scenario.model != summary.model ||
       scenario.name != summary.name ||
       scenario.status != 'active' ||
       detail.config.scenarioId != scenario.id ||
       detail.config.type != scenario.type ||
+      detail.config.model != scenario.model ||
       roles.isEmpty ||
       roles.any((role) => role.scenarioId != scenario.id)) {
     throw const PreparationCatalogException(

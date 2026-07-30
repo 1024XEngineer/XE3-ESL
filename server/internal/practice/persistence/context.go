@@ -15,6 +15,29 @@ const (
 	PlanStatusArchived            PlanStatus = "archived"
 )
 
+type ScenarioFamily string
+
+const (
+	ScenarioFamilyInterview ScenarioFamily = "INTERVIEW"
+	ScenarioFamilyExam      ScenarioFamily = "EXAM"
+	ScenarioFamilyWorkplace ScenarioFamily = "WORKPLACE"
+	ScenarioFamilyDaily     ScenarioFamily = "DAILY"
+)
+
+type ScenarioModel string
+
+const (
+	ScenarioModelProjectExperienceDeepDive    ScenarioModel = "PROJECT_EXPERIENCE_DEEP_DIVE"
+	ScenarioModelInterviewBasicDialogue       ScenarioModel = "INTERVIEW_BASIC_DIALOGUE"
+	ScenarioModelIELTSSpeakingPart2           ScenarioModel = "IELTS_SPEAKING_PART_2"
+	ScenarioModelIELTSSpeakingFullMock        ScenarioModel = "IELTS_SPEAKING_FULL_MOCK"
+	ScenarioModelExamBasicDialogue            ScenarioModel = "EXAM_BASIC_DIALOGUE"
+	ScenarioModelProgressAndRiskUpdate        ScenarioModel = "PROGRESS_AND_RISK_UPDATE"
+	ScenarioModelWorkplaceBasicDialogue       ScenarioModel = "WORKPLACE_BASIC_DIALOGUE"
+	ScenarioModelHotelCheckinAndIssueHandling ScenarioModel = "HOTEL_CHECKIN_AND_ISSUE_HANDLING"
+	ScenarioModelDailyBasicDialogue           ScenarioModel = "DAILY_BASIC_DIALOGUE"
+)
+
 type Plan struct {
 	ID                        string                `json:"practice_plan_id"`
 	UserID                    string                `json:"user_id"`
@@ -22,7 +45,8 @@ type Plan struct {
 	MatterID                  string                `json:"matter_id"`
 	ScenarioDefinitionID      string                `json:"scenario_definition_id"`
 	ScenarioDefinitionVersion int                   `json:"scenario_definition_version"`
-	ScenarioType              string                `json:"scenario_type"`
+	ScenarioType              ScenarioFamily        `json:"scenario_type"`
+	ScenarioModel             ScenarioModel         `json:"scenario_model"`
 	ScenarioConfigID          string                `json:"scenario_config_id"`
 	ScenarioConfigVersion     int                   `json:"scenario_config_version"`
 	PreparationProfileID      string                `json:"preparation_profile_id"`
@@ -50,7 +74,8 @@ type CreatePlanCommand struct {
 	MatterID                  string
 	ScenarioDefinitionID      string
 	ScenarioDefinitionVersion int
-	ScenarioType              string
+	ScenarioType              ScenarioFamily
+	ScenarioModel             ScenarioModel
 	ScenarioConfigID          string
 	ScenarioConfigVersion     int
 	PreparationProfileID      string
@@ -83,12 +108,13 @@ const (
 )
 
 type ContextSession struct {
-	ID           string               `json:"practice_session_id"`
-	PlanID       string               `json:"practice_plan_id"`
-	ScenarioType string               `json:"scenario_type"`
-	SnapshotID   string               `json:"snapshot_id"`
-	Status       ContextSessionStatus `json:"practice_session_status"`
-	Version      int                  `json:"session_version"`
+	ID            string               `json:"practice_session_id"`
+	PlanID        string               `json:"practice_plan_id"`
+	ScenarioType  ScenarioFamily       `json:"scenario_type"`
+	ScenarioModel ScenarioModel        `json:"scenario_model"`
+	SnapshotID    string               `json:"snapshot_id"`
+	Status        ContextSessionStatus `json:"practice_session_status"`
+	Version       int                  `json:"session_version"`
 	// EffectiveTurns is persisted on the shared Practice Session row. It is
 	// intentionally not added to the formal Context HTTP representation yet;
 	// Agent consumes it through the internal voice boundary.
@@ -100,21 +126,37 @@ type ContextSession struct {
 }
 
 type ScenarioDefinitionSnapshot struct {
-	ID      string `json:"scenario_definition_id"`
-	Type    string `json:"scenario_type"`
-	Name    string `json:"name"`
-	Version int    `json:"version"`
-	Status  string `json:"status"`
+	ID               string         `json:"scenario_definition_id"`
+	Type             ScenarioFamily `json:"scenario_type"`
+	Model            ScenarioModel  `json:"scenario_model"`
+	Name             string         `json:"name"`
+	Version          int            `json:"version"`
+	Status           string         `json:"status"`
+	TurnPolicyRef    string         `json:"turn_policy_ref"`
+	SessionPolicyRef string         `json:"session_policy_ref"`
 }
 
 type ScenarioConfigSnapshot struct {
-	ID                   string   `json:"scenario_config_id"`
-	ScenarioDefinitionID string   `json:"scenario_definition_id"`
-	Type                 string   `json:"config_type"`
-	Version              int      `json:"version"`
-	JobTitle             string   `json:"job_title"`
-	JobDescription       string   `json:"job_description"`
-	FocusAreas           []string `json:"focus_areas"`
+	ID                   string              `json:"scenario_config_id"`
+	ScenarioDefinitionID string              `json:"scenario_definition_id"`
+	Type                 ScenarioFamily      `json:"config_type"`
+	Model                ScenarioModel       `json:"scenario_model"`
+	Version              int                 `json:"version"`
+	JobTitle             string              `json:"job_title,omitempty"`
+	JobDescription       string              `json:"job_description,omitempty"`
+	PromptModel          ScenarioPromptModel `json:"prompt_model"`
+	FocusAreas           []string            `json:"focus_areas,omitempty"`
+}
+
+type ScenarioPromptModel struct {
+	PublicSceneBrief         string   `json:"public_scene_brief"`
+	PracticeGoal             string   `json:"practice_goal"`
+	UserRole                 string   `json:"user_role"`
+	AIRole                   string   `json:"ai_role"`
+	PersonaSummary           string   `json:"persona_summary"`
+	FocusAreas               []string `json:"focus_areas"`
+	TurnBlueprints           []string `json:"turn_blueprints"`
+	SuggestedDurationSeconds int      `json:"suggested_duration_seconds"`
 }
 
 type PreparationSnapshot struct {
@@ -220,7 +262,8 @@ type ContextSessionSnapshot struct {
 	ID                 string                     `json:"snapshot_id"`
 	SessionID          string                     `json:"practice_session_id"`
 	PlanRevision       int                        `json:"plan_revision"`
-	ScenarioType       string                     `json:"scenario_type"`
+	ScenarioType       ScenarioFamily             `json:"scenario_type"`
+	ScenarioModel      ScenarioModel              `json:"scenario_model"`
 	ScenarioDefinition ScenarioDefinitionSnapshot `json:"scenario_definition_snapshot"`
 	ScenarioConfig     ScenarioConfigSnapshot     `json:"scenario_config_snapshot"`
 	Preparation        PreparationSnapshot        `json:"preparation_snapshot"`

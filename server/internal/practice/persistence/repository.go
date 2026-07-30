@@ -10,13 +10,25 @@ import (
 )
 
 var (
-	ErrInvalidArgument     = errors.New("practice: invalid argument")
-	ErrNotFound            = errors.New("practice: not found")
-	ErrConflict            = errors.New("practice: conflict")
-	ErrIdempotencyConflict = errors.New("practice: idempotency conflict")
-	ErrSessionCompleted    = errors.New("practice: session completed")
-	ErrDeletionGeneration  = errors.New("practice: stale deletion generation")
+	ErrInvalidArgument       = errors.New("practice: invalid argument")
+	ErrNotFound              = errors.New("practice: not found")
+	ErrConflict              = errors.New("practice: conflict")
+	ErrActiveSessionConflict = activeSessionConflictError{}
+	ErrIdempotencyConflict   = errors.New("practice: idempotency conflict")
+	ErrConfirmationRequired  = errors.New("practice: confirmation required")
+	ErrSessionCompleted      = errors.New("practice: session completed")
+	ErrDeletionGeneration    = errors.New("practice: stale deletion generation")
 )
+
+type activeSessionConflictError struct{}
+
+func (activeSessionConflictError) Error() string {
+	return "practice: active session conflict"
+}
+
+func (activeSessionConflictError) Is(target error) bool {
+	return target == ErrConflict
+}
 
 // Actor is produced by the trusted authentication boundary. Repository
 // methods intentionally have no client-supplied owner identifier.

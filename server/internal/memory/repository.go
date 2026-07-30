@@ -9,12 +9,17 @@ import (
 )
 
 var (
-	ErrInvalidArgument    = errors.New("memory: invalid argument")
-	ErrNotFound           = errors.New("memory: not found")
-	ErrConflict           = errors.New("memory: conflict")
-	ErrAccountDeleted     = errors.New("memory: account is not active")
-	ErrDeletionGeneration = errors.New("memory: stale deletion generation")
-	ErrRepository         = errors.New("memory repository: operation failed")
+	ErrInvalidArgument     = errors.New("memory: invalid argument")
+	ErrNotFound            = errors.New("memory: not found")
+	ErrConflict            = errors.New("memory: conflict")
+	ErrAccountDeleted      = errors.New("memory: account is not active")
+	ErrDeletionGeneration  = errors.New("memory: stale deletion generation")
+	ErrRepository          = errors.New("memory repository: operation failed")
+	ErrExtractionResponse  = errors.New("memory: invalid extraction response")
+	ErrExtractionExhausted = errors.New(
+		"memory: extraction attempts exhausted during recovery",
+	)
+	ErrIndexResponse = errors.New("memory: invalid index response")
 )
 
 type CreateCommand struct {
@@ -128,6 +133,13 @@ type Repository interface {
 		string,
 	) error
 	DeleteOwnerData(context.Context, DeleteOwnerCommand) error
+}
+
+type StableProfileReader interface {
+	ListStableProfile(
+		context.Context,
+		requestcontext.Actor,
+	) ([]Memory, error)
 }
 
 type IDGenerator interface {

@@ -89,6 +89,7 @@ void main() {
       expect(transport.calls, hasLength(7));
       expect(jsonDecode(transport.calls.last.body!), <String, Object?>{
         'expected_plan_revision': 1,
+        'user_confirmed': true,
       });
       expect(
         transport.calls.last.body,
@@ -305,6 +306,12 @@ void main() {
         final objectives = policy['target_objectives']! as List<Object?>;
         objectives.add(_clone(objectives.single));
       },
+      'missing turn policy reference': (plan) {
+        final catalog = plan['catalog_snapshot']! as Map<String, Object?>;
+        final scenario =
+            catalog['scenario_definition']! as Map<String, Object?>;
+        scenario.remove('turn_policy_ref');
+      },
     };
 
     for (final entry in cases.entries) {
@@ -354,6 +361,12 @@ void main() {
       'unexpected session field': (root) {
         final session = root['practice_session']! as Map<String, Object?>;
         session['effective_turns'] = 0;
+      },
+      'invalid session policy reference': (root) {
+        final scenario =
+            _sessionSnapshot(root)['scenario_definition_snapshot']!
+                as Map<String, Object?>;
+        scenario['session_policy_ref'] = '';
       },
     };
 
@@ -636,9 +649,12 @@ Map<String, Object?> _scenarioJson() {
   return <String, Object?>{
     'scenario_definition_id': _scenarioId,
     'scenario_type': 'INTERVIEW',
+    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'name': 'Technical interview',
     'version': 1,
     'status': 'active',
+    'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
+    'session_policy_ref': 'interview.project_deep_dive.session.v1',
   };
 }
 
@@ -647,10 +663,20 @@ Map<String, Object?> _configJson() {
     'scenario_config_id': _configId,
     'scenario_definition_id': _scenarioId,
     'config_type': 'INTERVIEW',
+    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'version': 1,
     'job_title': 'Backend engineer',
     'job_description': 'Explain engineering decisions.',
-    'focus_areas': <String>['system_design'],
+    'prompt_model': <String, Object?>{
+      'public_scene_brief': 'Discuss one backend project.',
+      'practice_goal': 'Explain decisions with evidence.',
+      'user_role': 'Candidate',
+      'ai_role': 'Technical interviewer',
+      'persona_summary': 'Precise and evidence seeking.',
+      'focus_areas': <String>['system_design'],
+      'turn_blueprints': <String>['Ask for a project overview.'],
+      'suggested_duration_seconds': 900,
+    },
   };
 }
 
@@ -706,6 +732,7 @@ Map<String, Object?> _planJson() {
     'scenario_definition_id': _scenarioId,
     'scenario_definition_version': 1,
     'scenario_type': 'INTERVIEW',
+    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'scenario_config_id': _configId,
     'scenario_config_version': 1,
     'preparation_profile_id': _profileId,
@@ -732,6 +759,7 @@ Map<String, Object?> _bootstrapJson() {
       'practice_session_id': _sessionId,
       'practice_plan_id': _planId,
       'scenario_type': 'INTERVIEW',
+      'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
       'snapshot_id': _sessionSnapshotId,
       'practice_session_status': 'starting',
       'session_version': 1,
@@ -742,6 +770,7 @@ Map<String, Object?> _bootstrapJson() {
       'practice_session_id': _sessionId,
       'plan_revision': 1,
       'scenario_type': 'INTERVIEW',
+      'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
       'scenario_definition_snapshot': _scenarioJson(),
       'scenario_config_snapshot': _configJson(),
       'preparation_snapshot': _preparationSnapshotJson(),
@@ -749,7 +778,7 @@ Map<String, Object?> _bootstrapJson() {
         <String, Object?>{
           'practice_participant_id': 'participant-interviewer',
           'practice_session_id': _sessionId,
-          'participant_role': 'INTERVIEWER',
+          'participant_role': 'FACILITATOR',
           'subject_ref': <String, Object?>{
             'namespace': 'mock.actor',
             'subject_id': 'interviewer-technical',
@@ -761,7 +790,7 @@ Map<String, Object?> _bootstrapJson() {
         <String, Object?>{
           'practice_participant_id': 'participant-candidate',
           'practice_session_id': _sessionId,
-          'participant_role': 'CANDIDATE',
+          'participant_role': 'LEARNER',
           'subject_ref': <String, Object?>{
             'namespace': 'speakup.user',
             'subject_id': _userId,
