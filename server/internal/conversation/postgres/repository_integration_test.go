@@ -1448,8 +1448,8 @@ func TestMigrationUsesIdentityUUIDOwnershipAndPersistsNoAudio(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate columns: %v", err)
 	}
-	if ownerColumns != 7 {
-		t.Fatalf("owner UUID column count = %d, want 7", ownerColumns)
+	if ownerColumns != 8 {
+		t.Fatalf("owner UUID column count = %d, want 8", ownerColumns)
 	}
 	actor := testActor(testUserA)
 	question := saveTestQuestion(

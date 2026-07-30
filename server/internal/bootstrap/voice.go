@@ -297,7 +297,9 @@ func buildProductionVoiceApplication(
 	checkpointAdapter := &voiceCheckpointAdapter{
 		repository:  conversationRepository,
 		audioAssets: audioAssets,
-		feedback:    configuration.SpeechFeedbackCoordinator,
+	}
+	if configuration.SpeechFeedbackCoordinator != nil {
+		checkpointAdapter.feedback = configuration.SpeechFeedbackCoordinator
 	}
 	sourceReader := &voiceReviewSourceReader{
 		conversations: conversationRepository,
