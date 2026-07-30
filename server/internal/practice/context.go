@@ -84,6 +84,32 @@ type CatalogContextReader interface {
 	ReadSessionCatalog(SessionCatalogRequest) (SessionCatalogSelection, error)
 }
 
+type IELTSQuestionSetRequest struct {
+	Mode         string
+	Part1SetID   string
+	TopicGroupID string
+}
+
+type IELTSQuestionSetSelection struct {
+	BankID         string
+	Season         string
+	Mode           string
+	Part1SetID     string
+	TopicGroupID   string
+	TopicTitle     string
+	Part2CueCard   string
+	TurnBlueprints []string
+	Part1Questions int
+	Part2Questions int
+	Part3Questions int
+}
+
+type IELTSCatalogContextReader interface {
+	ResolveIELTSQuestionSet(
+		IELTSQuestionSetRequest,
+	) (IELTSQuestionSetSelection, error)
+}
+
 type PracticeResourceIDGenerator interface {
 	NewID() (string, error)
 }
@@ -464,6 +490,14 @@ func (a *ContextApplication) CreateSession(
 		return persistence.ContextSessionBootstrap{}, false,
 			persistence.ErrConflict
 	}
+	catalog, assignment, err := a.applyIELTSQuestionSelection(
+		plan,
+		request,
+		catalog,
+	)
+	if err != nil {
+		return persistence.ContextSessionBootstrap{}, false, err
+	}
 	sessionID, snapshotID, participants, err := a.newSessionIdentities(
 		actor,
 		catalog.SelectedRoles,
@@ -487,6 +521,7 @@ func (a *ContextApplication) CreateSession(
 			catalog.PracticeOption,
 		),
 		PracticeFocuses: contextPracticeFocuses(catalog.SelectedRoles),
+		IELTSAssignment: assignment,
 	}
 	return a.repository.CreateContextSession(
 		ctx,
@@ -520,9 +555,33 @@ func (a *ContextApplication) createTargetedContextSession(
 		return persistence.ContextSessionBootstrap{}, false,
 			persistence.ErrConflict
 	}
+	sessionCatalog := SessionCatalogSelection{
+		PlanCatalogSelection: PlanCatalogSelection{
+			ScenarioDefinition: catalog.ScenarioDefinition,
+			ScenarioConfig:     catalog.ScenarioConfig,
+			SelectedRoles:      catalog.SelectedRoles,
+			PracticeOption:     catalog.PracticeOption,
+		},
+		PracticeOption: catalog.PracticeOption,
+	}
+	sessionCatalog, assignment, err := a.applyIELTSQuestionSelection(
+		plan,
+		request,
+		sessionCatalog,
+	)
+	if err != nil {
+		return persistence.ContextSessionBootstrap{}, false, err
+	}
+	sessionPolicy := cloneContextSessionPolicy(*plan.SessionPolicy)
+	if assignment != nil {
+		sessionPolicy = defaultContextSessionPolicy(
+			sessionCatalog.ScenarioConfig,
+			sessionCatalog.PracticeOption,
+		)
+	}
 	sessionID, snapshotID, participants, err := a.newSessionIdentities(
 		actor,
-		catalog.SelectedRoles,
+		sessionCatalog.SelectedRoles,
 	)
 	if err != nil {
 		return persistence.ContextSessionBootstrap{}, false, err
@@ -533,17 +592,20 @@ func (a *ContextApplication) createTargetedContextSession(
 		PlanRevision:       plan.Revision,
 		ScenarioType:       plan.ScenarioType,
 		ScenarioModel:      plan.ScenarioModel,
-		ScenarioDefinition: catalog.ScenarioDefinition,
-		ScenarioConfig:     cloneScenarioConfigSnapshot(catalog.ScenarioConfig),
+		ScenarioDefinition: sessionCatalog.ScenarioDefinition,
+		ScenarioConfig: cloneScenarioConfigSnapshot(
+			sessionCatalog.ScenarioConfig,
+		),
 		Preparation: clonePreparationSnapshot(
 			*plan.PreparationSnapshot,
 		),
 		Participants:   participants,
-		PracticeOption: catalog.PracticeOption,
-		SessionPolicy:  cloneContextSessionPolicy(*plan.SessionPolicy),
+		PracticeOption: sessionCatalog.PracticeOption,
+		SessionPolicy:  sessionPolicy,
 		PracticeFocuses: clonePracticeObjectives(
 			plan.PracticeFocuses,
 		),
+		IELTSAssignment: assignment,
 	}
 	return a.repository.CreateContextSession(
 		ctx,
@@ -760,7 +822,25 @@ func validCreateSessionRequest(request CreateSessionRequest) bool {
 		(request.PracticeOptionID == "" ||
 			validContextResourceID(request.PracticeOptionID)) &&
 		(len(request.RoleDefinitionIDs) == 0 ||
-			validUniqueContextIDs(request.RoleDefinitionIDs))
+			validUniqueContextIDs(request.RoleDefinitionIDs)) &&
+		(request.IELTSSelection == nil ||
+			validIELTSPracticeSelectionInput(*request.IELTSSelection))
+}
+
+func validIELTSPracticeSelectionInput(selection IELTSPracticeSelection) bool {
+	switch selection.Mode {
+	case "FULL_MOCK":
+		return validContextResourceID(selection.Part1SetID) &&
+			validContextResourceID(selection.TopicGroupID)
+	case "PART_1":
+		return validContextResourceID(selection.Part1SetID) &&
+			selection.TopicGroupID == ""
+	case "PART_2", "PART_3":
+		return selection.Part1SetID == "" &&
+			validContextResourceID(selection.TopicGroupID)
+	default:
+		return false
+	}
 }
 
 func validPlanCatalogSelection(
@@ -1063,6 +1143,158 @@ func cloneContextSessionPolicy(
 	return result
 }
 
+func (a *ContextApplication) applyIELTSQuestionSelection(
+	plan persistence.Plan,
+	request CreateSessionRequest,
+	catalog SessionCatalogSelection,
+) (
+	SessionCatalogSelection,
+	*persistence.IELTSPracticeAssignment,
+	error,
+) {
+	if request.IELTSSelection == nil {
+		if _, isIELTS := ieltsModeForScenario(plan.ScenarioDefinitionID); isIELTS {
+			return SessionCatalogSelection{}, nil, persistence.ErrConflict
+		}
+		return catalog, nil, nil
+	}
+	expectedMode, isIELTS := ieltsModeForScenario(plan.ScenarioDefinitionID)
+	if !isIELTS || request.IELTSSelection.Mode != expectedMode {
+		return SessionCatalogSelection{}, nil, persistence.ErrConflict
+	}
+	reader, ok := a.catalog.(IELTSCatalogContextReader)
+	if !ok {
+		return SessionCatalogSelection{}, nil, persistence.ErrConflict
+	}
+	resolved, err := reader.ResolveIELTSQuestionSet(
+		IELTSQuestionSetRequest{
+			Mode:         request.IELTSSelection.Mode,
+			Part1SetID:   request.IELTSSelection.Part1SetID,
+			TopicGroupID: request.IELTSSelection.TopicGroupID,
+		},
+	)
+	if err != nil || !validResolvedIELTSQuestionSet(expectedMode, resolved) {
+		return SessionCatalogSelection{}, nil, persistence.ErrConflict
+	}
+	catalog.ScenarioConfig = cloneScenarioConfigSnapshot(
+		catalog.ScenarioConfig,
+	)
+	catalog.ScenarioConfig.PromptModel.TurnBlueprints = cloneStrings(
+		resolved.TurnBlueprints,
+	)
+	catalog.ScenarioConfig.PromptModel.PublicSceneBrief =
+		ieltsSceneBrief(resolved)
+	catalog.ScenarioConfig.PromptModel.SuggestedDurationSeconds =
+		ieltsSuggestedDurationSeconds(expectedMode)
+	assignment := &persistence.IELTSPracticeAssignment{
+		BankID:         resolved.BankID,
+		Season:         resolved.Season,
+		Mode:           resolved.Mode,
+		Part1SetID:     resolved.Part1SetID,
+		TopicGroupID:   resolved.TopicGroupID,
+		TopicTitle:     resolved.TopicTitle,
+		Part2CueCard:   resolved.Part2CueCard,
+		Part1Questions: resolved.Part1Questions,
+		Part2Questions: resolved.Part2Questions,
+		Part3Questions: resolved.Part3Questions,
+		TurnBlueprints: cloneStrings(resolved.TurnBlueprints),
+	}
+	return catalog, assignment, nil
+}
+
+func ieltsModeForScenario(scenarioID string) (string, bool) {
+	switch scenarioID {
+	case "scn_ielts_speaking_full":
+		return "FULL_MOCK", true
+	case "scn_ielts_speaking_part_1":
+		return "PART_1", true
+	case "scn_ielts_speaking_part_2":
+		return "PART_2", true
+	case "scn_ielts_speaking_part_3":
+		return "PART_3", true
+	default:
+		return "", false
+	}
+}
+
+func validResolvedIELTSQuestionSet(
+	mode string,
+	resolved IELTSQuestionSetSelection,
+) bool {
+	if resolved.Mode != mode ||
+		!validContextResourceID(resolved.BankID) ||
+		strings.TrimSpace(resolved.Season) == "" ||
+		len(resolved.TurnBlueprints) == 0 {
+		return false
+	}
+	switch mode {
+	case "FULL_MOCK":
+		return validContextResourceID(resolved.Part1SetID) &&
+			validContextResourceID(resolved.TopicGroupID) &&
+			resolved.Part1Questions == 8 &&
+			resolved.Part2Questions == 1 &&
+			resolved.Part3Questions >= 1 &&
+			resolved.Part3Questions <= 5 &&
+			len(resolved.TurnBlueprints) ==
+				9+resolved.Part3Questions
+	case "PART_1":
+		return validContextResourceID(resolved.Part1SetID) &&
+			resolved.TopicGroupID == "" &&
+			resolved.Part1Questions == 8 &&
+			resolved.Part2Questions == 0 &&
+			resolved.Part3Questions == 0 &&
+			len(resolved.TurnBlueprints) == 8
+	case "PART_2":
+		return resolved.Part1SetID == "" &&
+			validContextResourceID(resolved.TopicGroupID) &&
+			resolved.Part1Questions == 0 &&
+			resolved.Part2Questions == 1 &&
+			resolved.Part3Questions >= 1 &&
+			resolved.Part3Questions <= 5 &&
+			len(resolved.TurnBlueprints) ==
+				1+resolved.Part3Questions
+	case "PART_3":
+		return resolved.Part1SetID == "" &&
+			validContextResourceID(resolved.TopicGroupID) &&
+			resolved.Part1Questions == 0 &&
+			resolved.Part2Questions == 0 &&
+			resolved.Part3Questions >= 1 &&
+			resolved.Part3Questions <= 5 &&
+			len(resolved.TurnBlueprints) ==
+				resolved.Part3Questions
+	default:
+		return false
+	}
+}
+
+func ieltsSceneBrief(resolved IELTSQuestionSetSelection) string {
+	switch resolved.Mode {
+	case "FULL_MOCK":
+		return "完成冻结的 Part 1 套题，并继续同主题 Part 2 与 Part 3。"
+	case "PART_1":
+		return "完成冻结的三个熟悉话题和八道 Part 1 问题。"
+	case "PART_2":
+		return "完成“" + resolved.TopicTitle + "”题卡，并可继续同主题 Part 3。"
+	case "PART_3":
+		return "围绕“" + resolved.TopicTitle + "”完成同主题 Part 3 讨论。"
+	default:
+		return "完成 IELTS 口语练习。"
+	}
+}
+
+func ieltsSuggestedDurationSeconds(mode string) int {
+	switch mode {
+	case "FULL_MOCK":
+		return 900
+	case "PART_1", "PART_3":
+		return 300
+	case "PART_2":
+		return 540
+	default:
+		return 600
+	}
+}
+
 func equalContextStrings(left []string, right []string) bool {
 	if len(left) != len(right) {
 		return false
@@ -1115,10 +1347,38 @@ func defaultContextSessionPolicy(
 	if policy.SuggestedDurationSeconds == 0 {
 		policy.SuggestedDurationSeconds = 900
 	}
-	if config.Model == persistence.ScenarioModelIELTSSpeakingFullMock {
-		policy.MinEffectiveTurns = 14
-		policy.MaxEffectiveTurns = 14
-		policy.CoverageCheckpointTurn = 14
+	switch config.Model {
+	case persistence.ScenarioModelIELTSSpeakingFullMock:
+		turns := len(config.PromptModel.TurnBlueprints)
+		if turns == 0 {
+			turns = 14
+		}
+		policy.MinEffectiveTurns = turns
+		policy.MaxEffectiveTurns = turns
+		policy.CoverageCheckpointTurn = turns
+		policy.MaxFollowUpsPerQuestion = 0
+	case persistence.ScenarioModelIELTSSpeakingPart1:
+		policy.MinEffectiveTurns = 8
+		policy.MaxEffectiveTurns = 8
+		policy.CoverageCheckpointTurn = 8
+		policy.MaxFollowUpsPerQuestion = 0
+	case persistence.ScenarioModelIELTSSpeakingPart2:
+		turns := len(config.PromptModel.TurnBlueprints)
+		if turns == 0 {
+			turns = 6
+		}
+		policy.MinEffectiveTurns = turns
+		policy.MaxEffectiveTurns = turns
+		policy.CoverageCheckpointTurn = turns
+		policy.MaxFollowUpsPerQuestion = 0
+	case persistence.ScenarioModelIELTSSpeakingPart3:
+		turns := len(config.PromptModel.TurnBlueprints)
+		if turns == 0 {
+			turns = 5
+		}
+		policy.MinEffectiveTurns = turns
+		policy.MaxEffectiveTurns = turns
+		policy.CoverageCheckpointTurn = turns
 		policy.MaxFollowUpsPerQuestion = 0
 	}
 	if option.Type == "FOCUS" {
@@ -1148,7 +1408,9 @@ func validScenarioFamilyModel(
 		return model == persistence.ScenarioModelProjectExperienceDeepDive ||
 			model == persistence.ScenarioModelInterviewBasicDialogue
 	case persistence.ScenarioFamilyExam:
-		return model == persistence.ScenarioModelIELTSSpeakingPart2 ||
+		return model == persistence.ScenarioModelIELTSSpeakingPart1 ||
+			model == persistence.ScenarioModelIELTSSpeakingPart2 ||
+			model == persistence.ScenarioModelIELTSSpeakingPart3 ||
 			model == persistence.ScenarioModelIELTSSpeakingFullMock ||
 			model == persistence.ScenarioModelExamBasicDialogue
 	case persistence.ScenarioFamilyWorkplace:

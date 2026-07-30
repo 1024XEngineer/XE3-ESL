@@ -28,11 +28,18 @@ type UpdatePlanRequest struct {
 }
 
 type CreateSessionRequest struct {
-	ExpectedPlanRevision  int      `json:"expected_plan_revision"`
-	UserConfirmed         bool     `json:"user_confirmed"`
-	PreparationSnapshotID string   `json:"preparation_snapshot_id,omitempty"`
-	PracticeOptionID      string   `json:"practice_option_id,omitempty"`
-	RoleDefinitionIDs     []string `json:"role_definition_ids,omitempty"`
+	ExpectedPlanRevision  int                     `json:"expected_plan_revision"`
+	UserConfirmed         bool                    `json:"user_confirmed"`
+	PreparationSnapshotID string                  `json:"preparation_snapshot_id,omitempty"`
+	PracticeOptionID      string                  `json:"practice_option_id,omitempty"`
+	RoleDefinitionIDs     []string                `json:"role_definition_ids,omitempty"`
+	IELTSSelection        *IELTSPracticeSelection `json:"ielts_selection,omitempty"`
+}
+
+type IELTSPracticeSelection struct {
+	Mode         string `json:"mode"`
+	Part1SetID   string `json:"part_1_set_id,omitempty"`
+	TopicGroupID string `json:"topic_group_id,omitempty"`
 }
 
 type Backend interface {

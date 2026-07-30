@@ -18,4 +18,5 @@ import "embed"
 //go:embed 000030_agent_tool_routing_cleanup.*.sql
 //go:embed 000031_agent_memory_extraction_barrier.*.sql
 //go:embed 000032_ielts_speaking_full_mock_model.*.sql
+//go:embed 000033_ielts_speaking_section_models.*.sql
 var Files embed.FS

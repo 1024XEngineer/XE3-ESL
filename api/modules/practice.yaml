@@ -695,6 +695,50 @@ components:
             models validate exactly one role.
           items:
             $ref: '#/components/schemas/ResourceId'
+        ielts_selection:
+          $ref: '#/components/schemas/IELTSPracticeSelection'
+    IELTSPracticeSelection:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+      properties:
+        mode:
+          type: string
+          enum:
+            - FULL_MOCK
+            - PART_1
+            - PART_2
+            - PART_3
+        part_1_set_id:
+          $ref: '#/components/schemas/ResourceId'
+        topic_group_id:
+          $ref: '#/components/schemas/ResourceId'
+      oneOf:
+        - properties:
+            mode:
+              const: FULL_MOCK
+          required:
+            - part_1_set_id
+            - topic_group_id
+        - properties:
+            mode:
+              const: PART_1
+          required:
+            - part_1_set_id
+          not:
+            required:
+              - topic_group_id
+        - properties:
+            mode:
+              enum:
+                - PART_2
+                - PART_3
+          required:
+            - topic_group_id
+          not:
+            required:
+              - part_1_set_id
     PracticeSession:
       type: object
       additionalProperties: false
@@ -946,9 +990,64 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PracticeObjective'
+        ielts_assignment:
+          $ref: '#/components/schemas/IELTSPracticeAssignment'
         created_at:
           type: string
           format: date-time
+    IELTSPracticeAssignment:
+      type: object
+      additionalProperties: false
+      required:
+        - bank_id
+        - season
+        - mode
+        - part_1_questions
+        - part_2_questions
+        - part_3_questions
+        - turn_blueprints
+      properties:
+        bank_id:
+          $ref: '#/components/schemas/ResourceId'
+        season:
+          type: string
+          minLength: 1
+        mode:
+          type: string
+          enum:
+            - FULL_MOCK
+            - PART_1
+            - PART_2
+            - PART_3
+        part_1_set_id:
+          $ref: '#/components/schemas/ResourceId'
+        topic_group_id:
+          $ref: '#/components/schemas/ResourceId'
+        topic_title:
+          type: string
+          minLength: 1
+        part_2_cue_card:
+          type: string
+          minLength: 1
+        part_1_questions:
+          type: integer
+          minimum: 0
+          maximum: 8
+        part_2_questions:
+          type: integer
+          minimum: 0
+          maximum: 1
+        part_3_questions:
+          type: integer
+          minimum: 0
+          maximum: 5
+        turn_blueprints:
+          type: array
+          minItems: 1
+          maxItems: 14
+          items:
+            type: string
+            minLength: 1
     PracticeSessionBootstrap:
       type: object
       additionalProperties: false

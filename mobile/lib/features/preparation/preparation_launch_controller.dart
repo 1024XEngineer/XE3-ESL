@@ -70,6 +70,7 @@ final class PreparationLaunchController extends ChangeNotifier {
   bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
   String? get resumablePracticeTitle => workspaceController?.currentTitle;
   String? get resumableScenarioId => workspaceController?.currentScenarioId;
+  String? get resumableSessionId => workspaceController?.currentSessionId;
   String? get workspaceErrorMessage => workspaceController?.errorMessage;
   bool get canRetryWorkspaceActivation =>
       workspaceController?.canRetryActivation ?? false;

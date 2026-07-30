@@ -153,6 +153,81 @@ func TestSessionPolicyIsFrozenByPracticeOptionType(t *testing.T) {
 		ieltsFull.MaxFollowUpsPerQuestion != 0 {
 		t.Fatalf("IELTS full mock policy = %+v", ieltsFull)
 	}
+
+	ieltsSections := []struct {
+		name  string
+		model persistence.ScenarioModel
+		turns int
+	}{
+		{"part 1", persistence.ScenarioModelIELTSSpeakingPart1, 8},
+		{"part 2 with bound part 3", persistence.ScenarioModelIELTSSpeakingPart2, 6},
+		{"part 3", persistence.ScenarioModelIELTSSpeakingPart3, 5},
+	}
+	for _, test := range ieltsSections {
+		t.Run(test.name, func(t *testing.T) {
+			policy := defaultContextSessionPolicy(
+				persistence.ScenarioConfigSnapshot{
+					Model: test.model,
+					PromptModel: persistence.ScenarioPromptModel{
+						FocusAreas:               []string{"ielts"},
+						SuggestedDurationSeconds: 300,
+					},
+				},
+				persistence.PracticeOptionSnapshot{
+					Type: "FULL_SIMULATION",
+				},
+			)
+			if policy.MinEffectiveTurns != test.turns ||
+				policy.CoverageCheckpointTurn != test.turns ||
+				policy.MaxEffectiveTurns != test.turns ||
+				policy.MaxFollowUpsPerQuestion != 0 {
+				t.Fatalf("%s policy = %+v", test.name, policy)
+			}
+		})
+	}
+
+	shortIELTSSections := []struct {
+		name  string
+		model persistence.ScenarioModel
+		turns []string
+	}{
+		{
+			"short full mock",
+			persistence.ScenarioModelIELTSSpeakingFullMock,
+			make([]string, 10),
+		},
+		{
+			"short part 2 with bound part 3",
+			persistence.ScenarioModelIELTSSpeakingPart2,
+			make([]string, 2),
+		},
+		{
+			"short part 3",
+			persistence.ScenarioModelIELTSSpeakingPart3,
+			make([]string, 1),
+		},
+	}
+	for _, test := range shortIELTSSections {
+		t.Run(test.name, func(t *testing.T) {
+			policy := defaultContextSessionPolicy(
+				persistence.ScenarioConfigSnapshot{
+					Model: test.model,
+					PromptModel: persistence.ScenarioPromptModel{
+						TurnBlueprints: test.turns,
+					},
+				},
+				persistence.PracticeOptionSnapshot{
+					Type: "FULL_SIMULATION",
+				},
+			)
+			if policy.MinEffectiveTurns != len(test.turns) ||
+				policy.CoverageCheckpointTurn != len(test.turns) ||
+				policy.MaxEffectiveTurns != len(test.turns) ||
+				policy.MaxFollowUpsPerQuestion != 0 {
+				t.Fatalf("%s policy = %+v", test.name, policy)
+			}
+		})
+	}
 }
 
 func TestFocusOptionMustMatchSelectedInterviewer(t *testing.T) {

@@ -91,6 +91,19 @@ func TestEveryEmbeddedMigrationVersionIsUniqueAndPaired(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingSectionModelMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000033_ielts_speaking_section_models.up.sql",
+		"000033_ielts_speaking_section_models.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf("read embedded IELTS section-model migration %q: %v", name, err)
+		}
+	}
+}
+
 func TestDatabaseBaselineContainsNoBusinessDDL(t *testing.T) {
 	t.Parallel()
 
