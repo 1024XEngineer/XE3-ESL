@@ -18,6 +18,13 @@
     "evaluation_status": "QUEUED",
     "status_url": "/v1/evaluations/7b000001-0000-4000-8000-000000000001"
   },
+  "ready_replay": {
+    "evaluation_id": "7b000001-0000-4000-8000-000000000001",
+    "evaluation_revision_id": "a1000001-0000-4000-8000-000000000001",
+    "revision": 1,
+    "evaluation_status": "READY",
+    "status_url": "/v1/evaluations/7b000001-0000-4000-8000-000000000001"
+  },
   "core_4d_ready": {
     "evaluation_id": "b2000002-0000-4000-8000-000000000002",
     "evaluation_revision_id": "a2000002-0000-4000-8000-000000000002",

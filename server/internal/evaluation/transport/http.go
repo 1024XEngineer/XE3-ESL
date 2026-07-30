@@ -45,14 +45,16 @@ type Application interface {
 	) (EvaluationAccepted, error)
 }
 
-// EvaluationAccepted is the immutable revision identity returned by a fresh
-// write. The transport accepts only genuinely queued revisions.
+// EvaluationAccepted is the immutable revision identity returned by a write.
+// Fresh writes must be genuinely QUEUED. Idempotent replays may expose the
+// persisted current state without requeuing work.
 type EvaluationAccepted struct {
 	EvaluationID         string
 	EvaluationRevisionID string
 	Revision             int
 	SupersedesRevisionID string
 	EvaluationStatus     evaluation.Status
+	Replayed             bool `json:"-"`
 }
 
 type ScoreabilityStatus string
@@ -179,11 +181,11 @@ func (h *HTTPHandler) create(c *gin.Context) {
 		h.writeApplicationError(c, err)
 		return
 	}
-	if !accepted.valid() || accepted.Revision != 1 {
+	if !accepted.valid() || (!accepted.Replayed && accepted.Revision != 1) {
 		h.errors.Write(c, errInvalidApplicationProjection)
 		return
 	}
-	c.JSON(http.StatusAccepted, accepted.response())
+	c.JSON(accepted.responseStatus(), accepted.response())
 }
 
 func (h *HTTPHandler) get(c *gin.Context) {
@@ -248,7 +250,7 @@ func (h *HTTPHandler) reevaluate(c *gin.Context) {
 		h.errors.Write(c, errInvalidApplicationProjection)
 		return
 	}
-	c.JSON(http.StatusAccepted, accepted.response())
+	c.JSON(accepted.responseStatus(), accepted.response())
 }
 
 type optionalString struct {
@@ -357,8 +359,14 @@ type evaluationAcceptedResponse struct {
 func (accepted EvaluationAccepted) valid() bool {
 	if !validEvaluationID(accepted.EvaluationID) ||
 		!validEvaluationID(accepted.EvaluationRevisionID) ||
-		accepted.Revision < 1 ||
-		accepted.EvaluationStatus != evaluation.StatusQueued {
+		accepted.Revision < 1 {
+		return false
+	}
+	if accepted.Replayed {
+		if !validEvaluationStatus(accepted.EvaluationStatus) {
+			return false
+		}
+	} else if accepted.EvaluationStatus != evaluation.StatusQueued {
 		return false
 	}
 	if accepted.Revision == 1 {
@@ -366,6 +374,14 @@ func (accepted EvaluationAccepted) valid() bool {
 	}
 	return validEvaluationID(accepted.SupersedesRevisionID) &&
 		accepted.SupersedesRevisionID != accepted.EvaluationRevisionID
+}
+
+func (accepted EvaluationAccepted) responseStatus() int {
+	if accepted.Replayed &&
+		accepted.EvaluationStatus != evaluation.StatusQueued {
+		return http.StatusOK
+	}
+	return http.StatusAccepted
 }
 
 func (accepted EvaluationAccepted) response() evaluationAcceptedResponse {
