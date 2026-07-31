@@ -363,7 +363,9 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                         constraints.maxWidth > constraints.maxHeight;
                     final avatar = _AvatarStage(
                       scene: scene,
-                      surfaceBuilder: widget.avatarSurfaceBuilder,
+                      surfaceBuilder: _exitApproved
+                          ? null
+                          : widget.avatarSurfaceBuilder,
                       statusLabel: widget.avatarStatusLabel,
                       latestAssistantMessage: _latestAssistantMessage(
                         widget.agentController.messages,

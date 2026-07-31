@@ -407,6 +407,7 @@ void main() {
       expect(harness.agentController.hasActivePractice, isTrue);
       expect(harness.agentController.practiceSessionId, _sessionId);
       expect(harness.launchController.hasResumablePractice, isTrue);
+      expect(harness.launchController.resumableMatterId, matterId);
 
       final persisted =
           jsonDecode((await harness.recordStore.read(_userId))!)

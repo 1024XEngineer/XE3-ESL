@@ -70,6 +70,7 @@ final class PreparationLaunchController extends ChangeNotifier {
   bool get hasValidBackground => _validBackground(_backgroundSummary.trim());
   bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
   String? get resumablePracticeTitle => workspaceController?.currentTitle;
+  String? get resumableMatterId => workspaceController?.currentMatterId;
   String? get resumableScenarioId => workspaceController?.currentScenarioId;
   String? get resumableScenarioType => workspaceController?.currentScenarioType;
   AgentScenePresentationMode get resumablePresentationMode =>

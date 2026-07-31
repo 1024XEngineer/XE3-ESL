@@ -148,6 +148,9 @@ class _PreparationPageState extends State<PreparationPage> {
     await _startScenarioDirectly(
       controller,
       scenario,
+      forceReplaceCurrentPractice:
+          widget.launchController?.hasResumablePractice == true &&
+          widget.launchController?.resumableMatterId != matter?.id,
       scenarioDisplayName: matter?.scene.title,
       scenarioDescription: background,
     );

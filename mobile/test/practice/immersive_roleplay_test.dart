@@ -55,6 +55,45 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('removes the avatar surface before leaving practice', (
+    tester,
+  ) async {
+    final controller = await _roleplayController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            key: const Key('open-immersive-practice'),
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => ImmersiveRoleplayPage(
+                  agentController: controller,
+                  avatarSurfaceBuilder: (_) => const ColoredBox(
+                    key: Key('test-avatar-surface'),
+                    color: Colors.green,
+                  ),
+                  onExitRequested: () async => true,
+                ),
+              ),
+            ),
+            child: const Text('Open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('open-immersive-practice')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('immersive-exit')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('immersive-roleplay-page')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('keeps the existing typed-answer flow in the immersive shell', (
     tester,
   ) async {
