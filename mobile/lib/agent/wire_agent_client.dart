@@ -17,6 +17,7 @@ final class WireAgentClient
         AgentClient,
         AgentStreamingTextClient,
         AgentThreadHistoryClient,
+        AgentMatterSelectionClient,
         AgentPracticeAvailability,
         AgentMultimodalClient {
   factory WireAgentClient({
@@ -1146,6 +1147,40 @@ final class WireAgentClient
           text: scene.title,
         ),
       );
+    });
+  }
+
+  @override
+  Future<AgentMatter> selectExistingMatter({
+    required String threadId,
+    required String matterId,
+  }) {
+    return _runAccountOperation((generation) async {
+      _requireUuid(threadId);
+      _requireUuid(matterId);
+      final matter = await _loadMatter(
+        generation: generation,
+        matterId: matterId,
+      );
+      if (matter.status != 'active') {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.conflict,
+          errorCode: 'matter_not_active',
+        );
+      }
+      final response = await _send(
+        generation: generation,
+        method: 'PUT',
+        path: '/v1/agent-threads/$threadId/active-matter',
+        body: <String, Object?>{'matter_id': matterId},
+      );
+      _requireStatus(response, const <int>{HttpStatus.ok});
+      _decodeMatterLink(
+        response.body,
+        expectedThreadId: threadId,
+        expectedMatterId: matterId,
+      );
+      return matter;
     });
   }
 

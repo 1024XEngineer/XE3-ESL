@@ -1004,8 +1004,30 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  bool prepareActiveMatterForScenario(String matterId) {
-    final current = _activeMatter;
+  Future<bool> prepareActiveMatterForScenario(String matterId) async {
+    final fence = _captureOperationFence(threadId: _threadId);
+    var current = _activeMatter;
+    if (current?.id != matterId) {
+      final selector = switch (client) {
+        final AgentMatterSelectionClient supported => supported,
+        _ => null,
+      };
+      final threadId = _threadId;
+      if (selector == null || threadId == null) {
+        return false;
+      }
+      try {
+        current = await selector.selectExistingMatter(
+          threadId: threadId,
+          matterId: matterId,
+        );
+      } on Object {
+        return false;
+      }
+      if (!_isOperationCurrent(fence) || _threadId != threadId) {
+        return false;
+      }
+    }
     if (current == null ||
         current.id != matterId ||
         current.status != 'active' ||

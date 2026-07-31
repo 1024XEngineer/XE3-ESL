@@ -205,7 +205,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     if (!reloaded ||
-        !widget.agentController.prepareActiveMatterForScenario(
+        !await widget.agentController.prepareActiveMatterForScenario(
           action.matterId,
         )) {
       _showMockNotice('这场面试暂时无法打开，请稍后重试');
