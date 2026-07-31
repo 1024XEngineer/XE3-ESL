@@ -28,4 +28,5 @@ import "embed"
 //go:embed 000040_review_speech_feedback.*.sql
 //go:embed 000041_speech_feedback_retry_turns.*.sql
 //go:embed 000042_agent_image_assets.*.sql
+//go:embed 000043_speech_feedback_ise_evidence.*.sql
 var Files embed.FS

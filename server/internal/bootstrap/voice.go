@@ -1643,6 +1643,9 @@ func (adapter *voiceSpeechFeedbackAdapter) EnsureAgentVoiceMessage(
 		threadID,
 		messageID,
 	)
+	if errors.Is(err, review.ErrSpeechFeedbackNotApplicable) {
+		return agent.VoiceMessageFeedbackReference{}, nil
+	}
 	if err != nil {
 		return agent.VoiceMessageFeedbackReference{}, err
 	}
