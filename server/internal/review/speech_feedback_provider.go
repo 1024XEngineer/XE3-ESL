@@ -112,15 +112,11 @@ func (provider *TextSpeechFeedbackProvider) GenerateSpeechFeedback(
 
 const speechFeedbackSystemPrompt = `You return cautious English-learning feedback for one confirmed transcript.
 Return one JSON object only: {"items":[...]}.
-Each item has exactly: kind, anchor, explanation, and suggested_text when required.
+Each item has exactly: kind, explanation, and suggested_text when required.
 kind is CORRECTION, STRENGTH, IMPROVEMENT, or RECOMMENDED_EXPRESSION.
-For source_kind CONVERSATION_TURN, anchor has exactly: anchor_kind="CONVERSATION_TRANSCRIPT", evidence_ref_id copied from the top-level input, turn_id copied from source.turn_id, start_utf8_byte, end_utf8_byte, original_excerpt.
-For source_kind AGENT_VOICE_MESSAGE, anchor has exactly: anchor_kind="AGENT_TRANSCRIPT", transcript_evidence_id copied from source.transcript_evidence_id, message_id copied from source.message_id, start_utf8_byte, end_utf8_byte, original_excerpt.
-Do not put source_kind, thread_id, candidate_version, practice_session_id, or any other field in anchor.
-Offsets are zero-based UTF-8 byte positions in confirmed_text. original_excerpt must exactly equal confirmed_text[start_utf8_byte:end_utf8_byte].
 CORRECTION, IMPROVEMENT, and RECOMMENDED_EXPRESSION require non-empty suggested_text. STRENGTH must omit suggested_text.
 Use only the confirmed text. Do not score, grade, infer pronunciation, fluency, confidence, audio quality, intent, or facts not present in the transcript.
-Return at most 8 anchored items and no unknown fields.`
+Return at most 8 items and no unknown fields.`
 
 type SpeechFeedbackDraftItem struct {
 	Kind           SpeechFeedbackItemKind
@@ -176,7 +172,6 @@ func normalizeSpeechFeedbackProviderResult(
 	}
 	type providerItem struct {
 		Kind          SpeechFeedbackItemKind `json:"kind"`
-		Anchor        SpeechFeedbackAnchor   `json:"anchor"`
 		Explanation   string                 `json:"explanation"`
 		SuggestedText *string                `json:"suggested_text,omitempty"`
 	}
@@ -205,6 +200,10 @@ func normalizeSpeechFeedbackProviderResult(
 		0,
 		len(envelope.Items),
 	)
+	anchor, err := speechFeedbackAnchorForInput(input)
+	if err != nil {
+		return nil, err
+	}
 	seen := make(map[string]struct{}, len(envelope.Items))
 	for _, generated := range envelope.Items {
 		repractice := SpeechFeedbackRepracticeNone
@@ -222,7 +221,7 @@ func normalizeSpeechFeedbackProviderResult(
 		}
 		item := SpeechFeedbackDraftItem{
 			Kind:           generated.Kind,
-			Anchor:         generated.Anchor,
+			Anchor:         anchor,
 			Explanation:    generated.Explanation,
 			SuggestedText:  generated.SuggestedText,
 			RepracticeMode: repractice,
@@ -234,12 +233,15 @@ func normalizeSpeechFeedbackProviderResult(
 		) {
 			return nil, ErrInvalidSpeechFeedback
 		}
+		suggestedText := ""
+		if item.SuggestedText != nil {
+			suggestedText = *item.SuggestedText
+		}
 		key := fmt.Sprintf(
-			"%s\x00%s\x00%d\x00%d",
+			"%s\x00%s\x00%s",
 			item.Kind,
-			item.Anchor.AnchorKind,
-			item.Anchor.StartUTF8Byte,
-			item.Anchor.EndUTF8Byte,
+			item.Explanation,
+			suggestedText,
 		)
 		if _, duplicate := seen[key]; duplicate {
 			return nil, ErrInvalidSpeechFeedback
@@ -248,6 +250,38 @@ func normalizeSpeechFeedbackProviderResult(
 		normalized = append(normalized, item)
 	}
 	return normalized, nil
+}
+
+func speechFeedbackAnchorForInput(
+	input SpeechFeedbackProviderInput,
+) (SpeechFeedbackAnchor, error) {
+	anchor := SpeechFeedbackAnchor{
+		StartUTF8Byte:   0,
+		EndUTF8Byte:     len(input.ConfirmedText),
+		OriginalExcerpt: input.ConfirmedText,
+	}
+	switch input.Source.SourceKind {
+	case SpeechFeedbackSourceConversationTurn:
+		anchor.AnchorKind =
+			SpeechFeedbackAnchorConversationTranscript
+		anchor.EvidenceRefID = input.EvidenceRefID
+		anchor.TurnID = input.Source.TurnID
+	case SpeechFeedbackSourceAgentVoiceMessage:
+		anchor.AnchorKind = SpeechFeedbackAnchorAgentTranscript
+		anchor.TranscriptEvidenceID =
+			input.Source.TranscriptEvidenceID
+		anchor.MessageID = input.Source.MessageID
+	default:
+		return SpeechFeedbackAnchor{}, ErrInvalidSpeechFeedback
+	}
+	if !anchor.validFor(
+		input.Source,
+		input.EvidenceRefID,
+		input.ConfirmedText,
+	) {
+		return SpeechFeedbackAnchor{}, ErrInvalidSpeechFeedback
+	}
+	return anchor, nil
 }
 
 var _ SpeechFeedbackProvider = (*TextSpeechFeedbackProvider)(nil)

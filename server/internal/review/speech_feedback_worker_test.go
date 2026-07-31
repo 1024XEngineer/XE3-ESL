@@ -93,15 +93,7 @@ func TestSpeechFeedbackWorkerCompletesOnlyValidatedProviderItems(
 	suggestion := "I work on this project."
 	payload, err := json.Marshal(map[string]any{
 		"items": []any{map[string]any{
-			"kind": "CORRECTION",
-			"anchor": map[string]any{
-				"anchor_kind":            "AGENT_TRANSCRIPT",
-				"transcript_evidence_id": claim.Source.TranscriptEvidenceID,
-				"message_id":             claim.Source.MessageID,
-				"start_utf8_byte":        0,
-				"end_utf8_byte":          len(claim.CanonicalText),
-				"original_excerpt":       claim.CanonicalText,
-			},
+			"kind":           "CORRECTION",
 			"explanation":    "Use a preposition after work.",
 			"suggested_text": suggestion,
 		}},
@@ -134,6 +126,8 @@ func TestSpeechFeedbackWorkerCompletesOnlyValidatedProviderItems(
 		len(repository.completedItems) != 1 ||
 		repository.completedItems[0].SuggestedText == nil ||
 		*repository.completedItems[0].SuggestedText != suggestion ||
+		repository.completedItems[0].Anchor.OriginalExcerpt !=
+			claim.CanonicalText ||
 		repository.completedItems[0].RepracticeMode !=
 			SpeechFeedbackRepracticeSameThread {
 		t.Fatalf(

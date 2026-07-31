@@ -12,7 +12,7 @@ const (
 	SpeechFeedbackSchemaVersion   = "speech-feedback/v1"
 	SpeechFeedbackStrategyRef     = "qianwen-speech-feedback/v1"
 	SpeechFeedbackPipelineVersion = "speech-feedback-pipeline/v1"
-	SpeechFeedbackPromptVersion   = "speech-feedback-prompt/v2"
+	SpeechFeedbackPromptVersion   = "speech-feedback-prompt/v3"
 
 	SpeechFeedbackAcousticReasonUnavailable = "ACOUSTIC_EVIDENCE_UNAVAILABLE"
 	SpeechFeedbackAcousticProviderName      = "xfyun-ise"
