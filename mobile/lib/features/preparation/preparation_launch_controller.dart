@@ -93,9 +93,10 @@ final class PreparationLaunchController extends ChangeNotifier {
         await workspace.parkCurrentPractice();
   }
 
-  Future<bool> completeAndContinueWithAgent() async {
+  Future<bool> completeAndContinueWithAgent(String reportSummary) async {
     final workspace = workspaceController;
-    return workspace != null && await workspace.completeAndContinueWithAgent();
+    return workspace != null &&
+        await workspace.completeAndContinueWithAgent(reportSummary);
   }
 
   Future<void> activateAccount(String accountId) async {

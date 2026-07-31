@@ -807,7 +807,12 @@ void main() {
       );
       expect(harness.agent.recordingState, PracticeRecordingState.completed);
 
-      expect(await workspace.completeAndContinueWithAgent(), isTrue);
+      expect(
+        await workspace.completeAndContinueWithAgent(
+          '【回答相关性】\n可改进：回答需要更直接地回应问题。',
+        ),
+        isTrue,
+      );
 
       expect(harness.agent.threadId, homeThreadId);
       expect(workspace.hasResumable, isFalse);
@@ -816,7 +821,8 @@ void main() {
           (message) =>
               message.role == AgentMessageRole.user &&
               message.text.contains('招聘初筛') &&
-              message.text.contains('practice-session-1'),
+              message.text.contains('practice-session-1') &&
+              message.text.contains('回答需要更直接地回应问题'),
         ),
         isTrue,
       );

@@ -24,7 +24,7 @@ class InterviewReportPage extends StatefulWidget {
   final String title;
   final SpeechFeedbackController? speechFeedbackController;
   final List<String> speechFeedbackSourceKeys;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
 
   @override
   State<InterviewReportPage> createState() => _InterviewReportPageState();
@@ -93,7 +93,7 @@ class InterviewReportPanel extends StatefulWidget {
   });
 
   final InterviewReportController controller;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
 
   @override
   State<InterviewReportPanel> createState() => _InterviewReportPanelState();
@@ -411,7 +411,7 @@ class _ReadyInterviewReport extends StatelessWidget {
   const _ReadyInterviewReport({required this.report, this.onContinueWithAgent});
 
   final InterviewReport report;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
 
   @override
   Widget build(BuildContext context) {
@@ -434,7 +434,9 @@ class _ReadyInterviewReport extends StatelessWidget {
         ],
         if (onContinueWithAgent != null) ...[
           const SizedBox(height: 16),
-          _ContinueWithAgentButton(onPressed: onContinueWithAgent!),
+          _ContinueWithAgentButton(
+            onPressed: () => onContinueWithAgent!(_agentReportSummary(report)),
+          ),
         ],
       ],
     );
@@ -706,3 +708,42 @@ String _dimensionLabel(InterviewReportDimensionId dimension) =>
       InterviewReportDimensionId.professional => '职业表达',
       InterviewReportDimensionId.interaction => '追问互动',
     };
+
+String _agentReportSummary(InterviewReport report) {
+  const maximumCharacters = 5500;
+  final lines = <String>['以下是系统刚生成的真实面试报告摘要，请直接基于这些结果复盘：'];
+  var length = lines.first.length;
+
+  void addLine(String value) {
+    if (length + value.length + 1 > maximumCharacters) {
+      return;
+    }
+    lines.add(value);
+    length += value.length + 1;
+  }
+
+  for (final dimension in report.dimensions) {
+    addLine('【${_dimensionLabel(dimension.id)}】');
+    if (dimension.strengths.firstOrNull case final finding?) {
+      addLine('做得好：${finding.message}');
+    }
+    if (dimension.improvements.firstOrNull case final finding?) {
+      addLine('可改进：${finding.message}');
+      if (finding.suggestion case final suggestion?) {
+        addLine('改进建议：$suggestion');
+      }
+    }
+    if (dimension.recommendedExpressions.firstOrNull case final finding?) {
+      addLine('推荐表达：${finding.suggestion ?? finding.message}');
+    }
+  }
+  if (report.priorityActions.isNotEmpty) {
+    addLine('【优先改进】');
+    for (var index = 0; index < report.priorityActions.length; index++) {
+      addLine(
+        '${index + 1}. ${_actionText(report, report.priorityActions[index])}',
+      );
+    }
+  }
+  return lines.join('\n');
+}

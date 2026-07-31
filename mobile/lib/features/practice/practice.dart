@@ -37,7 +37,7 @@ class PracticePage extends StatefulWidget {
   final bool previewMode;
   final AgentController? agentController;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
   final IeltsMockProgressStore? ieltsMockProgressStore;
   final PreparationController? preparationController;
   final InterviewReportController? interviewReportController;

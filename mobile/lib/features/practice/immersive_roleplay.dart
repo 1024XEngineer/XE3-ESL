@@ -48,7 +48,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
   final bool replayLoading;
   final bool replayPlaying;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
   final bool previewMode;
 
   @override

@@ -457,9 +457,12 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     }
   }
 
-  Future<bool> completeAndContinueWithAgent() async {
+  Future<bool> completeAndContinueWithAgent(String reportSummary) async {
     final current = _current;
+    final summary = reportSummary.trim();
     if (current == null ||
+        summary.isEmpty ||
+        summary.length > 6000 ||
         !current.isCommitted ||
         current.returnThreadId == null ||
         agentController.threadId != current.practiceThreadId ||
@@ -476,7 +479,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     }
     final sent = await agentController.sendText(
       '我刚完成了“$title”的 $completedTurns 轮练习，练习记录 ID 是 $sessionId。'
-      '请读取这次练习的真实评分与报告，先概括我的主要表现，再问我想重点复盘哪一部分。',
+      '下面附上这次练习已生成的真实报告摘要，请直接基于它先概括我的主要表现，再问我想重点复盘哪一部分：\n$summary',
     );
     if (!sent) {
       _setError('已回到原会话，但暂时无法把练习结果发送给 Agent。');

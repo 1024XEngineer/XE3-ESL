@@ -198,6 +198,50 @@ void main() {
     expect(find.byKey(const Key('interview-report-retry')), findsOneWidget);
     expect(find.byKey(const Key('interview-report-dimensions')), findsNothing);
   });
+
+  testWidgets('Agent continuation receives the ready report evidence', (
+    tester,
+  ) async {
+    final ready = decodeInterviewReport(
+      interviewReportContractFixture()['ready'],
+    );
+    final controller = InterviewReportController(
+      client: _FixedClient(ready),
+      maximumPollAttempts: 1,
+    );
+    addTearDown(controller.dispose);
+    String? handedOff;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: InterviewReportPanel(
+              controller: controller,
+              onContinueWithAgent: (summary) async {
+                handedOff = summary;
+                return false;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await controller.load(ready.practiceSessionId);
+    await tester.pump();
+    await tester.ensureVisible(
+      find.byKey(const Key('interview-report-continue-agent')),
+    );
+    await tester.tap(find.byKey(const Key('interview-report-continue-agent')));
+    await tester.pump();
+
+    expect(handedOff, contains('真实面试报告摘要'));
+    expect(handedOff, contains('回答相关性'));
+    expect(
+      handedOff,
+      contains('The response needs a clearer connection to the question.'),
+    );
+  });
 }
 
 final class _FixedClient implements InterviewReportClient {
