@@ -1140,7 +1140,7 @@ final class _StoredPracticeWorkspace {
       final presentationModeName = version == 1
           ? AgentScenePresentationMode.standard.name
           : decoded['presentation_mode'];
-      final presentationMode = AgentScenePresentationMode.values
+      final storedPresentationMode = AgentScenePresentationMode.values
           .where((value) => value.name == presentationModeName)
           .firstOrNull;
       if (accountId is! String ||
@@ -1152,7 +1152,7 @@ final class _StoredPracticeWorkspace {
           (scenarioId != null && scenarioId is! String) ||
           (scenarioTitle != null && scenarioTitle is! String) ||
           (scenarioType != null && scenarioType is! String) ||
-          presentationMode == null ||
+          storedPresentationMode == null ||
           !_validOpaqueId(accountId) ||
           !_validOperationId(operationId) ||
           !_validOpaqueId(practiceThreadId) ||
@@ -1161,6 +1161,11 @@ final class _StoredPracticeWorkspace {
                   returnThreadId == practiceThreadId))) {
         return null;
       }
+      final presentationMode =
+          scenarioType == 'INTERVIEW' &&
+              storedPresentationMode == AgentScenePresentationMode.standard
+          ? AgentScenePresentationMode.immersiveRoleplay
+          : storedPresentationMode;
       final committedValues = <Object?>[
         matterId,
         sessionId,

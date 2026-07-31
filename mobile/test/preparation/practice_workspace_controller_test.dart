@@ -79,6 +79,7 @@ void main() {
         scenarioId: 'interview-screening',
         scenarioTitle: '招聘初筛',
         sessionId: 'practice-session-1',
+        scenarioType: 'INTERVIEW',
       );
 
       expect(firstWorkspace.hasResumable, isTrue);
@@ -98,6 +99,10 @@ void main() {
 
       expect(restoredWorkspace.currentTitle, '招聘初筛');
       expect(restoredWorkspace.currentScenarioId, 'interview-screening');
+      expect(
+        restoredWorkspace.currentPresentationMode,
+        AgentScenePresentationMode.immersiveRoleplay,
+      );
       expect(restoredWorkspace.hasResumable, isTrue);
       expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
       expect(harness.agent.threadId, launched.lease.practiceThreadId);
