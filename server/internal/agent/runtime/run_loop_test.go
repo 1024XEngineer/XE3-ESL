@@ -574,6 +574,44 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 	}
 }
 
+func TestPracticePreviewOnlyConsumesWriteBudgetWhenItCanCreatePlan(
+	t *testing.T,
+) {
+	tests := []struct {
+		name      string
+		arguments string
+		want      bool
+	}{
+		{
+			name:      "candidate lookup",
+			arguments: `{"scenario_query":"AI product manager interview"}`,
+			want:      false,
+		},
+		{
+			name: "ready plan input",
+			arguments: `{"preparation_profile_id":"profile-1",` +
+				`"max_effective_turns":3}`,
+			want: true,
+		},
+		{
+			name:      "invalid input fails closed",
+			arguments: `{`,
+			want:      true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			call := ai.ToolCall{
+				Name:      "practice.preview.v1",
+				Arguments: json.RawMessage(test.arguments),
+			}
+			if got := toolCallMayWrite(call); got != test.want {
+				t.Fatalf("toolCallMayWrite() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRunLoopLogsEndToEndToolSequence(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{
