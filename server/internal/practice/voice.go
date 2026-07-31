@@ -40,8 +40,9 @@ type VoiceTurnProgress struct {
 }
 
 // RequiresSessionReview reports whether completing this frozen Session must
-// synchronously create a formal Review. IELTS reports and practice history are
-// delivered separately, so no IELTS speaking flow depends on Review generation.
+// synchronously create a formal Review. Interview and IELTS reports are
+// delivered through asynchronous Evaluation workflows, so neither flow should
+// depend on the legacy Review generation timeout.
 func (a *VoiceApplication) RequiresSessionReview(
 	ctx context.Context,
 	actor persistence.Actor,
@@ -57,6 +58,9 @@ func (a *VoiceApplication) RequiresSessionReview(
 	session, err := a.repository.GetContextSession(ctx, actor, sessionID)
 	if err != nil {
 		return false, err
+	}
+	if session.ScenarioType == persistence.ScenarioFamilyInterview {
+		return false, nil
 	}
 	switch session.ScenarioModel {
 	case persistence.ScenarioModelIELTSSpeakingFullMock,

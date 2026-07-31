@@ -229,7 +229,9 @@ func TestVoiceApplicationDoesNotRequireSynchronousIELTSReview(t *testing.T) {
 	}
 }
 
-func TestVoiceApplicationRequiresReviewForOtherModels(t *testing.T) {
+func TestVoiceApplicationRequiresReviewForSynchronousNonInterviewModels(
+	t *testing.T,
+) {
 	actor := persistence.Actor{
 		UserID:    "10000000-0000-4000-8000-000000000007",
 		SessionID: "20000000-0000-4000-8000-000000000007",
@@ -237,6 +239,7 @@ func TestVoiceApplicationRequiresReviewForOtherModels(t *testing.T) {
 	application, err := NewVoiceApplication(
 		&voiceRepositoryStub{session: persistence.ContextSession{
 			ID:            "practice-session",
+			ScenarioType:  persistence.ScenarioFamilyWorkplace,
 			ScenarioModel: persistence.ScenarioModelProjectExperienceDeepDive,
 		}},
 		"speakup.user",
@@ -254,7 +257,39 @@ func TestVoiceApplicationRequiresReviewForOtherModels(t *testing.T) {
 		t.Fatalf("RequiresSessionReview: %v", err)
 	}
 	if !required {
-		t.Fatal("non-IELTS model must keep synchronous review")
+		t.Fatal("non-interview model must keep synchronous review")
+	}
+}
+
+func TestVoiceApplicationDoesNotRequireSynchronousInterviewReview(
+	t *testing.T,
+) {
+	actor := persistence.Actor{
+		UserID:    "10000000-0000-4000-8000-000000000008",
+		SessionID: "20000000-0000-4000-8000-000000000008",
+	}
+	application, err := NewVoiceApplication(
+		&voiceRepositoryStub{session: persistence.ContextSession{
+			ID:            "practice-session",
+			ScenarioType:  persistence.ScenarioFamilyInterview,
+			ScenarioModel: persistence.ScenarioModelProjectExperienceDeepDive,
+		}},
+		"speakup.user",
+	)
+	if err != nil {
+		t.Fatalf("NewVoiceApplication: %v", err)
+	}
+
+	required, err := application.RequiresSessionReview(
+		context.Background(),
+		actor,
+		"practice-session",
+	)
+	if err != nil {
+		t.Fatalf("RequiresSessionReview: %v", err)
+	}
+	if required {
+		t.Fatal("interview model unexpectedly requires synchronous review")
 	}
 }
 
