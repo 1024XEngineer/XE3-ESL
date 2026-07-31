@@ -32,6 +32,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
     this.replayLoading = false,
     this.replayPlaying = false,
     this.onExitRequested,
+    this.onContinueWithAgent,
     this.previewMode = false,
     super.key,
   });
@@ -47,6 +48,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
   final bool replayLoading;
   final bool replayPlaying;
   final Future<bool> Function()? onExitRequested;
+  final Future<bool> Function()? onContinueWithAgent;
   final bool previewMode;
 
   @override
@@ -66,7 +68,6 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   bool _exitInFlight = false;
   bool _exitApproved = false;
   bool _feedbackRebuildScheduled = false;
-  bool _reportRouteScheduled = false;
 
   @override
   void initState() {
@@ -76,7 +77,6 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     widget.speechFeedbackController?.addListener(_handleFeedbackState);
     _syncSpeechFeedbackSources();
     _syncRecordingTimer();
-    _scheduleInterviewReportIfNeeded();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _conversationScrollController.hasClients) {
         _conversationScrollController.jumpTo(
@@ -107,7 +107,6 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
       _syncRecordingTimer();
     }
     _syncSpeechFeedbackSources();
-    _scheduleInterviewReportIfNeeded();
   }
 
   @override
@@ -133,7 +132,6 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     _syncRecordingTimer();
     _syncSpeechFeedbackSources();
     setState(() {});
-    _scheduleInterviewReportIfNeeded();
     if (shouldFollowConversation) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_conversationScrollController.hasClients) {
@@ -235,12 +233,11 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     }
   }
 
-  void _scheduleInterviewReportIfNeeded() {
+  Future<void> _openInterviewReport() async {
     final reportController = widget.interviewReportController;
     final agentController = widget.agentController;
     final sessionId = agentController.practiceSessionId;
-    if (_reportRouteScheduled ||
-        reportController == null ||
+    if (reportController == null ||
         sessionId == null ||
         agentController.recordingState != PracticeRecordingState.completed ||
         !isInterviewPracticeScenario(
@@ -249,28 +246,23 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
         )) {
       return;
     }
-    _reportRouteScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          ModalRoute.of(context)?.isCurrent != true ||
-          widget.agentController.practiceSessionId != sessionId ||
-          widget.agentController.recordingState !=
-              PracticeRecordingState.completed) {
-        _reportRouteScheduled = false;
-        return;
-      }
-      unawaited(
-        Navigator.of(context).pushReplacement<void, void>(
-          MaterialPageRoute<void>(
-            builder: (_) => InterviewReportPage(
-              practiceSessionId: sessionId,
-              controller: reportController,
-              title: '${widget.agentController.scene?.title ?? '面试'} · 复盘',
-            ),
+    final result = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute<Object?>(
+        builder: (_) => InterviewReportPage(
+          practiceSessionId: sessionId,
+          controller: reportController,
+          title: '${widget.agentController.scene?.title ?? '面试'} · 复盘',
+          speechFeedbackController: widget.speechFeedbackController,
+          speechFeedbackSourceKeys: List<String>.unmodifiable(
+            _feedbackSources.keys,
           ),
+          onContinueWithAgent: widget.onContinueWithAgent,
         ),
-      );
-    });
+      ),
+    );
+    if (mounted && result == CompletedPracticeRouteResult.continueWithAgent) {
+      Navigator.of(context).pop(result);
+    }
   }
 
   Future<void> _submitText() async {
@@ -390,6 +382,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                       replayPlaying: widget.replayPlaying,
                       onToggleTextMode: _toggleTextMode,
                       onSubmitText: _submitText,
+                      onOpenReport: _openInterviewReport,
                     );
                     if (landscape) {
                       return Row(
@@ -604,6 +597,7 @@ class _ConversationPanel extends StatelessWidget {
     required this.replayPlaying,
     required this.onToggleTextMode,
     required this.onSubmitText,
+    required this.onOpenReport,
   });
 
   final AgentController controller;
@@ -620,6 +614,7 @@ class _ConversationPanel extends StatelessWidget {
   final bool replayPlaying;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
+  final VoidCallback onOpenReport;
 
   @override
   Widget build(BuildContext context) {
@@ -711,6 +706,7 @@ class _ConversationPanel extends StatelessWidget {
             onBeforeStartRecording: onBeforeStartRecording,
             onToggleTextMode: onToggleTextMode,
             onSubmitText: onSubmitText,
+            onOpenReport: onOpenReport,
           ),
         ],
       ),
@@ -888,6 +884,7 @@ class _ImmersiveComposer extends StatefulWidget {
     required this.onBeforeStartRecording,
     required this.onToggleTextMode,
     required this.onSubmitText,
+    required this.onOpenReport,
   });
 
   final AgentController controller;
@@ -898,6 +895,7 @@ class _ImmersiveComposer extends StatefulWidget {
   final ImmersiveAsyncAction? onBeforeStartRecording;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
+  final VoidCallback onOpenReport;
 
   @override
   State<_ImmersiveComposer> createState() => _ImmersiveComposerState();
@@ -993,9 +991,10 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
                 actionLabel: '重试',
                 onPressed: widget.controller.retryReview,
               ),
-              PracticeRecordingState.completed => const _ComposerProgress(
-                label: '本轮对话已完成',
-                showProgress: false,
+              PracticeRecordingState.completed => _ComposerAction(
+                label: '练习已完成，可先查看最后一轮回答与评分。',
+                actionLabel: '查看报告',
+                onPressed: widget.onOpenReport,
               ),
             },
           ),
@@ -1283,10 +1282,9 @@ class _TranscriptComposer extends StatelessWidget {
 }
 
 class _ComposerProgress extends StatelessWidget {
-  const _ComposerProgress({required this.label, this.showProgress = true});
+  const _ComposerProgress({required this.label});
 
   final String label;
-  final bool showProgress;
 
   @override
   Widget build(BuildContext context) {
@@ -1295,13 +1293,11 @@ class _ComposerProgress extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          if (showProgress) ...[
-            const SizedBox.square(
-              dimension: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 10),
-          ],
+          const SizedBox.square(
+            dimension: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 10),
           Flexible(
             child: Text(
               label,

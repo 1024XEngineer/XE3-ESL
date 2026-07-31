@@ -24,6 +24,7 @@ class ImmersiveRoleplaySession extends StatefulWidget {
     this.interviewReportController,
     this.speechFeedbackController,
     this.onExitRequested,
+    this.onContinueWithAgent,
     super.key,
   });
 
@@ -32,6 +33,7 @@ class ImmersiveRoleplaySession extends StatefulWidget {
   final InterviewReportController? interviewReportController;
   final SpeechFeedbackController? speechFeedbackController;
   final Future<bool> Function()? onExitRequested;
+  final Future<bool> Function()? onContinueWithAgent;
 
   @override
   State<ImmersiveRoleplaySession> createState() =>
@@ -574,6 +576,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
       replayLoading: _replayLoading,
       replayPlaying: _isAvatarSpeaking,
       onExitRequested: widget.onExitRequested,
+      onContinueWithAgent: widget.onContinueWithAgent,
     );
   }
 

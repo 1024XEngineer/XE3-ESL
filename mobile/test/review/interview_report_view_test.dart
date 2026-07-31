@@ -5,6 +5,9 @@ import 'package:speakup/review/interview_report.dart';
 import 'package:speakup/review/interview_report_client.dart';
 import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/interview_report_decoder.dart';
+import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/review/turn_feedback_client.dart';
+import 'package:speakup/review/turn_feedback_controller.dart';
 
 import 'interview_report_fixture.dart';
 
@@ -94,6 +97,83 @@ void main() {
     expect(find.byKey(const Key('interview-report-dimensions')), findsNothing);
   });
 
+  testWidgets('report includes real per-turn acoustic scores', (tester) async {
+    final ready = decodeInterviewReport(
+      interviewReportContractFixture()['ready'],
+    );
+    final reportController = InterviewReportController(
+      client: _FixedClient(ready),
+      maximumPollAttempts: 1,
+    );
+    final now = DateTime.utc(2026, 7, 31);
+    final feedbackController = SpeechFeedbackController(
+      client: _FixedSpeechFeedbackClient(
+        SpeechFeedback(
+          speechFeedbackId: 'feedback-1',
+          source: const ConversationTurnFeedbackSource(
+            practiceSessionId: 'session-1',
+            turnId: 'turn-1',
+            inputRevision: 1,
+            evidenceSnapshotId: 'evidence-1',
+          ),
+          feedbackStatus: SpeechFeedbackStatus.ready,
+          scoreabilityStatus: SpeechFeedbackScoreabilityStatus.provisional,
+          gateStatus: SpeechFeedbackGateStatus.feedbackOnly,
+          reasonCodes: const [],
+          schemaVersion: 'speech-feedback/v1',
+          strategyRef: 'qianwen-speech-feedback/v1',
+          pipelineVersion: 'speech-feedback-pipeline/v1',
+          isFinal: false,
+          items: const [],
+          acousticAssessment: const SpeechFeedbackAcousticAssessment(
+            pronunciation: SpeechFeedbackAssessmentStatus.assessed,
+            acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
+            reasonCode: '',
+            pronunciationScore: 82,
+            speakingSpeedWpm: 118,
+            semanticScore: 76,
+            provider: 'xfyun-ise',
+            providerSessionId: 'provider-1',
+            category: 'topic',
+            notice: '根据本次录音自动评估，仅供练习参考。',
+          ),
+          statusUrl: '/v1/speech-feedback/feedback-1',
+          createdAt: now,
+          updatedAt: now,
+          completedAt: now,
+        ),
+      ),
+      maximumPollAttempts: 1,
+    );
+    addTearDown(reportController.dispose);
+    addTearDown(feedbackController.dispose);
+    await feedbackController.load(
+      sourceKey: 'practice:session-1:turn-1',
+      statusUrl: '/v1/speech-feedback/feedback-1',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: InterviewReportPage(
+          practiceSessionId: ready.practiceSessionId,
+          controller: reportController,
+          speechFeedbackController: feedbackController,
+          speechFeedbackSourceKeys: const ['practice:session-1:turn-1'],
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('语言表现 · 逐轮真实数据'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const Key('speech-feedback-disclosure-toggle')),
+    );
+    await tester.pump();
+    expect(find.textContaining('发音准确度 82'), findsOneWidget);
+    expect(find.textContaining('语速 118'), findsOneWidget);
+    expect(find.textContaining('题意相关 76'), findsOneWidget);
+  });
+
   testWidgets('FAILED is explicitly technical and only retries when allowed', (
     tester,
   ) async {
@@ -128,6 +208,18 @@ final class _FixedClient implements InterviewReportClient {
   @override
   Future<InterviewReportEnvelope> getReport(String practiceSessionId) async =>
       value;
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _FixedSpeechFeedbackClient implements SpeechFeedbackClient {
+  const _FixedSpeechFeedbackClient(this.value);
+
+  final SpeechFeedback value;
+
+  @override
+  Future<SpeechFeedback> getFeedback(String statusUrl) async => value;
 
   @override
   Future<void> clearAccountState() async {}

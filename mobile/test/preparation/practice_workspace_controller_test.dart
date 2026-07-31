@@ -776,6 +776,54 @@ void main() {
   });
 
   test(
+    'completed interview returns to its source Agent thread for review',
+    () async {
+      final store = _InspectableRecordStore();
+      final harness = await _createHarness();
+      final workspace = PracticeWorkspaceController(
+        agentController: harness.agent,
+        recordStore: store,
+      );
+      addTearDown(() {
+        workspace.dispose();
+        harness.agent.dispose();
+      });
+      await workspace.activateAccount('account-1');
+      final homeThreadId = harness.agent.threadId;
+      final launched = await _launchPractice(
+        harness: harness,
+        workspace: workspace,
+        operationId: 'agent-created-interview',
+        scenarioId: 'interview-screening',
+        scenarioTitle: '招聘初筛',
+        sessionId: 'practice-session-1',
+        scenarioType: 'INTERVIEW',
+      );
+      expect(await workspace.parkCurrentPractice(), isTrue);
+      harness.practice.complete(launched.lease.practiceThreadId);
+      expect(
+        await harness.agent.selectThread(launched.lease.practiceThreadId),
+        isTrue,
+      );
+      expect(harness.agent.recordingState, PracticeRecordingState.completed);
+
+      expect(await workspace.completeAndContinueWithAgent(), isTrue);
+
+      expect(harness.agent.threadId, homeThreadId);
+      expect(workspace.hasResumable, isFalse);
+      expect(
+        harness.agent.messages.any(
+          (message) =>
+              message.role == AgentMessageRole.user &&
+              message.text.contains('招聘初筛') &&
+              message.text.contains('practice-session-1'),
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
     'records stay isolated by account and private cleanup deletes one account',
     () async {
       final store = _InspectableRecordStore();
@@ -1109,6 +1157,8 @@ final class _WorkspacePracticeClient
       sessionId: current.sessionId,
       threadId: threadId,
       sessionVersion: (current.sessionVersion ?? 1) + 1,
+      scenarioType: current.scenarioType,
+      scenarioModel: current.scenarioModel,
       matter: current.matter,
       completedTurns: current.turnLimit,
       turnLimit: current.turnLimit,
@@ -1227,6 +1277,14 @@ final class _WorkspacePracticeClient
     return PracticeSessionSnapshot(
       sessionId: sessionId,
       threadId: threadId,
+      scenarioType: matter.scene.scenarioType,
+      scenarioModel: switch (matter.scene.scenarioType) {
+        'INTERVIEW' => 'INTERVIEW_BASIC_DIALOGUE',
+        'DAILY' => 'DAILY_BASIC_DIALOGUE',
+        'WORKPLACE' => 'WORKPLACE_BASIC_DIALOGUE',
+        'EXAM' => 'EXAM_BASIC_DIALOGUE',
+        _ => null,
+      },
       sessionVersion: version,
       matter: matter,
       completedTurns: 0,

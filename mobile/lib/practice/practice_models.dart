@@ -359,6 +359,8 @@ enum PracticeSessionLifecycleStatus {
   endedEarly,
 }
 
+enum CompletedPracticeRouteResult { continueWithAgent }
+
 final class PracticeSessionLifecycle {
   const PracticeSessionLifecycle({
     required this.sessionId,

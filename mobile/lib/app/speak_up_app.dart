@@ -310,6 +310,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           interviewReportController: widget.interviewReportController,
           speechFeedbackController: widget.speechFeedbackController,
           onExitRequested: launchController?.parkCurrentPractice,
+          onContinueWithAgent: launchController?.completeAndContinueWithAgent,
         );
       }
       return ImmersiveRoleplayPage(
@@ -318,6 +319,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         interviewReportController: widget.interviewReportController,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
+        onContinueWithAgent: launchController?.completeAndContinueWithAgent,
       );
     }
     return PracticePage(
@@ -328,6 +330,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
       speechFeedbackController: widget.speechFeedbackController,
       onExitRequested: launchController?.parkCurrentPractice,
+      onContinueWithAgent: launchController?.completeAndContinueWithAgent,
     );
   }
 }

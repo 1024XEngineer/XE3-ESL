@@ -457,6 +457,35 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     }
   }
 
+  Future<bool> completeAndContinueWithAgent() async {
+    final current = _current;
+    if (current == null ||
+        !current.isCommitted ||
+        current.returnThreadId == null ||
+        agentController.threadId != current.practiceThreadId ||
+        agentController.practiceSessionId != current.sessionId ||
+        agentController.recordingState != PracticeRecordingState.completed) {
+      _setError('练习尚未完整结束，暂时无法回到 Agent 复盘。');
+      return false;
+    }
+    final title = current.scenarioTitle!;
+    final sessionId = current.sessionId!;
+    final completedTurns = agentController.completedTurns;
+    if (!await parkCurrentPractice()) {
+      return false;
+    }
+    final sent = await agentController.sendText(
+      '我刚完成了“$title”的 $completedTurns 轮练习，练习记录 ID 是 $sessionId。'
+      '请读取这次练习的真实评分与报告，先概括我的主要表现，再问我想重点复盘哪一部分。',
+    );
+    if (!sent) {
+      _setError('已回到原会话，但暂时无法把练习结果发送给 Agent。');
+      return false;
+    }
+    _errorMessage = null;
+    return true;
+  }
+
   Future<PracticeWorkspaceLease?> replaceCurrentPractice(
     String operationId,
   ) async {
