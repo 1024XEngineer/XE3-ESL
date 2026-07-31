@@ -169,8 +169,8 @@ func run() int {
 			Provider:          textConfig.Provider,
 			Model:             textConfig.Model,
 			MaxOutputTokens:   textConfig.MaxOutputTokens,
-			GenerationTimeout: 20 * time.Second,
-			LeaseDuration:     30 * time.Second,
+			GenerationTimeout: 45 * time.Second,
+			LeaseDuration:     60 * time.Second,
 			MaxAttempts:       3,
 			CursorSigningKey: []byte(
 				reviewHistoryConfig.CursorSigningKey.Reveal(),
