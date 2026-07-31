@@ -54,6 +54,36 @@
     "created_at": "2026-07-30T10:01:00Z",
     "updated_at": "2026-07-30T10:01:01Z"
   },
+  "running_topic": {
+    "speech_feedback_id": "speech_feedback_running_topic_001",
+    "source": {
+      "source_kind": "CONVERSATION_TURN",
+      "practice_session_id": "session_interview_001",
+      "turn_id": "turn_interview_001",
+      "input_revision": 1,
+      "evidence_snapshot_id": "evidence_interview_001"
+    },
+    "feedback_status": "RUNNING",
+    "schema_version": "speech-feedback/v1",
+    "strategy_ref": "qianwen-speech-feedback/v1",
+    "pipeline_version": "speech-feedback-pipeline/v1",
+    "is_final": false,
+    "items": [],
+    "acoustic_assessment": {
+      "pronunciation": "ASSESSED",
+      "acoustic_fluency": "ASSESSED",
+      "pronunciation_score": 88.5,
+      "speaking_speed_wpm": 156,
+      "semantic_score": 82,
+      "provider": "xfyun-ise",
+      "provider_session_id": "ise-topic-session-1",
+      "category": "topic",
+      "notice": "根据本次录音自动评估，仅供练习参考。"
+    },
+    "status_url": "/v1/speech-feedback/speech_feedback_running_topic_001",
+    "created_at": "2026-07-30T10:01:10Z",
+    "updated_at": "2026-07-30T10:01:11Z"
+  },
   "ready_provisional": {
     "speech_feedback_id": "speech_feedback_ready_001",
     "source": {

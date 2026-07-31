@@ -126,6 +126,9 @@ final class SpeechFeedbackAcousticAssessment {
     this.accuracyScore,
     this.fluencyScore,
     this.integrityScore,
+    this.pronunciationScore,
+    this.speakingSpeedWpm,
+    this.semanticScore,
     this.provider,
     this.providerSessionId,
     this.category,
@@ -139,15 +142,29 @@ final class SpeechFeedbackAcousticAssessment {
   final double? accuracyScore;
   final double? fluencyScore;
   final double? integrityScore;
+  final double? pronunciationScore;
+  final double? speakingSpeedWpm;
+  final double? semanticScore;
   final String? provider;
   final String? providerSessionId;
   final String? category;
   final String? notice;
 
-  bool get isAssessed =>
-      pronunciation == SpeechFeedbackAssessmentStatus.assessed &&
-      acousticFluency == SpeechFeedbackAssessmentStatus.assessed &&
-      integrity == SpeechFeedbackAssessmentStatus.assessed;
+  bool get isAssessed {
+    if (category == 'topic') {
+      return pronunciation == SpeechFeedbackAssessmentStatus.assessed &&
+          acousticFluency == SpeechFeedbackAssessmentStatus.assessed &&
+          pronunciationScore != null &&
+          speakingSpeedWpm != null &&
+          semanticScore != null;
+    }
+    return pronunciation == SpeechFeedbackAssessmentStatus.assessed &&
+        acousticFluency == SpeechFeedbackAssessmentStatus.assessed &&
+        integrity == SpeechFeedbackAssessmentStatus.assessed &&
+        accuracyScore != null &&
+        fluencyScore != null &&
+        integrityScore != null;
+  }
 }
 
 final class SpeechFeedbackStableFailure {

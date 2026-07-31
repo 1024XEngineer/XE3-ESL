@@ -90,22 +90,86 @@ func TestValidateSpeechFeedbackISESummaryExplainsUnavailableResult(
 ) {
 	t.Parallel()
 	rejected := true
-	err := validateSpeechFeedbackISESummary(xfyun.ScoreSummary{
-		Rejected:      &rejected,
-		ExceptionInfo: "28676",
-	})
+	err := validateSpeechFeedbackISESummary(
+		xfyun.ScoreSummary{
+			Rejected:      &rejected,
+			ExceptionInfo: "28676",
+		},
+		xfyun.CategoryReadSentence,
+	)
 	if !errors.Is(err, ErrSpeechFeedbackAcousticUnavailable) ||
 		!strings.Contains(err.Error(), "except_info=28676") {
 		t.Fatalf("rejected error = %v", err)
 	}
 
 	rejected = false
-	err = validateSpeechFeedbackISESummary(xfyun.ScoreSummary{
-		Rejected: &rejected,
-	})
+	err = validateSpeechFeedbackISESummary(
+		xfyun.ScoreSummary{Rejected: &rejected},
+		xfyun.CategoryReadSentence,
+	)
 	if !errors.Is(err, ErrSpeechFeedbackAcousticUnavailable) ||
 		!strings.Contains(err.Error(), "full-dimension") {
 		t.Fatalf("missing fields error = %v", err)
+	}
+}
+
+func TestXFYUNSpeechFeedbackAcousticProviderUsesTopicForPracticePrompt(
+	t *testing.T,
+) {
+	t.Parallel()
+	pronunciation, speed, semantic := 88.5, 156.0, 82.0
+	rejected := false
+	evaluator := &speechFeedbackISEEvaluatorStub{
+		result: xfyun.EvaluationResult{
+			SessionID: "wse00000001@ll36940e324c59000100",
+			RawXML:    "<xml_result/>",
+			Summary: xfyun.ScoreSummary{
+				PhoneScore:    &pronunciation,
+				SpeakingSpeed: &speed,
+				AccuracyScore: &semantic,
+				Rejected:      &rejected,
+			},
+		},
+	}
+	provider, err := NewXFYUNSpeechFeedbackAcousticProvider(
+		&speechFeedbackAudioReaderStub{
+			audio: speechFeedbackTestWAV([]byte{1, 2, 3, 4}),
+		},
+		evaluator,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := provider.EvaluateSpeechFeedbackAcoustics(
+		context.Background(),
+		SpeechFeedbackAcousticInput{
+			OwnerUserID:       "f475b521-a96f-44be-b447-8b85bed7e6e9",
+			AudioAssetID:      "audio_asset_1",
+			AudioAssetVersion: 1,
+			AudioChecksum:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			ConfirmedText:     "I use AI to summarize customer feedback.",
+			PromptText:        "How do you use artificial intelligence at work?",
+		},
+	)
+	if err != nil {
+		t.Fatalf("evaluate topic acoustics: %v", err)
+	}
+	if evaluator.request.Category != xfyun.CategoryTopic ||
+		evaluator.request.TopicTitle != "Practice response" ||
+		evaluator.request.ReferenceText !=
+			"How do you use artificial intelligence at work?" ||
+		evidence.Assessment.Category != "topic" ||
+		evidence.Assessment.PronunciationScore == nil ||
+		*evidence.Assessment.PronunciationScore != pronunciation ||
+		evidence.Assessment.SpeakingSpeedWPM == nil ||
+		*evidence.Assessment.SpeakingSpeedWPM != speed ||
+		evidence.Assessment.SemanticScore == nil ||
+		*evidence.Assessment.SemanticScore != semantic {
+		t.Fatalf(
+			"unexpected topic evidence/request: %#v / %#v",
+			evidence,
+			evaluator.request,
+		)
 	}
 }
 
@@ -151,6 +215,7 @@ func TestSpeechFeedbackWorkerPersistsAcousticsBeforeShortTextResult(
 	}
 	claim.EvidenceRefID = "evidence_1"
 	claim.CanonicalText = "Hello"
+	claim.PromptText = "What would you like to practice today?"
 	claim.AudioAssetID = "audio_asset_1"
 	claim.AudioAssetVersion = 1
 	claim.AudioChecksum =

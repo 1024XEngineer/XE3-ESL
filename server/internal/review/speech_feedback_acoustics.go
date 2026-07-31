@@ -21,6 +21,7 @@ type SpeechFeedbackAcousticInput struct {
 	AudioChecksum     string
 	AudioObjectKey    string
 	ConfirmedText     string
+	PromptText        string
 }
 
 type SpeechFeedbackAcousticEvidence struct {
@@ -108,33 +109,56 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 		return SpeechFeedbackAcousticEvidence{}, err
 	}
 	category := speechFeedbackISECategory(input.ConfirmedText)
+	referenceText := input.ConfirmedText
+	topicTitle := ""
+	if strings.TrimSpace(input.PromptText) != "" {
+		if classifySpeechFeedbackLanguage(input.PromptText) !=
+			speechFeedbackLanguageEnglish {
+			return SpeechFeedbackAcousticEvidence{},
+				ErrSpeechFeedbackAcousticUnavailable
+		}
+		category = xfyun.CategoryTopic
+		referenceText = input.PromptText
+		topicTitle = "Practice response"
+	}
 	result, err := provider.evaluator.Evaluate(
 		ctx,
 		xfyun.EvaluationRequest{
 			Audio:         pcm,
-			ReferenceText: input.ConfirmedText,
+			ReferenceText: referenceText,
+			TopicTitle:    topicTitle,
 			Category:      category,
 		},
 	)
 	if err != nil {
 		return SpeechFeedbackAcousticEvidence{}, err
 	}
-	if err := validateSpeechFeedbackISESummary(result.Summary); err != nil {
+	if err := validateSpeechFeedbackISESummary(
+		result.Summary,
+		category,
+	); err != nil {
 		return SpeechFeedbackAcousticEvidence{}, err
 	}
+	assessment := SpeechFeedbackAcousticAssessment{
+		Pronunciation:   SpeechFeedbackAssessed,
+		AcousticFluency: SpeechFeedbackAssessed,
+		Provider:        SpeechFeedbackAcousticProviderName,
+		ProviderSession: strings.TrimSpace(result.SessionID),
+		Category:        string(category),
+		Notice:          SpeechFeedbackAcousticNotice,
+	}
+	if category == xfyun.CategoryTopic {
+		assessment.PronunciationScore = result.Summary.PhoneScore
+		assessment.SpeakingSpeedWPM = result.Summary.SpeakingSpeed
+		assessment.SemanticScore = result.Summary.AccuracyScore
+	} else {
+		assessment.Integrity = SpeechFeedbackAssessed
+		assessment.AccuracyScore = result.Summary.AccuracyScore
+		assessment.FluencyScore = result.Summary.FluencyScore
+		assessment.IntegrityScore = result.Summary.IntegrityScore
+	}
 	evidence := SpeechFeedbackAcousticEvidence{
-		Assessment: SpeechFeedbackAcousticAssessment{
-			Pronunciation:   SpeechFeedbackAssessed,
-			AcousticFluency: SpeechFeedbackAssessed,
-			Integrity:       SpeechFeedbackAssessed,
-			AccuracyScore:   result.Summary.AccuracyScore,
-			FluencyScore:    result.Summary.FluencyScore,
-			IntegrityScore:  result.Summary.IntegrityScore,
-			Provider:        SpeechFeedbackAcousticProviderName,
-			ProviderSession: strings.TrimSpace(result.SessionID),
-			Category:        string(category),
-			Notice:          SpeechFeedbackAcousticNotice,
-		},
+		Assessment:      assessment,
 		RawResult:       result.RawXML,
 		AvailableFields: result.AvailableFields,
 	}
@@ -145,19 +169,42 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 	return evidence, nil
 }
 
-func validateSpeechFeedbackISESummary(summary xfyun.ScoreSummary) error {
-	if summary.Rejected == nil {
+func validateSpeechFeedbackISESummary(
+	summary xfyun.ScoreSummary,
+	category xfyun.EvaluationCategory,
+) error {
+	if summary.Rejected == nil && category != xfyun.CategoryTopic {
 		return fmt.Errorf(
 			"%w: result is missing is_rejected",
 			ErrSpeechFeedbackAcousticUnavailable,
 		)
 	}
-	if *summary.Rejected {
+	if summary.Rejected != nil && *summary.Rejected {
 		return fmt.Errorf(
 			"%w: speech was rejected (except_info=%s)",
 			ErrSpeechFeedbackAcousticUnavailable,
 			strings.TrimSpace(summary.ExceptionInfo),
 		)
+	}
+	if category == xfyun.CategoryTopic {
+		missing := make([]string, 0, 3)
+		if !validSpeechFeedbackScore(summary.PhoneScore) {
+			missing = append(missing, "phone_score")
+		}
+		if !validSpeechFeedbackSpeakingSpeed(summary.SpeakingSpeed) {
+			missing = append(missing, "speeking_speed")
+		}
+		if !validSpeechFeedbackScore(summary.AccuracyScore) {
+			missing = append(missing, "accuracy_score")
+		}
+		if len(missing) != 0 {
+			return fmt.Errorf(
+				"%w: topic result is missing fields %s",
+				ErrSpeechFeedbackAcousticUnavailable,
+				strings.Join(missing, ","),
+			)
+		}
+		return nil
 	}
 	missing := make([]string, 0, 3)
 	if !validSpeechFeedbackScore(summary.AccuracyScore) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 )
@@ -89,6 +90,95 @@ func TestPostgresSpeechFeedbackRejectsTextTurnWithoutReadableAudio(
 		t.Fatalf("idempotent references = %#v / %#v", first, second)
 	}
 	assertSpeechFeedbackCounts(t, pool, ownerID, 1, 1)
+}
+
+func TestPostgresSpeechFeedbackPersistsTopicAcousticEvidence(t *testing.T) {
+	pool := speechFeedbackDatabase(t)
+	const (
+		ownerID     = "10000000-0000-4000-8000-000000000001"
+		sessionID   = "practice-interview-topic"
+		turnID      = "turn-interview-topic"
+		candidateID = "candidate-interview-topic"
+	)
+	insertConversationSpeechFeedbackFixture(
+		t,
+		pool,
+		ownerID,
+		sessionID,
+		turnID,
+		candidateID,
+		true,
+	)
+	repository := review.NewPostgresRepository(pool)
+	reference, err := repository.EnsureConfirmedConversationTurn(
+		context.Background(),
+		ownerID,
+		sessionID,
+		turnID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration := review.SpeechFeedbackWorkerConfiguration{
+		MaxAttempts:     3,
+		LeaseDuration:   time.Second,
+		RetryDelay:      time.Second,
+		StrategyRef:     review.SpeechFeedbackStrategyRef,
+		PipelineVersion: review.SpeechFeedbackPipelineVersion,
+		PromptVersion:   review.SpeechFeedbackPromptVersion,
+		Provider:        "qianwen",
+		Model:           "qwen-plus",
+	}
+	claim, acquired, err := repository.ClaimSpeechFeedback(
+		context.Background(),
+		configuration,
+	)
+	if err != nil || !acquired {
+		t.Fatalf("claim = %#v, %t, %v", claim, acquired, err)
+	}
+	pronunciation, speed, semantic := 88.5, 156.0, 82.0
+	err = repository.SaveSpeechFeedbackAcousticEvidence(
+		context.Background(),
+		claim,
+		review.SpeechFeedbackAcousticEvidence{
+			Assessment: review.SpeechFeedbackAcousticAssessment{
+				Pronunciation:      review.SpeechFeedbackAssessed,
+				AcousticFluency:    review.SpeechFeedbackAssessed,
+				PronunciationScore: &pronunciation,
+				SpeakingSpeedWPM:   &speed,
+				SemanticScore:      &semantic,
+				Provider: review.
+					SpeechFeedbackAcousticProviderName,
+				ProviderSession: "ise-topic-session-1",
+				Category:        "topic",
+				Notice: review.
+					SpeechFeedbackAcousticNotice,
+			},
+			RawResult:       "<xml_result/>",
+			AvailableFields: []xfyun.ResultField{},
+		},
+	)
+	if err != nil {
+		t.Fatalf("save topic acoustics: %v", err)
+	}
+	feedback, err := repository.GetSpeechFeedback(
+		context.Background(),
+		ownerID,
+		reference.SpeechFeedbackID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment := feedback.AcousticAssessment
+	if assessment.Category != "topic" ||
+		assessment.PronunciationScore == nil ||
+		*assessment.PronunciationScore != pronunciation ||
+		assessment.SpeakingSpeedWPM == nil ||
+		*assessment.SpeakingSpeedWPM != speed ||
+		assessment.SemanticScore == nil ||
+		*assessment.SemanticScore != semantic {
+		t.Fatalf("topic assessment = %#v", assessment)
+	}
 }
 
 func TestPostgresSpeechFeedbackLeaseFencingAndExactItemRead(
@@ -585,6 +675,22 @@ func insertConversationSpeechFeedbackFixture(
 		t.Fatalf("insert Practice Session fixture: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
+		INSERT INTO conversation_questions (
+			owner_user_id,
+			question_id,
+			practice_session_id,
+			content
+		)
+		VALUES (
+			$1,
+			'question-1',
+			$2,
+			'Could you describe what you need from the hotel staff?'
+		)
+	`, ownerID, sessionID); err != nil {
+		t.Fatalf("insert question fixture: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
 		INSERT INTO conversation_transcript_candidates (
 			owner_user_id,
 			candidate_id,
@@ -711,6 +817,15 @@ func speechFeedbackDatabase(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, string(iseEvidenceUp)); err != nil {
 		t.Fatalf("apply SpeechFeedback ISE evidence migration: %v", err)
 	}
+	iseTopicUp, err := migrations.Files.ReadFile(
+		"000045_speech_feedback_ise_topic.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(iseTopicUp)); err != nil {
+		t.Fatalf("apply SpeechFeedback ISE topic migration: %v", err)
+	}
 	return pool
 }
 
@@ -736,6 +851,13 @@ const speechFeedbackModulePrerequisiteSQL = `
 		scenario_type text,
 		scenario_model text,
 		PRIMARY KEY (owner_user_id, session_id)
+	);
+	CREATE TABLE conversation_questions (
+		owner_user_id uuid NOT NULL,
+		question_id text NOT NULL,
+		practice_session_id text NOT NULL,
+		content text NOT NULL,
+		PRIMARY KEY (owner_user_id, question_id)
 	);
 	CREATE TABLE conversation_transcript_candidates (
 		owner_user_id uuid NOT NULL,

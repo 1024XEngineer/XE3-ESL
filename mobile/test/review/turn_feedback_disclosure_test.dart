@@ -113,6 +113,28 @@ void main() {
     expect(find.textContaining('未评估'), findsNothing);
   });
 
+  testWidgets('shows topic pronunciation, speed, and relevance', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        _projection(
+          _feedback(
+            status: SpeechFeedbackStatus.ready,
+            assessed: true,
+            topic: true,
+          ),
+        ),
+      ),
+    );
+    await tester.tap(
+      find.byKey(const Key('speech-feedback-disclosure-toggle')),
+    );
+    await tester.pump();
+
+    expect(find.text('发音准确度 89 · 语速 156 词/分钟 · 题意相关 82'), findsOneWidget);
+  });
+
   testWidgets('separates insufficient evidence and technical failure', (
     tester,
   ) async {
@@ -214,6 +236,7 @@ SpeechFeedback _feedback({
   required SpeechFeedbackStatus status,
   bool insufficient = false,
   bool assessed = false,
+  bool topic = false,
   List<String>? reasonCodes,
   SpeechFeedbackRepracticeMode repracticeMode =
       SpeechFeedbackRepracticeMode.sameQuestion,
@@ -267,19 +290,32 @@ SpeechFeedback _feedback({
           ]
         : const [],
     acousticAssessment: assessed
-        ? const SpeechFeedbackAcousticAssessment(
-            pronunciation: SpeechFeedbackAssessmentStatus.assessed,
-            acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
-            integrity: SpeechFeedbackAssessmentStatus.assessed,
-            accuracyScore: 81.5,
-            fluencyScore: 92.25,
-            integrityScore: 100,
-            provider: 'xfyun-ise',
-            providerSessionId: 'ise-session-1',
-            category: 'read_sentence',
-            notice: '根据本次录音自动评估，仅供练习参考。',
-            reasonCode: '',
-          )
+        ? topic
+              ? const SpeechFeedbackAcousticAssessment(
+                  pronunciation: SpeechFeedbackAssessmentStatus.assessed,
+                  acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
+                  pronunciationScore: 88.5,
+                  speakingSpeedWpm: 156,
+                  semanticScore: 82,
+                  provider: 'xfyun-ise',
+                  providerSessionId: 'ise-topic-session-1',
+                  category: 'topic',
+                  notice: '根据本次录音自动评估，仅供练习参考。',
+                  reasonCode: '',
+                )
+              : const SpeechFeedbackAcousticAssessment(
+                  pronunciation: SpeechFeedbackAssessmentStatus.assessed,
+                  acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
+                  integrity: SpeechFeedbackAssessmentStatus.assessed,
+                  accuracyScore: 81.5,
+                  fluencyScore: 92.25,
+                  integrityScore: 100,
+                  provider: 'xfyun-ise',
+                  providerSessionId: 'ise-session-1',
+                  category: 'read_sentence',
+                  notice: '根据本次录音自动评估，仅供练习参考。',
+                  reasonCode: '',
+                )
         : const SpeechFeedbackAcousticAssessment(
             pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
             acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,

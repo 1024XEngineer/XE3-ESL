@@ -45,6 +45,7 @@ type SpeechFeedbackClaim struct {
 	OwnerUserID        string
 	Source             SpeechFeedbackSource
 	CanonicalText      string
+	PromptText         string
 	EvidenceRefID      string
 	AudioAssetID       string
 	AudioAssetVersion  int64
@@ -65,6 +66,7 @@ func (claim SpeechFeedbackClaim) Valid() bool {
 		validUUID(claim.OwnerUserID) &&
 		claim.Source.valid() &&
 		validSpeechFeedbackText(claim.CanonicalText, 16*1024) &&
+		claim.validAcousticPrompt() &&
 		((claim.Source.SourceKind ==
 			SpeechFeedbackSourceConversationTurn &&
 			validSpeechFeedbackIdentifier(claim.EvidenceRefID)) ||
@@ -78,6 +80,17 @@ func (claim SpeechFeedbackClaim) Valid() bool {
 		!claim.LeaseExpiresAt.IsZero() &&
 		claim.StrategyRef == SpeechFeedbackStrategyRef &&
 		claim.PipelineVersion == SpeechFeedbackPipelineVersion
+}
+
+func (claim SpeechFeedbackClaim) validAcousticPrompt() bool {
+	switch claim.Source.SourceKind {
+	case SpeechFeedbackSourceConversationTurn:
+		return validSpeechFeedbackText(claim.PromptText, 10_000)
+	case SpeechFeedbackSourceAgentVoiceMessage:
+		return claim.PromptText == ""
+	default:
+		return false
+	}
 }
 
 func (claim SpeechFeedbackClaim) hasAcousticSource() bool {
@@ -227,6 +240,7 @@ func (worker *SpeechFeedbackWorker) processClaim(
 					AudioChecksum:     claim.AudioChecksum,
 					AudioObjectKey:    claim.AudioObjectKey,
 					ConfirmedText:     claim.CanonicalText,
+					PromptText:        claim.PromptText,
 				},
 			)
 		if acousticErr == nil {

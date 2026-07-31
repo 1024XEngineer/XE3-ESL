@@ -69,6 +69,7 @@ type storedSpeechFeedback struct {
 	SourceDigest       [sha256.Size]byte
 	DeletionGeneration int64
 	CanonicalText      string
+	PromptText         string
 	EvidenceRefID      string
 	AudioAssetID       string
 	AudioAssetVersion  int64

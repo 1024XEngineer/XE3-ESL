@@ -623,6 +623,7 @@ components:
       oneOf:
         - $ref: '#/components/schemas/SpeechFeedbackAcousticUnavailable'
         - $ref: '#/components/schemas/SpeechFeedbackAcousticAvailable'
+        - $ref: '#/components/schemas/SpeechFeedbackAcousticTopic'
     SpeechFeedbackAcousticUnavailable:
       type: object
       additionalProperties: false
@@ -689,6 +690,52 @@ components:
           enum:
             - read_word
             - read_sentence
+        notice:
+          type: string
+          const: 根据本次录音自动评估，仅供练习参考。
+    SpeechFeedbackAcousticTopic:
+      type: object
+      additionalProperties: false
+      required:
+        - pronunciation
+        - acoustic_fluency
+        - pronunciation_score
+        - speaking_speed_wpm
+        - semantic_score
+        - provider
+        - provider_session_id
+        - category
+        - notice
+      properties:
+        pronunciation:
+          type: string
+          const: ASSESSED
+        acoustic_fluency:
+          type: string
+          const: ASSESSED
+        pronunciation_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        speaking_speed_wpm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1000
+        semantic_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        provider:
+          type: string
+          const: xfyun-ise
+        provider_session_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^\S(?:.*\S)?$'
+        category:
+          type: string
+          const: topic
         notice:
           type: string
           const: 根据本次录音自动评估，仅供练习参考。

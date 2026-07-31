@@ -35,6 +35,7 @@ type ISEConfig struct {
 type EvaluationRequest struct {
 	Audio         []byte
 	ReferenceText string
+	TopicTitle    string
 	Category      EvaluationCategory
 }
 
@@ -43,6 +44,7 @@ type EvaluationCategory string
 const (
 	CategoryReadWord     EvaluationCategory = "read_word"
 	CategoryReadSentence EvaluationCategory = "read_sentence"
+	CategoryTopic        EvaluationCategory = "topic"
 )
 
 type EvaluationResult struct {
@@ -64,6 +66,8 @@ type ScoreSummary struct {
 	FluencyScore   *float64
 	IntegrityScore *float64
 	StandardScore  *float64
+	PhoneScore     *float64
+	SpeakingSpeed  *float64
 	Rejected       *bool
 	ExceptionInfo  string
 }
@@ -171,17 +175,15 @@ func (evaluator *Evaluator) Evaluate(
 	if len(request.Audio) > maxAudioBytes {
 		return EvaluationResult{}, errors.New("iFlytek ISE audio exceeds five minutes")
 	}
-	reference := strings.TrimSpace(request.ReferenceText)
-	if reference == "" {
-		return EvaluationResult{}, errors.New("iFlytek ISE reference text is required")
-	}
-	if len([]byte(reference)) > 10_000 {
-		return EvaluationResult{}, errors.New("iFlytek ISE reference text is too large")
+	evaluationText, err := buildEvaluationText(request)
+	if err != nil {
+		return EvaluationResult{}, err
 	}
 	if request.Category != CategoryReadWord &&
-		request.Category != CategoryReadSentence {
+		request.Category != CategoryReadSentence &&
+		request.Category != CategoryTopic {
 		return EvaluationResult{}, errors.New(
-			"iFlytek ISE category must be read_word or read_sentence",
+			"iFlytek ISE category must be read_word, read_sentence, or topic",
 		)
 	}
 
@@ -217,6 +219,11 @@ func (evaluator *Evaluator) Evaluate(
 			)
 		}
 	}
+	extraAbility := "multi_dimension"
+	if request.Category == CategoryReadWord ||
+		request.Category == CategoryReadSentence {
+		extraAbility += ";pitch;syll_phone_err_msg"
+	}
 	if err := connection.WriteJSON(initialRequest{
 		Common: initialCommon{AppID: evaluator.appID.reveal()},
 		Business: initialBusiness{
@@ -226,14 +233,14 @@ func (evaluator *Evaluator) Evaluate(
 			Command:        "ssb",
 			Language:       "en_vip",
 			Service:        "ise",
-			Text:           "\ufeff[content]\n" + reference,
+			Text:           evaluationText,
 			TextEncoding:   "utf-8",
 			SkipTextUpload: true,
 			ResultEncoding: "utf8",
 			ResultLevel:    "entirety",
 			UnifiedResult:  "1",
 			DetailLevel:    "0",
-			ExtraAbility:   "multi_dimension;pitch;syll_phone_err_msg",
+			ExtraAbility:   extraAbility,
 		},
 		Data: requestData{Status: 0, Data: ""},
 	}); err != nil {
@@ -277,6 +284,48 @@ func (evaluator *Evaluator) Evaluate(
 		result.SessionID = strings.TrimSpace(message.SessionID)
 		return result, nil
 	}
+}
+
+func buildEvaluationText(request EvaluationRequest) (string, error) {
+	reference := strings.TrimSpace(request.ReferenceText)
+	if reference == "" {
+		return "", errors.New("iFlytek ISE reference text is required")
+	}
+	if len([]byte(reference)) > 10_000 {
+		return "", errors.New("iFlytek ISE reference text is too large")
+	}
+	switch request.Category {
+	case CategoryReadWord, CategoryReadSentence:
+		if strings.TrimSpace(request.TopicTitle) != "" {
+			return "", errors.New(
+				"iFlytek ISE topic title is only valid for topic evaluation",
+			)
+		}
+		return "\ufeff[content]\n" + reference, nil
+	case CategoryTopic:
+		title := strings.TrimSpace(request.TopicTitle)
+		if !validTopicPaperLine(title) ||
+			!validTopicPaperLine(reference) {
+			return "", errors.New("iFlytek ISE topic paper is invalid")
+		}
+		return "\ufeff[topic]\n1. " + title + "\n1.1. " + reference, nil
+	default:
+		return "", errors.New(
+			"iFlytek ISE category must be read_word, read_sentence, or topic",
+		)
+	}
+}
+
+func validTopicPaperLine(value string) bool {
+	if value == "" || strings.ContainsAny(value, "\r\n\t[]（）") {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func (evaluator *Evaluator) sendAudio(
@@ -461,6 +510,10 @@ func parseAttributes(
 			target = &summary.IntegrityScore
 		case "standard_score":
 			target = &summary.StandardScore
+		case "phone_score":
+			target = &summary.PhoneScore
+		case "speeking_speed":
+			target = &summary.SpeakingSpeed
 		case "is_rejected":
 			rejected, err := strconv.ParseBool(value)
 			if err != nil {
@@ -513,7 +566,7 @@ type initialBusiness struct {
 	ResultLevel    string `json:"rst"`
 	UnifiedResult  string `json:"ise_unite"`
 	DetailLevel    string `json:"plev"`
-	ExtraAbility   string `json:"extra_ability"`
+	ExtraAbility   string `json:"extra_ability,omitempty"`
 }
 
 type audioRequest struct {

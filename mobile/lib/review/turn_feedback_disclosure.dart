@@ -381,9 +381,20 @@ class _AcousticBoundary extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '发音准确度 ${assessment.accuracyScore!.round()} · '
-                      '流利度 ${assessment.fluencyScore!.round()} · '
-                      '完整度 ${assessment.integrityScore!.round()}',
+                      assessment.category == 'topic'
+                          ? '发音准确度 '
+                                '${assessment.pronunciationScore!.round()} · '
+                                '语速 '
+                                '${assessment.speakingSpeedWpm!.round()} '
+                                '词/分钟 · '
+                                '题意相关 '
+                                '${assessment.semanticScore!.round()}'
+                          : '发音准确度 '
+                                '${assessment.accuracyScore!.round()} · '
+                                '流利度 '
+                                '${assessment.fluencyScore!.round()} · '
+                                '完整度 '
+                                '${assessment.integrityScore!.round()}',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: SpeakUpDesign.space4),

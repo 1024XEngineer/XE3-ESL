@@ -40,6 +40,10 @@ func (r *PostgresRepository) SaveSpeechFeedbackAcousticEvidence(
 		return ErrSpeechFeedbackClaimLost
 	}
 	assessment := evidence.Assessment
+	providerAccuracy := assessment.AccuracyScore
+	if assessment.Category == "topic" {
+		providerAccuracy = assessment.SemanticScore
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO review_speech_feedback_acoustic_evidence (
 			speech_feedback_id,
@@ -50,15 +54,20 @@ func (r *PostgresRepository) SaveSpeechFeedbackAcousticEvidence(
 			accuracy_score,
 			fluency_score,
 			integrity_score,
+			phone_score,
+			speaking_speed_wpm,
 			raw_result,
 			available_fields
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES (
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+		)
 		ON CONFLICT (speech_feedback_id) DO NOTHING
 	`, claim.SpeechFeedbackID, claim.OwnerUserID,
 		assessment.Provider, assessment.ProviderSession,
-		assessment.Category, *assessment.AccuracyScore,
-		*assessment.FluencyScore, *assessment.IntegrityScore,
+		assessment.Category, providerAccuracy,
+		assessment.FluencyScore, assessment.IntegrityScore,
+		assessment.PronunciationScore, assessment.SpeakingSpeedWPM,
 		evidence.RawResult, fields); err != nil {
 		return fmt.Errorf("insert SpeechFeedback acoustic evidence: %w", err)
 	}
@@ -90,11 +99,14 @@ func getSpeechFeedbackAcousticAssessment(
 	speechFeedbackID string,
 ) (SpeechFeedbackAcousticAssessment, bool, error) {
 	var assessment SpeechFeedbackAcousticAssessment
+	var providerAccuracy *float64
 	err := database.QueryRow(ctx, `
 		SELECT
 			accuracy_score,
 			fluency_score,
 			integrity_score,
+			phone_score,
+			speaking_speed_wpm,
 			provider,
 			provider_session_id,
 			category
@@ -102,9 +114,11 @@ func getSpeechFeedbackAcousticAssessment(
 		WHERE owner_user_id = $1
 		  AND speech_feedback_id = $2
 	`, ownerUserID, speechFeedbackID).Scan(
-		&assessment.AccuracyScore,
+		&providerAccuracy,
 		&assessment.FluencyScore,
 		&assessment.IntegrityScore,
+		&assessment.PronunciationScore,
+		&assessment.SpeakingSpeedWPM,
 		&assessment.Provider,
 		&assessment.ProviderSession,
 		&assessment.Category,
@@ -118,7 +132,12 @@ func getSpeechFeedbackAcousticAssessment(
 	}
 	assessment.Pronunciation = SpeechFeedbackAssessed
 	assessment.AcousticFluency = SpeechFeedbackAssessed
-	assessment.Integrity = SpeechFeedbackAssessed
+	if assessment.Category == "topic" {
+		assessment.SemanticScore = providerAccuracy
+	} else {
+		assessment.Integrity = SpeechFeedbackAssessed
+		assessment.AccuracyScore = providerAccuracy
+	}
 	assessment.Notice = SpeechFeedbackAcousticNotice
 	if !assessment.valid() {
 		return SpeechFeedbackAcousticAssessment{}, false,
@@ -135,11 +154,36 @@ func sameSpeechFeedbackAcousticAssessment(
 		left.Pronunciation == right.Pronunciation &&
 		left.AcousticFluency == right.AcousticFluency &&
 		left.Integrity == right.Integrity &&
-		*left.AccuracyScore == *right.AccuracyScore &&
-		*left.FluencyScore == *right.FluencyScore &&
-		*left.IntegrityScore == *right.IntegrityScore &&
+		sameSpeechFeedbackScore(
+			left.AccuracyScore,
+			right.AccuracyScore,
+		) &&
+		sameSpeechFeedbackScore(left.FluencyScore, right.FluencyScore) &&
+		sameSpeechFeedbackScore(
+			left.IntegrityScore,
+			right.IntegrityScore,
+		) &&
+		sameSpeechFeedbackScore(
+			left.PronunciationScore,
+			right.PronunciationScore,
+		) &&
+		sameSpeechFeedbackScore(
+			left.SpeakingSpeedWPM,
+			right.SpeakingSpeedWPM,
+		) &&
+		sameSpeechFeedbackScore(
+			left.SemanticScore,
+			right.SemanticScore,
+		) &&
 		left.Provider == right.Provider &&
 		left.ProviderSession == right.ProviderSession &&
 		left.Category == right.Category &&
 		left.Notice == right.Notice
+}
+
+func sameSpeechFeedbackScore(left *float64, right *float64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }

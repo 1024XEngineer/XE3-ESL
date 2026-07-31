@@ -384,6 +384,45 @@ SpeechFeedbackAcousticAssessment _acousticAssessment(Object? value) {
       reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
     );
   }
+  if (value['category'] == 'topic') {
+    final root = _exactObject(
+      value,
+      required: const {
+        'pronunciation',
+        'acoustic_fluency',
+        'pronunciation_score',
+        'speaking_speed_wpm',
+        'semantic_score',
+        'provider',
+        'provider_session_id',
+        'category',
+        'notice',
+      },
+    );
+    final providerSessionId = root['provider_session_id'];
+    if (root['pronunciation'] != 'ASSESSED' ||
+        root['acoustic_fluency'] != 'ASSESSED' ||
+        root['provider'] != 'xfyun-ise' ||
+        providerSessionId is! String ||
+        providerSessionId.isEmpty ||
+        providerSessionId.length > 256 ||
+        providerSessionId != providerSessionId.trim() ||
+        root['notice'] != '根据本次录音自动评估，仅供练习参考。') {
+      throw const SpeechFeedbackDecodeException();
+    }
+    return SpeechFeedbackAcousticAssessment(
+      pronunciation: SpeechFeedbackAssessmentStatus.assessed,
+      acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
+      reasonCode: '',
+      pronunciationScore: _acousticScore(root['pronunciation_score']),
+      speakingSpeedWpm: _speakingSpeed(root['speaking_speed_wpm']),
+      semanticScore: _acousticScore(root['semantic_score']),
+      provider: root['provider']! as String,
+      providerSessionId: providerSessionId,
+      category: 'topic',
+      notice: root['notice']! as String,
+    );
+  }
   final root = _exactObject(
     value,
     required: const {
@@ -440,6 +479,17 @@ double _acousticScore(Object? value) {
     throw const SpeechFeedbackDecodeException();
   }
   return score;
+}
+
+double _speakingSpeed(Object? value) {
+  if (value is! num) {
+    throw const SpeechFeedbackDecodeException();
+  }
+  final speed = value.toDouble();
+  if (!speed.isFinite || speed <= 0 || speed > 1000) {
+    throw const SpeechFeedbackDecodeException();
+  }
+  return speed;
 }
 
 SpeechFeedbackStableFailure _stableFailure(Object? value) {
