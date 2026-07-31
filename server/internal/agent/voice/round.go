@@ -393,6 +393,16 @@ func (orchestrator *VoiceRoundOrchestrator) completeSession(
 	candidate conversation.TranscriptionCandidate,
 	turn conversation.ConfirmedVoiceTurn,
 ) error {
+	if err := orchestrator.completions.EnsureCompletedSessionEvaluation(
+		ctx,
+		actor,
+		VoiceCompletionEvaluationSource{
+			TurnID:    turn.ID,
+			SessionID: turn.SessionID,
+		},
+	); err != nil {
+		return err
+	}
 	reviewRequired, err := orchestrator.practice.RequiresSessionReview(
 		ctx,
 		actor,
@@ -432,16 +442,6 @@ func (orchestrator *VoiceRoundOrchestrator) completeSession(
 			!validVoiceTurnCheckpoint(turn) {
 			return ErrInvalidContext
 		}
-	}
-	if err := orchestrator.completions.EnsureCompletedSessionEvaluation(
-		ctx,
-		actor,
-		VoiceCompletionEvaluationSource{
-			TurnID:    turn.ID,
-			SessionID: turn.SessionID,
-		},
-	); err != nil {
-		return err
 	}
 	return nil
 }

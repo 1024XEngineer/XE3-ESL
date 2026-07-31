@@ -149,7 +149,7 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
       case SpeechFeedbackStatus.ready:
         if (feedback.scoreabilityStatus ==
             SpeechFeedbackScoreabilityStatus.insufficient) {
-          return _InsufficientDetails(assessment: feedback.acousticAssessment);
+          return _InsufficientDetails(feedback: feedback);
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -325,9 +325,9 @@ class _FeedbackItemDetails extends StatelessWidget {
 }
 
 class _InsufficientDetails extends StatelessWidget {
-  const _InsufficientDetails({required this.assessment});
+  const _InsufficientDetails({required this.feedback});
 
-  final SpeechFeedbackAcousticAssessment assessment;
+  final SpeechFeedback feedback;
 
   @override
   Widget build(BuildContext context) {
@@ -335,16 +335,26 @@ class _InsufficientDetails extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '输入太短：这次已确认文本不足以生成可靠纠错，不会按低分处理。',
+          _insufficientMessage(feedback.reasonCodes),
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
         ),
         const SizedBox(height: SpeakUpDesign.space12),
-        _AcousticBoundary(assessment: assessment),
+        _AcousticBoundary(assessment: feedback.acousticAssessment),
       ],
     );
   }
+}
+
+String _insufficientMessage(List<String> reasonCodes) {
+  if (reasonCodes.contains('TRANSCRIPT_CONFIDENCE_INSUFFICIENT')) {
+    return '本轮转写或英语内容不足，无法生成可靠评分；不会按低分处理。请尽量全程使用英语回答。';
+  }
+  if (reasonCodes.contains('EVIDENCE_INCONSISTENT')) {
+    return '本轮录音与转写证据不一致，无法生成可靠评分；不会按低分处理。';
+  }
+  return '输入太短：这次已确认文本不足以生成可靠纠错，不会按低分处理。';
 }
 
 class _AcousticBoundary extends StatelessWidget {

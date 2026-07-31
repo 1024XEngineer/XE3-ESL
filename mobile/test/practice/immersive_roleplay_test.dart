@@ -9,6 +9,9 @@ import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/practice/immersive_roleplay.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/review/interview_report.dart';
+import 'package:speakup/review/interview_report_client.dart';
+import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_client.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
@@ -305,6 +308,48 @@ void main() {
     expect(find.text('重试'), findsOneWidget);
   });
 
+  testWidgets('opens the asynchronous Interview report after the final turn', (
+    tester,
+  ) async {
+    final controller = await _roleplayController(
+      practiceClient: _AsyncReviewPracticeClient(
+        scenarioType: 'INTERVIEW',
+        scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+      ),
+    );
+    addTearDown(controller.dispose);
+    for (var turn = 0; turn < 3; turn++) {
+      await controller.startRecording();
+      await controller.stopRecording();
+      await controller.confirmTranscript();
+    }
+    expect(controller.recordingState, PracticeRecordingState.completed);
+
+    final reportController = InterviewReportController(
+      client: _PendingInterviewReportClient(),
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+    );
+    addTearDown(reportController.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ImmersiveRoleplayPage(
+          agentController: controller,
+          interviewReportController: reportController,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('interview-report-page')), findsOneWidget);
+    expect(
+      find.byKey(const Key('interview-report-generating')),
+      findsOneWidget,
+    );
+    expect(reportController.practiceSessionId, controller.practiceSessionId);
+  });
+
   testWidgets('prefers the injected avatar replay action over audio playback', (
     tester,
   ) async {
@@ -476,7 +521,11 @@ final class _FailOncePracticeClient implements PracticeClient {
 }
 
 final class _AsyncReviewPracticeClient implements PracticeClient {
+  _AsyncReviewPracticeClient({this.scenarioType, this.scenarioModel});
+
   final _delegate = FakePracticeClient();
+  final String? scenarioType;
+  final String? scenarioModel;
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
@@ -493,11 +542,36 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
     required String threadId,
     required AgentMatter activeMatter,
     required String clientOperationId,
-  }) => _delegate.startPractice(
-    threadId: threadId,
-    activeMatter: activeMatter,
-    clientOperationId: clientOperationId,
-  );
+  }) async {
+    final result = await _delegate.startPractice(
+      threadId: threadId,
+      activeMatter: activeMatter,
+      clientOperationId: clientOperationId,
+    );
+    final snapshot = result.snapshot;
+    if (scenarioType == null && scenarioModel == null) {
+      return result;
+    }
+    return PracticeStartResult(
+      snapshot: PracticeSessionSnapshot(
+        sessionId: snapshot.sessionId,
+        planId: snapshot.planId,
+        threadId: snapshot.threadId,
+        scenarioType: scenarioType,
+        scenarioModel: scenarioModel,
+        sessionVersion: snapshot.sessionVersion,
+        matter: snapshot.matter,
+        completedTurns: snapshot.completedTurns,
+        turnLimit: snapshot.turnLimit,
+        sessionCompleted: snapshot.sessionCompleted,
+        currentQuestion: snapshot.currentQuestion,
+        currentTurn: snapshot.currentTurn,
+        turnHistory: snapshot.turnHistory,
+        review: snapshot.review,
+        formalReview: snapshot.formalReview,
+      ),
+    );
+  }
 
   @override
   Future<TranscriptionCandidate> transcribe(
@@ -528,8 +602,8 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
       completedTurns: confirmation.completedTurns,
       turnLimit: confirmation.turnLimit,
       sessionCompleted: confirmation.sessionCompleted,
-      scenarioType: confirmation.scenarioType,
-      scenarioModel: confirmation.scenarioModel,
+      scenarioType: scenarioType ?? confirmation.scenarioType,
+      scenarioModel: scenarioModel ?? confirmation.scenarioModel,
       sessionVersion: confirmation.sessionVersion,
       nextQuestion: confirmation.nextQuestion,
       review: confirmation.sessionCompleted ? null : confirmation.review,
@@ -558,6 +632,17 @@ final class _PendingSpeechFeedbackClient implements SpeechFeedbackClient {
 
   @override
   Future<SpeechFeedback> getFeedback(String statusUrl) => _pending.future;
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _PendingInterviewReportClient implements InterviewReportClient {
+  final _pending = Completer<InterviewReportEnvelope>();
+
+  @override
+  Future<InterviewReportEnvelope> getReport(String practiceSessionId) =>
+      _pending.future;
 
   @override
   Future<void> clearAccountState() async {}

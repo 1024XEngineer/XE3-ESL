@@ -10,8 +10,11 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/review/interview_report_view.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
+import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recordings.dart';
+import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
@@ -24,6 +27,7 @@ class PracticePage extends StatefulWidget {
     this.onExitRequested,
     this.ieltsMockProgressStore,
     this.preparationController,
+    this.interviewReportController,
     this.ieltsSpeakingReportController,
     this.speechFeedbackController,
     super.key,
@@ -34,6 +38,7 @@ class PracticePage extends StatefulWidget {
   final Future<bool> Function()? onExitRequested;
   final IeltsMockProgressStore? ieltsMockProgressStore;
   final PreparationController? preparationController;
+  final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final SpeechFeedbackController? speechFeedbackController;
 
@@ -58,6 +63,7 @@ class _PracticePageState extends State<PracticePage>
   bool _textAnswerMode = false;
   bool _stickToLatestMessage = true;
   bool _ieltsRouteActive = false;
+  bool _interviewReportRouteScheduled = false;
   int _messageCount = 0;
   String? _lastMessageId;
   PracticeRecordingState? _lastRecordingState;
@@ -78,6 +84,7 @@ class _PracticePageState extends State<PracticePage>
     widget.speechFeedbackController?.addListener(_handleSpeechFeedbackState);
     _captureConversationState();
     _syncRecordingTimer();
+    _scheduleInterviewReportIfNeeded();
     _scheduleReviewExitIfNeeded();
     _scheduleScrollToLatest(animated: false);
   }
@@ -102,6 +109,7 @@ class _PracticePageState extends State<PracticePage>
     _ieltsRouteActive = _controllerIsIeltsSpeaking;
     _captureConversationState();
     _syncSpeechFeedbackSources();
+    _scheduleInterviewReportIfNeeded();
     _scheduleReviewExitIfNeeded();
     _scheduleScrollToLatest(animated: false);
   }
@@ -149,6 +157,7 @@ class _PracticePageState extends State<PracticePage>
     _syncRecordingTimer();
     _syncSpeechFeedbackSources();
     setState(() {});
+    _scheduleInterviewReportIfNeeded();
     if (retryCompleted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
@@ -171,6 +180,45 @@ class _PracticePageState extends State<PracticePage>
       return;
     }
     _scheduleReviewExitIfNeeded();
+  }
+
+  void _scheduleInterviewReportIfNeeded() {
+    final reportController = widget.interviewReportController;
+    final agentController = widget.agentController;
+    final sessionId = agentController?.practiceSessionId;
+    if (_interviewReportRouteScheduled ||
+        reportController == null ||
+        agentController == null ||
+        sessionId == null ||
+        agentController.recordingState != PracticeRecordingState.completed ||
+        !isInterviewPracticeScenario(
+          agentController.practiceScenarioType,
+          agentController.practiceScenarioModel,
+        )) {
+      return;
+    }
+    _interviewReportRouteScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          ModalRoute.of(context)?.isCurrent != true ||
+          widget.agentController?.practiceSessionId != sessionId ||
+          widget.agentController?.recordingState !=
+              PracticeRecordingState.completed) {
+        _interviewReportRouteScheduled = false;
+        return;
+      }
+      unawaited(
+        Navigator.of(context).pushReplacement<void, void>(
+          MaterialPageRoute<void>(
+            builder: (_) => InterviewReportPage(
+              practiceSessionId: sessionId,
+              controller: reportController,
+              title: '${agentController.scene?.title ?? '面试'} · 复盘',
+            ),
+          ),
+        ),
+      );
+    });
   }
 
   void _syncSpeechFeedbackSources() {

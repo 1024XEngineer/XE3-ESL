@@ -396,6 +396,64 @@ func TestPostgresSpeechFeedbackDeletionFencesLateWorker(
 	}
 }
 
+func TestPostgresSpeechFeedbackPublishesInsufficientForMixedLanguageTurn(
+	t *testing.T,
+) {
+	pool := speechFeedbackDatabase(t)
+	const (
+		ownerID     = "10000000-0000-4000-8000-000000000009"
+		sessionID   = "practice-mixed-language-1"
+		turnID      = "turn-mixed-language-1"
+		candidateID = "candidate-mixed-language-1"
+	)
+	ctx := context.Background()
+	insertConversationSpeechFeedbackFixture(
+		t,
+		pool,
+		ownerID,
+		sessionID,
+		turnID,
+		candidateID,
+		true,
+	)
+	if _, err := pool.Exec(ctx, `
+		UPDATE conversation_confirmed_turns
+		SET answer_text = '是不是拿下了？ My name is Nai Long. I like AI.'
+		WHERE owner_user_id = $1
+		  AND turn_id = $2
+	`, ownerID, turnID); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := review.NewPostgresRepository(pool)
+	reference, err := repository.EnsureConfirmedConversationTurn(
+		ctx,
+		ownerID,
+		sessionID,
+		turnID,
+	)
+	if err != nil {
+		t.Fatalf("ensure mixed-language SpeechFeedback: %v", err)
+	}
+	feedback, err := repository.GetSpeechFeedback(
+		ctx,
+		ownerID,
+		reference.SpeechFeedbackID,
+	)
+	if err != nil {
+		t.Fatalf("get mixed-language SpeechFeedback: %v", err)
+	}
+	if feedback.FeedbackStatus != review.SpeechFeedbackReady ||
+		feedback.ScoreabilityStatus == nil ||
+		*feedback.ScoreabilityStatus != review.SpeechFeedbackInsufficient ||
+		len(feedback.ReasonCodes) != 1 ||
+		feedback.ReasonCodes[0] !=
+			review.SpeechFeedbackReasonTranscriptConfidenceInsufficient {
+		t.Fatalf("mixed-language SpeechFeedback = %#v", feedback)
+	}
+	assertSpeechFeedbackCounts(t, pool, ownerID, 1, 1)
+}
+
 func TestPostgresSpeechFeedbackUsesAgentTranscriptIdentityWithoutPracticeIDs(
 	t *testing.T,
 ) {

@@ -1,7 +1,64 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/review/interview_report.dart';
 import 'package:speakup/review/interview_report_controller.dart';
+
+class InterviewReportPage extends StatefulWidget {
+  const InterviewReportPage({
+    required this.practiceSessionId,
+    required this.controller,
+    this.title = '面试复盘报告',
+    super.key,
+  });
+
+  final String practiceSessionId;
+  final InterviewReportController controller;
+  final String title;
+
+  @override
+  State<InterviewReportPage> createState() => _InterviewReportPageState();
+}
+
+class _InterviewReportPageState extends State<InterviewReportPage> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(widget.controller.load(widget.practiceSessionId));
+  }
+
+  @override
+  void didUpdateWidget(covariant InterviewReportPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller &&
+        oldWidget.practiceSessionId == widget.practiceSessionId) {
+      return;
+    }
+    oldWidget.controller.cancel(oldWidget.practiceSessionId);
+    unawaited(widget.controller.load(widget.practiceSessionId));
+  }
+
+  @override
+  void dispose() {
+    widget.controller.cancel(widget.practiceSessionId);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: const Key('interview-report-page'),
+      appBar: AppBar(title: Text(widget.title)),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(SpeakUpDesign.space16),
+          child: InterviewReportPanel(controller: widget.controller),
+        ),
+      ),
+    );
+  }
+}
 
 class InterviewReportPanel extends StatefulWidget {
   const InterviewReportPanel({required this.controller, super.key});

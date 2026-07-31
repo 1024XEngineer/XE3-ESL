@@ -331,8 +331,9 @@ func buildProductionVoiceApplication(
 		interviewShadowCoordinator: interviewShadowCoordinator,
 	}
 	completionAdapter := &voiceCompletionEvaluationAdapter{
-		sessions:    practiceAdapter,
-		ieltsShadow: configuration.IELTSSpeakingShadowCoordinator,
+		sessions:        practiceAdapter,
+		interviewShadow: interviewShadowCoordinator,
+		ieltsShadow:     configuration.IELTSSpeakingShadowCoordinator,
 	}
 	feedbackPorts := make([]agent.VoiceTurnFeedbackPort, 0, 1)
 	if configuration.SpeechFeedbackCoordinator != nil {
@@ -1690,8 +1691,9 @@ type voiceReviewAdapter struct {
 }
 
 type voiceCompletionEvaluationAdapter struct {
-	sessions    agent.VoiceSessionPort
-	ieltsShadow IELTSSpeakingCompletionCoordinator
+	sessions        agent.VoiceSessionPort
+	interviewShadow interviewShadowCompletionCoordinator
+	ieltsShadow     IELTSSpeakingCompletionCoordinator
 }
 
 func (adapter *voiceCompletionEvaluationAdapter) EnsureCompletedSessionEvaluation(
@@ -1715,6 +1717,21 @@ func (adapter *voiceCompletionEvaluationAdapter) EnsureCompletedSessionEvaluatio
 		session.EffectiveTurns < 1 ||
 		session.EffectiveTurns > session.TurnLimit {
 		return agent.ErrInvalidContext
+	}
+	if session.ScenarioType == string(
+		practicepersistence.ScenarioFamilyInterview,
+	) {
+		if adapter.interviewShadow == nil {
+			return errors.New(
+				"bootstrap: Interview completion Evaluation is not configured",
+			)
+		}
+		_, _, err = adapter.interviewShadow.EnsureForCompletedInterview(
+			ctx,
+			actor,
+			source.SessionID,
+		)
+		return err
 	}
 	if session.ScenarioType != string(
 		practicepersistence.ScenarioFamilyExam,

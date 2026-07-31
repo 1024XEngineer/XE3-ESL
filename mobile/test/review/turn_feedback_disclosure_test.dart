@@ -130,6 +130,20 @@ void main() {
     expect(find.textContaining('输入太短'), findsOneWidget);
     expect(find.textContaining('不会按低分处理'), findsOneWidget);
 
+    await tester.pumpWidget(
+      _app(
+        _projection(
+          _feedback(
+            status: SpeechFeedbackStatus.ready,
+            insufficient: true,
+            reasonCodes: const ['TRANSCRIPT_CONFIDENCE_INSUFFICIENT'],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.textContaining('请尽量全程使用英语回答'), findsOneWidget);
+
     var retried = false;
     await tester.pumpWidget(
       _app(
@@ -200,6 +214,7 @@ SpeechFeedback _feedback({
   required SpeechFeedbackStatus status,
   bool insufficient = false,
   bool assessed = false,
+  List<String>? reasonCodes,
   SpeechFeedbackRepracticeMode repracticeMode =
       SpeechFeedbackRepracticeMode.sameQuestion,
 }) {
@@ -224,7 +239,9 @@ SpeechFeedback _feedback({
               ? SpeechFeedbackGateStatus.blocked
               : SpeechFeedbackGateStatus.feedbackOnly
         : null,
-    reasonCodes: insufficient ? const ['INSUFFICIENT_EVIDENCE'] : const [],
+    reasonCodes:
+        reasonCodes ??
+        (insufficient ? const ['INSUFFICIENT_EVIDENCE'] : const []),
     schemaVersion: 'speech-feedback/v1',
     strategyRef: 'qianwen-speech-feedback/v1',
     pipelineVersion: 'speech-feedback-pipeline/v1',

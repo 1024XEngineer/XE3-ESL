@@ -122,11 +122,9 @@ func (r *PostgresRepository) EnsureConfirmedConversationTurn(
 	if err != nil {
 		return SpeechFeedbackReference{}, err
 	}
-	if classifySpeechFeedbackLanguage(snapshot.CanonicalText) !=
-		speechFeedbackLanguageEnglish {
-		return SpeechFeedbackReference{},
-			ErrSpeechFeedbackNotApplicable
-	}
+	englishEvidence := classifySpeechFeedbackLanguage(
+		snapshot.CanonicalText,
+	) == speechFeedbackLanguageEnglish
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO review_speech_feedbacks (
 			owner_user_id,
@@ -138,7 +136,12 @@ func (r *PostgresRepository) EnsureConfirmedConversationTurn(
 			source_digest,
 			schema_version,
 			strategy_ref,
-			pipeline_version
+			pipeline_version,
+			feedback_status,
+			scoreability_status,
+			gate_status,
+			reason_codes,
+			completed_at
 		)
 		VALUES (
 			$1,
@@ -150,13 +153,27 @@ func (r *PostgresRepository) EnsureConfirmedConversationTurn(
 			$6,
 			$7,
 			$8,
-			$9
+			$9,
+			CASE WHEN $10::boolean THEN 'QUEUED' ELSE 'READY' END,
+			CASE
+				WHEN $10::boolean THEN NULL
+				ELSE 'INSUFFICIENT'
+			END,
+			CASE WHEN $10::boolean THEN NULL ELSE 'BLOCKED' END,
+			CASE
+				WHEN $10::boolean THEN ARRAY[]::text[]
+				ELSE ARRAY['TRANSCRIPT_CONFIDENCE_INSUFFICIENT']::text[]
+			END,
+			CASE
+				WHEN $10::boolean THEN NULL
+				ELSE transaction_timestamp()
+			END
 		)
 		ON CONFLICT DO NOTHING
 	`, ownerUserID, practiceSessionID, turnID,
 		snapshot.InputRevision, snapshot.ID, snapshot.SourceDigest[:],
 		SpeechFeedbackSchemaVersion, SpeechFeedbackStrategyRef,
-		SpeechFeedbackPipelineVersion); err != nil {
+		SpeechFeedbackPipelineVersion, englishEvidence); err != nil {
 		return SpeechFeedbackReference{}, fmt.Errorf(
 			"insert Conversation SpeechFeedback: %w",
 			err,
@@ -230,11 +247,9 @@ func (r *PostgresRepository) EnsureConfirmedAgentVoiceMessage(
 	if err != nil {
 		return SpeechFeedbackReference{}, err
 	}
-	if classifySpeechFeedbackLanguage(canonicalText) !=
-		speechFeedbackLanguageEnglish {
-		return SpeechFeedbackReference{},
-			ErrSpeechFeedbackNotApplicable
-	}
+	englishEvidence := classifySpeechFeedbackLanguage(
+		canonicalText,
+	) == speechFeedbackLanguageEnglish
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO review_speech_feedbacks (
 			owner_user_id,
@@ -246,7 +261,12 @@ func (r *PostgresRepository) EnsureConfirmedAgentVoiceMessage(
 			source_digest,
 			schema_version,
 			strategy_ref,
-			pipeline_version
+			pipeline_version,
+			feedback_status,
+			scoreability_status,
+			gate_status,
+			reason_codes,
+			completed_at
 		)
 		VALUES (
 			$1,
@@ -258,14 +278,28 @@ func (r *PostgresRepository) EnsureConfirmedAgentVoiceMessage(
 			$6,
 			$7,
 			$8,
-			$9
+			$9,
+			CASE WHEN $10::boolean THEN 'QUEUED' ELSE 'READY' END,
+			CASE
+				WHEN $10::boolean THEN NULL
+				ELSE 'INSUFFICIENT'
+			END,
+			CASE WHEN $10::boolean THEN NULL ELSE 'BLOCKED' END,
+			CASE
+				WHEN $10::boolean THEN ARRAY[]::text[]
+				ELSE ARRAY['TRANSCRIPT_CONFIDENCE_INSUFFICIENT']::text[]
+			END,
+			CASE
+				WHEN $10::boolean THEN NULL
+				ELSE transaction_timestamp()
+			END
 		)
 		ON CONFLICT DO NOTHING
 	`, ownerUserID, source.ThreadID, source.MessageID,
 		source.TranscriptEvidenceID, source.CandidateVersion,
 		sourceDigest[:], SpeechFeedbackSchemaVersion,
 		SpeechFeedbackStrategyRef,
-		SpeechFeedbackPipelineVersion); err != nil {
+		SpeechFeedbackPipelineVersion, englishEvidence); err != nil {
 		return SpeechFeedbackReference{}, fmt.Errorf(
 			"insert Agent SpeechFeedback: %w",
 			err,

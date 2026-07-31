@@ -5,6 +5,9 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
+import 'package:speakup/features/review/interview_report_view.dart';
+import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
 import 'package:speakup/review/turn_feedback_disclosure.dart';
 
@@ -24,6 +27,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
     this.onBeforeStartRecording,
     this.onBeforeSubmitText,
     this.onReplayQuestion,
+    this.interviewReportController,
     this.speechFeedbackController,
     this.replayLoading = false,
     this.replayPlaying = false,
@@ -38,6 +42,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
   final ImmersiveAsyncAction? onBeforeStartRecording;
   final ImmersiveAsyncAction? onBeforeSubmitText;
   final ImmersiveAsyncAction? onReplayQuestion;
+  final InterviewReportController? interviewReportController;
   final SpeechFeedbackController? speechFeedbackController;
   final bool replayLoading;
   final bool replayPlaying;
@@ -61,6 +66,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   bool _exitInFlight = false;
   bool _exitApproved = false;
   bool _feedbackRebuildScheduled = false;
+  bool _reportRouteScheduled = false;
 
   @override
   void initState() {
@@ -70,6 +76,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     widget.speechFeedbackController?.addListener(_handleFeedbackState);
     _syncSpeechFeedbackSources();
     _syncRecordingTimer();
+    _scheduleInterviewReportIfNeeded();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _conversationScrollController.hasClients) {
         _conversationScrollController.jumpTo(
@@ -100,6 +107,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
       _syncRecordingTimer();
     }
     _syncSpeechFeedbackSources();
+    _scheduleInterviewReportIfNeeded();
   }
 
   @override
@@ -125,6 +133,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     _syncRecordingTimer();
     _syncSpeechFeedbackSources();
     setState(() {});
+    _scheduleInterviewReportIfNeeded();
     if (shouldFollowConversation) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_conversationScrollController.hasClients) {
@@ -224,6 +233,44 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     if (widget.agentController.recordingState != PracticeRecordingState.idle) {
       _textMode = false;
     }
+  }
+
+  void _scheduleInterviewReportIfNeeded() {
+    final reportController = widget.interviewReportController;
+    final agentController = widget.agentController;
+    final sessionId = agentController.practiceSessionId;
+    if (_reportRouteScheduled ||
+        reportController == null ||
+        sessionId == null ||
+        agentController.recordingState != PracticeRecordingState.completed ||
+        !isInterviewPracticeScenario(
+          agentController.practiceScenarioType,
+          agentController.practiceScenarioModel,
+        )) {
+      return;
+    }
+    _reportRouteScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          ModalRoute.of(context)?.isCurrent != true ||
+          widget.agentController.practiceSessionId != sessionId ||
+          widget.agentController.recordingState !=
+              PracticeRecordingState.completed) {
+        _reportRouteScheduled = false;
+        return;
+      }
+      unawaited(
+        Navigator.of(context).pushReplacement<void, void>(
+          MaterialPageRoute<void>(
+            builder: (_) => InterviewReportPage(
+              practiceSessionId: sessionId,
+              controller: reportController,
+              title: '${widget.agentController.scene?.title ?? '面试'} · 复盘',
+            ),
+          ),
+        ),
+      );
+    });
   }
 
   Future<void> _submitText() async {

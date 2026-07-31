@@ -54,6 +54,31 @@ void main() {
     expect(controller.errorMessage, '报告仍在生成，请稍后重试。');
   });
 
+  test(
+    'retries an initial 404 while the completion task is being queued',
+    () async {
+      final ready = decodeInterviewReport(
+        interviewReportContractFixture()['ready'],
+      );
+      final client = _NotFoundThenReadyClient(ready);
+      final controller = InterviewReportController(
+        client: client,
+        pollInterval: Duration.zero,
+        maximumPollAttempts: 2,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load('session_interview_report_001');
+
+      expect(client.calls, 2);
+      expect(
+        controller.envelope?.evaluationStatus,
+        InterviewReportEvaluationStatus.ready,
+      );
+      expect(controller.errorMessage, isNull);
+    },
+  );
+
   test('leaving the detail fences a late response and clears memory', () async {
     final client = _ControlledClient();
     final controller = InterviewReportController(client: client);
@@ -120,6 +145,27 @@ final class _ControlledClient implements InterviewReportClient {
   Future<InterviewReportEnvelope> getReport(String practiceSessionId) {
     started.complete();
     return response.future;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _NotFoundThenReadyClient implements InterviewReportClient {
+  _NotFoundThenReadyClient(this.ready);
+
+  final InterviewReportEnvelope ready;
+  int calls = 0;
+
+  @override
+  Future<InterviewReportEnvelope> getReport(String practiceSessionId) async {
+    calls++;
+    if (calls == 1) {
+      throw const InterviewReportException(
+        kind: InterviewReportFailureKind.notFound,
+      );
+    }
+    return ready;
   }
 
   @override
