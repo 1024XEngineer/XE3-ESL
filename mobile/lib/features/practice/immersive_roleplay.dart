@@ -987,8 +987,8 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
                 label: '正在发送并准备下一轮…',
               ),
               PracticeRecordingState.reviewFailed => _ComposerAction(
-                label: '本轮已完成，暂时无法保存结果。',
-                actionLabel: '重试',
+                label: '本轮录音和转写已保留，复盘结果暂未同步。无需重新录音。',
+                actionLabel: '刷新复盘',
                 onPressed: widget.controller.retryReview,
               ),
               PracticeRecordingState.completed => _ComposerAction(

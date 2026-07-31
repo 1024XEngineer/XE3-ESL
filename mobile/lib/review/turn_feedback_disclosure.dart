@@ -407,7 +407,7 @@ class _AcousticBoundary extends StatelessWidget {
                   ],
                 )
               : Text(
-                  '发音与声学流利度未评估：当前没有可信声学证据。',
+                  '本轮发音与声学流利度未评估，但已保留文字纠错；无需重新录音。',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: SpeakUpDesign.secondary,
                   ),

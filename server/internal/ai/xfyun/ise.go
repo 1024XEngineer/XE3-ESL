@@ -303,7 +303,8 @@ func buildEvaluationText(request EvaluationRequest) (string, error) {
 		}
 		return "\ufeff[content]\n" + reference, nil
 	case CategoryTopic:
-		title := strings.TrimSpace(request.TopicTitle)
+		title := normalizeTopicPaperLine(request.TopicTitle)
+		reference = normalizeTopicPaperLine(reference)
 		if !validTopicPaperLine(title) ||
 			!validTopicPaperLine(reference) {
 			return "", errors.New("iFlytek ISE topic paper is invalid")
@@ -314,6 +315,26 @@ func buildEvaluationText(request EvaluationRequest) (string, error) {
 			"iFlytek ISE category must be read_word, read_sentence, or topic",
 		)
 	}
+}
+
+// ISE topic papers accept a narrow ASCII line format. User-facing questions
+// may contain typographic punctuation, so normalize only the common variants
+// before validation; unknown non-ASCII content remains fail-closed.
+func normalizeTopicPaperLine(value string) string {
+	return strings.NewReplacer(
+		"\u00a0", " ",
+		"\u2018", "'",
+		"\u2019", "'",
+		"\u201a", "'",
+		"\u201b", "'",
+		"\u201c", "\"",
+		"\u201d", "\"",
+		"\u201e", "\"",
+		"\u201f", "\"",
+		"\u2013", "-",
+		"\u2014", "-",
+		"\u2026", "...",
+	).Replace(strings.TrimSpace(value))
 }
 
 func validTopicPaperLine(value string) bool {

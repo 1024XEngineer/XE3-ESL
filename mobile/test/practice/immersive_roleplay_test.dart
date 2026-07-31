@@ -344,7 +344,7 @@ void main() {
       findsNWidgets(3),
     );
     expect(find.text('正在生成评分与纠错…'), findsNWidgets(3));
-    expect(find.text('重试'), findsOneWidget);
+    expect(find.text('刷新复盘'), findsOneWidget);
   });
 
   testWidgets('keeps the final turn visible until report is requested', (

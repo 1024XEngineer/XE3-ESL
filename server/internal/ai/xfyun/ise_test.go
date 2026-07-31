@@ -299,6 +299,43 @@ func TestEvaluatorRejectsInvalidTopicPaperBeforeDial(t *testing.T) {
 	}
 }
 
+func TestEvaluatorNormalizesTypographicPunctuationInTopicPaper(t *testing.T) {
+	connection := &fakeConnection{
+		responses: []responseMessage{{
+			Code:      0,
+			Message:   "success",
+			SessionID: "ise-topic-normalized",
+			Data: &responseData{
+				Status: 2,
+				Data: base64.StdEncoding.EncodeToString(
+					[]byte(testTopicResultXML),
+				),
+			},
+		}},
+	}
+	evaluator := newTestEvaluator(t, connection)
+	evaluator.frameInterval = 0
+
+	if _, err := evaluator.Evaluate(
+		context.Background(),
+		EvaluationRequest{
+			Audio:         []byte{1},
+			ReferenceText: "How would you describe the role you’re applying for?",
+			TopicTitle:    "Interview question",
+			Category:      CategoryTopic,
+		},
+	); err != nil {
+		t.Fatalf("evaluate topic with typographic punctuation: %v", err)
+	}
+	initial := decodeObject(t, connection.writes[0])
+	business := objectValue(t, initial, "business")
+	if business["text"] != "\ufeff[topic]\n"+
+		"1. Interview question\n"+
+		"1.1. How would you describe the role you're applying for?" {
+		t.Fatalf("unexpected normalized topic business: %#v", business)
+	}
+}
+
 func newTestEvaluator(
 	t *testing.T,
 	connection websocketConnection,
