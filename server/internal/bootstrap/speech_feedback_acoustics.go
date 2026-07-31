@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
@@ -48,6 +50,7 @@ func NewSpeechFeedbackAcousticProvider(
 	return review.NewXFYUNSpeechFeedbackAcousticProvider(
 		&speechFeedbackAudioReader{
 			service: service,
+			store:   store,
 			client: &http.Client{
 				Timeout: 30 * time.Second,
 				CheckRedirect: func(
@@ -64,6 +67,7 @@ func NewSpeechFeedbackAcousticProvider(
 
 type speechFeedbackAudioReader struct {
 	service *conversation.AudioAssetService
+	store   objectstore.Store
 	client  *http.Client
 }
 
@@ -71,18 +75,35 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 	ctx context.Context,
 	ownerUserID string,
 	audioAssetID string,
+	audioObjectKey string,
 	expectedChecksum string,
 ) ([]byte, error) {
-	if reader == nil || reader.service == nil || reader.client == nil {
+	if reader == nil || reader.service == nil ||
+		reader.store == nil || reader.client == nil {
 		return nil, review.ErrSpeechFeedbackAcousticUnavailable
 	}
-	playback, err := reader.service.Playback(
-		ctx,
-		conversation.AudioAssetActor{UserID: ownerUserID},
-		audioAssetID,
-	)
-	if err != nil {
-		return nil, err
+	var playback objectstore.SignedGetResult
+	var err error
+	if audioObjectKey == "" {
+		playback, err = reader.service.Playback(
+			ctx,
+			conversation.AudioAssetActor{UserID: ownerUserID},
+			audioAssetID,
+		)
+	} else {
+		playback, err = reader.store.SignedGet(ctx, audioObjectKey)
+	}
+	if err != nil || !playback.ExpiresAt.After(time.Now()) {
+		return nil, review.ErrSpeechFeedbackAcousticUnavailable
+	}
+	playbackURL, err := url.Parse(playback.URL)
+	if err != nil ||
+		!strings.EqualFold(playbackURL.Scheme, "https") ||
+		playbackURL.Host == "" ||
+		playback.ExpiresAt.After(
+			time.Now().Add(conversation.MaxPlaybackURLTTL),
+		) {
+		return nil, review.ErrSpeechFeedbackAcousticUnavailable
 	}
 	request, err := http.NewRequestWithContext(
 		ctx,

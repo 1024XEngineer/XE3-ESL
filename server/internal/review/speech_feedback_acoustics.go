@@ -17,6 +17,7 @@ type SpeechFeedbackAcousticInput struct {
 	AudioAssetID      string
 	AudioAssetVersion int64
 	AudioChecksum     string
+	AudioObjectKey    string
 	ConfirmedText     string
 }
 
@@ -36,6 +37,7 @@ func (evidence SpeechFeedbackAcousticEvidence) valid() bool {
 type SpeechFeedbackAudioReader interface {
 	ReadSpeechFeedbackAudio(
 		context.Context,
+		string,
 		string,
 		string,
 		string,
@@ -93,6 +95,7 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 		ctx,
 		input.OwnerUserID,
 		input.AudioAssetID,
+		input.AudioObjectKey,
 		input.AudioChecksum,
 	)
 	if err != nil {

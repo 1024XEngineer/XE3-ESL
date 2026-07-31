@@ -147,6 +147,21 @@ func TestSpeechFeedbackWorkerPersistsAcousticsBeforeShortTextResult(
 	}
 }
 
+func TestAgentVoiceClaimUsesItsReadableMessageAudio(t *testing.T) {
+	t.Parallel()
+	claim := validSpeechFeedbackClaim()
+	claim.AudioAssetID = "4a579544-0a28-4f8d-84ea-fac3202ce3a3"
+	claim.AudioAssetVersion = claim.Source.CandidateVersion
+	claim.AudioChecksum =
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	claim.AudioObjectKey =
+		"audio/v1/agent/4a579544-0a28-4f8d-84ea-fac3202ce3a3.wav"
+
+	if !claim.hasAcousticSource() {
+		t.Fatal("Agent voice claim should expose readable acoustic evidence")
+	}
+}
+
 type speechFeedbackAudioReaderStub struct {
 	audio []byte
 	err   error
@@ -155,6 +170,7 @@ type speechFeedbackAudioReaderStub struct {
 
 func (reader *speechFeedbackAudioReaderStub) ReadSpeechFeedbackAudio(
 	context.Context,
+	string,
 	string,
 	string,
 	string,

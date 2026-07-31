@@ -73,6 +73,7 @@ type storedSpeechFeedback struct {
 	AudioAssetID       string
 	AudioAssetVersion  int64
 	AudioChecksum      string
+	AudioObjectKey     string
 	AttemptCount       int
 	FencingToken       int64
 	LeaseExpiresAt     *time.Time
@@ -858,9 +859,14 @@ const speechFeedbackSelect = `
 		feedback.completed_at,
 		coalesce(snapshot.transcript_text, evidence.confirmed_text, ''),
 		coalesce(snapshot.evidence_ref_id, ''),
-		coalesce(snapshot.audio_asset_id, ''),
-		coalesce(snapshot.audio_asset_version, 0),
-		coalesce(snapshot.audio_checksum_sha256, '')
+		coalesce(snapshot.audio_asset_id, agent_audio.audio_id::text, ''),
+		coalesce(snapshot.audio_asset_version, evidence.candidate_version, 0),
+		coalesce(
+			snapshot.audio_checksum_sha256,
+			agent_audio.checksum_sha256,
+			''
+		),
+		coalesce(agent_audio.object_key, '')
 	FROM review_speech_feedbacks AS feedback
 	JOIN identity_users AS owner
 	  ON owner.id = feedback.owner_user_id
@@ -872,6 +878,12 @@ const speechFeedbackSelect = `
 	LEFT JOIN agent_voice_transcript_evidence AS evidence
 	  ON evidence.evidence_id = feedback.transcript_evidence_id
 	 AND evidence.owner_user_id = feedback.owner_user_id
+	LEFT JOIN agent_message_audios AS agent_audio
+	  ON agent_audio.owner_user_id = feedback.owner_user_id
+	 AND agent_audio.thread_id = feedback.thread_id
+	 AND agent_audio.message_id = feedback.message_id
+	 AND agent_audio.candidate_id = evidence.candidate_id
+	 AND agent_audio.status = 'readable'
 `
 
 func scanStoredSpeechFeedback(
@@ -932,6 +944,7 @@ func scanStoredSpeechFeedback(
 		&stored.AudioAssetID,
 		&stored.AudioAssetVersion,
 		&stored.AudioChecksum,
+		&stored.AudioObjectKey,
 	)
 	if err != nil {
 		return storedSpeechFeedback{}, err

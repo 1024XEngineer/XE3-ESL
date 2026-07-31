@@ -48,6 +48,7 @@ type SpeechFeedbackClaim struct {
 	AudioAssetID       string
 	AudioAssetVersion  int64
 	AudioChecksum      string
+	AudioObjectKey     string
 	SourceDigest       [sha256.Size]byte
 	DeletionGeneration int64
 	AttemptCount       int
@@ -79,11 +80,22 @@ func (claim SpeechFeedbackClaim) Valid() bool {
 }
 
 func (claim SpeechFeedbackClaim) hasAcousticSource() bool {
-	return claim.Source.SourceKind ==
-		SpeechFeedbackSourceConversationTurn &&
-		validSpeechFeedbackIdentifier(claim.AudioAssetID) &&
-		claim.AudioAssetVersion > 0 &&
-		len(claim.AudioChecksum) == 64
+	if !validSpeechFeedbackIdentifier(claim.AudioAssetID) ||
+		claim.AudioAssetVersion <= 0 ||
+		len(claim.AudioChecksum) != 64 {
+		return false
+	}
+	switch claim.Source.SourceKind {
+	case SpeechFeedbackSourceConversationTurn:
+		return claim.AudioObjectKey == ""
+	case SpeechFeedbackSourceAgentVoiceMessage:
+		return strings.HasPrefix(
+			claim.AudioObjectKey,
+			"audio/v1/agent/",
+		)
+	default:
+		return false
+	}
 }
 
 type SpeechFeedbackSweepResult struct {
@@ -212,6 +224,7 @@ func (worker *SpeechFeedbackWorker) processClaim(
 					AudioAssetID:      claim.AudioAssetID,
 					AudioAssetVersion: claim.AudioAssetVersion,
 					AudioChecksum:     claim.AudioChecksum,
+					AudioObjectKey:    claim.AudioObjectKey,
 					ConfirmedText:     claim.CanonicalText,
 				},
 			)

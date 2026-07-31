@@ -112,6 +112,7 @@ func (r *PostgresRepository) ClaimSpeechFeedback(
 		AudioAssetID:       stored.AudioAssetID,
 		AudioAssetVersion:  stored.AudioAssetVersion,
 		AudioChecksum:      stored.AudioChecksum,
+		AudioObjectKey:     stored.AudioObjectKey,
 		SourceDigest:       stored.SourceDigest,
 		DeletionGeneration: stored.DeletionGeneration,
 		AttemptCount:       stored.AttemptCount,
