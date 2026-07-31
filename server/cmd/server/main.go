@@ -11,6 +11,7 @@ import (
 	"time"
 
 	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
@@ -183,26 +184,6 @@ func run() int {
 		)
 		return 1
 	}
-	speechFeedbackComposition, err :=
-		bootstrap.NewSpeechFeedbackComposition(
-			databasePool.Native(),
-			textGenerator,
-			bootstrap.SpeechFeedbackConfiguration{
-				Provider:      textConfig.Provider,
-				Model:         textConfig.Model,
-				MaxAttempts:   3,
-				LeaseDuration: 30 * time.Second,
-				RetryDelay:    2 * time.Second,
-			},
-		)
-	if err != nil {
-		logger.Error(
-			"speech feedback composition failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-
 	memoryIndexComposition, err := bootstrap.NewMemoryIndexComposition(
 		databasePool.Native(),
 		embedder,
@@ -247,6 +228,68 @@ func run() int {
 			StagedTTL:   24 * time.Hour,
 			UploadLease: 2 * time.Minute,
 		}
+	}
+	var speechFeedbackAcoustics review.SpeechFeedbackAcousticProvider
+	speechFeedbackLease := 30 * time.Second
+	if recordingStore != nil {
+		iseConfig, configurationErr := config.LoadISE()
+		if configurationErr != nil {
+			logger.Error(
+				"iFlytek ISE configuration failed",
+				slog.String("error_kind", "configuration"),
+			)
+			return 1
+		}
+		speechFeedbackLease = iseConfig.Timeout + 30*time.Second
+		iseEvaluator, evaluatorErr := xfyun.NewEvaluator(
+			xfyun.ISEConfig{
+				Endpoint: iseConfig.Endpoint,
+				Timeout:  iseConfig.Timeout,
+			},
+			iseConfig.AppID.Reveal(),
+			iseConfig.APIKey.Reveal(),
+			iseConfig.APISecret.Reveal(),
+		)
+		if evaluatorErr != nil {
+			logger.Error(
+				"iFlytek ISE startup failed",
+				slog.String("error_kind", "dependency"),
+			)
+			return 1
+		}
+		speechFeedbackAcoustics, err =
+			bootstrap.NewSpeechFeedbackAcousticProvider(
+				databasePool.Native(),
+				recordingStore,
+				iseEvaluator,
+			)
+		if err != nil {
+			logger.Error(
+				"SpeechFeedback acoustic provider failed",
+				slog.String("error_kind", "dependency"),
+			)
+			return 1
+		}
+	}
+	speechFeedbackComposition, err :=
+		bootstrap.NewSpeechFeedbackComposition(
+			databasePool.Native(),
+			textGenerator,
+			bootstrap.SpeechFeedbackConfiguration{
+				Provider:      textConfig.Provider,
+				Model:         textConfig.Model,
+				MaxAttempts:   3,
+				LeaseDuration: speechFeedbackLease,
+				RetryDelay:    2 * time.Second,
+				Acoustics:     speechFeedbackAcoustics,
+			},
+		)
+	if err != nil {
+		logger.Error(
+			"speech feedback composition failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
 	}
 
 	applicationComposition, err :=

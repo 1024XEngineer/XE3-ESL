@@ -70,6 +70,9 @@ type storedSpeechFeedback struct {
 	DeletionGeneration int64
 	CanonicalText      string
 	EvidenceRefID      string
+	AudioAssetID       string
+	AudioAssetVersion  int64
+	AudioChecksum      string
 	AttemptCount       int
 	FencingToken       int64
 	LeaseExpiresAt     *time.Time
@@ -117,6 +120,11 @@ func (r *PostgresRepository) EnsureConfirmedConversationTurn(
 	)
 	if err != nil {
 		return SpeechFeedbackReference{}, err
+	}
+	if classifySpeechFeedbackLanguage(snapshot.CanonicalText) !=
+		speechFeedbackLanguageEnglish {
+		return SpeechFeedbackReference{},
+			ErrSpeechFeedbackNotApplicable
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO review_speech_feedbacks (
@@ -220,6 +228,11 @@ func (r *PostgresRepository) EnsureConfirmedAgentVoiceMessage(
 		)
 	if err != nil {
 		return SpeechFeedbackReference{}, err
+	}
+	if classifySpeechFeedbackLanguage(canonicalText) !=
+		speechFeedbackLanguageEnglish {
+		return SpeechFeedbackReference{},
+			ErrSpeechFeedbackNotApplicable
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO review_speech_feedbacks (
@@ -326,6 +339,18 @@ func (r *PostgresRepository) GetSpeechFeedback(
 		return SpeechFeedback{}, err
 	}
 	stored.Feedback.Items = items
+	acoustics, found, err := getSpeechFeedbackAcousticAssessment(
+		ctx,
+		tx,
+		ownerUserID,
+		speechFeedbackID,
+	)
+	if err != nil {
+		return SpeechFeedback{}, err
+	}
+	if found {
+		stored.Feedback.AcousticAssessment = acoustics
+	}
 	if !stored.Feedback.valid(
 		stored.EvidenceRefID,
 		stored.CanonicalText,
@@ -398,6 +423,9 @@ type speechFeedbackTurnSnapshot struct {
 	InputRevision int64
 	EvidenceRefID string
 	CanonicalText string
+	AudioAssetID  string
+	AudioVersion  int64
+	AudioChecksum string
 	SourceDigest  [sha256.Size]byte
 }
 
@@ -503,12 +531,16 @@ func ensureSpeechFeedbackTurnSnapshot(
 			input_revision,
 			evidence_ref_id,
 			transcript_text,
-			source_digest
+			source_digest,
+			audio_asset_id,
+			audio_asset_version,
+			audio_checksum_sha256
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (owner_user_id, turn_id) DO NOTHING
 	`, snapshotID, ownerUserID, practiceSessionID, turnID,
-		evidenceVersion, evidenceRefID, answerText, digest[:]); err != nil {
+		evidenceVersion, evidenceRefID, answerText, digest[:],
+		audioAssetID, audioVersion, audioChecksum); err != nil {
 		return speechFeedbackTurnSnapshot{}, fmt.Errorf(
 			"insert SpeechFeedback Turn snapshot: %w",
 			err,
@@ -522,7 +554,10 @@ func ensureSpeechFeedbackTurnSnapshot(
 			input_revision,
 			evidence_ref_id,
 			transcript_text,
-			source_digest
+			source_digest,
+			audio_asset_id,
+			audio_asset_version,
+			audio_checksum_sha256
 		FROM review_speech_feedback_turn_snapshots
 		WHERE owner_user_id = $1
 		  AND practice_session_id = $2
@@ -533,6 +568,9 @@ func ensureSpeechFeedbackTurnSnapshot(
 		&snapshot.EvidenceRefID,
 		&snapshot.CanonicalText,
 		&persistedDigest,
+		&snapshot.AudioAssetID,
+		&snapshot.AudioVersion,
+		&snapshot.AudioChecksum,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return speechFeedbackTurnSnapshot{},
@@ -553,6 +591,9 @@ func ensureSpeechFeedbackTurnSnapshot(
 		snapshot.InputRevision != evidenceVersion ||
 		snapshot.EvidenceRefID != evidenceRefID ||
 		snapshot.CanonicalText != answerText ||
+		snapshot.AudioAssetID != audioAssetID ||
+		snapshot.AudioVersion != audioVersion ||
+		snapshot.AudioChecksum != audioChecksum ||
 		snapshot.SourceDigest != digest {
 		return speechFeedbackTurnSnapshot{},
 			ErrSpeechFeedbackConflict
@@ -816,7 +857,10 @@ const speechFeedbackSelect = `
 		feedback.updated_at,
 		feedback.completed_at,
 		coalesce(snapshot.transcript_text, evidence.confirmed_text, ''),
-		coalesce(snapshot.evidence_ref_id, '')
+		coalesce(snapshot.evidence_ref_id, ''),
+		coalesce(snapshot.audio_asset_id, ''),
+		coalesce(snapshot.audio_asset_version, 0),
+		coalesce(snapshot.audio_checksum_sha256, '')
 	FROM review_speech_feedbacks AS feedback
 	JOIN identity_users AS owner
 	  ON owner.id = feedback.owner_user_id
@@ -885,6 +929,9 @@ func scanStoredSpeechFeedback(
 		&completedAt,
 		&stored.CanonicalText,
 		&stored.EvidenceRefID,
+		&stored.AudioAssetID,
+		&stored.AudioAssetVersion,
+		&stored.AudioChecksum,
 	)
 	if err != nil {
 		return storedSpeechFeedback{}, err

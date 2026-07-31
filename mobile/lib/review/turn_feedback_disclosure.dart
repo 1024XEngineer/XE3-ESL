@@ -148,13 +148,15 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
       case SpeechFeedbackStatus.ready:
         if (feedback.scoreabilityStatus ==
             SpeechFeedbackScoreabilityStatus.insufficient) {
-          return const _InsufficientDetails();
+          return _InsufficientDetails(assessment: feedback.acousticAssessment);
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '以下仅基于已确认文本，是暂定的表达反馈；不包含发音或声学流利度判断。',
+              feedback.acousticAssessment.isAssessed
+                  ? '表达反馈基于已确认文本，发音表现基于本次录音。'
+                  : '以下仅基于已确认文本，是暂定的表达反馈；不包含发音或声学流利度判断。',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
@@ -168,7 +170,7 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
               ),
             ],
             const SizedBox(height: SpeakUpDesign.space12),
-            const _AcousticBoundary(),
+            _AcousticBoundary(assessment: feedback.acousticAssessment),
           ],
         );
     }
@@ -321,7 +323,9 @@ class _FeedbackItemDetails extends StatelessWidget {
 }
 
 class _InsufficientDetails extends StatelessWidget {
-  const _InsufficientDetails();
+  const _InsufficientDetails({required this.assessment});
+
+  final SpeechFeedbackAcousticAssessment assessment;
 
   @override
   Widget build(BuildContext context) {
@@ -329,39 +333,62 @@ class _InsufficientDetails extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '这次已确认文本不足以生成可靠纠错，不会按低分处理。',
+          '输入太短：这次已确认文本不足以生成可靠纠错，不会按低分处理。',
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
         ),
         const SizedBox(height: SpeakUpDesign.space12),
-        const _AcousticBoundary(),
+        _AcousticBoundary(assessment: assessment),
       ],
     );
   }
 }
 
 class _AcousticBoundary extends StatelessWidget {
-  const _AcousticBoundary();
+  const _AcousticBoundary({required this.assessment});
+
+  final SpeechFeedbackAcousticAssessment assessment;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(
-          Icons.hearing_disabled_rounded,
+        Icon(
+          assessment.isAssessed
+              ? Icons.graphic_eq_rounded
+              : Icons.hearing_disabled_rounded,
           size: 18,
           color: SpeakUpDesign.secondary,
         ),
         const SizedBox(width: SpeakUpDesign.space8),
         Expanded(
-          child: Text(
-            '发音与声学流利度未评估：当前没有可信声学证据。',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
-          ),
+          child: assessment.isAssessed
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '发音准确度 ${assessment.accuracyScore!.round()} · '
+                      '流利度 ${assessment.fluencyScore!.round()} · '
+                      '完整度 ${assessment.integrityScore!.round()}',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: SpeakUpDesign.space4),
+                    Text(
+                      assessment.notice!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: SpeakUpDesign.secondary,
+                      ),
+                    ),
+                  ],
+                )
+              : Text(
+                  '发音与声学流利度未评估：当前没有可信声学证据。',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: SpeakUpDesign.secondary,
+                  ),
+                ),
         ),
       ],
     );

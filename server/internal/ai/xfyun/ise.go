@@ -35,7 +35,15 @@ type ISEConfig struct {
 type EvaluationRequest struct {
 	Audio         []byte
 	ReferenceText string
+	Category      EvaluationCategory
 }
+
+type EvaluationCategory string
+
+const (
+	CategoryReadWord     EvaluationCategory = "read_word"
+	CategoryReadSentence EvaluationCategory = "read_sentence"
+)
 
 type EvaluationResult struct {
 	SessionID       string
@@ -170,6 +178,12 @@ func (evaluator *Evaluator) Evaluate(
 	if len([]byte(reference)) > 10_000 {
 		return EvaluationResult{}, errors.New("iFlytek ISE reference text is too large")
 	}
+	if request.Category != CategoryReadWord &&
+		request.Category != CategoryReadSentence {
+		return EvaluationResult{}, errors.New(
+			"iFlytek ISE category must be read_word or read_sentence",
+		)
+	}
 
 	callContext, cancel := context.WithTimeout(ctx, evaluator.timeout)
 	defer cancel()
@@ -208,7 +222,7 @@ func (evaluator *Evaluator) Evaluate(
 		Business: initialBusiness{
 			AudioEncoding:  "raw",
 			AudioFormat:    "audio/L16;rate=16000",
-			Category:       "read_sentence",
+			Category:       string(request.Category),
 			Command:        "ssb",
 			Language:       "en_vip",
 			Service:        "ise",

@@ -366,20 +366,80 @@ void _validateItemSource({
 }
 
 SpeechFeedbackAcousticAssessment _acousticAssessment(Object? value) {
-  final root = _exactObject(
-    value,
-    required: const {'pronunciation', 'acoustic_fluency', 'reason_code'},
-  );
-  if (root['pronunciation'] != 'NOT_ASSESSED' ||
-      root['acoustic_fluency'] != 'NOT_ASSESSED' ||
-      root['reason_code'] != 'ACOUSTIC_EVIDENCE_UNAVAILABLE') {
+  if (value is! Map<String, Object?>) {
     throw const SpeechFeedbackDecodeException();
   }
-  return const SpeechFeedbackAcousticAssessment(
-    pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
-    acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
-    reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
+  if (value['pronunciation'] == 'NOT_ASSESSED') {
+    final root = _exactObject(
+      value,
+      required: const {'pronunciation', 'acoustic_fluency', 'reason_code'},
+    );
+    if (root['acoustic_fluency'] != 'NOT_ASSESSED' ||
+        root['reason_code'] != 'ACOUSTIC_EVIDENCE_UNAVAILABLE') {
+      throw const SpeechFeedbackDecodeException();
+    }
+    return const SpeechFeedbackAcousticAssessment(
+      pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
+      acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
+      reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
+    );
+  }
+  final root = _exactObject(
+    value,
+    required: const {
+      'pronunciation',
+      'acoustic_fluency',
+      'integrity',
+      'accuracy_score',
+      'fluency_score',
+      'integrity_score',
+      'provider',
+      'provider_session_id',
+      'category',
+      'notice',
+    },
   );
+  final accuracy = _acousticScore(root['accuracy_score']);
+  final fluency = _acousticScore(root['fluency_score']);
+  final integrity = _acousticScore(root['integrity_score']);
+  final providerSessionId = root['provider_session_id'];
+  if (root['pronunciation'] != 'ASSESSED' ||
+      root['acoustic_fluency'] != 'ASSESSED' ||
+      root['integrity'] != 'ASSESSED' ||
+      root['provider'] != 'xfyun-ise' ||
+      providerSessionId is! String ||
+      providerSessionId.isEmpty ||
+      providerSessionId.length > 256 ||
+      providerSessionId != providerSessionId.trim() ||
+      (root['category'] != 'read_word' &&
+          root['category'] != 'read_sentence') ||
+      root['notice'] != '根据本次录音自动评估，仅供练习参考。') {
+    throw const SpeechFeedbackDecodeException();
+  }
+  return SpeechFeedbackAcousticAssessment(
+    pronunciation: SpeechFeedbackAssessmentStatus.assessed,
+    acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
+    integrity: SpeechFeedbackAssessmentStatus.assessed,
+    reasonCode: '',
+    accuracyScore: accuracy,
+    fluencyScore: fluency,
+    integrityScore: integrity,
+    provider: root['provider']! as String,
+    providerSessionId: providerSessionId,
+    category: root['category']! as String,
+    notice: root['notice']! as String,
+  );
+}
+
+double _acousticScore(Object? value) {
+  if (value is! num) {
+    throw const SpeechFeedbackDecodeException();
+  }
+  final score = value.toDouble();
+  if (!score.isFinite || score < 0 || score > 100) {
+    throw const SpeechFeedbackDecodeException();
+  }
+  return score;
 }
 
 SpeechFeedbackStableFailure _stableFailure(Object? value) {

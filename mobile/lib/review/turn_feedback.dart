@@ -13,7 +13,7 @@ enum SpeechFeedbackItemKind {
 
 enum SpeechFeedbackRepracticeMode { none, sameQuestion, sameThread }
 
-enum SpeechFeedbackAssessmentStatus { notAssessed }
+enum SpeechFeedbackAssessmentStatus { notAssessed, assessed }
 
 bool validSpeechFeedbackStatusUrl(String value) {
   if (value.length > 160 || !_speechFeedbackStatusUrlPattern.hasMatch(value)) {
@@ -122,11 +122,32 @@ final class SpeechFeedbackAcousticAssessment {
     required this.pronunciation,
     required this.acousticFluency,
     required this.reasonCode,
+    this.integrity = SpeechFeedbackAssessmentStatus.notAssessed,
+    this.accuracyScore,
+    this.fluencyScore,
+    this.integrityScore,
+    this.provider,
+    this.providerSessionId,
+    this.category,
+    this.notice,
   });
 
   final SpeechFeedbackAssessmentStatus pronunciation;
   final SpeechFeedbackAssessmentStatus acousticFluency;
+  final SpeechFeedbackAssessmentStatus integrity;
   final String reasonCode;
+  final double? accuracyScore;
+  final double? fluencyScore;
+  final double? integrityScore;
+  final String? provider;
+  final String? providerSessionId;
+  final String? category;
+  final String? notice;
+
+  bool get isAssessed =>
+      pronunciation == SpeechFeedbackAssessmentStatus.assessed &&
+      acousticFluency == SpeechFeedbackAssessmentStatus.assessed &&
+      integrity == SpeechFeedbackAssessmentStatus.assessed;
 }
 
 final class SpeechFeedbackStableFailure {

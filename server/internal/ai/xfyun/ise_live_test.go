@@ -46,6 +46,7 @@ func TestISELive(t *testing.T) {
 	result, err := evaluator.Evaluate(context.Background(), xfyun.EvaluationRequest{
 		Audio:         audio,
 		ReferenceText: referenceText,
+		Category:      xfyun.CategoryReadSentence,
 	})
 	if err != nil {
 		t.Fatalf("evaluate live audio: %v", err)

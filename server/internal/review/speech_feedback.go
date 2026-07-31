@@ -15,6 +15,8 @@ const (
 	SpeechFeedbackPromptVersion   = "speech-feedback-prompt/v1"
 
 	SpeechFeedbackAcousticReasonUnavailable = "ACOUSTIC_EVIDENCE_UNAVAILABLE"
+	SpeechFeedbackAcousticProviderName      = "xfyun-ise"
+	SpeechFeedbackAcousticNotice            = "根据本次录音自动评估，仅供练习参考。"
 )
 
 var (
@@ -286,12 +288,23 @@ func (item SpeechFeedbackItem) validFor(
 
 type SpeechFeedbackAssessmentStatus string
 
-const SpeechFeedbackNotAssessed SpeechFeedbackAssessmentStatus = "NOT_ASSESSED"
+const (
+	SpeechFeedbackNotAssessed SpeechFeedbackAssessmentStatus = "NOT_ASSESSED"
+	SpeechFeedbackAssessed    SpeechFeedbackAssessmentStatus = "ASSESSED"
+)
 
 type SpeechFeedbackAcousticAssessment struct {
 	Pronunciation   SpeechFeedbackAssessmentStatus `json:"pronunciation"`
 	AcousticFluency SpeechFeedbackAssessmentStatus `json:"acoustic_fluency"`
-	ReasonCode      string                         `json:"reason_code"`
+	Integrity       SpeechFeedbackAssessmentStatus `json:"integrity,omitempty"`
+	AccuracyScore   *float64                       `json:"accuracy_score,omitempty"`
+	FluencyScore    *float64                       `json:"fluency_score,omitempty"`
+	IntegrityScore  *float64                       `json:"integrity_score,omitempty"`
+	Provider        string                         `json:"provider,omitempty"`
+	ProviderSession string                         `json:"provider_session_id,omitempty"`
+	Category        string                         `json:"category,omitempty"`
+	ReasonCode      string                         `json:"reason_code,omitempty"`
+	Notice          string                         `json:"notice,omitempty"`
 }
 
 func unavailableSpeechFeedbackAcoustics() SpeechFeedbackAcousticAssessment {
@@ -303,10 +316,35 @@ func unavailableSpeechFeedbackAcoustics() SpeechFeedbackAcousticAssessment {
 }
 
 func (assessment SpeechFeedbackAcousticAssessment) valid() bool {
-	return assessment.Pronunciation == SpeechFeedbackNotAssessed &&
+	if assessment.Pronunciation == SpeechFeedbackNotAssessed &&
 		assessment.AcousticFluency == SpeechFeedbackNotAssessed &&
 		assessment.ReasonCode ==
-			SpeechFeedbackAcousticReasonUnavailable
+			SpeechFeedbackAcousticReasonUnavailable {
+		return assessment.Integrity == "" &&
+			assessment.AccuracyScore == nil &&
+			assessment.FluencyScore == nil &&
+			assessment.IntegrityScore == nil &&
+			assessment.Provider == "" &&
+			assessment.ProviderSession == "" &&
+			assessment.Category == "" &&
+			assessment.Notice == ""
+	}
+	return assessment.Pronunciation == SpeechFeedbackAssessed &&
+		assessment.AcousticFluency == SpeechFeedbackAssessed &&
+		assessment.Integrity == SpeechFeedbackAssessed &&
+		validSpeechFeedbackScore(assessment.AccuracyScore) &&
+		validSpeechFeedbackScore(assessment.FluencyScore) &&
+		validSpeechFeedbackScore(assessment.IntegrityScore) &&
+		assessment.Provider == SpeechFeedbackAcousticProviderName &&
+		validSpeechFeedbackIdentifier(assessment.ProviderSession) &&
+		(assessment.Category == "read_word" ||
+			assessment.Category == "read_sentence") &&
+		assessment.ReasonCode == "" &&
+		assessment.Notice == SpeechFeedbackAcousticNotice
+}
+
+func validSpeechFeedbackScore(score *float64) bool {
+	return score != nil && *score >= 0 && *score <= 100
 }
 
 type SpeechFeedback struct {

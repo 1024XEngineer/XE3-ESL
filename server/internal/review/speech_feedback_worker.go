@@ -45,6 +45,9 @@ type SpeechFeedbackClaim struct {
 	Source             SpeechFeedbackSource
 	CanonicalText      string
 	EvidenceRefID      string
+	AudioAssetID       string
+	AudioAssetVersion  int64
+	AudioChecksum      string
 	SourceDigest       [sha256.Size]byte
 	DeletionGeneration int64
 	AttemptCount       int
@@ -75,6 +78,14 @@ func (claim SpeechFeedbackClaim) Valid() bool {
 		claim.PipelineVersion == SpeechFeedbackPipelineVersion
 }
 
+func (claim SpeechFeedbackClaim) hasAcousticSource() bool {
+	return claim.Source.SourceKind ==
+		SpeechFeedbackSourceConversationTurn &&
+		validSpeechFeedbackIdentifier(claim.AudioAssetID) &&
+		claim.AudioAssetVersion > 0 &&
+		len(claim.AudioChecksum) == 64
+}
+
 type SpeechFeedbackSweepResult struct {
 	Claimed      int
 	Completed    int
@@ -84,9 +95,34 @@ type SpeechFeedbackSweepResult struct {
 }
 
 type SpeechFeedbackWorker struct {
-	repository    SpeechFeedbackRepository
-	provider      SpeechFeedbackProvider
-	configuration SpeechFeedbackWorkerConfiguration
+	repository         SpeechFeedbackRepository
+	provider           SpeechFeedbackProvider
+	acousticRepository SpeechFeedbackAcousticRepository
+	acousticProvider   SpeechFeedbackAcousticProvider
+	configuration      SpeechFeedbackWorkerConfiguration
+}
+
+func NewSpeechFeedbackWorkerWithAcoustics(
+	repository SpeechFeedbackRepository,
+	provider SpeechFeedbackProvider,
+	acousticRepository SpeechFeedbackAcousticRepository,
+	acousticProvider SpeechFeedbackAcousticProvider,
+	configuration SpeechFeedbackWorkerConfiguration,
+) (*SpeechFeedbackWorker, error) {
+	worker, err := NewSpeechFeedbackWorker(
+		repository,
+		provider,
+		configuration,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if acousticRepository == nil || acousticProvider == nil {
+		return nil, ErrInvalidSpeechFeedback
+	}
+	worker.acousticRepository = acousticRepository
+	worker.acousticProvider = acousticProvider
+	return worker, nil
 }
 
 func NewSpeechFeedbackWorker(
@@ -166,6 +202,29 @@ func (worker *SpeechFeedbackWorker) processClaim(
 				},
 			)
 		return SpeechFeedbackReady, true, err
+	}
+	if worker.acousticProvider != nil && claim.hasAcousticSource() {
+		evidence, acousticErr :=
+			worker.acousticProvider.EvaluateSpeechFeedbackAcoustics(
+				ctx,
+				SpeechFeedbackAcousticInput{
+					OwnerUserID:       claim.OwnerUserID,
+					AudioAssetID:      claim.AudioAssetID,
+					AudioAssetVersion: claim.AudioAssetVersion,
+					AudioChecksum:     claim.AudioChecksum,
+					ConfirmedText:     claim.CanonicalText,
+				},
+			)
+		if acousticErr == nil {
+			if err := worker.acousticRepository.
+				SaveSpeechFeedbackAcousticEvidence(
+					context.WithoutCancel(ctx),
+					claim,
+					evidence,
+				); err != nil {
+				return "", false, err
+			}
+		}
 	}
 	if !speechFeedbackTextHasEnoughEvidence(claim.CanonicalText) {
 		_, err := worker.repository.

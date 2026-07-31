@@ -164,6 +164,16 @@ type speechFeedbackRepositoryStub struct {
 	completedItems      []SpeechFeedbackDraftItem
 	insufficientReasons []SpeechFeedbackReasonCode
 	failure             *SpeechFeedbackStableFailure
+	acousticEvidence    *SpeechFeedbackAcousticEvidence
+}
+
+func (repository *speechFeedbackRepositoryStub) SaveSpeechFeedbackAcousticEvidence(
+	_ context.Context,
+	_ SpeechFeedbackClaim,
+	evidence SpeechFeedbackAcousticEvidence,
+) error {
+	repository.acousticEvidence = &evidence
+	return nil
 }
 
 func (repository *speechFeedbackRepositoryStub) ClaimSpeechFeedback(

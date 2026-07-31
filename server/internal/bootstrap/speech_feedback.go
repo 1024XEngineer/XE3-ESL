@@ -21,6 +21,7 @@ type SpeechFeedbackConfiguration struct {
 	MaxAttempts   int
 	LeaseDuration time.Duration
 	RetryDelay    time.Duration
+	Acoustics     review.SpeechFeedbackAcousticProvider
 }
 
 type SpeechFeedbackComposition struct {
@@ -51,20 +52,32 @@ func NewSpeechFeedbackComposition(
 	if err != nil {
 		return nil, err
 	}
-	worker, err := review.NewSpeechFeedbackWorker(
-		repository,
-		provider,
-		review.SpeechFeedbackWorkerConfiguration{
-			MaxAttempts:     configuration.MaxAttempts,
-			LeaseDuration:   configuration.LeaseDuration,
-			RetryDelay:      configuration.RetryDelay,
-			StrategyRef:     review.SpeechFeedbackStrategyRef,
-			PipelineVersion: review.SpeechFeedbackPipelineVersion,
-			PromptVersion:   review.SpeechFeedbackPromptVersion,
-			Provider:        configuration.Provider,
-			Model:           configuration.Model,
-		},
-	)
+	workerConfiguration := review.SpeechFeedbackWorkerConfiguration{
+		MaxAttempts:     configuration.MaxAttempts,
+		LeaseDuration:   configuration.LeaseDuration,
+		RetryDelay:      configuration.RetryDelay,
+		StrategyRef:     review.SpeechFeedbackStrategyRef,
+		PipelineVersion: review.SpeechFeedbackPipelineVersion,
+		PromptVersion:   review.SpeechFeedbackPromptVersion,
+		Provider:        configuration.Provider,
+		Model:           configuration.Model,
+	}
+	var worker *review.SpeechFeedbackWorker
+	if configuration.Acoustics == nil {
+		worker, err = review.NewSpeechFeedbackWorker(
+			repository,
+			provider,
+			workerConfiguration,
+		)
+	} else {
+		worker, err = review.NewSpeechFeedbackWorkerWithAcoustics(
+			repository,
+			provider,
+			repository,
+			configuration.Acoustics,
+			workerConfiguration,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}

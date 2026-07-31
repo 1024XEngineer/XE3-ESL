@@ -49,6 +49,7 @@ func TestEvaluatorSendsDocumentedFramesAndParsesFinalResult(t *testing.T) {
 	result, err := evaluator.Evaluate(context.Background(), EvaluationRequest{
 		Audio:         []byte{1, 2, 3},
 		ReferenceText: "Hello.",
+		Category:      CategoryReadSentence,
 	})
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
@@ -115,6 +116,7 @@ func TestEvaluatorReportsProviderFailureWithoutFallback(t *testing.T) {
 	_, err := evaluator.Evaluate(context.Background(), EvaluationRequest{
 		Audio:         []byte{1},
 		ReferenceText: "Hello.",
+		Category:      CategoryReadSentence,
 	})
 	if err == nil ||
 		!strings.Contains(err.Error(), "code=10105") ||
@@ -160,11 +162,50 @@ func TestEvaluatorRejectsInvalidInputBeforeDial(t *testing.T) {
 		{},
 		{Audio: []byte{1}},
 		{ReferenceText: "Hello."},
+		{
+			Audio:         []byte{1},
+			ReferenceText: "Hello.",
+			Category:      "read_chapter",
+		},
 	}
 	for _, request := range tests {
 		if _, err := evaluator.Evaluate(context.Background(), request); err == nil {
 			t.Fatalf("request %#v should fail", request)
 		}
+	}
+}
+
+func TestEvaluatorUsesReadWordCategory(t *testing.T) {
+	connection := &fakeConnection{
+		responses: []responseMessage{{
+			Code:      0,
+			Message:   "success",
+			SessionID: "ise-word",
+			Data: &responseData{
+				Status: 2,
+				Data: base64.StdEncoding.EncodeToString(
+					[]byte(testResultXML),
+				),
+			},
+		}},
+	}
+	evaluator := newTestEvaluator(t, connection)
+	evaluator.frameInterval = 0
+
+	if _, err := evaluator.Evaluate(
+		context.Background(),
+		EvaluationRequest{
+			Audio:         []byte{1},
+			ReferenceText: "Hello",
+			Category:      CategoryReadWord,
+		},
+	); err != nil {
+		t.Fatalf("evaluate word: %v", err)
+	}
+	initial := decodeObject(t, connection.writes[0])
+	business := objectValue(t, initial, "business")
+	if business["category"] != "read_word" {
+		t.Fatalf("category = %v, want read_word", business["category"])
 	}
 }
 

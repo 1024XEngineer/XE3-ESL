@@ -89,6 +89,26 @@ void main() {
     expect(action, findsNothing);
   });
 
+  testWidgets('shows the three trusted acoustic scores and notice', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        _projection(
+          _feedback(status: SpeechFeedbackStatus.ready, assessed: true),
+        ),
+      ),
+    );
+    await tester.tap(
+      find.byKey(const Key('speech-feedback-disclosure-toggle')),
+    );
+    await tester.pump();
+
+    expect(find.text('发音准确度 82 · 流利度 92 · 完整度 100'), findsOneWidget);
+    expect(find.text('根据本次录音自动评估，仅供练习参考。'), findsOneWidget);
+    expect(find.textContaining('未评估'), findsNothing);
+  });
+
   testWidgets('separates insufficient evidence and technical failure', (
     tester,
   ) async {
@@ -103,6 +123,7 @@ void main() {
       find.byKey(const Key('speech-feedback-disclosure-toggle')),
     );
     await tester.pump();
+    expect(find.textContaining('输入太短'), findsOneWidget);
     expect(find.textContaining('不会按低分处理'), findsOneWidget);
 
     var retried = false;
@@ -174,6 +195,7 @@ SpeechFeedback _feedback({
   String statusUrl = '/v1/speech-feedback/feedback_000000000001',
   required SpeechFeedbackStatus status,
   bool insufficient = false,
+  bool assessed = false,
   SpeechFeedbackRepracticeMode repracticeMode =
       SpeechFeedbackRepracticeMode.sameQuestion,
 }) {
@@ -223,11 +245,25 @@ SpeechFeedback _feedback({
             ),
           ]
         : const [],
-    acousticAssessment: const SpeechFeedbackAcousticAssessment(
-      pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
-      acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
-      reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
-    ),
+    acousticAssessment: assessed
+        ? const SpeechFeedbackAcousticAssessment(
+            pronunciation: SpeechFeedbackAssessmentStatus.assessed,
+            acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
+            integrity: SpeechFeedbackAssessmentStatus.assessed,
+            accuracyScore: 81.5,
+            fluencyScore: 92.25,
+            integrityScore: 100,
+            provider: 'xfyun-ise',
+            providerSessionId: 'ise-session-1',
+            category: 'read_sentence',
+            notice: '根据本次录音自动评估，仅供练习参考。',
+            reasonCode: '',
+          )
+        : const SpeechFeedbackAcousticAssessment(
+            pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
+            acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
+            reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
+          ),
     stableFailure: status == SpeechFeedbackStatus.failed
         ? const SpeechFeedbackStableFailure(
             reasonCode: 'INTERNAL_RETRYABLE',
