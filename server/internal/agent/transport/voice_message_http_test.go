@@ -77,6 +77,38 @@ func TestAgentVoiceMessageHTTPVerticalContract(t *testing.T) {
 		t.Fatalf("upload command = %#v", application)
 	}
 
+	streamed := voiceHTTPRequest(
+		t,
+		router,
+		http.MethodPost,
+		"/v1/agent-threads/thread-1/voice-message-candidates/stream",
+		voiceTestWAV(0x56),
+		map[string]string{
+			"Content-Type":    platformmedia.ContentTypeWAV,
+			"Idempotency-Key": "voice-http-stream-1",
+		},
+	)
+	if streamed.Code != http.StatusOK ||
+		!strings.HasPrefix(
+			streamed.Header().Get("Content-Type"),
+			"text/event-stream",
+		) {
+		t.Fatalf("stream status = %d headers = %#v body = %s",
+			streamed.Code,
+			streamed.Header(),
+			streamed.Body,
+		)
+	}
+	streamBody := streamed.Body.String()
+	started := strings.Index(streamBody, "event: transcription.started")
+	updated := strings.Index(streamBody, "event: transcription.updated")
+	ready := strings.Index(streamBody, "event: candidate.ready")
+	if started < 0 || updated <= started || ready <= updated ||
+		!strings.Contains(streamBody, `"transcript":"Provider candidate"`) ||
+		strings.Contains(streamBody, "private-server-key") {
+		t.Fatalf("unsafe or unordered stream = %s", streamBody)
+	}
+
 	for _, test := range []struct {
 		method string
 		path   string
@@ -364,6 +396,20 @@ func (application *voiceMessageHTTPApplication) Upload(
 	application.uploadKey = request.IdempotencyKey
 	application.uploadBytes = len(body)
 	return application.candidate, nil
+}
+
+func (application *voiceMessageHTTPApplication) UploadStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	request UploadVoiceCandidateRequest,
+	observer ai.TranscriptionObserver,
+) (VoiceCandidate, error) {
+	if err := observer.OnTranscriptionUpdate(ctx, ai.TranscriptionUpdate{
+		Transcript: "Provider candidate",
+	}); err != nil {
+		return VoiceCandidate{}, err
+	}
+	return application.Upload(ctx, actor, request)
 }
 
 func (application *voiceMessageHTTPApplication) GetCandidate(

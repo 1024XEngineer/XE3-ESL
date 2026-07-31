@@ -42,6 +42,7 @@ type realtimeASREvent struct {
 func (recognizer *Recognizer) transcribeRealtime(
 	ctx context.Context,
 	request ai.TranscriptionRequest,
+	observer ai.TranscriptionObserver,
 ) (ai.TranscriptionResult, error) {
 	if ctx == nil {
 		return ai.TranscriptionResult{}, ai.NewSpeechError(
@@ -117,7 +118,27 @@ func (recognizer *Recognizer) transcribeRealtime(
 	if err := waitForRealtimeASRStart(connection, taskID); err != nil {
 		return ai.TranscriptionResult{}, err
 	}
+	type readResult struct {
+		transcript string
+		duration   int
+		err        error
+	}
+	readResults := make(chan readResult, 1)
+	go func() {
+		transcript, duration, readErr := collectRealtimeASRResult(
+			callContext,
+			connection,
+			taskID,
+			observer,
+		)
+		readResults <- readResult{
+			transcript: transcript,
+			duration:   duration,
+			err:        readErr,
+		}
+	}()
 	if err := streamRealtimeASRAudio(connection, request.Audio); err != nil {
+		_ = connection.Close()
 		return ai.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
 	}
 	finishTask := map[string]any{
@@ -129,14 +150,22 @@ func (recognizer *Recognizer) transcribeRealtime(
 	if err := connection.WriteJSON(finishTask); err != nil {
 		return ai.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
 	}
-	transcript, duration, err := collectRealtimeASRResult(connection, taskID)
-	if err != nil {
-		return ai.TranscriptionResult{}, err
+	var completed readResult
+	select {
+	case completed = <-readResults:
+	case <-callContext.Done():
+		return ai.TranscriptionResult{}, realtimeASRTransportError(
+			callContext,
+			callContext.Err(),
+		)
+	}
+	if completed.err != nil {
+		return ai.TranscriptionResult{}, completed.err
 	}
 	return ai.TranscriptionResult{
 		ID: taskID, Provider: providerName, Model: recognizer.model,
-		Transcript: transcript,
-		Usage:      ai.SpeechUsage{AudioSeconds: duration},
+		Transcript: completed.transcript,
+		Usage:      ai.SpeechUsage{AudioSeconds: completed.duration},
 	}, nil
 }
 
@@ -182,10 +211,12 @@ func streamRealtimeASRAudio(
 }
 
 func collectRealtimeASRResult(
+	ctx context.Context,
 	connection *websocket.Conn,
 	taskID string,
+	observer ai.TranscriptionObserver,
 ) (string, int, error) {
-	sentences := map[int]string{}
+	accumulator := realtimeTranscriptAccumulator{}
 	duration := 0
 	for {
 		event, err := readRealtimeASREvent(connection, taskID)
@@ -198,33 +229,96 @@ func collectRealtimeASRResult(
 		switch event.Header.Event {
 		case "result-generated":
 			sentence := event.Payload.Output.Sentence
-			if sentence.SentenceEnd && sentence.SentenceID > 0 {
-				sentences[sentence.SentenceID] = strings.TrimSpace(sentence.Text)
-			}
-		case "task-finished":
-			ids := make([]int, 0, len(sentences))
-			for id := range sentences {
-				ids = append(ids, id)
-			}
-			sort.Ints(ids)
-			parts := make([]string, 0, len(ids))
-			for _, id := range ids {
-				if sentences[id] != "" {
-					parts = append(parts, sentences[id])
+			transcript := accumulator.Apply(
+				sentence.Text,
+				sentence.SentenceEnd,
+				sentence.SentenceID,
+			)
+			if transcript != "" && observer != nil {
+				if err := observer.OnTranscriptionUpdate(
+					ctx,
+					ai.TranscriptionUpdate{Transcript: transcript},
+				); err != nil {
+					return "", 0, err
 				}
 			}
-			transcript := strings.TrimSpace(strings.Join(parts, " "))
+		case "task-finished":
+			transcript := accumulator.Transcript()
 			if transcript == "" {
 				return "", 0, invalidSpeechResponse(
 					ai.SpeechOperationTranscription, 0, taskID,
 					"Fun-ASR realtime response has no transcript",
 				)
 			}
+			if observer != nil {
+				if err := observer.OnTranscriptionUpdate(
+					ctx,
+					ai.TranscriptionUpdate{
+						Transcript: transcript,
+						Final:      true,
+					},
+				); err != nil {
+					return "", 0, err
+				}
+			}
 			return transcript, duration, nil
 		case "task-failed":
 			return "", 0, realtimeASRProviderError(event)
 		}
 	}
+}
+
+type realtimeTranscriptAccumulator struct {
+	committedByID map[int]string
+	committed     []string
+	partial       string
+}
+
+func (accumulator *realtimeTranscriptAccumulator) Apply(
+	raw string,
+	final bool,
+	sentenceID int,
+) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return accumulator.Transcript()
+	}
+	if !final {
+		accumulator.partial = text
+		return accumulator.Transcript()
+	}
+	if sentenceID > 0 {
+		if accumulator.committedByID == nil {
+			accumulator.committedByID = make(map[int]string)
+		}
+		accumulator.committedByID[sentenceID] = text
+	} else if len(accumulator.committed) == 0 ||
+		accumulator.committed[len(accumulator.committed)-1] != text {
+		accumulator.committed = append(accumulator.committed, text)
+	}
+	accumulator.partial = ""
+	return accumulator.Transcript()
+}
+
+func (accumulator realtimeTranscriptAccumulator) Transcript() string {
+	parts := make([]string, 0, len(accumulator.committedByID)+
+		len(accumulator.committed)+1)
+	if len(accumulator.committedByID) > 0 {
+		ids := make([]int, 0, len(accumulator.committedByID))
+		for id := range accumulator.committedByID {
+			ids = append(ids, id)
+		}
+		sort.Ints(ids)
+		for _, id := range ids {
+			parts = append(parts, accumulator.committedByID[id])
+		}
+	} else {
+		parts = append(parts, accumulator.committed...)
+	}
+	if accumulator.partial != "" {
+		parts = append(parts, accumulator.partial)
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
 func readRealtimeASREvent(

@@ -66,6 +66,7 @@ final class AgentVoiceController extends ChangeNotifier
   AgentVoiceCandidate? _candidate;
   AgentVoiceRun? _pendingRun;
   String _editedTranscript = '';
+  String _liveTranscript = '';
   String? _errorMessage;
   _VoiceRetry? _retry;
   String? _uploadIdempotencyKey;
@@ -106,6 +107,7 @@ final class AgentVoiceController extends ChangeNotifier
   AgentVoiceLocalRecording? get recording => _recording;
   AgentVoiceCandidate? get candidate => _candidate;
   String get editedTranscript => _editedTranscript;
+  String get liveTranscript => _liveTranscript;
   String? get errorMessage => _errorMessage;
   Duration get recordingElapsed => _recordingElapsed;
   bool get hasActiveWorkflow => _state != AgentVoiceComposerState.idle;
@@ -380,11 +382,33 @@ final class AgentVoiceController extends ChangeNotifier
     required String idempotencyKey,
   }) async {
     try {
-      final candidate = await client.createCandidate(
+      AgentVoiceCandidate? completedCandidate;
+      await for (final event in client.createCandidateStream(
         threadId: fence.threadId,
         recording: recording,
         idempotencyKey: idempotencyKey,
-      );
+      )) {
+        if (!_isWorkflowCurrent(fence)) {
+          if (event case AgentVoiceCandidateCompleted(:final candidate)) {
+            await _deleteCandidateBestEffort(candidate.id);
+          }
+          return;
+        }
+        switch (event) {
+          case AgentVoiceTranscriptUpdated(:final text):
+            _liveTranscript = text;
+            _state = AgentVoiceComposerState.transcribing;
+            notifyListeners();
+          case AgentVoiceCandidateCompleted(:final candidate):
+            completedCandidate = candidate;
+        }
+      }
+      final candidate = completedCandidate;
+      if (candidate == null) {
+        throw StateError(
+          'Voice transcription stream ended without a candidate.',
+        );
+      }
       if (!_isWorkflowCurrent(fence)) {
         await _deleteCandidateBestEffort(candidate.id);
         await _discardRecordingBestEffort(recording);
@@ -428,6 +452,7 @@ final class AgentVoiceController extends ChangeNotifier
       _candidate = candidate;
       if (candidate.isReady) {
         _editedTranscript = candidate.transcript!.text;
+        _liveTranscript = _editedTranscript;
         _state = AgentVoiceComposerState.awaitingConfirmation;
         _retry = null;
         _errorMessage = null;
@@ -1358,6 +1383,7 @@ final class AgentVoiceController extends ChangeNotifier
     _candidate = null;
     _pendingRun = null;
     _editedTranscript = '';
+    _liveTranscript = '';
     _errorMessage = null;
     _retry = null;
     _uploadIdempotencyKey = null;

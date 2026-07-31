@@ -660,6 +660,24 @@ final class FakeAgentClient
   }
 
   @override
+  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+    required String threadId,
+    required AgentVoiceLocalRecording recording,
+    required String idempotencyKey,
+  }) async* {
+    final candidate = await createCandidate(
+      threadId: threadId,
+      recording: recording,
+      idempotencyKey: idempotencyKey,
+    );
+    yield AgentVoiceTranscriptUpdated(
+      text: candidate.transcript!.text,
+      finalResult: true,
+    );
+    yield AgentVoiceCandidateCompleted(candidate);
+  }
+
+  @override
   Future<AgentVoiceCandidate> createCandidate({
     required String threadId,
     required AgentVoiceLocalRecording recording,

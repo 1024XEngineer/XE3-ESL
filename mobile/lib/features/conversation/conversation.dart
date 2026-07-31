@@ -31,6 +31,7 @@ class ConversationPage extends StatefulWidget {
     this.onOpenMenu,
     this.onNavigateBack,
     this.onCreatePlan,
+    this.onBrowseScenes,
     this.onContinuePractice,
     this.onOpenReview,
     this.onMessageAction,
@@ -69,6 +70,7 @@ class ConversationPage extends StatefulWidget {
   final VoidCallback? onOpenMenu;
   final VoidCallback? onNavigateBack;
   final VoidCallback? onCreatePlan;
+  final VoidCallback? onBrowseScenes;
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
   final ValueChanged<AgentMessageAction>? onMessageAction;
@@ -184,6 +186,7 @@ class ConversationPage extends StatefulWidget {
                                   compact:
                                       width < 350 || textScaler.scale(1) > 1.2,
                                   onCreatePlan: onCreatePlan,
+                                  onBrowseScenes: onBrowseScenes,
                                   onContinuePractice: onContinuePractice,
                                   onOpenReview: onOpenReview,
                                 )
@@ -275,9 +278,29 @@ class ConversationPage extends StatefulWidget {
                             ],
                             if (isBusy) ...[
                               const SizedBox(height: 14),
-                              const LinearProgressIndicator(
-                                key: Key('agent-operation-progress'),
-                                minHeight: 2,
+                              Center(
+                                child: Semantics(
+                                  label: 'SpeakUp 正在处理',
+                                  child: const Wrap(
+                                    key: Key('agent-operation-progress'),
+                                    alignment: WrapAlignment.center,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    spacing: 10,
+                                    children: [
+                                      SizedBox.square(
+                                        dimension: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      Text(
+                                        'SpeakUp 正在回复…',
+                                        style: SpeakUpDesign.meta,
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ],
                             if (errorMessage case final message?) ...[
@@ -771,12 +794,14 @@ class _QuickActions extends StatelessWidget {
   const _QuickActions({
     required this.compact,
     required this.onCreatePlan,
+    required this.onBrowseScenes,
     required this.onContinuePractice,
     required this.onOpenReview,
   });
 
   final bool compact;
   final VoidCallback? onCreatePlan;
+  final VoidCallback? onBrowseScenes;
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
 
@@ -803,7 +828,7 @@ class _QuickActions extends StatelessWidget {
         icon: Icons.grid_view_rounded,
         label: '浏览练习场景',
         compact: compact,
-        onPressed: onCreatePlan,
+        onPressed: onBrowseScenes,
       ),
       _QuickActionButton(
         actionKey: const Key('quick-action-recent-review'),
@@ -1468,6 +1493,9 @@ class _AgentComposerState extends State<_AgentComposer> {
                     state: voiceState,
                     message: voiceFailure
                         ? voice?.errorMessage ?? '语音识别失败'
+                        : voiceState == AgentVoiceComposerState.transcribing &&
+                              voice?.liveTranscript.trim().isNotEmpty == true
+                        ? voice!.liveTranscript
                         : _composerVoiceStateLabel(voiceState),
                     canCancel: !voiceSubmissionInFlight,
                     canRetry: voiceFailure && voice?.canRetry == true,

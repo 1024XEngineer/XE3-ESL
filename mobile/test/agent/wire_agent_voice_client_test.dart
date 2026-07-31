@@ -21,7 +21,7 @@ void main() {
     final transport = _ScriptedVoiceTransport([
       _Step(
         method: 'POST',
-        path: '/v1/agent-threads/$_threadId/voice-message-candidates',
+        path: '/v1/agent-threads/$_threadId/voice-message-candidates/stream',
         verify: (request) {
           expect(
             request.headers[HttpHeaders.authorizationHeader],
@@ -31,10 +31,22 @@ void main() {
           expect(request.headers['Idempotency-Key'], 'voice_upload_001');
           expect(request.body, _waveBytes);
         },
-        response: _jsonResponse(
-          HttpStatus.created,
-          _candidateJson(status: 'candidate_ready'),
-        ),
+        response: _sseResponse(<(String, Object?)>[
+          ('transcription.started', <String, Object?>{}),
+          (
+            'transcription.updated',
+            <String, Object?>{
+              'transcript': 'Candidate transcript',
+              'final': false,
+            },
+          ),
+          (
+            'candidate.ready',
+            <String, Object?>{
+              'candidate': _candidateJson(status: 'candidate_ready'),
+            },
+          ),
+        ]),
       ),
     ]);
     final client = _client(transport);
@@ -297,6 +309,23 @@ final class _ScriptedVoiceTransport implements AgentVoiceWireTransport {
 
   @override
   Future<AgentVoiceWireResponse> send(AgentVoiceWireRequest request) async {
+    final step = _takeStep(request);
+    return step.response;
+  }
+
+  @override
+  Future<AgentVoiceWireStreamResponse> openStream(
+    AgentVoiceWireRequest request,
+  ) async {
+    final step = _takeStep(request);
+    return AgentVoiceWireStreamResponse(
+      statusCode: step.response.statusCode,
+      body: Stream<Uint8List>.value(step.response.body),
+      headers: step.response.headers,
+    );
+  }
+
+  _Step _takeStep(AgentVoiceWireRequest request) {
     if (_steps.isEmpty) {
       fail('Unexpected ${request.method} ${request.uri}');
     }
@@ -315,7 +344,7 @@ final class _ScriptedVoiceTransport implements AgentVoiceWireTransport {
         body: request.body == null ? null : Uint8List.fromList(request.body!),
       ),
     );
-    return step.response;
+    return step;
   }
 
   @override
@@ -349,6 +378,23 @@ AgentVoiceWireResponse _jsonResponse(
     statusCode: status,
     body: Uint8List.fromList(utf8.encode(jsonEncode(body))),
     headers: headers,
+  );
+}
+
+AgentVoiceWireResponse _sseResponse(Iterable<(String, Object?)> events) {
+  final body = StringBuffer();
+  for (final (event, data) in events) {
+    body
+      ..writeln('event: $event')
+      ..writeln('data: ${jsonEncode(data)}')
+      ..writeln();
+  }
+  return AgentVoiceWireResponse(
+    statusCode: HttpStatus.ok,
+    body: Uint8List.fromList(utf8.encode(body.toString())),
+    headers: const <String, String>{
+      HttpHeaders.contentTypeHeader: 'text/event-stream; charset=utf-8',
+    },
   );
 }
 

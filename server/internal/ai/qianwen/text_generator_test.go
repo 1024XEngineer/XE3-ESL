@@ -203,6 +203,45 @@ func TestGenerateStreamKeepsToolFragmentsPrivate(t *testing.T) {
 	}
 }
 
+func TestGenerateStreamAllowsVisiblePreambleBeforeToolCall(t *testing.T) {
+	t.Parallel()
+
+	doer := doerFunc(func(*http.Request) (*http.Response, error) {
+		return streamResponse(
+			`data: {"id":"chatcmpl-mixed-stream","model":"qwen3.5-flash","choices":[{"delta":{"role":"assistant","content":"I will create that interview now."}}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-mixed-stream","model":"qwen3.5-flash","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"scenario_create_v1","arguments":"{\"type\":\"interview\"}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-mixed-stream","model":"qwen3.5-flash","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":12,"total_tokens":32}}` + "\n\n" +
+				"data: [DONE]\n\n",
+		), nil
+	})
+	generator := mustGenerator(t, doer, "test-api-key")
+	request := validRequest()
+	request.Tools = []ai.ToolDefinition{{
+		Name: "scenario.create.v1", Description: "Create a scenario.",
+		InputSchema: map[string]any{"type": "object"},
+	}}
+	request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
+	var deltas []string
+	result, err := generator.GenerateStream(
+		context.Background(),
+		request,
+		ai.TextDeltaObserverFunc(func(_ context.Context, delta string) error {
+			deltas = append(deltas, delta)
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("generate mixed stream: %v", err)
+	}
+	if strings.Join(deltas, "") != "I will create that interview now." ||
+		result.Content != "I will create that interview now." ||
+		result.FinishReason != "tool_calls" ||
+		len(result.ToolCalls) != 1 ||
+		result.ToolCalls[0].Name != "scenario.create.v1" {
+		t.Fatalf("mixed stream result = %#v, deltas = %#v", result, deltas)
+	}
+}
+
 func TestGenerateRequestsJSONObjectResponse(t *testing.T) {
 	t.Parallel()
 

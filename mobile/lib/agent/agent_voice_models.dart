@@ -116,6 +116,26 @@ final class AgentVoiceCandidate {
       version >= 1;
 }
 
+sealed class AgentVoiceTranscriptionEvent {
+  const AgentVoiceTranscriptionEvent();
+}
+
+final class AgentVoiceTranscriptUpdated extends AgentVoiceTranscriptionEvent {
+  const AgentVoiceTranscriptUpdated({
+    required this.text,
+    required this.finalResult,
+  });
+
+  final String text;
+  final bool finalResult;
+}
+
+final class AgentVoiceCandidateCompleted extends AgentVoiceTranscriptionEvent {
+  const AgentVoiceCandidateCompleted(this.candidate);
+
+  final AgentVoiceCandidate candidate;
+}
+
 enum AgentVoiceRunStatus { pending, running, completed, failed }
 
 final class AgentVoiceRun {

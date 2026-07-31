@@ -4,6 +4,12 @@ import 'agent_models.dart';
 import 'agent_voice_models.dart';
 
 abstract interface class AgentVoiceClient {
+  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+    required String threadId,
+    required AgentVoiceLocalRecording recording,
+    required String idempotencyKey,
+  });
+
   Future<AgentVoiceCandidate> createCandidate({
     required String threadId,
     required AgentVoiceLocalRecording recording,

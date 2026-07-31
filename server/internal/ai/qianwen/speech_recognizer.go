@@ -97,7 +97,7 @@ func (recognizer *Recognizer) Transcribe(
 	request ai.TranscriptionRequest,
 ) (ai.TranscriptionResult, error) {
 	if recognizer.model == "fun-asr-realtime" {
-		return recognizer.transcribeRealtime(ctx, request)
+		return recognizer.transcribeRealtime(ctx, request, nil)
 	}
 	if ctx == nil {
 		return ai.TranscriptionResult{}, ai.NewSpeechError(
@@ -260,6 +260,17 @@ func (recognizer *Recognizer) Transcribe(
 	return result, nil
 }
 
+func (recognizer *Recognizer) TranscribeStream(
+	ctx context.Context,
+	request ai.TranscriptionRequest,
+	observer ai.TranscriptionObserver,
+) (ai.TranscriptionResult, error) {
+	if recognizer.model != "fun-asr-realtime" || observer == nil {
+		return recognizer.Transcribe(ctx, request)
+	}
+	return recognizer.transcribeRealtime(ctx, request, observer)
+}
+
 type asrRequest struct {
 	Model      string        `json:"model"`
 	Input      asrInput      `json:"input"`
@@ -390,3 +401,4 @@ func invalidSpeechResponse(
 }
 
 var _ ai.SpeechRecognizer = (*Recognizer)(nil)
+var _ ai.StreamingSpeechRecognizer = (*Recognizer)(nil)

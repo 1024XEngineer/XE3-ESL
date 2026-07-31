@@ -867,6 +867,20 @@ final class _ControlledVoiceClient implements AgentVoiceClient {
   final List<String> deletedCandidateIds = <String>[];
 
   @override
+  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+    required String threadId,
+    required AgentVoiceLocalRecording recording,
+    required String idempotencyKey,
+  }) async* {
+    final candidate = await createCandidate(
+      threadId: threadId,
+      recording: recording,
+      idempotencyKey: idempotencyKey,
+    );
+    yield AgentVoiceCandidateCompleted(candidate);
+  }
+
+  @override
   Future<AgentVoiceCandidate> createCandidate({
     required String threadId,
     required AgentVoiceLocalRecording recording,

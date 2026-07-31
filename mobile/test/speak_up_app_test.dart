@@ -662,12 +662,18 @@ void main() {
     },
   );
 
-  testWidgets('Agent actions reuse the existing feature entry points', (
+  testWidgets('Agent actions start planning or open the matching destination', (
     tester,
   ) async {
     await tester.pumpWidget(const SpeakUpApp.preview());
 
     await _tapVisible(tester, 'quick-action-create-plan');
+    expect(find.text('我想创建一场模拟面试，请先帮我梳理面试信息。'), findsOneWidget);
+    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('conversation-create-button')));
+    await tester.pumpAndSettle();
+    await _tapVisible(tester, 'quick-action-browse-scenes');
     expect(find.byKey(const Key('scenes-page')), findsOneWidget);
     expect(
       find.byKey(const Key('practice-availability-message')),

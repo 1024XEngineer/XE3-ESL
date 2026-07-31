@@ -41,8 +41,24 @@ final class AgentVoiceWireResponse {
   final Map<String, String> headers;
 }
 
+final class AgentVoiceWireStreamResponse {
+  const AgentVoiceWireStreamResponse({
+    required this.statusCode,
+    required this.body,
+    this.headers = const <String, String>{},
+  });
+
+  final int statusCode;
+  final Stream<Uint8List> body;
+  final Map<String, String> headers;
+}
+
 abstract interface class AgentVoiceWireTransport {
   Future<AgentVoiceWireResponse> send(AgentVoiceWireRequest request);
+
+  Future<AgentVoiceWireStreamResponse> openStream(
+    AgentVoiceWireRequest request,
+  );
 
   void close({bool force = false});
 }
@@ -81,6 +97,7 @@ final class WireAgentVoiceClient implements AgentVoiceClient {
       apiTransport == null,
       signedAudioTransport == null,
       createTransport,
+      requestTimeout,
       now ?? _utcNow,
     );
   }
@@ -95,6 +112,7 @@ final class WireAgentVoiceClient implements AgentVoiceClient {
     this._ownsApiTransport,
     this._ownsSignedAudioTransport,
     this._transportFactory,
+    this._requestTimeout,
     this._now,
   );
 
@@ -112,6 +130,7 @@ final class WireAgentVoiceClient implements AgentVoiceClient {
   final bool _ownsApiTransport;
   final bool _ownsSignedAudioTransport;
   final AgentVoiceWireTransportFactory _transportFactory;
+  final Duration _requestTimeout;
   final AgentVoiceNow _now;
 
   int _accountGeneration = 0;
@@ -124,7 +143,26 @@ final class WireAgentVoiceClient implements AgentVoiceClient {
     required String threadId,
     required AgentVoiceLocalRecording recording,
     required String idempotencyKey,
-  }) {
+  }) async {
+    AgentVoiceCandidate? completed;
+    await for (final event in createCandidateStream(
+      threadId: threadId,
+      recording: recording,
+      idempotencyKey: idempotencyKey,
+    )) {
+      if (event case AgentVoiceCandidateCompleted(:final candidate)) {
+        completed = candidate;
+      }
+    }
+    return completed ?? (throw _invalidResponse());
+  }
+
+  @override
+  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+    required String threadId,
+    required AgentVoiceLocalRecording recording,
+    required String idempotencyKey,
+  }) async* {
     _requireUuid(threadId);
     _requireClientIdentity(idempotencyKey, minimumLength: 8);
     if (recording.contentType != 'audio/wav' ||
@@ -136,7 +174,18 @@ final class WireAgentVoiceClient implements AgentVoiceClient {
         kind: AgentClientFailureKind.invalidRequest,
       );
     }
-    return _run((generation) async {
+    final cleanup = _cleanupFuture;
+    if (cleanup != null) {
+      await cleanup;
+    }
+    if (_disposed) {
+      throw const AgentClientOperationCancelled();
+    }
+    final generation = _accountGeneration;
+    final completion = Completer<void>();
+    final marker = completion.future;
+    _inFlight.add(marker);
+    try {
       final file = File(recording.path);
       late final Uint8List bytes;
       try {
@@ -160,31 +209,52 @@ final class WireAgentVoiceClient implements AgentVoiceClient {
             kind: AgentClientFailureKind.invalidRequest,
           );
         }
-        final response = await _sendApi(
+        final response = await _openApiStream(
           generation: generation,
           method: 'POST',
           path:
-              '/v1/agent-threads/${Uri.encodeComponent(threadId)}/voice-message-candidates',
-          accept: ContentType.json.mimeType,
+              '/v1/agent-threads/${Uri.encodeComponent(threadId)}/voice-message-candidates/stream',
+          accept: 'text/event-stream',
           contentType: 'audio/wav',
           headers: <String, String>{'Idempotency-Key': idempotencyKey},
           body: bytes,
           maximumResponseBytes: _maximumJsonBytes,
         );
-        try {
-          _requireStatus(response, const <int>{HttpStatus.created});
-          final candidate = _decodeJson(response.body, _decodeCandidateObject);
-          if (candidate.threadId != threadId) {
-            throw _invalidResponse();
-          }
-          return candidate;
-        } finally {
-          _zero(response.body);
+        await for (final event in _decodeTranscriptionEvents(
+          response,
+          expectedThreadId: threadId,
+        )) {
+          _requireGeneration(generation);
+          yield event;
         }
       } finally {
         _zero(bytes);
       }
-    });
+    } on AgentClientException {
+      rethrow;
+    } on AgentClientOperationCancelled {
+      rethrow;
+    } on TimeoutException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    } on SocketException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    } on IOException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    } catch (_) {
+      throw const AgentClientException(kind: AgentClientFailureKind.unexpected);
+    } finally {
+      _inFlight.remove(marker);
+      completion.complete();
+    }
   }
 
   @override
@@ -623,6 +693,252 @@ final class WireAgentVoiceClient implements AgentVoiceClient {
     );
   }
 
+  Future<AgentVoiceWireStreamResponse> _openApiStream({
+    required int generation,
+    required String method,
+    required String path,
+    required String accept,
+    required int maximumResponseBytes,
+    required String contentType,
+    required Map<String, String> headers,
+    required Uint8List body,
+  }) async {
+    _requireGeneration(generation);
+    final credential = _requireCredential();
+    final uri = _baseUri.resolve(path);
+    _trustedOrigin.validateResourceUri(uri);
+    validateNoSessionCredentialInUri(
+      uri,
+      sessionToken: credential.sessionToken,
+    );
+    final response = await _openStream(
+      AgentVoiceWireRequest(
+        method: method,
+        uri: uri,
+        headers: <String, String>{
+          HttpHeaders.acceptHeader: accept,
+          HttpHeaders.authorizationHeader: bearerAuthorizationValue(
+            credential.sessionToken,
+          ),
+          HttpHeaders.cacheControlHeader: 'no-store',
+          HttpHeaders.contentTypeHeader: contentType,
+          ...headers,
+        },
+        maximumResponseBytes: maximumResponseBytes,
+        body: body,
+      ),
+    );
+    _requireGeneration(generation);
+    if (!isSameAuthSessionCredential(_credentialProvider(), credential)) {
+      throw const AgentClientOperationCancelled();
+    }
+    if (response.statusCode != HttpStatus.ok) {
+      final responseBody = await _readStreamBody(
+        response.body,
+        maximumResponseBytes,
+      );
+      final buffered = AgentVoiceWireResponse(
+        statusCode: response.statusCode,
+        body: responseBody,
+        headers: response.headers,
+      );
+      if (response.statusCode == HttpStatus.unauthorized) {
+        unawaited(_invalidateCredential(credential));
+      }
+      try {
+        throw _exceptionFor(buffered);
+      } finally {
+        _zero(responseBody);
+      }
+    }
+    final responseType = _header(
+      response.headers,
+      HttpHeaders.contentTypeHeader,
+    )?.split(';').first.trim().toLowerCase();
+    if (responseType != 'text/event-stream') {
+      throw _invalidResponse();
+    }
+    return response;
+  }
+
+  Future<AgentVoiceWireStreamResponse> _openStream(
+    AgentVoiceWireRequest request,
+  ) async {
+    try {
+      return await _apiTransport.openStream(request);
+    } on AgentClientException {
+      rethrow;
+    } on TimeoutException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    } on SocketException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    } on HttpException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    } on IOException {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      );
+    }
+  }
+
+  Stream<AgentVoiceTranscriptionEvent> _decodeTranscriptionEvents(
+    AgentVoiceWireStreamResponse response, {
+    required String expectedThreadId,
+  }) async* {
+    var responseBytes = 0;
+    var eventName = '';
+    var eventData = '';
+    var started = false;
+    var completed = false;
+    try {
+      final lines = response.body
+          .map((chunk) {
+            responseBytes += chunk.length;
+            if (responseBytes > _maximumJsonBytes) {
+              throw _invalidResponse();
+            }
+            return chunk;
+          })
+          .cast<List<int>>()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+      await for (final line in lines.timeout(_requestTimeout)) {
+        if (line.isEmpty) {
+          if (eventName.isEmpty && eventData.isEmpty) {
+            continue;
+          }
+          if (completed) {
+            throw _invalidResponse();
+          }
+          final decoded = _decodeTranscriptionEvent(
+            eventName,
+            eventData,
+            expectedThreadId: expectedThreadId,
+          );
+          if (eventName == 'transcription.started') {
+            if (started || decoded != null) {
+              throw _invalidResponse();
+            }
+            started = true;
+          } else {
+            if (!started || decoded == null) {
+              throw _invalidResponse();
+            }
+            if (decoded is AgentVoiceCandidateCompleted) {
+              completed = true;
+            }
+            yield decoded;
+          }
+          eventName = '';
+          eventData = '';
+          continue;
+        }
+        if (line.startsWith(':')) {
+          continue;
+        }
+        if (line.startsWith('event: ')) {
+          if (eventName.isNotEmpty) {
+            throw _invalidResponse();
+          }
+          eventName = line.substring(7);
+          continue;
+        }
+        if (line.startsWith('data: ')) {
+          if (eventData.isNotEmpty) {
+            throw _invalidResponse();
+          }
+          eventData = line.substring(6);
+          continue;
+        }
+        throw _invalidResponse();
+      }
+    } on _InvalidVoiceResponse {
+      throw _invalidResponse();
+    }
+    if (!started ||
+        !completed ||
+        eventName.isNotEmpty ||
+        eventData.isNotEmpty) {
+      throw _invalidResponse();
+    }
+  }
+
+  AgentVoiceTranscriptionEvent? _decodeTranscriptionEvent(
+    String event,
+    String data, {
+    required String expectedThreadId,
+  }) {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(data);
+    } catch (_) {
+      throw const _InvalidVoiceResponse();
+    }
+    switch (event) {
+      case 'transcription.started':
+        _strictObject(
+          decoded,
+          allowed: const <String>{},
+          required: const <String>{},
+        );
+        return null;
+      case 'transcription.updated':
+        final update = _strictObject(
+          decoded,
+          allowed: const <String>{'transcript', 'final'},
+          required: const <String>{'transcript', 'final'},
+        );
+        return AgentVoiceTranscriptUpdated(
+          text: _strictContent(update['transcript']),
+          finalResult: _strictBool(update['final']),
+        );
+      case 'candidate.ready':
+      case 'candidate.failed':
+        final envelope = _strictObject(
+          decoded,
+          allowed: const <String>{'candidate', 'kind', 'retryable'},
+          required: event == 'candidate.ready'
+              ? const <String>{'candidate'}
+              : const <String>{},
+        );
+        if (envelope['candidate'] case final candidateValue?) {
+          if (envelope.length != 1) {
+            throw const _InvalidVoiceResponse();
+          }
+          final candidate = _decodeCandidateObject(candidateValue);
+          if (candidate.threadId != expectedThreadId ||
+              (event == 'candidate.ready' && !candidate.isReady) ||
+              (event == 'candidate.failed' &&
+                  candidate.status != AgentVoiceCandidateStatus.failed)) {
+            throw const _InvalidVoiceResponse();
+          }
+          return AgentVoiceCandidateCompleted(candidate);
+        }
+        _requireOnly(
+          envelope,
+          allowed: const <String>{'kind', 'retryable'},
+          required: const <String>{'kind', 'retryable'},
+        );
+        throw AgentClientException(
+          kind: AgentClientFailureKind.server,
+          errorCode: _strictString(envelope['kind'], min: 1, max: 64),
+          retryable: _strictBool(envelope['retryable']),
+        );
+      default:
+        throw const _InvalidVoiceResponse();
+    }
+  }
+
   Future<AgentVoiceWireResponse> _sendApiWithCredential({
     required int generation,
     required AuthSessionCredential credential,
@@ -900,9 +1216,62 @@ final class IoAgentVoiceWireTransport implements AgentVoiceWireTransport {
   }
 
   @override
+  Future<AgentVoiceWireStreamResponse> openStream(
+    AgentVoiceWireRequest request,
+  ) async {
+    HttpClientRequest? nativeRequest;
+    try {
+      nativeRequest = await _client
+          .openUrl(request.method, request.uri)
+          .timeout(_requestTimeout);
+      nativeRequest.followRedirects = false;
+      request.headers.forEach(nativeRequest.headers.set);
+      if (request.body case final body?) {
+        nativeRequest.contentLength = body.length;
+        nativeRequest.add(body);
+      }
+      final response = await nativeRequest.close().timeout(
+        _requestTimeout,
+        onTimeout: () {
+          nativeRequest?.abort();
+          throw TimeoutException('Agent voice stream timed out.');
+        },
+      );
+      final headers = <String, String>{};
+      response.headers.forEach((name, values) {
+        headers[name.toLowerCase()] = values.join(',');
+      });
+      return AgentVoiceWireStreamResponse(
+        statusCode: response.statusCode,
+        body: response.map(Uint8List.fromList),
+        headers: headers,
+      );
+    } on TimeoutException {
+      nativeRequest?.abort();
+      rethrow;
+    }
+  }
+
+  @override
   void close({bool force = false}) {
     _client.close(force: force);
   }
+}
+
+Future<Uint8List> _readStreamBody(
+  Stream<Uint8List> stream,
+  int maximumBytes,
+) async {
+  final builder = BytesBuilder(copy: false);
+  var length = 0;
+  await for (final chunk in stream) {
+    length += chunk.length;
+    if (length > maximumBytes) {
+      throw _invalidResponse();
+    }
+    builder.add(chunk);
+  }
+  return builder.takeBytes();
 }
 
 AgentVoiceCandidate _decodeCandidateObject(Object? value) {

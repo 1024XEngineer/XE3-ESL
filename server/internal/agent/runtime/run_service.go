@@ -740,6 +740,7 @@ func (service *RunService) generateObserved(
 			result.Provider != service.configuration.Provider ||
 			result.Model != service.configuration.Model ||
 			result.Usage.OutputTokens > service.configuration.MaxOutputTokens {
+			service.logInvalidModelResult(run, result)
 			return result, nil
 		}
 		if len(result.ToolCalls) == 0 {
@@ -1249,6 +1250,40 @@ func (service *RunService) logRunFailed(
 		"failure_category", kind,
 		"retryable", retryable,
 		"duration_ms", durationSince(startedAt).Milliseconds(),
+	)
+}
+
+func (service *RunService) logInvalidModelResult(
+	run Run,
+	result ai.TextResult,
+) {
+	if service.logger == nil {
+		return
+	}
+	toolCallsValid := true
+	for _, call := range result.ToolCalls {
+		if ai.ValidateToolCall(call) != nil {
+			toolCallsValid = false
+			break
+		}
+	}
+	service.logger.Error(
+		"agent.loop.invalid_model_result",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"id_valid", core.ValidModelID(result.ID),
+		"provider", result.Provider,
+		"provider_matches", result.Provider == service.configuration.Provider,
+		"model", result.Model,
+		"model_matches", result.Model == service.configuration.Model,
+		"finish_reason", result.FinishReason,
+		"content_length", utf8.RuneCountInString(result.Content),
+		"tool_call_count", len(result.ToolCalls),
+		"tool_calls_valid", toolCallsValid,
+		"input_tokens", result.Usage.InputTokens,
+		"output_tokens", result.Usage.OutputTokens,
+		"total_tokens", result.Usage.TotalTokens,
+		"output_token_limit", service.configuration.MaxOutputTokens,
 	)
 }
 

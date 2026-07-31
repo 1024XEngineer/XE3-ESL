@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
@@ -70,6 +71,7 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 			return
 		}
 		var received bytes.Buffer
+		partialSent := false
 		for {
 			messageType, payload, readErr := connection.ReadMessage()
 			if readErr != nil {
@@ -78,6 +80,23 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 			}
 			if messageType == websocket.BinaryMessage {
 				received.Write(payload)
+				if !partialSent {
+					partialSent = true
+					if err := connection.WriteJSON(map[string]any{
+						"header": map[string]any{
+							"task_id": run.Header.TaskID,
+							"event":   "result-generated",
+						},
+						"payload": map[string]any{
+							"output": map[string]any{"sentence": map[string]any{
+								"text": "I practice", "sentence_end": false,
+							}},
+						},
+					}); err != nil {
+						t.Errorf("write intermediate result: %v", err)
+						return
+					}
+				}
 				continue
 			}
 			var finish struct {
@@ -129,9 +148,11 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 	}), apiKey)
 	recognizer.model = "fun-asr-realtime"
 	recognizer.wsEndpoint = "ws" + strings.TrimPrefix(server.URL, "http")
-	result, err := recognizer.Transcribe(
+	observer := &recordingTranscriptionObserver{}
+	result, err := recognizer.TranscribeStream(
 		context.Background(),
 		ai.TranscriptionRequest{Audio: &asrTestAudio{data: audio}},
+		observer,
 	)
 	if err != nil {
 		t.Fatalf("transcribe realtime: %v", err)
@@ -141,6 +162,33 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 		result.Usage.AudioSeconds != 4 {
 		t.Fatalf("result = %#v", result)
 	}
+	updates := observer.Updates()
+	if len(updates) < 2 || updates[0].Transcript != "I practice" ||
+		!updates[len(updates)-1].Final ||
+		updates[len(updates)-1].Transcript != result.Transcript {
+		t.Fatalf("stream updates = %#v", updates)
+	}
+}
+
+type recordingTranscriptionObserver struct {
+	mutex   sync.Mutex
+	updates []ai.TranscriptionUpdate
+}
+
+func (observer *recordingTranscriptionObserver) OnTranscriptionUpdate(
+	_ context.Context,
+	update ai.TranscriptionUpdate,
+) error {
+	observer.mutex.Lock()
+	defer observer.mutex.Unlock()
+	observer.updates = append(observer.updates, update)
+	return nil
+}
+
+func (observer *recordingTranscriptionObserver) Updates() []ai.TranscriptionUpdate {
+	observer.mutex.Lock()
+	defer observer.mutex.Unlock()
+	return append([]ai.TranscriptionUpdate(nil), observer.updates...)
 }
 
 func TestRealtimeEndpointDerivesFromDashScopeHTTPBase(t *testing.T) {
