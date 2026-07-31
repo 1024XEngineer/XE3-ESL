@@ -3,8 +3,10 @@ package voice
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -146,11 +148,12 @@ type VoiceTurnFeedbackPort interface {
 // reaches into a module Repository and relies on stable Turn and Session IDs
 // for idempotent recovery after any completed step.
 type VoiceRoundOrchestrator struct {
-	conversations VoiceConversationPort
-	practice      VoicePracticePort
-	reviews       VoiceReviewPort
-	completions   VoiceCompletionEvaluationPort
-	feedback      VoiceTurnFeedbackPort
+	conversations   VoiceConversationPort
+	practice        VoicePracticePort
+	reviews         VoiceReviewPort
+	completions     VoiceCompletionEvaluationPort
+	feedback        VoiceTurnFeedbackPort
+	completionTasks sync.WaitGroup
 }
 
 func NewVoiceRoundOrchestrator(
@@ -228,6 +231,14 @@ func (orchestrator *VoiceRoundOrchestrator) Confirm(
 	if err != nil {
 		return conversation.ConfirmedVoiceTurn{}, err
 	}
+	return orchestrator.attachTurnFeedback(ctx, actor, turn)
+}
+
+func (orchestrator *VoiceRoundOrchestrator) attachTurnFeedback(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	turn conversation.ConfirmedVoiceTurn,
+) (conversation.ConfirmedVoiceTurn, error) {
 	if orchestrator.feedback == nil {
 		return turn, nil
 	}
@@ -342,13 +353,53 @@ func (orchestrator *VoiceRoundOrchestrator) finishTurn(
 	if !turn.SessionCompleted {
 		return turn, nil
 	}
+	orchestrator.startSessionCompletion(ctx, actor, candidate, turn)
+	return turn, nil
+}
+
+func (orchestrator *VoiceRoundOrchestrator) startSessionCompletion(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	candidate conversation.TranscriptionCandidate,
+	turn conversation.ConfirmedVoiceTurn,
+) {
+	completionContext := context.WithoutCancel(ctx)
+	orchestrator.completionTasks.Add(1)
+	go func() {
+		defer orchestrator.completionTasks.Done()
+		if err := orchestrator.completeSession(
+			completionContext,
+			actor,
+			candidate,
+			turn,
+		); err != nil {
+			slog.ErrorContext(
+				completionContext,
+				"voice session completion failed",
+				"session_id",
+				turn.SessionID,
+				"turn_id",
+				turn.ID,
+				"error",
+				err,
+			)
+		}
+	}()
+}
+
+func (orchestrator *VoiceRoundOrchestrator) completeSession(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	candidate conversation.TranscriptionCandidate,
+	turn conversation.ConfirmedVoiceTurn,
+) error {
 	reviewRequired, err := orchestrator.practice.RequiresSessionReview(
 		ctx,
 		actor,
 		turn.SessionID,
 	)
 	if err != nil {
-		return conversation.ConfirmedVoiceTurn{}, err
+		return err
 	}
 	if reviewRequired {
 		sessionReview, reviewErr := orchestrator.reviews.EnsureSessionReview(
@@ -360,12 +411,12 @@ func (orchestrator *VoiceRoundOrchestrator) finishTurn(
 			},
 		)
 		if reviewErr != nil {
-			return conversation.ConfirmedVoiceTurn{}, reviewErr
+			return reviewErr
 		}
 		if sessionReview.ID == "" ||
 			sessionReview.SessionID != turn.SessionID ||
 			sessionReview.SourceTurnID != turn.ID {
-			return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+			return ErrInvalidContext
 		}
 		turn, err = orchestrator.conversations.SaveTurnReview(
 			ctx,
@@ -374,12 +425,12 @@ func (orchestrator *VoiceRoundOrchestrator) finishTurn(
 			sessionReview.ID,
 		)
 		if err != nil {
-			return conversation.ConfirmedVoiceTurn{}, err
+			return err
 		}
 		if turn.ReviewID != sessionReview.ID ||
 			!candidateMatchesTurn(candidate, turn) ||
 			!validVoiceTurnCheckpoint(turn) {
-			return conversation.ConfirmedVoiceTurn{}, ErrInvalidContext
+			return ErrInvalidContext
 		}
 	}
 	if err := orchestrator.completions.EnsureCompletedSessionEvaluation(
@@ -390,9 +441,9 @@ func (orchestrator *VoiceRoundOrchestrator) finishTurn(
 			SessionID: turn.SessionID,
 		},
 	); err != nil {
-		return conversation.ConfirmedVoiceTurn{}, err
+		return err
 	}
-	return turn, nil
+	return nil
 }
 
 func (orchestrator *VoiceRoundOrchestrator) SynthesizeQuestion(

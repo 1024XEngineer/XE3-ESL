@@ -5,9 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/practice/immersive_roleplay.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/review/turn_feedback_client.dart';
+import 'package:speakup/review/turn_feedback_controller.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -263,6 +267,44 @@ void main() {
     expect(find.byKey(const Key('immersive-record')), findsOneWidget);
   });
 
+  testWidgets('shows asynchronous scoring without breaking the composer row', (
+    tester,
+  ) async {
+    final controller = await _roleplayController(
+      practiceClient: _AsyncReviewPracticeClient(),
+    );
+    addTearDown(controller.dispose);
+    for (var turn = 0; turn < 3; turn++) {
+      await controller.startRecording();
+      await controller.stopRecording();
+      await controller.confirmTranscript();
+    }
+    expect(controller.recordingState, PracticeRecordingState.reviewFailed);
+
+    final feedbackController = SpeechFeedbackController(
+      client: _PendingSpeechFeedbackClient(),
+    );
+    addTearDown(feedbackController.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: ImmersiveRoleplayPage(
+          agentController: controller,
+          speechFeedbackController: feedbackController,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const Key('speech-feedback-loading-indicator')),
+      findsNWidgets(3),
+    );
+    expect(find.text('正在生成评分与纠错…'), findsNWidgets(3));
+    expect(find.text('重试'), findsOneWidget);
+  });
+
   testWidgets('prefers the injected avatar replay action over audio playback', (
     tester,
   ) async {
@@ -431,4 +473,92 @@ final class _FailOncePracticeClient implements PracticeClient {
     answerText: answerText,
     idempotencyKey: idempotencyKey,
   );
+}
+
+final class _AsyncReviewPracticeClient implements PracticeClient {
+  final _delegate = FakePracticeClient();
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
+
+  @override
+  Future<PracticeSessionSnapshot?> restorePractice({
+    required String threadId,
+    AgentMatter? activeMatter,
+  }) =>
+      _delegate.restorePractice(threadId: threadId, activeMatter: activeMatter);
+
+  @override
+  Future<PracticeStartResult> startPractice({
+    required String threadId,
+    required AgentMatter activeMatter,
+    required String clientOperationId,
+  }) => _delegate.startPractice(
+    threadId: threadId,
+    activeMatter: activeMatter,
+    clientOperationId: clientOperationId,
+  );
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) => _delegate.transcribe(request);
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) async {
+    final confirmation = await _delegate.confirm(
+      sessionId: sessionId,
+      questionId: questionId,
+      candidateId: candidateId,
+      idempotencyKey: idempotencyKey,
+    );
+    const statusUrl =
+        '/v1/speech-feedback/10000000-0000-4000-8000-000000000001';
+    return PracticeTurnConfirmation(
+      turnId: confirmation.turnId,
+      sessionId: confirmation.sessionId,
+      questionId: confirmation.questionId,
+      candidateId: confirmation.candidateId,
+      answer: confirmation.answer.copyWith(speechFeedbackStatusUrl: statusUrl),
+      completedTurns: confirmation.completedTurns,
+      turnLimit: confirmation.turnLimit,
+      sessionCompleted: confirmation.sessionCompleted,
+      scenarioType: confirmation.scenarioType,
+      scenarioModel: confirmation.scenarioModel,
+      sessionVersion: confirmation.sessionVersion,
+      nextQuestion: confirmation.nextQuestion,
+      review: confirmation.sessionCompleted ? null : confirmation.review,
+      formalReview: confirmation.formalReview,
+      audioAssetId: confirmation.audioAssetId,
+      speechFeedbackStatusUrl: statusUrl,
+    );
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) => _delegate.submitText(
+    sessionId: sessionId,
+    questionId: questionId,
+    answerText: answerText,
+    idempotencyKey: idempotencyKey,
+  );
+}
+
+final class _PendingSpeechFeedbackClient implements SpeechFeedbackClient {
+  final _pending = Completer<SpeechFeedback>();
+
+  @override
+  Future<SpeechFeedback> getFeedback(String statusUrl) => _pending.future;
+
+  @override
+  Future<void> clearAccountState() async {}
 }

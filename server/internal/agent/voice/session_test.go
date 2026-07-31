@@ -71,9 +71,10 @@ func TestVoiceSessionResumeRecoversSagaCrashWindows(t *testing.T) {
 					context.Background(),
 					agentVoiceActor("a"),
 					command,
-				); !errors.Is(err, errAgentVoiceCheckpoint) {
+				); err != nil {
 					t.Fatalf("create missing Review checkpoint: %v", err)
 				}
+				orchestrator.completionTasks.Wait()
 			}
 
 			application := newVoiceSessionTestApplication(
@@ -91,6 +92,18 @@ func TestVoiceSessionResumeRecoversSagaCrashWindows(t *testing.T) {
 			)
 			if err != nil {
 				t.Fatalf("resume: %v", err)
+			}
+			orchestrator.completionTasks.Wait()
+			if test.wantReview && state.Review == nil {
+				state, err = application.Resume(
+					context.Background(),
+					agentVoiceActor("a"),
+					"thread-1",
+					"matter-1",
+				)
+				if err != nil {
+					t.Fatalf("resume completed Review: %v", err)
+				}
 			}
 			if state.Session.EffectiveTurns != test.wantEffective ||
 				state.Session.Completed != test.wantCompleted ||
@@ -609,6 +622,7 @@ func TestVoiceSessionRestoresCompletedIELTSFullMockWithoutReview(
 		state.Review != nil {
 		t.Fatalf("completed IELTS full mock state = %#v", state)
 	}
+	application.orchestrator.completionTasks.Wait()
 	if completions.creations != 1 || completions.calls != 1 {
 		t.Fatalf(
 			"completion recovery = %d creations / %d calls",

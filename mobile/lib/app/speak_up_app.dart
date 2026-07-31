@@ -307,12 +307,14 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         return ImmersiveRoleplaySession(
           agentController: _agentController,
           avatarControllerFactory: factory,
+          speechFeedbackController: widget.speechFeedbackController,
           onExitRequested: launchController?.parkCurrentPractice,
         );
       }
       return ImmersiveRoleplayPage(
         previewMode: widget.allowFakePreview,
         agentController: _agentController,
+        speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
       );
     }
@@ -321,6 +323,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       agentController: _agentController,
       preparationController: widget.preparationController,
       ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
+      speechFeedbackController: widget.speechFeedbackController,
       onExitRequested: launchController?.parkCurrentPractice,
     );
   }

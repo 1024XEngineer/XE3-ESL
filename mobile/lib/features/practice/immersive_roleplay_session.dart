@@ -7,6 +7,7 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/practice/immersive_roleplay.dart';
 import 'package:speakup/practice/avatar/avatar.dart';
 import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/review/turn_feedback_controller.dart';
 
 typedef AvatarControllerFactory = AvatarController Function();
 
@@ -19,12 +20,14 @@ class ImmersiveRoleplaySession extends StatefulWidget {
   const ImmersiveRoleplaySession({
     required this.agentController,
     required this.avatarControllerFactory,
+    this.speechFeedbackController,
     this.onExitRequested,
     super.key,
   });
 
   final AgentController agentController;
   final AvatarControllerFactory avatarControllerFactory;
+  final SpeechFeedbackController? speechFeedbackController;
   final Future<bool> Function()? onExitRequested;
 
   @override
@@ -563,6 +566,7 @@ class _ImmersiveRoleplaySessionState extends State<ImmersiveRoleplaySession>
           widget.agentController.currentQuestion?.speechPath == null
           ? null
           : _replayQuestion,
+      speechFeedbackController: widget.speechFeedbackController,
       replayLoading: _replayLoading,
       replayPlaying: _isAvatarSpeaking,
       onExitRequested: widget.onExitRequested,

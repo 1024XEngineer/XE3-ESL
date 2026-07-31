@@ -177,7 +177,6 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 			"matter",
 			"practice_plan_id",
 			"practice_session_id",
-			"review",
 			"scenario_model",
 			"scenario_type",
 			"session_completed",
@@ -195,24 +194,12 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 			"practice_session_id",
 			"question_id",
 			"respondent_participant_id",
-			"review_id",
 			"session_completed",
 			"turn_id",
 		)
-		requireVoiceKeys(
-			t,
-			state["review"].(map[string]any),
-			"completed_at",
-			"created_at",
-			"implementation_version",
-			"practice_session_id",
-			"result",
-			"review_id",
-			"source_turn_id",
-			"source_turn_version",
-			"status",
-			"updated_at",
-		)
+		if _, found := state["review"]; found {
+			t.Fatalf("completed confirmation blocked on Review: %#v", state)
+		}
 	}
 }
 
