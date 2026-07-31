@@ -821,7 +821,8 @@ void main() {
           (message) =>
               message.role == AgentMessageRole.user &&
               message.text.contains('招聘初筛') &&
-              message.text.contains('practice-session-1') &&
+              !message.text.contains('practice-session-1') &&
+              !message.text.contains('练习记录 ID') &&
               message.text.contains('回答需要更直接地回应问题'),
         ),
         isTrue,

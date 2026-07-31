@@ -472,13 +472,12 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       return false;
     }
     final title = current.scenarioTitle!;
-    final sessionId = current.sessionId!;
     final completedTurns = agentController.completedTurns;
     if (!await parkCurrentPractice()) {
       return false;
     }
     final sent = await agentController.sendText(
-      '我刚完成了“$title”的 $completedTurns 轮练习，练习记录 ID 是 $sessionId。'
+      '我刚完成了“$title”的 $completedTurns 轮练习。'
       '下面附上这次练习已生成的真实报告摘要，请直接基于它先概括我的主要表现，再问我想重点复盘哪一部分：\n$summary',
     );
     if (!sent) {
