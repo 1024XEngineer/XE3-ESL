@@ -145,7 +145,12 @@ class _PreparationPageState extends State<PreparationPage> {
     if (background != null && background.isNotEmpty) {
       widget.launchController?.updateBackgroundSummary(background);
     }
-    await _startScenarioDirectly(controller, scenario);
+    await _startScenarioDirectly(
+      controller,
+      scenario,
+      scenarioDisplayName: matter?.scene.title,
+      scenarioDescription: background,
+    );
   }
 
   @override
@@ -222,6 +227,8 @@ class _PreparationPageState extends State<PreparationPage> {
   Future<void> _startPractice({
     required bool replaceCurrentPractice,
     IeltsPracticeSelection? ieltsSelection,
+    String? scenarioDisplayName,
+    String? scenarioDescription,
   }) async {
     final catalog = widget.preparationController;
     final launch = widget.launchController;
@@ -247,6 +254,8 @@ class _PreparationPageState extends State<PreparationPage> {
         role: role,
         option: option,
         ieltsSelection: ieltsSelection,
+        scenarioDisplayName: scenarioDisplayName,
+        scenarioDescription: scenarioDescription,
       ),
       replaceCurrentPractice: replaceCurrentPractice,
     );
@@ -289,6 +298,8 @@ class _PreparationPageState extends State<PreparationPage> {
     PreparationScenario scenario, {
     IeltsPracticeSelection? ieltsSelection,
     bool forceReplaceCurrentPractice = false,
+    String? scenarioDisplayName,
+    String? scenarioDescription,
   }) async {
     var replaceCurrentPractice = forceReplaceCurrentPractice;
     final launch = widget.launchController;
@@ -333,6 +344,8 @@ class _PreparationPageState extends State<PreparationPage> {
     await _startPractice(
       replaceCurrentPractice: replaceCurrentPractice,
       ieltsSelection: ieltsSelection,
+      scenarioDisplayName: scenarioDisplayName,
+      scenarioDescription: scenarioDescription,
     );
   }
 

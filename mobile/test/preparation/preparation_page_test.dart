@@ -300,6 +300,7 @@ void main() {
   testWidgets(
     'Agent-created interview opens the custom scene and starts directly',
     (tester) async {
+      final agentController = AgentController(client: FakeAgentClient());
       final preparationController = PreparationController(
         client: _CustomInterviewClient(),
       );
@@ -323,12 +324,22 @@ void main() {
         idFactory: (scope) => '$scope-agent-created-key',
       );
       var navigations = 0;
+      await agentController.initialize();
+      await agentController.selectScene(
+        const AgentScene(
+          id: 'agent-created-interview',
+          title: '阿里高级 Java 开发面试',
+          description: '重点练习 JVM、并发和系统设计。',
+        ),
+      );
+      addTearDown(agentController.dispose);
       addTearDown(preparationController.dispose);
       addTearDown(launchController.dispose);
 
       await tester.pumpWidget(
         MaterialApp(
           home: PreparationPage(
+            agentController: agentController,
             preparationController: preparationController,
             launchController: launchController,
             onPracticeStarted: () => navigations++,
@@ -340,6 +351,8 @@ void main() {
 
       expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
       expect(launchClient.selection?.scenarioDefinitionId, _customScenarioId);
+      expect(launchClient.selection?.scenarioDisplayName, '阿里高级 Java 开发面试');
+      expect(launchClient.selection?.scenarioDescription, '重点练习 JVM、并发和系统设计。');
       expect(launchClient.selection?.roleDefinitionId, _customRole.id);
       expect(navigations, 1);
       expect(
