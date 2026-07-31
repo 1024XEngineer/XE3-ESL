@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
@@ -21,7 +22,7 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesConfirmedTextAndAudio(
 	}
 	evaluator := &speechFeedbackISEEvaluatorStub{
 		result: xfyun.EvaluationResult{
-			SessionID: "ise-session-1",
+			SessionID: "wse00000001@ll36940e324c59000100",
 			RawXML:    "<xml_result/>",
 			AvailableFields: []xfyun.ResultField{{
 				Path:  "/read_word",
@@ -81,6 +82,30 @@ func TestSpeechFeedbackPCM16MonoRejectsMismatchedFormat(t *testing.T) {
 		ErrSpeechFeedbackAcousticUnavailable,
 	) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateSpeechFeedbackISESummaryExplainsUnavailableResult(
+	t *testing.T,
+) {
+	t.Parallel()
+	rejected := true
+	err := validateSpeechFeedbackISESummary(xfyun.ScoreSummary{
+		Rejected:      &rejected,
+		ExceptionInfo: "28676",
+	})
+	if !errors.Is(err, ErrSpeechFeedbackAcousticUnavailable) ||
+		!strings.Contains(err.Error(), "except_info=28676") {
+		t.Fatalf("rejected error = %v", err)
+	}
+
+	rejected = false
+	err = validateSpeechFeedbackISESummary(xfyun.ScoreSummary{
+		Rejected: &rejected,
+	})
+	if !errors.Is(err, ErrSpeechFeedbackAcousticUnavailable) ||
+		!strings.Contains(err.Error(), "full-dimension") {
+		t.Fatalf("missing fields error = %v", err)
 	}
 }
 

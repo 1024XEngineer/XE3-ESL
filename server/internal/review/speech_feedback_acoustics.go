@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
@@ -118,13 +119,8 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 	if err != nil {
 		return SpeechFeedbackAcousticEvidence{}, err
 	}
-	if result.Summary.Rejected == nil ||
-		*result.Summary.Rejected ||
-		!validSpeechFeedbackScore(result.Summary.AccuracyScore) ||
-		!validSpeechFeedbackScore(result.Summary.FluencyScore) ||
-		!validSpeechFeedbackScore(result.Summary.IntegrityScore) {
-		return SpeechFeedbackAcousticEvidence{},
-			ErrSpeechFeedbackAcousticUnavailable
+	if err := validateSpeechFeedbackISESummary(result.Summary); err != nil {
+		return SpeechFeedbackAcousticEvidence{}, err
 	}
 	evidence := SpeechFeedbackAcousticEvidence{
 		Assessment: SpeechFeedbackAcousticAssessment{
@@ -147,6 +143,40 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 			ErrSpeechFeedbackAcousticUnavailable
 	}
 	return evidence, nil
+}
+
+func validateSpeechFeedbackISESummary(summary xfyun.ScoreSummary) error {
+	if summary.Rejected == nil {
+		return fmt.Errorf(
+			"%w: result is missing is_rejected",
+			ErrSpeechFeedbackAcousticUnavailable,
+		)
+	}
+	if *summary.Rejected {
+		return fmt.Errorf(
+			"%w: speech was rejected (except_info=%s)",
+			ErrSpeechFeedbackAcousticUnavailable,
+			strings.TrimSpace(summary.ExceptionInfo),
+		)
+	}
+	missing := make([]string, 0, 3)
+	if !validSpeechFeedbackScore(summary.AccuracyScore) {
+		missing = append(missing, "accuracy_score")
+	}
+	if !validSpeechFeedbackScore(summary.FluencyScore) {
+		missing = append(missing, "fluency_score")
+	}
+	if !validSpeechFeedbackScore(summary.IntegrityScore) {
+		missing = append(missing, "integrity_score")
+	}
+	if len(missing) != 0 {
+		return fmt.Errorf(
+			"%w: result is missing full-dimension fields %s",
+			ErrSpeechFeedbackAcousticUnavailable,
+			strings.Join(missing, ","),
+		)
+	}
+	return nil
 }
 
 func speechFeedbackPCM16Mono(wav []byte) ([]byte, error) {

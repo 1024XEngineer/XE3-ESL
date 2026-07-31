@@ -336,7 +336,7 @@ func (assessment SpeechFeedbackAcousticAssessment) valid() bool {
 		validSpeechFeedbackScore(assessment.FluencyScore) &&
 		validSpeechFeedbackScore(assessment.IntegrityScore) &&
 		assessment.Provider == SpeechFeedbackAcousticProviderName &&
-		validSpeechFeedbackIdentifier(assessment.ProviderSession) &&
+		validSpeechFeedbackProviderSession(assessment.ProviderSession) &&
 		(assessment.Category == "read_word" ||
 			assessment.Category == "read_sentence") &&
 		assessment.ReasonCode == "" &&
@@ -345,6 +345,16 @@ func (assessment SpeechFeedbackAcousticAssessment) valid() bool {
 
 func validSpeechFeedbackScore(score *float64) bool {
 	return score != nil && *score >= 0 && *score <= 100
+}
+
+func validSpeechFeedbackProviderSession(value string) bool {
+	return utf8.ValidString(value) &&
+		strings.TrimSpace(value) == value &&
+		value != "" &&
+		len(value) <= 256 &&
+		strings.IndexFunc(value, func(character rune) bool {
+			return character < 0x20 || character == 0x7f
+		}) == -1
 }
 
 type SpeechFeedback struct {
