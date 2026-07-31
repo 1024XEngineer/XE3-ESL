@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"testing"
 
@@ -14,7 +15,10 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesConfirmedTextAndAudio(
 	t.Parallel()
 	accuracy, fluency, integrity := 81.5, 92.25, 100.0
 	rejected := false
-	audio := &speechFeedbackAudioReaderStub{audio: []byte{1, 2, 3}}
+	pcm := []byte{1, 2, 3, 4}
+	audio := &speechFeedbackAudioReaderStub{
+		audio: speechFeedbackTestWAV(pcm),
+	}
 	evaluator := &speechFeedbackISEEvaluatorStub{
 		result: xfyun.EvaluationResult{
 			SessionID: "ise-session-1",
@@ -55,7 +59,7 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesConfirmedTextAndAudio(
 	if audio.calls != 1 ||
 		evaluator.request.ReferenceText != "Hello" ||
 		evaluator.request.Category != xfyun.CategoryReadWord ||
-		string(evaluator.request.Audio) != string(audio.audio) ||
+		string(evaluator.request.Audio) != string(pcm) ||
 		evidence.Assessment.AccuracyScore == nil ||
 		*evidence.Assessment.AccuracyScore != accuracy ||
 		evidence.Assessment.Provider !=
@@ -65,6 +69,18 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesConfirmedTextAndAudio(
 			evidence,
 			evaluator.request,
 		)
+	}
+}
+
+func TestSpeechFeedbackPCM16MonoRejectsMismatchedFormat(t *testing.T) {
+	t.Parallel()
+	wav := speechFeedbackTestWAV([]byte{1, 2, 3, 4})
+	binary.LittleEndian.PutUint32(wav[24:28], 48_000)
+	if _, err := speechFeedbackPCM16Mono(wav); !errors.Is(
+		err,
+		ErrSpeechFeedbackAcousticUnavailable,
+	) {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -225,4 +241,23 @@ func validSpeechFeedbackAcousticEvidence() SpeechFeedbackAcousticEvidence {
 		RawResult:       "<xml_result/>",
 		AvailableFields: []xfyun.ResultField{},
 	}
+}
+
+func speechFeedbackTestWAV(pcm []byte) []byte {
+	wav := make([]byte, 44+len(pcm))
+	copy(wav[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(wav[4:8], uint32(len(wav)-8))
+	copy(wav[8:12], "WAVE")
+	copy(wav[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(wav[16:20], 16)
+	binary.LittleEndian.PutUint16(wav[20:22], 1)
+	binary.LittleEndian.PutUint16(wav[22:24], 1)
+	binary.LittleEndian.PutUint32(wav[24:28], 16_000)
+	binary.LittleEndian.PutUint32(wav[28:32], 32_000)
+	binary.LittleEndian.PutUint16(wav[32:34], 2)
+	binary.LittleEndian.PutUint16(wav[34:36], 16)
+	copy(wav[36:40], "data")
+	binary.LittleEndian.PutUint32(wav[40:44], uint32(len(pcm)))
+	copy(wav[44:], pcm)
+	return wav
 }

@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"strings"
 
@@ -101,11 +102,15 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 	if err != nil {
 		return SpeechFeedbackAcousticEvidence{}, err
 	}
+	pcm, err := speechFeedbackPCM16Mono(audio)
+	if err != nil {
+		return SpeechFeedbackAcousticEvidence{}, err
+	}
 	category := speechFeedbackISECategory(input.ConfirmedText)
 	result, err := provider.evaluator.Evaluate(
 		ctx,
 		xfyun.EvaluationRequest{
-			Audio:         audio,
+			Audio:         pcm,
 			ReferenceText: input.ConfirmedText,
 			Category:      category,
 		},
@@ -142,6 +147,57 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 			ErrSpeechFeedbackAcousticUnavailable
 	}
 	return evidence, nil
+}
+
+func speechFeedbackPCM16Mono(wav []byte) ([]byte, error) {
+	if len(wav) < 12 ||
+		string(wav[:4]) != "RIFF" ||
+		string(wav[8:12]) != "WAVE" {
+		return nil, ErrSpeechFeedbackAcousticUnavailable
+	}
+	var (
+		foundFormat bool
+		pcm         []byte
+	)
+	for offset := 12; offset+8 <= len(wav); {
+		chunkSize := int(binary.LittleEndian.Uint32(
+			wav[offset+4 : offset+8],
+		))
+		chunkStart := offset + 8
+		chunkEnd := chunkStart + chunkSize
+		if chunkEnd > len(wav) {
+			return nil, ErrSpeechFeedbackAcousticUnavailable
+		}
+		switch string(wav[offset : offset+4]) {
+		case "fmt ":
+			if foundFormat || chunkSize < 16 ||
+				binary.LittleEndian.Uint16(
+					wav[chunkStart:chunkStart+2],
+				) != 1 ||
+				binary.LittleEndian.Uint16(
+					wav[chunkStart+2:chunkStart+4],
+				) != 1 ||
+				binary.LittleEndian.Uint32(
+					wav[chunkStart+4:chunkStart+8],
+				) != 16_000 ||
+				binary.LittleEndian.Uint16(
+					wav[chunkStart+14:chunkStart+16],
+				) != 16 {
+				return nil, ErrSpeechFeedbackAcousticUnavailable
+			}
+			foundFormat = true
+		case "data":
+			if pcm != nil || chunkSize == 0 {
+				return nil, ErrSpeechFeedbackAcousticUnavailable
+			}
+			pcm = wav[chunkStart:chunkEnd]
+		}
+		offset = chunkEnd + chunkSize%2
+	}
+	if !foundFormat || len(pcm) == 0 || len(pcm)%2 != 0 {
+		return nil, ErrSpeechFeedbackAcousticUnavailable
+	}
+	return pcm, nil
 }
 
 type SpeechFeedbackAcousticRepository interface {

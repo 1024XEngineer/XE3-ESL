@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode"
@@ -237,6 +238,20 @@ func (worker *SpeechFeedbackWorker) processClaim(
 				); err != nil {
 				return "", false, err
 			}
+		} else {
+			slog.WarnContext(
+				ctx,
+				"speech feedback acoustic evaluation unavailable",
+				slog.String(
+					"speech_feedback_id",
+					claim.SpeechFeedbackID,
+				),
+				slog.String(
+					"source_kind",
+					string(claim.Source.SourceKind),
+				),
+				slog.Any("error", acousticErr),
+			)
 		}
 	}
 	if !speechFeedbackTextHasEnoughEvidence(claim.CanonicalText) {

@@ -306,6 +306,8 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     if (!mounted || _exitInFlight || _exitApproved) {
       return;
     }
+    final route = ModalRoute.of(context);
+    final navigator = Navigator.of(context);
     final callback = widget.onExitRequested;
     if (callback == null) {
       _exitApproved = true;
@@ -330,12 +332,12 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
       }
       _exitApproved = true;
     }
-    if (mounted) {
+    if (mounted && route?.isCurrent == true) {
       setState(() {});
       await WidgetsBinding.instance.endOfFrame;
     }
-    if (mounted) {
-      await Navigator.of(context).maybePop();
+    if (mounted && route?.isCurrent == true) {
+      await navigator.maybePop();
     }
   }
 
