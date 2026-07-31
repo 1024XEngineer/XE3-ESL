@@ -1290,6 +1290,7 @@ AgentMessage _decodeMessageObject(
       'modality',
       'content',
       'audio',
+      'actions',
       'speech_feedback_status_url',
       'created_at',
     },
@@ -1330,8 +1331,11 @@ AgentMessage _decodeMessageObject(
     'speech_feedback_status_url',
     max: 160,
   );
+  final actions = object['actions'] == null
+      ? const <AgentMessageAction>[]
+      : _decodeMessageActions(object['actions']);
   if ((role == AgentMessageRole.user &&
-          (clientId == null || producedBy != null)) ||
+          (clientId == null || producedBy != null || actions.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientId != null || producedBy == null)) ||
       (modality == AgentMessageModality.voice &&
@@ -1351,7 +1355,32 @@ AgentMessage _decodeMessageObject(
     createdAt: _strictDateTime(object['created_at']),
     modality: modality,
     audio: audio,
+    actions: actions,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
+  );
+}
+
+List<AgentMessageAction> _decodeMessageActions(Object? value) {
+  final values = _strictList(value, max: 4);
+  return List<AgentMessageAction>.unmodifiable(
+    values.map((item) {
+      final object = _strictObject(
+        item,
+        allowed: const <String>{'type', 'label', 'matter_id', 'title'},
+        required: const <String>{'type', 'label', 'matter_id', 'title'},
+      );
+      final type = switch (_strictString(object['type'], min: 1, max: 64)) {
+        'open_interview_preparation' =>
+          AgentMessageActionType.openInterviewPreparation,
+        _ => throw const _InvalidVoiceResponse(),
+      };
+      return AgentMessageAction(
+        type: type,
+        label: _strictString(object['label'], min: 1, max: 64),
+        matterId: _strictUuid(object['matter_id']),
+        title: _strictString(object['title'], min: 1, max: 200),
+      );
+    }),
   );
 }
 
