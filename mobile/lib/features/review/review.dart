@@ -123,6 +123,21 @@ class _ReviewPageState extends State<ReviewPage> {
   }
 
   void _openIeltsReport(IeltsSpeakingReportIndexItem item) {
+    if (item.reportKind == IeltsSpeakingReportKind.interview) {
+      final controller = widget.interviewReportController;
+      if (controller == null) return;
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => InterviewReportPage(
+              practiceSessionId: item.practiceSessionId,
+              controller: controller,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     final reportController = widget.ieltsSpeakingReportController;
     if (reportController == null) {
       return;
@@ -379,7 +394,7 @@ final class _ReviewListEntry {
   String get statusLabel {
     final eligibility = formalReview?.result?.eligibility;
     return switch (eligibility) {
-      FormalReviewSummaryEligibility.provisional => '暂定文本反馈',
+      FormalReviewSummaryEligibility.provisional => '面试能力反馈',
       FormalReviewSummaryEligibility.insufficientEvidence => '证据不足',
       _ => isCurrent ? '本次结果' : '已完成',
     };
@@ -543,8 +558,10 @@ class _IeltsReportListCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'IELTS 口语完整模考',
+                      Text(
+                        item.reportKind == IeltsSpeakingReportKind.interview
+                            ? '面试练习报告'
+                            : 'IELTS 口语完整模考',
                         style: SpeakUpDesign.cardTitle,
                       ),
                       const SizedBox(height: 5),
@@ -1257,7 +1274,7 @@ class _ReviewDetailSection extends StatelessWidget {
   if (review.contextType == FormalReviewContextType.ieltsSpeakingPart2) {
     if (result.eligibility == FormalReviewSummaryEligibility.provisional) {
       return (
-        title: '暂定文本反馈',
+        title: '面试能力反馈',
         message:
             '当前只依据已确认文字评估；发音尚未评估，因此不会生成 Overall。'
             '这是 AI 练习反馈，不是 IELTS 官方成绩。',

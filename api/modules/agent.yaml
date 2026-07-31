@@ -653,6 +653,47 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-messages/{message_id}/speech-previews:
+    parameters:
+      - $ref: '#/components/parameters/AgentMessageId'
+    post:
+      tags:
+        - Agent
+      summary: Synthesize a short speech preview for an owned Agent Message
+      description: |
+        Returns ephemeral WAV bytes synthesized from a supplied feedback
+        suggestion. The server verifies ownership of the parent Message and
+        never persists the generated audio.
+      operationId: createAgentMessageSpeechPreview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        '200':
+          description: Ephemeral synthesized feedback suggestion.
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-threads/{thread_id}/runs:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'

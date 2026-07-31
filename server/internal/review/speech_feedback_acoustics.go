@@ -110,24 +110,15 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 	}
 	category := speechFeedbackISECategory(input.ConfirmedText)
 	referenceText := input.ConfirmedText
-	topicTitle := ""
-	if strings.TrimSpace(input.PromptText) != "" {
-		if classifySpeechFeedbackLanguage(input.PromptText) !=
-			speechFeedbackLanguageEnglish {
-			return SpeechFeedbackAcousticEvidence{},
-				ErrSpeechFeedbackAcousticUnavailable
-		}
-		category = xfyun.CategoryTopic
-		referenceText = input.PromptText
-		topicTitle = "Practice response"
-	}
 	result, err := provider.evaluator.Evaluate(
 		ctx,
 		xfyun.EvaluationRequest{
 			Audio:         pcm,
 			ReferenceText: referenceText,
-			TopicTitle:    topicTitle,
-			Category:      category,
+			// The scene prompt is used by the text evaluator for relevance and
+			// task completion. ISE should compare the audio with the learner's
+			// confirmed answer, not require the learner to repeat the question.
+			Category: category,
 		},
 	)
 	if err != nil {

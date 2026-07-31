@@ -620,6 +620,7 @@ func (application *evaluationHTTPApplication) ListIELTSSpeakingReports(
 		}
 		items[index] =
 			evaluationtransport.IELTSSpeakingReportIndexEntryResource{
+				SceneType:            item.SceneType,
 				PracticeSessionID:    item.PracticeSessionID,
 				EvaluationID:         item.EvaluationID,
 				EvaluationRevisionID: item.EvaluationRevisionID,

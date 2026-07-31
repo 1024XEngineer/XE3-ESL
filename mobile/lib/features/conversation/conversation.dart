@@ -351,6 +351,7 @@ class _ConversationPageState extends State<ConversationPage> {
   int _scrollRequestGeneration = 0;
   bool _showJumpToLatest = false;
   bool _feedbackRebuildScheduled = false;
+  bool _voiceRebuildScheduled = false;
 
   @override
   void initState() {
@@ -359,6 +360,7 @@ class _ConversationPageState extends State<ConversationPage> {
     _scheduleThreadInitialPosition();
     _syncSpeechFeedbackSources();
     widget.speechFeedbackController?.addListener(_handleFeedbackState);
+    widget.voiceController?.addListener(_handleConversationVoiceState);
   }
 
   @override
@@ -368,6 +370,10 @@ class _ConversationPageState extends State<ConversationPage> {
       oldWidget.speechFeedbackController?.removeListener(_handleFeedbackState);
       _removeSpeechFeedbackSources(oldWidget.speechFeedbackController);
       widget.speechFeedbackController?.addListener(_handleFeedbackState);
+    }
+    if (oldWidget.voiceController != widget.voiceController) {
+      oldWidget.voiceController?.removeListener(_handleConversationVoiceState);
+      widget.voiceController?.addListener(_handleConversationVoiceState);
     }
     _syncSpeechFeedbackSources();
     if (oldWidget.threadId != widget.threadId) {
@@ -414,6 +420,7 @@ class _ConversationPageState extends State<ConversationPage> {
     _scrollRequestGeneration++;
     _scrollController.removeListener(_handleScroll);
     widget.speechFeedbackController?.removeListener(_handleFeedbackState);
+    widget.voiceController?.removeListener(_handleConversationVoiceState);
     _removeSpeechFeedbackSources(widget.speechFeedbackController);
     _scrollController.dispose();
     super.dispose();
@@ -486,6 +493,27 @@ class _ConversationPageState extends State<ConversationPage> {
       _feedbackRebuildScheduled = false;
       if (mounted) {
         setState(() {});
+      }
+    });
+  }
+
+  void _handleConversationVoiceState() {
+    if (_voiceRebuildScheduled) {
+      return;
+    }
+    _voiceRebuildScheduled = true;
+    scheduleMicrotask(() {
+      _voiceRebuildScheduled = false;
+      if (!mounted) {
+        return;
+      }
+      final keepLatestVisible = _isNearLatest();
+      final voiceState = widget.voiceController?.state;
+      setState(() {});
+      if (voiceState == AgentVoiceComposerState.awaitingAssistant ||
+          (keepLatestVisible &&
+              voiceState == AgentVoiceComposerState.confirming)) {
+        _scheduleScrollToLatest();
       }
     });
   }
@@ -904,6 +932,8 @@ class _MessageList extends StatelessWidget {
             voiceController: voiceController,
             onAction: onAction,
             onRefreshImage: onRefreshImage,
+            polishedText: _polishedText(_feedbackProjection(message)),
+            polishLoading: _feedbackProjection(message)?.isPolling ?? false,
           ),
           if (_feedbackProjection(message) case final projection?) ...[
             const SizedBox(height: SpeakUpDesign.space8),
@@ -916,6 +946,7 @@ class _MessageList extends StatelessWidget {
                     'agent-speech-feedback-${projection.sourceKey}',
                   ),
                   projection: projection,
+                  compact: true,
                   onRetry: projection.canRetry
                       ? () => unawaited(
                           speechFeedbackController!.retry(projection.sourceKey),
@@ -937,7 +968,33 @@ class _MessageList extends StatelessWidget {
         feedbackSourceKey == null) {
       return null;
     }
-    return speechFeedbackController!.projectionFor(feedbackSourceKey!(message));
+    final projection = speechFeedbackController!.projectionFor(
+      feedbackSourceKey!(message),
+    );
+    if (projection?.feedback?.scoreabilityStatus ==
+        SpeechFeedbackScoreabilityStatus.insufficient) {
+      return null;
+    }
+    return projection;
+  }
+
+  String? _polishedText(SpeechFeedbackProjection? projection) {
+    final items = projection?.feedback?.items;
+    if (items == null) {
+      return null;
+    }
+    for (final item in items) {
+      if (item.kind == SpeechFeedbackItemKind.recommendedExpression &&
+          item.suggestedText != null) {
+        return item.suggestedText;
+      }
+    }
+    for (final item in items) {
+      if (item.suggestedText != null) {
+        return item.suggestedText;
+      }
+    }
+    return null;
   }
 }
 
@@ -1141,6 +1198,10 @@ class _AgentComposerState extends State<_AgentComposer> {
       return;
     }
     await voice.stopRecordingAndUpload();
+    if (!mounted || !voice.canConfirm) {
+      return;
+    }
+    await WidgetsBinding.instance.endOfFrame;
     if (!mounted || !voice.canConfirm) {
       return;
     }
@@ -1386,18 +1447,21 @@ class _AgentComposerState extends State<_AgentComposer> {
           onSendVoice: _sendVoiceMessage,
           onConvertToText: _convertVoiceToText,
           onCancel: _cancelVoice,
+          upwardCancelOnly: true,
           builder: (context, capture) => AnimatedContainer(
             key: const Key('agent-composer-surface'),
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOut,
             constraints: BoxConstraints(
-              minHeight: widget.keyboardVisible ? 56 : 58,
+              minHeight: widget.keyboardVisible ? 52 : 54,
             ),
-            padding: const EdgeInsets.fromLTRB(8, 7, 7, 7),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
             decoration: BoxDecoration(
-              color: SpeakUpDesign.surface,
-              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-              border: Border.all(color: SpeakUpDesign.border),
+              color: SpeakUpDesign.primaryMuted.withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: SpeakUpDesign.surface.withValues(alpha: 0.72),
+              ),
             ),
             child: voiceProgress || voiceFailure
                 ? _AgentVoiceStatusDock(
@@ -1425,12 +1489,6 @@ class _AgentComposerState extends State<_AgentComposer> {
                         !widget.isBusy &&
                         !imageUploadPending &&
                         !imageUploadFailed,
-                    imageSelectionInFlight: widget.imageSelectionInFlight,
-                    canAddImages:
-                        !confirmingText &&
-                        (widget.onPickImages != null ||
-                            widget.onTakePhoto != null),
-                    onAddImages: _showImageSource,
                     onReturnToVoice: confirmingText
                         ? _cancelVoice
                         : _showVoiceComposer,
@@ -1442,6 +1500,10 @@ class _AgentComposerState extends State<_AgentComposer> {
                     elapsed: voice?.recordingElapsed ?? Duration.zero,
                     enabled: voiceCaptureEnabled,
                     textEnabled: widget.enabled,
+                    canAddImages:
+                        widget.onPickImages != null ||
+                        widget.onTakePhoto != null,
+                    onAddImages: _showImageSource,
                     onShowText: _showTextComposer,
                   ),
           ),
@@ -1458,6 +1520,8 @@ class _AgentVoiceDock extends StatelessWidget {
     required this.elapsed,
     required this.enabled,
     required this.textEnabled,
+    required this.canAddImages,
+    required this.onAddImages,
     required this.onShowText,
   });
 
@@ -1466,6 +1530,8 @@ class _AgentVoiceDock extends StatelessWidget {
   final Duration elapsed;
   final bool enabled;
   final bool textEnabled;
+  final bool canAddImages;
+  final FutureOr<void> Function() onAddImages;
   final VoidCallback onShowText;
 
   @override
@@ -1473,14 +1539,13 @@ class _AgentVoiceDock extends StatelessWidget {
     final capturing =
         phase == VoiceCapturePhase.starting ||
         phase == VoiceCapturePhase.recording;
-    final showTargets = capturing;
     final label = switch ((phase, capture.releaseIntent, capture.tapMode)) {
       (VoiceCapturePhase.starting, _, _) => '正在打开麦克风…',
       (_, VoiceCaptureReleaseIntent.cancel, _) => '松开取消',
-      (_, VoiceCaptureReleaseIntent.convertToText, _) => '松开转成文字',
-      (VoiceCapturePhase.recording, _, true) => '点击发送语音',
-      (VoiceCapturePhase.recording, _, false) => '松开发送语音',
-      _ => enabled ? '点击或按住说话' : '暂时无法录音',
+      (VoiceCapturePhase.recording, _, true) => '点击发送 · 上滑取消',
+      (VoiceCapturePhase.recording, _, false) => '上滑取消 · 松开发送',
+      (_, VoiceCaptureReleaseIntent.convertToText, _) => '松开发送语音',
+      _ => enabled ? '点击或长按说话' : '暂时无法录音',
     };
     final mainTarget = capture.wrapTarget(
       key: const Key('agent-mic-placeholder'),
@@ -1488,7 +1553,7 @@ class _AgentVoiceDock extends StatelessWidget {
       child: AnimatedContainer(
         key: capturing ? const Key('agent-voice-stop') : null,
         duration: const Duration(milliseconds: 100),
-        constraints: const BoxConstraints(minHeight: 56),
+        constraints: const BoxConstraints(minHeight: 48),
         decoration: BoxDecoration(
           color: capture.cancelArmed
               ? SpeakUpDesign.errorMuted
@@ -1496,8 +1561,8 @@ class _AgentVoiceDock extends StatelessWidget {
               ? SpeakUpDesign.primaryMuted
               : capturing
               ? SpeakUpDesign.surfaceMuted
-              : SpeakUpDesign.primary,
-          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
           border: Border.all(
             color: capture.cancelArmed
                 ? SpeakUpDesign.error
@@ -1505,18 +1570,20 @@ class _AgentVoiceDock extends StatelessWidget {
                 ? SpeakUpDesign.primary
                 : capturing
                 ? SpeakUpDesign.border
-                : SpeakUpDesign.primary,
+                : Colors.transparent,
           ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              capturing ? Icons.graphic_eq_rounded : Icons.mic_none_rounded,
-              color: capturing ? SpeakUpDesign.ink : Colors.white,
-              size: 22,
-            ),
-            const SizedBox(width: 9),
+            if (capturing) ...[
+              const Icon(
+                Icons.graphic_eq_rounded,
+                color: SpeakUpDesign.ink,
+                size: 22,
+              ),
+              const SizedBox(width: 9),
+            ],
             Flexible(
               child: Text(
                 label,
@@ -1524,7 +1591,9 @@ class _AgentVoiceDock extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: capturing ? SpeakUpDesign.ink : Colors.white,
+                  color: capturing
+                      ? SpeakUpDesign.ink
+                      : SpeakUpDesign.secondary,
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
                 ),
@@ -1547,35 +1616,29 @@ class _AgentVoiceDock extends StatelessWidget {
       ),
     );
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    return Row(
       children: [
-        if (showTargets) ...[
-          VoiceCaptureIntentTargets(
-            capture: capture,
-            elapsed: elapsed,
-            keyPrefix: 'agent',
+        if (!capturing)
+          IconButton(
+            key: const Key('agent-image-picker-button'),
+            tooltip: '添加图片',
+            onPressed: textEnabled && canAddImages ? () => onAddImages() : null,
+            constraints: const BoxConstraints.tightFor(width: 42, height: 42),
+            padding: EdgeInsets.zero,
+            color: SpeakUpDesign.secondary,
+            icon: const Icon(Icons.add_rounded, size: 28),
           ),
-          const SizedBox(height: 10),
+        Expanded(child: mainTarget),
+        if (!capturing) ...[
+          IconButton(
+            key: const Key('agent-show-text-composer'),
+            tooltip: '切换到键盘输入',
+            onPressed: textEnabled ? onShowText : null,
+            constraints: const BoxConstraints.tightFor(width: 42, height: 42),
+            color: SpeakUpDesign.secondary,
+            icon: const Icon(Icons.keyboard_alt_outlined, size: 24),
+          ),
         ],
-        Row(
-          children: [
-            Expanded(child: mainTarget),
-            if (!capturing) ...[
-              const SizedBox(width: 6),
-              IconButton(
-                key: const Key('agent-show-text-composer'),
-                tooltip: '切换到键盘输入',
-                onPressed: textEnabled ? onShowText : null,
-                constraints: const BoxConstraints.tightFor(
-                  width: 48,
-                  height: 48,
-                ),
-                icon: const Icon(Icons.keyboard_alt_outlined),
-              ),
-            ],
-          ],
-        ),
       ],
     );
   }
@@ -1591,9 +1654,6 @@ class _AgentTextDock extends StatelessWidget {
     required this.submitting,
     required this.canSubmitConvertedText,
     required this.canSubmitText,
-    required this.imageSelectionInFlight,
-    required this.canAddImages,
-    required this.onAddImages,
     required this.onReturnToVoice,
     required this.onSubmit,
   });
@@ -1606,9 +1666,6 @@ class _AgentTextDock extends StatelessWidget {
   final bool submitting;
   final bool canSubmitConvertedText;
   final bool canSubmitText;
-  final bool imageSelectionInFlight;
-  final bool canAddImages;
-  final FutureOr<void> Function() onAddImages;
   final FutureOr<void> Function() onReturnToVoice;
   final FutureOr<void> Function() onSubmit;
 
@@ -1619,7 +1676,7 @@ class _AgentTextDock extends StatelessWidget {
         !submitting &&
         (confirmingConvertedText ? canSubmitConvertedText : canSubmitText);
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         if (confirmingConvertedText)
           IconButton(
@@ -1671,26 +1728,13 @@ class _AgentTextDock extends StatelessWidget {
               ),
               border: InputBorder.none,
               isDense: true,
-              contentPadding: const EdgeInsets.fromLTRB(7, 9, 6, 8),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 7,
+                vertical: 10,
+              ),
             ),
           ),
         ),
-        if (!confirmingConvertedText)
-          IconButton(
-            key: const Key('agent-image-picker-button'),
-            tooltip: '添加图片',
-            onPressed: enabled && canAddImages && !imageSelectionInFlight
-                ? () => onAddImages()
-                : null,
-            constraints: const BoxConstraints.tightFor(width: 40, height: 40),
-            padding: EdgeInsets.zero,
-            icon: imageSelectionInFlight
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.add_photo_alternate_outlined, size: 21),
-          ),
         IconButton.filled(
           key: Key(
             confirmingConvertedText
@@ -1826,6 +1870,55 @@ class _AgentVoiceStatusDock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final failed = state == AgentVoiceComposerState.failed;
+    if (!failed) {
+      return SizedBox(
+        height: 48,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            if (canCancel)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  key: const Key('agent-voice-cancel'),
+                  tooltip: '取消语音输入',
+                  onPressed: () => onCancel(),
+                  constraints: const BoxConstraints.tightFor(
+                    width: 40,
+                    height: 40,
+                  ),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.close_rounded, size: 21),
+                ),
+              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    message,
+                    key: const Key('agent-voice-state-label'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: SpeakUpDesign.secondary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
     return Row(
       children: [
         if (canCancel) ...[
@@ -1838,13 +1931,6 @@ class _AgentVoiceStatusDock extends StatelessWidget {
             icon: const Icon(Icons.close_rounded, size: 21),
           ),
           const SizedBox(width: 4),
-        ],
-        if (!failed) ...[
-          const SizedBox.square(
-            dimension: 16,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          const SizedBox(width: 8),
         ],
         Expanded(
           child: Text(
@@ -1877,7 +1963,7 @@ String _composerVoiceStateLabel(AgentVoiceComposerState state) {
     AgentVoiceComposerState.starting => '正在打开麦克风…',
     AgentVoiceComposerState.uploading => '正在处理语音…',
     AgentVoiceComposerState.transcribing => '正在转写…',
-    AgentVoiceComposerState.confirming => '正在发送…',
+    AgentVoiceComposerState.confirming => '已识别，SpeakUp 正在回复…',
     AgentVoiceComposerState.awaitingAssistant => 'SpeakUp 正在回复…',
     _ => '正在处理…',
   };

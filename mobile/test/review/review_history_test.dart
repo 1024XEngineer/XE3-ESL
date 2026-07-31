@@ -1247,7 +1247,7 @@ void main() {
         MaterialApp(home: ReviewPage(historyController: controller)),
       );
       await tester.pumpAndSettle();
-      expect(find.text('暂定文本反馈'), findsOneWidget);
+      expect(find.text('面试能力反馈'), findsOneWidget);
       await tester.tap(
         find.byKey(Key('review-history-select-${item.review.id}')),
       );

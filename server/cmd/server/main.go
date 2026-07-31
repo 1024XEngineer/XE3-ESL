@@ -323,9 +323,9 @@ func run() int {
 				AudioStagedTTL:            24 * time.Hour,
 				AudioUploadLease:          2 * time.Minute,
 				ASRLease:                  asrConfig.Timeout + 15*time.Second,
-				// The existing Review lease is 30s. Bound the parent context
-				// below it even when the shared provider client allows 60s.
-				ReviewGenerationTimeout: 20 * time.Second,
+				// Keep report generation within the Review lease while allowing
+				// the same provider budget used by scene-level reports.
+				ReviewGenerationTimeout: 45 * time.Second,
 				AudioReadTimeout:        temporaryAudioConfig.ReadTimeout,
 				ReviewHistoryCursorKey: []byte(
 					reviewHistoryConfig.CursorSigningKey.Reveal(),

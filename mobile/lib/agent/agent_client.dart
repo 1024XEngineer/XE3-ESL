@@ -955,6 +955,24 @@ final class FakeAgentClient
   }
 
   @override
+  Future<Uint8List> loadSpeechPreview({
+    required String messageId,
+    required String text,
+  }) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      final found = _threadMessages.values.any(
+        (messages) => messages.any((message) => message.id == messageId),
+      );
+      if (!found || text.trim().isEmpty) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      return Uint8List.fromList(_fakeWaveBytes);
+    });
+  }
+
+  @override
   Future<void> dispose() async {}
 
   String _nextMessageId() => 'message_${++_messageSequence}';

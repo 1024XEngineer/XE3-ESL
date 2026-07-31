@@ -34,7 +34,7 @@ import (
 const (
 	legacyVoiceReviewImplementation = "qianwen-voice-review-v1"
 	voiceReviewImplementation       = "qianwen-scenario-review-v2"
-	voiceReviewMaxGeneration        = 20 * time.Second
+	voiceReviewMaxGeneration        = 45 * time.Second
 	voiceQuestionObjective          = "targeted-english-practice"
 )
 

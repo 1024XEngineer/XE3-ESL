@@ -283,10 +283,22 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	voiceRunProcessor := agentvoice.VoicePendingRunProcessor(runService)
+	if len(voiceConfigurations) == 1 &&
+		voiceConfigurations[0].AgentVoiceMessagesEnabled {
+		voiceRunProcessor, err = newDeferredAgentVoiceRunProcessor(
+			ctx,
+			runService,
+			slog.Default(),
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
 	agentVoiceMessages, err := buildAgentVoiceMessageApplication(
 		voiceConfigurations,
 		agentRepository,
-		runService,
+		voiceRunProcessor,
 		ids,
 		runConfiguration,
 	)

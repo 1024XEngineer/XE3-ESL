@@ -32,6 +32,7 @@ type InterviewReport struct {
 
 type InterviewReportDimension struct {
 	DimensionID            InterviewDimension          `json:"dimension_id"`
+	Score                  *int                        `json:"score,omitempty"`
 	ScoreabilityStatus     InterviewScoreabilityStatus `json:"scoreability_status"`
 	GateStatus             InterviewGateStatus         `json:"gate_status"`
 	Coverage               float64                     `json:"coverage"`
@@ -190,7 +191,7 @@ func ProjectInterviewReport(
 func projectInterviewReportDimension(
 	source InterviewShadowDimensionResult,
 ) InterviewReportDimension {
-	return InterviewReportDimension{
+	dimension := InterviewReportDimension{
 		DimensionID:        source.DimensionID,
 		ScoreabilityStatus: source.Scoreability,
 		GateStatus:         source.Gate,
@@ -208,6 +209,11 @@ func projectInterviewReportDimension(
 			source.RecommendedExpressions,
 		),
 	}
+	if source.Scoreability == InterviewScoreabilityProvisional {
+		score := source.Score
+		dimension.Score = &score
+	}
+	return dimension
 }
 
 func projectInterviewReportFindings(
@@ -347,18 +353,21 @@ func (report InterviewReport) Valid() bool {
 		}
 		switch dimension.ScoreabilityStatus {
 		case InterviewScoreabilityProvisional:
-			if dimension.ReasonCodes[0] !=
-				InterviewReasonASRConfidenceUnavailable ||
+			if dimension.Score == nil ||
+				*dimension.Score < 0 || *dimension.Score > 100 ||
+				dimension.ReasonCodes[0] !=
+					InterviewReasonASRConfidenceUnavailable ||
 				len(dimension.EvidenceRefIDs) == 0 ||
 				len(dimension.Strengths)+
 					len(dimension.Improvements) == 0 {
 				return false
 			}
 		case InterviewScoreabilityInsufficient:
-			if (dimension.ReasonCodes[0] !=
-				InterviewReasonInsufficientEvidence &&
-				dimension.ReasonCodes[0] !=
-					InterviewReasonOpportunityNotProvided) ||
+			if dimension.Score != nil ||
+				(dimension.ReasonCodes[0] !=
+					InterviewReasonInsufficientEvidence &&
+					dimension.ReasonCodes[0] !=
+						InterviewReasonOpportunityNotProvided) ||
 				len(dimension.EvidenceRefIDs) != 0 ||
 				len(dimension.Strengths) != 0 ||
 				len(dimension.Improvements) != 0 ||

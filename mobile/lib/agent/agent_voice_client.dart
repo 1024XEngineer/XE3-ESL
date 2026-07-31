@@ -41,6 +41,11 @@ abstract interface class AgentVoiceClient {
 
   Future<Uint8List> loadAssistantSpeech({required String messageId});
 
+  Future<Uint8List> loadSpeechPreview({
+    required String messageId,
+    required String text,
+  });
+
   Future<void> clearAccountState();
 
   Future<void> dispose();

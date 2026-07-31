@@ -64,14 +64,20 @@ IeltsSpeakingReportIndexItem _item(Object? value) {
       'updated_at',
     },
   );
-  if (root['report_kind'] != 'IELTS_SPEAKING_FULL_MOCK' ||
-      root['is_final'] != false) {
+  final kind = switch (root['report_kind']) {
+    'IELTS_SPEAKING_FULL_MOCK' => IeltsSpeakingReportKind.fullMock,
+    'INTERVIEW' => IeltsSpeakingReportKind.interview,
+    _ => throw const IeltsSpeakingReportIndexDecodeException(),
+  };
+  if (root['is_final'] != false) {
     throw const IeltsSpeakingReportIndexDecodeException();
   }
   final practiceSessionId = _identifier(root['practice_session_id']);
   final statusUrl = root['status_url'];
-  if (statusUrl !=
-      '/v1/practice-sessions/$practiceSessionId/ielts-speaking-report') {
+  final expectedSuffix = kind == IeltsSpeakingReportKind.interview
+      ? 'interview-report'
+      : 'ielts-speaking-report';
+  if (statusUrl != '/v1/practice-sessions/$practiceSessionId/$expectedSuffix') {
     throw const IeltsSpeakingReportIndexDecodeException();
   }
   final createdAt = _dateTime(root['created_at']);
@@ -80,7 +86,7 @@ IeltsSpeakingReportIndexItem _item(Object? value) {
     throw const IeltsSpeakingReportIndexDecodeException();
   }
   return IeltsSpeakingReportIndexItem(
-    reportKind: IeltsSpeakingReportKind.fullMock,
+    reportKind: kind,
     practiceSessionId: practiceSessionId,
     evaluationId: _uuid(root['evaluation_id']),
     evaluationRevisionId: _uuid(root['evaluation_revision_id']),

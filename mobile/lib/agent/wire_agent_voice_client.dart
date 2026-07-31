@@ -518,6 +518,33 @@ final class WireAgentVoiceClient implements AgentVoiceClient {
   }
 
   @override
+  Future<Uint8List> loadSpeechPreview({
+    required String messageId,
+    required String text,
+  }) {
+    _requireUuid(messageId);
+    return _run((generation) async {
+      final response = await _sendApi(
+        generation: generation,
+        method: 'POST',
+        path:
+            '/v1/agent-messages/${Uri.encodeComponent(messageId)}/speech-previews',
+        accept: 'audio/wav',
+        contentType: ContentType.json.mimeType,
+        body: utf8.encode(jsonEncode(<String, String>{'text': text})),
+        maximumResponseBytes: _maximumAudioBytes,
+      );
+      try {
+        _requireStatus(response, const <int>{HttpStatus.ok});
+        _requireWave(response);
+        return Uint8List.fromList(response.body);
+      } finally {
+        _zero(response.body);
+      }
+    });
+  }
+
+  @override
   Future<void> clearAccountState() {
     final existing = _cleanupFuture;
     if (existing != null) {

@@ -477,8 +477,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       return false;
     }
     final sent = await agentController.sendText(
-      '我刚完成了“$title”的 $completedTurns 轮练习。'
-      '下面附上这次练习已生成的真实报告摘要，请直接基于它先概括我的主要表现，再问我想重点复盘哪一部分：\n$summary',
+      '我完成了“$title”的 $completedTurns 轮练习，请根据摘要帮我复盘：\n$summary',
     );
     if (!sent) {
       _setError('已回到原会话，但暂时无法把练习结果发送给 Agent。');

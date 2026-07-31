@@ -363,6 +363,10 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 			"/v1/agent-messages/:message_id/speech",
 			h.agentMessageSpeech,
 		)
+		protected.POST(
+			"/v1/agent-messages/:message_id/speech-previews",
+			h.agentMessageSpeechPreview,
+		)
 	}
 	if h.images != nil {
 		protected.POST(
@@ -1644,6 +1648,24 @@ func (h *HTTPHandler) deleteAgentMessageAudio(c *gin.Context) {
 }
 
 func (h *HTTPHandler) agentMessageSpeech(c *gin.Context) {
+	h.serveAgentMessageSpeech(c, "")
+}
+
+func (h *HTTPHandler) agentMessageSpeechPreview(c *gin.Context) {
+	values, ok := decodeObject(c, []string{"text"}, []string{"text"})
+	if !ok {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	text, ok := decodeString(values["text"])
+	if !ok || strings.TrimSpace(text) != text || text == "" {
+		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
+		return
+	}
+	h.serveAgentMessageSpeech(c, text)
+}
+
+func (h *HTTPHandler) serveAgentMessageSpeech(c *gin.Context, text string) {
 	actor, ok := trustedActor(c)
 	if !ok {
 		h.writeAuthenticationRequired(c)
@@ -1653,6 +1675,7 @@ func (h *HTTPHandler) agentMessageSpeech(c *gin.Context) {
 		c.Request.Context(),
 		actor,
 		c.Param("message_id"),
+		text,
 	)
 	if err != nil {
 		h.writeAgentVoiceMessageError(c, err)

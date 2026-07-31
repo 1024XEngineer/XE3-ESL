@@ -26,6 +26,7 @@ func (boundary IELTSSpeakingReportIndexBoundary) valid() bool {
 }
 
 type IELTSSpeakingReportIndexEntry struct {
+	SceneType            SceneType
 	PracticeSessionID    string
 	EvaluationID         string
 	EvaluationRevisionID string
@@ -37,7 +38,8 @@ type IELTSSpeakingReportIndexEntry struct {
 }
 
 func (entry IELTSSpeakingReportIndexEntry) Valid() bool {
-	return validIdentifier(entry.PracticeSessionID) &&
+	return (entry.SceneType == "" || entry.SceneType == SceneIELTSSpeaking || entry.SceneType == SceneInterview) &&
+		validIdentifier(entry.PracticeSessionID) &&
 		validUUID(entry.EvaluationID) &&
 		validUUID(entry.EvaluationRevisionID) &&
 		entry.Revision >= 1 &&
@@ -207,6 +209,7 @@ func (r *PostgresRepository) ListCurrentIELTSSpeakingReportIndex(
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT
+			ledger.scene_type,
 			ledger.practice_session_id,
 			ledger.id::text,
 			revision.id::text,
@@ -225,9 +228,10 @@ func (r *PostgresRepository) ListCurrentIELTSSpeakingReportIndex(
 		 AND state.owner_user_id = ledger.owner_user_id
 		WHERE ledger.owner_user_id = $1
 		  AND ledger.scope = 'SESSION'
-		  AND ledger.scene_type = 'IELTS_SPEAKING'
+		  AND ledger.scene_type IN ('IELTS_SPEAKING', 'INTERVIEW')
 		  AND revision.channels = ARRAY['SCENE']::text[]
-		  AND revision.scene_strategy_ref = $2
+		  AND ((ledger.scene_type = 'IELTS_SPEAKING' AND revision.scene_strategy_ref = $2)
+		    OR (ledger.scene_type = 'INTERVIEW' AND revision.scene_strategy_ref = $8))
 		  AND revision.core_4d_strategy_ref IS NULL
 		  AND revision.pipeline_version = $3
 		  AND revision.schema_version = $4
@@ -254,7 +258,8 @@ func (r *PostgresRepository) ListCurrentIELTSSpeakingReportIndex(
 		SchemaVersion,
 		beforeUpdatedAt,
 		beforeEvaluationID,
-		limit+1)
+		limit+1,
+		InterviewShadowStrategyRef)
 	if err != nil {
 		return IELTSSpeakingReportIndexPage{}, fmt.Errorf(
 			"list IELTS Speaking report index: %w",
@@ -270,6 +275,7 @@ func (r *PostgresRepository) ListCurrentIELTSSpeakingReportIndex(
 	for rows.Next() {
 		var item IELTSSpeakingReportIndexEntry
 		if err := rows.Scan(
+			&item.SceneType,
 			&item.PracticeSessionID,
 			&item.EvaluationID,
 			&item.EvaluationRevisionID,

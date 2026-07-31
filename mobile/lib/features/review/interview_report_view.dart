@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
@@ -456,15 +457,10 @@ class _ReportNotice extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('暂定文本反馈', style: SpeakUpDesign.cardTitle),
+            Text('面试能力反馈', style: SpeakUpDesign.cardTitle),
             SizedBox(height: 8),
             Text(
-              '面试专项能力基于本次练习中已确认的文字回答；语言表现中的发音与语速来自上方逐轮真实录音评分，两类结果不会混算。',
-              style: SpeakUpDesign.body,
-            ),
-            SizedBox(height: 6),
-            Text(
-              '反馈仅用于练习，不代表录用结论或录用概率。',
+              '基于本次回答，分析回答相关性、结构、说服力、职业表达与追问应对能力。',
               key: Key('interview-report-readiness-notice'),
               style: SpeakUpDesign.body,
             ),
@@ -514,7 +510,18 @@ class _ReportDimensions extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('五维反馈', style: SpeakUpDesign.cardTitle),
+            Text('五维反馈概览', style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: 8),
+            Text('图形展示本次五维能力得分。', style: SpeakUpDesign.meta),
+            const SizedBox(height: 12),
+            if (report.dimensions.every((dimension) => dimension.score != null))
+              _DimensionRadar(dimensions: report.dimensions)
+            else
+              Text(
+                '部分维度证据不足，暂不绘制雷达图。',
+                key: const Key('interview-report-dimension-radar-unavailable'),
+                style: SpeakUpDesign.meta,
+              ),
             const SizedBox(height: 14),
             for (var index = 0; index < report.dimensions.length; index++) ...[
               if (index > 0) ...[
@@ -529,6 +536,108 @@ class _ReportDimensions extends StatelessWidget {
       ),
     );
   }
+}
+
+class _DimensionRadar extends StatelessWidget {
+  const _DimensionRadar({required this.dimensions});
+
+  final List<InterviewReportDimension> dimensions;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      key: const Key('interview-report-dimension-radar'),
+      width: double.infinity,
+      height: 250,
+      child: CustomPaint(
+        painter: _DimensionRadarPainter(
+          values: [for (final dimension in dimensions) dimension.score! / 100],
+          labels: [
+            for (final dimension in dimensions) _dimensionLabel(dimension.id),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DimensionRadarPainter extends CustomPainter {
+  const _DimensionRadarPainter({required this.values, required this.labels});
+
+  final List<double> values;
+  final List<String> labels;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length != 5 || labels.length != 5) return;
+    final center = Offset(size.width / 2, size.height / 2 + 4);
+    final radius = math.min(size.width, size.height) * 0.31;
+    final grid = Paint()
+      ..color = const Color(0xFFD8DEE1)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    final fill = Paint()
+      ..color = SpeakUpDesign.primary.withValues(alpha: 0.18)
+      ..style = PaintingStyle.fill;
+    final stroke = Paint()
+      ..color = SpeakUpDesign.primary
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+
+    Offset point(int index, double scale) {
+      final angle = -math.pi / 2 + index * math.pi * 2 / 5;
+      return center + Offset(math.cos(angle), math.sin(angle)) * radius * scale;
+    }
+
+    Path polygon(double scale) {
+      final path = Path()..moveTo(point(0, scale).dx, point(0, scale).dy);
+      for (var index = 1; index < 5; index++) {
+        path.lineTo(point(index, scale).dx, point(index, scale).dy);
+      }
+      return path..close();
+    }
+
+    for (final scale in const [0.25, 0.5, 0.75, 1.0]) {
+      canvas.drawPath(polygon(scale), grid);
+    }
+    for (var index = 0; index < 5; index++) {
+      canvas.drawLine(center, point(index, 1), grid);
+    }
+
+    final result = Path();
+    for (var index = 0; index < 5; index++) {
+      final value = values[index].clamp(0.0, 1.0);
+      final current = point(index, value);
+      if (index == 0) {
+        result.moveTo(current.dx, current.dy);
+      } else {
+        result.lineTo(current.dx, current.dy);
+      }
+    }
+    result.close();
+    canvas.drawPath(result, fill);
+    canvas.drawPath(result, stroke);
+
+    for (var index = 0; index < 5; index++) {
+      final anchor = point(index, 1.28);
+      final text = TextPainter(
+        text: TextSpan(
+          text: labels[index],
+          style: const TextStyle(
+            color: Color(0xFF4F565A),
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      text.paint(canvas, anchor - Offset(text.width / 2, text.height / 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DimensionRadarPainter oldDelegate) =>
+      oldDelegate.values != values || oldDelegate.labels != labels;
 }
 
 class _DimensionFeedback extends StatelessWidget {
@@ -550,7 +659,12 @@ class _DimensionFeedback extends StatelessWidget {
       key: Key('interview-report-dimension-${dimension.id.name}'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(_dimensionLabel(dimension.id), style: SpeakUpDesign.label),
+        Text(
+          dimension.score == null
+              ? '${_dimensionLabel(dimension.id)} · 未评估'
+              : '${_dimensionLabel(dimension.id)} · ${dimension.score} / 100',
+          style: SpeakUpDesign.label,
+        ),
         if (findings.isEmpty) ...[
           const SizedBox(height: 6),
           Text('现有文本证据不足以形成该维度结论。', style: SpeakUpDesign.meta),
@@ -710,40 +824,17 @@ String _dimensionLabel(InterviewReportDimensionId dimension) =>
     };
 
 String _agentReportSummary(InterviewReport report) {
-  const maximumCharacters = 5500;
-  final lines = <String>['以下是系统刚生成的真实面试报告摘要，请直接基于这些结果复盘：'];
-  var length = lines.first.length;
-
-  void addLine(String value) {
-    if (length + value.length + 1 > maximumCharacters) {
-      return;
-    }
-    lines.add(value);
-    length += value.length + 1;
-  }
-
+  final lines = <String>['练习报告摘要'];
   for (final dimension in report.dimensions) {
-    addLine('【${_dimensionLabel(dimension.id)}】');
     if (dimension.strengths.firstOrNull case final finding?) {
-      addLine('做得好：${finding.message}');
-    }
-    if (dimension.improvements.firstOrNull case final finding?) {
-      addLine('可改进：${finding.message}');
-      if (finding.suggestion case final suggestion?) {
-        addLine('改进建议：$suggestion');
-      }
-    }
-    if (dimension.recommendedExpressions.firstOrNull case final finding?) {
-      addLine('推荐表达：${finding.suggestion ?? finding.message}');
+      lines.add('优势：${finding.message}');
+      break;
     }
   }
-  if (report.priorityActions.isNotEmpty) {
-    addLine('【优先改进】');
-    for (var index = 0; index < report.priorityActions.length; index++) {
-      addLine(
-        '${index + 1}. ${_actionText(report, report.priorityActions[index])}',
-      );
-    }
+  for (final action in report.priorityActions.take(2)) {
+    lines.add(
+      '待提升（${_dimensionLabel(action.dimensionId)}）：${report.finding(action.findingId)!.message}',
+    );
   }
   return lines.join('\n');
 }

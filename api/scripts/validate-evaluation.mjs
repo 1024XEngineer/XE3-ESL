@@ -699,10 +699,10 @@ const forbiddenInterviewReportField = new RegExp(
   'u',
 );
 
-const assertNoInterviewScoreFields = (value, path = 'report') => {
+const assertNoUnexpectedInterviewScoreFields = (value, path = 'report') => {
   if (Array.isArray(value)) {
     value.forEach((item, index) =>
-      assertNoInterviewScoreFields(item, `${path}[${index}]`),
+      assertNoUnexpectedInterviewScoreFields(item, `${path}[${index}]`),
     );
     return;
   }
@@ -710,12 +710,15 @@ const assertNoInterviewScoreFields = (value, path = 'report') => {
     return;
   }
   for (const [field, item] of Object.entries(value)) {
+    if (field === 'score' && /^report\.dimensions\[\d+\]$/u.test(path)) {
+      continue;
+    }
     assert.doesNotMatch(
       field,
       forbiddenInterviewReportField,
       `${path}.${field} exposes a forbidden numeric score field`,
     );
-    assertNoInterviewScoreFields(item, `${path}.${field}`);
+    assertNoUnexpectedInterviewScoreFields(item, `${path}.${field}`);
   }
 };
 
@@ -734,7 +737,7 @@ const assertInterviewReportSemantics = (envelope) => {
   const report = envelope.report;
   assert.equal(report.schema_version, 'interview-report/v1');
   assert.equal(report.readiness_level, 'NOT_ASSESSED');
-  assertNoInterviewScoreFields(report);
+  assertNoUnexpectedInterviewScoreFields(report);
   assert.deepEqual(
     report.dimensions.map((dimension) => dimension.dimension_id),
     interviewDimensionOrder,
@@ -789,6 +792,12 @@ const assertInterviewReportSemantics = (envelope) => {
 
   const findingById = new Map();
   for (const dimension of report.dimensions) {
+    if (dimension.scoreability_status === 'PROVISIONAL') {
+      assert.ok(Number.isInteger(dimension.score));
+      assert.ok(dimension.score >= 0 && dimension.score <= 100);
+    } else {
+      assert.ok(!Object.hasOwn(dimension, 'score'));
+    }
     if (report.scoreability_status === 'INSUFFICIENT') {
       assert.equal(dimension.scoreability_status, 'INSUFFICIENT');
       assert.equal(dimension.gate_status, 'BLOCKED');
@@ -1019,6 +1028,36 @@ for (const [caseName, mutate] of [
     invalid,
   );
 }
+
+const interviewReportWithoutDimensionScore = structuredClone(
+  interviewReportFixture.ready,
+);
+delete interviewReportWithoutDimensionScore.report.dimensions[0].score;
+assertSchemaRejected(
+  'Interview report missing an assessable dimension score',
+  'InterviewReportEnvelope',
+  interviewReportWithoutDimensionScore,
+);
+
+const interviewReportWithInvalidDimensionScore = structuredClone(
+  interviewReportFixture.ready,
+);
+interviewReportWithInvalidDimensionScore.report.dimensions[0].score = 101;
+assertSchemaRejected(
+  'Interview report with an out-of-range dimension score',
+  'InterviewReportEnvelope',
+  interviewReportWithInvalidDimensionScore,
+);
+
+const insufficientInterviewReportWithScore = structuredClone(
+  interviewReportFixture.insufficient,
+);
+insufficientInterviewReportWithScore.report.dimensions[0].score = 0;
+assertSchemaRejected(
+  'unscoreable Interview report dimension carrying zero',
+  'InterviewReportEnvelope',
+  insufficientInterviewReportWithScore,
+);
 
 const unknownReportReason = structuredClone(interviewReportFixture.ready);
 unknownReportReason.report.dimensions[0].reason_codes = ['UNKNOWN'];

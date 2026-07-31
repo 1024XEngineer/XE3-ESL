@@ -113,6 +113,7 @@ type VoiceMessageApplication interface {
 		context.Context,
 		requestcontext.Actor,
 		string,
+		string,
 	) (ai.SynthesisResult, error)
 }
 
@@ -600,6 +601,7 @@ func (service *VoiceMessageService) SynthesizeMessage(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	messageID string,
+	previewText string,
 ) (ai.SynthesisResult, error) {
 	if ctx == nil || !actor.Valid() || !validUUID(messageID) {
 		return ai.SynthesisResult{}, ErrNotFound
@@ -613,12 +615,15 @@ func (service *VoiceMessageService) SynthesizeMessage(
 	if err != nil {
 		return ai.SynthesisResult{}, err
 	}
-	if message.Role != MessageRoleAssistant {
+	text := message.Content
+	if previewText != "" {
+		text = previewText
+	} else if message.Role != MessageRoleAssistant {
 		return ai.SynthesisResult{}, ErrNotFound
 	}
 	return service.synthesizer.Synthesize(
 		ctx,
-		ai.SynthesisRequest{Text: message.Content},
+		ai.SynthesisRequest{Text: text},
 	)
 }
 

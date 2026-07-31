@@ -1,6 +1,6 @@
 import 'package:speakup/review/ielts_speaking_report.dart';
 
-enum IeltsSpeakingReportKind { fullMock }
+enum IeltsSpeakingReportKind { fullMock, interview }
 
 final class IeltsSpeakingReportIndexItem {
   const IeltsSpeakingReportIndexItem({

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	defaultGenerationLease           = 30 * time.Second
+	defaultGenerationLease           = 60 * time.Second
 	defaultGenerationFinalizeTimeout = 5 * time.Second
 	defaultPollInterval              = 20 * time.Millisecond
 	defaultMaxPollInterval           = 500 * time.Millisecond

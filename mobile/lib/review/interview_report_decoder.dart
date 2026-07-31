@@ -291,13 +291,21 @@ InterviewReportDimension _dimension(
       'improvements',
       'recommended_expressions',
     },
+    optional: const {'score'},
   );
   final id = _dimensionId(root['dimension_id']);
   if (id != expected) {
     throw const InterviewReportDecodeException();
   }
+  final score = root.containsKey('score')
+      ? _nonNegativeInt(root['score'])
+      : null;
+  if (score != null && score > 100) {
+    throw const InterviewReportDecodeException();
+  }
   final result = InterviewReportDimension(
     id: id,
+    score: score,
     scoreabilityStatus: _scoreability(root['scoreability_status']),
     gateStatus: _gate(root['gate_status']),
     coverage: _ratio(root['coverage']),
@@ -313,13 +321,15 @@ InterviewReportDimension _dimension(
   }
   if (result.scoreabilityStatus ==
       InterviewReportScoreabilityStatus.provisional) {
-    if (result.gateStatus != InterviewReportGateStatus.feedbackOnly ||
+    if (result.score == null ||
+        result.gateStatus != InterviewReportGateStatus.feedbackOnly ||
         result.reasonCodes.single != 'ASR_CONFIDENCE_UNAVAILABLE' ||
         result.evidenceRefIds.isEmpty ||
         (result.strengths.isEmpty && result.improvements.isEmpty)) {
       throw const InterviewReportDecodeException();
     }
-  } else if (result.gateStatus != InterviewReportGateStatus.blocked ||
+  } else if (result.score != null ||
+      result.gateStatus != InterviewReportGateStatus.blocked ||
       !const {
         'INSUFFICIENT_EVIDENCE',
         'OPPORTUNITY_NOT_PROVIDED',

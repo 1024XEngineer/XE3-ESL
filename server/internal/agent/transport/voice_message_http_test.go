@@ -475,6 +475,7 @@ func (*voiceMessageHTTPApplication) SynthesizeMessage(
 	context.Context,
 	requestcontext.Actor,
 	string,
+	string,
 ) (ai.SynthesisResult, error) {
 	return ai.SynthesisResult{
 		Audio: &voiceMessageHTTPAudio{body: []byte("temporary-tts")},
