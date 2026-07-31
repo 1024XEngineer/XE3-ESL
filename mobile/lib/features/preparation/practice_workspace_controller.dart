@@ -1213,7 +1213,8 @@ bool _validScenePresentation(
   }
   return presentationMode != AgentScenePresentationMode.immersiveRoleplay ||
       scenarioType == 'WORKPLACE' ||
-      scenarioType == 'DAILY';
+      scenarioType == 'DAILY' ||
+      scenarioType == 'INTERVIEW';
 }
 
 bool _validOpaqueId(String value) {

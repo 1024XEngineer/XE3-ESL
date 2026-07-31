@@ -211,6 +211,97 @@ func TestPostgresSpeechFeedbackLeaseFencingAndExactItemRead(
 	}
 }
 
+func TestPostgresSpeechFeedbackPersistsTerminalRetryableFailure(
+	t *testing.T,
+) {
+	pool := speechFeedbackDatabase(t)
+	const (
+		ownerID     = "10000000-0000-4000-8000-000000000001"
+		sessionID   = "practice-daily-1"
+		turnID      = "turn-daily-1"
+		candidateID = "candidate-daily-1"
+	)
+	insertConversationSpeechFeedbackFixture(
+		t,
+		pool,
+		ownerID,
+		sessionID,
+		turnID,
+		candidateID,
+		true,
+	)
+	repository := review.NewPostgresRepository(pool)
+	if _, err := repository.EnsureConfirmedConversationTurn(
+		context.Background(),
+		ownerID,
+		sessionID,
+		turnID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	configuration := review.SpeechFeedbackWorkerConfiguration{
+		MaxAttempts:     1,
+		LeaseDuration:   time.Minute,
+		RetryDelay:      time.Second,
+		StrategyRef:     review.SpeechFeedbackStrategyRef,
+		PipelineVersion: review.SpeechFeedbackPipelineVersion,
+		PromptVersion:   review.SpeechFeedbackPromptVersion,
+		Provider:        "qianwen",
+		Model:           "qwen-plus",
+	}
+	claim, acquired, err := repository.ClaimSpeechFeedback(
+		context.Background(),
+		configuration,
+	)
+	if err != nil || !acquired {
+		t.Fatalf("claim = %#v, %t, %v", claim, acquired, err)
+	}
+	status, err := repository.FailSpeechFeedback(
+		context.Background(),
+		claim,
+		review.SpeechFeedbackStableFailure{
+			ReasonCode: review.SpeechFeedbackFailureProviderUnavailable,
+			Retryable:  true,
+		},
+		configuration,
+	)
+	if err != nil {
+		t.Fatalf("persist terminal failure: %v", err)
+	}
+	if status != review.SpeechFeedbackFailed {
+		t.Fatalf("failure status = %q", status)
+	}
+	var (
+		persistedCode      string
+		persistedRetryable bool
+		leaseExpiresAt     *time.Time
+	)
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			stable_failure_code,
+			stable_failure_retryable,
+			lease_expires_at
+		FROM review_speech_feedbacks
+		WHERE id = $1
+	`, claim.SpeechFeedbackID).Scan(
+		&persistedCode,
+		&persistedRetryable,
+		&leaseExpiresAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if persistedCode != string(
+		review.SpeechFeedbackFailureProviderUnavailable,
+	) || persistedRetryable || leaseExpiresAt != nil {
+		t.Fatalf(
+			"persisted failure = %q, %t, %v",
+			persistedCode,
+			persistedRetryable,
+			leaseExpiresAt,
+		)
+	}
+}
+
 func TestPostgresSpeechFeedbackDeletionFencesLateWorker(
 	t *testing.T,
 ) {
@@ -553,6 +644,15 @@ func speechFeedbackDatabase(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, string(up)); err != nil {
 		t.Fatalf("apply SpeechFeedback migration: %v", err)
 	}
+	iseEvidenceUp, err := migrations.Files.ReadFile(
+		"000043_speech_feedback_ise_evidence.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(iseEvidenceUp)); err != nil {
+		t.Fatalf("apply SpeechFeedback ISE evidence migration: %v", err)
+	}
 	return pool
 }
 
@@ -634,6 +734,16 @@ const speechFeedbackModulePrerequisiteSQL = `
 		candidate_version bigint NOT NULL,
 		message_id uuid NOT NULL,
 		confirmed_text text NOT NULL
+	);
+	CREATE TABLE agent_message_audios (
+		audio_id uuid PRIMARY KEY,
+		owner_user_id uuid NOT NULL,
+		thread_id uuid NOT NULL,
+		message_id uuid NOT NULL,
+		candidate_id uuid NOT NULL,
+		checksum_sha256 text NOT NULL,
+		object_key text NOT NULL,
+		status text NOT NULL
 	);
 `
 

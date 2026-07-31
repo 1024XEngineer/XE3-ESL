@@ -337,7 +337,8 @@ final class PreparationLaunchController extends ChangeNotifier {
           scenarioType: activeAttempt.selection.scenarioType,
           presentationMode:
               activeAttempt.selection.scenarioType == 'WORKPLACE' ||
-                  activeAttempt.selection.scenarioType == 'DAILY'
+                  activeAttempt.selection.scenarioType == 'DAILY' ||
+                  activeAttempt.selection.scenarioType == 'INTERVIEW'
               ? AgentScenePresentationMode.immersiveRoleplay
               : AgentScenePresentationMode.standard,
         );

@@ -396,21 +396,30 @@ func (r *PostgresRepository) FailSpeechFeedback(
 	err = tx.QueryRow(ctx, `
 		UPDATE review_speech_feedbacks
 		SET feedback_status =
-		        CASE WHEN $6 THEN 'QUEUED' ELSE 'FAILED' END,
+		        CASE
+		            WHEN $6::boolean THEN 'QUEUED'
+		            ELSE 'FAILED'
+		        END,
 		    stable_failure_code =
-		        CASE WHEN $6 THEN NULL ELSE $7 END,
+		        CASE
+		            WHEN $6::boolean THEN NULL
+		            ELSE $7::text
+		        END,
 		    stable_failure_retryable =
-		        CASE WHEN $6 THEN NULL ELSE $8 END,
+		        CASE
+		            WHEN $6::boolean THEN NULL
+		            ELSE $8::boolean
+		        END,
 		    lease_expires_at = NULL,
 		    available_at =
 		        CASE
-		            WHEN $6 THEN transaction_timestamp() +
-		                make_interval(secs => $9)
+		            WHEN $6::boolean THEN transaction_timestamp() +
+		                make_interval(secs => $9::double precision)
 		            ELSE available_at
 		        END,
 		    completed_at =
 		        CASE
-		            WHEN $6 THEN NULL
+		            WHEN $6::boolean THEN NULL
 		            ELSE transaction_timestamp()
 		        END,
 		    updated_at = transaction_timestamp()

@@ -114,7 +114,10 @@ const speechFeedbackSystemPrompt = `You return cautious English-learning feedbac
 Return one JSON object only: {"items":[...]}.
 Each item has exactly: kind, anchor, explanation, and suggested_text when required.
 kind is CORRECTION, STRENGTH, IMPROVEMENT, or RECOMMENDED_EXPRESSION.
-anchor must copy the complete source-specific anchor identity from the input and include exact UTF-8 byte offsets and original_excerpt.
+For source_kind CONVERSATION_TURN, anchor has exactly: anchor_kind="CONVERSATION_TRANSCRIPT", evidence_ref_id copied from the top-level input, turn_id copied from source.turn_id, start_utf8_byte, end_utf8_byte, original_excerpt.
+For source_kind AGENT_VOICE_MESSAGE, anchor has exactly: anchor_kind="AGENT_TRANSCRIPT", transcript_evidence_id copied from source.transcript_evidence_id, message_id copied from source.message_id, start_utf8_byte, end_utf8_byte, original_excerpt.
+Do not put source_kind, thread_id, candidate_version, practice_session_id, or any other field in anchor.
+Offsets are zero-based UTF-8 byte positions in confirmed_text. original_excerpt must exactly equal confirmed_text[start_utf8_byte:end_utf8_byte].
 CORRECTION, IMPROVEMENT, and RECOMMENDED_EXPRESSION require non-empty suggested_text. STRENGTH must omit suggested_text.
 Use only the confirmed text. Do not score, grade, infer pronunciation, fluency, confidence, audio quality, intent, or facts not present in the transcript.
 Return at most 8 anchored items and no unknown fields.`
