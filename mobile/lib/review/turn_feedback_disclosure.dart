@@ -66,7 +66,18 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
                   ),
                   child: Row(
                     children: [
-                      Icon(content.icon, size: 18, color: content.color),
+                      if (content.loading)
+                        SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            key: const Key('speech-feedback-loading-indicator'),
+                            strokeWidth: 2,
+                            color: content.color,
+                          ),
+                        )
+                      else
+                        Icon(content.icon, size: 18, color: content.color),
                       const SizedBox(width: SpeakUpDesign.space8),
                       Expanded(
                         child: Text(
@@ -75,16 +86,6 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
                               ?.copyWith(color: SpeakUpDesign.ink),
                         ),
                       ),
-                      if (content.badge != null) ...[
-                        const SizedBox(width: SpeakUpDesign.space8),
-                        Text(
-                          content.badge!,
-                          style: SpeakUpDesign.meta.copyWith(
-                            color: content.color,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
                       if (content.canExpand) ...[
                         const SizedBox(width: SpeakUpDesign.space4),
                         Icon(
@@ -156,7 +157,7 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
             Text(
               feedback.acousticAssessment.isAssessed
                   ? '表达反馈基于已确认文本，发音表现基于本次录音。'
-                  : '以下仅基于已确认文本，是暂定的表达反馈；不包含发音或声学流利度判断。',
+                  : '以下表达反馈仅基于已确认文本；当前不包含发音或声学流利度判断。',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
@@ -183,24 +184,25 @@ final class _DisclosureContent {
     required this.icon,
     required this.color,
     required this.canExpand,
-    this.badge,
+    this.loading = false,
   });
 
   final String title;
   final IconData icon;
   final Color color;
   final bool canExpand;
-  final String? badge;
+  final bool loading;
 }
 
 _DisclosureContent _contentFor(SpeechFeedbackProjection projection) {
   final feedback = projection.feedback;
   if (projection.isPolling) {
     return const _DisclosureContent(
-      title: '正在生成文字反馈…',
+      title: '正在生成评分与纠错…',
       icon: Icons.schedule_rounded,
       color: SpeakUpDesign.secondary,
       canExpand: false,
+      loading: true,
     );
   }
   if (projection.errorMessage != null) {
@@ -213,10 +215,11 @@ _DisclosureContent _contentFor(SpeechFeedbackProjection projection) {
   }
   if (feedback?.isPending == true) {
     return const _DisclosureContent(
-      title: '正在生成文字反馈…',
+      title: '正在生成评分与纠错…',
       icon: Icons.schedule_rounded,
       color: SpeakUpDesign.secondary,
       canExpand: false,
+      loading: true,
     );
   }
   if (feedback == null) {
@@ -245,8 +248,7 @@ _DisclosureContent _contentFor(SpeechFeedbackProjection projection) {
     );
   }
   return const _DisclosureContent(
-    title: '本轮表达反馈',
-    badge: '暂定',
+    title: '评分与纠错',
     icon: Icons.chat_bubble_outline_rounded,
     color: SpeakUpDesign.primary,
     canExpand: true,

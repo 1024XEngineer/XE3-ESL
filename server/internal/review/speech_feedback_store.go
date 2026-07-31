@@ -686,6 +686,15 @@ func eligibleSpeechFeedbackScenario(
 	case "WORKPLACE":
 		return scenarioModel == "PROGRESS_AND_RISK_UPDATE" ||
 			scenarioModel == "WORKPLACE_BASIC_DIALOGUE"
+	case "INTERVIEW":
+		return scenarioModel == "PROJECT_EXPERIENCE_DEEP_DIVE" ||
+			scenarioModel == "INTERVIEW_BASIC_DIALOGUE"
+	case "EXAM":
+		return scenarioModel == "IELTS_SPEAKING_PART_1" ||
+			scenarioModel == "IELTS_SPEAKING_PART_2" ||
+			scenarioModel == "IELTS_SPEAKING_PART_3" ||
+			scenarioModel == "IELTS_SPEAKING_FULL_MOCK" ||
+			scenarioModel == "EXAM_BASIC_DIALOGUE"
 	default:
 		return false
 	}

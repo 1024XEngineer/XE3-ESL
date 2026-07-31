@@ -16,14 +16,18 @@ void main() {
         ),
       ),
     );
-    expect(find.text('正在生成文字反馈…'), findsOneWidget);
+    expect(find.text('正在生成评分与纠错…'), findsOneWidget);
+    expect(
+      find.byKey(const Key('speech-feedback-loading-indicator')),
+      findsOneWidget,
+    );
 
     await tester.pumpWidget(
       _app(_projection(_feedback(status: SpeechFeedbackStatus.ready))),
     );
     await tester.pump();
 
-    expect(find.text('本轮表达反馈'), findsOneWidget);
+    expect(find.text('评分与纠错'), findsOneWidget);
     expect(
       find.byKey(const Key('speech-feedback-disclosure-content')),
       findsNothing,
@@ -46,7 +50,7 @@ void main() {
     expect(find.textContaining('基于已确认文本'), findsOneWidget);
     expect(find.text('I was'), findsOneWidget);
     expect(find.textContaining('发音与声学流利度未评估'), findsOneWidget);
-    expect(find.textContaining('分'), findsNothing);
+    expect(find.textContaining('发音准确度'), findsNothing);
   });
 
   testWidgets('shows repractice only from the server-declared mode', (

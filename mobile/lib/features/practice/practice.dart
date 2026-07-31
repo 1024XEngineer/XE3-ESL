@@ -534,6 +534,7 @@ class _PracticePageState extends State<PracticePage>
         progressStore: widget.ieltsMockProgressStore,
         preparationController: widget.preparationController,
         reportController: widget.ieltsSpeakingReportController,
+        speechFeedbackController: widget.speechFeedbackController,
       );
     }
     final scene = controller?.scene;

@@ -42,7 +42,7 @@ func NewSpeechFeedbackCoordinator(
 }
 
 // EnsureConversationTurn is the composition entry point for a confirmed
-// Daily/Workplace voice Turn. Review derives and freezes the source revision;
+// practice voice Turn. Review derives and freezes the source revision;
 // callers cannot supply an EvidenceSnapshot identity.
 func (coordinator *SpeechFeedbackCoordinator) EnsureConversationTurn(
 	ctx context.Context,
