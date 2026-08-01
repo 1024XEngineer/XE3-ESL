@@ -1754,10 +1754,10 @@ func createVoiceFormalContext(
 		}`,
 			threadID,
 			matterID,
-			preparation.ProgrammerInterviewScenarioID,
-			preparation.BackendEngineerConfigID,
+			preparation.WorkplaceProgressRiskScenarioID,
+			preparation.WorkplaceProgressRiskConfigID,
 			profileID,
-			preparation.TechnicalInterviewerRoleID,
+			preparation.DirectManagerRoleID,
 		),
 		"voice-"+key+"-plan",
 		http.StatusCreated,
@@ -1795,8 +1795,8 @@ func createVoiceFormalContextSession(
 			"role_definition_ids":[%q]
 		}`,
 			formalContext.PreparationSnapshotID,
-			preparation.TechnicalFocusOptionID,
-			preparation.TechnicalInterviewerRoleID,
+			preparation.DirectManagerFocusOptionID,
+			preparation.DirectManagerRoleID,
 		),
 		"voice-"+key+"-context-session",
 		http.StatusCreated,
@@ -2206,6 +2206,15 @@ func voiceReviewFixture(prompt string) (string, error) {
 		"ownership_decisions",
 		"evidence_impact",
 		"language_clarity",
+	}
+	if strings.Contains(prompt, "workplace.progress_risk_update") {
+		dimensions = []string{
+			"progress_clarity",
+			"risk_specificity",
+			"impact_priority",
+			"next_step_ask",
+			"language_clarity",
+		}
 	}
 	conclusions := make([]map[string]any, len(dimensions))
 	for dimensionIndex, dimension := range dimensions {

@@ -610,6 +610,11 @@ class _PracticePageState extends State<PracticePage>
               ? const _NoScene()
               : Column(
                   children: [
+                    if (controller.review != null)
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: Text('复盘已生成，正在打开'),
+                      ),
                     if (_isInterview(controller))
                       _InterviewProgress(controller: controller),
                     Expanded(
