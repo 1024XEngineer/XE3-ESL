@@ -631,7 +631,9 @@ final class JobPreparationController extends ChangeNotifier {
     final target = _target;
     final confirmation = target?.confirmation;
     final candidate = confirmation?.candidate;
-    final background = _input.candidateBackground;
+    final background =
+        _input.candidateBackground ??
+        '未提供个人背景，本次按${candidate?.jobTitle ?? '目标岗位'}通用要求练习。';
     final workspace = workspaceController;
     var threadId = workspace == null ? threadIdProvider() : null;
     if (target == null ||
@@ -641,12 +643,6 @@ final class JobPreparationController extends ChangeNotifier {
         target.stage != JobTargetStage.confirmed) {
       _errorMessage = '岗位信息尚未确认，请先完成分析与确认。';
       _operationStage = JobPreparationOperationStage.confirmation;
-      notifyListeners();
-      return false;
-    }
-    if (background == null || background.isEmpty) {
-      _errorMessage = '请先补充你的相关背景，再生成练习预览。';
-      _operationStage = JobPreparationOperationStage.profile;
       notifyListeners();
       return false;
     }
