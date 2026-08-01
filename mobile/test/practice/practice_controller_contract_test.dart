@@ -1133,13 +1133,19 @@ void main() {
   testWidgets('interview and daily scenes share the conversation page', (
     tester,
   ) async {
+    const interviewScene = AgentScene(
+      id: 'behavioral-interview',
+      title: '行为面试',
+      description: '使用具体经历回答协作、冲突和成长类问题。',
+      scenarioType: 'INTERVIEW',
+    );
     const dailyScene = AgentScene(
       id: 'hotel-check-in',
       title: '酒店入住',
       description: '练习办理入住和沟通房间问题。',
     );
 
-    for (final scene in [agentScenes[1], dailyScene]) {
+    for (final scene in [interviewScene, dailyScene]) {
       final controller = AgentController(
         client: FakeAgentClient(),
         practiceClient: FakePracticeClient(),
