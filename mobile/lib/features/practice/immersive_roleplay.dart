@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/agent/agent_voice_widgets.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/review/interview_report_view.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/review/interview_report_controller.dart';
+import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
 import 'package:speakup/review/turn_feedback_disclosure.dart';
 
@@ -49,7 +51,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
   final bool replayLoading;
   final bool replayPlaying;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
   final bool previewMode;
 
   @override
@@ -650,7 +652,12 @@ class _ConversationPanel extends StatelessWidget {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            _MessageBubble(message: message),
+                            AgentMessageBubble(
+                              message: message,
+                              voiceController: controller.voiceController,
+                              polishedText: _polishedText(projection),
+                              polishLoading: projection?.isPolling ?? false,
+                            ),
                             if (projection != null) ...[
                               const SizedBox(height: SpeakUpDesign.space8),
                               Align(
@@ -663,6 +670,7 @@ class _ConversationPanel extends StatelessWidget {
                                       '${projection.sourceKey}',
                                     ),
                                     projection: projection,
+                                    compact: true,
                                     onRetry: projection.canRetry
                                         ? () => unawaited(
                                             speechFeedbackController!.retry(
@@ -719,9 +727,33 @@ class _ConversationPanel extends StatelessWidget {
         speechFeedbackController == null) {
       return null;
     }
-    return speechFeedbackController!.projectionFor(
+    final projection = speechFeedbackController!.projectionFor(
       _immersiveFeedbackSourceKey(controller, message),
     );
+    if (projection?.feedback?.scoreabilityStatus ==
+        SpeechFeedbackScoreabilityStatus.insufficient) {
+      return null;
+    }
+    return projection;
+  }
+
+  String? _polishedText(SpeechFeedbackProjection? projection) {
+    final items = projection?.feedback?.items;
+    if (items == null) {
+      return null;
+    }
+    for (final item in items) {
+      if (item.kind == SpeechFeedbackItemKind.recommendedExpression &&
+          item.suggestedText != null) {
+        return item.suggestedText;
+      }
+    }
+    for (final item in items) {
+      if (item.suggestedText != null) {
+        return item.suggestedText;
+      }
+    }
+    return null;
   }
 }
 
@@ -817,20 +849,6 @@ class _ConversationEmpty extends StatelessWidget {
           style: SpeakUpDesign.body,
         ),
       ),
-    );
-  }
-}
-
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
-
-  final AgentMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    return KeyedSubtree(
-      key: Key('immersive-message-${message.id}'),
-      child: PracticeChatBubble(message: message),
     );
   }
 }

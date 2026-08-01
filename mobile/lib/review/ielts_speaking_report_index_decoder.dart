@@ -63,6 +63,7 @@ IeltsSpeakingReportIndexItem _item(Object? value) {
       'created_at',
       'updated_at',
     },
+    optional: const {'title'},
   );
   final kind = switch (root['report_kind']) {
     'IELTS_SPEAKING_FULL_MOCK' => IeltsSpeakingReportKind.fullMock,
@@ -85,6 +86,7 @@ IeltsSpeakingReportIndexItem _item(Object? value) {
   if (updatedAt.isBefore(createdAt)) {
     throw const IeltsSpeakingReportIndexDecodeException();
   }
+  final title = root.containsKey('title') ? _reportTitle(root['title']) : null;
   return IeltsSpeakingReportIndexItem(
     reportKind: kind,
     practiceSessionId: practiceSessionId,
@@ -96,7 +98,19 @@ IeltsSpeakingReportIndexItem _item(Object? value) {
     statusUrl: statusUrl as String,
     createdAt: createdAt,
     updatedAt: updatedAt,
+    title: title,
   );
+}
+
+String _reportTitle(Object? value) {
+  if (value is! String) {
+    throw const IeltsSpeakingReportIndexDecodeException();
+  }
+  final trimmed = value.trim();
+  if (trimmed.isEmpty || trimmed.length > 256) {
+    throw const IeltsSpeakingReportIndexDecodeException();
+  }
+  return trimmed;
 }
 
 Map<String, Object?> _exactObject(

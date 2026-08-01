@@ -19,6 +19,9 @@ const (
 
 type historyRepositoryStub struct {
 	item        domainreview.FormalReview
+	listItems   []domainreview.FormalReview
+	listQuery   domainreview.HistoryQuery
+	listActor   domainreview.Actor
 	searchItems []domainreview.FormalReview
 	searchQuery domainreview.HistorySearchQuery
 	searchActor domainreview.Actor
@@ -44,11 +47,18 @@ func (stub *historyRepositoryStub) Get(
 }
 
 func (stub *historyRepositoryStub) ListCompletedHistory(
-	context.Context,
-	domainreview.Actor,
-	domainreview.HistoryQuery,
+	_ context.Context,
+	actor domainreview.Actor,
+	query domainreview.HistoryQuery,
 ) (domainreview.HistoryPage, error) {
-	return domainreview.HistoryPage{}, nil
+	stub.listActor = actor
+	stub.listQuery = query
+	if stub.err != nil {
+		return domainreview.HistoryPage{}, stub.err
+	}
+	return domainreview.HistoryPage{
+		Items: append([]domainreview.FormalReview(nil), stub.listItems...),
+	}, nil
 }
 
 func (stub *historyRepositoryStub) SearchCompletedHistory(
@@ -78,17 +88,14 @@ func TestServicePortSearchesCompletedFormalReviews(t *testing.T) {
 	result, err := port.SearchReviews(
 		context.Background(),
 		servicePortCallContext(servicePortUserID),
-		ReviewSearchInput{
-			Query:             "metrics",
-			PracticeSessionID: item.PracticeSessionID,
-		},
+		ReviewSearchInput{Query: "metrics"},
 	)
 	if err != nil {
 		t.Fatalf("SearchReviews() error = %v", err)
 	}
 	if repository.searchActor.UserID != servicePortUserID ||
 		repository.searchQuery.Limit != defaultReviewSearchLimit ||
-		repository.searchQuery.PracticeSessionID != item.PracticeSessionID {
+		repository.searchQuery.Query != "metrics" {
 		t.Fatalf(
 			"search actor/query = %+v / %+v",
 			repository.searchActor,
@@ -103,6 +110,34 @@ func TestServicePortSearchesCompletedFormalReviews(t *testing.T) {
 		len(result[0].SourceRefs) != 1 ||
 		result[0].SourceRefs[0].Type != "formal_review" {
 		t.Fatalf("SearchReviews() = %+v", result)
+	}
+}
+
+func TestServicePortReturnsLatestCompletedReviewWithoutQuery(t *testing.T) {
+	item := completedFormalReview()
+	repository := &historyRepositoryStub{listItems: []domainreview.FormalReview{item}}
+	port, err := NewServicePort(domainreview.NewHistoryService(repository))
+	if err != nil {
+		t.Fatalf("NewServicePort() error = %v", err)
+	}
+
+	result, err := port.SearchReviews(
+		context.Background(),
+		servicePortCallContext(servicePortUserID),
+		ReviewSearchInput{Limit: 1},
+	)
+	if err != nil {
+		t.Fatalf("SearchReviews() error = %v", err)
+	}
+	if repository.listActor.UserID != servicePortUserID ||
+		repository.listQuery.Limit != 1 || len(result) != 1 ||
+		result[0].ID != item.ID {
+		t.Fatalf(
+			"latest actor/query/result = %+v / %+v / %+v",
+			repository.listActor,
+			repository.listQuery,
+			result,
+		)
 	}
 }
 

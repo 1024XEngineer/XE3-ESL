@@ -627,6 +627,7 @@ func (application *evaluationHTTPApplication) ListIELTSSpeakingReports(
 				Revision:             item.Revision,
 				EvaluationStatus:     item.EvaluationStatus,
 				IsFinal:              item.IsFinal,
+				Title:                item.Title,
 				CreatedAt:            item.CreatedAt,
 				UpdatedAt:            item.UpdatedAt,
 			}

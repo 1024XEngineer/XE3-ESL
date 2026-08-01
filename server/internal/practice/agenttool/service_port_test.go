@@ -40,6 +40,28 @@ type previewCatalogStub struct {
 	err   error
 }
 
+type previewProfileApplicationStub struct {
+	calls          int
+	actor          requestcontext.Actor
+	idempotencyKey string
+	request        preparation.CreateProfileRequest
+	profile        preparation.Profile
+	err            error
+}
+
+func (stub *previewProfileApplicationStub) CreateProfile(
+	_ context.Context,
+	actor requestcontext.Actor,
+	idempotencyKey string,
+	request preparation.CreateProfileRequest,
+) (preparation.Profile, bool, error) {
+	stub.calls++
+	stub.actor = actor
+	stub.idempotencyKey = idempotencyKey
+	stub.request = request
+	return stub.profile, false, stub.err
+}
+
 func (stub previewCatalogStub) ResolvePreviewCatalog(
 	string,
 ) ([]preparation.PreviewCatalogCandidate, error) {
@@ -48,11 +70,12 @@ func (stub previewCatalogStub) ResolvePreviewCatalog(
 
 func TestServicePortNeedsInputDoesNotPersistPlan(t *testing.T) {
 	application := &previewApplicationStub{}
+	profiles := &previewProfileApplicationStub{}
 	port, err := NewServicePort(application, previewCatalogStub{
 		items: []preparation.PreviewCatalogCandidate{
 			previewCatalogCandidate(),
 		},
-	})
+	}, profiles)
 	if err != nil {
 		t.Fatalf("NewServicePort() error = %v", err)
 	}
@@ -65,13 +88,13 @@ func TestServicePortNeedsInputDoesNotPersistPlan(t *testing.T) {
 		t.Fatalf("PreviewPractice() error = %v", err)
 	}
 	wantMissing := []string{
-		"preparation_profile_id_or_snapshot_id",
+		"background_summary",
 		"max_effective_turns",
 	}
 	if result.Status != "needs_input" ||
 		!reflect.DeepEqual(result.RequiredMissingFields, wantMissing) ||
 		len(result.Candidates) != 1 ||
-		application.calls != 0 {
+		application.calls != 0 || profiles.calls != 0 {
 		t.Fatalf("needs_input result = %#v, calls = %d", result, application.calls)
 	}
 }
@@ -101,7 +124,8 @@ func TestServicePortCreatesReadyPlanFromTrustedContext(t *testing.T) {
 			},
 		},
 	}
-	port, err := NewServicePort(application, previewCatalogStub{})
+	profiles := &previewProfileApplicationStub{}
+	port, err := NewServicePort(application, previewCatalogStub{}, profiles)
 	if err != nil {
 		t.Fatalf("NewServicePort() error = %v", err)
 	}
@@ -137,6 +161,60 @@ func TestServicePortCreatesReadyPlanFromTrustedContext(t *testing.T) {
 			"trusted delegation = actor %#v key %q request %#v",
 			application.actor,
 			application.idempotencyKey,
+			application.request,
+		)
+	}
+	if profiles.calls != 0 {
+		t.Fatalf("profiles.calls = %d, want existing trusted profile", profiles.calls)
+	}
+}
+
+func TestServicePortCreatesPreparationProfileFromNaturalBackground(t *testing.T) {
+	candidate := previewCatalogCandidate()
+	application := &previewApplicationStub{plan: persistence.Plan{
+		ID:                   "plan-1",
+		SelectedRoleIDs:      append([]string(nil), candidate.DefaultRoleIDs...),
+		ScenarioType:         persistence.ScenarioFamilyInterview,
+		ScenarioModel:        persistence.ScenarioModelProjectExperienceDeepDive,
+		Revision:             1,
+		Status:               persistence.PlanStatusReady,
+		PreparationProfileID: "profile-1",
+		CatalogSnapshot: &persistence.PlanCatalogSnapshot{
+			ScenarioDefinition: persistence.ScenarioDefinitionSnapshot{Name: "项目经历深挖"},
+			PracticeOption:     persistence.PracticeOptionSnapshot{ID: candidate.DefaultOption.ID},
+		},
+		SessionPolicy: &persistence.ContextSessionPolicy{MaxEffectiveTurns: 3},
+	}}
+	profiles := &previewProfileApplicationStub{
+		profile: preparation.Profile{ID: "profile-1", Version: 1},
+	}
+	port, err := NewServicePort(application, previewCatalogStub{
+		items: []preparation.PreviewCatalogCandidate{candidate},
+	}, profiles)
+	if err != nil {
+		t.Fatalf("NewServicePort() error = %v", err)
+	}
+	call := previewCallContext()
+	result, err := port.PreviewPractice(
+		context.Background(),
+		call,
+		PreviewInput{
+			ScenarioQuery:     "项目经历深挖",
+			BackgroundSummary: "AI 产品经理，重点练习项目影响力表达。",
+			MaxEffectiveTurns: 3,
+		},
+	)
+	if err != nil {
+		t.Fatalf("PreviewPractice() error = %v", err)
+	}
+	if result.Status != "preview_ready" || profiles.calls != 1 ||
+		profiles.actor != call.Actor || profiles.idempotencyKey != call.RequestID ||
+		profiles.request.BackgroundSummary != "AI 产品经理，重点练习项目影响力表达。" ||
+		application.request.PreparationProfileID != "profile-1" {
+		t.Fatalf(
+			"profile/result/request = %#v / %#v / %#v",
+			profiles,
+			result,
 			application.request,
 		)
 	}

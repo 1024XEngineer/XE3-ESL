@@ -3,6 +3,7 @@ package agenttool
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -14,6 +15,7 @@ import (
 type ServicePort struct {
 	practice PreviewApplication
 	catalog  preparation.PreviewCatalogResolver
+	profiles PreparationProfileApplication
 }
 
 type PreviewApplication interface {
@@ -25,16 +27,30 @@ type PreviewApplication interface {
 	) (persistence.Plan, bool, error)
 }
 
+type PreparationProfileApplication interface {
+	CreateProfile(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		preparation.CreateProfileRequest,
+	) (preparation.Profile, bool, error)
+}
+
 func NewServicePort(
 	application PreviewApplication,
 	catalog preparation.PreviewCatalogResolver,
+	profiles PreparationProfileApplication,
 ) (*ServicePort, error) {
-	if application == nil || catalog == nil {
+	if application == nil || catalog == nil || profiles == nil {
 		return nil, errors.New(
-			"practice agenttool: application and catalog resolver are required",
+			"practice agenttool: application, catalog resolver, and profiles are required",
 		)
 	}
-	return &ServicePort{practice: application, catalog: catalog}, nil
+	return &ServicePort{
+		practice: application,
+		catalog:  catalog,
+		profiles: profiles,
+	}, nil
 }
 
 func (port *ServicePort) PreviewPractice(
@@ -43,9 +59,11 @@ func (port *ServicePort) PreviewPractice(
 	input PreviewInput,
 ) (PreviewResult, error) {
 	if port == nil || port.practice == nil || port.catalog == nil ||
+		port.profiles == nil ||
 		!call.Actor.Valid() || call.ThreadID == "" || call.RequestID == "" {
 		return PreviewResult{}, tool.ErrExecutionRejected
 	}
+	input.BackgroundSummary = strings.TrimSpace(input.BackgroundSummary)
 
 	candidates, err := port.resolveCandidates(input.ScenarioQuery)
 	if err != nil {
@@ -59,6 +77,20 @@ func (port *ServicePort) PreviewPractice(
 			RequiredMissingFields: missing,
 			Candidates:            candidates,
 		}, nil
+	}
+	if input.PreparationSnapshotID == "" && input.PreparationProfileID == "" {
+		profile, _, createErr := port.profiles.CreateProfile(
+			ctx,
+			call.Actor,
+			call.RequestID,
+			preparation.CreateProfileRequest{
+				BackgroundSummary: input.BackgroundSummary,
+			},
+		)
+		if createErr != nil {
+			return PreviewResult{}, mapPracticeToolError(createErr)
+		}
+		input.PreparationProfileID = profile.ID
 	}
 
 	plan, replayed, err := port.practice.CreatePlan(
@@ -173,33 +205,23 @@ func enrichPreviewInput(
 }
 
 func previewMissingFields(input PreviewInput) []string {
-	missing := make([]string, 0, 9)
-	if input.PreparationSnapshotID == "" && input.PreparationProfileID == "" {
-		missing = append(
-			missing,
-			"preparation_profile_id_or_snapshot_id",
-		)
+	missing := make([]string, 0, 5)
+	if input.PreparationSnapshotID == "" &&
+		input.PreparationProfileID == "" &&
+		input.BackgroundSummary == "" {
+		missing = append(missing, "background_summary")
 	}
-	if input.ScenarioDefinitionID == "" {
-		missing = append(missing, "scenario_definition_id")
-	}
-	if input.ScenarioDefinitionVersion < 1 {
-		missing = append(missing, "scenario_definition_version")
-	}
-	if input.ScenarioConfigID == "" {
-		missing = append(missing, "scenario_config_id")
-	}
-	if input.ScenarioConfigVersion < 1 {
-		missing = append(missing, "scenario_config_version")
+	if input.ScenarioDefinitionID == "" ||
+		input.ScenarioDefinitionVersion < 1 ||
+		input.ScenarioConfigID == "" ||
+		input.ScenarioConfigVersion < 1 {
+		missing = append(missing, "scenario_selection")
 	}
 	if len(input.SelectedRoleIDs) == 0 {
-		missing = append(missing, "selected_role_ids")
+		missing = append(missing, "role_selection")
 	}
-	if input.PracticeOptionID == "" {
-		missing = append(missing, "practice_option_id")
-	}
-	if input.PracticeOptionVersion < 1 {
-		missing = append(missing, "practice_option_version")
+	if input.PracticeOptionID == "" || input.PracticeOptionVersion < 1 {
+		missing = append(missing, "practice_option")
 	}
 	if input.MaxEffectiveTurns < 1 {
 		missing = append(missing, "max_effective_turns")
@@ -212,11 +234,15 @@ func mapPracticeToolError(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, persistence.ErrInvalidArgument),
-		errors.Is(err, preparation.ErrCatalogSelectionInvalid):
+		errors.Is(err, preparation.ErrCatalogSelectionInvalid),
+		errors.Is(err, preparation.ErrProfileInvalid):
 		return tool.ErrInvalidInput
 	case errors.Is(err, persistence.ErrNotFound),
 		errors.Is(err, persistence.ErrConflict),
-		errors.Is(err, persistence.ErrIdempotencyConflict):
+		errors.Is(err, persistence.ErrIdempotencyConflict),
+		errors.Is(err, preparation.ErrProfileNotFound),
+		errors.Is(err, preparation.ErrProfileConflict),
+		errors.Is(err, preparation.ErrProfileIdempotencyConflict):
 		return tool.ErrExecutionRejected
 	default:
 		return err

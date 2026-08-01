@@ -3,6 +3,7 @@ package agenttool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	. "github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 )
@@ -13,7 +14,7 @@ const (
 )
 
 type ReviewSearchInput struct {
-	Query             string `json:"query"`
+	Query             string `json:"query,omitempty"`
 	PracticeSessionID string `json:"practice_session_id,omitempty"`
 	Limit             int    `json:"limit,omitempty"`
 }
@@ -80,21 +81,18 @@ func NewReviewSearchTool(port ReviewPort) ReviewSearchTool {
 func (tool ReviewSearchTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewSearchToolName,
-		Description: "Search the current user's historical practice reviews and interview evaluations, returning summary records with review ids. Use when the user asks about previous feedback, performance, recurring review themes, or wants to locate a review before opening it. Do not use for correcting only the current sentence, searching scenarios, or reading one known review id.",
+		Description: "Search the current user's completed practice reviews and interview evaluations. When the user refers to the practice they just completed, omit query to retrieve the latest completed review. Use a natural-language query only for older or specific practice history. Review identifiers are internal: use returned identifiers only for review.get.v1 and never ask the user to provide or repeat them. Do not use for correcting only the current sentence or searching scenarios.",
 		InputSchema: ObjectSchema(map[string]any{
 			"query": TextSchema(
-				"Words describing the review or evaluation to find.",
+				"Optional words describing an older or specific review. Omit for the latest completed practice.",
 				500,
-			),
-			"practice_session_id": IdentifierSchema(
-				"Optional exact practice session id used to narrow the review search.",
 			),
 			"limit": IntegerRangeSchema(
 				"Maximum number of review summaries to return.",
 				1,
 				20,
 			),
-		}, []string{"query"}),
+		}, nil),
 		ReadOnly: true,
 		Risk:     RiskReadOnly,
 	}
@@ -110,9 +108,10 @@ func (tool ReviewSearchTool) Execute(
 		return Result{}, ErrExecutionRejected
 	}
 	var parsed ReviewSearchInput
-	if err := json.Unmarshal(input, &parsed); err != nil || parsed.Query == "" {
+	if err := json.Unmarshal(input, &parsed); err != nil {
 		return Result{}, ErrInvalidInput
 	}
+	parsed.Query = strings.TrimSpace(parsed.Query)
 	reviews, err := tool.port.SearchReviews(ctx, call, parsed)
 	if err != nil {
 		return Result{}, err
@@ -142,7 +141,7 @@ func NewReviewGetTool(port ReviewPort) ReviewGetTool {
 func (tool ReviewGetTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewGetToolName,
-		Description: "Read the full structured details of exactly one review by review_id. Use after review.search.v1 returned an id or when the conversation already contains a specific review id and the user asks to expand that item. Do not use for broad historical review searches or guess a review id from natural language.",
+		Description: "Read the full structured details of exactly one review by the internal review_id returned from review.search.v1. Never ask the user to provide, repeat, or understand this identifier, and never expose it in the reply. Do not use for broad historical review searches or guess an id from natural language.",
 		InputSchema: ObjectSchema(map[string]any{
 			"review_id": IdentifierSchema(
 				"Exact review id returned by a previous review search.",

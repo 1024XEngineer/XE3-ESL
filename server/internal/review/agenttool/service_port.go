@@ -3,6 +3,7 @@ package agenttool
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
@@ -36,15 +37,33 @@ func (port *ServicePort) SearchReviews(
 	if limit == 0 {
 		limit = defaultReviewSearchLimit
 	}
-	items, err := port.history.SearchCompleted(
-		ctx,
-		domainreview.Actor{UserID: call.Actor.UserID},
-		domainreview.HistorySearchQuery{
-			Query:             input.Query,
-			PracticeSessionID: input.PracticeSessionID,
-			Limit:             limit,
-		},
-	)
+	actor := domainreview.Actor{UserID: call.Actor.UserID}
+	query := strings.TrimSpace(input.Query)
+	practiceSessionID := strings.TrimSpace(input.PracticeSessionID)
+	var items []domainreview.FormalReview
+	var err error
+	if query == "" && practiceSessionID == "" {
+		var page domainreview.HistoryPage
+		page, err = port.history.ListCompleted(
+			ctx,
+			actor,
+			domainreview.HistoryQuery{Limit: limit},
+		)
+		items = page.Items
+	} else {
+		if query == "" {
+			query = practiceSessionID
+		}
+		items, err = port.history.SearchCompleted(
+			ctx,
+			actor,
+			domainreview.HistorySearchQuery{
+				Query:             query,
+				PracticeSessionID: practiceSessionID,
+				Limit:             limit,
+			},
+		)
+	}
 	if err != nil {
 		return nil, mapReviewToolError(err)
 	}

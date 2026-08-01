@@ -115,6 +115,46 @@ void main() {
   );
 
   test(
+    'park returns to the conversation being viewed, not a stale launch Home',
+    () async {
+      final store = _InspectableRecordStore();
+      final harness = await _createHarness();
+      final workspace = PracticeWorkspaceController(
+        agentController: harness.agent,
+        recordStore: store,
+      );
+      addTearDown(() {
+        workspace.dispose();
+        harness.agent.dispose();
+      });
+      await workspace.activateAccount('account-1');
+      final launchHomeThreadId = harness.agent.threadId;
+      await _launchPractice(
+        harness: harness,
+        workspace: workspace,
+        operationId: 'launch-operation-1',
+        scenarioId: 'interview-screening',
+        scenarioTitle: '招聘初筛',
+        sessionId: 'practice-session-1',
+      );
+      expect(await workspace.parkCurrentPractice(), isTrue);
+      expect(harness.agent.threadId, launchHomeThreadId);
+
+      // The user switches to a different conversation (e.g. via the drawer)
+      // while the practice stays parked and resumable.
+      await harness.agent.createThread();
+      final otherHomeThreadId = harness.agent.threadId;
+      expect(otherHomeThreadId, isNot(launchHomeThreadId));
+
+      // Leaving the training tab parks the practice again; the user should
+      // land back on the conversation they were actually viewing instead of
+      // the original launch Home.
+      expect(await workspace.parkCurrentPractice(), isTrue);
+      expect(harness.agent.threadId, otherHomeThreadId);
+    },
+  );
+
+  test(
     'roleplay presentation survives parking and cold workspace restore',
     () async {
       final store = _InspectableRecordStore();
@@ -807,12 +847,7 @@ void main() {
       );
       expect(harness.agent.recordingState, PracticeRecordingState.completed);
 
-      expect(
-        await workspace.completeAndContinueWithAgent(
-          '【回答相关性】\n可改进：回答需要更直接地回应问题。',
-        ),
-        isTrue,
-      );
+      expect(await workspace.completeAndContinueWithAgent(), isTrue);
 
       expect(harness.agent.threadId, homeThreadId);
       expect(workspace.hasResumable, isFalse);
@@ -823,7 +858,8 @@ void main() {
               message.text.contains('招聘初筛') &&
               !message.text.contains('practice-session-1') &&
               !message.text.contains('练习记录 ID') &&
-              message.text.contains('回答需要更直接地回应问题'),
+              !message.text.contains('profile ID') &&
+              message.text.contains('直接读取这次练习的真实评分与报告'),
         ),
         isTrue,
       );

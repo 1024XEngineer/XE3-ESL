@@ -14,6 +14,71 @@ type InterviewReportReadState struct {
 	Snapshot   *EvidenceSnapshot
 }
 
+// GetLatestInterviewReportState resolves the newest ready Interview report for
+// an owner. The caller supplies only the trusted owner identity; practice and
+// Evaluation identifiers remain an internal persistence concern.
+func (r *PostgresRepository) GetLatestInterviewReportState(
+	ctx context.Context,
+	ownerUserID string,
+) (InterviewReportReadState, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validUUID(ownerUserID) {
+		return InterviewReportReadState{}, ErrInvalidRequest
+	}
+	var practiceSessionID string
+	err := r.pool.QueryRow(ctx, `
+		SELECT result.practice_session_id
+		FROM evaluation_interview_scene_results AS result
+		JOIN evaluation_ledgers AS ledger
+		  ON ledger.id = result.evaluation_id
+		 AND ledger.owner_user_id = result.owner_user_id
+		JOIN evaluation_revisions AS revision
+		  ON revision.id = result.evaluation_revision_id
+		 AND revision.evaluation_id = result.evaluation_id
+		 AND revision.owner_user_id = result.owner_user_id
+		JOIN evaluation_revision_states AS state
+		  ON state.revision_id = revision.id
+		 AND state.evaluation_id = revision.evaluation_id
+		 AND state.owner_user_id = revision.owner_user_id
+		WHERE result.owner_user_id = $1
+		  AND ledger.scope = 'SESSION'
+		  AND ledger.scene_type = 'INTERVIEW'
+		  AND revision.channels = ARRAY['SCENE']::text[]
+		  AND revision.scene_strategy_ref = $2
+		  AND revision.core_4d_strategy_ref IS NULL
+		  AND revision.pipeline_version = $3
+		  AND revision.schema_version = $4
+		  AND state.evaluation_status = 'READY'
+		  AND state.is_final = false
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM evaluation_revisions AS later
+		      WHERE later.evaluation_id = revision.evaluation_id
+		        AND later.owner_user_id = revision.owner_user_id
+		        AND later.revision > revision.revision
+		  )
+		ORDER BY result.created_at DESC, result.id DESC
+		LIMIT 1
+	`, ownerUserID,
+		InterviewShadowStrategyRef,
+		InterviewShadowPipelineVersion,
+		SchemaVersion,
+	).Scan(&practiceSessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return InterviewReportReadState{}, ErrNotFound
+	}
+	if err != nil {
+		return InterviewReportReadState{}, fmt.Errorf(
+			"find latest Interview report: %w",
+			err,
+		)
+	}
+	return r.GetCurrentInterviewReportState(
+		ctx,
+		ownerUserID,
+		practiceSessionID,
+	)
+}
+
 func (r *PostgresRepository) GetCurrentInterviewReportState(
 	ctx context.Context,
 	ownerUserID string,

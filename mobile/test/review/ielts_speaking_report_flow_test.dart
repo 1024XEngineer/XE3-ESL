@@ -30,7 +30,7 @@ void main() {
       createdAt: updatedAt.subtract(const Duration(minutes: 10)),
       updatedAt: updatedAt,
     );
-    final indexClient = _IndexClient(item);
+    final indexClient = _IndexClient([item]);
     final indexController = IeltsSpeakingReportIndexController(
       client: indexClient,
     );
@@ -85,12 +85,74 @@ void main() {
     expect(reportController.practiceSessionId, isNull);
     expect(reportController.envelope, isNull);
   });
+
+  testWidgets(
+    'interview and IELTS full mock reports render in separate sections',
+    (tester) async {
+      final now = DateTime.utc(2026, 7, 30, 9, 10);
+      final interviewItem = IeltsSpeakingReportIndexItem(
+        reportKind: IeltsSpeakingReportKind.interview,
+        practiceSessionId: 'session_interview_001',
+        evaluationId: '7b000101-0000-4000-8000-000000000002',
+        evaluationRevisionId: 'a1000101-0000-4000-8000-000000000002',
+        revision: 1,
+        evaluationStatus: IeltsSpeakingReportEvaluationStatus.ready,
+        isFinal: false,
+        statusUrl:
+            '/v1/practice-sessions/session_interview_001/interview-report',
+        createdAt: now.subtract(const Duration(minutes: 10)),
+        updatedAt: now,
+        title: 'AI产品经理模拟面试',
+      );
+      final ieltsItem = IeltsSpeakingReportIndexItem(
+        reportKind: IeltsSpeakingReportKind.fullMock,
+        practiceSessionId: 'session_ielts_001',
+        evaluationId: '7b000101-0000-4000-8000-000000000003',
+        evaluationRevisionId: 'a1000101-0000-4000-8000-000000000003',
+        revision: 1,
+        evaluationStatus: IeltsSpeakingReportEvaluationStatus.ready,
+        isFinal: false,
+        statusUrl:
+            '/v1/practice-sessions/session_ielts_001/ielts-speaking-report',
+        createdAt: now.subtract(const Duration(minutes: 10)),
+        updatedAt: now,
+      );
+      final indexController = IeltsSpeakingReportIndexController(
+        client: _IndexClient([interviewItem, ieltsItem]),
+      );
+      addTearDown(indexController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReviewPage(ieltsSpeakingReportIndexController: indexController),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The interview section shows the practice title on its card; the
+      // IELTS mock card falls back to the report-type label.
+      expect(find.text('面试练习报告'), findsOneWidget);
+      expect(find.text('AI产品经理模拟面试'), findsOneWidget);
+      expect(find.text('IELTS 模考报告'), findsOneWidget);
+      expect(find.text('IELTS 口语完整模考'), findsOneWidget);
+      expect(
+        find.byKey(
+          const Key('ielts-report-history-select-session_interview_001'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('ielts-report-history-select-session_ielts_001')),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 final class _IndexClient implements IeltsSpeakingReportIndexClient {
-  _IndexClient(this.item);
+  _IndexClient(this.items);
 
-  final IeltsSpeakingReportIndexItem item;
+  final List<IeltsSpeakingReportIndexItem> items;
   int calls = 0;
 
   @override
@@ -99,7 +161,7 @@ final class _IndexClient implements IeltsSpeakingReportIndexClient {
     int limit = 20,
   }) async {
     calls++;
-    return IeltsSpeakingReportIndexPage(items: [item]);
+    return IeltsSpeakingReportIndexPage(items: items);
   }
 
   @override

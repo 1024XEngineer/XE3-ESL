@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:speakup/design/five_dimension_radar.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/review/interview_report.dart';
@@ -25,7 +25,7 @@ class InterviewReportPage extends StatefulWidget {
   final String title;
   final SpeechFeedbackController? speechFeedbackController;
   final List<String> speechFeedbackSourceKeys;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
 
   @override
   State<InterviewReportPage> createState() => _InterviewReportPageState();
@@ -94,7 +94,7 @@ class InterviewReportPanel extends StatefulWidget {
   });
 
   final InterviewReportController controller;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
 
   @override
   State<InterviewReportPanel> createState() => _InterviewReportPanelState();
@@ -412,7 +412,7 @@ class _ReadyInterviewReport extends StatelessWidget {
   const _ReadyInterviewReport({required this.report, this.onContinueWithAgent});
 
   final InterviewReport report;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
 
   @override
   Widget build(BuildContext context) {
@@ -435,9 +435,7 @@ class _ReadyInterviewReport extends StatelessWidget {
         ],
         if (onContinueWithAgent != null) ...[
           const SizedBox(height: 16),
-          _ContinueWithAgentButton(
-            onPressed: () => onContinueWithAgent!(_agentReportSummary(report)),
-          ),
+          _ContinueWithAgentButton(onPressed: onContinueWithAgent!),
         ],
       ],
     );
@@ -545,99 +543,17 @@ class _DimensionRadar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    return FiveDimensionRadar(
       key: const Key('interview-report-dimension-radar'),
-      width: double.infinity,
-      height: 250,
-      child: CustomPaint(
-        painter: _DimensionRadarPainter(
-          values: [for (final dimension in dimensions) dimension.score! / 100],
-          labels: [
-            for (final dimension in dimensions) _dimensionLabel(dimension.id),
-          ],
-        ),
-      ),
+      scores: [
+        for (final dimension in dimensions)
+          FiveDimensionScore(
+            label: _dimensionLabel(dimension.id),
+            score: dimension.score!,
+          ),
+      ],
     );
   }
-}
-
-class _DimensionRadarPainter extends CustomPainter {
-  const _DimensionRadarPainter({required this.values, required this.labels});
-
-  final List<double> values;
-  final List<String> labels;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (values.length != 5 || labels.length != 5) return;
-    final center = Offset(size.width / 2, size.height / 2 + 4);
-    final radius = math.min(size.width, size.height) * 0.31;
-    final grid = Paint()
-      ..color = const Color(0xFFD8DEE1)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    final fill = Paint()
-      ..color = SpeakUpDesign.primary.withValues(alpha: 0.18)
-      ..style = PaintingStyle.fill;
-    final stroke = Paint()
-      ..color = SpeakUpDesign.primary
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-
-    Offset point(int index, double scale) {
-      final angle = -math.pi / 2 + index * math.pi * 2 / 5;
-      return center + Offset(math.cos(angle), math.sin(angle)) * radius * scale;
-    }
-
-    Path polygon(double scale) {
-      final path = Path()..moveTo(point(0, scale).dx, point(0, scale).dy);
-      for (var index = 1; index < 5; index++) {
-        path.lineTo(point(index, scale).dx, point(index, scale).dy);
-      }
-      return path..close();
-    }
-
-    for (final scale in const [0.25, 0.5, 0.75, 1.0]) {
-      canvas.drawPath(polygon(scale), grid);
-    }
-    for (var index = 0; index < 5; index++) {
-      canvas.drawLine(center, point(index, 1), grid);
-    }
-
-    final result = Path();
-    for (var index = 0; index < 5; index++) {
-      final value = values[index].clamp(0.0, 1.0);
-      final current = point(index, value);
-      if (index == 0) {
-        result.moveTo(current.dx, current.dy);
-      } else {
-        result.lineTo(current.dx, current.dy);
-      }
-    }
-    result.close();
-    canvas.drawPath(result, fill);
-    canvas.drawPath(result, stroke);
-
-    for (var index = 0; index < 5; index++) {
-      final anchor = point(index, 1.28);
-      final text = TextPainter(
-        text: TextSpan(
-          text: labels[index],
-          style: const TextStyle(
-            color: Color(0xFF4F565A),
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      text.paint(canvas, anchor - Offset(text.width / 2, text.height / 2));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DimensionRadarPainter oldDelegate) =>
-      oldDelegate.values != values || oldDelegate.labels != labels;
 }
 
 class _DimensionFeedback extends StatelessWidget {
@@ -822,19 +738,3 @@ String _dimensionLabel(InterviewReportDimensionId dimension) =>
       InterviewReportDimensionId.professional => '职业表达',
       InterviewReportDimensionId.interaction => '追问互动',
     };
-
-String _agentReportSummary(InterviewReport report) {
-  final lines = <String>['练习报告摘要'];
-  for (final dimension in report.dimensions) {
-    if (dimension.strengths.firstOrNull case final finding?) {
-      lines.add('优势：${finding.message}');
-      break;
-    }
-  }
-  for (final action in report.priorityActions.take(2)) {
-    lines.add(
-      '待提升（${_dimensionLabel(action.dimensionId)}）：${report.finding(action.findingId)!.message}',
-    );
-  }
-  return lines.join('\n');
-}

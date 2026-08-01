@@ -56,4 +56,10 @@ func TestPreviewToolSchemaAllowsNeedsInputRequest(t *testing.T) {
 	if definition.ReadOnly || definition.Risk != tool.RiskLowRiskWrite {
 		t.Fatalf("definition = %#v", definition)
 	}
+	properties := definition.InputSchema["properties"].(map[string]any)
+	if properties["background_summary"] == nil ||
+		properties["preparation_profile_id"] != nil ||
+		properties["preparation_snapshot_id"] != nil {
+		t.Fatalf("properties expose internal Preparation identifiers: %#v", properties)
+	}
 }

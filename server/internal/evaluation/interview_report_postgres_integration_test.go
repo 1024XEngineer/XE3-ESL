@@ -54,6 +54,37 @@ func TestPostgresInterviewReportLookupIsOwnerScopedAndFailClosed(
 	}
 }
 
+func TestPostgresLatestInterviewReportLookupUsesTrustedOwner(t *testing.T) {
+	_, repository, configuration, value := prepareInterviewShadowRuntime(t)
+	claim := claimInterviewShadow(t, repository, configuration)
+	result := evaluateInterviewShadowClaim(t, claim)
+	if err := repository.CompleteInterviewShadow(
+		context.Background(),
+		claim,
+		result,
+	); err != nil {
+		t.Fatalf("CompleteInterviewShadow: %v", err)
+	}
+	state, err := repository.GetLatestInterviewReportState(
+		context.Background(),
+		testOwnerA,
+	)
+	if err != nil {
+		t.Fatalf("GetLatestInterviewReportState: %v", err)
+	}
+	if state.Evaluation.ID != value.ID ||
+		state.Evaluation.PracticeSessionID != value.PracticeSessionID ||
+		state.Runtime.Result == nil || state.Snapshot == nil {
+		t.Fatalf("latest report state = %#v", state)
+	}
+	if _, err := repository.GetLatestInterviewReportState(
+		context.Background(),
+		testOwnerB,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner latest report error = %v", err)
+	}
+}
+
 func TestPostgresInterviewReportReadsEveryPublishedState(t *testing.T) {
 	t.Run("queued", func(t *testing.T) {
 		_, repository, _, value := prepareInterviewShadowRuntime(t)

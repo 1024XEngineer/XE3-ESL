@@ -11,6 +11,7 @@ const PracticePreviewToolName = "practice.preview.v1"
 
 type PreviewInput struct {
 	ScenarioQuery             string   `json:"scenario_query,omitempty"`
+	BackgroundSummary         string   `json:"background_summary,omitempty"`
 	MatterID                  string   `json:"matter_id,omitempty"`
 	PreparationProfileID      string   `json:"preparation_profile_id,omitempty"`
 	PreparationSnapshotID     string   `json:"preparation_snapshot_id,omitempty"`
@@ -80,20 +81,18 @@ func (tool PreviewTool) Definition() Definition {
 	}
 	return Definition{
 		Name:        PracticePreviewToolName,
-		Description: "Resolve and prepare a server-authoritative PracticePlan preview for the current Agent thread. Use when the user wants to configure an English practice session after identifying the desired catalog scenario. Missing catalog or Preparation fields return needs_input without creating a Plan. A preview_ready result creates only a PracticePlan and never starts a PracticeSession. Do not use for creating a RealityMatter, starting practice, or claiming that the user confirmed.",
+		Description: "Resolve and prepare a server-authoritative PracticePlan preview for the current Agent thread. Use when the user wants to configure an English practice session after identifying the desired catalog scenario. Pass background_summary using only facts the user already provided; the server creates and links Preparation data internally. Missing user-facing details return needs_input without creating a Plan. All identifiers are internal: never ask the user to provide, repeat, or understand an id. A preview_ready result creates only a PracticePlan and never starts a PracticeSession. Do not use for creating a RealityMatter, starting practice, or claiming that the user confirmed.",
 		InputSchema: ObjectSchema(map[string]any{
 			"scenario_query": TextSchema(
 				"Natural-language catalog query used only to return or resolve official Preparation candidates.",
 				500,
 			),
+			"background_summary": TextSchema(
+				"Concise preparation background assembled only from facts the user provided, such as their target, experience, and practice focus.",
+				6000,
+			),
 			"matter_id": IdentifierSchema(
-				"Optional owned RealityMatter id already linked to the current Agent thread.",
-			),
-			"preparation_snapshot_id": IdentifierSchema(
-				"Optional exact immutable Preparation snapshot id for a confirmed targeted context.",
-			),
-			"preparation_profile_id": IdentifierSchema(
-				"Exact owned Preparation profile id. Required when no targeted Preparation snapshot is supplied.",
+				"Optional internal RealityMatter id returned by a tool in this conversation. Never request it from the user.",
 			),
 			"scenario_definition_id": IdentifierSchema(
 				"Exact official Preparation scenario definition id.",

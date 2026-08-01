@@ -15,6 +15,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
 	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
@@ -98,6 +99,74 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 		!strings.Contains(toolMessage.Content, `"reviews"`) {
 		t.Fatalf("tool message = %#v", toolMessage)
 	}
+}
+
+func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
+	generator := newScriptedGenerator(
+		finalLoopResult("Here is your latest practice feedback."),
+	)
+	service := newLoopTestService(t, generator)
+	store := mocktool.NewStore()
+	registry, err := tool.NewRegistry(append(
+		mocktool.Tools(store),
+		evaluationtool.NewLatestPracticeReportTool(loopLatestReportPort{}),
+	)...)
+	if err != nil {
+		t.Fatalf("tool.NewRegistry() error = %v", err)
+	}
+	service.registry = registry
+	service.executor = tool.NewExecutor(registry)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		ContextManifest{},
+		loopRequest(
+			"我刚完成了面试练习。请直接读取这次练习的真实评分与报告。",
+		),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if result.Content != "Here is your latest practice feedback." {
+		t.Fatalf("Content = %q", result.Content)
+	}
+	requests := generator.Requests()
+	if got, want := len(requests), 1; got != want {
+		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+	request := requests[0]
+	if request.ToolChoice.Mode != ai.ToolChoiceAuto {
+		t.Fatalf("ToolChoice = %#v, want auto", request.ToolChoice)
+	}
+	if got, want := len(request.Messages), 4; got != want {
+		t.Fatalf("messages = %d, want %d", got, want)
+	}
+	assistant := request.Messages[2]
+	toolResult := request.Messages[3]
+	if len(assistant.ToolCalls) != 1 ||
+		assistant.ToolCalls[0].Name != evaluationtool.LatestPracticeReportToolName ||
+		toolResult.Role != ai.TextRoleTool ||
+		!strings.Contains(toolResult.Content, `"practice_report"`) {
+		t.Fatalf(
+			"latest report messages = assistant %#v, tool %#v",
+			assistant,
+			toolResult,
+		)
+	}
+}
+
+type loopLatestReportPort struct{}
+
+func (loopLatestReportPort) LatestPracticeReport(
+	context.Context,
+	tool.CallContext,
+) (evaluationtool.LatestPracticeReport, error) {
+	return evaluationtool.LatestPracticeReport{
+		Scene:          "面试英语",
+		AssessmentMode: "评分与反馈",
+	}, nil
 }
 
 func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
@@ -589,7 +658,7 @@ func TestPracticePreviewOnlyConsumesWriteBudgetWhenItCanCreatePlan(
 		},
 		{
 			name: "ready plan input",
-			arguments: `{"preparation_profile_id":"profile-1",` +
+			arguments: `{"background_summary":"AI PM interview",` +
 				`"max_effective_turns":3}`,
 			want: true,
 		},

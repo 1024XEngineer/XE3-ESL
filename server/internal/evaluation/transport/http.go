@@ -207,6 +207,7 @@ type IELTSSpeakingReportIndexEntryResource struct {
 	Revision             int
 	EvaluationStatus     evaluation.Status
 	IsFinal              bool
+	Title                string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
@@ -749,6 +750,7 @@ type ieltsSpeakingReportIndexEntryResponse struct {
 	Revision             int               `json:"revision"`
 	EvaluationStatus     evaluation.Status `json:"evaluation_status"`
 	IsFinal              bool              `json:"is_final"`
+	Title                string            `json:"title,omitempty"`
 	StatusURL            string            `json:"status_url"`
 	CreatedAt            string            `json:"created_at"`
 	UpdatedAt            string            `json:"updated_at"`
@@ -1003,6 +1005,7 @@ func (h *HTTPHandler) ieltsSpeakingReportIndexResponse(
 			Revision:             item.Revision,
 			EvaluationStatus:     item.EvaluationStatus,
 			IsFinal:              item.IsFinal,
+			Title:                item.Title,
 			StatusURL: "/v1/practice-sessions/" + item.PracticeSessionID + map[evaluation.SceneType]string{
 				evaluation.SceneIELTSSpeaking: "/ielts-speaking-report",
 				evaluation.SceneInterview:     "/interview-report",

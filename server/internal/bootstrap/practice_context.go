@@ -277,6 +277,7 @@ func newIdentityAgentAndPracticeComposition(
 		previewPort, err := practiceagenttool.NewServicePort(
 			practiceApplication,
 			previewCatalog,
+			preparationApplication,
 		)
 		if err != nil {
 			return nil, err

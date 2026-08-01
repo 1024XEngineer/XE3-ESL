@@ -1492,6 +1492,7 @@
         "revision": 1,
         "evaluation_status": "READY",
         "is_final": false,
+        "title": "IELTS 口语完整模考练习",
         "status_url": "/v1/practice-sessions/session_ielts_report_001/ielts-speaking-report",
         "created_at": "2026-07-30T08:00:00Z",
         "updated_at": "2026-07-30T08:00:01Z"

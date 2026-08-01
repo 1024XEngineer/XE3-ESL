@@ -3,9 +3,10 @@ package command
 import "encoding/json"
 
 const (
-	ToolScenarioCreate = "scenario.create.v1"
-	ToolScenarioSearch = "scenario.search.v1"
-	ToolReviewSearch   = "review.search.v1"
+	ToolScenarioCreate       = "scenario.create.v1"
+	ToolScenarioSearch       = "scenario.search.v1"
+	ToolReviewSearch         = "review.search.v1"
+	ToolLatestPracticeReport = "practice.report.latest.v1"
 )
 
 // Builtins 返回 Agent 首批支持的用户可见斜杠命令。

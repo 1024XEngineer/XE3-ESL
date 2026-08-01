@@ -180,7 +180,14 @@ func (assembler *ContextAssembler) Assemble(
 		"When internal tools are available, you may use them to look up " +
 		"practice scenarios, historical reviews, user materials, and recurring " +
 		"mistakes. Do not expose tool names, schemas, or implementation details; " +
-		"describe capabilities naturally."
+		"describe capabilities naturally. Never ask the user to provide or " +
+		"repeat internal identifiers, including profile, matter, plan, session, " +
+		"or review ids, and never include those identifiers in a user-facing " +
+		"reply. Resolve internal references with tools. When the user says they " +
+		"just completed a practice, read the latest real practice report before " +
+		"coaching them; do not ask for a profile, plan, session, evaluation, or " +
+		"review identifier. Use historical Review search only when the user asks " +
+		"about an older practice."
 	manifest := ContextManifest{
 		RunID:                             run.ID,
 		OwnerID:                           actor.UserID,

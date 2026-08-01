@@ -1460,10 +1460,12 @@ const assertIeltsSpeakingIndexSemantics = (page) => {
       `Duplicate IELTS report Evaluation ${item.evaluation_id}`,
     );
     evaluationIds.add(item.evaluation_id);
-    assert.equal(
-      item.status_url,
-      `/v1/practice-sessions/${item.practice_session_id}/ielts-speaking-report`,
-      'IELTS index status_url must address its Practice Session',
+    assert.ok(
+      item.status_url ===
+          `/v1/practice-sessions/${item.practice_session_id}/ielts-speaking-report` ||
+        item.status_url ===
+          `/v1/practice-sessions/${item.practice_session_id}/interview-report`,
+      'IELTS index status_url must address its Practice Session report',
     );
     assert.ok(
       Date.parse(item.created_at) <= Date.parse(item.updated_at),

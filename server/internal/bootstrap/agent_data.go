@@ -18,6 +18,8 @@ import (
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
+	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	matteragenttool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
@@ -162,11 +164,18 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	evaluationTools, err := evaluationagenttool.NewServicePort(
+		evaluation.NewPostgresRepository(database),
+	)
+	if err != nil {
+		return nil, err
+	}
 	productionTools, err := tool.NewRegistry(
 		matteragenttool.NewScenarioCreateTool(matterTools),
 		matteragenttool.NewScenarioSearchTool(matterTools),
 		reviewagenttool.NewReviewSearchTool(reviewTools),
 		reviewagenttool.NewReviewGetTool(reviewTools),
+		evaluationagenttool.NewLatestPracticeReportTool(evaluationTools),
 	)
 	if err != nil {
 		return nil, err

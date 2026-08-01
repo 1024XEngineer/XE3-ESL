@@ -14,6 +14,7 @@ final class IeltsSpeakingReportIndexItem {
     required this.statusUrl,
     required this.createdAt,
     required this.updatedAt,
+    this.title,
   });
 
   final IeltsSpeakingReportKind reportKind;
@@ -26,6 +27,7 @@ final class IeltsSpeakingReportIndexItem {
   final String statusUrl;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? title;
 }
 
 final class IeltsSpeakingReportIndexPage {

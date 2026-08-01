@@ -33,6 +33,7 @@ type IELTSSpeakingReportIndexEntry struct {
 	Revision             int
 	EvaluationStatus     Status
 	IsFinal              bool
+	Title                string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
@@ -217,7 +218,8 @@ func (r *PostgresRepository) ListCurrentIELTSSpeakingReportIndex(
 			state.evaluation_status,
 			state.is_final,
 			ledger.created_at,
-			state.updated_at
+			state.updated_at,
+			COALESCE(matter.title, '') AS title
 		FROM evaluation_ledgers AS ledger
 		JOIN evaluation_revisions AS revision
 		  ON revision.evaluation_id = ledger.id
@@ -226,6 +228,10 @@ func (r *PostgresRepository) ListCurrentIELTSSpeakingReportIndex(
 		  ON state.evaluation_id = ledger.id
 		 AND state.revision_id = revision.id
 		 AND state.owner_user_id = ledger.owner_user_id
+		LEFT JOIN practice_sessions AS practice_session
+		  ON practice_session.session_id = ledger.practice_session_id
+		 AND practice_session.owner_user_id = ledger.owner_user_id
+		LEFT JOIN matters AS matter ON matter.id = practice_session.matter_id
 		WHERE ledger.owner_user_id = $1
 		  AND ledger.scope = 'SESSION'
 		  AND ledger.scene_type IN ('IELTS_SPEAKING', 'INTERVIEW')
@@ -284,6 +290,7 @@ func (r *PostgresRepository) ListCurrentIELTSSpeakingReportIndex(
 			&item.IsFinal,
 			&item.CreatedAt,
 			&item.UpdatedAt,
+			&item.Title,
 		); err != nil {
 			return IELTSSpeakingReportIndexPage{}, fmt.Errorf(
 				"scan IELTS Speaking report index: %w",

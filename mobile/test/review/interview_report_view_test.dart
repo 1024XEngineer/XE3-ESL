@@ -203,7 +203,7 @@ void main() {
     expect(find.byKey(const Key('interview-report-dimensions')), findsNothing);
   });
 
-  testWidgets('Agent continuation receives the ready report evidence', (
+  testWidgets('Agent continuation triggers a server-side report lookup', (
     tester,
   ) async {
     final ready = decodeInterviewReport(
@@ -214,7 +214,7 @@ void main() {
       maximumPollAttempts: 1,
     );
     addTearDown(controller.dispose);
-    String? handedOff;
+    var continued = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -222,8 +222,8 @@ void main() {
           body: SingleChildScrollView(
             child: InterviewReportPanel(
               controller: controller,
-              onContinueWithAgent: (summary) async {
-                handedOff = summary;
+              onContinueWithAgent: () async {
+                continued = true;
                 return false;
               },
             ),
@@ -239,12 +239,7 @@ void main() {
     await tester.tap(find.byKey(const Key('interview-report-continue-agent')));
     await tester.pump();
 
-    expect(handedOff, contains('练习报告摘要'));
-    expect(handedOff, contains('回答相关性'));
-    expect(
-      handedOff,
-      contains('The response needs a clearer connection to the question.'),
-    );
+    expect(continued, isTrue);
   });
 }
 

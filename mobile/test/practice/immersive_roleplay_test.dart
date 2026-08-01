@@ -15,6 +15,7 @@ import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_client.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/review/turn_feedback_disclosure.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -322,6 +323,14 @@ void main() {
     expect(
       find.byKey(const Key('speech-feedback-loading-indicator')),
       findsWidgets,
+    );
+    expect(
+      tester
+          .widgetList<SpeechFeedbackDisclosure>(
+            find.byType(SpeechFeedbackDisclosure),
+          )
+          .every((disclosure) => disclosure.compact),
+      isTrue,
     );
     expect(find.text('正在生成评分与纠错…'), findsWidgets);
     expect(find.text('刷新复盘'), findsOneWidget);
