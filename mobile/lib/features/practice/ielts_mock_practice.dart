@@ -114,6 +114,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   bool _narrationBusy = false;
   bool _introNarrated = false;
   String? _narrationError;
+  final Set<String> _revealedQuestionIds = <String>{};
+  String? _autoNarratedQuestionId;
+  String? _playingQuestionId;
+  String? _questionNarrationErrorId;
+  int _questionNarrationGeneration = 0;
   final Set<IeltsPracticeMode> _recordedCompletions = <IeltsPracticeMode>{};
   String? _reportSessionId;
 
@@ -163,6 +168,12 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (controllerChanged) {
       oldWidget.controller.removeListener(_handleControllerState);
       widget.controller.addListener(_handleControllerState);
+      _questionNarrationGeneration++;
+      _autoNarratedQuestionId = null;
+      _playingQuestionId = null;
+      _questionNarrationErrorId = null;
+      _revealedQuestionIds.clear();
+      unawaited(_stopExaminerSpeakerSafely());
       unawaited(_restoreProgress());
     }
     if (reportControllerChanged && !controllerChanged) {
@@ -179,7 +190,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     _convertedAnswerController.dispose();
     _convertedAnswerFocusNode.dispose();
     _ticker?.cancel();
-    unawaited(_examinerSpeaker.stop());
+    unawaited(_stopExaminerSpeakerSafely());
     if (_ownsExaminerSpeaker) {
       unawaited(_examinerSpeaker.dispose());
     }
@@ -222,6 +233,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     _recordCompletedParts();
     _syncReport();
     unawaited(_resumePart2Narration(restored.phase));
+    _scheduleQuestionNarration();
   }
 
   IeltsMockPhase _initialPhase() => switch (_mode) {
@@ -358,6 +370,75 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     _recordCompletedParts();
     setState(() {});
     _syncReport();
+    _scheduleQuestionNarration();
+  }
+
+  void _scheduleQuestionNarration() {
+    final phase = _progress?.phase;
+    final question = widget.controller.currentQuestion;
+    if ((phase != IeltsMockPhase.part1 && phase != IeltsMockPhase.part3) ||
+        question == null ||
+        _autoNarratedQuestionId == question.id) {
+      return;
+    }
+    _autoNarratedQuestionId = question.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.controller.currentQuestion?.id != question.id) {
+        return;
+      }
+      unawaited(_playQuestionNarration(question.id, question.text));
+    });
+  }
+
+  Future<void> _playQuestionNarration(String questionId, String text) async {
+    if (_playingQuestionId == questionId) {
+      await _stopQuestionNarration();
+      return;
+    }
+    final generation = ++_questionNarrationGeneration;
+    await _stopExaminerSpeakerSafely();
+    if (!mounted || generation != _questionNarrationGeneration) {
+      return;
+    }
+    setState(() {
+      _playingQuestionId = questionId;
+      _questionNarrationErrorId = null;
+    });
+    try {
+      await _examinerSpeaker.speak(text);
+    } catch (_) {
+      if (mounted && generation == _questionNarrationGeneration) {
+        setState(() => _questionNarrationErrorId = questionId);
+      }
+    } finally {
+      if (mounted && generation == _questionNarrationGeneration) {
+        setState(() => _playingQuestionId = null);
+      }
+    }
+  }
+
+  Future<void> _stopQuestionNarration() async {
+    _questionNarrationGeneration++;
+    await _stopExaminerSpeakerSafely();
+    if (mounted && _playingQuestionId != null) {
+      setState(() => _playingQuestionId = null);
+    }
+  }
+
+  Future<void> _stopExaminerSpeakerSafely() async {
+    try {
+      await _examinerSpeaker.stop();
+    } catch (_) {
+      // Playback is best-effort; recording and navigation must stay usable.
+    }
+  }
+
+  void _toggleQuestionTranscript(String questionId) {
+    setState(() {
+      if (!_revealedQuestionIds.add(questionId)) {
+        _revealedQuestionIds.remove(questionId);
+      }
+    });
   }
 
   void _syncReport() {
@@ -469,6 +550,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     });
     _syncTicker();
     await _progressStore.write(value);
+    _scheduleQuestionNarration();
   }
 
   void _syncTicker() {
@@ -522,6 +604,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (progress == null) {
       return;
     }
+    await _stopQuestionNarration();
     await _setProgress(progress.copyWith(phase: IeltsMockPhase.part2Intro));
     await _narratePart2Intro();
   }
@@ -697,6 +780,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   Future<void> _startShortRecording() {
     _conversionRequested = false;
+    unawaited(_stopQuestionNarration());
     return widget.controller.startRecording();
   }
 
@@ -1119,6 +1203,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
             messages: _sectionMessages(sectionStart, completed),
             controller: widget.controller,
             speechFeedbackController: widget.speechFeedbackController,
+            revealedQuestionIds: _revealedQuestionIds,
+            playingQuestionId: _playingQuestionId,
+            narrationErrorQuestionId: _questionNarrationErrorId,
+            onPlayQuestion: _playQuestionNarration,
+            onToggleTranscript: _toggleQuestionTranscript,
           ),
         ),
         if (widget.controller.errorMessage case final error?)
@@ -1215,11 +1304,21 @@ class _ExamConversation extends StatelessWidget {
   const _ExamConversation({
     required this.messages,
     required this.controller,
+    required this.revealedQuestionIds,
+    required this.playingQuestionId,
+    required this.narrationErrorQuestionId,
+    required this.onPlayQuestion,
+    required this.onToggleTranscript,
     this.speechFeedbackController,
   });
 
   final List<AgentMessage> messages;
   final AgentController controller;
+  final Set<String> revealedQuestionIds;
+  final String? playingQuestionId;
+  final String? narrationErrorQuestionId;
+  final Future<void> Function(String questionId, String text) onPlayQuestion;
+  final ValueChanged<String> onToggleTranscript;
   final SpeechFeedbackController? speechFeedbackController;
 
   @override
@@ -1244,31 +1343,18 @@ class _ExamConversation extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: PracticeChatBubble(
-                message: message,
-                maxWidth: 340,
-                actions: assistant && message.id == controller.questionId
-                    ? TextButton.icon(
-                        key: const Key('ielts-mock-question-audio'),
-                        onPressed: controller.canUsePracticeAudio
-                            ? controller.toggleQuestionAudio
-                            : null,
-                        icon: Icon(
-                          controller.isQuestionAudioPlaying
-                              ? Icons.stop_rounded
-                              : Icons.volume_up_outlined,
-                          size: 18,
-                        ),
-                        label: Text(
-                          controller.isQuestionAudioLoading
-                              ? 'Loading…'
-                              : controller.isQuestionAudioPlaying
-                              ? 'Stop'
-                              : 'Play question',
-                        ),
-                      )
-                    : null,
-              ),
+              child: assistant
+                  ? _ExaminerQuestionBubble(
+                      message: message,
+                      playing: playingQuestionId == message.id,
+                      transcriptVisible: revealedQuestionIds.contains(
+                        message.id,
+                      ),
+                      playbackFailed: narrationErrorQuestionId == message.id,
+                      onPlay: () => onPlayQuestion(message.id, message.text),
+                      onToggleTranscript: () => onToggleTranscript(message.id),
+                    )
+                  : PracticeChatBubble(message: message, maxWidth: 340),
             ),
             if (projection != null)
               Align(
@@ -1296,6 +1382,109 @@ class _ExamConversation extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _ExaminerQuestionBubble extends StatelessWidget {
+  const _ExaminerQuestionBubble({
+    required this.message,
+    required this.playing,
+    required this.transcriptVisible,
+    required this.playbackFailed,
+    required this.onPlay,
+    required this.onToggleTranscript,
+  });
+
+  final AgentMessage message;
+  final bool playing;
+  final bool transcriptVisible;
+  final bool playbackFailed;
+  final VoidCallback onPlay;
+  final VoidCallback onToggleTranscript;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 340),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Material(
+              key: ValueKey('ielts-question-voice-${message.id}'),
+              color: SpeakUpDesign.surfaceMuted,
+              borderRadius: BorderRadius.circular(22),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(22),
+                onTap: onPlay,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        playing
+                            ? Icons.stop_circle_outlined
+                            : Icons.play_circle_outline_rounded,
+                        color: SpeakUpDesign.primary,
+                      ),
+                      const SizedBox(width: 10),
+                      Icon(
+                        Icons.graphic_eq_rounded,
+                        color: SpeakUpDesign.primary,
+                        size: 34,
+                      ),
+                      const SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          playing ? 'Examiner is speaking…' : 'Examiner voice',
+                          style: SpeakUpDesign.body.copyWith(
+                            color: SpeakUpDesign.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            TextButton.icon(
+              key: ValueKey('ielts-question-transcript-toggle-${message.id}'),
+              onPressed: onToggleTranscript,
+              icon: Icon(
+                transcriptVisible
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                size: 18,
+              ),
+              label: Text(transcriptVisible ? 'Hide English' : 'Show English'),
+            ),
+            if (playbackFailed)
+              const Padding(
+                padding: EdgeInsets.only(left: 12, bottom: 8),
+                child: Text(
+                  'Playback failed. Tap the voice bubble to retry.',
+                  style: TextStyle(color: SpeakUpDesign.error, fontSize: 12),
+                ),
+              ),
+            if (transcriptVisible)
+              Container(
+                key: ValueKey('ielts-question-transcript-${message.id}'),
+                margin: const EdgeInsets.only(bottom: 4),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: SpeakUpDesign.surface,
+                  border: Border.all(color: SpeakUpDesign.border),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(message.text, style: SpeakUpDesign.body),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

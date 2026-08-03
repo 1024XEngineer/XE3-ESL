@@ -22,6 +22,105 @@ import 'package:speakup/review/ielts_speaking_report_controller.dart';
 
 void main() {
   testWidgets(
+    'Part 1 auto-plays voice bubbles and reveals English only on request',
+    (tester) async {
+      final speaker = _ImmediateExaminerSpeaker();
+      final practice = _IeltsPracticeClient(initialCompleted: 0);
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(_ieltsScene);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: _MemoryProgressStore(),
+            examinerSpeaker: speaker,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(speaker.spoken, [_question(1).text]);
+      expect(
+        find.byKey(const Key('ielts-question-voice-question-1')),
+        findsOneWidget,
+      );
+      expect(find.text(_question(1).text), findsNothing);
+
+      await tester.tap(
+        find.byKey(const Key('ielts-question-transcript-toggle-question-1')),
+      );
+      await tester.pump();
+
+      expect(find.text(_question(1).text), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-question-transcript-question-1')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('ielts-mock-record')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('ielts-mock-record')));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 220));
+      await tester.pump();
+
+      expect(speaker.spoken.last, _question(2).text);
+      expect(find.text(_question(2).text), findsNothing);
+    },
+  );
+
+  testWidgets('Part 3 starts with an auto-playing hidden-text voice bubble', (
+    tester,
+  ) async {
+    final speaker = _ImmediateExaminerSpeaker();
+    final practice = _IeltsPracticeClient(
+      initialCompleted: 0,
+      turnLimit: 1,
+      scenarioModel: 'IELTS_SPEAKING_PART_3',
+    );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsPart3Scene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: speaker,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(speaker.spoken, isEmpty);
+
+    await tester.tap(find.byKey(const Key('ielts-part3-start')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(speaker.spoken, [_question(1).text]);
+    expect(
+      find.byKey(const Key('ielts-question-voice-question-1')),
+      findsOneWidget,
+    );
+    expect(find.text(_question(1).text), findsNothing);
+  });
+
+  testWidgets(
     'Part 2 reads instructions and Cue Card before starting 60 seconds',
     (tester) async {
       final now = DateTime.utc(2026, 8, 3, 4, 30);
