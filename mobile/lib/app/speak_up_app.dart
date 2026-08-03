@@ -24,6 +24,7 @@ import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
 import 'package:speakup/review/review_history_controller.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/resume/resume_controller.dart';
 
 class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp({
@@ -38,6 +39,7 @@ class SpeakUpApp extends StatelessWidget {
     this.ieltsSpeakingReportController,
     this.ieltsSpeakingReportIndexController,
     this.speechFeedbackController,
+    this.resumeController,
     super.key,
   }) : _authentication = (controller: authController),
        _allowFakePreview = false;
@@ -53,6 +55,7 @@ class SpeakUpApp extends StatelessWidget {
     this.ieltsSpeakingReportController,
     this.ieltsSpeakingReportIndexController,
     this.speechFeedbackController,
+    this.resumeController,
     super.key,
   }) : _authentication = null,
        _allowFakePreview = true;
@@ -68,6 +71,7 @@ class SpeakUpApp extends StatelessWidget {
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
   final SpeechFeedbackController? speechFeedbackController;
+  final ResumeController? resumeController;
   final bool _allowFakePreview;
 
   @override
@@ -90,6 +94,7 @@ class SpeakUpApp extends StatelessWidget {
               ieltsSpeakingReportIndexController:
                   ieltsSpeakingReportIndexController,
               speechFeedbackController: speechFeedbackController,
+              resumeController: resumeController,
               allowFakePreview: _allowFakePreview,
             )
           : AuthGate(
@@ -108,6 +113,7 @@ class SpeakUpApp extends StatelessWidget {
                 ieltsSpeakingReportIndexController:
                     ieltsSpeakingReportIndexController,
                 speechFeedbackController: speechFeedbackController,
+                resumeController: resumeController,
                 allowFakePreview: _allowFakePreview,
               ),
             ),
@@ -129,6 +135,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.ieltsSpeakingReportController,
     this.ieltsSpeakingReportIndexController,
     this.speechFeedbackController,
+    this.resumeController,
     required this.allowFakePreview,
   });
 
@@ -144,6 +151,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
   final SpeechFeedbackController? speechFeedbackController;
+  final ResumeController? resumeController;
   final bool allowFakePreview;
 
   @override
@@ -231,6 +239,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             ieltsSpeakingReportIndexController:
                 widget.ieltsSpeakingReportIndexController,
             speechFeedbackController: widget.speechFeedbackController,
+            resumeController: widget.resumeController,
           ),
           AppRoutes.preparation => PreparationPage(
             showBackButton: true,
@@ -270,6 +279,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             ieltsSpeakingReportIndexController:
                 widget.ieltsSpeakingReportIndexController,
             speechFeedbackController: widget.speechFeedbackController,
+            resumeController: widget.resumeController,
           ),
           AppRoutes.review => ReviewPage(
             showBackButton: true,
