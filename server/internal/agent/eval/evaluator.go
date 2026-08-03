@@ -10,12 +10,14 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
 	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
-const DatasetVersion = "agent-routing-eval-v2"
+const DatasetVersion = "agent-routing-eval-v3"
 
 type EvaluationResult struct {
 	DatasetVersion      string
@@ -45,7 +47,7 @@ type Evaluator struct {
 }
 
 func NewEvaluator() (*Evaluator, error) {
-	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	registry, err := newEvaluationRegistry()
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +70,7 @@ func (e *Evaluator) Evaluate(
 		Total:          len(cases),
 		CaseResults:    make([]CaseResult, 0, len(cases)),
 	}
+	writeTools := registeredWriteToolNames(e.registry)
 	var directCases, directMisroutes, writeCases, writeMisroutes int
 	for index, item := range cases {
 		caseResult, err := e.evaluateCase(ctx, index, item)
@@ -83,9 +86,9 @@ func (e *Evaluator) Evaluate(
 				directMisroutes++
 			}
 		}
-		if containsString(item.ForbiddenTools, mattertool.ScenarioCreateToolName) {
+		if intersects(item.ForbiddenTools, writeTools) {
 			writeCases++
-			if containsString(caseResult.ToolNames, mattertool.ScenarioCreateToolName) {
+			if intersects(caseResult.ToolNames, writeTools) {
 				writeMisroutes++
 			}
 		}
@@ -213,6 +216,44 @@ func (DeterministicRouter) Route(
 				}},
 			}
 		}
+	case hasAny(input, "刚完成", "刚练完", "最新报告", "latest report"):
+		if containsString(allowed, evaluationtool.LatestPracticeReportToolName) {
+			return Route{
+				Decision: DecisionToolCall,
+				ToolCalls: []ToolCall{{
+					Name:  evaluationtool.LatestPracticeReportToolName,
+					Input: mustRaw(map[string]any{}),
+				}},
+			}
+		}
+	case hasAny(input, "确认开始练习", "确认开始面试", "confirm practice"):
+		if containsString(allowed, practicetool.PracticeStartToolName) {
+			return Route{
+				Decision: DecisionToolCall,
+				ToolCalls: []ToolCall{{
+					Name: practicetool.PracticeStartToolName,
+					Input: mustRaw(map[string]any{
+						"practice_plan_id":       "eval-practice-plan-001",
+						"expected_plan_revision": 1,
+						"user_confirmed":         true,
+					}),
+				}},
+			}
+		}
+	case hasAny(input, "开始练习", "开始面试", "start practice"):
+		return Route{Decision: DecisionClarify}
+	case hasAny(input, "预览", "练习方案", "preview"):
+		if containsString(allowed, practicetool.PracticePreviewToolName) {
+			return Route{
+				Decision: DecisionToolCall,
+				ToolCalls: []ToolCall{{
+					Name: practicetool.PracticePreviewToolName,
+					Input: mustRaw(map[string]any{
+						"scenario_query": "英文产品经理面试",
+					}),
+				}},
+			}
+		}
 	case hasAny(input, "评价", "评家", "复盘", "review", "feedback"):
 		if containsString(allowed, reviewtool.ReviewSearchToolName) {
 			return Route{
@@ -309,6 +350,19 @@ func registeredToolNames(registry *tool.Registry) []string {
 	return names
 }
 
+func registeredWriteToolNames(registry *tool.Registry) []string {
+	if registry == nil {
+		return nil
+	}
+	names := make([]string, 0)
+	for _, definition := range registry.Definitions() {
+		if !definition.ReadOnly {
+			names = append(names, definition.Name)
+		}
+	}
+	return names
+}
+
 func validateCase(item RoutingCase, result CaseResult) []string {
 	failures := make([]string, 0)
 	if result.Decision != item.ExpectedDecision {
@@ -364,6 +418,15 @@ func lastUserContent(messages []EvalMessage) string {
 func containsString(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func intersects(left, right []string) bool {
+	for _, item := range left {
+		if containsString(right, item) {
 			return true
 		}
 	}
