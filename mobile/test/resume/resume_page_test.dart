@@ -57,6 +57,20 @@ void main() {
     expect(button.onPressed, isNull);
     expect(find.text('已达到 3 份上限'), findsOneWidget);
   });
+
+  testWidgets('failed detail explains how to replace an image-only PDF', (
+    tester,
+  ) async {
+    final failed = _resume('failed', ResumeParseStatus.failed);
+    final controller = _controller(<ResumeItem>[failed]);
+    await tester.pumpWidget(
+      _app(ResumeDetailPage(controller: controller, resumeId: failed.id)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('图片型 PDF'), findsOneWidget);
+    expect(find.textContaining('带可选中文本'), findsOneWidget);
+  });
 }
 
 Widget _app(Widget home) => MaterialApp(theme: SpeakUpTheme.light, home: home);
@@ -102,7 +116,8 @@ final class _PageClient implements ResumeClient {
   @override
   Future<void> delete(ResumeItem resume) => throw UnimplementedError();
   @override
-  Future<ResumeDetail> get(String resumeId) => throw UnimplementedError();
+  Future<ResumeDetail> get(String resumeId) async =>
+      ResumeDetail(resume: items.singleWhere((item) => item.id == resumeId));
   @override
   Future<Uri> getContentUrl(String resumeId) => throw UnimplementedError();
   @override

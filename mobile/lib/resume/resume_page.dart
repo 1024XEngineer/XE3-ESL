@@ -667,7 +667,7 @@ class _ParsingCard extends StatelessWidget {
           Expanded(
             child: Text(
               status == ResumeParseStatus.failed
-                  ? '解析未完成，可返回列表重新解析或替换 PDF。'
+                  ? '解析未完成。如果这是扫描件或图片型 PDF，请先导出带可选中文本的 PDF，再返回列表替换文件。'
                   : '正在提取岗位、经历与技能，请稍后刷新。',
             ),
           ),
