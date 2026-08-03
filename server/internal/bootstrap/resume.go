@@ -33,7 +33,6 @@ func NewResumeComposition(
 	ids resumeapp.IDGenerator,
 	configuration ResumeConfiguration,
 ) (*ResumeComposition, error) {
-	// TODO(issue-320): 在真实实现 Issue 中应用配置并增加端到端组装测试。
 	if pool == nil || storage == nil || parser == nil || ids == nil ||
 		configuration.MaximumFileBytes <= 0 ||
 		configuration.ParsePollInterval <= 0 ||
@@ -44,15 +43,28 @@ func NewResumeComposition(
 	if err != nil {
 		return nil, err
 	}
-	service, err := resumeapp.NewService(repository, storage, ids)
+	service, err := resumeapp.NewService(
+		repository,
+		storage,
+		ids,
+		resumeapp.ServiceConfiguration{
+			MaximumFileBytes: configuration.MaximumFileBytes,
+			ReadURLLifetime:  configuration.ReadURLLifetime,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
-	handler, err := resumetransport.NewHTTPHandler(service)
+	handler, err := resumetransport.NewHTTPHandler(service, configuration.MaximumFileBytes)
 	if err != nil {
 		return nil, err
 	}
-	worker, err := resumeapp.NewParseWorker(repository, storage, parser)
+	worker, err := resumeapp.NewParseWorker(
+		repository,
+		storage,
+		parser,
+		configuration.ParsePollInterval,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +73,6 @@ func NewResumeComposition(
 
 // HTTPHandler 返回需要挂载到 Identity 认证路由组的 Resume Handler。
 func (c *ResumeComposition) HTTPHandler() *resumetransport.HTTPHandler {
-	// TODO(issue-320): 在 main 组装 Issue 中接入受保护路由。
 	if c == nil {
 		return nil
 	}
@@ -70,7 +81,6 @@ func (c *ResumeComposition) HTTPHandler() *resumetransport.HTTPHandler {
 
 // Worker 返回由 server 进程托管生命周期的解析 Worker。
 func (c *ResumeComposition) Worker() *resumeapp.ParseWorker {
-	// TODO(issue-320): 在解析实现 Issue 中接入启动和优雅停止。
 	if c == nil {
 		return nil
 	}

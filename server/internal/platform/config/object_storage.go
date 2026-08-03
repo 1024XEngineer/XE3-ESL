@@ -11,10 +11,11 @@ import (
 )
 
 const (
-	defaultAudioStoragePrefix = "audio/v1"
-	defaultImageStoragePrefix = "image/v1"
-	defaultSignedURLTTL       = 2 * time.Minute
-	maxSignedURLTTL           = 2 * time.Minute
+	defaultAudioStoragePrefix  = "audio/v1"
+	defaultImageStoragePrefix  = "image/v1"
+	defaultResumeStoragePrefix = "resume/v1"
+	defaultSignedURLTTL        = 2 * time.Minute
+	maxSignedURLTTL            = 2 * time.Minute
 )
 
 type ObjectStorageCredentialsProvider string
@@ -47,6 +48,7 @@ type ObjectStorageConfig struct {
 	Bucket              string
 	AudioPrefix         string
 	ImagePrefix         string
+	ResumePrefix        string
 	SignedURLTTL        time.Duration
 	CredentialsProvider ObjectStorageCredentialsProvider
 	RAMRoleName         string
@@ -67,6 +69,7 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 		Bucket:       strings.TrimSpace(os.Getenv("OSS_BUCKET")),
 		AudioPrefix:  valueOrDefault("OSS_AUDIO_PREFIX", defaultAudioStoragePrefix),
 		ImagePrefix:  valueOrDefault("OSS_IMAGE_PREFIX", defaultImageStoragePrefix),
+		ResumePrefix: valueOrDefault("OSS_RESUME_PREFIX", defaultResumeStoragePrefix),
 		SignedURLTTL: defaultSignedURLTTL,
 		CredentialsProvider: ObjectStorageCredentialsProvider(strings.TrimSpace(
 			valueOrDefault(
@@ -87,15 +90,22 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 
 	config.AudioPrefix = strings.TrimSuffix(strings.TrimSpace(config.AudioPrefix), "/")
 	config.ImagePrefix = strings.TrimSuffix(strings.TrimSpace(config.ImagePrefix), "/")
+	config.ResumePrefix = strings.TrimSuffix(strings.TrimSpace(config.ResumePrefix), "/")
 	if err := validateObjectStoragePrefix(config.AudioPrefix); err != nil {
 		return ObjectStorageConfig{}, err
 	}
 	if err := validateObjectStoragePrefix(config.ImagePrefix); err != nil {
 		return ObjectStorageConfig{}, err
 	}
+	if err := validateObjectStoragePrefix(config.ResumePrefix); err != nil {
+		return ObjectStorageConfig{}, err
+	}
 	if config.AudioPrefix != defaultAudioStoragePrefix ||
 		config.ImagePrefix != defaultImageStoragePrefix ||
-		config.AudioPrefix == config.ImagePrefix {
+		config.ResumePrefix != defaultResumeStoragePrefix ||
+		config.AudioPrefix == config.ImagePrefix ||
+		config.AudioPrefix == config.ResumePrefix ||
+		config.ImagePrefix == config.ResumePrefix {
 		return ObjectStorageConfig{}, ErrObjectStoragePrefix
 	}
 	if config.SignedURLTTL <= 0 || config.SignedURLTTL > maxSignedURLTTL {

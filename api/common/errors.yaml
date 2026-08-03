@@ -64,7 +64,6 @@ components:
         - unsupported_resume_format
         - resume_file_too_large
         - resume_parse_failed
-        - resume_not_implemented
         - rate_limited
         - resource_not_found
         - resource_conflict
@@ -148,7 +147,6 @@ components:
         unsupported_resume_format: 400
         resume_file_too_large: 400
         resume_parse_failed: 503
-        resume_not_implemented: 501
         idempotency_key_conflict: 409
         resource_conflict: 409
         resource_processing: 409

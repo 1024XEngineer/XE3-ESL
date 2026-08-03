@@ -13,6 +13,8 @@ import (
 type Repository interface {
 	// CreateWithinLimit 在同一事务内校验数量上限并创建简历。
 	CreateWithinLimit(context.Context, resume.Resume, int) error
+	// AbortCreate 删除尚未完成文件保存的新建记录，用于上传失败补偿。
+	AbortCreate(context.Context, string, string) error
 	// ListByOwner 分页列出指定用户拥有的活动简历。
 	ListByOwner(context.Context, string, ListQuery) ([]resume.Resume, error)
 	// FindByOwnerAndID 按所有者和简历标识查询元数据。
@@ -63,8 +65,8 @@ type Parser interface {
 
 // IDGenerator 定义 Resume 模块生成资源标识和对象键的能力。
 type IDGenerator interface {
-	// NewResumeID 生成一条新的简历资源标识。
-	NewResumeID() string
+	// NewResumeID 根据用户和幂等键生成稳定简历标识。
+	NewResumeID(string, string) string
 	// NewObjectKey 为用户简历生成不可猜测的存储对象键。
 	NewObjectKey(string, string) string
 }

@@ -14,3 +14,22 @@ type updateContentRequest struct {
 	Content         resume.Content `json:"content"`
 	ExpectedVersion int64          `json:"expected_version"`
 }
+
+// hasRequiredArrays 校验 OpenAPI 声明为必填的结构化数组没有被省略或设为 null。
+func (request updateContentRequest) hasRequiredArrays() bool {
+	if request.Content.WorkExperiences == nil || request.Content.ProjectExperiences == nil ||
+		request.Content.EducationExperiences == nil || request.Content.Skills == nil {
+		return false
+	}
+	for _, item := range request.Content.WorkExperiences {
+		if item.Duties == nil || item.Achievements == nil {
+			return false
+		}
+	}
+	for _, item := range request.Content.ProjectExperiences {
+		if item.Technologies == nil || item.Duties == nil || item.Achievements == nil {
+			return false
+		}
+	}
+	return true
+}

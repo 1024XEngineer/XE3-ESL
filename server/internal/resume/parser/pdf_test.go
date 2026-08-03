@@ -1,0 +1,91 @@
+// 本文件使用最小 PDF 验证文本提取、结构化和失败分类。
+package parser
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+)
+
+// TestPDFParserExtractsStructuredSections 验证文本型 PDF 可生成核心结构化字段。
+func TestPDFParserExtractsStructuredSections(t *testing.T) {
+	body := testPDF(strings.Join([]string{
+		"Target Position: Backend Engineer",
+		"Professional Summary",
+		"Backend engineer with distributed systems experience",
+		"Skills",
+		"Go, PostgreSQL, Docker",
+		"Work Experience",
+		"Acme | Senior Engineer",
+		"Built reliable APIs",
+		"Project Experience",
+		"Interview Coach | Backend Lead",
+		"Designed resume parsing service",
+		"Education",
+		"HDU | Computer Science | Bachelor",
+	}, "\n"))
+	content, err := NewPDFParser().Parse(context.Background(), bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if content.TargetPosition != "Backend Engineer" ||
+		len(content.Skills) != 3 || len(content.WorkExperiences) != 1 ||
+		len(content.ProjectExperiences) != 1 || len(content.EducationExperiences) != 1 {
+		t.Fatalf("unexpected content: %#v", content)
+	}
+}
+
+// TestPDFParserRejectsInvalidAndTextlessFiles 验证损坏文件和无文本扫描件返回稳定失败码。
+func TestPDFParserRejectsInvalidAndTextlessFiles(t *testing.T) {
+	for name, test := range map[string]struct {
+		body []byte
+		code string
+	}{
+		"invalid":  {body: []byte("not-pdf"), code: "pdf_invalid"},
+		"textless": {body: testPDF(""), code: "pdf_text_unavailable"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewPDFParser().Parse(context.Background(), bytes.NewReader(test.body))
+			failure, ok := err.(interface{ FailureCode() string })
+			if !ok || failure.FailureCode() != test.code {
+				t.Fatalf("error = %v, want code %q", err, test.code)
+			}
+		})
+	}
+}
+
+// testPDF 构造使用 Helvetica 的最小文本 PDF 测试文件。
+func testPDF(text string) []byte {
+	commands := "BT /F1 10 Tf 14 TL 72 760 Td "
+	for index, line := range strings.Split(text, "\n") {
+		if index > 0 {
+			commands += "T* "
+		}
+		line = strings.NewReplacer("\\", "\\\\", "(", "\\(", ")", "\\)").Replace(line)
+		commands += "(" + line + ") Tj "
+	}
+	commands += "ET"
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(commands), commands),
+	}
+	var buffer bytes.Buffer
+	buffer.WriteString("%PDF-1.4\n")
+	offsets := []int{0}
+	for index, object := range objects {
+		offsets = append(offsets, buffer.Len())
+		fmt.Fprintf(&buffer, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	xref := buffer.Len()
+	fmt.Fprintf(&buffer, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets[1:] {
+		fmt.Fprintf(&buffer, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&buffer, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return buffer.Bytes()
+}

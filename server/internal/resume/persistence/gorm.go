@@ -100,6 +100,30 @@ func (r *GormRepository) CreateWithinLimit(
 	return mapTransactionError(err)
 }
 
+// AbortCreate 硬删除仍处于上传中的记录，用于文件保存失败后的安全补偿。
+func (r *GormRepository) AbortCreate(
+	ctx context.Context,
+	ownerUserID string,
+	resumeID string,
+) error {
+	if r == nil || r.database == nil || ctx == nil ||
+		!validUUID(ownerUserID) || !validUUID(resumeID) {
+		return app.InvalidResumeError()
+	}
+	result := r.database.WithContext(ctx).
+		Unscoped().
+		Where("owner_user_id = ? AND resume_id = ?", ownerUserID, resumeID).
+		Where("file_status = ?", string(resume.FileUploading)).
+		Delete(&resumeRecord{})
+	if result.Error != nil {
+		return mapGormError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return r.writeMiss(ctx, ownerUserID, resumeID)
+	}
+	return nil
+}
+
 // ListByOwner 按稳定顺序分页查询当前用户的活动简历。
 func (r *GormRepository) ListByOwner(
 	ctx context.Context,

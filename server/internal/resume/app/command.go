@@ -3,6 +3,7 @@ package app
 
 import (
 	"io"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume"
 )
@@ -22,6 +23,12 @@ type CreateCommand struct {
 type ListQuery struct {
 	Cursor string
 	Limit  int
+}
+
+// ListResult 表示一页简历和继续读取时使用的下一游标。
+type ListResult struct {
+	Items      []resume.Resume
+	NextCursor string
 }
 
 // UpdateMetadataCommand 表示修改简历展示名称的应用输入。
@@ -75,5 +82,5 @@ type Detail struct {
 // ContentURL 表示查看原始 PDF 的短时有效地址。
 type ContentURL struct {
 	URL       string
-	ExpiresAt string
+	ExpiresAt time.Time
 }

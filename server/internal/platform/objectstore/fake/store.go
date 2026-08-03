@@ -121,6 +121,23 @@ func (store *Store) SignedGet(
 	}, nil
 }
 
+// Open 返回对象内容的独立只读流，供受控服务端处理使用。
+func (store *Store) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	if ctx == nil || ctx.Err() != nil {
+		return nil, context.Canceled
+	}
+	if err := objectstore.ValidateKey(store.prefix, key); err != nil {
+		return nil, err
+	}
+	store.mu.RLock()
+	item, found := store.objects[key]
+	store.mu.RUnlock()
+	if !found {
+		return nil, objectstore.ErrOperationFailed
+	}
+	return io.NopCloser(strings.NewReader(string(item.body))), nil
+}
+
 func (store *Store) Delete(ctx context.Context, key string) error {
 	if ctx == nil || ctx.Err() != nil {
 		return context.Canceled
