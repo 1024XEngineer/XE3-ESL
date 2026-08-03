@@ -6,12 +6,12 @@ import (
 	"fmt"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"

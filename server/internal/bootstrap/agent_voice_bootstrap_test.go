@@ -10,9 +10,9 @@ import (
 	"time"
 
 	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 

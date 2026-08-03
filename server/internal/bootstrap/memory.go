@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 )
 
 const (

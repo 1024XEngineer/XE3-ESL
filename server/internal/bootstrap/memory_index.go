@@ -4,9 +4,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

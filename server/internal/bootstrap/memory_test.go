@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 )
 
 func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
