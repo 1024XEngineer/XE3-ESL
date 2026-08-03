@@ -174,7 +174,8 @@ func (claim CleanupClaim) Valid() bool {
 	}
 	switch claim.Kind {
 	case CleanupCandidate:
-		return ValidUUID(claim.CandidateID) && claim.AudioID == ""
+		return ValidUUID(claim.CandidateID) &&
+			(claim.AudioID == "" || ValidUUID(claim.AudioID))
 	case CleanupAudio:
 		return ValidUUID(claim.AudioID) && claim.CandidateID == ""
 	default:

@@ -247,7 +247,7 @@ SELECT
 		context.Background(),
 		actorB,
 		submission.Run.ID,
-	); !errors.Is(err, agentcontext.ErrNotFound) {
+	); !errors.Is(err, agentrun.ErrNotFound) {
 		t.Fatalf("cross-owner manifest error = %v, want not found", err)
 	}
 	threadB, err := dataService.CreateThread(
