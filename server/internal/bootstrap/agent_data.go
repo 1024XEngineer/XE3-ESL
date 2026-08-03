@@ -8,11 +8,12 @@ import (
 	"time"
 
 	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/image"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
-	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	agenttransport "github.com/1024XEngineer/XE3-ESL/server/internal/agent/transport"
@@ -79,7 +80,7 @@ type identityAgentComposition struct {
 	agentImageReclaimer AgentImageObjectReclaimer
 	matterService       *matter.Service
 	productionTools     *tool.Registry
-	runService          *agentruntime.RunService
+	runService          *agentrun.Service
 	memoryExtraction    memory.ExtractionProcessor
 	summaryProcessor    agentsummary.Processor
 	ids                 *identity.UUIDv4Generator
@@ -192,14 +193,14 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	var contextOptions []agentruntime.ContextAssemblerOption
+	var contextOptions []agentcontext.Option
 	if agentImages != nil {
 		contextOptions = append(
 			contextOptions,
-			agentruntime.WithImageContextReader(agentImages),
+			agentcontext.WithImageReader(agentImages),
 		)
 	}
-	contextAssembler, err := agentruntime.NewContextAssembler(
+	contextAssembler, err := agentcontext.NewAssembler(
 		agentRepository,
 		matterService,
 		stableProfileReader,
@@ -238,7 +239,7 @@ func buildIdentityAgentComposition(
 			return nil, err
 		}
 	}
-	runService, err := agentruntime.NewRunService(
+	runService, err := agentrun.NewService(
 		runRepository,
 		contextAssembler,
 		generator,

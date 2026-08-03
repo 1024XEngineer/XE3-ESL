@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
-	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
 )
 
 type agentMemoryContextSearcher struct {
@@ -25,8 +25,8 @@ func newAgentMemoryContextSearcher(
 
 func (searcher *agentMemoryContextSearcher) Search(
 	ctx context.Context,
-	request agentruntime.MemorySearchRequest,
-) ([]agentruntime.MemorySearchHit, error) {
+	request agentcontext.MemorySearchRequest,
+) ([]agentcontext.MemorySearchHit, error) {
 	if searcher == nil || searcher.searcher == nil {
 		return nil, errors.New(
 			"bootstrap: Memory Context search dependency is required",
@@ -42,9 +42,9 @@ func (searcher *agentMemoryContextSearcher) Search(
 	if err != nil {
 		return nil, err
 	}
-	result := make([]agentruntime.MemorySearchHit, 0, len(hits))
+	result := make([]agentcontext.MemorySearchHit, 0, len(hits))
 	for _, hit := range hits {
-		result = append(result, agentruntime.MemorySearchHit{
+		result = append(result, agentcontext.MemorySearchHit{
 			MemoryID:               hit.MemoryID,
 			MemoryVersion:          hit.MemoryVersion,
 			CanonicalKey:           hit.CanonicalKey,
@@ -64,4 +64,4 @@ func (searcher *agentMemoryContextSearcher) Search(
 	return result, nil
 }
 
-var _ agentruntime.MemorySearcher = (*agentMemoryContextSearcher)(nil)
+var _ agentcontext.MemorySearcher = (*agentMemoryContextSearcher)(nil)

@@ -1,22 +1,26 @@
-package runtime
+package run
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+)
 
 func TestRunConfigurationMatchesPersistedProviderModelAndBudget(t *testing.T) {
-	configuration := RunConfiguration{
+	configuration := core.RunConfiguration{
 		Provider:           "qianwen",
 		Model:              "qwen-test",
 		MaxOutputTokens:    512,
 		MaxInputCharacters: 12000,
 	}
-	run := Run{
+	run := core.Run{
 		RequestedProvider:  configuration.Provider,
 		RequestedModel:     configuration.Model,
 		MaxOutputTokens:    configuration.MaxOutputTokens,
 		MaxInputCharacters: configuration.MaxInputCharacters,
 	}
 	tests := map[string]struct {
-		configuration RunConfiguration
+		configuration core.RunConfiguration
 		want          bool
 	}{
 		"matches": {
@@ -24,7 +28,7 @@ func TestRunConfigurationMatchesPersistedProviderModelAndBudget(t *testing.T) {
 			want:          true,
 		},
 		"provider drift": {
-			configuration: func() RunConfiguration {
+			configuration: func() core.RunConfiguration {
 				changed := configuration
 				changed.Provider = "qianwen_next"
 				return changed
@@ -32,7 +36,7 @@ func TestRunConfigurationMatchesPersistedProviderModelAndBudget(t *testing.T) {
 			want: false,
 		},
 		"model drift": {
-			configuration: func() RunConfiguration {
+			configuration: func() core.RunConfiguration {
 				changed := configuration
 				changed.Model = "qwen-next"
 				return changed
@@ -40,7 +44,7 @@ func TestRunConfigurationMatchesPersistedProviderModelAndBudget(t *testing.T) {
 			want: false,
 		},
 		"output budget drift": {
-			configuration: func() RunConfiguration {
+			configuration: func() core.RunConfiguration {
 				changed := configuration
 				changed.MaxOutputTokens++
 				return changed
@@ -48,7 +52,7 @@ func TestRunConfigurationMatchesPersistedProviderModelAndBudget(t *testing.T) {
 			want: false,
 		},
 		"context budget drift": {
-			configuration: func() RunConfiguration {
+			configuration: func() core.RunConfiguration {
 				changed := configuration
 				changed.MaxInputCharacters++
 				return changed
