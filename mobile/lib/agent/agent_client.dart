@@ -122,6 +122,10 @@ abstract interface class AgentThreadHistoryClient {
   });
 }
 
+abstract interface class AgentThreadDeletionClient {
+  Future<void> deleteThread({required String threadId});
+}
+
 abstract interface class AgentMatterSelectionClient {
   Future<AgentMatter> selectExistingMatter({
     required String threadId,
@@ -196,6 +200,7 @@ final class FakeAgentClient
     implements
         AgentClient,
         AgentThreadHistoryClient,
+        AgentThreadDeletionClient,
         AgentMatterSelectionClient,
         AgentVoiceClient,
         AgentImageClient,
@@ -347,6 +352,26 @@ final class FakeAgentClient
       await _wait(generation);
       _requireCurrentGeneration(generation);
       _focusedThreadId = null;
+    });
+  }
+
+  @override
+  Future<void> deleteThread({required String threadId}) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      if (!_threads.containsKey(threadId)) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.notFound,
+          errorCode: 'resource_not_found',
+        );
+      }
+      _threads.remove(threadId);
+      _threadMessages.remove(threadId);
+      _threadMatters.remove(threadId);
+      if (_focusedThreadId == threadId) {
+        _focusedThreadId = null;
+      }
     });
   }
 

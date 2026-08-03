@@ -545,6 +545,13 @@ class _ConversationDrawer extends StatelessWidget {
                 selected: true,
                 enabled: !controller.isBusy,
                 onTap: () => Navigator.of(context).pop(),
+                onDelete: controller.supportsThreadDeletion
+                    ? () => _confirmDelete(
+                        context,
+                        currentThreadId,
+                        current?.title,
+                      )
+                    : null,
               ),
             const SizedBox(height: 24),
             const Text('近期对话', style: SpeakUpDesign.label),
@@ -573,6 +580,9 @@ class _ConversationDrawer extends StatelessWidget {
                     }
                     Navigator.of(context).pop();
                   },
+                  onDelete: controller.supportsThreadDeletion
+                      ? () => _confirmDelete(context, thread.id, thread.title)
+                      : null,
                 ),
             if (controller.threadHistoryErrorMessage case final message?) ...[
               const SizedBox(height: 10),
@@ -597,6 +607,36 @@ class _ConversationDrawer extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _confirmDelete(
+    BuildContext context,
+    String threadId,
+    String? title,
+  ) async {
+    final displayTitle = title ?? '新对话';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除对话？'),
+        content: Text('“$displayTitle”及其中的消息将被永久删除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('confirm-delete-conversation'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) {
+      return;
+    }
+    await controller.deleteThread(threadId);
+  }
 }
 
 class _ConversationThreadTile extends StatelessWidget {
@@ -607,6 +647,7 @@ class _ConversationThreadTile extends StatelessWidget {
     required this.selected,
     required this.enabled,
     required this.onTap,
+    required this.onDelete,
   });
 
   final String threadId;
@@ -615,6 +656,7 @@ class _ConversationThreadTile extends StatelessWidget {
   final bool selected;
   final bool enabled;
   final VoidCallback onTap;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -637,13 +679,23 @@ class _ConversationThreadTile extends StatelessWidget {
         subtitle: lastUpdatedAt == null
             ? null
             : Text('更新于 ${_formatThreadUpdatedAt(lastUpdatedAt)}'),
-        trailing: selected
-            ? const Icon(
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (selected)
+              const Icon(
                 Icons.check_rounded,
                 key: Key('focused-conversation-indicator'),
                 size: 20,
-              )
-            : null,
+              ),
+            IconButton(
+              key: Key('delete-conversation-$threadId'),
+              tooltip: '删除对话',
+              onPressed: enabled ? onDelete : null,
+              icon: const Icon(Icons.delete_outline_rounded, size: 20),
+            ),
+          ],
+        ),
         onTap: enabled ? onTap : null,
       ),
     );

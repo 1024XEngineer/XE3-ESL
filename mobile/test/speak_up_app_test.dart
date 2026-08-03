@@ -662,6 +662,46 @@ void main() {
     },
   );
 
+  testWidgets('conversation drawer confirms and deletes each Thread', (
+    tester,
+  ) async {
+    final controller = AgentController(client: FakeAgentClient());
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
+    await tester.pumpAndSettle();
+    final originalThreadId = controller.threadId!;
+
+    await tester.tap(find.byKey(const Key('conversation-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('new-conversation-button')));
+    await tester.pumpAndSettle();
+    final currentThreadId = controller.threadId!;
+
+    await tester.tap(find.byKey(const Key('conversation-menu-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(Key('delete-conversation-$originalThreadId')));
+    await tester.pumpAndSettle();
+    expect(find.text('删除对话？'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('confirm-delete-conversation')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(Key('conversation-thread-$originalThreadId')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(Key('delete-conversation-$currentThreadId')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-delete-conversation')));
+    await tester.pumpAndSettle();
+
+    expect(controller.threadId, isNull);
+    expect(
+      find.byKey(Key('conversation-thread-$currentThreadId')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('no-focused-conversation')), findsOneWidget);
+  });
+
   testWidgets('Agent actions start planning or open the matching destination', (
     tester,
   ) async {

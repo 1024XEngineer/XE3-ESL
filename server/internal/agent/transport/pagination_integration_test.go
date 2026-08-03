@@ -690,6 +690,50 @@ WHERE id = $2 AND owner_user_id = $1`,
 		)
 	}
 
+	crossOwnerDelete := performAgentRequest(
+		router,
+		http.MethodDelete,
+		"/v1/agent-threads/"+threads[2].ID,
+		"",
+		"token-b",
+	)
+	if crossOwnerDelete.Code != http.StatusNotFound {
+		t.Fatalf(
+			"cross-owner Thread delete response: %d %s",
+			crossOwnerDelete.Code,
+			crossOwnerDelete.Body,
+		)
+	}
+	deletedThread := performAgentRequest(
+		router,
+		http.MethodDelete,
+		"/v1/agent-threads/"+threads[2].ID,
+		"",
+		"token-a",
+	)
+	if deletedThread.Code != http.StatusNoContent ||
+		deletedThread.Body.Len() != 0 {
+		t.Fatalf(
+			"Thread delete response: %d %q",
+			deletedThread.Code,
+			deletedThread.Body.String(),
+		)
+	}
+	repeatedDelete := performAgentRequest(
+		router,
+		http.MethodDelete,
+		"/v1/agent-threads/"+threads[2].ID,
+		"",
+		"token-a",
+	)
+	if repeatedDelete.Code != http.StatusNotFound {
+		t.Fatalf(
+			"repeated Thread delete response: %d %s",
+			repeatedDelete.Code,
+			repeatedDelete.Body,
+		)
+	}
+
 	clearFocus := performAgentRequest(
 		router,
 		http.MethodDelete,

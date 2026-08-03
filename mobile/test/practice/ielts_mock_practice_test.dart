@@ -6,6 +6,7 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
+import 'package:speakup/features/practice/ielts_examiner_speaker.dart';
 import 'package:speakup/features/practice/practice.dart';
 import 'package:speakup/features/preparation/ielts_question_bank.dart';
 import 'package:speakup/features/preparation/preparation_client.dart';
@@ -20,6 +21,73 @@ import 'package:speakup/review/ielts_speaking_report_client.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
 
 void main() {
+  testWidgets(
+    'Part 2 reads instructions and Cue Card before starting 60 seconds',
+    (tester) async {
+      final now = DateTime.utc(2026, 8, 3, 4, 30);
+      final speaker = _ControlledExaminerSpeaker();
+      final practice = _IeltsPracticeClient(initialCompleted: 8);
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+      );
+      final store = _MemoryProgressStore();
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(_ieltsScene);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: store,
+            examinerSpeaker: speaker,
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Continue to Part 2'));
+      await tester.pump();
+      expect(speaker.spoken.single, contains('one minute to prepare'));
+      expect(find.text('Examiner is speaking…'), findsOneWidget);
+      expect(store.value?.preparationDeadline, isNull);
+
+      speaker.completeCurrent();
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('ielts-mock-part-2-cue-card-reading')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('ielts-mock-preparation-countdown')),
+        findsNothing,
+      );
+      expect(speaker.spoken.last, _question(9).text);
+      expect(store.value?.phase, IeltsMockPhase.part2CueCard);
+      expect(store.value?.preparationDeadline, isNull);
+
+      speaker.completeCurrent();
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('ielts-mock-part-2-preparation')),
+        findsOneWidget,
+      );
+      expect(find.text('60s'), findsOneWidget);
+      expect(
+        store.value?.preparationDeadline,
+        now.add(const Duration(seconds: 60)),
+      );
+    },
+  );
+
   testWidgets(
     'Part 1 boundary enters prep, keeps notes, and submits the Part 2 long turn',
     (tester) async {
@@ -39,6 +107,7 @@ void main() {
           home: PracticePage(
             agentController: controller,
             ieltsMockProgressStore: store,
+            ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
           ),
         ),
       );
@@ -133,6 +202,7 @@ void main() {
           home: PracticePage(
             agentController: controller,
             ieltsMockProgressStore: store,
+            ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
           ),
         ),
       );
@@ -238,6 +308,7 @@ void main() {
         home: IeltsSpeakingMockPage(
           controller: controller,
           progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
       ),
     );
@@ -286,6 +357,7 @@ void main() {
         home: IeltsSpeakingMockPage(
           controller: controller,
           progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
       ),
     );
@@ -1085,6 +1157,45 @@ final class _Recorder implements PracticeRecorder {
   Future<void> clearAccountState() async {
     recording = false;
   }
+}
+
+final class _ImmediateExaminerSpeaker implements IeltsExaminerSpeaker {
+  final List<String> spoken = <String>[];
+
+  @override
+  Future<void> speak(String text) async {
+    spoken.add(text);
+  }
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> dispose() async {}
+}
+
+final class _ControlledExaminerSpeaker implements IeltsExaminerSpeaker {
+  final List<String> spoken = <String>[];
+  Completer<void>? _current;
+
+  @override
+  Future<void> speak(String text) {
+    spoken.add(text);
+    final completion = Completer<void>();
+    _current = completion;
+    return completion.future;
+  }
+
+  void completeCurrent() {
+    _current?.complete();
+    _current = null;
+  }
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 final class _PendingReportClient implements IeltsSpeakingReportClient {

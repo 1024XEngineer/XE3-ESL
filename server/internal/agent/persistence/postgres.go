@@ -461,6 +461,66 @@ SELECT COUNT(*) FROM deleted`,
 	return nil
 }
 
+func (r *PostgresRepository) DeleteThread(
+	ctx context.Context,
+	ownerID string,
+	threadID string,
+) error {
+	tx, err := r.database.Begin(ctx)
+	if err != nil {
+		return ErrRepository
+	}
+	defer rollback(tx)
+
+	var lockedThreadID string
+	if err := tx.QueryRow(ctx, `
+SELECT id::text
+FROM agent_threads
+WHERE id = $1 AND owner_user_id = $2
+FOR UPDATE`,
+		threadID,
+		ownerID,
+	).Scan(&lockedThreadID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return mapPostgresError(err)
+	}
+
+	var protected bool
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM practice_plans
+    WHERE owner_user_id = $1
+      AND agent_thread_id = $2
+)`,
+		ownerID,
+		threadID,
+	).Scan(&protected); err != nil {
+		return mapPostgresError(err)
+	}
+	if protected {
+		return ErrConflict
+	}
+
+	tag, err := tx.Exec(ctx, `
+DELETE FROM agent_threads
+WHERE id = $1 AND owner_user_id = $2`,
+		threadID,
+		ownerID,
+	)
+	if err != nil {
+		return mapPostgresError(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ErrRepository
+	}
+	return nil
+}
+
 func (r *PostgresRepository) SetActiveMatter(
 	ctx context.Context,
 	ownerID string,

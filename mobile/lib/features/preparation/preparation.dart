@@ -500,20 +500,6 @@ class _PreparationPageState extends State<PreparationPage> {
     }
   }
 
-  bool get _canContinueCurrentPractice {
-    if (widget.launchController?.hasResumablePractice ?? false) {
-      return widget.onPracticeStarted != null;
-    }
-    final agent = widget.agentController;
-    if (agent?.activeMatter == null) {
-      return false;
-    }
-    if (agent?.hasActivePractice ?? false) {
-      return widget.onPracticeStarted != null;
-    }
-    return widget.onSceneSelected != null || widget.showBackButton;
-  }
-
   void _handleBack(PreparationController? controller) {
     if (widget.launchController?.isSelectionLocked ?? false) {
       return;
@@ -610,21 +596,6 @@ class _PreparationPageState extends State<PreparationPage> {
           key: Key('practice-hub-page-title'),
           style: PreparationDesign.body,
         ),
-        if ((widget.launchController?.hasResumablePractice ?? false) ||
-            widget.agentController?.activeMatter != null) ...[
-          const SizedBox(height: 20),
-          _PracticeContinuation(
-            sceneTitle:
-                widget.launchController?.resumablePracticeTitle ??
-                widget.agentController?.activeMatter?.scene.title,
-            hasActivePractice:
-                (widget.launchController?.hasResumablePractice ?? false) ||
-                (widget.agentController?.hasActivePractice ?? false),
-            onPressed: _canContinueCurrentPractice
-                ? () => unawaited(_continueCurrentPractice())
-                : null,
-          ),
-        ],
         if (widget.launchController?.workspaceErrorMessage case final message?)
           Padding(
             padding: const EdgeInsets.only(top: 10),
@@ -1060,94 +1031,6 @@ class _CatalogEmpty extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _PracticeContinuation extends StatelessWidget {
-  const _PracticeContinuation({
-    required this.sceneTitle,
-    required this.hasActivePractice,
-    required this.onPressed,
-  });
-
-  final String? sceneTitle;
-  final bool hasActivePractice;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final title = sceneTitle;
-    final hasCurrentPractice = title != null;
-    final label = hasCurrentPractice
-        ? hasActivePractice
-              ? '继续练习'
-              : '继续当前话题'
-        : '最近练习';
-    final description = title ?? '完成一次练习后，这里会保留你的进度。';
-    final content = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: PreparationDesign.surfaceMuted,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(
-              Icons.history_rounded,
-              size: 20,
-              color: PreparationDesign.inkSecondary,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: PreparationDesign.inkSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  description,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 14, height: 1.35),
-                ),
-              ],
-            ),
-          ),
-          if (onPressed != null) ...[
-            const SizedBox(width: 10),
-            const Icon(Icons.arrow_forward_rounded, size: 20),
-          ],
-        ],
-      ),
-    );
-    return DecoratedBox(
-      key: const Key('practice-continuation'),
-      decoration: const BoxDecoration(
-        border: Border.symmetric(
-          horizontal: BorderSide(color: PreparationDesign.border),
-        ),
-      ),
-      child: onPressed == null
-          ? content
-          : Semantics(
-              button: true,
-              label: '$label，$description',
-              onTap: onPressed,
-              excludeSemantics: true,
-              child: InkWell(onTap: onPressed, child: content),
-            ),
     );
   }
 }

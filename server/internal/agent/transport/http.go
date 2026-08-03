@@ -259,6 +259,7 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 	protected.PUT("/v1/agent-threads/focused", h.setFocusedThread)
 	protected.DELETE("/v1/agent-threads/focused", h.clearFocusedThread)
 	protected.GET("/v1/agent-threads/:thread_id", h.getThread)
+	protected.DELETE("/v1/agent-threads/:thread_id", h.deleteThread)
 	protected.PUT(
 		"/v1/agent-threads/:thread_id/active-matter",
 		h.setActiveMatter,
@@ -656,6 +657,28 @@ func (h *HTTPHandler) getThread(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, threadResponse(thread))
+}
+
+func (h *HTTPHandler) deleteThread(c *gin.Context) {
+	actor, ok := trustedActor(c)
+	if !ok {
+		h.writeAuthenticationRequired(c)
+		return
+	}
+	application, ok := h.application.(ThreadDeletionApplication)
+	if !ok {
+		h.writeAgentError(c, ErrRepository)
+		return
+	}
+	if err := application.DeleteThread(
+		c.Request.Context(),
+		actor,
+		c.Param("thread_id"),
+	); err != nil {
+		h.writeAgentError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *HTTPHandler) setActiveMatter(c *gin.Context) {
