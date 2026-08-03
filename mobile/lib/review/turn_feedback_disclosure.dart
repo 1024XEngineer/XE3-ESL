@@ -11,12 +11,14 @@ class SpeechFeedbackDisclosure extends StatefulWidget {
     required this.projection,
     this.onRetry,
     this.onRepractice,
+    this.compact = false,
     super.key,
   });
 
   final SpeechFeedbackProjection projection;
   final VoidCallback? onRetry;
   final SpeechFeedbackRepracticeCallback? onRepractice;
+  final bool compact;
 
   @override
   State<SpeechFeedbackDisclosure> createState() =>
@@ -37,10 +39,13 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
   @override
   Widget build(BuildContext context) {
     final content = _contentFor(widget.projection);
+    final compact = widget.compact && !_expanded;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: SpeakUpDesign.surfaceMuted,
-        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+        borderRadius: BorderRadius.circular(
+          compact ? 999 : SpeakUpDesign.radiusControl,
+        ),
         border: Border.all(color: SpeakUpDesign.border),
       ),
       child: Column(
@@ -81,7 +86,9 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
                       const SizedBox(width: SpeakUpDesign.space8),
                       Expanded(
                         child: Text(
-                          content.title,
+                          compact
+                              ? _compactTitle(widget.projection, content.title)
+                              : content.title,
                           style: Theme.of(context).textTheme.labelLarge
                               ?.copyWith(color: SpeakUpDesign.ink),
                         ),
@@ -176,6 +183,28 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
         );
     }
   }
+}
+
+String _compactTitle(SpeechFeedbackProjection projection, String fallback) {
+  final feedback = projection.feedback;
+  if (feedback == null ||
+      feedback.feedbackStatus != SpeechFeedbackStatus.ready ||
+      feedback.scoreabilityStatus ==
+          SpeechFeedbackScoreabilityStatus.insufficient) {
+    return fallback;
+  }
+  final assessment = feedback.acousticAssessment;
+  if (!assessment.isAssessed) {
+    return '查看评分与润色';
+  }
+  if (assessment.category == 'topic') {
+    return '发音 ${assessment.pronunciationScore!.round()}  '
+        '语速 ${assessment.speakingSpeedWpm!.round()}词/分  '
+        '相关 ${assessment.semanticScore!.round()}';
+  }
+  return '流利 ${assessment.fluencyScore!.round()}  '
+      '发音 ${assessment.accuracyScore!.round()}  '
+      '完整 ${assessment.integrityScore!.round()}';
 }
 
 final class _DisclosureContent {

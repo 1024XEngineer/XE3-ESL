@@ -63,15 +63,22 @@ IeltsSpeakingReportIndexItem _item(Object? value) {
       'created_at',
       'updated_at',
     },
+    optional: const {'title'},
   );
-  if (root['report_kind'] != 'IELTS_SPEAKING_FULL_MOCK' ||
-      root['is_final'] != false) {
+  final kind = switch (root['report_kind']) {
+    'IELTS_SPEAKING_FULL_MOCK' => IeltsSpeakingReportKind.fullMock,
+    'INTERVIEW' => IeltsSpeakingReportKind.interview,
+    _ => throw const IeltsSpeakingReportIndexDecodeException(),
+  };
+  if (root['is_final'] != false) {
     throw const IeltsSpeakingReportIndexDecodeException();
   }
   final practiceSessionId = _identifier(root['practice_session_id']);
   final statusUrl = root['status_url'];
-  if (statusUrl !=
-      '/v1/practice-sessions/$practiceSessionId/ielts-speaking-report') {
+  final expectedSuffix = kind == IeltsSpeakingReportKind.interview
+      ? 'interview-report'
+      : 'ielts-speaking-report';
+  if (statusUrl != '/v1/practice-sessions/$practiceSessionId/$expectedSuffix') {
     throw const IeltsSpeakingReportIndexDecodeException();
   }
   final createdAt = _dateTime(root['created_at']);
@@ -79,8 +86,9 @@ IeltsSpeakingReportIndexItem _item(Object? value) {
   if (updatedAt.isBefore(createdAt)) {
     throw const IeltsSpeakingReportIndexDecodeException();
   }
+  final title = root.containsKey('title') ? _reportTitle(root['title']) : null;
   return IeltsSpeakingReportIndexItem(
-    reportKind: IeltsSpeakingReportKind.fullMock,
+    reportKind: kind,
     practiceSessionId: practiceSessionId,
     evaluationId: _uuid(root['evaluation_id']),
     evaluationRevisionId: _uuid(root['evaluation_revision_id']),
@@ -90,7 +98,19 @@ IeltsSpeakingReportIndexItem _item(Object? value) {
     statusUrl: statusUrl as String,
     createdAt: createdAt,
     updatedAt: updatedAt,
+    title: title,
   );
+}
+
+String _reportTitle(Object? value) {
+  if (value is! String) {
+    throw const IeltsSpeakingReportIndexDecodeException();
+  }
+  final trimmed = value.trim();
+  if (trimmed.isEmpty || trimmed.length > 256) {
+    throw const IeltsSpeakingReportIndexDecodeException();
+  }
+  return trimmed;
 }
 
 Map<String, Object?> _exactObject(

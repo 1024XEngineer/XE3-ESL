@@ -71,6 +71,10 @@ void main() {
         Key('agent-assistant-tts-${assistant.id}'),
       );
       expect(assistantTts.hitTestable(), findsOneWidget);
+      expect(controller.voiceController?.playingMessageId, assistant.id);
+      await tester.tap(assistantTts);
+      await tester.pump();
+      expect(controller.voiceController?.playingMessageId, isNull);
       await tester.tap(assistantTts);
       await tester.pump();
       expect(
@@ -89,7 +93,7 @@ void main() {
       final voiceDecoration =
           tester.widget<Container>(voiceBubble).decoration! as BoxDecoration;
       expect(voiceDecoration.color, SpeakUpDesign.primaryMuted);
-      expect(tester.getSize(voiceBubble).height, lessThan(140));
+      expect(tester.getSize(voiceBubble).height, lessThan(220));
       expect(
         find.byKey(Key('agent-user-voice-play-${voiceMessage.id}')),
         findsOneWidget,
@@ -102,17 +106,6 @@ void main() {
         find.byKey(Key('agent-user-voice-progress-${voiceMessage.id}')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(Key('agent-user-voice-transcript-${voiceMessage.id}')),
-        findsNothing,
-      );
-      final transcriptToggle = find.byKey(
-        Key('agent-user-voice-transcript-toggle-${voiceMessage.id}'),
-      );
-      await tester.ensureVisible(transcriptToggle);
-      await tester.pump();
-      await tester.tap(transcriptToggle);
-      await tester.pump();
       expect(
         find.byKey(Key('agent-user-voice-transcript-${voiceMessage.id}')),
         findsOneWidget,
@@ -136,9 +129,7 @@ void main() {
     },
   );
 
-  testWidgets('right swipe converts home recording into editable text', (
-    tester,
-  ) async {
+  testWidgets('upward swipe cancels home recording', (tester) async {
     final controller = AgentController(
       client: FakeAgentClient(),
       clientIdFactory: _sequentialIdFactory(),
@@ -147,36 +138,23 @@ void main() {
     await tester.pumpWidget(SpeakUpApp.preview(agentController: controller));
     await tester.pumpAndSettle();
 
-    final gesture = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('agent-mic-placeholder'))),
-    );
-    await tester.pump(const Duration(milliseconds: 220));
-    await gesture.moveBy(const Offset(90, 0));
+    final target = find.byKey(const Key('agent-mic-placeholder'));
+    await tester.tap(target);
     await tester.pump();
-    expect(find.text('松开转成文字'), findsOneWidget);
+    expect(
+      controller.voiceController?.state,
+      AgentVoiceComposerState.recording,
+    );
+
+    final gesture = await tester.startGesture(tester.getCenter(target));
+    await gesture.moveBy(const Offset(0, -90));
+    await tester.pump();
+    expect(find.text('松开取消'), findsOneWidget);
     await gesture.up();
     await _pumpVoiceOperation(tester);
 
-    final field = find.byKey(const Key('agent-composer-field'));
-    expect(field, findsOneWidget);
-    expect(
-      tester.widget<TextField>(field).controller?.text,
-      'I explained the problem, the trade-off, and the result clearly.',
-    );
-    expect(
-      controller.voiceController?.state,
-      AgentVoiceComposerState.awaitingConfirmation,
-    );
-
-    await tester.enterText(field, 'Edited transcript sent as text.');
-    await tester.tap(find.byKey(const Key('agent-voice-confirm')));
-    await _pumpVoiceOperation(tester);
-
-    final userMessage = controller.messages.lastWhere(
-      (message) => message.role == AgentMessageRole.user,
-    );
-    expect(userMessage.text, 'Edited transcript sent as text.');
-    expect(userMessage.modality, AgentMessageModality.text);
+    expect(controller.voiceController?.state, AgentVoiceComposerState.idle);
+    expect(find.byKey(const Key('agent-composer-field')), findsNothing);
   });
 
   testWidgets('recording elapsed time updates inside the original composer', (
@@ -341,8 +319,8 @@ void main() {
     await tester.pump();
 
     expect(voiceController.state, AgentVoiceComposerState.recording);
-    await tester.tap(find.byKey(const Key('agent-voice-target-cancel')));
-    await _pumpVoiceOperation(tester);
+    await voiceController.cancel();
+    await tester.pump();
 
     await tester.tap(find.byKey(const Key('agent-show-text-composer')));
     await tester.pump();
@@ -445,10 +423,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
 
-      await tester.tap(find.byKey(const Key('agent-voice-target-convert')));
-      await _pumpVoiceOperation(tester);
-
-      expect(find.byKey(const Key('agent-composer-field')), findsOneWidget);
+      expect(find.text('点击发送 · 上滑取消'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await controller.voiceController?.cancel();
       await tester.pump();

@@ -333,7 +333,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
             : null,
-        onCreatePlan: () => _selectDestination(1),
+        onCreatePlan: () => unawaited(
+          widget.agentController.sendText('我想创建一场模拟面试，请先帮我梳理面试信息。'),
+        ),
+        onBrowseScenes: () => _selectDestination(1),
         onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
         onMessageAction: (action) =>

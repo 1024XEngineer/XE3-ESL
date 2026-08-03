@@ -305,48 +305,44 @@ void main() {
     expect(controller.recordingState, PracticeRecordingState.idle);
   });
 
-  testWidgets(
-    'Part 1 right-swipe converts to an editable draft without auto-submit',
-    (tester) async {
-      final practice = _IeltsPracticeClient(initialCompleted: 0);
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
-        recorder: _Recorder(),
-      );
-      addTearDown(controller.dispose);
-      await controller.initialize();
-      await controller.selectScene(_ieltsScene);
+  testWidgets('Part 1 supports upward cancel without auto-submit', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 0);
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(_ieltsScene);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: IeltsSpeakingMockPage(
-            controller: controller,
-            progressStore: _MemoryProgressStore(),
-          ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      final gesture = await tester.startGesture(
-        tester.getCenter(find.byKey(const Key('ielts-mock-record'))),
-      );
-      await tester.pump(const Duration(milliseconds: 220));
-      await gesture.moveBy(const Offset(90, 0));
-      await tester.pump();
-      expect(find.text('Release to convert to text'), findsOneWidget);
-      await gesture.up();
-      await tester.pump();
-      await tester.pump();
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('ielts-mock-record'))),
+    );
+    await tester.pump(const Duration(milliseconds: 220));
+    await gesture.moveBy(const Offset(0, -90));
+    await tester.pump();
+    expect(find.text('松开取消'), findsOneWidget);
+    await gesture.up();
+    await tester.pump();
+    await tester.pump();
 
-      final field = find.byKey(const Key('ielts-mock-converted-answer-field'));
-      expect(field, findsOneWidget);
-      expect(tester.widget<TextField>(field).controller?.text, 'Answer 1');
-      expect(controller.recordingState, PracticeRecordingState.idle);
-      expect(controller.completedTurns, 0);
-      expect(practice.confirmedQuestionIds, isEmpty);
-    },
-  );
+    expect(controller.recordingState, PracticeRecordingState.idle);
+    expect(controller.completedTurns, 0);
+    expect(practice.confirmedQuestionIds, isEmpty);
+  });
 
   testWidgets('completed full mock remains on completion instead of report', (
     tester,

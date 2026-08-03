@@ -33,7 +33,7 @@ class ImmersiveRoleplaySession extends StatefulWidget {
   final InterviewReportController? interviewReportController;
   final SpeechFeedbackController? speechFeedbackController;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
 
   @override
   State<ImmersiveRoleplaySession> createState() =>

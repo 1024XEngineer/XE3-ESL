@@ -14,6 +14,7 @@ import (
 	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
 	matteragenttool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
@@ -32,12 +33,13 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	}
 	composition := newPracticeContextIntegrationComposition(t, pool, catalog)
 	wantTools := map[string]bool{
-		matteragenttool.ScenarioCreateToolName:    true,
-		matteragenttool.ScenarioSearchToolName:    true,
-		reviewagenttool.ReviewSearchToolName:      true,
-		reviewagenttool.ReviewGetToolName:         true,
-		practiceagenttool.PracticePreviewToolName: true,
-		practiceagenttool.PracticeStartToolName:   true,
+		matteragenttool.ScenarioCreateToolName:           true,
+		matteragenttool.ScenarioSearchToolName:           true,
+		reviewagenttool.ReviewSearchToolName:             true,
+		reviewagenttool.ReviewGetToolName:                true,
+		practiceagenttool.PracticePreviewToolName:        true,
+		practiceagenttool.PracticeStartToolName:          true,
+		evaluationagenttool.LatestPracticeReportToolName: true,
 	}
 	if composition.productionTools == nil {
 		t.Fatal("production Agent Tool Registry is nil")
@@ -204,8 +206,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	previewCall.RequestID = "preview-ready-0001"
 	previewInput := json.RawMessage(fmt.Sprintf(`{
 		"matter_id":%q,
-		"preparation_profile_id":%q,
-		"preparation_snapshot_id":%q,
+		"background_summary":"Go engineer preparing for a backend interview.",
 		"scenario_definition_id":%q,
 		"scenario_definition_version":1,
 		"scenario_config_id":%q,
@@ -216,8 +217,6 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		"max_effective_turns":4
 	}`,
 		matterID,
-		profileID,
-		snapshotID,
 		preparation.ProgrammerInterviewScenarioID,
 		preparation.BackendEngineerConfigID,
 		preparation.TechnicalInterviewerRoleID,

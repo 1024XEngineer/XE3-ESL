@@ -20,6 +20,13 @@ void main() {
     expect(ready.evaluationStatus, InterviewReportEvaluationStatus.ready);
     expect(ready.isFinal, isFalse);
     expect(ready.report?.dimensions, hasLength(5));
+    expect(ready.report?.dimensions.map((dimension) => dimension.score), [
+      78,
+      72,
+      70,
+      82,
+      76,
+    ]);
     expect(ready.report?.questions, hasLength(2));
     expect(ready.report?.priorityActions, hasLength(3));
     expect(
@@ -34,6 +41,12 @@ void main() {
     expect(
       insufficient.report?.questions.last.assessmentStatus,
       InterviewReportAssessmentStatus.notAssessed,
+    );
+    expect(
+      insufficient.report?.dimensions.every(
+        (dimension) => dimension.score == null,
+      ),
+      isTrue,
     );
     final failed = decodeInterviewReport(contract['failed']);
     expect(failed.evaluationStatus, InterviewReportEvaluationStatus.failed);
@@ -77,6 +90,25 @@ void main() {
       }
     },
   );
+
+  test('requires scores only for assessable Interview dimensions', () {
+    final contract = interviewReportContractFixture();
+    final missing = cloneInterviewReportFixture(contract['ready']);
+    _firstDimension(missing).remove('score');
+    final outOfRange = cloneInterviewReportFixture(contract['ready']);
+    _firstDimension(outOfRange)['score'] = 101;
+    final blockedWithZero = cloneInterviewReportFixture(
+      contract['insufficient'],
+    );
+    _firstDimension(blockedWithZero)['score'] = 0;
+
+    for (final value in [missing, outOfRange, blockedWithZero]) {
+      expect(
+        () => decodeInterviewReport(value),
+        throwsA(isA<InterviewReportDecodeException>()),
+      );
+    }
+  });
 
   test('rejects status payload shape mismatches and a non-report poll URL', () {
     final contract = interviewReportContractFixture();
@@ -144,6 +176,7 @@ void main() {
     final contract = interviewReportContractFixture();
     final value = cloneInterviewReportFixture(contract['ready']);
     (_dimensions(value).last as Map<String, Object?>)
+      ..remove('score')
       ..['scoreability_status'] = 'INSUFFICIENT'
       ..['gate_status'] = 'BLOCKED'
       ..['coverage'] = 0

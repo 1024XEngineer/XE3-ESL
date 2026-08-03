@@ -4,6 +4,12 @@ import 'agent_models.dart';
 import 'agent_voice_models.dart';
 
 abstract interface class AgentVoiceClient {
+  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+    required String threadId,
+    required AgentVoiceLocalRecording recording,
+    required String idempotencyKey,
+  });
+
   Future<AgentVoiceCandidate> createCandidate({
     required String threadId,
     required AgentVoiceLocalRecording recording,
@@ -40,6 +46,11 @@ abstract interface class AgentVoiceClient {
   Future<void> deleteMessageAudio({required String audioId});
 
   Future<Uint8List> loadAssistantSpeech({required String messageId});
+
+  Future<Uint8List> loadSpeechPreview({
+    required String messageId,
+    required String text,
+  });
 
   Future<void> clearAccountState();
 

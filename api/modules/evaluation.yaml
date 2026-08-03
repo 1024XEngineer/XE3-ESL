@@ -726,8 +726,9 @@ components:
       type: object
       additionalProperties: false
       description: |
-        Versioned qualitative Interview feedback projected from one frozen
-        Shadow revision. It contains no numeric performance score, hiring
+        Versioned Interview practice feedback projected from one frozen Shadow
+        revision. Assessable dimensions include a 0-100 coaching score based
+        only on confirmed transcript evidence. The report contains no hiring
         probability, readiness inference, pronunciation, pace, stress,
         phoneme, or other acoustic assessment.
       required:
@@ -885,6 +886,11 @@ components:
       properties:
         dimension_id:
           $ref: '#/components/schemas/InterviewReportDimensionId'
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Transcript-evidence coaching score for this dimension.
         scoreability_status:
           $ref: '#/components/schemas/InterviewReportScoreabilityStatus'
         gate_status:
@@ -926,6 +932,8 @@ components:
             required:
               - scoreability_status
           then:
+            required:
+              - score
             properties:
               gate_status:
                 const: FEEDBACK_ONLY
@@ -952,6 +960,9 @@ components:
             required:
               - scoreability_status
           then:
+            not:
+              required:
+                - score
             properties:
               gate_status:
                 const: BLOCKED
@@ -2152,7 +2163,7 @@ components:
       properties:
         report_kind:
           type: string
-          const: IELTS_SPEAKING_FULL_MOCK
+          enum: [IELTS_SPEAKING_FULL_MOCK, INTERVIEW]
         practice_session_id:
           $ref: '#/components/schemas/StableIdentifier'
         evaluation_id:
@@ -2167,10 +2178,14 @@ components:
         is_final:
           type: boolean
           const: false
+        title:
+          type: string
+          minLength: 1
+          maxLength: 256
         status_url:
           type: string
-          maxLength: 173
-          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/ielts-speaking-report$'
+          maxLength: 184
+          pattern: '^/v1/practice-sessions/[A-Za-z0-9][A-Za-z0-9_-]*/(ielts-speaking-report|interview-report)$'
         created_at:
           type: string
           format: date-time

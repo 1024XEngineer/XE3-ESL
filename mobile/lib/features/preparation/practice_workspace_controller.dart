@@ -457,12 +457,9 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     }
   }
 
-  Future<bool> completeAndContinueWithAgent(String reportSummary) async {
+  Future<bool> completeAndContinueWithAgent() async {
     final current = _current;
-    final summary = reportSummary.trim();
     if (current == null ||
-        summary.isEmpty ||
-        summary.length > 6000 ||
         !current.isCommitted ||
         current.returnThreadId == null ||
         agentController.threadId != current.practiceThreadId ||
@@ -478,7 +475,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     }
     final sent = await agentController.sendText(
       '我刚完成了“$title”的 $completedTurns 轮练习。'
-      '下面附上这次练习已生成的真实报告摘要，请直接基于它先概括我的主要表现，再问我想重点复盘哪一部分：\n$summary',
+      '请直接读取这次练习的真实评分与报告，先概括我的主要表现，'
+      '再问我想重点复盘哪一项。',
     );
     if (!sent) {
       _setError('已回到原会话，但暂时无法把练习结果发送给 Agent。');
@@ -831,7 +829,15 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     required bool preparedToLeave,
     bool fallbackToEmpty = false,
   }) async {
-    final returnThreadId = record.returnThreadId;
+    // Prefer the conversation the user is currently viewing so parking the
+    // practice lands them back where they were, instead of the stale launch
+    // Home. Only fall back to the stored return thread when the current
+    // thread is the practice thread itself or there is no focused Home.
+    final currentThreadId = agentController.threadId;
+    final returnThreadId =
+        currentThreadId != null && currentThreadId != record.practiceThreadId
+        ? currentThreadId
+        : record.returnThreadId;
     if (returnThreadId == null) {
       await agentController.clearFocusedThread();
       return agentController.threadId == null;

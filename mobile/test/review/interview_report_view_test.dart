@@ -13,7 +13,7 @@ import 'interview_report_fixture.dart';
 
 void main() {
   testWidgets(
-    'READY renders qualitative evidence without numeric or acoustic scores',
+    'READY renders real dimension scores without invented acoustic scores',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(320, 568));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -47,16 +47,20 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('暂定文本反馈'), findsOneWidget);
+      expect(find.text('面试能力反馈'), findsOneWidget);
       expect(
         find.byKey(const Key('interview-report-readiness-notice')),
         findsOneWidget,
       );
-      expect(find.text('五维反馈'), findsOneWidget);
+      expect(find.text('五维反馈概览'), findsOneWidget);
+      expect(
+        find.byKey(const Key('interview-report-dimension-radar')),
+        findsOneWidget,
+      );
       expect(find.text('逐题复盘'), findsOneWidget);
       expect(find.text('优先改进'), findsOneWidget);
       expect(find.textContaining('I led the migration'), findsOneWidget);
-      expect(find.textContaining('/ 100'), findsNothing);
+      expect(find.text('回答相关性 · 78 / 100'), findsOneWidget);
       expect(find.textContaining('录用概率：'), findsNothing);
       expect(tester.takeException(), isNull);
 
@@ -199,7 +203,7 @@ void main() {
     expect(find.byKey(const Key('interview-report-dimensions')), findsNothing);
   });
 
-  testWidgets('Agent continuation receives the ready report evidence', (
+  testWidgets('Agent continuation triggers a server-side report lookup', (
     tester,
   ) async {
     final ready = decodeInterviewReport(
@@ -210,7 +214,7 @@ void main() {
       maximumPollAttempts: 1,
     );
     addTearDown(controller.dispose);
-    String? handedOff;
+    var continued = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -218,8 +222,8 @@ void main() {
           body: SingleChildScrollView(
             child: InterviewReportPanel(
               controller: controller,
-              onContinueWithAgent: (summary) async {
-                handedOff = summary;
+              onContinueWithAgent: () async {
+                continued = true;
                 return false;
               },
             ),
@@ -235,12 +239,7 @@ void main() {
     await tester.tap(find.byKey(const Key('interview-report-continue-agent')));
     await tester.pump();
 
-    expect(handedOff, contains('真实面试报告摘要'));
-    expect(handedOff, contains('回答相关性'));
-    expect(
-      handedOff,
-      contains('The response needs a clearer connection to the question.'),
-    );
+    expect(continued, isTrue);
   });
 }
 

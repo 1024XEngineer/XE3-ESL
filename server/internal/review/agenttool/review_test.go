@@ -59,6 +59,20 @@ func TestReviewSearchToolMapsInput(t *testing.T) {
 	}
 }
 
+func TestReviewSearchToolAllowsLatestCompletedLookup(t *testing.T) {
+	port := &fakeReviewPort{}
+	if _, err := NewReviewSearchTool(port).Execute(
+		context.Background(),
+		validCallContext(),
+		json.RawMessage(`{}`),
+	); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if port.searchInput.Query != "" {
+		t.Fatalf("searchInput.Query = %q, want latest lookup", port.searchInput.Query)
+	}
+}
+
 func TestReviewGetToolMapsInput(t *testing.T) {
 	port := &fakeReviewPort{}
 	result, err := NewReviewGetTool(port).Execute(

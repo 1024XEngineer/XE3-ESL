@@ -113,6 +113,7 @@ type VoiceMessageApplication interface {
 		context.Context,
 		requestcontext.Actor,
 		string,
+		string,
 	) (ai.SynthesisResult, error)
 }
 
@@ -198,6 +199,27 @@ func (service *VoiceMessageService) Upload(
 	actor requestcontext.Actor,
 	request UploadVoiceCandidateRequest,
 ) (VoiceCandidate, error) {
+	return service.upload(ctx, actor, request, nil)
+}
+
+func (service *VoiceMessageService) UploadStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	request UploadVoiceCandidateRequest,
+	observer ai.TranscriptionObserver,
+) (VoiceCandidate, error) {
+	if observer == nil {
+		return VoiceCandidate{}, ErrInvalidRequest
+	}
+	return service.upload(ctx, actor, request, observer)
+}
+
+func (service *VoiceMessageService) upload(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	request UploadVoiceCandidateRequest,
+	observer ai.TranscriptionObserver,
+) (VoiceCandidate, error) {
 	if ctx == nil || !actor.Valid() || !validUUID(request.ThreadID) ||
 		!validVoiceIdempotencyKey(request.IdempotencyKey) ||
 		request.Audio == nil {
@@ -251,7 +273,7 @@ func (service *VoiceMessageService) Upload(
 	if candidate.Status == VoiceCandidateTranscribing {
 		// A live lease returns the current candidate; an expired lease is
 		// atomically retaken and fenced by the Repository.
-		return service.transcribe(ctx, actor, candidate.ID, audio)
+		return service.transcribe(ctx, actor, candidate.ID, audio, observer)
 	}
 	if candidate.Status != VoiceCandidateStaged {
 		return candidate, nil
@@ -318,7 +340,7 @@ func (service *VoiceMessageService) Upload(
 			return VoiceCandidate{}, err
 		}
 	}
-	return service.transcribe(ctx, actor, candidate.ID, audio)
+	return service.transcribe(ctx, actor, candidate.ID, audio, observer)
 }
 
 func voiceUploadPutDeadline(
@@ -372,7 +394,7 @@ func (service *VoiceMessageService) Retry(
 		(current.Status != VoiceCandidateFailed || !current.FailureRetryable) {
 		return VoiceCandidate{}, ErrConflict
 	}
-	return service.transcribe(ctx, actor, candidateID, nil)
+	return service.transcribe(ctx, actor, candidateID, nil, nil)
 }
 
 func (service *VoiceMessageService) transcribe(
@@ -380,6 +402,7 @@ func (service *VoiceMessageService) transcribe(
 	actor requestcontext.Actor,
 	candidateID string,
 	source platformmedia.ManagedAudioSource,
+	observer ai.TranscriptionObserver,
 ) (VoiceCandidate, error) {
 	claim, acquired, err := service.repository.ClaimVoiceTranscription(
 		ctx,
@@ -405,10 +428,14 @@ func (service *VoiceMessageService) transcribe(
 		}
 		defer source.Close()
 	}
-	result, providerErr := service.recognizer.Transcribe(
-		ctx,
-		ai.TranscriptionRequest{Audio: source},
-	)
+	request := ai.TranscriptionRequest{Audio: source}
+	var result ai.TranscriptionResult
+	var providerErr error
+	if streaming, ok := service.recognizer.(ai.StreamingSpeechRecognizer); ok && observer != nil {
+		result, providerErr = streaming.TranscribeStream(ctx, request, observer)
+	} else {
+		result, providerErr = service.recognizer.Transcribe(ctx, request)
+	}
 	if providerErr != nil {
 		kind, retryable := speechFailure(providerErr)
 		return service.failTranscription(ctx, claim, kind, retryable)
@@ -600,6 +627,7 @@ func (service *VoiceMessageService) SynthesizeMessage(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	messageID string,
+	previewText string,
 ) (ai.SynthesisResult, error) {
 	if ctx == nil || !actor.Valid() || !validUUID(messageID) {
 		return ai.SynthesisResult{}, ErrNotFound
@@ -613,12 +641,15 @@ func (service *VoiceMessageService) SynthesizeMessage(
 	if err != nil {
 		return ai.SynthesisResult{}, err
 	}
-	if message.Role != MessageRoleAssistant {
+	text := message.Content
+	if previewText != "" {
+		text = previewText
+	} else if message.Role != MessageRoleAssistant {
 		return ai.SynthesisResult{}, ErrNotFound
 	}
 	return service.synthesizer.Synthesize(
 		ctx,
-		ai.SynthesisRequest{Text: message.Content},
+		ai.SynthesisRequest{Text: text},
 	)
 }
 

@@ -660,6 +660,24 @@ final class FakeAgentClient
   }
 
   @override
+  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+    required String threadId,
+    required AgentVoiceLocalRecording recording,
+    required String idempotencyKey,
+  }) async* {
+    final candidate = await createCandidate(
+      threadId: threadId,
+      recording: recording,
+      idempotencyKey: idempotencyKey,
+    );
+    yield AgentVoiceTranscriptUpdated(
+      text: candidate.transcript!.text,
+      finalResult: true,
+    );
+    yield AgentVoiceCandidateCompleted(candidate);
+  }
+
+  @override
   Future<AgentVoiceCandidate> createCandidate({
     required String threadId,
     required AgentVoiceLocalRecording recording,
@@ -948,6 +966,24 @@ final class FakeAgentClient
         ),
       );
       if (!found) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      return Uint8List.fromList(_fakeWaveBytes);
+    });
+  }
+
+  @override
+  Future<Uint8List> loadSpeechPreview({
+    required String messageId,
+    required String text,
+  }) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      final found = _threadMessages.values.any(
+        (messages) => messages.any((message) => message.id == messageId),
+      );
+      if (!found || text.trim().isEmpty) {
         throw const AgentClientException(kind: AgentClientFailureKind.notFound);
       }
       return Uint8List.fromList(_fakeWaveBytes);

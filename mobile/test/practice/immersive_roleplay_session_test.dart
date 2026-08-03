@@ -56,11 +56,17 @@ void main() {
     expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
     expect(find.byKey(const Key('immersive-avatar-surface')), findsOneWidget);
 
+    // Selectable assistant messages register an AppLifecycleListener that
+    // validates the full transition chain, so drive each state in order.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     await _pumpUntil(tester, () => renderers.first.closeCount == 1);
     expect(renderers, hasLength(1));
     expect(renderers.first.closeCount, 1);
 
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await _pumpUntil(tester, () => renderers.length == 2);
     expect(renderers, hasLength(2));

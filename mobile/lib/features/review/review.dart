@@ -123,6 +123,21 @@ class _ReviewPageState extends State<ReviewPage> {
   }
 
   void _openIeltsReport(IeltsSpeakingReportIndexItem item) {
+    if (item.reportKind == IeltsSpeakingReportKind.interview) {
+      final controller = widget.interviewReportController;
+      if (controller == null) return;
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => InterviewReportPage(
+              practiceSessionId: item.practiceSessionId,
+              controller: controller,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     final reportController = widget.ieltsSpeakingReportController;
     if (reportController == null) {
       return;
@@ -143,6 +158,14 @@ class _ReviewPageState extends State<ReviewPage> {
     final ieltsIndexController = widget.ieltsSpeakingReportIndexController;
     final ieltsItems =
         ieltsIndexController?.items ?? const <IeltsSpeakingReportIndexItem>[];
+    // Interview reports and IELTS full mocks both flow through the report
+    // index but must not share the "IELTS 模考报告" heading.
+    final interviewReportItems = ieltsItems
+        .where((item) => item.reportKind == IeltsSpeakingReportKind.interview)
+        .toList(growable: false);
+    final ieltsMockItems = ieltsItems
+        .where((item) => item.reportKind != IeltsSpeakingReportKind.interview)
+        .toList(growable: false);
     final currentReview = widget.agentController?.review;
     final showCurrentReview =
         controller != null &&
@@ -232,32 +255,64 @@ class _ReviewPageState extends State<ReviewPage> {
                   ),
                 )
               else if (hasIeltsEntries) ...[
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-                  sliver: const SliverToBoxAdapter(
-                    child: Text(
-                      'IELTS 模考报告',
-                      style: SpeakUpDesign.sectionTitle,
+                if (interviewReportItems.isNotEmpty) ...[
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                    sliver: const SliverToBoxAdapter(
+                      child: Text('面试练习报告', style: SpeakUpDesign.sectionTitle),
                     ),
                   ),
-                ),
-                SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate((context, index) {
-                      if (index.isOdd) {
-                        return const SizedBox(height: 10);
-                      }
-                      final item = ieltsItems[index ~/ 2];
-                      return _IeltsReportListCard(
-                        item: item,
-                        onTap: widget.ieltsSpeakingReportController == null
-                            ? null
-                            : () => _openIeltsReport(item),
-                      );
-                    }, childCount: ieltsItems.length * 2 - 1),
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        if (index.isOdd) {
+                          return const SizedBox(height: 10);
+                        }
+                        final item = interviewReportItems[index ~/ 2];
+                        return _IeltsReportListCard(
+                          item: item,
+                          onTap: widget.ieltsSpeakingReportController == null
+                              ? null
+                              : () => _openIeltsReport(item),
+                        );
+                      }, childCount: interviewReportItems.length * 2 - 1),
+                    ),
                   ),
-                ),
+                ],
+                if (ieltsMockItems.isNotEmpty) ...[
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(
+                      20,
+                      interviewReportItems.isNotEmpty ? 24 : 0,
+                      20,
+                      10,
+                    ),
+                    sliver: const SliverToBoxAdapter(
+                      child: Text(
+                        'IELTS 模考报告',
+                        style: SpeakUpDesign.sectionTitle,
+                      ),
+                    ),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        if (index.isOdd) {
+                          return const SizedBox(height: 10);
+                        }
+                        final item = ieltsMockItems[index ~/ 2];
+                        return _IeltsReportListCard(
+                          item: item,
+                          onTap: widget.ieltsSpeakingReportController == null
+                              ? null
+                              : () => _openIeltsReport(item),
+                        );
+                      }, childCount: ieltsMockItems.length * 2 - 1),
+                    ),
+                  ),
+                ],
               ],
               if (ieltsIndexController != null &&
                   (hasIeltsEntries ||
@@ -379,7 +434,7 @@ final class _ReviewListEntry {
   String get statusLabel {
     final eligibility = formalReview?.result?.eligibility;
     return switch (eligibility) {
-      FormalReviewSummaryEligibility.provisional => '暂定文本反馈',
+      FormalReviewSummaryEligibility.provisional => '面试能力反馈',
       FormalReviewSummaryEligibility.insufficientEvidence => '证据不足',
       _ => isCurrent ? '本次结果' : '已完成',
     };
@@ -510,11 +565,16 @@ class _IeltsReportListCard extends StatelessWidget {
       IeltsSpeakingReportEvaluationStatus.ready => '部分练习报告',
       IeltsSpeakingReportEvaluationStatus.failed => '报告生成失败',
     };
+    final reportTitle =
+        item.title ??
+        (item.reportKind == IeltsSpeakingReportKind.interview
+            ? '面试复盘'
+            : 'IELTS 口语完整模考');
     final dateLabel = _compactDateLabel(item.updatedAt);
     return Semantics(
       button: onTap != null,
       excludeSemantics: true,
-      label: 'IELTS 口语完整模考，$statusLabel，$dateLabel，查看报告',
+      label: '$reportTitle，$statusLabel，$dateLabel，查看报告',
       onTap: onTap,
       child: Card(
         key: Key('ielts-report-history-${item.practiceSessionId}'),
@@ -543,8 +603,10 @@ class _IeltsReportListCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'IELTS 口语完整模考',
+                      Text(
+                        reportTitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: SpeakUpDesign.cardTitle,
                       ),
                       const SizedBox(height: 5),
@@ -1257,7 +1319,7 @@ class _ReviewDetailSection extends StatelessWidget {
   if (review.contextType == FormalReviewContextType.ieltsSpeakingPart2) {
     if (result.eligibility == FormalReviewSummaryEligibility.provisional) {
       return (
-        title: '暂定文本反馈',
+        title: '面试能力反馈',
         message:
             '当前只依据已确认文字评估；发音尚未评估，因此不会生成 Overall。'
             '这是 AI 练习反馈，不是 IELTS 官方成绩。',

@@ -66,6 +66,7 @@ final class AgentVoiceController extends ChangeNotifier
   AgentVoiceCandidate? _candidate;
   AgentVoiceRun? _pendingRun;
   String _editedTranscript = '';
+  String _liveTranscript = '';
   String? _errorMessage;
   _VoiceRetry? _retry;
   String? _uploadIdempotencyKey;
@@ -89,6 +90,7 @@ final class AgentVoiceController extends ChangeNotifier
 
   String? _loadingMessageId;
   String? _playingMessageId;
+  bool _messagePlaybackUsesPreview = false;
   String? _activeMessageAudioId;
   String? _deletingMessageId;
   String? _deletingAudioId;
@@ -105,6 +107,7 @@ final class AgentVoiceController extends ChangeNotifier
   AgentVoiceLocalRecording? get recording => _recording;
   AgentVoiceCandidate? get candidate => _candidate;
   String get editedTranscript => _editedTranscript;
+  String get liveTranscript => _liveTranscript;
   String? get errorMessage => _errorMessage;
   Duration get recordingElapsed => _recordingElapsed;
   bool get hasActiveWorkflow => _state != AgentVoiceComposerState.idle;
@@ -129,6 +132,7 @@ final class AgentVoiceController extends ChangeNotifier
   double get speechSpeed => _speechSpeed;
   String? get loadingMessageId => _loadingMessageId;
   String? get playingMessageId => _playingMessageId;
+  bool get messagePlaybackUsesPreview => _messagePlaybackUsesPreview;
   String? get deletingMessageId => _deletingMessageId;
   String? get mediaErrorMessage => _mediaErrorMessage;
   String? get mediaErrorMessageId => _mediaErrorMessageId;
@@ -378,11 +382,33 @@ final class AgentVoiceController extends ChangeNotifier
     required String idempotencyKey,
   }) async {
     try {
-      final candidate = await client.createCandidate(
+      AgentVoiceCandidate? completedCandidate;
+      await for (final event in client.createCandidateStream(
         threadId: fence.threadId,
         recording: recording,
         idempotencyKey: idempotencyKey,
-      );
+      )) {
+        if (!_isWorkflowCurrent(fence)) {
+          if (event case AgentVoiceCandidateCompleted(:final candidate)) {
+            await _deleteCandidateBestEffort(candidate.id);
+          }
+          return;
+        }
+        switch (event) {
+          case AgentVoiceTranscriptUpdated(:final text):
+            _liveTranscript = text;
+            _state = AgentVoiceComposerState.transcribing;
+            notifyListeners();
+          case AgentVoiceCandidateCompleted(:final candidate):
+            completedCandidate = candidate;
+        }
+      }
+      final candidate = completedCandidate;
+      if (candidate == null) {
+        throw StateError(
+          'Voice transcription stream ended without a candidate.',
+        );
+      }
       if (!_isWorkflowCurrent(fence)) {
         await _deleteCandidateBestEffort(candidate.id);
         await _discardRecordingBestEffort(recording);
@@ -426,6 +452,7 @@ final class AgentVoiceController extends ChangeNotifier
       _candidate = candidate;
       if (candidate.isReady) {
         _editedTranscript = candidate.transcript!.text;
+        _liveTranscript = _editedTranscript;
         _state = AgentVoiceComposerState.awaitingConfirmation;
         _retry = null;
         _errorMessage = null;
@@ -751,6 +778,7 @@ final class AgentVoiceController extends ChangeNotifier
       if (confirmation.assistantMessage != null) {
         _resetWorkflowPresentation();
         notifyListeners();
+        unawaited(_toggleMessagePlayback(confirmation.assistantMessage!));
         return;
       }
       _state = AgentVoiceComposerState.awaitingAssistant;
@@ -863,8 +891,10 @@ final class AgentVoiceController extends ChangeNotifier
         }
         onMessagesCommitted(<AgentMessage>[assistant]);
         _visibleMessageIds.add(assistant.id);
+        _visibleMessageAudioIds[assistant.id] = assistant.audio?.id;
         _resetWorkflowPresentation();
         notifyListeners();
+        unawaited(_toggleMessagePlayback(assistant));
         return;
       }
       await _waitForPoll();
@@ -931,13 +961,26 @@ final class AgentVoiceController extends ChangeNotifier
   }
 
   Future<void> toggleMessagePlayback(AgentMessage message) {
+    return _toggleMessagePlayback(message);
+  }
+
+  Future<void> toggleSpeechPreview(AgentMessage message, String text) {
+    return _toggleMessagePlayback(message, previewText: text);
+  }
+
+  Future<void> _toggleMessagePlayback(
+    AgentMessage message, {
+    String? previewText,
+  }) {
     if (!_visibleMessageIds.contains(message.id) ||
         _threadId == null ||
         _disposed ||
         _deletingMessageId == message.id) {
       return Future<void>.value();
     }
-    if (_playingMessageId == message.id || _loadingMessageId == message.id) {
+    final usesPreview = previewText != null;
+    if ((_playingMessageId == message.id || _loadingMessageId == message.id) &&
+        _messagePlaybackUsesPreview == usesPreview) {
       _mediaGeneration++;
       _resetPlaybackPresentation();
       notifyListeners();
@@ -960,23 +1003,34 @@ final class AgentVoiceController extends ChangeNotifier
     );
     _resetPlaybackPresentation();
     _loadingMessageId = message.id;
+    _messagePlaybackUsesPreview = usesPreview;
     _activeMessageAudioId = audio?.id;
     notifyListeners();
     late final Future<void> operation;
-    operation = _playMessage(fence, message).whenComplete(() {
-      if (identical(_mediaOperation, operation)) {
-        _mediaOperation = null;
-      }
-    });
+    operation = _playMessage(fence, message, previewText: previewText)
+        .whenComplete(() {
+          if (identical(_mediaOperation, operation)) {
+            _mediaOperation = null;
+          }
+        });
     _mediaOperation = operation;
     return operation;
   }
 
-  Future<void> _playMessage(_MediaFence fence, AgentMessage message) async {
+  Future<void> _playMessage(
+    _MediaFence fence,
+    AgentMessage message, {
+    String? previewText,
+  }) async {
     Uint8List? bytes;
     try {
       await audioPlayer.stop();
-      bytes = message.role == AgentMessageRole.user
+      bytes = previewText != null
+          ? await client.loadSpeechPreview(
+              messageId: message.id,
+              text: previewText,
+            )
+          : message.role == AgentMessageRole.user
           ? await client.loadMessageAudio(audioId: message.audio!.id)
           : await client.loadAssistantSpeech(messageId: message.id);
       if (!_isMediaCurrent(fence)) {
@@ -1329,6 +1383,7 @@ final class AgentVoiceController extends ChangeNotifier
     _candidate = null;
     _pendingRun = null;
     _editedTranscript = '';
+    _liveTranscript = '';
     _errorMessage = null;
     _retry = null;
     _uploadIdempotencyKey = null;
@@ -1343,6 +1398,7 @@ final class AgentVoiceController extends ChangeNotifier
     _draftPlaying = false;
     _loadingMessageId = null;
     _playingMessageId = null;
+    _messagePlaybackUsesPreview = false;
     _activeMessageAudioId = null;
     if (clearError) {
       _mediaErrorMessage = null;

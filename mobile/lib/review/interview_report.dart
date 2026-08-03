@@ -94,6 +94,7 @@ final class InterviewReport {
 final class InterviewReportDimension {
   const InterviewReportDimension({
     required this.id,
+    required this.score,
     required this.scoreabilityStatus,
     required this.gateStatus,
     required this.coverage,
@@ -106,6 +107,7 @@ final class InterviewReportDimension {
   });
 
   final InterviewReportDimensionId id;
+  final int? score;
   final InterviewReportScoreabilityStatus scoreabilityStatus;
   final InterviewReportGateStatus gateStatus;
   final double coverage;

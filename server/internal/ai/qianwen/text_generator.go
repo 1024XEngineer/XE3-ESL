@@ -606,6 +606,7 @@ const (
 	streamModeUnknown streamMode = iota
 	streamModeText
 	streamModeTools
+	streamModeMixed
 )
 
 type streamToolCall struct {
@@ -701,14 +702,12 @@ func decodeCompletionStream(
 		}
 		hasText := choice.Delta.Content != nil && *choice.Delta.Content != ""
 		hasTools := len(choice.Delta.ToolCalls) != 0
-		if hasText && hasTools {
-			return ai.TextResult{}, errors.New("Qianwen stream mixed text and tool deltas")
-		}
 		if hasText {
 			if mode == streamModeTools {
-				return ai.TextResult{}, errors.New("Qianwen stream changed from tools to text")
+				mode = streamModeMixed
+			} else if mode == streamModeUnknown {
+				mode = streamModeText
 			}
-			mode = streamModeText
 			visible, pending := normalizedVisibleDelta(
 				content.Len() > 0,
 				pendingWhitespace+*choice.Delta.Content,
@@ -725,9 +724,10 @@ func decodeCompletionStream(
 		}
 		if hasTools {
 			if mode == streamModeText {
-				return ai.TextResult{}, errors.New("Qianwen stream changed from text to tools")
+				mode = streamModeMixed
+			} else if mode == streamModeUnknown {
+				mode = streamModeTools
 			}
-			mode = streamModeTools
 			for _, fragment := range choice.Delta.ToolCalls {
 				if fragment.Index < 0 || fragment.Index > len(tools) {
 					return ai.TextResult{}, errors.New("Qianwen stream has a non-contiguous tool index")
@@ -784,7 +784,7 @@ func decodeCompletionStream(
 		if result.Content == "" || (finishReason != "stop" && finishReason != "length") {
 			return ai.TextResult{}, errors.New("Qianwen text stream has an invalid completion")
 		}
-	case streamModeTools:
+	case streamModeTools, streamModeMixed:
 		if finishReason != "tool_calls" || len(tools) == 0 {
 			return ai.TextResult{}, errors.New("Qianwen tool stream has an invalid completion")
 		}

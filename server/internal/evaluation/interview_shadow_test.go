@@ -97,7 +97,6 @@ func TestInterviewShadowEngineBuildsEvidenceBoundProvisionalResult(
 		t.Fatalf("decode result: %v", err)
 	}
 	for _, forbidden := range []string{
-		"score",
 		"raw",
 		"display",
 		"interval",
@@ -433,9 +432,9 @@ func TestInterviewShadowProviderResponseIsStrictAndFailClosed(
 			},
 		},
 		{
-			name: "dimension score",
+			name: "dimension score out of range",
 			mutate: func(value map[string]any) {
-				firstProviderDimension(value)["score"] = 70
+				firstProviderDimension(value)["score"] = 101
 			},
 		},
 		{
@@ -997,6 +996,7 @@ func validInterviewProviderPayloadValue(
 		}
 		dimensions = append(dimensions, interviewProviderDimension{
 			DimensionID: dimension,
+			Score:       75,
 			Strengths: []interviewProviderFinding{{
 				TemplateID: template.ID,
 				Evidence: []interviewProviderAnchor{{

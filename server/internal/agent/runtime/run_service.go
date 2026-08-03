@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -682,6 +683,17 @@ func (service *RunService) generateObserved(
 			"我暂时无法识别这条命令，请换成自然语言告诉我你想做什么。",
 		), nil
 	}
+	if !explicitCommand && requestsLatestPracticeReport(input) {
+		if _, available := service.toolDefinition(
+			command.ToolLatestPracticeReport,
+		); available {
+			parsed.Invocation = tool.Invocation{
+				Name:  command.ToolLatestPracticeReport,
+				Input: json.RawMessage(`{}`),
+			}
+			explicitCommand = true
+		}
+	}
 
 	// 自然语言请求始终拿到 Registry 的全量工具，是否调用完全由模型判断。
 	request.Tools = routing.Definitions
@@ -740,6 +752,7 @@ func (service *RunService) generateObserved(
 			result.Provider != service.configuration.Provider ||
 			result.Model != service.configuration.Model ||
 			result.Usage.OutputTokens > service.configuration.MaxOutputTokens {
+			service.logInvalidModelResult(run, result)
 			return result, nil
 		}
 		if len(result.ToolCalls) == 0 {
@@ -1252,6 +1265,40 @@ func (service *RunService) logRunFailed(
 	)
 }
 
+func (service *RunService) logInvalidModelResult(
+	run Run,
+	result ai.TextResult,
+) {
+	if service.logger == nil {
+		return
+	}
+	toolCallsValid := true
+	for _, call := range result.ToolCalls {
+		if ai.ValidateToolCall(call) != nil {
+			toolCallsValid = false
+			break
+		}
+	}
+	service.logger.Error(
+		"agent.loop.invalid_model_result",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"id_valid", core.ValidModelID(result.ID),
+		"provider", result.Provider,
+		"provider_matches", result.Provider == service.configuration.Provider,
+		"model", result.Model,
+		"model_matches", result.Model == service.configuration.Model,
+		"finish_reason", result.FinishReason,
+		"content_length", utf8.RuneCountInString(result.Content),
+		"tool_call_count", len(result.ToolCalls),
+		"tool_calls_valid", toolCallsValid,
+		"input_tokens", result.Usage.InputTokens,
+		"output_tokens", result.Usage.OutputTokens,
+		"total_tokens", result.Usage.TotalTokens,
+		"output_token_limit", service.configuration.MaxOutputTokens,
+	)
+}
+
 func (service *RunService) persistFailure(
 	ctx context.Context,
 	ownerID string,
@@ -1384,6 +1431,13 @@ func (service *RunService) parseCommand(input string) (command.Parsed, bool, err
 	return service.commands.Parse(input)
 }
 
+func requestsLatestPracticeReport(input string) bool {
+	return strings.Contains(
+		input,
+		"请直接读取这次练习的真实评分与报告",
+	)
+}
+
 func (service *RunService) toolDefinition(name string) (tool.Definition, bool) {
 	if service.registry == nil {
 		return tool.Definition{}, false
@@ -1421,7 +1475,8 @@ func toolCallMayWrite(call ai.ToolCall) bool {
 	if err := json.Unmarshal(call.Arguments, &input); err != nil {
 		return true
 	}
-	return (input.PreparationProfileID != "" ||
+	return (input.BackgroundSummary != "" ||
+		input.PreparationProfileID != "" ||
 		input.PreparationSnapshotID != "") && input.MaxEffectiveTurns > 0
 }
 

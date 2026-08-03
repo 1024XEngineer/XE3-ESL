@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:speakup/design/five_dimension_radar.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/review/interview_report.dart';
@@ -24,7 +25,7 @@ class InterviewReportPage extends StatefulWidget {
   final String title;
   final SpeechFeedbackController? speechFeedbackController;
   final List<String> speechFeedbackSourceKeys;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
 
   @override
   State<InterviewReportPage> createState() => _InterviewReportPageState();
@@ -93,7 +94,7 @@ class InterviewReportPanel extends StatefulWidget {
   });
 
   final InterviewReportController controller;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
 
   @override
   State<InterviewReportPanel> createState() => _InterviewReportPanelState();
@@ -411,7 +412,7 @@ class _ReadyInterviewReport extends StatelessWidget {
   const _ReadyInterviewReport({required this.report, this.onContinueWithAgent});
 
   final InterviewReport report;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
 
   @override
   Widget build(BuildContext context) {
@@ -434,9 +435,7 @@ class _ReadyInterviewReport extends StatelessWidget {
         ],
         if (onContinueWithAgent != null) ...[
           const SizedBox(height: 16),
-          _ContinueWithAgentButton(
-            onPressed: () => onContinueWithAgent!(_agentReportSummary(report)),
-          ),
+          _ContinueWithAgentButton(onPressed: onContinueWithAgent!),
         ],
       ],
     );
@@ -456,15 +455,10 @@ class _ReportNotice extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('暂定文本反馈', style: SpeakUpDesign.cardTitle),
+            Text('面试能力反馈', style: SpeakUpDesign.cardTitle),
             SizedBox(height: 8),
             Text(
-              '面试专项能力基于本次练习中已确认的文字回答；语言表现中的发音与语速来自上方逐轮真实录音评分，两类结果不会混算。',
-              style: SpeakUpDesign.body,
-            ),
-            SizedBox(height: 6),
-            Text(
-              '反馈仅用于练习，不代表录用结论或录用概率。',
+              '基于本次回答，分析回答相关性、结构、说服力、职业表达与追问应对能力。',
               key: Key('interview-report-readiness-notice'),
               style: SpeakUpDesign.body,
             ),
@@ -514,7 +508,18 @@ class _ReportDimensions extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('五维反馈', style: SpeakUpDesign.cardTitle),
+            Text('五维反馈概览', style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: 8),
+            Text('图形展示本次五维能力得分。', style: SpeakUpDesign.meta),
+            const SizedBox(height: 12),
+            if (report.dimensions.every((dimension) => dimension.score != null))
+              _DimensionRadar(dimensions: report.dimensions)
+            else
+              Text(
+                '部分维度证据不足，暂不绘制雷达图。',
+                key: const Key('interview-report-dimension-radar-unavailable'),
+                style: SpeakUpDesign.meta,
+              ),
             const SizedBox(height: 14),
             for (var index = 0; index < report.dimensions.length; index++) ...[
               if (index > 0) ...[
@@ -527,6 +532,26 @@ class _ReportDimensions extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _DimensionRadar extends StatelessWidget {
+  const _DimensionRadar({required this.dimensions});
+
+  final List<InterviewReportDimension> dimensions;
+
+  @override
+  Widget build(BuildContext context) {
+    return FiveDimensionRadar(
+      key: const Key('interview-report-dimension-radar'),
+      scores: [
+        for (final dimension in dimensions)
+          FiveDimensionScore(
+            label: _dimensionLabel(dimension.id),
+            score: dimension.score!,
+          ),
+      ],
     );
   }
 }
@@ -550,7 +575,12 @@ class _DimensionFeedback extends StatelessWidget {
       key: Key('interview-report-dimension-${dimension.id.name}'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(_dimensionLabel(dimension.id), style: SpeakUpDesign.label),
+        Text(
+          dimension.score == null
+              ? '${_dimensionLabel(dimension.id)} · 未评估'
+              : '${_dimensionLabel(dimension.id)} · ${dimension.score} / 100',
+          style: SpeakUpDesign.label,
+        ),
         if (findings.isEmpty) ...[
           const SizedBox(height: 6),
           Text('现有文本证据不足以形成该维度结论。', style: SpeakUpDesign.meta),
@@ -708,42 +738,3 @@ String _dimensionLabel(InterviewReportDimensionId dimension) =>
       InterviewReportDimensionId.professional => '职业表达',
       InterviewReportDimensionId.interaction => '追问互动',
     };
-
-String _agentReportSummary(InterviewReport report) {
-  const maximumCharacters = 5500;
-  final lines = <String>['以下是系统刚生成的真实面试报告摘要，请直接基于这些结果复盘：'];
-  var length = lines.first.length;
-
-  void addLine(String value) {
-    if (length + value.length + 1 > maximumCharacters) {
-      return;
-    }
-    lines.add(value);
-    length += value.length + 1;
-  }
-
-  for (final dimension in report.dimensions) {
-    addLine('【${_dimensionLabel(dimension.id)}】');
-    if (dimension.strengths.firstOrNull case final finding?) {
-      addLine('做得好：${finding.message}');
-    }
-    if (dimension.improvements.firstOrNull case final finding?) {
-      addLine('可改进：${finding.message}');
-      if (finding.suggestion case final suggestion?) {
-        addLine('改进建议：$suggestion');
-      }
-    }
-    if (dimension.recommendedExpressions.firstOrNull case final finding?) {
-      addLine('推荐表达：${finding.suggestion ?? finding.message}');
-    }
-  }
-  if (report.priorityActions.isNotEmpty) {
-    addLine('【优先改进】');
-    for (var index = 0; index < report.priorityActions.length; index++) {
-      addLine(
-        '${index + 1}. ${_actionText(report, report.priorityActions[index])}',
-      );
-    }
-  }
-  return lines.join('\n');
-}

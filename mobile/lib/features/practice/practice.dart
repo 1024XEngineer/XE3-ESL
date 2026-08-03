@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
@@ -37,7 +38,7 @@ class PracticePage extends StatefulWidget {
   final bool previewMode;
   final AgentController? agentController;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
   final IeltsMockProgressStore? ieltsMockProgressStore;
   final PreparationController? preparationController;
   final InterviewReportController? interviewReportController;
@@ -1049,6 +1050,12 @@ class _RecordingPanelState extends State<_RecordingPanel> {
             PracticeRecordingState.awaitingConfirmation) {
       return;
     }
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted ||
+        widget.controller.recordingState !=
+            PracticeRecordingState.awaitingConfirmation) {
+      return;
+    }
     await widget.controller.confirmTranscript();
   }
 
@@ -1108,28 +1115,11 @@ class _RecordingPanelState extends State<_RecordingPanel> {
                     capture: capture,
                   ),
           PracticeRecordingState.starting ||
-          PracticeRecordingState.recording => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              VoiceCaptureIntentTargets(
-                capture: capture,
-                elapsed: Duration(seconds: widget.recordingSeconds),
-                keyPrefix: 'practice',
-              ),
-              const SizedBox(height: 10),
-              capture.wrapTarget(
-                key: const Key('practice-record'),
-                semanticsLabel: capture.tapMode
-                    ? '发送语音回答'
-                    : '录音中，左滑取消，右滑转文字，松开发送',
-                child: _ActiveRecordingPanel(
-                  preparing: state == PracticeRecordingState.starting,
-                  releaseIntent: capture.releaseIntent,
-                  recordingSeconds: widget.recordingSeconds,
-                  tapMode: capture.tapMode,
-                ),
-              ),
-            ],
+          PracticeRecordingState.recording => PracticeRecordingComposer(
+            capture: capture,
+            phase: capturePhase,
+            keyPrefix: 'practice',
+            elapsed: Duration(seconds: widget.recordingSeconds),
           ),
           PracticeRecordingState.transcribing => const _WorkingState(
             label: '正在识别英文回答…',
@@ -1139,7 +1129,7 @@ class _RecordingPanelState extends State<_RecordingPanel> {
           PracticeRecordingState.submitting => _WorkingState(
             label: widget.controller.isSpeechFeedbackRetryActive
                 ? '正在提交同题复练…'
-                : '回答已发送，正在准备下一题…',
+                : '回答已发送，Agent 正在回复…',
           ),
           PracticeRecordingState.reviewFailed => _ReviewRetry(
             onPressed: widget.controller.retryReview,
@@ -1148,17 +1138,7 @@ class _RecordingPanelState extends State<_RecordingPanel> {
             onOpenReport: widget.onOpenReport,
           ),
         };
-        return Material(
-          color: SpeakUpDesign.surface,
-          shape: const Border(top: BorderSide(color: SpeakUpDesign.border)),
-          child: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
-              child: panel,
-            ),
-          ),
-        );
+        return PracticeComposerSurface(child: panel);
       },
     );
   }
@@ -1208,182 +1188,14 @@ class _IdleAnswerPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!textMode) {
-      return Row(
-        children: [
-          Expanded(
-            child: capture.wrapTarget(
-              key: const Key('practice-record'),
-              semanticsLabel: '点击或按住说话',
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 100),
-                height: 56,
-                decoration: BoxDecoration(
-                  color: capture.pressed
-                      ? SpeakUpDesign.primary.withValues(alpha: 0.82)
-                      : SpeakUpDesign.primary,
-                  borderRadius: BorderRadius.circular(
-                    SpeakUpDesign.radiusControl,
-                  ),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.mic_rounded, color: Colors.white),
-                    SizedBox(width: 10),
-                    Flexible(
-                      child: Text(
-                        '点击或按住说话',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          IconButton.outlined(
-            key: const Key('practice-open-keyboard'),
-            tooltip: '键盘回答',
-            onPressed: onToggleTextMode,
-            icon: const Icon(Icons.keyboard_alt_outlined),
-            style: IconButton.styleFrom(minimumSize: const Size.square(56)),
-          ),
-        ],
-      );
-    }
-    return Row(
-      children: [
-        IconButton.outlined(
-          key: const Key('practice-return-to-voice'),
-          tooltip: '切换到语音回答',
-          onPressed: onToggleTextMode,
-          icon: const Icon(Icons.mic_none_rounded),
-          style: IconButton.styleFrom(minimumSize: const Size.square(52)),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: TextField(
-            key: const Key('practice-text-answer'),
-            controller: textController,
-            focusNode: textFocusNode,
-            minLines: 1,
-            maxLines: 3,
-            maxLength: 8000,
-            textCapitalization: TextCapitalization.sentences,
-            textInputAction: TextInputAction.newline,
-            decoration: const InputDecoration(
-              hintText: 'Type your answer…',
-              counterText: '',
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 13,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        IconButton.filled(
-          key: const Key('practice-submit-text'),
-          onPressed: onSubmitText,
-          tooltip: '发送文字回答',
-          icon: const Icon(Icons.arrow_upward_rounded),
-          style: IconButton.styleFrom(minimumSize: const Size.square(52)),
-        ),
-      ],
-    );
-  }
-}
-
-class _ActiveRecordingPanel extends StatelessWidget {
-  const _ActiveRecordingPanel({
-    required this.preparing,
-    required this.releaseIntent,
-    required this.recordingSeconds,
-    required this.tapMode,
-  });
-
-  final bool preparing;
-  final VoiceCaptureReleaseIntent releaseIntent;
-  final int recordingSeconds;
-  final bool tapMode;
-
-  @override
-  Widget build(BuildContext context) {
-    final minutes = (recordingSeconds ~/ 60).toString().padLeft(2, '0');
-    final seconds = (recordingSeconds % 60).toString().padLeft(2, '0');
-    final cancelArmed = releaseIntent == VoiceCaptureReleaseIntent.cancel;
-    final convertArmed =
-        releaseIntent == VoiceCaptureReleaseIntent.convertToText;
-    final accent = cancelArmed ? SpeakUpDesign.error : SpeakUpDesign.primary;
-    return AnimatedContainer(
-      key: const Key('practice-stop-recording'),
-      duration: const Duration(milliseconds: 120),
-      constraints: const BoxConstraints(minHeight: 72),
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-      decoration: BoxDecoration(
-        color: cancelArmed
-            ? SpeakUpDesign.errorMuted
-            : SpeakUpDesign.primaryMuted,
-        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
-        border: Border.all(color: accent),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            cancelArmed
-                ? Icons.delete_outline_rounded
-                : convertArmed
-                ? Icons.text_fields_rounded
-                : Icons.graphic_eq_rounded,
-            color: accent,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  cancelArmed
-                      ? '松开取消'
-                      : convertArmed
-                      ? '松开转成文字'
-                      : preparing
-                      ? '正在打开麦克风…'
-                      : tapMode
-                      ? '点击发送语音'
-                      : '松开发送语音',
-                  style: SpeakUpDesign.cardTitle.copyWith(color: accent),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  cancelArmed
-                      ? '录音不会保存'
-                      : convertArmed
-                      ? '识别后可编辑再发送'
-                      : tapMode
-                      ? '也可点击上方取消或转文字 · $minutes:$seconds'
-                      : '左滑取消 · 右滑转文字 · $minutes:$seconds',
-                  style: SpeakUpDesign.meta,
-                ),
-              ],
-            ),
-          ),
-          if (!cancelArmed && !convertArmed)
-            Icon(
-              tapMode ? Icons.send_rounded : Icons.keyboard_arrow_down_rounded,
-              color: accent,
-            ),
-        ],
-      ),
+    return PracticeIdleComposer(
+      capture: capture,
+      textController: textController,
+      textFocusNode: textFocusNode,
+      textMode: textMode,
+      onToggleTextMode: onToggleTextMode,
+      onSubmitText: onSubmitText,
+      keyPrefix: 'practice',
     );
   }
 }
@@ -1509,15 +1321,6 @@ class _WorkingState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const SizedBox.square(
-          dimension: 22,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        const SizedBox(width: 12),
-        Expanded(child: Text(label, style: SpeakUpDesign.body)),
-      ],
-    );
+    return PracticeLoadingComposer(label: label);
   }
 }

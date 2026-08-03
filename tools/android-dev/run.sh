@@ -41,6 +41,10 @@ if [[ ! -f "$repo_dir/.env" ]]; then
   exit 1
 fi
 
+set -a
+source "$repo_dir/.env"
+set +a
+
 adb start-server >/dev/null
 
 if [[ -n "${ANDROID_DEVICE_ID:-}" ]]; then

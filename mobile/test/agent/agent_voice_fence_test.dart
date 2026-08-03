@@ -225,83 +225,89 @@ void main() {
     expect(controller.candidate, isNotNull);
   });
 
-  testWidgets('submitted voice progress cannot restore the prior draft', (
-    tester,
-  ) async {
-    final candidate = _readyCandidate(threadId: 'thread-a');
-    final confirmation = Completer<AgentVoiceConfirmation>();
-    final runResult = Completer<AgentVoiceRun>();
-    final pendingRun = AgentVoiceRun(
-      id: 'run-a',
-      threadId: 'thread-a',
-      inputMessageId: 'message-a',
-      status: AgentVoiceRunStatus.pending,
-    );
-    final completedRun = AgentVoiceRun(
-      id: 'run-a',
-      threadId: 'thread-a',
-      inputMessageId: 'message-a',
-      status: AgentVoiceRunStatus.completed,
-      assistantMessageId: 'assistant-a',
-    );
-    final client = _ControlledVoiceClient()
-      ..createResult = candidate
-      ..confirmCompleter = confirmation
-      ..getRunCompleter = runResult
-      ..messages['assistant-a'] = const AgentMessage(
-        id: 'assistant-a',
-        role: AgentMessageRole.assistant,
-        text: 'Assistant reply',
+  testWidgets(
+    'committed voice Message appears before the pending Agent reply',
+    (tester) async {
+      final candidate = _readyCandidate(threadId: 'thread-a');
+      final confirmation = Completer<AgentVoiceConfirmation>();
+      final runResult = Completer<AgentVoiceRun>();
+      final pendingRun = AgentVoiceRun(
+        id: 'run-a',
+        threadId: 'thread-a',
+        inputMessageId: 'message-a',
+        status: AgentVoiceRunStatus.pending,
       );
-    final committed = <AgentMessage>[];
-    final controller = _controller(client, committed);
-    addTearDown(controller.dispose);
-    await controller.bindThread('thread-a');
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ConversationPage(
-          threadId: 'thread-a',
-          messages: committed,
-          onStartVoice: controller.startRecording,
-          voiceController: controller,
-          onSubmitText: (_) async => true,
+      final completedRun = AgentVoiceRun(
+        id: 'run-a',
+        threadId: 'thread-a',
+        inputMessageId: 'message-a',
+        status: AgentVoiceRunStatus.completed,
+        assistantMessageId: 'assistant-a',
+      );
+      final client = _ControlledVoiceClient()
+        ..createResult = candidate
+        ..confirmCompleter = confirmation
+        ..getRunCompleter = runResult
+        ..messages['assistant-a'] = const AgentMessage(
+          id: 'assistant-a',
+          role: AgentMessageRole.assistant,
+          text: 'Assistant reply',
+        );
+      final committed = <AgentMessage>[];
+      final controller = _controller(client, committed);
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-a');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ConversationPage(
+            threadId: 'thread-a',
+            messages: committed,
+            onStartVoice: controller.startRecording,
+            voiceController: controller,
+            onSubmitText: (_) async => true,
+          ),
         ),
-      ),
-    );
-    await tester.tap(find.byKey(const Key('agent-show-text-composer')));
-    await tester.pump();
-    await tester.enterText(
-      find.byKey(const Key('agent-composer-field')),
-      'Unsent text before recording',
-    );
-    await tester.tap(find.byKey(const Key('agent-show-voice-composer')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('agent-voice-stop')));
-    await _pumpVoiceOperation(tester);
-    expect(controller.state, AgentVoiceComposerState.confirming);
-    expect(find.byKey(const Key('agent-voice-cancel')), findsNothing);
-    expect(find.text('Unsent text before recording'), findsNothing);
+      );
+      await tester.tap(find.byKey(const Key('agent-show-text-composer')));
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const Key('agent-composer-field')),
+        'Unsent text before recording',
+      );
+      await tester.tap(find.byKey(const Key('agent-show-voice-composer')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('agent-voice-stop')));
+      await _pumpVoiceOperation(tester);
+      expect(controller.state, AgentVoiceComposerState.confirming);
+      expect(find.byKey(const Key('agent-voice-cancel')), findsNothing);
+      expect(find.text('Unsent text before recording'), findsNothing);
 
-    confirmation.complete(
-      _confirmation(
-        candidate: candidate,
-        text: candidate.transcript!.text,
-        run: pendingRun,
-      ),
-    );
-    await tester.pump();
+      confirmation.complete(
+        _confirmation(
+          candidate: candidate,
+          text: candidate.transcript!.text,
+          run: pendingRun,
+        ),
+      );
+      await tester.pump();
 
-    expect(controller.state, AgentVoiceComposerState.awaitingAssistant);
-    expect(find.byKey(const Key('agent-voice-cancel')), findsNothing);
-    expect(find.byKey(const Key('agent-voice-state-label')), findsOneWidget);
-    expect(find.text('Unsent text before recording'), findsNothing);
+      expect(controller.state, AgentVoiceComposerState.awaitingAssistant);
+      expect(committed, hasLength(1));
+      expect(committed.single.role, AgentMessageRole.user);
+      expect(committed.single.modality, AgentMessageModality.voice);
+      expect(find.byKey(const Key('agent-message-message-a')), findsOneWidget);
+      expect(find.text('Assistant reply'), findsNothing);
+      expect(find.byKey(const Key('agent-voice-cancel')), findsNothing);
+      expect(find.byKey(const Key('agent-voice-state-label')), findsOneWidget);
+      expect(find.text('Unsent text before recording'), findsNothing);
 
-    runResult.complete(completedRun);
-    await _pumpVoiceOperation(tester);
-    expect(controller.state, AgentVoiceComposerState.idle);
-  });
+      runResult.complete(completedRun);
+      await _pumpVoiceOperation(tester);
+      expect(controller.state, AgentVoiceComposerState.idle);
+    },
+  );
 
   test('upload and ASR failures expose bounded retry states', () async {
     final uploadClient = _ControlledVoiceClient()
@@ -668,10 +674,6 @@ void main() {
         find.byKey(const Key('agent-user-voice-play-message-a')),
       );
       await _pumpVoiceOperation(tester);
-      await tester.tap(
-        find.byKey(const Key('agent-user-voice-transcript-toggle-message-a')),
-      );
-      await tester.pump();
       expect(
         find.byKey(const Key('agent-user-voice-transcript-message-a')),
         findsOneWidget,
@@ -865,6 +867,20 @@ final class _ControlledVoiceClient implements AgentVoiceClient {
   final List<String> deletedCandidateIds = <String>[];
 
   @override
+  Stream<AgentVoiceTranscriptionEvent> createCandidateStream({
+    required String threadId,
+    required AgentVoiceLocalRecording recording,
+    required String idempotencyKey,
+  }) async* {
+    final candidate = await createCandidate(
+      threadId: threadId,
+      recording: recording,
+      idempotencyKey: idempotencyKey,
+    );
+    yield AgentVoiceCandidateCompleted(candidate);
+  }
+
+  @override
   Future<AgentVoiceCandidate> createCandidate({
     required String threadId,
     required AgentVoiceLocalRecording recording,
@@ -971,6 +987,14 @@ final class _ControlledVoiceClient implements AgentVoiceClient {
     }
     return speechCompleter?.future ??
         Future<Uint8List>.value(Uint8List.fromList(_waveBytes));
+  }
+
+  @override
+  Future<Uint8List> loadSpeechPreview({
+    required String messageId,
+    required String text,
+  }) {
+    return loadAssistantSpeech(messageId: messageId);
   }
 
   @override

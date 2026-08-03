@@ -113,21 +113,21 @@ func TestValidateSpeechFeedbackISESummaryExplainsUnavailableResult(
 	}
 }
 
-func TestXFYUNSpeechFeedbackAcousticProviderUsesTopicForPracticePrompt(
+func TestXFYUNSpeechFeedbackAcousticProviderUsesReadSentenceForPracticePrompt(
 	t *testing.T,
 ) {
 	t.Parallel()
-	pronunciation, speed, semantic := 88.5, 156.0, 82.0
+	accuracy, fluency, integrity := 88.5, 92.0, 100.0
 	rejected := false
 	evaluator := &speechFeedbackISEEvaluatorStub{
 		result: xfyun.EvaluationResult{
 			SessionID: "wse00000001@ll36940e324c59000100",
 			RawXML:    "<xml_result/>",
 			Summary: xfyun.ScoreSummary{
-				PhoneScore:    &pronunciation,
-				SpeakingSpeed: &speed,
-				AccuracyScore: &semantic,
-				Rejected:      &rejected,
+				AccuracyScore:  &accuracy,
+				FluencyScore:   &fluency,
+				IntegrityScore: &integrity,
+				Rejected:       &rejected,
 			},
 		},
 	}
@@ -152,21 +152,21 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesTopicForPracticePrompt(
 		},
 	)
 	if err != nil {
-		t.Fatalf("evaluate topic acoustics: %v", err)
+		t.Fatalf("evaluate practice acoustics: %v", err)
 	}
-	if evaluator.request.Category != xfyun.CategoryTopic ||
-		evaluator.request.TopicTitle != "Practice response" ||
+	if evaluator.request.Category != xfyun.CategoryReadSentence ||
+		evaluator.request.TopicTitle != "" ||
 		evaluator.request.ReferenceText !=
-			"How do you use artificial intelligence at work?" ||
-		evidence.Assessment.Category != "topic" ||
-		evidence.Assessment.PronunciationScore == nil ||
-		*evidence.Assessment.PronunciationScore != pronunciation ||
-		evidence.Assessment.SpeakingSpeedWPM == nil ||
-		*evidence.Assessment.SpeakingSpeedWPM != speed ||
-		evidence.Assessment.SemanticScore == nil ||
-		*evidence.Assessment.SemanticScore != semantic {
+			"I use AI to summarize customer feedback." ||
+		evidence.Assessment.Category != "read_sentence" ||
+		evidence.Assessment.AccuracyScore == nil ||
+		*evidence.Assessment.AccuracyScore != accuracy ||
+		evidence.Assessment.FluencyScore == nil ||
+		*evidence.Assessment.FluencyScore != fluency ||
+		evidence.Assessment.IntegrityScore == nil ||
+		*evidence.Assessment.IntegrityScore != integrity {
 		t.Fatalf(
-			"unexpected topic evidence/request: %#v / %#v",
+			"unexpected practice evidence/request: %#v / %#v",
 			evidence,
 			evaluator.request,
 		)

@@ -52,6 +52,48 @@ void main() {
     );
   });
 
+  test('decodes an optional report title', () {
+    final value = cloneIeltsSpeakingReportFixture(
+      ieltsSpeakingReportContractFixture()['index_page'],
+    );
+    _first(value)['title'] = 'AI产品经理模拟面试';
+
+    final page = decodeIeltsSpeakingReportIndex(value);
+
+    expect(page.items.single.title, 'AI产品经理模拟面试');
+  });
+
+  test('keeps title null when the server omits it', () {
+    final value = cloneIeltsSpeakingReportFixture(
+      ieltsSpeakingReportContractFixture()['index_page'],
+    );
+    _first(value).remove('title');
+
+    final page = decodeIeltsSpeakingReportIndex(value);
+
+    expect(page.items.single.title, isNull);
+  });
+
+  test('rejects a blank or oversized report title', () {
+    final blank = cloneIeltsSpeakingReportFixture(
+      ieltsSpeakingReportContractFixture()['index_page'],
+    );
+    _first(blank)['title'] = '   ';
+    expect(
+      () => decodeIeltsSpeakingReportIndex(blank),
+      throwsA(isA<IeltsSpeakingReportIndexDecodeException>()),
+    );
+
+    final oversized = cloneIeltsSpeakingReportFixture(
+      ieltsSpeakingReportContractFixture()['index_page'],
+    );
+    _first(oversized)['title'] = 'x' * 257;
+    expect(
+      () => decodeIeltsSpeakingReportIndex(oversized),
+      throwsA(isA<IeltsSpeakingReportIndexDecodeException>()),
+    );
+  });
+
   test('rejects duplicate logical reports and reversed timestamps', () {
     final duplicate = cloneIeltsSpeakingReportFixture(
       ieltsSpeakingReportContractFixture()['index_page'],

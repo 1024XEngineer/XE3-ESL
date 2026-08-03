@@ -15,6 +15,26 @@ type SpeechRecognizer interface {
 	Transcribe(context.Context, TranscriptionRequest) (TranscriptionResult, error)
 }
 
+// StreamingSpeechRecognizer exposes provider-authored intermediate transcript
+// snapshots while preserving Transcribe as the final durable result boundary.
+type StreamingSpeechRecognizer interface {
+	SpeechRecognizer
+	TranscribeStream(
+		context.Context,
+		TranscriptionRequest,
+		TranscriptionObserver,
+	) (TranscriptionResult, error)
+}
+
+type TranscriptionObserver interface {
+	OnTranscriptionUpdate(context.Context, TranscriptionUpdate) error
+}
+
+type TranscriptionUpdate struct {
+	Transcript string
+	Final      bool
+}
+
 type SpeechSynthesizer interface {
 	Synthesize(context.Context, SynthesisRequest) (SynthesisResult, error)
 }

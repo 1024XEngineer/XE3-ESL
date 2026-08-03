@@ -200,12 +200,14 @@ type IELTSSpeakingReportIndexQuery struct {
 }
 
 type IELTSSpeakingReportIndexEntryResource struct {
+	SceneType            evaluation.SceneType
 	PracticeSessionID    string
 	EvaluationID         string
 	EvaluationRevisionID string
 	Revision             int
 	EvaluationStatus     evaluation.Status
 	IsFinal              bool
+	Title                string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
@@ -748,6 +750,7 @@ type ieltsSpeakingReportIndexEntryResponse struct {
 	Revision             int               `json:"revision"`
 	EvaluationStatus     evaluation.Status `json:"evaluation_status"`
 	IsFinal              bool              `json:"is_final"`
+	Title                string            `json:"title,omitempty"`
 	StatusURL            string            `json:"status_url"`
 	CreatedAt            string            `json:"created_at"`
 	UpdatedAt            string            `json:"updated_at"`
@@ -759,7 +762,7 @@ type ieltsSpeakingReportIndexResponse struct {
 }
 
 func (resource IELTSSpeakingReportIndexEntryResource) valid() bool {
-	return stableIdentifierPattern.MatchString(
+	return (resource.SceneType == "" || resource.SceneType == evaluation.SceneIELTSSpeaking || resource.SceneType == evaluation.SceneInterview) && stableIdentifierPattern.MatchString(
 		resource.PracticeSessionID,
 	) &&
 		validEvaluationID(resource.EvaluationID) &&
@@ -987,17 +990,26 @@ func (h *HTTPHandler) ieltsSpeakingReportIndexResponse(
 		if !item.valid() {
 			return ieltsSpeakingReportIndexResponse{}, false
 		}
+		sceneType := item.SceneType
+		if sceneType == "" {
+			sceneType = evaluation.SceneIELTSSpeaking
+		}
 		items[index] = ieltsSpeakingReportIndexEntryResponse{
-			ReportKind:           "IELTS_SPEAKING_FULL_MOCK",
+			ReportKind: map[evaluation.SceneType]string{
+				evaluation.SceneIELTSSpeaking: "IELTS_SPEAKING_FULL_MOCK",
+				evaluation.SceneInterview:     "INTERVIEW",
+			}[sceneType],
 			PracticeSessionID:    item.PracticeSessionID,
 			EvaluationID:         item.EvaluationID,
 			EvaluationRevisionID: item.EvaluationRevisionID,
 			Revision:             item.Revision,
 			EvaluationStatus:     item.EvaluationStatus,
 			IsFinal:              item.IsFinal,
-			StatusURL: "/v1/practice-sessions/" +
-				item.PracticeSessionID +
-				"/ielts-speaking-report",
+			Title:                item.Title,
+			StatusURL: "/v1/practice-sessions/" + item.PracticeSessionID + map[evaluation.SceneType]string{
+				evaluation.SceneIELTSSpeaking: "/ielts-speaking-report",
+				evaluation.SceneInterview:     "/interview-report",
+			}[sceneType],
 			CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339Nano),
 			UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		}

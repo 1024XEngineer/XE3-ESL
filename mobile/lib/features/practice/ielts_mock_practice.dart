@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/preparation/ielts_question_bank.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
@@ -1133,114 +1134,32 @@ class _ExamConversation extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Align(
-              alignment: assistant
-                  ? Alignment.centerLeft
-                  : Alignment.centerRight,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (assistant) ...[
-                      const CircleAvatar(
-                        radius: 17,
-                        backgroundColor: Color(0xFF5C97E5),
-                        foregroundColor: Colors.white,
-                        child: Text(
-                          'E',
-                          style: TextStyle(fontWeight: FontWeight.w700),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: PracticeChatBubble(
+                message: message,
+                maxWidth: 340,
+                actions: assistant && message.id == controller.questionId
+                    ? TextButton.icon(
+                        key: const Key('ielts-mock-question-audio'),
+                        onPressed: controller.canUsePracticeAudio
+                            ? controller.toggleQuestionAudio
+                            : null,
+                        icon: Icon(
+                          controller.isQuestionAudioPlaying
+                              ? Icons.stop_rounded
+                              : Icons.volume_up_outlined,
+                          size: 18,
                         ),
-                      ),
-                      const SizedBox(width: 9),
-                    ],
-                    Flexible(
-                      child: Container(
-                        constraints: const BoxConstraints(maxWidth: 290),
-                        padding: const EdgeInsets.fromLTRB(14, 11, 14, 12),
-                        decoration: BoxDecoration(
-                          color: assistant
-                              ? SpeakUpDesign.surfaceMuted
-                              : const Color(0xFF197782),
-                          borderRadius: BorderRadius.circular(15),
+                        label: Text(
+                          controller.isQuestionAudioLoading
+                              ? 'Loading…'
+                              : controller.isQuestionAudioPlaying
+                              ? 'Stop'
+                              : 'Play question',
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              assistant ? 'Examiner' : 'You',
-                              style: TextStyle(
-                                color: assistant
-                                    ? SpeakUpDesign.secondary
-                                    : Colors.white70,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              message.text,
-                              style: TextStyle(
-                                color: assistant
-                                    ? SpeakUpDesign.ink
-                                    : Colors.white,
-                                fontSize: 15,
-                                height: 1.4,
-                              ),
-                            ),
-                            if (assistant &&
-                                message.id == controller.questionId) ...[
-                              const SizedBox(height: 8),
-                              InkWell(
-                                key: const Key('ielts-mock-question-audio'),
-                                onTap: controller.canUsePracticeAudio
-                                    ? controller.toggleQuestionAudio
-                                    : null,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      controller.isQuestionAudioPlaying
-                                          ? Icons.stop_rounded
-                                          : Icons.graphic_eq_rounded,
-                                      size: 20,
-                                      color: SpeakUpDesign.secondary,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      controller.isQuestionAudioLoading
-                                          ? 'Loading…'
-                                          : controller.isQuestionAudioPlaying
-                                          ? 'Stop'
-                                          : 'Play question',
-                                      style: SpeakUpDesign.meta,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                    if (!assistant) ...[
-                      const SizedBox(width: 9),
-                      const CircleAvatar(
-                        radius: 17,
-                        backgroundColor: Color(0xFF197782),
-                        foregroundColor: Colors.white,
-                        child: Text(
-                          'Me',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+                      )
+                    : null,
               ),
             ),
             if (projection != null)
@@ -1330,6 +1249,7 @@ class _RecorderDock extends StatelessWidget {
       onSendVoice: onSendVoice,
       onConvertToText: onConvertToText,
       onCancel: onCancelRecording,
+      upwardCancelOnly: true,
       builder: (context, capture) {
         final content = convertedAnswerMode
             ? _IeltsConvertedAnswerDock(
@@ -1348,14 +1268,7 @@ class _RecorderDock extends StatelessWidget {
                 capture: capture,
                 onShowText: onOpenTextAnswer,
               );
-        return Material(
-          color: SpeakUpDesign.surface,
-          child: SafeArea(
-            top: false,
-            minimum: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-            child: content,
-          ),
-        );
+        return PracticeComposerSurface(child: content);
       },
     );
   }
@@ -1377,105 +1290,20 @@ class _IeltsVoiceCaptureDock extends StatelessWidget {
     final recording =
         phase == VoiceCapturePhase.starting ||
         phase == VoiceCapturePhase.recording;
-    final showTargets = recording;
-    final label = switch ((phase, capture.releaseIntent, capture.tapMode)) {
-      (VoiceCapturePhase.starting, _, _) => 'Opening microphone…',
-      (_, VoiceCaptureReleaseIntent.cancel, _) => 'Release to cancel',
-      (_, VoiceCaptureReleaseIntent.convertToText, _) =>
-        'Release to convert to text',
-      (VoiceCapturePhase.recording, _, true) => 'Tap to send voice',
-      (VoiceCapturePhase.recording, _, false) => 'Release to send voice',
-      _ => 'Tap or hold to speak',
-    };
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (showTargets) ...[
-          VoiceCaptureIntentTargets(
-            capture: capture,
-            elapsed: Duration.zero,
-            keyPrefix: 'ielts-mock',
-            cancelLabel: 'Cancel',
-            convertLabel: 'Convert to text',
-          ),
-          const SizedBox(height: 10),
-        ],
-        Row(
-          children: [
-            Expanded(
-              child: capture.wrapTarget(
-                key: const Key('ielts-mock-record'),
-                semanticsLabel: recording
-                    ? 'Send voice answer'
-                    : 'Start recording',
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 100),
-                  constraints: const BoxConstraints(minHeight: 64),
-                  decoration: BoxDecoration(
-                    color: capture.cancelArmed
-                        ? SpeakUpDesign.errorMuted
-                        : capture.convertArmed
-                        ? SpeakUpDesign.primaryMuted
-                        : recording
-                        ? const Color(0xFFE2F2F2)
-                        : SpeakUpDesign.ink,
-                    borderRadius: BorderRadius.circular(
-                      SpeakUpDesign.radiusControl,
-                    ),
-                    border: Border.all(
-                      color: capture.cancelArmed
-                          ? SpeakUpDesign.error
-                          : capture.convertArmed
-                          ? SpeakUpDesign.primary
-                          : recording
-                          ? const Color(0xFF197782)
-                          : SpeakUpDesign.ink,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        recording
-                            ? Icons.graphic_eq_rounded
-                            : Icons.mic_none_rounded,
-                        color: recording
-                            ? const Color(0xFF197782)
-                            : Colors.white,
-                        size: 27,
-                      ),
-                      const SizedBox(width: 10),
-                      Flexible(
-                        child: Text(
-                          label,
-                          key: const Key('ielts-mock-recorder-state'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: SpeakUpDesign.cardTitle.copyWith(
-                            color: recording
-                                ? const Color(0xFF197782)
-                                : Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            if (!recording) ...[
-              const SizedBox(width: 10),
-              IconButton.outlined(
-                key: const Key('ielts-mock-open-keyboard'),
-                onPressed: onShowText,
-                tooltip: 'Type answer',
-                icon: const Icon(Icons.keyboard_alt_outlined),
-                style: IconButton.styleFrom(minimumSize: const Size.square(56)),
-              ),
-            ],
-          ],
-        ),
-      ],
+    if (!recording) {
+      return PracticeIdleComposer(
+        capture: capture,
+        textMode: false,
+        onToggleTextMode: onShowText,
+        onSubmitText: onShowText,
+        keyPrefix: 'ielts-mock',
+      );
+    }
+    return PracticeRecordingComposer(
+      capture: capture,
+      phase: phase,
+      keyPrefix: 'ielts-mock',
+      upwardCancelOnly: true,
     );
   }
 }
@@ -1490,25 +1318,12 @@ class _IeltsRecorderWorkingState extends StatelessWidget {
     final label = switch (state) {
       PracticeRecordingState.transcribing => 'Transcribing your answer…',
       PracticeRecordingState.awaitingConfirmation => 'Submitting your answer…',
-      PracticeRecordingState.submitting => 'Preparing the next question…',
+      PracticeRecordingState.submitting => 'Answer sent. Agent is replying…',
       _ => 'Working…',
     };
-    return Row(
+    return KeyedSubtree(
       key: const Key('ielts-mock-recorder-working'),
-      children: [
-        const SizedBox.square(
-          dimension: 22,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            label,
-            key: const Key('ielts-mock-recorder-state'),
-            style: SpeakUpDesign.body,
-          ),
-        ),
-      ],
+      child: PracticeLoadingComposer(label: label),
     );
   }
 }

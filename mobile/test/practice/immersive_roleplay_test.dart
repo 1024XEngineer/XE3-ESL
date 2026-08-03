@@ -15,6 +15,7 @@ import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_client.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/review/turn_feedback_disclosure.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -186,7 +187,7 @@ void main() {
     tapInterrupt.complete();
     await tester.pumpAndSettle();
     expect(controller.recordingState, PracticeRecordingState.recording);
-    await tester.tap(find.byKey(const Key('immersive-stop-recording')));
+    await tester.tap(find.byKey(const Key('immersive-record')));
     await tester.pumpAndSettle();
     controller.rerecord();
     await tester.pump();
@@ -213,9 +214,7 @@ void main() {
     expect(controller.completedTurns, 2);
   });
 
-  testWidgets('supports send, left cancel, and right editable text release', (
-    tester,
-  ) async {
+  testWidgets('supports send and upward cancel', (tester) async {
     final controller = await _roleplayController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(
@@ -226,7 +225,7 @@ void main() {
       tester.getCenter(find.byKey(const Key('immersive-record'))),
     );
     await tester.pump(const Duration(milliseconds: 220));
-    expect(find.byKey(const Key('immersive-voice-targets')), findsOneWidget);
+    expect(find.textContaining('上滑取消'), findsOneWidget);
     await send.up();
     await tester.pumpAndSettle();
     expect(controller.completedTurns, 1);
@@ -239,9 +238,8 @@ void main() {
       tester.getCenter(find.byKey(const Key('immersive-record'))),
     );
     await tester.pump(const Duration(milliseconds: 220));
-    await cancel.moveBy(const Offset(-80, 0));
+    await cancel.moveBy(const Offset(0, -80));
     await tester.pump();
-    expect(find.text('松开取消'), findsWidgets);
     await cancel.up();
     await tester.pumpAndSettle();
     expect(controller.completedTurns, 1);
@@ -252,23 +250,6 @@ void main() {
       userTurnsAfterSend,
     );
 
-    final convert = await tester.startGesture(
-      tester.getCenter(find.byKey(const Key('immersive-record'))),
-    );
-    await tester.pump(const Duration(milliseconds: 220));
-    await convert.moveBy(const Offset(80, 0));
-    await tester.pump();
-    expect(find.text('松开转成文字'), findsWidgets);
-    await convert.up();
-    await tester.pumpAndSettle();
-
-    final textField = tester.widget<TextField>(
-      find.byKey(const Key('immersive-text-answer')),
-    );
-    expect(
-      textField.controller?.text,
-      'The main trade-off was delivery speed versus reliability, so I reduced the scope first.',
-    );
     expect(controller.completedTurns, 1);
     expect(controller.recordingState, PracticeRecordingState.idle);
   });
@@ -341,9 +322,17 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(
       find.byKey(const Key('speech-feedback-loading-indicator')),
-      findsNWidgets(3),
+      findsWidgets,
     );
-    expect(find.text('正在生成评分与纠错…'), findsNWidgets(3));
+    expect(
+      tester
+          .widgetList<SpeechFeedbackDisclosure>(
+            find.byType(SpeechFeedbackDisclosure),
+          )
+          .every((disclosure) => disclosure.compact),
+      isTrue,
+    );
+    expect(find.text('正在生成评分与纠错…'), findsWidgets);
     expect(find.text('刷新复盘'), findsOneWidget);
   });
 

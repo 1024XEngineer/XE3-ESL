@@ -157,6 +157,7 @@ type InterviewShadowProviderLineage struct {
 
 type InterviewShadowDimensionResult struct {
 	DimensionID            InterviewDimension          `json:"dimension_id"`
+	Score                  int                         `json:"score"`
 	Scoreability           InterviewScoreabilityStatus `json:"scoreability_status"`
 	Gate                   InterviewGateStatus         `json:"gate_status"`
 	Coverage               float64                     `json:"coverage"`
@@ -481,6 +482,7 @@ type interviewProviderPayload struct {
 
 type interviewProviderDimension struct {
 	DimensionID            InterviewDimension         `json:"dimension_id"`
+	Score                  int                        `json:"score"`
 	Strengths              []interviewProviderFinding `json:"strengths"`
 	Improvements           []interviewProviderFinding `json:"improvements"`
 	RecommendedExpressions []interviewProviderFinding `json:"recommended_expressions"`
@@ -788,7 +790,8 @@ func normalizeInterviewProviderDimension(
 	prepared preparedInterviewShadow,
 	source interviewProviderDimension,
 ) (InterviewShadowDimensionResult, error) {
-	if source.Strengths == nil ||
+	if source.Score < 0 || source.Score > 100 ||
+		source.Strengths == nil ||
 		source.Improvements == nil ||
 		source.RecommendedExpressions == nil ||
 		len(source.Strengths) > interviewShadowMaximumFindings ||
@@ -800,6 +803,7 @@ func normalizeInterviewProviderDimension(
 	}
 	result := InterviewShadowDimensionResult{
 		DimensionID:  source.DimensionID,
+		Score:        source.Score,
 		Scoreability: InterviewScoreabilityProvisional,
 		Gate:         InterviewGateFeedbackOnly,
 		Coverage:     prepared.dimensionCover[source.DimensionID],
@@ -1008,6 +1012,7 @@ func ValidateInterviewShadowResult(
 	for index, dimension := range result.Dimensions {
 		expectedID := interviewDimensionOrder[index]
 		if dimension.DimensionID != expectedID ||
+			dimension.Score < 0 || dimension.Score > 100 ||
 			!sameRatio(
 				dimension.Coverage,
 				prepared.dimensionCover[expectedID],

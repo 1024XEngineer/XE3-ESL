@@ -62,6 +62,7 @@ class VoiceCaptureControl extends StatefulWidget {
     this.mode = VoiceCaptureMode.pressAndHold,
     this.holdDelay = const Duration(milliseconds: 180),
     this.intentDistance = 72,
+    this.upwardCancelOnly = false,
     super.key,
   });
 
@@ -76,6 +77,7 @@ class VoiceCaptureControl extends StatefulWidget {
   final VoiceCaptureMode mode;
   final Duration holdDelay;
   final double intentDistance;
+  final bool upwardCancelOnly;
 
   @override
   State<VoiceCaptureControl> createState() => _VoiceCaptureControlState();
@@ -150,6 +152,11 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
     if (origin == null) {
       return VoiceCaptureReleaseIntent.sendVoice;
     }
+    if (widget.upwardCancelOnly) {
+      return position.dy - origin.dy <= -widget.intentDistance
+          ? VoiceCaptureReleaseIntent.cancel
+          : VoiceCaptureReleaseIntent.sendVoice;
+    }
     final horizontalDistance = position.dx - origin.dx;
     if (horizontalDistance <= -widget.intentDistance) {
       return VoiceCaptureReleaseIntent.cancel;
@@ -205,7 +212,7 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
       return;
     }
     _pointerPosition = event.position;
-    if (!_holdStarted) {
+    if (!_holdStarted && !(_tapMode && _isCapturing)) {
       return;
     }
     _setReleaseIntent(_intentForPosition(event.position));
@@ -215,7 +222,11 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
     if (event.pointer != _activePointer) {
       return;
     }
-    _finishPointer(_releaseIntent);
+    _finishPointer(
+      widget.upwardCancelOnly
+          ? _intentForPosition(event.position)
+          : _releaseIntent,
+    );
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {

@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/agent/agent_voice_widgets.dart';
+import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/review/interview_report_view.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/review/interview_report_controller.dart';
+import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
 import 'package:speakup/review/turn_feedback_disclosure.dart';
 
@@ -48,7 +51,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
   final bool replayLoading;
   final bool replayPlaying;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+  final Future<bool> Function()? onContinueWithAgent;
   final bool previewMode;
 
   @override
@@ -649,7 +652,12 @@ class _ConversationPanel extends StatelessWidget {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            _MessageBubble(message: message),
+                            AgentMessageBubble(
+                              message: message,
+                              voiceController: controller.voiceController,
+                              polishedText: _polishedText(projection),
+                              polishLoading: projection?.isPolling ?? false,
+                            ),
                             if (projection != null) ...[
                               const SizedBox(height: SpeakUpDesign.space8),
                               Align(
@@ -662,6 +670,7 @@ class _ConversationPanel extends StatelessWidget {
                                       '${projection.sourceKey}',
                                     ),
                                     projection: projection,
+                                    compact: true,
                                     onRetry: projection.canRetry
                                         ? () => unawaited(
                                             speechFeedbackController!.retry(
@@ -718,9 +727,33 @@ class _ConversationPanel extends StatelessWidget {
         speechFeedbackController == null) {
       return null;
     }
-    return speechFeedbackController!.projectionFor(
+    final projection = speechFeedbackController!.projectionFor(
       _immersiveFeedbackSourceKey(controller, message),
     );
+    if (projection?.feedback?.scoreabilityStatus ==
+        SpeechFeedbackScoreabilityStatus.insufficient) {
+      return null;
+    }
+    return projection;
+  }
+
+  String? _polishedText(SpeechFeedbackProjection? projection) {
+    final items = projection?.feedback?.items;
+    if (items == null) {
+      return null;
+    }
+    for (final item in items) {
+      if (item.kind == SpeechFeedbackItemKind.recommendedExpression &&
+          item.suggestedText != null) {
+        return item.suggestedText;
+      }
+    }
+    for (final item in items) {
+      if (item.suggestedText != null) {
+        return item.suggestedText;
+      }
+    }
+    return null;
   }
 }
 
@@ -820,45 +853,6 @@ class _ConversationEmpty extends StatelessWidget {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
-
-  final AgentMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    final isUser = message.role == AgentMessageRole.user;
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Semantics(
-        label: '${isUser ? '你' : '对话伙伴'}：${message.text}',
-        child: Container(
-          key: Key('immersive-message-${message.id}'),
-          constraints: const BoxConstraints(maxWidth: 520),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: isUser ? SpeakUpDesign.primary : SpeakUpDesign.surfaceMuted,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(isUser ? 16 : 4),
-              bottomRight: Radius.circular(isUser ? 4 : 16),
-            ),
-          ),
-          child: Text(
-            message.text,
-            style: TextStyle(
-              color: isUser ? Colors.white : SpeakUpDesign.ink,
-              fontSize: 15,
-              height: 1.42,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _InlineError extends StatelessWidget {
   const _InlineError({required this.message});
 
@@ -909,6 +903,12 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
             PracticeRecordingState.awaitingConfirmation) {
       return;
     }
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted ||
+        widget.controller.recordingState !=
+            PracticeRecordingState.awaitingConfirmation) {
+      return;
+    }
     await widget.controller.confirmTranscript();
   }
 
@@ -953,52 +953,46 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
       onSendVoice: _sendVoice,
       onConvertToText: _convertToText,
       onCancel: widget.controller.cancelRecording,
-      builder: (context, capture) => Material(
-        color: SpeakUpDesign.surface,
-        shape: const Border(top: BorderSide(color: SpeakUpDesign.border)),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            child: switch (state) {
-              PracticeRecordingState.idle =>
-                widget.controller.hasPendingPracticeAudio
-                    ? _PendingImmersiveAudio(controller: widget.controller)
-                    : _IdleComposer(
-                        textController: widget.textController,
-                        textFocusNode: widget.textFocusNode,
-                        textMode: widget.textMode,
-                        onToggleTextMode: widget.onToggleTextMode,
-                        onSubmitText: widget.onSubmitText,
-                        capture: capture,
-                      ),
-              PracticeRecordingState.starting ||
-              PracticeRecordingState.recording => _RecordingComposer(
-                preparing: state == PracticeRecordingState.starting,
-                seconds: widget.recordingSeconds,
-                capture: capture,
-              ),
-              PracticeRecordingState.transcribing => const _ComposerProgress(
-                label: '正在识别你的回答…',
-              ),
-              PracticeRecordingState.awaitingConfirmation =>
-                _TranscriptComposer(controller: widget.controller),
-              PracticeRecordingState.submitting => const _ComposerProgress(
-                label: '正在发送并准备下一轮…',
-              ),
-              PracticeRecordingState.reviewFailed => _ComposerAction(
-                label: '本轮录音和转写已保留，复盘结果暂未同步。无需重新录音。',
-                actionLabel: '刷新复盘',
-                onPressed: widget.controller.retryReview,
-              ),
-              PracticeRecordingState.completed => _ComposerAction(
-                label: '练习已完成，可先查看最后一轮回答与评分。',
-                actionLabel: '查看报告',
-                onPressed: widget.onOpenReport,
-              ),
-            },
+      upwardCancelOnly: true,
+      builder: (context, capture) => PracticeComposerSurface(
+        child: switch (state) {
+          PracticeRecordingState.idle =>
+            widget.controller.hasPendingPracticeAudio
+                ? _PendingImmersiveAudio(controller: widget.controller)
+                : _IdleComposer(
+                    textController: widget.textController,
+                    textFocusNode: widget.textFocusNode,
+                    textMode: widget.textMode,
+                    onToggleTextMode: widget.onToggleTextMode,
+                    onSubmitText: widget.onSubmitText,
+                    capture: capture,
+                  ),
+          PracticeRecordingState.starting ||
+          PracticeRecordingState.recording => _RecordingComposer(
+            phase: capturePhase,
+            seconds: widget.recordingSeconds,
+            capture: capture,
           ),
-        ),
+          PracticeRecordingState.transcribing => const _ComposerProgress(
+            label: '正在识别你的回答…',
+          ),
+          PracticeRecordingState.awaitingConfirmation => _TranscriptComposer(
+            controller: widget.controller,
+          ),
+          PracticeRecordingState.submitting => const _ComposerProgress(
+            label: '回答已发送，Agent 正在回复…',
+          ),
+          PracticeRecordingState.reviewFailed => _ComposerAction(
+            label: '本轮录音和转写已保留，复盘结果暂未同步。无需重新录音。',
+            actionLabel: '刷新复盘',
+            onPressed: widget.controller.retryReview,
+          ),
+          PracticeRecordingState.completed => _ComposerAction(
+            label: '练习已完成，可先查看最后一轮回答与评分。',
+            actionLabel: '查看报告',
+            onPressed: widget.onOpenReport,
+          ),
+        },
       ),
     );
   }
@@ -1023,177 +1017,37 @@ class _IdleComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (textMode) {
-      return Row(
-        children: [
-          IconButton.outlined(
-            key: const Key('immersive-return-to-voice'),
-            tooltip: '切换到语音',
-            onPressed: onToggleTextMode,
-            icon: const Icon(Icons.mic_none_rounded),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              key: const Key('immersive-text-answer'),
-              controller: textController,
-              focusNode: textFocusNode,
-              minLines: 1,
-              maxLines: 2,
-              maxLength: 8000,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                hintText: 'Type your reply…',
-                counterText: '',
-                isDense: true,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton.filled(
-            key: const Key('immersive-submit-text'),
-            tooltip: '发送',
-            onPressed: onSubmitText,
-            icon: const Icon(Icons.arrow_upward_rounded),
-          ),
-        ],
-      );
-    }
-    return Row(
-      children: [
-        Expanded(
-          child: capture.wrapTarget(
-            key: const Key('immersive-record'),
-            semanticsLabel: '点击或按住说话',
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 100),
-              height: 52,
-              decoration: BoxDecoration(
-                color: capture.pressed
-                    ? SpeakUpDesign.primary.withValues(alpha: 0.82)
-                    : SpeakUpDesign.primary,
-                borderRadius: BorderRadius.circular(
-                  SpeakUpDesign.radiusControl,
-                ),
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.mic_rounded, color: Colors.white),
-                  SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      '点击或按住说话',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        IconButton.outlined(
-          key: const Key('immersive-open-keyboard'),
-          tooltip: '键盘输入',
-          onPressed: onToggleTextMode,
-          icon: const Icon(Icons.keyboard_alt_outlined),
-          style: IconButton.styleFrom(minimumSize: const Size.square(52)),
-        ),
-      ],
+    return PracticeIdleComposer(
+      capture: capture,
+      textController: textController,
+      textFocusNode: textFocusNode,
+      textMode: textMode,
+      onToggleTextMode: onToggleTextMode,
+      onSubmitText: onSubmitText,
+      keyPrefix: 'immersive',
     );
   }
 }
 
 class _RecordingComposer extends StatelessWidget {
   const _RecordingComposer({
-    required this.preparing,
+    required this.phase,
     required this.seconds,
     required this.capture,
   });
 
-  final bool preparing;
+  final VoiceCapturePhase phase;
   final int seconds;
   final VoiceCaptureView capture;
 
   @override
   Widget build(BuildContext context) {
-    final minutesText = (seconds ~/ 60).toString().padLeft(2, '0');
-    final secondsText = (seconds % 60).toString().padLeft(2, '0');
-    final cancelArmed =
-        capture.releaseIntent == VoiceCaptureReleaseIntent.cancel;
-    final convertArmed =
-        capture.releaseIntent == VoiceCaptureReleaseIntent.convertToText;
-    final accent = cancelArmed ? SpeakUpDesign.error : SpeakUpDesign.primary;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        VoiceCaptureIntentTargets(
-          capture: capture,
-          elapsed: Duration(seconds: seconds),
-          keyPrefix: 'immersive',
-        ),
-        const SizedBox(height: 10),
-        capture.wrapTarget(
-          key: const Key('immersive-record'),
-          semanticsLabel: capture.tapMode ? '发送语音回答' : '录音中，左滑取消，右滑转文字，松开发送',
-          child: AnimatedContainer(
-            key: const Key('immersive-stop-recording'),
-            duration: const Duration(milliseconds: 120),
-            constraints: const BoxConstraints(minHeight: 58),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: cancelArmed
-                  ? SpeakUpDesign.errorMuted
-                  : SpeakUpDesign.primaryMuted,
-              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
-              border: Border.all(color: accent),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  cancelArmed
-                      ? Icons.delete_outline_rounded
-                      : convertArmed
-                      ? Icons.text_fields_rounded
-                      : Icons.graphic_eq_rounded,
-                  color: accent,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    cancelArmed
-                        ? '松开取消'
-                        : convertArmed
-                        ? '松开转成文字'
-                        : preparing
-                        ? '正在打开麦克风…'
-                        : capture.tapMode
-                        ? '点击发送语音 · $minutesText:$secondsText'
-                        : '松开发送语音 · $minutesText:$secondsText',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: SpeakUpDesign.label.copyWith(color: accent),
-                  ),
-                ),
-                if (!cancelArmed && !convertArmed)
-                  Icon(
-                    capture.tapMode
-                        ? Icons.send_rounded
-                        : Icons.keyboard_arrow_down_rounded,
-                    color: accent,
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ],
+    return PracticeRecordingComposer(
+      capture: capture,
+      phase: phase,
+      keyPrefix: 'immersive',
+      elapsed: Duration(seconds: seconds),
+      upwardCancelOnly: true,
     );
   }
 }
@@ -1288,27 +1142,7 @@ class _ComposerProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 52,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const SizedBox.square(
-            dimension: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: SpeakUpDesign.body,
-            ),
-          ),
-        ],
-      ),
-    );
+    return PracticeLoadingComposer(label: label);
   }
 }
 

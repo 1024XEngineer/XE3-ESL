@@ -61,6 +61,15 @@ func TestProjectInterviewReportUsesFrozenQuestionsAndEvidence(t *testing.T) {
 		len(report.PriorityActions) != 3 {
 		t.Fatalf("report = %#v", report)
 	}
+	for _, dimension := range report.Dimensions {
+		if dimension.ScoreabilityStatus == InterviewScoreabilityProvisional {
+			if dimension.Score == nil || *dimension.Score != 75 {
+				t.Fatalf("dimension score = %#v", dimension.Score)
+			}
+		} else if dimension.Score != nil {
+			t.Fatalf("blocked dimension exposes score %#v", dimension.Score)
+		}
+	}
 	first := report.Questions[0]
 	if first.QuestionText != "Tell me about a migration you led." ||
 		first.ConfirmedTranscript != "I led a careful migration." ||

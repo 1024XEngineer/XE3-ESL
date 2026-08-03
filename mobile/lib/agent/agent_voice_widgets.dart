@@ -13,6 +13,8 @@ class AgentMessageBubble extends StatefulWidget {
     this.voiceController,
     this.onAction,
     this.onRefreshImage,
+    this.polishedText,
+    this.polishLoading = false,
     super.key,
   });
 
@@ -21,14 +23,16 @@ class AgentMessageBubble extends StatefulWidget {
   final ValueChanged<AgentMessageAction>? onAction;
   final FutureOr<void> Function(String messageId, String imageAssetId)?
   onRefreshImage;
+  final String? polishedText;
+  final bool polishLoading;
 
   @override
   State<AgentMessageBubble> createState() => _AgentMessageBubbleState();
 }
 
 class _AgentMessageBubbleState extends State<AgentMessageBubble> {
-  bool _transcriptExpanded = false;
   late _AgentMessageVoiceSnapshot _voiceSnapshot;
+  bool _polishExpanded = false;
 
   @override
   void initState() {
@@ -45,7 +49,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
       widget.voiceController?.addListener(_handleVoiceController);
     }
     if (oldWidget.message.id != widget.message.id) {
-      _transcriptExpanded = false;
+      _polishExpanded = false;
     }
     _voiceSnapshot = _captureVoiceSnapshot();
   }
@@ -86,6 +90,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
       speechSpeed: message.role == AgentMessageRole.assistant
           ? voice?.speechSpeed ?? 1
           : 1,
+      usesPreview: voice?.messagePlaybackUsesPreview ?? false,
     );
   }
 
@@ -281,8 +286,18 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     final audio = message.audio!;
     final voice = widget.voiceController;
     final readable = audio.isReadable && voice != null;
-    final loading = voice?.loadingMessageId == message.id;
-    final playing = voice?.playingMessageId == message.id;
+    final loading =
+        voice?.loadingMessageId == message.id &&
+        voice?.messagePlaybackUsesPreview == false;
+    final playing =
+        voice?.playingMessageId == message.id &&
+        voice?.messagePlaybackUsesPreview == false;
+    final previewLoading =
+        voice?.loadingMessageId == message.id &&
+        voice?.messagePlaybackUsesPreview == true;
+    final previewPlaying =
+        voice?.playingMessageId == message.id &&
+        voice?.messagePlaybackUsesPreview == true;
     final deleting =
         voice?.deletingMessageId == message.id ||
         audio.status == AgentMessageAudioStatus.deleting;
@@ -293,72 +308,71 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Text(
+          message.text,
+          key: Key('agent-user-voice-transcript-${message.id}'),
+          style: TextStyle(color: foreground, fontSize: 16, height: 1.45),
+        ),
+        const SizedBox(height: 8),
         Row(
           children: [
-            IconButton(
+            _VoiceTextAction(
               key: Key('agent-user-voice-play-${message.id}'),
-              tooltip: readable
-                  ? playing
-                        ? '停止播放录音'
-                        : '播放录音'
-                  : '录音不可用',
+              icon: playing ? Icons.stop_rounded : Icons.volume_up_rounded,
+              loading: loading,
+              label: '原声',
               onPressed: readable
                   ? () => voice.toggleMessagePlayback(message)
                   : null,
-              style: IconButton.styleFrom(
-                backgroundColor: SpeakUpDesign.surfaceMuted,
-                foregroundColor: foreground,
-                disabledBackgroundColor: SpeakUpDesign.surfaceMuted,
-                disabledForegroundColor: SpeakUpDesign.tertiary,
-                minimumSize: const Size.square(36),
-                maximumSize: const Size.square(36),
-                padding: EdgeInsets.zero,
-              ),
-              icon: loading
-                  ? const SizedBox.square(
-                      dimension: 15,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: SpeakUpDesign.secondary,
-                      ),
-                    )
-                  : Icon(
-                      playing ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                      size: 21,
-                    ),
             ),
-            const SizedBox(width: 9),
+            const SizedBox(width: 4),
             Text(
               _formatDuration(audio.duration),
               key: Key('agent-user-voice-duration-${message.id}'),
               style: TextStyle(
-                color: foreground,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
+                color: SpeakUpDesign.secondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
               ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                playing
-                    ? '正在播放'
-                    : audio.isReadable
-                    ? '语音消息'
-                    : audio.status == AgentMessageAudioStatus.deleting
+            const SizedBox(width: 4),
+            _VoiceTextAction(
+              key: Key('agent-user-voice-tts-${message.id}'),
+              icon: previewPlaying
+                  ? Icons.stop_rounded
+                  : Icons.record_voice_over_rounded,
+              loading: previewLoading,
+              label: 'TTS',
+              onPressed: voice == null || widget.polishedText == null
+                  ? null
+                  : () => voice.toggleSpeechPreview(
+                      message,
+                      widget.polishedText!,
+                    ),
+            ),
+            const SizedBox(width: 4),
+            _VoiceTextAction(
+              key: Key('agent-user-voice-polish-${message.id}'),
+              icon: Icons.auto_awesome_rounded,
+              loading: widget.polishLoading,
+              label: '润色',
+              onPressed: widget.polishedText == null
+                  ? null
+                  : () => setState(() => _polishExpanded = !_polishExpanded),
+            ),
+            const Spacer(),
+            if (!audio.isReadable)
+              Text(
+                audio.status == AgentMessageAudioStatus.deleting
                     ? '正在删除录音'
                     : '录音已删除',
-                key: !audio.isReadable
-                    ? Key(
-                        audio.status == AgentMessageAudioStatus.deleting
-                            ? 'agent-user-voice-deleting-${message.id}'
-                            : 'agent-user-voice-deleted-${message.id}',
-                      )
-                    : null,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                key: Key(
+                  audio.status == AgentMessageAudioStatus.deleting
+                      ? 'agent-user-voice-deleting-${message.id}'
+                      : 'agent-user-voice-deleted-${message.id}',
+                ),
                 style: SpeakUpDesign.meta,
               ),
-            ),
             if (!audio.isReadable) const SizedBox(width: 2),
             if (audio.status != AgentMessageAudioStatus.deleted &&
                 voice != null)
@@ -397,35 +411,13 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
             ),
           ),
         ],
-        const SizedBox(height: 4),
-        TextButton.icon(
-          key: Key('agent-user-voice-transcript-toggle-${message.id}'),
-          style: TextButton.styleFrom(
-            foregroundColor: SpeakUpDesign.secondary,
-            minimumSize: const Size(0, 30),
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            visualDensity: VisualDensity.compact,
-            textStyle: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          onPressed: () {
-            setState(() => _transcriptExpanded = !_transcriptExpanded);
-          },
-          icon: Icon(
-            _transcriptExpanded
-                ? Icons.expand_less_rounded
-                : Icons.expand_more_rounded,
-            size: 18,
-          ),
-          label: const Text('转写'),
-        ),
-        if (_transcriptExpanded) ...[
-          const SizedBox(height: 2),
+        if (_polishExpanded && widget.polishedText != null) ...[
+          const SizedBox(height: 10),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
           Text(
-            message.text,
-            key: Key('agent-user-voice-transcript-${message.id}'),
+            widget.polishedText!,
+            key: Key('agent-user-voice-polish-text-${message.id}'),
             style: TextStyle(color: foreground, fontSize: 15, height: 1.45),
           ),
         ],
@@ -442,6 +434,41 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _VoiceTextAction extends StatelessWidget {
+  const _VoiceTextAction({
+    required this.icon,
+    required this.loading,
+    required this.label,
+    required this.onPressed,
+    super.key,
+  });
+
+  final IconData icon;
+  final bool loading;
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        foregroundColor: SpeakUpDesign.secondary,
+        minimumSize: const Size(0, 32),
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        visualDensity: VisualDensity.compact,
+      ),
+      icon: loading
+          ? const SizedBox.square(
+              dimension: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(icon, size: 17),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
     );
   }
 }
@@ -626,6 +653,7 @@ typedef _AgentMessageVoiceSnapshot = ({
   String? error,
   Duration playbackPosition,
   double speechSpeed,
+  bool usesPreview,
 });
 
 String _formatDuration(Duration value) {

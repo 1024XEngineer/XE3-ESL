@@ -26,11 +26,12 @@ type ASRConfig struct {
 }
 
 type Recognizer struct {
-	endpoint string
-	model    string
-	timeout  time.Duration
-	apiKey   providerSecret
-	client   httpDoer
+	endpoint   string
+	wsEndpoint string
+	model      string
+	timeout    time.Duration
+	apiKey     providerSecret
+	client     httpDoer
 }
 
 func (recognizer *Recognizer) String() string {
@@ -82,11 +83,12 @@ func newRecognizerWithClient(
 		return nil, errors.New("Fun-ASR HTTP client is required")
 	}
 	return &Recognizer{
-		endpoint: baseURL + multimodalGenerationPath,
-		model:    model,
-		timeout:  config.Timeout,
-		apiKey:   newProviderSecret(apiKey),
-		client:   client,
+		endpoint:   baseURL + multimodalGenerationPath,
+		wsEndpoint: realtimeASREndpoint(baseURL),
+		model:      model,
+		timeout:    config.Timeout,
+		apiKey:     newProviderSecret(apiKey),
+		client:     client,
 	}, nil
 }
 
@@ -94,6 +96,9 @@ func (recognizer *Recognizer) Transcribe(
 	ctx context.Context,
 	request ai.TranscriptionRequest,
 ) (ai.TranscriptionResult, error) {
+	if recognizer.model == "fun-asr-realtime" {
+		return recognizer.transcribeRealtime(ctx, request, nil)
+	}
 	if ctx == nil {
 		return ai.TranscriptionResult{}, ai.NewSpeechError(
 			ai.SpeechOperationTranscription,
@@ -255,6 +260,17 @@ func (recognizer *Recognizer) Transcribe(
 	return result, nil
 }
 
+func (recognizer *Recognizer) TranscribeStream(
+	ctx context.Context,
+	request ai.TranscriptionRequest,
+	observer ai.TranscriptionObserver,
+) (ai.TranscriptionResult, error) {
+	if recognizer.model != "fun-asr-realtime" || observer == nil {
+		return recognizer.Transcribe(ctx, request)
+	}
+	return recognizer.transcribeRealtime(ctx, request, observer)
+}
+
 type asrRequest struct {
 	Model      string        `json:"model"`
 	Input      asrInput      `json:"input"`
@@ -361,10 +377,11 @@ func readAudioSource(source platformmedia.AudioSource) ([]byte, error) {
 }
 
 func normalizeASRModel(raw string) (string, error) {
-	if !strings.EqualFold(strings.TrimSpace(raw), "fun-asr-flash-2026-06-15") {
-		return "", errors.New("Fun-ASR adapter only accepts fun-asr-flash-2026-06-15")
+	model := strings.ToLower(strings.TrimSpace(raw))
+	if model != "fun-asr-realtime" && model != "fun-asr-flash-2026-06-15" {
+		return "", errors.New("Fun-ASR adapter only accepts fun-asr-realtime or fun-asr-flash-2026-06-15")
 	}
-	return "fun-asr-flash-2026-06-15", nil
+	return model, nil
 }
 
 func invalidSpeechResponse(
@@ -384,3 +401,4 @@ func invalidSpeechResponse(
 }
 
 var _ ai.SpeechRecognizer = (*Recognizer)(nil)
+var _ ai.StreamingSpeechRecognizer = (*Recognizer)(nil)
