@@ -49,6 +49,131 @@ void main() {
     expect(recorder.discarded, 2);
   });
 
+  test('reconciles an ambiguous final interview voice confirmation', () async {
+    final practice = _TwoTurnPracticeClient(
+      scenarioType: 'INTERVIEW',
+      scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+    );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await controller.startRecording();
+    await controller.stopRecording();
+    await controller.confirmTranscript();
+
+    const answer = 'Answer 2';
+    practice
+      ..confirmFailure = const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      )
+      ..restoreResult = _completedInterviewSnapshot(
+        matter: controller.activeMatter!,
+        questionId: 'question-2',
+        candidateId: 'candidate-2',
+        answer: answer,
+      );
+    await controller.startRecording();
+    await controller.stopRecording();
+    expect(controller.isFinalInterviewSubmission, isFalse);
+    final restoreCount = practice.restoreCount;
+
+    final confirmation = controller.confirmTranscript();
+    expect(controller.isFinalInterviewSubmission, isTrue);
+    await confirmation;
+
+    expect(controller.recordingState, PracticeRecordingState.completed);
+    expect(controller.completedTurns, 2);
+    expect(controller.errorMessage, isNull);
+    expect(practice.restoreCount, restoreCount + 1);
+  });
+
+  test('reconciles an ambiguous final interview text submission', () async {
+    final practice = _TwoTurnPracticeClient(
+      scenarioType: 'INTERVIEW',
+      scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+    );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await controller.startRecording();
+    await controller.stopRecording();
+    await controller.confirmTranscript();
+
+    const answer = 'Typed final answer';
+    practice
+      ..textFailure = const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      )
+      ..restoreResult = _completedInterviewSnapshot(
+        matter: controller.activeMatter!,
+        questionId: 'question-2',
+        candidateId: 'server-text-candidate',
+        answer: answer,
+      );
+    final restoreCount = practice.restoreCount;
+
+    final submission = controller.submitPracticeText(answer);
+    expect(controller.isFinalInterviewSubmission, isTrue);
+    expect(await submission, isTrue);
+    expect(controller.recordingState, PracticeRecordingState.completed);
+    expect(controller.completedTurns, 2);
+    expect(controller.errorMessage, isNull);
+    expect(practice.restoreCount, restoreCount + 1);
+  });
+
+  test('does not accept a mismatched final interview recovery', () async {
+    final practice = _TwoTurnPracticeClient(
+      scenarioType: 'INTERVIEW',
+      scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+    );
+    final controller = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.selectScene(agentScenes.first);
+    await controller.startRecording();
+    await controller.stopRecording();
+    await controller.confirmTranscript();
+
+    practice
+      ..confirmFailure = const AgentClientException(
+        kind: AgentClientFailureKind.network,
+        retryable: true,
+      )
+      ..restoreResult = _completedInterviewSnapshot(
+        matter: controller.activeMatter!,
+        questionId: 'question-2',
+        candidateId: 'different-candidate',
+        answer: 'Answer 2',
+      );
+    await controller.startRecording();
+    await controller.stopRecording();
+    await controller.confirmTranscript();
+
+    expect(
+      controller.recordingState,
+      PracticeRecordingState.awaitingConfirmation,
+    );
+    expect(controller.completedTurns, 1);
+    expect(controller.candidateId, 'candidate-2');
+    expect(controller.errorMessage, '网络连接不稳定，这一轮尚未确认，请重试。');
+  });
+
   test(
     'retains failed transcription audio and retries with one Turn identity',
     () async {
@@ -1278,6 +1403,8 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     this.firstAnswer = 'Answer 1',
     this.secondQuestion = 'Second question',
     this.formalReview,
+    this.scenarioType,
+    this.scenarioModel,
   });
 
   final bool includeAudioAssets;
@@ -1285,6 +1412,8 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   final String firstAnswer;
   final String secondQuestion;
   final FormalReview? formalReview;
+  final String? scenarioType;
+  final String? scenarioModel;
   int completed = 0;
   int cleanupCount = 0;
   final List<String> confirmedQuestionIds = [];
@@ -1297,6 +1426,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   Object? restoreFailure;
   PracticeSessionSnapshot? restoreResult;
   int transcribeCount = 0;
+  int restoreCount = 0;
   final List<String> transcriptionClientTurnIds = <String>[];
 
   @override
@@ -1310,6 +1440,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     required String threadId,
     AgentMatter? activeMatter,
   }) async {
+    restoreCount++;
     if (restoreFailure case final failure?) {
       throw failure;
     }
@@ -1325,6 +1456,8 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     return PracticeStartResult(
       snapshot: PracticeSessionSnapshot(
         sessionId: _sessionId,
+        scenarioType: scenarioType,
+        scenarioModel: scenarioModel,
         matter: activeMatter,
         completedTurns: 0,
         turnLimit: 2,
@@ -1387,6 +1520,8 @@ final class _TwoTurnPracticeClient implements PracticeClient {
       sessionId: sessionId,
       questionId: questionId,
       candidateId: candidateId,
+      scenarioType: scenarioType,
+      scenarioModel: scenarioModel,
       answer: AgentMessage(
         id: 'answer-$completed',
         role: AgentMessageRole.user,
@@ -1422,6 +1557,34 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     }
     throw UnimplementedError();
   }
+}
+
+PracticeSessionSnapshot _completedInterviewSnapshot({
+  required AgentMatter matter,
+  required String questionId,
+  required String candidateId,
+  required String answer,
+}) {
+  return PracticeSessionSnapshot(
+    sessionId: _sessionId,
+    scenarioType: 'INTERVIEW',
+    scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+    matter: matter,
+    completedTurns: 2,
+    turnLimit: 2,
+    sessionCompleted: true,
+    currentTurn: PracticeTurnSnapshot(
+      id: 'turn-2',
+      sessionId: _sessionId,
+      questionId: questionId,
+      respondentParticipantId: 'respondent-1',
+      candidateId: candidateId,
+      answerText: answer,
+      evidenceVersion: 1,
+      effectiveTurns: 2,
+      sessionCompleted: true,
+    ),
+  );
 }
 
 final class _NoopMediaClient implements PracticeMediaClient {
