@@ -206,8 +206,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	previewCall.RequestID = "preview-ready-0001"
 	previewInput := json.RawMessage(fmt.Sprintf(`{
 		"matter_id":%q,
-		"preparation_profile_id":%q,
-		"preparation_snapshot_id":%q,
+		"background_summary":"Go engineer preparing for a backend interview.",
 		"scenario_definition_id":%q,
 		"scenario_definition_version":1,
 		"scenario_config_id":%q,
@@ -218,8 +217,6 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		"max_effective_turns":4
 	}`,
 		matterID,
-		profileID,
-		snapshotID,
 		preparation.ProgrammerInterviewScenarioID,
 		preparation.BackendEngineerConfigID,
 		preparation.TechnicalInterviewerRoleID,
