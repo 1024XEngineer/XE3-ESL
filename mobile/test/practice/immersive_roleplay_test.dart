@@ -336,7 +336,7 @@ void main() {
     expect(find.text('刷新复盘'), findsOneWidget);
   });
 
-  testWidgets('keeps the final turn visible until report is requested', (
+  testWidgets('opens report generation after the final interview turn', (
     tester,
   ) async {
     final controller = await _roleplayController(
@@ -367,17 +367,6 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
-    await tester.pump();
-
-    expect(find.byKey(const Key('interview-report-page')), findsNothing);
-    expect(find.text('查看报告'), findsOneWidget);
-    expect(
-      find.byKey(const Key('immersive-conversation-history')),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.text('查看报告'));
     await tester.pump();
     await tester.pump();
 

@@ -74,6 +74,9 @@ class _PracticePageState extends State<PracticePage>
   DateTime? _recordingStartedAt;
   int _recordingSeconds = 0;
   bool _speechFeedbackRebuildScheduled = false;
+  String? _scheduledInterviewReportSessionId;
+  String? _autoOpenedInterviewReportSessionId;
+  bool _interviewReportRouteActive = false;
 
   @override
   void initState() {
@@ -87,6 +90,7 @@ class _PracticePageState extends State<PracticePage>
     _captureConversationState();
     _syncRecordingTimer();
     _scheduleReviewExitIfNeeded();
+    _scheduleInterviewReportIfNeeded();
     _scheduleScrollToLatest(animated: false);
   }
 
@@ -102,6 +106,7 @@ class _PracticePageState extends State<PracticePage>
     }
     if (oldWidget.agentController == widget.agentController) {
       _syncSpeechFeedbackSources();
+      _scheduleInterviewReportIfNeeded();
       return;
     }
     oldWidget.agentController?.removeListener(_handleState);
@@ -111,6 +116,7 @@ class _PracticePageState extends State<PracticePage>
     _captureConversationState();
     _syncSpeechFeedbackSources();
     _scheduleReviewExitIfNeeded();
+    _scheduleInterviewReportIfNeeded();
     _scheduleScrollToLatest(animated: false);
   }
 
@@ -157,6 +163,7 @@ class _PracticePageState extends State<PracticePage>
     _syncRecordingTimer();
     _syncSpeechFeedbackSources();
     setState(() {});
+    _scheduleInterviewReportIfNeeded();
     if (retryCompleted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
@@ -181,6 +188,39 @@ class _PracticePageState extends State<PracticePage>
     _scheduleReviewExitIfNeeded();
   }
 
+  void _scheduleInterviewReportIfNeeded() {
+    final controller = widget.agentController;
+    final sessionId = controller?.practiceSessionId;
+    if (controller == null ||
+        widget.interviewReportController == null ||
+        sessionId == null ||
+        controller.recordingState != PracticeRecordingState.completed ||
+        !isInterviewPracticeScenario(
+          controller.practiceScenarioType,
+          controller.practiceScenarioModel,
+        ) ||
+        _interviewReportRouteActive ||
+        _scheduledInterviewReportSessionId == sessionId ||
+        _autoOpenedInterviewReportSessionId == sessionId) {
+      return;
+    }
+    _scheduledInterviewReportSessionId = sessionId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          widget.agentController?.practiceSessionId != sessionId ||
+          widget.agentController?.recordingState !=
+              PracticeRecordingState.completed) {
+        if (_scheduledInterviewReportSessionId == sessionId) {
+          _scheduledInterviewReportSessionId = null;
+        }
+        return;
+      }
+      _scheduledInterviewReportSessionId = null;
+      _autoOpenedInterviewReportSessionId = sessionId;
+      unawaited(_openInterviewReport());
+    });
+  }
+
   Future<void> _openInterviewReport() async {
     final reportController = widget.interviewReportController;
     final agentController = widget.agentController;
@@ -189,28 +229,34 @@ class _PracticePageState extends State<PracticePage>
         agentController == null ||
         sessionId == null ||
         agentController.recordingState != PracticeRecordingState.completed ||
+        _interviewReportRouteActive ||
         !isInterviewPracticeScenario(
           agentController.practiceScenarioType,
           agentController.practiceScenarioModel,
         )) {
       return;
     }
-    final result = await Navigator.of(context).push<Object?>(
-      MaterialPageRoute<Object?>(
-        builder: (_) => InterviewReportPage(
-          practiceSessionId: sessionId,
-          controller: reportController,
-          title: '${agentController.scene?.title ?? '面试'} · 复盘',
-          speechFeedbackController: widget.speechFeedbackController,
-          speechFeedbackSourceKeys: List<String>.unmodifiable(
-            _feedbackSources.keys,
+    _interviewReportRouteActive = true;
+    try {
+      final result = await Navigator.of(context).push<Object?>(
+        MaterialPageRoute<Object?>(
+          builder: (_) => InterviewReportPage(
+            practiceSessionId: sessionId,
+            controller: reportController,
+            title: '${agentController.scene?.title ?? '面试'} · 复盘',
+            speechFeedbackController: widget.speechFeedbackController,
+            speechFeedbackSourceKeys: List<String>.unmodifiable(
+              _feedbackSources.keys,
+            ),
+            onContinueWithAgent: widget.onContinueWithAgent,
           ),
-          onContinueWithAgent: widget.onContinueWithAgent,
         ),
-      ),
-    );
-    if (mounted && result == CompletedPracticeRouteResult.continueWithAgent) {
-      Navigator.of(context).pop(result);
+      );
+      if (mounted && result == CompletedPracticeRouteResult.continueWithAgent) {
+        Navigator.of(context).pop(result);
+      }
+    } finally {
+      _interviewReportRouteActive = false;
     }
   }
 
@@ -690,7 +736,8 @@ class _InterviewProgress extends StatelessWidget {
       PracticeRecordingState.recording => '正在作答',
       PracticeRecordingState.transcribing ||
       PracticeRecordingState.awaitingConfirmation => '正在识别',
-      PracticeRecordingState.submitting => '正在生成下一题',
+      PracticeRecordingState.submitting =>
+        controller.isFinalInterviewSubmission ? '正在提交最后一题' : '正在生成下一题',
       PracticeRecordingState.completed => '面试已完成',
       PracticeRecordingState.reviewFailed => '等待重试',
       PracticeRecordingState.idle => '等待作答',
@@ -1129,6 +1176,8 @@ class _RecordingPanelState extends State<_RecordingPanel> {
           PracticeRecordingState.submitting => _WorkingState(
             label: widget.controller.isSpeechFeedbackRetryActive
                 ? '正在提交同题复练…'
+                : widget.controller.isFinalInterviewSubmission
+                ? '正在提交最后一轮回答，完成后将生成报告…'
                 : '回答已发送，Agent 正在回复…',
           ),
           PracticeRecordingState.reviewFailed => _ReviewRetry(

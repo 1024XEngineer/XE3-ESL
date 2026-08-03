@@ -71,6 +71,9 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   bool _exitInFlight = false;
   bool _exitApproved = false;
   bool _feedbackRebuildScheduled = false;
+  String? _scheduledInterviewReportSessionId;
+  String? _autoOpenedInterviewReportSessionId;
+  bool _interviewReportRouteActive = false;
 
   @override
   void initState() {
@@ -80,6 +83,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     widget.speechFeedbackController?.addListener(_handleFeedbackState);
     _syncSpeechFeedbackSources();
     _syncRecordingTimer();
+    _scheduleInterviewReportIfNeeded();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _conversationScrollController.hasClients) {
         _conversationScrollController.jumpTo(
@@ -110,6 +114,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
       _syncRecordingTimer();
     }
     _syncSpeechFeedbackSources();
+    _scheduleInterviewReportIfNeeded();
   }
 
   @override
@@ -135,6 +140,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     _syncRecordingTimer();
     _syncSpeechFeedbackSources();
     setState(() {});
+    _scheduleInterviewReportIfNeeded();
     if (shouldFollowConversation) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_conversationScrollController.hasClients) {
@@ -236,6 +242,38 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     }
   }
 
+  void _scheduleInterviewReportIfNeeded() {
+    final controller = widget.agentController;
+    final sessionId = controller.practiceSessionId;
+    if (widget.interviewReportController == null ||
+        sessionId == null ||
+        controller.recordingState != PracticeRecordingState.completed ||
+        !isInterviewPracticeScenario(
+          controller.practiceScenarioType,
+          controller.practiceScenarioModel,
+        ) ||
+        _interviewReportRouteActive ||
+        _scheduledInterviewReportSessionId == sessionId ||
+        _autoOpenedInterviewReportSessionId == sessionId) {
+      return;
+    }
+    _scheduledInterviewReportSessionId = sessionId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          widget.agentController.practiceSessionId != sessionId ||
+          widget.agentController.recordingState !=
+              PracticeRecordingState.completed) {
+        if (_scheduledInterviewReportSessionId == sessionId) {
+          _scheduledInterviewReportSessionId = null;
+        }
+        return;
+      }
+      _scheduledInterviewReportSessionId = null;
+      _autoOpenedInterviewReportSessionId = sessionId;
+      unawaited(_openInterviewReport());
+    });
+  }
+
   Future<void> _openInterviewReport() async {
     final reportController = widget.interviewReportController;
     final agentController = widget.agentController;
@@ -243,28 +281,34 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     if (reportController == null ||
         sessionId == null ||
         agentController.recordingState != PracticeRecordingState.completed ||
+        _interviewReportRouteActive ||
         !isInterviewPracticeScenario(
           agentController.practiceScenarioType,
           agentController.practiceScenarioModel,
         )) {
       return;
     }
-    final result = await Navigator.of(context).push<Object?>(
-      MaterialPageRoute<Object?>(
-        builder: (_) => InterviewReportPage(
-          practiceSessionId: sessionId,
-          controller: reportController,
-          title: '${widget.agentController.scene?.title ?? '面试'} · 复盘',
-          speechFeedbackController: widget.speechFeedbackController,
-          speechFeedbackSourceKeys: List<String>.unmodifiable(
-            _feedbackSources.keys,
+    _interviewReportRouteActive = true;
+    try {
+      final result = await Navigator.of(context).push<Object?>(
+        MaterialPageRoute<Object?>(
+          builder: (_) => InterviewReportPage(
+            practiceSessionId: sessionId,
+            controller: reportController,
+            title: '${widget.agentController.scene?.title ?? '面试'} · 复盘',
+            speechFeedbackController: widget.speechFeedbackController,
+            speechFeedbackSourceKeys: List<String>.unmodifiable(
+              _feedbackSources.keys,
+            ),
+            onContinueWithAgent: widget.onContinueWithAgent,
           ),
-          onContinueWithAgent: widget.onContinueWithAgent,
         ),
-      ),
-    );
-    if (mounted && result == CompletedPracticeRouteResult.continueWithAgent) {
-      Navigator.of(context).pop(result);
+      );
+      if (mounted && result == CompletedPracticeRouteResult.continueWithAgent) {
+        Navigator.of(context).pop(result);
+      }
+    } finally {
+      _interviewReportRouteActive = false;
     }
   }
 
@@ -979,8 +1023,10 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
           PracticeRecordingState.awaitingConfirmation => _TranscriptComposer(
             controller: widget.controller,
           ),
-          PracticeRecordingState.submitting => const _ComposerProgress(
-            label: '回答已发送，Agent 正在回复…',
+          PracticeRecordingState.submitting => _ComposerProgress(
+            label: widget.controller.isFinalInterviewSubmission
+                ? '正在提交最后一轮回答，完成后将生成报告…'
+                : '回答已发送，Agent 正在回复…',
           ),
           PracticeRecordingState.reviewFailed => _ComposerAction(
             label: '本轮录音和转写已保留，复盘结果暂未同步。无需重新录音。',

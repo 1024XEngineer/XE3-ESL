@@ -215,6 +215,16 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
+  bool get isFinalInterviewSubmission =>
+      _recordingState == PracticeRecordingState.submitting &&
+      _speechFeedbackRetry == null &&
+      !_sessionCompleted &&
+      _turnLimit > 0 &&
+      _completedTurns + 1 == _turnLimit &&
+      isInterviewPracticeScenario(
+        _practiceScenarioType,
+        _practiceScenarioModel,
+      );
   bool get isBusy =>
       _busy ||
       _practiceRequestInFlight ||
@@ -2800,6 +2810,15 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         _recordingState != PracticeRecordingState.awaitingConfirmation) {
       return;
     }
+    final isFinalInterviewTurn =
+        _turnLimit > 0 &&
+        _completedTurns + 1 == _turnLimit &&
+        isInterviewPracticeScenario(
+          _practiceScenarioType,
+          _practiceScenarioModel,
+        );
+    final completedTurns = _completedTurns;
+    final turnLimit = _turnLimit;
     final fence = _captureOperationFence(
       threadId: _threadId,
       practiceGeneration: _practiceGeneration,
@@ -2828,8 +2847,22 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _applyPracticeConfirmation(confirmation);
     } catch (error) {
       if (_isOperationCurrent(fence)) {
-        _recordingState = PracticeRecordingState.awaitingConfirmation;
-        _errorMessage = _confirmationFailureMessage(error);
+        final reconciled = isFinalInterviewTurn && _canRetry(error)
+            ? await _reconcileFinalInterviewSubmission(
+                practice: practice,
+                fence: fence,
+                expectedSessionId: sessionId,
+                expectedQuestionId: question.id,
+                expectedCandidateId: candidate.id,
+                expectedAnswer: candidate.text,
+                previousCompletedTurns: completedTurns,
+                expectedTurnLimit: turnLimit,
+              )
+            : false;
+        if (!reconciled && _isOperationCurrent(fence)) {
+          _recordingState = PracticeRecordingState.awaitingConfirmation;
+          _errorMessage = _confirmationFailureMessage(error);
+        }
       }
     }
     if (_isCurrent(fence.epoch)) {
@@ -2917,6 +2950,15 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _activeConfirmationId = _newClientId('text-turn');
       _activeTextAnswer = text;
     }
+    final isFinalInterviewTurn =
+        _turnLimit > 0 &&
+        _completedTurns + 1 == _turnLimit &&
+        isInterviewPracticeScenario(
+          _practiceScenarioType,
+          _practiceScenarioModel,
+        );
+    final completedTurns = _completedTurns;
+    final turnLimit = _turnLimit;
     final fence = _captureOperationFence(
       threadId: _threadId,
       practiceGeneration: generation,
@@ -2951,8 +2993,24 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       return true;
     } catch (error) {
       if (_isOperationCurrent(fence)) {
-        _recordingState = PracticeRecordingState.idle;
-        _errorMessage = _confirmationFailureMessage(error);
+        final reconciled = isFinalInterviewTurn && _canRetry(error)
+            ? await _reconcileFinalInterviewSubmission(
+                practice: practice,
+                fence: fence,
+                expectedSessionId: sessionId,
+                expectedQuestionId: question.id,
+                expectedAnswer: text,
+                previousCompletedTurns: completedTurns,
+                expectedTurnLimit: turnLimit,
+              )
+            : false;
+        if (reconciled) {
+          return true;
+        }
+        if (_isOperationCurrent(fence)) {
+          _recordingState = PracticeRecordingState.idle;
+          _errorMessage = _confirmationFailureMessage(error);
+        }
       }
       return false;
     } finally {
@@ -3011,6 +3069,55 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
           : null;
     } else {
       _recordingState = PracticeRecordingState.idle;
+    }
+  }
+
+  Future<bool> _reconcileFinalInterviewSubmission({
+    required PracticeClient practice,
+    required _AgentOperationFence fence,
+    required String expectedSessionId,
+    required String expectedQuestionId,
+    required String expectedAnswer,
+    required int previousCompletedTurns,
+    required int expectedTurnLimit,
+    String? expectedCandidateId,
+  }) async {
+    final threadId = _threadId;
+    if (threadId == null) {
+      return false;
+    }
+    try {
+      final snapshot = await practice.restorePractice(
+        threadId: threadId,
+        activeMatter: _activeMatter,
+      );
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      final currentTurn = snapshot?.currentTurn;
+      if (snapshot == null ||
+          snapshot.sessionId != expectedSessionId ||
+          snapshot.scenarioType != _practiceScenarioType ||
+          snapshot.scenarioModel != _practiceScenarioModel ||
+          !snapshot.sessionCompleted ||
+          snapshot.completedTurns != previousCompletedTurns + 1 ||
+          snapshot.completedTurns != expectedTurnLimit ||
+          snapshot.turnLimit != expectedTurnLimit ||
+          currentTurn == null ||
+          currentTurn.sessionId != expectedSessionId ||
+          currentTurn.questionId != expectedQuestionId ||
+          currentTurn.answerText != expectedAnswer ||
+          currentTurn.effectiveTurns != expectedTurnLimit ||
+          !currentTurn.sessionCompleted ||
+          (expectedCandidateId != null &&
+              currentTurn.candidateId != expectedCandidateId)) {
+        return false;
+      }
+      _applyPracticeSnapshot(snapshot, preserveKnownRecordings: true);
+      _errorMessage = null;
+      return true;
+    } on Object {
+      return false;
     }
   }
 
