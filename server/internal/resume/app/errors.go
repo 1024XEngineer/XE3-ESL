@@ -50,3 +50,13 @@ func NotImplementedError() error {
 	// TODO(issue-320): 各接口完成真实实现后删除该占位错误。
 	return apperror.New(apperror.Unimplemented, "resume_not_implemented", "Resume operation is not implemented yet.")
 }
+
+// RepositoryError 返回不会泄露数据库细节的内部持久化错误。
+func RepositoryError(cause error) error {
+	return apperror.New(
+		apperror.Internal,
+		"internal_error",
+		"An internal error occurred.",
+		apperror.WithCause(cause),
+	)
+}
