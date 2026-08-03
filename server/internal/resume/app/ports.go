@@ -38,7 +38,7 @@ type Repository interface {
 	// CompleteParse 原子保存解析修订并完成解析任务。
 	CompleteParse(context.Context, resume.Resume, resume.Revision) error
 	// FailParse 保存解析失败状态和稳定失败码。
-	FailParse(context.Context, string, string) error
+	FailParse(context.Context, resume.Resume, string) error
 }
 
 // FileStorage 定义原始 PDF 文件的保存、读取、授权访问和删除能力。

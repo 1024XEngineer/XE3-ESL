@@ -34,4 +34,5 @@ import "embed"
 //go:embed 000046_agent_thread_sidebar_deletion.*.sql
 //go:embed 000047_practice_follow_up_turns.*.sql
 //go:embed 000048_follow_up_confirmed_turn_shape.*.sql
+//go:embed 000049_resumes.*.sql
 var Files embed.FS
