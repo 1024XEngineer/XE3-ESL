@@ -43,6 +43,8 @@ tags:
     description: Versioned Scene and Core 4D evaluation facts, gates, evidence, and revisions.
   - name: Avatar
     description: Short-lived avatar rendering credentials for owned interactive practice sessions.
+  - name: Resume
+    description: Actor-owned PDF resumes, structured content revisions, and parsing lifecycle.
 paths:
   /health:
     get:
@@ -77,6 +79,18 @@ paths:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me
   /v1/me/profile:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me~1profile
+  /v1/resumes:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes
+  /v1/resumes/{resume_id}:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}
+  /v1/resumes/{resume_id}/content:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1content
+  /v1/resumes/{resume_id}/file:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1file
+  /v1/resumes/{resume_id}/content-url:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1content-url
+  /v1/resumes/{resume_id}/parse-retries:
+    $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1parse-retries
   /v1/scenario-definitions:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions
   /v1/ielts-speaking/question-bank:
@@ -256,6 +270,16 @@ components:
       $ref: ./modules/identity.yaml#/components/schemas/UserProfile
     UpdateUserProfileRequest:
       $ref: ./modules/identity.yaml#/components/schemas/UpdateUserProfileRequest
+    Resume:
+      $ref: ./modules/resume.yaml#/components/schemas/Resume
+    ResumeList:
+      $ref: ./modules/resume.yaml#/components/schemas/ResumeList
+    ResumeDetail:
+      $ref: ./modules/resume.yaml#/components/schemas/ResumeDetail
+    ResumeRevision:
+      $ref: ./modules/resume.yaml#/components/schemas/ResumeRevision
+    ResumeContent:
+      $ref: ./modules/resume.yaml#/components/schemas/ResumeContent
     RegisterRequest:
       $ref: ./modules/identity.yaml#/components/schemas/RegisterRequest
     LoginRequest:
