@@ -50,4 +50,5 @@ import "embed"
 //go:embed 000062_agent_memory_extraction_context_barrier.*.sql
 //go:embed 000063_speech_feedback_acoustic_provider_boundary.*.sql
 //go:embed 000064_evaluation_ielts_speaking_prompt_v2.*.sql
+//go:embed 000065_evaluation_ielts_speaking_prompt_v3.*.sql
 var Files embed.FS

@@ -66,8 +66,8 @@ class _IeltsSpeakingReportPanelState extends State<IeltsSpeakingReportPanel> {
         report: envelope.report!,
       ),
       IeltsSpeakingReportEvaluationStatus.failed => _ReportFailure(
-        message: '报告生成遇到技术问题，这不代表你的 IELTS 口语表现较差。',
-        retryable: envelope.stableFailure!.retryable,
+        message: '报告暂未生成，这不代表你的 IELTS 口语表现较差。',
+        retryable: controller.canRetry,
         onRetry: controller.retry,
       ),
     };
@@ -151,7 +151,7 @@ class _ReportFailure extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              retryable ? '可以稍后重新查询。' : '请保留本次模考，稍后再试。',
+              retryable ? '本次模考已保留，可以重新生成报告。' : '本次模考已保留，可稍后在复盘中查看。',
               textAlign: TextAlign.center,
               style: SpeakUpDesign.meta,
             ),
@@ -160,7 +160,7 @@ class _ReportFailure extends StatelessWidget {
               OutlinedButton(
                 key: const Key('ielts-speaking-report-retry'),
                 onPressed: onRetry,
-                child: const Text('重新查询'),
+                child: const Text('重新生成报告'),
               ),
             ],
           ],

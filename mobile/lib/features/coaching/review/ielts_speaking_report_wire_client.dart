@@ -10,7 +10,10 @@ import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_decoder.dart';
 
-final class WireIeltsSpeakingReportClient implements IeltsSpeakingReportClient {
+final class WireIeltsSpeakingReportClient
+    implements
+        IeltsSpeakingReportClient,
+        IeltsSpeakingReportRegenerationClient {
   factory WireIeltsSpeakingReportClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -33,6 +36,38 @@ final class WireIeltsSpeakingReportClient implements IeltsSpeakingReportClient {
       ),
       requestTimeout,
     );
+  }
+
+  @override
+  Future<void> regenerateReport(IeltsSpeakingReportEnvelope envelope) async {
+    if (envelope.evaluationStatus !=
+            IeltsSpeakingReportEvaluationStatus.failed ||
+        !_validEvaluationId(envelope.evaluationId)) {
+      throw const IeltsSpeakingReportException(
+        kind: IeltsSpeakingReportFailureKind.invalidRequest,
+      );
+    }
+    final generation = _accountGeneration;
+    final uri = _baseUri.replace(
+      path:
+          '/v1/evaluations/${Uri.encodeComponent(envelope.evaluationId)}/re-evaluate',
+      query: null,
+      fragment: null,
+    );
+    final response = await _send(
+      uri,
+      method: 'POST',
+      body: jsonEncode(const <String, Object>{
+        'channels': <String>['SCENE'],
+        'scene_strategy_ref': 'ielts-speaking-full-mock-shadow/v1',
+        'pipeline_version': 'evaluation-pipeline-shadow/v1',
+      }),
+    );
+    _requireCurrent(generation);
+    if (response.statusCode != HttpStatus.ok &&
+        response.statusCode != HttpStatus.accepted) {
+      throw _unexpectedStatus(response.statusCode);
+    }
   }
 
   WireIeltsSpeakingReportClient._(
@@ -98,17 +133,24 @@ final class WireIeltsSpeakingReportClient implements IeltsSpeakingReportClient {
     }
   }
 
-  Future<IdentityHttpResponse> _send(Uri uri) async {
+  Future<IdentityHttpResponse> _send(
+    Uri uri, {
+    String method = 'GET',
+    String? body,
+  }) async {
     _trustedOrigin.validateResourceUri(uri);
     validateNoSessionCredentialInUri(uri);
     try {
       return await _transport
           .send(
-            method: 'GET',
+            method: method,
             uri: uri,
-            headers: const <String, String>{
+            headers: <String, String>{
               HttpHeaders.acceptHeader: 'application/json',
+              if (body != null)
+                HttpHeaders.contentTypeHeader: 'application/json',
             },
+            body: body,
           )
           .timeout(_requestTimeout);
     } on AuthSessionSupersededException {
@@ -176,6 +218,10 @@ bool _validPracticeSessionId(String value) =>
     value.length <= 128 &&
     value == value.trim() &&
     RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]*$').hasMatch(value);
+
+bool _validEvaluationId(String value) => RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+).hasMatch(value);
 
 final class _IoIeltsSpeakingReportHttpTransport
     implements IdentityHttpTransport {

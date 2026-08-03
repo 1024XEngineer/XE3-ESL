@@ -211,6 +211,29 @@ func TestIELTSSpeakingShadowRejectsCrossTurnAnchor(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingShadowIgnoresFCDescriptorWithoutAcoustics(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := validIELTSProviderPayload(prepared.input)
+	payload.Criteria[0].RubricDescriptor = "FC_PRACTICE_BAND_7"
+	result, err := normalizeIELTSSpeakingProviderResult(
+		prepared,
+		ieltsProviderResult(t, payload),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Criteria[0].EstimatedBand != nil ||
+		result.Criteria[0].BandDescriptor != "" {
+		t.Fatalf("FC criterion = %#v", result.Criteria[0])
+	}
+}
+
 func TestIELTSSpeakingShadowRejectsCompleteResultDowngrades(
 	t *testing.T,
 ) {

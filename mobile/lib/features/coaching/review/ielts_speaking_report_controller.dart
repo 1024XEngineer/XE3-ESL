@@ -6,7 +6,7 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
   IeltsSpeakingReportController({
     required this.client,
     this.pollInterval = const Duration(seconds: 2),
-    this.maximumPollAttempts = 8,
+    this.maximumPollAttempts = 30,
   }) {
     if (pollInterval < Duration.zero) {
       throw ArgumentError.value(pollInterval, 'pollInterval');
@@ -68,7 +68,8 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
           _canRetry =
               envelope.evaluationStatus ==
                   IeltsSpeakingReportEvaluationStatus.failed &&
-              (envelope.stableFailure?.retryable ?? false);
+              ((envelope.stableFailure?.retryable ?? false) ||
+                  client is IeltsSpeakingReportRegenerationClient);
           notifyListeners();
           return;
         }
@@ -113,9 +114,40 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
     }
   }
 
-  Future<void> retry() {
+  Future<void> retry() async {
     final sessionId = _practiceSessionId;
-    return sessionId == null ? Future<void>.value() : load(sessionId);
+    if (sessionId == null) {
+      return;
+    }
+    final retryGeneration = _requestGeneration;
+    final envelope = _envelope;
+    final regenerationClient = client is IeltsSpeakingReportRegenerationClient
+        ? client as IeltsSpeakingReportRegenerationClient
+        : null;
+    if (envelope?.evaluationStatus ==
+            IeltsSpeakingReportEvaluationStatus.failed &&
+        regenerationClient != null) {
+      _loading = true;
+      _canRetry = false;
+      notifyListeners();
+      try {
+        await regenerationClient.regenerateReport(envelope!);
+      } on IeltsSpeakingReportException catch (error) {
+        if (!_isCurrent(retryGeneration, sessionId)) {
+          return;
+        }
+        _loading = false;
+        _failureKind = error.kind;
+        _canRetry = error.retryable;
+        _errorMessage = _messageFor(error);
+        notifyListeners();
+        return;
+      }
+      if (!_isCurrent(retryGeneration, sessionId)) {
+        return;
+      }
+    }
+    await load(sessionId);
   }
 
   void cancel(String practiceSessionId) {

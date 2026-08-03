@@ -159,7 +159,7 @@ void main() {
   testWidgets(
     'Part 2 reads instructions and Cue Card before starting 60 seconds',
     (tester) async {
-      final now = DateTime.utc(2026, 8, 3, 4, 30);
+      var now = DateTime.utc(2026, 8, 3, 4, 30);
       final speaker = _ControlledExaminerSpeaker();
       final practice = _IeltsPracticeClient(initialCompleted: 8);
       final controller = AgentController(
@@ -184,7 +184,7 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.text('Continue to Part 2'));
+      await tester.tap(find.text('进入 Part 2'));
       await tester.pump();
       expect(speaker.spoken.single, contains('one minute to prepare'));
       expect(find.text('Examiner is speaking…'), findsOneWidget);
@@ -220,6 +220,15 @@ void main() {
         store.value?.preparationDeadline,
         now.add(const Duration(seconds: 60)),
       );
+
+      now = now.add(const Duration(seconds: 61));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(store.value?.phase, IeltsMockPhase.part2Speaking);
+      expect(controller.recordingState, PracticeRecordingState.recording);
+      expect(find.textContaining('录音中·'), findsOneWidget);
+      expect(find.byKey(const Key('ielts-mock-finish-speaking')), findsNothing);
     },
   );
 
@@ -252,7 +261,7 @@ void main() {
         find.byKey(const Key('ielts-mock-part-1-complete')),
         findsOneWidget,
       );
-      await tester.tap(find.text('Continue to Part 2'));
+      await tester.tap(find.text('进入 Part 2'));
       await tester.pump();
       expect(find.byKey(const Key('ielts-mock-part-2-intro')), findsOneWidget);
       expect(find.byKey(const Key('ielts-mock-cue-card')), findsNothing);
@@ -289,14 +298,13 @@ void main() {
         find.byKey(const Key('ielts-part2-recording-status')),
         findsOneWidget,
       );
-      expect(find.textContaining('Listening ·'), findsOneWidget);
+      expect(find.textContaining('录音中·'), findsOneWidget);
       expect(
         find.text('online course, weekly practice, useful at work'),
         findsOneWidget,
       );
 
-      await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
-      await tester.pump();
+      await tester.pump(const Duration(seconds: 120));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 220));
 
@@ -308,12 +316,12 @@ void main() {
       );
       expect(
         find.byKey(const Key('ielts-part2-answer-feedback')),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(find.text('Answer 9'), findsOneWidget);
+      expect(find.text('Answer 9'), findsNothing);
       expect(store.value?.notes, contains('weekly practice'));
 
-      await tester.tap(find.text('Continue to Part 3'));
+      await tester.tap(find.text('进入 Part 3'));
       await tester.pump();
       expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
       expect(find.text('Part 3 · Discussion'), findsOneWidget);
@@ -348,13 +356,13 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.text('Continue to Part 2'));
+      await tester.tap(find.text('进入 Part 2'));
       await tester.pump();
       await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
       await tester.pump();
       await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
       await tester.pump();
-      await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+      await controller.finishRecordingGesture();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 220));
 
@@ -363,7 +371,7 @@ void main() {
         find.byKey(const Key('ielts-mock-part-2-speaking')),
         findsOneWidget,
       );
-      expect(find.text('Start Speaking →'), findsOneWidget);
+      expect(find.text('重新录音 →'), findsOneWidget);
       expect(controller.hasPendingPracticeAudio, isFalse);
       expect(find.text('Delete'), findsNothing);
       expect(find.text('Retry transcript'), findsNothing);
@@ -371,9 +379,9 @@ void main() {
       await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
       await tester.pump();
       expect(controller.recordingState, PracticeRecordingState.recording);
-      expect(find.textContaining('Listening ·'), findsOneWidget);
+      expect(find.textContaining('录音中·'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+      await controller.finishRecordingGesture();
       await tester.pump();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 220));
@@ -383,7 +391,7 @@ void main() {
         find.byKey(const Key('ielts-mock-part-2-complete')),
         findsOneWidget,
       );
-      await tester.tap(find.text('Continue to Part 3'));
+      await tester.tap(find.text('进入 Part 3'));
       await tester.pump();
       expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
     },
@@ -461,7 +469,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+    await controller.finishRecordingGesture();
     await tester.pump();
     await tester.pump();
 
@@ -470,7 +478,7 @@ void main() {
     expect(controller.completedTurns, 8);
     expect(find.text('Delete'), findsNothing);
     expect(find.text('Retry transcript'), findsNothing);
-    expect(find.text('Start Speaking →'), findsOneWidget);
+    expect(find.text('重新录音 →'), findsOneWidget);
   });
 
   testWidgets('Part 1 clears failed transcription without a recovery dock', (
@@ -613,7 +621,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.byKey(const Key('ielts-mock-complete')), findsOneWidget);
-    expect(find.text('Mock Test Complete'), findsOneWidget);
+    expect(find.text('模考已完成'), findsOneWidget);
     expect(find.textContaining('OVERALL BAND'), findsNothing);
     expect(find.byKey(const Key('practice-page')), findsNothing);
   });
@@ -1038,7 +1046,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.text('Continue to Part 3'));
+    await tester.tap(find.text('进入 Part 3'));
     await tester.pump();
     expect(find.text('0/1'), findsOneWidget);
 
@@ -1051,7 +1059,7 @@ void main() {
 
     expect(controller.completedTurns, 10);
     expect(find.byKey(const Key('ielts-mock-complete')), findsOneWidget);
-    expect(find.text('1 answers'), findsOneWidget);
+    expect(find.text('1 题'), findsOneWidget);
   });
 
   testWidgets('section Scene models open the matching IELTS flow', (

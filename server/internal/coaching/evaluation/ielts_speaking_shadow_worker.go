@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -247,6 +248,13 @@ func (worker *IELTSSpeakingShadowWorker) recordFailure(
 	claim IELTSSpeakingShadowClaim,
 	cause error,
 ) (IELTSSpeakingShadowRuntimeStatus, error) {
+	if errors.Is(cause, ErrInvalidIELTSSpeakingShadow) {
+		slog.Warn(
+			"IELTS Speaking provider response rejected",
+			"validation_error",
+			cause,
+		)
+	}
 	status, err := worker.repository.FailIELTSSpeakingShadow(
 		ctx,
 		claim,
@@ -282,7 +290,7 @@ func classifyIELTSSpeakingShadowFailure(
 		errors.Is(cause, ErrInvalidRequest):
 		return IELTSSpeakingShadowFailure{
 			Code:      "provider_invalid_response",
-			Retryable: false,
+			Retryable: errors.Is(cause, ErrInvalidIELTSSpeakingShadow),
 		}
 	case errors.Is(cause, context.Canceled):
 		return IELTSSpeakingShadowFailure{

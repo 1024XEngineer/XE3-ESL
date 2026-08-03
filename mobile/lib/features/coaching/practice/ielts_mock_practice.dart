@@ -226,6 +226,12 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     _syncTicker();
     _handleExpiredTimer();
+    if (restored.phase == IeltsMockPhase.part2Speaking &&
+        widget.controller.recordingState == PracticeRecordingState.idle &&
+        !widget.controller.hasPendingPracticeAudio &&
+        widget.controller.errorMessage == null) {
+      unawaited(_startPart2Speaking(restart: true));
+    }
     _recordCompletedParts();
     _syncReport();
     unawaited(_resumePart2Narration(restored.phase));
@@ -354,6 +360,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     _confirmPendingTranscript();
+    if (_progress?.phase == IeltsMockPhase.part2Speaking &&
+        widget.controller.recordingState == PracticeRecordingState.idle &&
+        widget.controller.hasPendingPracticeAudio &&
+        widget.controller.errorMessage != null &&
+        !_finishingPart2Recording) {
+      unawaited(_discardFailedPart2Audio());
+    }
 
     final progress = _progress;
     if (progress != null) {
@@ -594,9 +607,14 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     if (progress.phase == IeltsMockPhase.part2Speaking &&
-        _secondsUntil(progress.speakingDeadline) <= 0 &&
-        !widget.controller.hasPendingPracticeAudio) {
-      unawaited(_finishPart2Speaking());
+        _secondsUntil(progress.speakingDeadline) <= 0) {
+      if (widget.controller.recordingState == PracticeRecordingState.idle &&
+          !widget.controller.hasPendingPracticeAudio &&
+          widget.controller.errorMessage == null) {
+        unawaited(_startPart2Speaking(restart: true));
+      } else if (!widget.controller.hasPendingPracticeAudio) {
+        unawaited(_finishPart2Speaking());
+      }
     }
   }
 
@@ -713,8 +731,18 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final progress = _progress;
     if (progress == null ||
         _startingPart2Recording ||
-        (!restart && progress.phase == IeltsMockPhase.part2Speaking)) {
+        (progress.phase == IeltsMockPhase.part2Speaking &&
+            widget.controller.recordingState != PracticeRecordingState.idle)) {
       return;
+    }
+    if (widget.controller.hasPendingPracticeAudio) {
+      if (!restart) {
+        return;
+      }
+      await widget.controller.discardPendingPracticeAudio();
+      if (widget.controller.hasPendingPracticeAudio) {
+        return;
+      }
     }
     _startingPart2Recording = true;
     _part2RetryNeeded = false;
@@ -725,20 +753,17 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       speakingStartedAt: now,
       speakingDeadline: now.add(const Duration(seconds: 120)),
     );
-    await _setProgress(speaking);
+    if (!_sameProgress(progress, speaking)) {
+      await _setProgress(speaking);
+    }
     await widget.controller.startRecording(limit: const Duration(seconds: 120));
     if (!mounted) {
       return;
     }
     _startingPart2Recording = false;
     if (widget.controller.recordingState == PracticeRecordingState.idle) {
-      await _setProgress(
-        speaking.copyWith(
-          phase: IeltsMockPhase.part2Intro,
-          clearSpeakingStartedAt: true,
-          clearSpeakingDeadline: true,
-        ),
-      );
+      _part2RetryNeeded = true;
+      setState(() {});
     } else {
       setState(() {});
     }
@@ -756,6 +781,21 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     await _finishPart2Speaking();
+  }
+
+  Future<void> _discardFailedPart2Audio() async {
+    if (_finishingPart2Recording) {
+      return;
+    }
+    _finishingPart2Recording = true;
+    _part2RetryNeeded = true;
+    await widget.controller.discardPendingPracticeAudio();
+    if (widget.controller.hasPendingPracticeAudio) {
+      await widget.controller.discardPendingPracticeAudio();
+    }
+    if (mounted) {
+      setState(() => _finishingPart2Recording = false);
+    }
   }
 
   Future<void> _finishPart2Speaking() async {
@@ -1066,6 +1106,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       IeltsMockPhase.part2Preparation ||
       IeltsMockPhase.part2Speaking => 'IELTS · Part 2',
       IeltsMockPhase.part3Intro || IeltsMockPhase.part3 => 'IELTS · Part 3',
+      IeltsMockPhase.complete => 'IELTS 口语报告',
       _ => 'IELTS Speaking',
     };
     return AppBar(
@@ -1074,7 +1115,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       centerTitle: true,
       leading: IconButton(
         key: const Key('ielts-mock-exit'),
-        tooltip: 'Exit mock test',
+        tooltip: '退出模考',
         onPressed: _exitInFlight ? null : _requestExit,
         icon: const Icon(Icons.chevron_left_rounded),
       ),
@@ -1100,9 +1141,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       ),
       IeltsMockPhase.part1Complete => _CompletionStep(
         key: const Key('ielts-mock-part-1-complete'),
-        title: 'Part 1 Complete',
-        message: "Well done! You've finished Part 1. Next up: Part 2.",
-        buttonLabel: 'Continue to Part 2',
+        title: 'Part 1 已完成',
+        message: '接下来进入 Part 2。你将有 1 分钟准备时间。',
+        buttonLabel: '进入 Part 2',
         onPressed: _beginPart2Intro,
       ),
       IeltsMockPhase.part2Intro => _Part2Intro(
@@ -1135,20 +1176,18 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                 PracticeRecordingState.transcribing ||
             widget.controller.recordingState ==
                 PracticeRecordingState.submitting,
-        errorMessage: widget.controller.errorMessage,
+        errorMessage:
+            widget.controller.errorMessage ??
+            (_part2RetryNeeded ? '录音识别失败，请重新录音。' : null),
         onPressed: _handlePart2SpeakingAction,
       ),
       IeltsMockPhase.part2Complete =>
         _mode == IeltsPracticeMode.fullMock
             ? _CompletionStep(
                 key: const Key('ielts-mock-part-2-complete'),
-                title: 'Part 2 Complete',
-                message: "Well done! You've finished Part 2. Next up: Part 3.",
-                detail: _Part2AnswerFeedback(
-                  controller: widget.controller,
-                  speechFeedbackController: widget.speechFeedbackController,
-                ),
-                buttonLabel: 'Continue to Part 3',
+                title: 'Part 2 已完成',
+                message: '长回答已保存。接下来进入 Part 3 深入讨论。',
+                buttonLabel: '进入 Part 3',
                 onPressed: _beginPart3,
               )
             : _Part2PracticeComplete(
@@ -1734,7 +1773,6 @@ class _CompletionStep extends StatelessWidget {
     required this.message,
     required this.buttonLabel,
     required this.onPressed,
-    this.detail,
     this.buttonKey = const Key('ielts-mock-continue'),
     super.key,
   });
@@ -1744,7 +1782,6 @@ class _CompletionStep extends StatelessWidget {
   final String buttonLabel;
   final VoidCallback onPressed;
   final Key buttonKey;
-  final Widget? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -1777,10 +1814,6 @@ class _CompletionStep extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: SpeakUpDesign.body,
               ),
-              if (detail case final content?) ...[
-                const SizedBox(height: 20),
-                content,
-              ],
               const SizedBox(height: 36),
               FilledButton(
                 key: buttonKey,
@@ -1877,7 +1910,7 @@ class _Part2PracticeComplete extends StatelessWidget {
   Widget build(BuildContext context) {
     return _SectionActionLayout(
       key: const Key('ielts-part2-practice-complete'),
-      title: 'Part 2 Complete',
+      title: 'Part 2 已完成',
       message: '题卡陈述已完成。你可以继续练同主题 Part 3，或切换下一张题卡。',
       detail: detail,
       primaryLabel: '继续对应 Part 3',
@@ -1912,7 +1945,7 @@ class _SectionPracticeComplete extends StatelessWidget {
     };
     return _SectionActionLayout(
       key: Key('ielts-section-practice-complete-${mode.name}'),
-      title: '$part Complete',
+      title: '$part 已完成',
       message: '本套练习已完成，进度已保存。',
       primaryLabel: '下一套未练习',
       onPrimary: onNext,
@@ -2166,7 +2199,7 @@ class _Part2CueCardReading extends StatelessWidget {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
                 SizedBox(width: 10),
-                Text('Examiner is reading the Cue Card…'),
+                Text('考官正在朗读 Cue Card…'),
               ],
             ),
           if (errorMessage != null) ...[
@@ -2180,7 +2213,7 @@ class _Part2CueCardReading extends StatelessWidget {
             FilledButton(
               key: const Key('ielts-part2-retry-narration'),
               onPressed: narrationBusy ? null : onRetry,
-              child: const Text('Replay Cue Card'),
+              child: const Text('重新播放 Cue Card'),
             ),
           ],
         ],
@@ -2218,7 +2251,7 @@ class _Part2Preparation extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Preparation time',
+            '准备时间',
             textAlign: TextAlign.center,
             style: SpeakUpDesign.body,
           ),
@@ -2232,7 +2265,7 @@ class _Part2Preparation extends StatelessWidget {
             maxLines: 4,
             maxLength: 4000,
             decoration: const InputDecoration(
-              hintText: 'Make notes here…',
+              hintText: '在这里记录要点…',
               counterText: '',
               alignLabelWithHint: true,
             ),
@@ -2246,7 +2279,7 @@ class _Part2Preparation extends StatelessWidget {
               backgroundColor: SpeakUpDesign.ink,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Start Speaking →'),
+            child: const Text('提前开始作答 →'),
           ),
         ],
       ),
@@ -2303,7 +2336,7 @@ class _Part2Speaking extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
-          const Text('Speaking time — talk now!', style: SpeakUpDesign.body),
+          const Text('作答时间·请开始讲述', style: SpeakUpDesign.body),
           const SizedBox(height: 22),
           Container(
             padding: const EdgeInsets.all(20),
@@ -2312,7 +2345,7 @@ class _Part2Speaking extends StatelessWidget {
               borderRadius: BorderRadius.circular(18),
             ),
             child: Text(
-              notes.isEmpty ? 'No notes were taken during prep.' : notes,
+              notes.isEmpty ? '准备阶段未记录要点。' : notes,
               textAlign: TextAlign.center,
               style: SpeakUpDesign.body,
             ),
@@ -2329,33 +2362,20 @@ class _Part2Speaking extends StatelessWidget {
               style: const TextStyle(color: SpeakUpDesign.error),
             ),
           ],
-          const SizedBox(height: 26),
-          FilledButton(
-            key: const Key('ielts-mock-finish-speaking'),
-            onPressed: busy ? null : onPressed,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(58),
-              backgroundColor: SpeakUpDesign.ink,
-              foregroundColor: Colors.white,
+          if (recordingState == PracticeRecordingState.idle &&
+              errorMessage != null) ...[
+            const SizedBox(height: 26),
+            FilledButton(
+              key: const Key('ielts-mock-finish-speaking'),
+              onPressed: busy ? null : onPressed,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(58),
+                backgroundColor: SpeakUpDesign.ink,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('重新录音 →'),
             ),
-            child: busy
-                ? const SizedBox.square(
-                    dimension: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.4,
-                      color: Colors.white,
-                    ),
-                  )
-                : Text(switch (recordingState) {
-                    PracticeRecordingState.idle =>
-                      errorMessage == null
-                          ? 'Start Speaking →'
-                          : 'Record Again →',
-                    PracticeRecordingState.awaitingConfirmation =>
-                      'Submit Answer →',
-                    _ => 'Finish Speaking →',
-                  }),
-          ),
+          ],
         ],
       ),
     );
@@ -2382,12 +2402,12 @@ class _Part2RecordingStatus extends StatelessWidget {
       '0',
     );
     final label = switch (state) {
-      PracticeRecordingState.starting => 'Opening microphone…',
-      PracticeRecordingState.recording => 'Listening · $minutes:$seconds',
-      PracticeRecordingState.transcribing => 'Transcribing your answer…',
-      PracticeRecordingState.awaitingConfirmation => 'Submitting your answer…',
-      PracticeRecordingState.submitting => 'Preparing the next section…',
-      _ => 'Ready to speak',
+      PracticeRecordingState.starting => '正在打开麦克风…',
+      PracticeRecordingState.recording => '录音中·$minutes:$seconds',
+      PracticeRecordingState.transcribing => '正在识别你的作答…',
+      PracticeRecordingState.awaitingConfirmation => '正在提交作答…',
+      PracticeRecordingState.submitting => '正在进入下一环节…',
+      _ => '等待录音',
     };
     final color = recording ? const Color(0xFF197782) : SpeakUpDesign.secondary;
 
@@ -2478,17 +2498,26 @@ class _MockComplete extends StatelessWidget {
           ),
           const SizedBox(height: 22),
           Text(
-            'Mock Test Complete',
+            '模考已完成',
             textAlign: TextAlign.center,
             style: SpeakUpDesign.pageTitle.copyWith(fontSize: 28),
           ),
           const SizedBox(height: 10),
           const Text(
-            'You have completed all three parts of the IELTS Speaking mock test.',
+            '14 道题已全部作答，正在整理你的口语报告。',
             textAlign: TextAlign.center,
             style: SpeakUpDesign.body,
           ),
+          if (reportController case final controller?) ...[
+            const SizedBox(height: 24),
+            IeltsSpeakingReportPanel(controller: controller),
+          ],
           const SizedBox(height: 28),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text('本次模考', style: SpeakUpDesign.sectionTitle),
+          ),
+          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
@@ -2497,27 +2526,20 @@ class _MockComplete extends StatelessWidget {
             ),
             child: Column(
               children: [
-                const _ResultLine(label: 'Part 1', value: '8 answers'),
+                const _ResultLine(label: 'Part 1', value: '8 题'),
                 const SizedBox(height: 12),
                 _ResultLine(
                   label: 'Part 2',
-                  value: '${progress.part2SpokenSeconds}s talk',
+                  value: '${progress.part2SpokenSeconds} 秒',
                 ),
                 const SizedBox(height: 12),
-                _ResultLine(
-                  label: 'Part 3',
-                  value: '$part3AnswerCount answers',
-                ),
+                _ResultLine(label: 'Part 3', value: '$part3AnswerCount 题'),
                 const Divider(height: 28),
-                _ResultLine(label: 'Total time', value: '$totalMinutes min'),
+                _ResultLine(label: '总用时', value: '$totalMinutes 分钟'),
               ],
             ),
           ),
           const SizedBox(height: 28),
-          if (reportController case final controller?) ...[
-            IeltsSpeakingReportPanel(controller: controller),
-            const SizedBox(height: 28),
-          ],
           FilledButton(
             key: const Key('ielts-mock-back-to-training'),
             onPressed: onPressed,
@@ -2526,7 +2548,7 @@ class _MockComplete extends StatelessWidget {
               backgroundColor: SpeakUpDesign.ink,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Back to Training →'),
+            child: const Text('返回训练'),
           ),
         ],
       ),

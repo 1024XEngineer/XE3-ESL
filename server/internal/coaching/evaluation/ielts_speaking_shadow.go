@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,7 +19,7 @@ import (
 const (
 	IELTSSpeakingShadowSchemaVersion         = "ielts-speaking-full-mock-shadow/v1"
 	IELTSSpeakingShadowProviderSchemaVersion = "ielts-speaking-full-mock-shadow-provider/v2"
-	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v2"
+	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v3"
 	IELTSSpeakingShadowRubricVersion         = "ielts-speaking-public-band-rubric/v2"
 
 	ieltsFullMockSceneID      = "scn_ielts_speaking_full"
@@ -735,8 +736,10 @@ func normalizeIELTSSpeakingProviderResult(
 		!validProviderIdentifier(generated.Provider) ||
 		!validProviderIdentifier(generated.Model) ||
 		!validProviderIdentifier(generated.RequestID) {
-		return IELTSSpeakingShadowResult{},
-			ErrInvalidIELTSSpeakingShadow
+		return IELTSSpeakingShadowResult{}, fmt.Errorf(
+			"provider envelope: %w",
+			ErrInvalidIELTSSpeakingShadow,
+		)
 	}
 	var payload ieltsProviderPayload
 	decoder := json.NewDecoder(bytes.NewReader(generated.Payload))
@@ -746,8 +749,10 @@ func normalizeIELTSSpeakingProviderResult(
 		payload.SchemaVersion !=
 			IELTSSpeakingShadowProviderSchemaVersion ||
 		len(payload.Criteria) != len(prepared.input.AssessableCriteria) {
-		return IELTSSpeakingShadowResult{},
-			ErrInvalidIELTSSpeakingShadow
+		return IELTSSpeakingShadowResult{}, fmt.Errorf(
+			"provider JSON shape: %w",
+			ErrInvalidIELTSSpeakingShadow,
+		)
 	}
 	byCriterion := make(
 		map[IELTSCriterion]ieltsProviderCriterion,
@@ -756,8 +761,10 @@ func normalizeIELTSSpeakingProviderResult(
 	for index, criterion := range payload.Criteria {
 		expected := prepared.input.AssessableCriteria[index]
 		if criterion.CriterionID != expected {
-			return IELTSSpeakingShadowResult{},
-				ErrInvalidIELTSSpeakingShadow
+			return IELTSSpeakingShadowResult{}, fmt.Errorf(
+				"provider criterion order: %w",
+				ErrInvalidIELTSSpeakingShadow,
+			)
 		}
 		if _, duplicate := byCriterion[criterion.CriterionID]; duplicate {
 			return IELTSSpeakingShadowResult{},
@@ -786,7 +793,11 @@ func normalizeIELTSSpeakingProviderResult(
 			byCriterion[criterionID],
 		)
 		if err != nil {
-			return IELTSSpeakingShadowResult{}, err
+			return IELTSSpeakingShadowResult{}, fmt.Errorf(
+				"provider criterion %s: %w",
+				criterionID,
+				err,
+			)
 		}
 		result.Criteria = append(result.Criteria, criterion)
 	}
@@ -818,8 +829,10 @@ func normalizeIELTSProviderCriterion(
 		len(source.Improvements) > ieltsMaximumFindings ||
 		len(source.UpgradeExamples) > ieltsMaximumFindings ||
 		len(source.Strengths)+len(source.Improvements) == 0 {
-		return IELTSSpeakingShadowCriterionResult{},
-			ErrInvalidIELTSSpeakingShadow
+		return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
+			"finding collections: %w",
+			ErrInvalidIELTSSpeakingShadow,
+		)
 	}
 	result := IELTSSpeakingShadowCriterionResult{
 		CriterionID:  source.CriterionID,
@@ -840,10 +853,6 @@ func normalizeIELTSProviderCriterion(
 		IELTSCriterionPR,
 	)
 	if source.CriterionID == IELTSCriterionFC && !fullAcoustics {
-		if source.RubricDescriptor != "" {
-			return IELTSSpeakingShadowCriterionResult{},
-				ErrInvalidIELTSSpeakingShadow
-		}
 		result.ReasonCodes = append(
 			result.ReasonCodes,
 			IELTSReasonFluencyTimingUnavailable,
@@ -854,8 +863,10 @@ func normalizeIELTSProviderCriterion(
 			source.RubricDescriptor,
 		)
 		if !ok {
-			return IELTSSpeakingShadowCriterionResult{},
-				ErrInvalidIELTSSpeakingShadow
+			return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
+				"rubric descriptor: %w",
+				ErrInvalidIELTSSpeakingShadow,
+			)
 		}
 		result.EstimatedBand = &band
 		result.BandDescriptor = descriptor
@@ -875,7 +886,10 @@ func normalizeIELTSProviderCriterion(
 		source.Strengths,
 	)
 	if err != nil {
-		return IELTSSpeakingShadowCriterionResult{}, err
+		return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
+			"strengths: %w",
+			err,
+		)
 	}
 	result.Improvements, err = normalizeIELTSFindings(
 		prepared,
@@ -884,7 +898,10 @@ func normalizeIELTSProviderCriterion(
 		source.Improvements,
 	)
 	if err != nil {
-		return IELTSSpeakingShadowCriterionResult{}, err
+		return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
+			"improvements: %w",
+			err,
+		)
 	}
 	result.UpgradeExamples, err = normalizeIELTSFindings(
 		prepared,
@@ -893,7 +910,10 @@ func normalizeIELTSProviderCriterion(
 		source.UpgradeExamples,
 	)
 	if err != nil {
-		return IELTSSpeakingShadowCriterionResult{}, err
+		return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
+			"upgrade examples: %w",
+			err,
+		)
 	}
 	refSet := make(map[string]struct{})
 	for _, findings := range [][]IELTSSpeakingShadowFinding{
@@ -915,8 +935,10 @@ func normalizeIELTSProviderCriterion(
 	}
 	slices.Sort(result.EvidenceRefIDs)
 	if len(result.EvidenceRefIDs) == 0 {
-		return IELTSSpeakingShadowCriterionResult{},
-			ErrInvalidIELTSSpeakingShadow
+		return IELTSSpeakingShadowCriterionResult{}, fmt.Errorf(
+			"missing evidence: %w",
+			ErrInvalidIELTSSpeakingShadow,
+		)
 	}
 	result.Coverage = ratio(
 		len(result.EvidenceRefIDs),

@@ -398,6 +398,67 @@ func TestPostgresServiceReevaluateSameConfigCreatesRevisionThenReplays(
 	assertEvaluationCounts(t, pool, created.ID, 2, 2)
 }
 
+func TestPostgresServiceReevaluateRetriesFailedSameConfig(
+	t *testing.T,
+) {
+	pool := evaluationDatabase(t)
+	insertEvaluationUsers(t, pool, testOwnerA)
+	service, createRequest := serviceWithEvidenceSnapshot(
+		t,
+		pool,
+		testOwnerA,
+	)
+	created, _, err := service.Create(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		createRequest,
+	)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	request := ReevaluateRequest{
+		Channels:          createRequest.Channels,
+		SceneStrategyRef:  createRequest.SceneStrategyRef,
+		Core4DStrategyRef: createRequest.Core4DStrategyRef,
+		PipelineVersion:   createRequest.PipelineVersion,
+		ClientRequestID:   "failed-retry-first-trace",
+	}
+	failed, replayed, err := service.Reevaluate(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		created.ID,
+		request,
+	)
+	if err != nil || replayed {
+		t.Fatalf("first Reevaluate = %#v, replayed = %v, err = %v", failed, replayed, err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE evaluation_revision_states
+		SET evaluation_status = 'FAILED',
+		    is_final = true,
+		    updated_at = transaction_timestamp(),
+		    completed_at = transaction_timestamp()
+		WHERE revision_id = $1
+	`, failed.Revision.ID); err != nil {
+		t.Fatalf("mark revision failed: %v", err)
+	}
+	request.ClientRequestID = "failed-retry-second-trace"
+	retry, replayed, err := service.Reevaluate(
+		testActorContext(testOwnerA),
+		testActor(testOwnerA),
+		created.ID,
+		request,
+	)
+	if err != nil {
+		t.Fatalf("retry failed Reevaluate: %v", err)
+	}
+	if replayed || retry.Revision.Number != 3 ||
+		retry.Revision.SupersedesRevisionID != failed.Revision.ID {
+		t.Fatalf("retry = %#v, replayed = %v", retry, replayed)
+	}
+	assertEvaluationCounts(t, pool, created.ID, 3, 3)
+}
+
 func TestPostgresConcurrentReevaluationCreatesOneRevision(t *testing.T) {
 	pool := evaluationDatabase(t)
 	insertEvaluationUsers(t, pool, testOwnerA)

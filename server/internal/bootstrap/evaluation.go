@@ -505,16 +505,9 @@ func (application *evaluationHTTPApplication) Reevaluate(
 	evaluationID string,
 	request evaluation.ReevaluateRequest,
 ) (evaluationtransport.EvaluationAccepted, error) {
-	if application == nil || application.evaluations == nil ||
-		!application.configuration.Valid() {
+	if application == nil || application.evaluations == nil {
 		return evaluationtransport.EvaluationAccepted{},
 			evaluation.ErrInvalidRequest
-	}
-	if err := evaluation.ValidateInterviewShadowReevaluateRequest(
-		request,
-	); err != nil {
-		return evaluationtransport.EvaluationAccepted{},
-			interviewShadowStrategyError()
 	}
 	current, err := application.evaluations.Get(
 		ctx,
@@ -524,7 +517,26 @@ func (application *evaluationHTTPApplication) Reevaluate(
 	if err != nil {
 		return evaluationtransport.EvaluationAccepted{}, err
 	}
-	if !interviewShadowEvaluation(current) {
+	var accept func(
+		evaluation.Evaluation,
+		bool,
+	) (evaluationtransport.EvaluationAccepted, error)
+	switch {
+	case interviewShadowEvaluation(current):
+		if !application.configuration.Valid() ||
+			evaluation.ValidateInterviewShadowReevaluateRequest(request) != nil {
+			return evaluationtransport.EvaluationAccepted{},
+				interviewShadowStrategyError()
+		}
+		accept = interviewShadowAccepted
+	case ieltsSpeakingShadowEvaluation(current):
+		if !application.ieltsConfiguration.Valid() ||
+			evaluation.ValidateIELTSSpeakingShadowReevaluateRequest(request) != nil {
+			return evaluationtransport.EvaluationAccepted{},
+				interviewShadowStrategyError()
+		}
+		accept = ieltsSpeakingShadowAccepted
+	default:
 		return evaluationtransport.EvaluationAccepted{},
 			interviewShadowStrategyError()
 	}
@@ -537,7 +549,7 @@ func (application *evaluationHTTPApplication) Reevaluate(
 	if err != nil {
 		return evaluationtransport.EvaluationAccepted{}, err
 	}
-	return interviewShadowAccepted(value, replayed)
+	return accept(value, replayed)
 }
 
 func (application *evaluationHTTPApplication) Get(
@@ -658,6 +670,38 @@ func interviewShadowAccepted(
 	replayed bool,
 ) (evaluationtransport.EvaluationAccepted, error) {
 	if !interviewShadowEvaluation(value) {
+		return evaluationtransport.EvaluationAccepted{},
+			interviewShadowVersionConflictError()
+	}
+	if replayed {
+		switch value.Revision.Status {
+		case evaluation.StatusQueued,
+			evaluation.StatusRunning,
+			evaluation.StatusReady,
+			evaluation.StatusFailed:
+		default:
+			return evaluationtransport.EvaluationAccepted{},
+				interviewShadowVersionConflictError()
+		}
+	} else if value.Revision.Status != evaluation.StatusQueued {
+		return evaluationtransport.EvaluationAccepted{},
+			interviewShadowVersionConflictError()
+	}
+	return evaluationtransport.EvaluationAccepted{
+		EvaluationID:         value.ID,
+		EvaluationRevisionID: value.Revision.ID,
+		Revision:             value.Revision.Number,
+		SupersedesRevisionID: value.Revision.SupersedesRevisionID,
+		EvaluationStatus:     value.Revision.Status,
+		Replayed:             replayed,
+	}, nil
+}
+
+func ieltsSpeakingShadowAccepted(
+	value evaluation.Evaluation,
+	replayed bool,
+) (evaluationtransport.EvaluationAccepted, error) {
+	if !ieltsSpeakingShadowEvaluation(value) {
 		return evaluationtransport.EvaluationAccepted{},
 			interviewShadowVersionConflictError()
 	}

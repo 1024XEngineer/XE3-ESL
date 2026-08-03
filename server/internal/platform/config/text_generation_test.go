@@ -42,11 +42,11 @@ func TestLoadTextGenerationUsesSafeOperationalDefaults(t *testing.T) {
 	if cfg.Timeout != defaultTextTimeout {
 		t.Fatalf("timeout = %s, want %s", cfg.Timeout, defaultTextTimeout)
 	}
-	if cfg.MaxOutputTokens != 2048 {
+	if cfg.MaxOutputTokens != 8192 {
 		t.Fatalf(
 			"max output tokens = %d, want %d",
 			cfg.MaxOutputTokens,
-			2048,
+			8192,
 		)
 	}
 	if cfg.MaxContextChars != defaultAgentContextChars {

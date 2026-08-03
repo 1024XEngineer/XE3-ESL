@@ -112,7 +112,7 @@ func TestIELTSSpeakingShadowWorkerFailsInvalidProviderPayload(
 	}
 	if sweep.Failed != 1 ||
 		repository.failure.Code != "provider_invalid_response" ||
-		repository.failure.Retryable ||
+		!repository.failure.Retryable ||
 		repository.completeCalls != 0 {
 		t.Fatalf(
 			"sweep = %#v, failure = %#v",

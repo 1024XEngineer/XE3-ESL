@@ -26,12 +26,17 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for command_name in curl docker flutter go rsync xcrun; do
+for command_name in curl docker flutter go lsof rsync xcrun; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     print -u2 "缺少命令：$command_name"
     exit 1
   fi
 done
+
+if lsof -nP -iTCP:"$server_port" -sTCP:LISTEN >/dev/null 2>&1; then
+  print -u2 "端口 $server_port 已被占用。请先停止旧后端，或设置 SPEAKUP_DEV_PORT 使用其他端口。"
+  exit 1
+fi
 
 if [[ ! -f "$repo_dir/.env" ]]; then
   print -u2 "缺少 $repo_dir/.env，无法启动真实后端。"

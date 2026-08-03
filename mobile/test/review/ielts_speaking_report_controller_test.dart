@@ -54,6 +54,34 @@ void main() {
     expect(controller.errorMessage, '报告仍在生成，请稍后重试。');
   });
 
+  test(
+    'terminal report can create a replacement revision and poll again',
+    () async {
+      final fixture = ieltsSpeakingReportContractFixture();
+      final client = _RegeneratingClient(
+        decodeIeltsSpeakingReport(fixture['failed']),
+        decodeIeltsSpeakingReport(fixture['ready']),
+      );
+      final controller = IeltsSpeakingReportController(
+        client: client,
+        pollInterval: Duration.zero,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load('session_ielts_report_001');
+      expect(controller.canRetry, isTrue);
+
+      await controller.retry();
+
+      expect(client.regenerationCalls, 1);
+      expect(client.getCalls, 2);
+      expect(
+        controller.envelope?.evaluationStatus,
+        IeltsSpeakingReportEvaluationStatus.ready,
+      );
+    },
+  );
+
   test('leaving the report fences a late response and clears memory', () async {
     final client = _ControlledClient();
     final controller = IeltsSpeakingReportController(client: client);
@@ -119,6 +147,33 @@ final class _ControlledClient implements IeltsSpeakingReportClient {
   Future<IeltsSpeakingReportEnvelope> getReport(String practiceSessionId) {
     started.complete();
     return response.future;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _RegeneratingClient
+    implements
+        IeltsSpeakingReportClient,
+        IeltsSpeakingReportRegenerationClient {
+  _RegeneratingClient(this.failed, this.ready);
+
+  final IeltsSpeakingReportEnvelope failed;
+  final IeltsSpeakingReportEnvelope ready;
+  int getCalls = 0;
+  int regenerationCalls = 0;
+
+  @override
+  Future<IeltsSpeakingReportEnvelope> getReport(
+    String practiceSessionId,
+  ) async {
+    return getCalls++ == 0 ? failed : ready;
+  }
+
+  @override
+  Future<void> regenerateReport(IeltsSpeakingReportEnvelope envelope) async {
+    regenerationCalls++;
   }
 
   @override
