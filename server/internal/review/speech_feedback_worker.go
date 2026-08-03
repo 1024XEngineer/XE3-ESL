@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
@@ -388,18 +387,6 @@ func classifySpeechFeedbackFailure(
 }
 
 func speechFeedbackTextHasEnoughEvidence(text string) bool {
-	words := 0
-	inWord := false
-	for _, character := range strings.TrimSpace(text) {
-		isWord := unicode.IsLetter(character) ||
-			unicode.IsNumber(character)
-		if isWord && !inWord {
-			words++
-			if words >= 2 {
-				return true
-			}
-		}
-		inWord = isWord
-	}
-	return false
+	return classifySpeechFeedbackLanguage(text) ==
+		speechFeedbackLanguageEnglish
 }
