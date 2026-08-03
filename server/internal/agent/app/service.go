@@ -127,6 +127,21 @@ func (s *Service) GetThread(
 	return s.repository.FindThread(ctx, actor.UserID, threadID)
 }
 
+func (s *Service) DeleteThread(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+) error {
+	if !actor.Valid() || !core.ValidUUID(threadID) {
+		return ErrNotFound
+	}
+	repository, ok := s.repository.(core.ThreadDeletionRepository)
+	if !ok {
+		return ErrRepository
+	}
+	return repository.DeleteThread(ctx, actor.UserID, threadID)
+}
+
 func (s *Service) GetFocusedThread(
 	ctx context.Context,
 	actor requestcontext.Actor,

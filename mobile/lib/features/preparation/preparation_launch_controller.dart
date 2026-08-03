@@ -69,6 +69,8 @@ final class PreparationLaunchController extends ChangeNotifier {
   bool get canRetry => _retry != null && !isStarting;
   bool get hasValidBackground => _validBackground(_backgroundSummary.trim());
   bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
+  bool get resumableHasProgress =>
+      workspaceController?.resumableHasProgress ?? false;
   String? get resumablePracticeTitle => workspaceController?.currentTitle;
   String? get resumableMatterId => workspaceController?.currentMatterId;
   String? get resumableScenarioId => workspaceController?.currentScenarioId;

@@ -234,6 +234,25 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+    delete:
+      tags:
+        - Agent
+      summary: Delete one owned Agent Thread
+      description: |
+        Removes only a Thread owned by the trusted Actor from conversation
+        history. Practice-linked records remain available to the training and
+        review flows. Deleting the focused Thread also clears the focused
+        selection.
+      operationId: deleteAgentThread
+      responses:
+        '204':
+          description: The owned Thread was deleted.
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-threads/{thread_id}/active-matter:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'

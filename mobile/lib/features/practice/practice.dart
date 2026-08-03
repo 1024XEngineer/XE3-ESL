@@ -10,6 +10,7 @@ import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
+import 'package:speakup/features/practice/ielts_examiner_speaker.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
 import 'package:speakup/features/review/interview_report_view.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
@@ -32,6 +33,7 @@ class PracticePage extends StatefulWidget {
     this.interviewReportController,
     this.ieltsSpeakingReportController,
     this.speechFeedbackController,
+    this.ieltsExaminerSpeaker,
     super.key,
   });
 
@@ -44,6 +46,7 @@ class PracticePage extends StatefulWidget {
   final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final SpeechFeedbackController? speechFeedbackController;
+  final IeltsExaminerSpeaker? ieltsExaminerSpeaker;
 
   @override
   State<PracticePage> createState() => _PracticePageState();
@@ -622,6 +625,7 @@ class _PracticePageState extends State<PracticePage>
         preparationController: widget.preparationController,
         reportController: widget.ieltsSpeakingReportController,
         speechFeedbackController: widget.speechFeedbackController,
+        examinerSpeaker: widget.ieltsExaminerSpeaker,
       );
     }
     final scene = controller?.scene;

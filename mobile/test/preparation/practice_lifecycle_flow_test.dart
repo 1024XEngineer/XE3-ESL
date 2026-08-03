@@ -150,7 +150,7 @@ void main() {
       await _leavePractice(tester);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsNothing);
-      expect(find.byKey(const Key('practice-continuation')), findsOneWidget);
+      expect(find.byKey(const Key('practice-continuation')), findsNothing);
       expect(agentController.threadId, homeThreadId);
       expect(agentController.hasActivePractice, isFalse);
       expect(workspaceController.hasResumable, isTrue);
@@ -222,7 +222,7 @@ void main() {
       await tester.pump();
       expect(agentController.hasActivePractice, isTrue);
       await _tapVisible(tester, find.byKey(const Key('primary-tab-scenes')));
-      await _tapVisible(tester, find.byKey(const Key('practice-continuation')));
+      await _openScenario(tester, _progressScenario.id);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
       expect(agentController.threadId, firstPracticeThreadId);
@@ -234,7 +234,7 @@ void main() {
       await _leavePractice(tester);
       expect(agentController.threadId, homeThreadId);
 
-      expect(find.byKey(const Key('practice-continuation')), findsOneWidget);
+      expect(find.byKey(const Key('practice-continuation')), findsNothing);
       await _openScenario(tester, _progressScenario.id);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);

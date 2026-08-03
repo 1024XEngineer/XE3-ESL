@@ -12,6 +12,7 @@ import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_client.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/review/turn_feedback_disclosure.dart';
 
 void main() {
   testWidgets(
@@ -154,7 +155,7 @@ void main() {
     },
   );
 
-  testWidgets('IELTS user voice bubble shows the shared feedback entry', (
+  testWidgets('IELTS Part 2 English answer shows the shared feedback entry', (
     tester,
   ) async {
     final feedback = _practiceFeedback();
@@ -170,8 +171,8 @@ void main() {
         _practiceSnapshot(
           feedback.statusUrl,
           scenarioType: 'EXAM',
-          scenarioModel: 'IELTS_SPEAKING_FULL_MOCK',
-          turnLimit: 14,
+          scenarioModel: 'IELTS_SPEAKING_PART_2',
+          turnLimit: 6,
         ),
       ),
     );
@@ -194,6 +195,15 @@ void main() {
 
     expect(client.calls, 1);
     expect(
+      find.byKey(const Key('ielts-part2-practice-complete')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('ielts-part2-answer-feedback')),
+      findsOneWidget,
+    );
+    expect(find.text('I manage the release.'), findsOneWidget);
+    expect(
       feedbackController.projectionFor(
         'practice:practice_session_001:practice_turn_001',
       ),
@@ -208,6 +218,82 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('IELTS keeps a Chinese answer but hides insufficient feedback', (
+    tester,
+  ) async {
+    final feedback = _practiceFeedback(insufficient: true);
+    final client = _Client(feedback);
+    final feedbackController = SpeechFeedbackController(
+      client: client,
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+    );
+    final snapshot = _practiceSnapshot(
+      feedback.statusUrl,
+      scenarioType: 'EXAM',
+      scenarioModel: 'IELTS_SPEAKING_PART_2',
+      turnLimit: 6,
+    );
+    final practiceController = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: _PracticeClient(
+        PracticeSessionSnapshot(
+          sessionId: snapshot.sessionId,
+          threadId: snapshot.threadId,
+          scenarioType: snapshot.scenarioType,
+          scenarioModel: snapshot.scenarioModel,
+          matter: snapshot.matter,
+          completedTurns: snapshot.completedTurns,
+          turnLimit: snapshot.turnLimit,
+          sessionCompleted: snapshot.sessionCompleted,
+          currentQuestion: snapshot.currentQuestion,
+          turnHistory: [
+            PracticeTurnExchange(
+              question: snapshot.turnHistory.single.question,
+              turn: PracticeTurnSnapshot(
+                id: snapshot.turnHistory.single.turn.id,
+                sessionId: snapshot.sessionId,
+                questionId: snapshot.turnHistory.single.question.id,
+                respondentParticipantId: 'participant_user',
+                candidateId: 'candidate_001',
+                answerText: '然后，黄天宇主要来把这个。',
+                evidenceVersion: 1,
+                effectiveTurns: 1,
+                sessionCompleted: false,
+                audioAssetId: 'audio_asset_001',
+                speechFeedbackStatusUrl: feedback.statusUrl,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    addTearDown(feedbackController.dispose);
+    addTearDown(practiceController.dispose);
+    await practiceController.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PracticePage(
+          agentController: practiceController,
+          speechFeedbackController: feedbackController,
+          ieltsMockProgressStore: _MemoryIeltsProgressStore(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('然后，黄天宇主要来把这个。'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-part2-practice-complete')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('证据不足'), findsNothing);
+    expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
   });
 
   testWidgets(
@@ -347,7 +433,7 @@ SpeechFeedback _agentFeedback() {
   );
 }
 
-SpeechFeedback _practiceFeedback() {
+SpeechFeedback _practiceFeedback({bool insufficient = false}) {
   const statusUrl = '/v1/speech-feedback/speech_feedback_practice_001';
   return SpeechFeedback(
     speechFeedbackId: 'speech_feedback_practice_001',
@@ -358,31 +444,37 @@ SpeechFeedback _practiceFeedback() {
       evidenceSnapshotId: 'evidence_snapshot_001',
     ),
     feedbackStatus: SpeechFeedbackStatus.ready,
-    scoreabilityStatus: SpeechFeedbackScoreabilityStatus.provisional,
+    scoreabilityStatus: insufficient
+        ? SpeechFeedbackScoreabilityStatus.insufficient
+        : SpeechFeedbackScoreabilityStatus.provisional,
     gateStatus: SpeechFeedbackGateStatus.feedbackOnly,
-    reasonCodes: const [],
+    reasonCodes: insufficient
+        ? const ['TRANSCRIPT_CONFIDENCE_INSUFFICIENT']
+        : const [],
     schemaVersion: 'speech-feedback/v1',
     strategyRef: 'qianwen-speech-feedback/v1',
     pipelineVersion: 'speech-feedback-pipeline/v1',
     isFinal: false,
-    items: [
-      SpeechFeedbackItem(
-        feedbackItemId: 'item_practice_001',
-        speechFeedbackId: 'speech_feedback_practice_001',
-        kind: SpeechFeedbackItemKind.correction,
-        anchor: const ConversationTranscriptFeedbackAnchor(
-          evidenceRefId: 'evidence_ref_001',
-          turnId: 'practice_turn_001',
-          startUtf8Byte: 0,
-          endUtf8Byte: 8,
-          originalExcerpt: 'I manage',
-        ),
-        explanation: 'Use the past tense for the completed release.',
-        suggestedText: 'I managed',
-        repracticeMode: SpeechFeedbackRepracticeMode.sameQuestion,
-        createdAt: DateTime.utc(2026, 7, 30, 10, 1, 1),
-      ),
-    ],
+    items: insufficient
+        ? const []
+        : [
+            SpeechFeedbackItem(
+              feedbackItemId: 'item_practice_001',
+              speechFeedbackId: 'speech_feedback_practice_001',
+              kind: SpeechFeedbackItemKind.correction,
+              anchor: const ConversationTranscriptFeedbackAnchor(
+                evidenceRefId: 'evidence_ref_001',
+                turnId: 'practice_turn_001',
+                startUtf8Byte: 0,
+                endUtf8Byte: 8,
+                originalExcerpt: 'I manage',
+              ),
+              explanation: 'Use the past tense for the completed release.',
+              suggestedText: 'I managed',
+              repracticeMode: SpeechFeedbackRepracticeMode.sameQuestion,
+              createdAt: DateTime.utc(2026, 7, 30, 10, 1, 1),
+            ),
+          ],
     acousticAssessment: const SpeechFeedbackAcousticAssessment(
       pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
       acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
@@ -402,6 +494,13 @@ PracticeSessionSnapshot _practiceSnapshot(
   int turnLimit = 3,
 }) {
   const sessionId = 'practice_session_001';
+  final scene = scenarioModel == 'IELTS_SPEAKING_PART_2'
+      ? const AgentScene(
+          id: 'scn_ielts_speaking_part_2',
+          title: 'IELTS Speaking Part 2',
+          description: 'Part 2 cue card with bound Part 3',
+        )
+      : agentScenes.first;
   const question = PracticeQuestion(
     id: 'practice_question_001',
     sessionId: sessionId,
@@ -412,7 +511,7 @@ PracticeSessionSnapshot _practiceSnapshot(
     threadId: 'thread_001',
     scenarioType: scenarioType,
     scenarioModel: scenarioModel,
-    matter: AgentMatter(id: 'matter_001', scene: agentScenes.first),
+    matter: AgentMatter(id: 'matter_001', scene: scene),
     completedTurns: 1,
     turnLimit: turnLimit,
     sessionCompleted: false,

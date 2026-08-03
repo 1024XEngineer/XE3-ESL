@@ -201,7 +201,7 @@ func TestXFYUNSpeechFeedbackAcousticProviderRejectsChineseBeforeReadingAudio(
 	}
 }
 
-func TestSpeechFeedbackWorkerPersistsAcousticsBeforeShortTextResult(
+func TestSpeechFeedbackWorkerPersistsAcousticsForShortEnglishText(
 	t *testing.T,
 ) {
 	t.Parallel()
@@ -227,7 +227,12 @@ func TestSpeechFeedbackWorkerPersistsAcousticsBeforeShortTextResult(
 	worker, err := NewSpeechFeedbackWorkerWithAcoustics(
 		repository,
 		&speechFeedbackProviderStub{
-			err: errors.New("text provider must not be called"),
+			result: SpeechFeedbackProviderResult{
+				Payload:   []byte(`{"items":[{"kind":"RECOMMENDED_EXPRESSION","explanation":"Use a complete answer.","suggested_text":"Hello, it is nice to meet you."}]}`),
+				Provider:  "qianwen",
+				Model:     "qwen-plus",
+				RequestID: "request-short-english-acoustics",
+			},
 		},
 		repository,
 		acoustics,
@@ -243,7 +248,7 @@ func TestSpeechFeedbackWorkerPersistsAcousticsBeforeShortTextResult(
 	if acoustics.calls != 1 ||
 		repository.acousticEvidence == nil ||
 		sweep.Completed != 1 ||
-		sweep.Insufficient != 1 {
+		sweep.Insufficient != 0 {
 		t.Fatalf(
 			"unexpected acoustic result: calls=%d evidence=%#v sweep=%#v",
 			acoustics.calls,

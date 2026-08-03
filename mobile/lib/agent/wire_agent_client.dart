@@ -17,6 +17,7 @@ final class WireAgentClient
         AgentClient,
         AgentStreamingTextClient,
         AgentThreadHistoryClient,
+        AgentThreadDeletionClient,
         AgentMatterSelectionClient,
         AgentPracticeAvailability,
         AgentMultimodalClient {
@@ -205,6 +206,20 @@ final class WireAgentClient
         generation: generation,
         method: 'DELETE',
         path: '/v1/agent-threads/focused',
+      );
+      _requireStatus(response, const <int>{HttpStatus.noContent});
+      _requireEmptyBody(response);
+    });
+  }
+
+  @override
+  Future<void> deleteThread({required String threadId}) {
+    return _runAccountOperation((generation) async {
+      _requireUuid(threadId);
+      final response = await _send(
+        generation: generation,
+        method: 'DELETE',
+        path: '/v1/agent-threads/$threadId',
       );
       _requireStatus(response, const <int>{HttpStatus.noContent});
       _requireEmptyBody(response);

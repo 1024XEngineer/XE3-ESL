@@ -168,6 +168,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       List<AgentThreadSummary>.unmodifiable(_threads);
   bool get isInitialized => _initialized;
   bool get supportsThreadHistory => client is AgentThreadHistoryClient;
+  bool get supportsThreadDeletion => client is AgentThreadDeletionClient;
   bool get isThreadTransitionInFlight => _threadTransitionInFlight;
   bool get hasMoreThreads => _nextThreadCursor != null;
   bool get isLoadingMoreThreads => _loadingMoreThreads;
@@ -722,6 +723,58 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       }
       await _clearFocusedThread(historyClient);
     } finally {
+      _finishThreadTransition(transitionGeneration);
+    }
+  }
+
+  Future<bool> deleteThread(String threadId) async {
+    if (client is! AgentThreadDeletionClient ||
+        _disposed ||
+        threadId.trim().isEmpty) {
+      return false;
+    }
+    final accountEpoch = _epoch;
+    final transitionGeneration = _beginThreadTransition();
+    if (transitionGeneration == null) {
+      return false;
+    }
+    final deletionClient = client as AgentThreadDeletionClient;
+    _threadHistoryErrorMessage = null;
+    _setBusy(true);
+    try {
+      await _ensureInitialized();
+      if (!_isCurrent(accountEpoch)) {
+        return false;
+      }
+      await deletionClient.deleteThread(threadId: threadId);
+      if (!_isCurrent(accountEpoch)) {
+        return false;
+      }
+      _threads = <AgentThreadSummary>[
+        for (final thread in _threads)
+          if (thread.id != threadId) thread,
+      ];
+      if (_threadId == threadId) {
+        _epoch++;
+        _practiceGeneration++;
+        _cancelRecordingLimit();
+        await stopPracticeAudio();
+        await _voiceController?.bindThread(null);
+        _pendingFocusThreadId = null;
+        _threadHistoryRecovery = null;
+        _resetSelectedThreadPresentation();
+        _initialized = true;
+      }
+      notifyListeners();
+      return true;
+    } on AgentClientException catch (_) {
+      _threadHistoryErrorMessage = '暂时无法删除对话，请稍后再试。';
+      return false;
+    } catch (_) {
+      _threadHistoryErrorMessage = '暂时无法删除对话，请稍后再试。';
+      return false;
+    } finally {
+      _setBusy(false);
       _finishThreadTransition(transitionGeneration);
     }
   }

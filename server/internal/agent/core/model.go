@@ -328,6 +328,10 @@ type Repository interface {
 	) ([]Message, error)
 }
 
+type ThreadDeletionRepository interface {
+	DeleteThread(ctx context.Context, ownerID string, threadID string) error
+}
+
 type Application interface {
 	CreateThread(
 		ctx context.Context,
@@ -387,6 +391,14 @@ type Application interface {
 		pageSize int,
 		cursor string,
 	) (MessagePage, error)
+}
+
+type ThreadDeletionApplication interface {
+	DeleteThread(
+		ctx context.Context,
+		actor requestcontext.Actor,
+		threadID string,
+	) error
 }
 
 type RunRepository interface {

@@ -690,6 +690,64 @@ WHERE id = $2 AND owner_user_id = $1`,
 		)
 	}
 
+	crossOwnerDelete := performAgentRequest(
+		router,
+		http.MethodDelete,
+		"/v1/agent-threads/"+threads[2].ID,
+		"",
+		"token-b",
+	)
+	if crossOwnerDelete.Code != http.StatusNotFound {
+		t.Fatalf(
+			"cross-owner Thread delete response: %d %s",
+			crossOwnerDelete.Code,
+			crossOwnerDelete.Body,
+		)
+	}
+	deletedThread := performAgentRequest(
+		router,
+		http.MethodDelete,
+		"/v1/agent-threads/"+threads[2].ID,
+		"",
+		"token-a",
+	)
+	if deletedThread.Code != http.StatusNoContent ||
+		deletedThread.Body.Len() != 0 {
+		t.Fatalf(
+			"Thread delete response: %d %q",
+			deletedThread.Code,
+			deletedThread.Body.String(),
+		)
+	}
+	var sidebarDeleted bool
+	if err := database.pool.QueryRow(context.Background(), `
+SELECT sidebar_deleted_at IS NOT NULL
+FROM agent_threads
+WHERE id = $1 AND owner_user_id = $2`,
+		threads[2].ID,
+		actorA.UserID,
+	).Scan(&sidebarDeleted); err != nil || !sidebarDeleted {
+		t.Fatalf(
+			"sidebar deletion marker = %t, error %v; want marked",
+			sidebarDeleted,
+			err,
+		)
+	}
+	repeatedDelete := performAgentRequest(
+		router,
+		http.MethodDelete,
+		"/v1/agent-threads/"+threads[2].ID,
+		"",
+		"token-a",
+	)
+	if repeatedDelete.Code != http.StatusNotFound {
+		t.Fatalf(
+			"repeated Thread delete response: %d %s",
+			repeatedDelete.Code,
+			repeatedDelete.Body,
+		)
+	}
+
 	clearFocus := performAgentRequest(
 		router,
 		http.MethodDelete,

@@ -464,6 +464,24 @@ void main() {
       transport.expectDone();
     });
 
+    test('deletes one owned Thread with an empty 204 response', () async {
+      final transport = _ScriptedTransport([
+        const _Step(
+          method: 'DELETE',
+          path: '/v1/agent-threads/$_threadId',
+          response: IdentityHttpResponse(
+            statusCode: HttpStatus.noContent,
+            body: '',
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      await harness.client.deleteThread(threadId: _threadId);
+
+      transport.expectDone();
+    });
+
     test(
       'recovers an ambiguous create with GET only and never repeats POST',
       () async {

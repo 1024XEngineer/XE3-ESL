@@ -21,6 +21,7 @@ type RunSubmission = core.RunSubmission
 type RunRetry = core.RunRetry
 type RunStreamObserver = core.RunStreamObserver
 type Application = core.Application
+type ThreadDeletionApplication = core.ThreadDeletionApplication
 type RunApplication = core.RunApplication
 type MultimodalRunApplication = core.MultimodalRunApplication
 type Service = agentapp.Service

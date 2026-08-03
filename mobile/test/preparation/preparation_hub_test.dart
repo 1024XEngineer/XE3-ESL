@@ -32,48 +32,28 @@ void main() {
     expect(find.byKey(const Key('preparation-family-DAILY')), findsNothing);
   });
 
-  testWidgets('continues the current topic through one accessible action', (
-    tester,
-  ) async {
-    final semantics = tester.ensureSemantics();
+  testWidgets('does not show the legacy continuation row', (tester) async {
     final agentController = AgentController(client: FakeAgentClient());
     final preparationController = PreparationController(
       client: _HubFixtureClient(),
     );
     addTearDown(agentController.dispose);
     addTearDown(preparationController.dispose);
-    try {
-      await agentController.initialize();
-      await agentController.selectScene(agentScenes.first);
-      expect(agentController.activeMatter, isNotNull);
-      var opens = 0;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: PreparationPage(
-            agentController: agentController,
-            preparationController: preparationController,
-            onPracticeStarted: () => opens++,
-          ),
+    await agentController.initialize();
+    await agentController.selectScene(agentScenes.first);
+    expect(agentController.activeMatter, isNotNull);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          agentController: agentController,
+          preparationController: preparationController,
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      final continuation = find.byKey(const Key('practice-continuation'));
-      expect(find.text('继续练习'), findsOneWidget);
-      expect(
-        tester.getSemantics(continuation),
-        isSemantics(
-          label: '继续练习，${agentScenes.first.title}',
-          isButton: true,
-          hasTapAction: true,
-        ),
-      );
-      await tester.tap(continuation);
-      await tester.pump();
-      expect(opens, 1);
-    } finally {
-      semantics.dispose();
-    }
+    expect(find.byKey(const Key('practice-continuation')), findsNothing);
+    expect(find.text('继续练习'), findsNothing);
   });
 
   testWidgets('opens the English interview module from the hub', (

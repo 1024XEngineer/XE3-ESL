@@ -48,7 +48,7 @@ void main() {
         containsPair('practice_thread_id', retried?.practiceThreadId),
       );
       expect(record, containsPair('return_thread_id', homeThreadId));
-      expect(record, containsPair('schema_version', 2));
+      expect(record, containsPair('schema_version', 3));
 
       final replacement = await workspace.acquireThread(
         'different-operation-2',
@@ -83,6 +83,7 @@ void main() {
       );
 
       expect(firstWorkspace.hasResumable, isTrue);
+      expect(firstWorkspace.resumableHasProgress, isFalse);
       expect(await firstWorkspace.parkCurrentPractice(), isTrue);
       expect(harness.agent.threadId, homeThreadId);
       expect(await harness.agent.createThread(), isTrue);
@@ -111,6 +112,43 @@ void main() {
       expect(harness.agent.hasActivePractice, isTrue);
       expect(await restoredWorkspace.parkCurrentPractice(), isTrue);
       expect(harness.agent.threadId, newerHomeThreadId);
+    },
+  );
+
+  test(
+    'only a confirmed answer marks a practice as resumable progress',
+    () async {
+      final store = _InspectableRecordStore();
+      final harness = await _createHarness();
+      final workspace = PracticeWorkspaceController(
+        agentController: harness.agent,
+        recordStore: store,
+      );
+      addTearDown(() {
+        workspace.dispose();
+        harness.agent.dispose();
+      });
+      await workspace.activateAccount('account-1');
+      await _launchPractice(
+        harness: harness,
+        workspace: workspace,
+        operationId: 'launch-progress-operation',
+        scenarioId: 'interview-screening',
+        scenarioTitle: '招聘初筛',
+        sessionId: 'practice-progress-session',
+      );
+
+      expect(workspace.resumableHasProgress, isFalse);
+      expect(
+        await harness.agent.submitPracticeText('A confirmed answer.'),
+        isTrue,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(workspace.resumableHasProgress, isTrue);
+      expect(await workspace.parkCurrentPractice(), isTrue);
+      final record = jsonDecode((await store.read('account-1'))!);
+      expect(record, containsPair('completed_turns', 1));
     },
   );
 
@@ -1308,7 +1346,48 @@ final class _WorkspacePracticeClient
     if (pending != null) {
       return pending.future;
     }
-    throw UnimplementedError();
+    final current = _sessions.values.single;
+    final completedTurns = current.completedTurns + 1;
+    final completed = completedTurns >= current.turnLimit;
+    final nextQuestion = completed
+        ? null
+        : PracticeQuestion(
+            id: 'question-${current.sessionId}-$completedTurns',
+            sessionId: current.sessionId,
+            text: 'What happened next?',
+          );
+    _sessions[current.threadId!] = PracticeSessionSnapshot(
+      sessionId: current.sessionId,
+      threadId: current.threadId,
+      sessionVersion: (current.sessionVersion ?? 1) + 1,
+      scenarioType: current.scenarioType,
+      scenarioModel: current.scenarioModel,
+      matter: current.matter,
+      completedTurns: completedTurns,
+      turnLimit: current.turnLimit,
+      sessionCompleted: completed,
+      currentQuestion: nextQuestion,
+    );
+    return Future<PracticeTurnConfirmation>.value(
+      PracticeTurnConfirmation(
+        turnId: 'turn-$completedTurns',
+        sessionId: sessionId,
+        questionId: questionId,
+        candidateId: 'text-candidate-$completedTurns',
+        answer: AgentMessage(
+          id: 'answer-$completedTurns',
+          role: AgentMessageRole.user,
+          text: answerText,
+        ),
+        completedTurns: completedTurns,
+        turnLimit: current.turnLimit,
+        sessionCompleted: completed,
+        scenarioType: current.scenarioType,
+        scenarioModel: current.scenarioModel,
+        sessionVersion: (current.sessionVersion ?? 1) + 1,
+        nextQuestion: nextQuestion,
+      ),
+    );
   }
 
   PracticeSessionSnapshot _activeSnapshot({

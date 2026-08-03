@@ -138,6 +138,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS first_user ON true
 WHERE threads.owner_user_id = $1
+  AND threads.sidebar_deleted_at IS NULL
 ORDER BY threads.updated_at DESC, threads.id DESC`,
 		ownerID,
 	)
@@ -199,6 +200,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS first_user ON true
 WHERE threads.owner_user_id = $1
+  AND threads.sidebar_deleted_at IS NULL
 ORDER BY threads.updated_at DESC, threads.id DESC
 LIMIT $2`
 	arguments := []any{ownerID, limit}
@@ -227,6 +229,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS first_user ON true
 WHERE threads.owner_user_id = $1
+  AND threads.sidebar_deleted_at IS NULL
   AND (threads.updated_at, threads.id) < ($2, $3)
 ORDER BY threads.updated_at DESC, threads.id DESC
 LIMIT $4`
@@ -457,6 +460,62 @@ SELECT COUNT(*) FROM deleted`,
 		ownerID,
 	).Scan(&deleted); err != nil {
 		return mapPostgresError(err)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) DeleteThread(
+	ctx context.Context,
+	ownerID string,
+	threadID string,
+) error {
+	tx, err := r.database.Begin(ctx)
+	if err != nil {
+		return ErrRepository
+	}
+	defer rollback(tx)
+
+	var lockedThreadID string
+	if err := tx.QueryRow(ctx, `
+SELECT id::text
+FROM agent_threads
+WHERE id = $1
+  AND owner_user_id = $2
+  AND sidebar_deleted_at IS NULL
+FOR UPDATE`,
+		threadID,
+		ownerID,
+	).Scan(&lockedThreadID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return mapPostgresError(err)
+	}
+
+	tag, err := tx.Exec(ctx, `
+UPDATE agent_threads
+SET sidebar_deleted_at = CURRENT_TIMESTAMP
+WHERE id = $1
+  AND owner_user_id = $2
+  AND sidebar_deleted_at IS NULL`,
+		threadID,
+		ownerID,
+	)
+	if err != nil {
+		return mapPostgresError(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM agent_thread_focuses
+WHERE owner_user_id = $1 AND thread_id = $2`,
+		ownerID,
+		threadID,
+	); err != nil {
+		return mapPostgresError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ErrRepository
 	}
 	return nil
 }

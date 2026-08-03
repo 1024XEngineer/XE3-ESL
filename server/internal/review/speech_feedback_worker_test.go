@@ -9,15 +9,62 @@ import (
 	"time"
 )
 
-func TestSpeechFeedbackWorkerCompletesShortTextAsInsufficient(
+func TestSpeechFeedbackWorkerGeneratesFeedbackForShortEnglishText(
 	t *testing.T,
 ) {
 	t.Parallel()
 	claim := validSpeechFeedbackClaim()
-	claim.CanonicalText = "Hi"
+	claim.CanonicalText = "Hello."
 	repository := &speechFeedbackRepositoryStub{
 		claim: claim,
 	}
+	payload, err := json.Marshal(map[string]any{
+		"items": []any{map[string]any{
+			"kind":           "RECOMMENDED_EXPRESSION",
+			"explanation":    "Use a complete answer for speaking practice.",
+			"suggested_text": "Hello, it is nice to meet you.",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &speechFeedbackProviderStub{
+		result: SpeechFeedbackProviderResult{
+			Payload:   payload,
+			Provider:  "qianwen",
+			Model:     "qwen-plus",
+			RequestID: "request-short-english",
+		},
+	}
+	worker, err := NewSpeechFeedbackWorker(
+		repository,
+		provider,
+		validSpeechFeedbackWorkerConfiguration(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sweep, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("process short English text: %v", err)
+	}
+	if provider.calls != 1 ||
+		sweep.Claimed != 1 ||
+		sweep.Completed != 1 ||
+		sweep.Insufficient != 0 ||
+		len(repository.completedItems) != 1 {
+		t.Fatalf("unexpected sweep/provider: %#v calls=%d", sweep, provider.calls)
+	}
+	if len(repository.insufficientReasons) != 0 {
+		t.Fatalf("insufficient reasons = %#v", repository.insufficientReasons)
+	}
+}
+
+func TestSpeechFeedbackWorkerKeepsChineseTextInsufficient(t *testing.T) {
+	t.Parallel()
+	claim := validSpeechFeedbackClaim()
+	claim.CanonicalText = "你好。"
+	repository := &speechFeedbackRepositoryStub{claim: claim}
 	provider := &speechFeedbackProviderStub{
 		err: errors.New("provider must not be called"),
 	}
@@ -31,19 +78,14 @@ func TestSpeechFeedbackWorkerCompletesShortTextAsInsufficient(
 	}
 	sweep, err := worker.ProcessPending(context.Background(), 1)
 	if err != nil {
-		t.Fatalf("process short text: %v", err)
+		t.Fatalf("process Chinese text: %v", err)
 	}
-	if provider.calls != 0 ||
-		sweep.Claimed != 1 ||
-		sweep.Completed != 1 ||
-		sweep.Insufficient != 1 {
-		t.Fatalf("unexpected sweep/provider: %#v calls=%d", sweep, provider.calls)
-	}
-	if len(repository.insufficientReasons) != 1 ||
-		repository.insufficientReasons[0] !=
-			SpeechFeedbackReasonTextTooShort {
+	if provider.calls != 0 || sweep.Insufficient != 1 ||
+		len(repository.insufficientReasons) != 1 {
 		t.Fatalf(
-			"insufficient reasons = %#v",
+			"unexpected Chinese result: %#v calls=%d reasons=%#v",
+			sweep,
+			provider.calls,
 			repository.insufficientReasons,
 		)
 	}
