@@ -68,6 +68,40 @@ func TestIELTSSpeakingShadowProducesHonestPartialReport(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingShadowProducesFourBandsAndOverallWithAcoustics(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	provider := &ieltsProviderStub{}
+	acoustics := &ieltsAcousticSourceStub{}
+	result, err := NewIELTSSpeakingShadowEngineWithAcoustics(
+		provider,
+		acoustics,
+	).Evaluate(context.Background(), snapshot)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if acoustics.calls != 1 || len(result.Criteria) != 4 {
+		t.Fatalf("acoustic calls = %d; result = %#v", acoustics.calls, result)
+	}
+	for _, criterion := range result.Criteria {
+		if criterion.Scoreability != IELTSSpeakingScoreabilityProvisional ||
+			criterion.EstimatedBand == nil ||
+			*criterion.EstimatedBand != 6 {
+			t.Fatalf("criterion = %#v", criterion)
+		}
+	}
+	report, err := ProjectIELTSSpeakingReport(snapshot, result)
+	if err != nil {
+		t.Fatalf("ProjectIELTSSpeakingReport: %v", err)
+	}
+	if report.SpeakingOverall.Status != IELTSSpeakingOverallAvailable ||
+		report.SpeakingOverall.EstimatedBand == nil ||
+		*report.SpeakingOverall.EstimatedBand != 6 {
+		t.Fatalf("speaking overall = %#v", report.SpeakingOverall)
+	}
+}
+
 func TestIELTSSpeakingShadowDoesNotCallProviderWithoutFourteenAnswers(
 	t *testing.T,
 ) {
@@ -305,6 +339,31 @@ type ieltsProviderStub struct {
 	calls   int
 }
 
+type ieltsAcousticSourceStub struct {
+	calls int
+}
+
+func (source *ieltsAcousticSourceStub) GetIELTSSpeakingAcoustics(
+	_ context.Context,
+	_ string,
+	requests []IELTSSpeakingAcousticRequest,
+) ([]IELTSSpeakingTurnAcoustics, error) {
+	source.calls++
+	result := make([]IELTSSpeakingTurnAcoustics, 0, len(requests))
+	for _, request := range requests {
+		fluency := 76.0
+		result = append(result, IELTSSpeakingTurnAcoustics{
+			TurnID:               request.TurnID,
+			EvidenceRefID:        request.EvidenceRefID,
+			PronunciationScore:   72,
+			AcousticFluencyScore: &fluency,
+			Provider:             "xfyun_ise",
+			ProviderRun:          "run_fixture",
+		})
+	}
+	return result, nil
+}
+
 func (provider *ieltsProviderStub) AnalyzeIELTSSpeaking(
 	_ context.Context,
 	input IELTSSpeakingShadowProviderInput,
@@ -352,10 +411,11 @@ func validIELTSProviderPayload(
 			Improvements:    []ieltsProviderFinding{},
 			UpgradeExamples: []ieltsProviderFinding{},
 		}
-		if criterion == IELTSCriterionLR ||
-			criterion == IELTSCriterionGRA {
+		if descriptors := ieltsDescriptorsFor(criterion); len(descriptors) > 0 &&
+			(criterion != IELTSCriterionFC ||
+				slices.Contains(input.AssessableCriteria, IELTSCriterionPR)) {
 			value.RubricDescriptor =
-				ieltsDescriptorsFor(criterion)[5]
+				descriptors[5].ID
 		}
 		criteria = append(criteria, value)
 	}

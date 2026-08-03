@@ -17,7 +17,7 @@ enum IeltsSpeakingOpportunityStatus { provided, notProvided }
 
 enum IeltsSpeakingAssessmentStatus { assessed, notAssessed }
 
-enum IeltsSpeakingOverallStatus { notAvailable }
+enum IeltsSpeakingOverallStatus { available, notAvailable }
 
 enum IeltsSpeakingTargetPlanStatus { notConfigured }
 
@@ -62,12 +62,15 @@ final class IeltsSpeakingReport {
     required this.disclaimer,
     required this.scoreabilityStatus,
     required this.gateStatus,
+    required this.testSummary,
     required this.criteria,
     required this.speakingOverallStatus,
+    required this.speakingOverallExplanation,
     required this.partReviews,
     required this.questions,
     required this.targetPlanStatus,
     required this.priorityActions,
+    this.speakingOverallBand,
   });
 
   final String schemaVersion;
@@ -75,8 +78,11 @@ final class IeltsSpeakingReport {
   final String disclaimer;
   final IeltsSpeakingReportScoreabilityStatus scoreabilityStatus;
   final IeltsSpeakingReportGateStatus gateStatus;
+  final IeltsSpeakingTestSummary testSummary;
   final List<IeltsSpeakingCriterion> criteria;
   final IeltsSpeakingOverallStatus speakingOverallStatus;
+  final double? speakingOverallBand;
+  final String speakingOverallExplanation;
   final List<IeltsSpeakingPartReview> partReviews;
   final List<IeltsSpeakingQuestionReview> questions;
   final IeltsSpeakingTargetPlanStatus targetPlanStatus;
@@ -98,11 +104,30 @@ final class IeltsSpeakingReport {
   }
 }
 
+final class IeltsSpeakingTestSummary {
+  const IeltsSpeakingTestSummary({
+    required this.part1Topic,
+    required this.part2Topic,
+    required this.part3Topic,
+    required this.questionCount,
+    required this.answeredCount,
+    required this.recordingDurationMs,
+  });
+
+  final String part1Topic;
+  final String part2Topic;
+  final String part3Topic;
+  final int questionCount;
+  final int answeredCount;
+  final int recordingDurationMs;
+}
+
 final class IeltsSpeakingCriterion {
   const IeltsSpeakingCriterion({
     required this.id,
     required this.scoreabilityStatus,
     required this.gateStatus,
+    required this.explanation,
     required this.coverage,
     required this.confidence,
     required this.reasonCodes,
@@ -117,6 +142,7 @@ final class IeltsSpeakingCriterion {
   final IeltsSpeakingCriterionId id;
   final IeltsSpeakingReportScoreabilityStatus scoreabilityStatus;
   final IeltsSpeakingReportGateStatus gateStatus;
+  final String explanation;
   final int? estimatedBand;
   final String? bandDescriptor;
   final double coverage;

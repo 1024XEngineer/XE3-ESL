@@ -163,7 +163,11 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 		RubricDescriptors: []evaluation.IELTSRubricDescriptorSet{{
 			CriterionID: evaluation.IELTSCriterionLR,
 			Descriptors: []evaluation.IELTSRubricDescriptor{
-				"LR_PRACTICE_BAND_1",
+				{
+					ID:          "LR_PRACTICE_BAND_1",
+					Band:        1,
+					Description: "Uses only isolated words or memorised utterances.",
+				},
 			},
 		}},
 		Questions: []evaluation.IELTSSpeakingProviderQuestion{{

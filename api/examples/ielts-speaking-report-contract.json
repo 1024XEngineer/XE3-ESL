@@ -31,11 +31,20 @@
       "disclaimer": "AI 练习估分，非 IELTS 官方成绩。",
       "scoreability_status": "PROVISIONAL",
       "gate_status": "FEEDBACK_ONLY",
+      "test_summary": {
+        "part_1_topic": "IELTS speaking question 1",
+        "part_2_topic": "IELTS speaking question 9",
+        "part_3_topic": "IELTS speaking question 10",
+        "question_count": 14,
+        "answered_count": 14,
+        "recording_duration_ms": 548000
+      },
       "criteria": [
         {
           "criterion_id": "IELTS_FC",
           "scoreability_status": "PROVISIONAL",
           "gate_status": "FEEDBACK_ONLY",
+          "explanation": "根据已确认回答评估观点衔接与话题展开；缺少完整时序证据时只提供定性反馈。",
           "coverage": 1,
           "confidence": 0,
           "reason_codes": [
@@ -68,6 +77,7 @@
           "gate_status": "FEEDBACK_ONLY",
           "estimated_band": 6,
           "band_descriptor": "Uses an adequate range of vocabulary for familiar topics.",
+          "explanation": "Uses an adequate range of vocabulary for familiar topics.",
           "coverage": 1,
           "confidence": 0,
           "reason_codes": [
@@ -101,6 +111,7 @@
           "gate_status": "FEEDBACK_ONLY",
           "estimated_band": 6,
           "band_descriptor": "Uses a mix of simple and complex forms with some flexibility.",
+          "explanation": "Uses a mix of simple and complex forms with some flexibility.",
           "coverage": 1,
           "confidence": 0,
           "reason_codes": [
@@ -132,6 +143,7 @@
           "criterion_id": "IELTS_PR",
           "scoreability_status": "INSUFFICIENT",
           "gate_status": "BLOCKED",
+          "explanation": "本次缺少可用于整场评分的可信发音工件，因此不展示发音分数。",
           "coverage": 0,
           "confidence": 0,
           "reason_codes": [
@@ -144,7 +156,8 @@
         }
       ],
       "speaking_overall": {
-        "status": "NOT_AVAILABLE"
+        "status": "NOT_AVAILABLE",
+        "explanation": "当前证据还不能同时支持四项评分，因此暂不计算口语总分。"
       },
       "part_reviews": [
         {
@@ -794,11 +807,20 @@
       "disclaimer": "AI 练习估分，非 IELTS 官方成绩。",
       "scoreability_status": "INSUFFICIENT",
       "gate_status": "BLOCKED",
+      "test_summary": {
+        "part_1_topic": "IELTS speaking question 1",
+        "part_2_topic": "IELTS speaking question 9",
+        "part_3_topic": "IELTS speaking question 10",
+        "question_count": 14,
+        "answered_count": 0,
+        "recording_duration_ms": 0
+      },
       "criteria": [
         {
           "criterion_id": "IELTS_FC",
           "scoreability_status": "INSUFFICIENT",
           "gate_status": "BLOCKED",
+          "explanation": "本次可确认的回答证据不足，因此不展示该维度分数。",
           "coverage": 0,
           "confidence": 0,
           "reason_codes": [
@@ -813,6 +835,7 @@
           "criterion_id": "IELTS_LR",
           "scoreability_status": "INSUFFICIENT",
           "gate_status": "BLOCKED",
+          "explanation": "本次可确认的回答证据不足，因此不展示该维度分数。",
           "coverage": 0,
           "confidence": 0,
           "reason_codes": [
@@ -827,6 +850,7 @@
           "criterion_id": "IELTS_GRA",
           "scoreability_status": "INSUFFICIENT",
           "gate_status": "BLOCKED",
+          "explanation": "本次可确认的回答证据不足，因此不展示该维度分数。",
           "coverage": 0,
           "confidence": 0,
           "reason_codes": [
@@ -841,6 +865,7 @@
           "criterion_id": "IELTS_PR",
           "scoreability_status": "INSUFFICIENT",
           "gate_status": "BLOCKED",
+          "explanation": "本次缺少可用于整场评分的可信发音工件，因此不展示发音分数。",
           "coverage": 0,
           "confidence": 0,
           "reason_codes": [
@@ -853,7 +878,8 @@
         }
       ],
       "speaking_overall": {
-        "status": "NOT_AVAILABLE"
+        "status": "NOT_AVAILABLE",
+        "explanation": "当前证据还不能同时支持四项评分，因此暂不计算口语总分。"
       },
       "part_reviews": [
         {

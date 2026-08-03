@@ -185,20 +185,109 @@ class _ReadyReport extends StatelessWidget {
       key: const Key('ielts-speaking-report-ready'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ReportNotice(disclaimer: report.disclaimer),
-        const SizedBox(height: 12),
-        const _OverallUnavailable(),
-        const SizedBox(height: 12),
-        _Criteria(report: report),
-        const SizedBox(height: 12),
-        _PartReviews(report: report),
-        const SizedBox(height: 12),
-        _QuestionReviews(report: report),
-        const SizedBox(height: 12),
+        _ReportHeader(report: report),
+        const SizedBox(height: SpeakUpDesign.space16),
+        _OverallScore(report: report),
+        const SizedBox(height: SpeakUpDesign.space16),
+        _ScoreOverview(report: report),
+        const SizedBox(height: SpeakUpDesign.space24),
+        const _ReportSectionTitle(title: '评分描述'),
+        const SizedBox(height: SpeakUpDesign.space12),
+        for (final criterion in report.criteria) ...[
+          _CriterionFeedback(criterion: criterion),
+          const SizedBox(height: SpeakUpDesign.space12),
+        ],
+        const SizedBox(height: SpeakUpDesign.space12),
+        const _ReportSectionTitle(title: '改进建议'),
+        const SizedBox(height: SpeakUpDesign.space12),
         _TargetPlan(report: report),
+        const SizedBox(height: SpeakUpDesign.space24),
+        _ReportNotice(disclaimer: report.disclaimer),
+        const SizedBox(height: SpeakUpDesign.space12),
+        _PartReviews(report: report),
+        const SizedBox(height: SpeakUpDesign.space12),
+        _QuestionReviews(report: report),
       ],
     );
   }
+}
+
+class _ReportHeader extends StatelessWidget {
+  const _ReportHeader({required this.report});
+
+  final IeltsSpeakingReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final summary = report.testSummary;
+    return Semantics(
+      container: true,
+      label: 'IELTS 口语模考报告摘要',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: SpeakUpDesign.primaryMuted,
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusMedia),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(SpeakUpDesign.space20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'IELTS Speaking',
+                style: SpeakUpDesign.pageTitle.copyWith(
+                  color: SpeakUpDesign.primary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+              Text(
+                'Test Report',
+                style: SpeakUpDesign.pageTitle.copyWith(
+                  color: const Color(0xFF2A6D7E),
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+              const SizedBox(height: SpeakUpDesign.space20),
+              _SummaryLine(label: 'Part 1', value: summary.part1Topic),
+              const SizedBox(height: SpeakUpDesign.space8),
+              _SummaryLine(label: 'Part 2', value: summary.part2Topic),
+              const SizedBox(height: SpeakUpDesign.space8),
+              _SummaryLine(label: 'Part 3', value: summary.part3Topic),
+              const SizedBox(height: SpeakUpDesign.space12),
+              Text(
+                '共 ${summary.answeredCount}/${summary.questionCount} 题 · '
+                '录音 ${_durationLabel(summary.recordingDurationMs)}',
+                style: SpeakUpDesign.meta,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryLine extends StatelessWidget {
+  const _SummaryLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Text.rich(
+    TextSpan(
+      style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
+      children: [
+        TextSpan(
+          text: '$label: ',
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        TextSpan(text: value),
+      ],
+    ),
+    maxLines: 2,
+    overflow: TextOverflow.ellipsis,
+  );
 }
 
 class _ReportNotice extends StatelessWidget {
@@ -269,23 +358,55 @@ class _InsufficientReport extends StatelessWidget {
   }
 }
 
-class _OverallUnavailable extends StatelessWidget {
-  const _OverallUnavailable();
+class _OverallScore extends StatelessWidget {
+  const _OverallScore({required this.report});
+
+  final IeltsSpeakingReport report;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    final band = report.speakingOverallBand;
+    return Container(
       key: const Key('ielts-speaking-overall-unavailable'),
-      child: const Padding(
-        padding: EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [SpeakUpDesign.primary, Color(0xFF2A6D7E)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusMedia),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Speaking Overall', style: SpeakUpDesign.cardTitle),
-            SizedBox(height: 6),
-            Text('暂不可用', style: SpeakUpDesign.body),
-            SizedBox(height: 4),
-            Text('四项标准尚未全部具备可靠证据，因此不计算总分。', style: SpeakUpDesign.meta),
+            Text(
+              '口语总分',
+              style: SpeakUpDesign.cardTitle.copyWith(color: Colors.white),
+            ),
+            const SizedBox(height: SpeakUpDesign.space8),
+            Text(
+              band == null ? '暂不可用' : _bandLabel(band),
+              style: SpeakUpDesign.pageTitle.copyWith(
+                color: Colors.white,
+                fontSize: band == null ? 26 : 48,
+              ),
+            ),
+            const SizedBox(height: SpeakUpDesign.space12),
+            Container(
+              padding: const EdgeInsets.all(SpeakUpDesign.space16),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.94),
+                borderRadius: BorderRadius.circular(
+                  SpeakUpDesign.radiusControl,
+                ),
+              ),
+              child: Text(
+                report.speakingOverallExplanation,
+                style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
+              ),
+            ),
           ],
         ),
       ),
@@ -293,8 +414,8 @@ class _OverallUnavailable extends StatelessWidget {
   }
 }
 
-class _Criteria extends StatelessWidget {
-  const _Criteria({required this.report});
+class _ScoreOverview extends StatelessWidget {
+  const _ScoreOverview({required this.report});
 
   final IeltsSpeakingReport report;
 
@@ -303,25 +424,74 @@ class _Criteria extends StatelessWidget {
     return Card(
       key: const Key('ielts-speaking-report-criteria'),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('评分标准', style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: 14),
-            for (var index = 0; index < report.criteria.length; index++) ...[
-              if (index > 0) ...[
-                const SizedBox(height: 16),
-                const Divider(height: 1),
-                const SizedBox(height: 16),
-              ],
-              _CriterionFeedback(criterion: report.criteria[index]),
-            ],
+            const Text('四项评分', style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: SpeakUpDesign.space16),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: SpeakUpDesign.space12,
+                crossAxisSpacing: SpeakUpDesign.space12,
+                childAspectRatio: 1.25,
+              ),
+              itemCount: report.criteria.length,
+              itemBuilder: (context, index) =>
+                  _ScoreTile(criterion: report.criteria[index]),
+            ),
           ],
         ),
       ),
     );
   }
+}
+
+class _ScoreTile extends StatelessWidget {
+  const _ScoreTile({required this.criterion});
+
+  final IeltsSpeakingCriterion criterion;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(SpeakUpDesign.space12),
+    decoration: BoxDecoration(
+      color: _criterionColor(criterion.id).withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Icon(
+          _criterionIcon(criterion.id),
+          color: _criterionColor(criterion.id),
+          size: 22,
+        ),
+        Text(_criterionChineseLabel(criterion.id), style: SpeakUpDesign.label),
+        Text(
+          criterion.estimatedBand?.toString() ?? '--',
+          style: SpeakUpDesign.pageTitle.copyWith(
+            color: _criterionColor(criterion.id),
+            fontSize: 30,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _ReportSectionTitle extends StatelessWidget {
+  const _ReportSectionTitle({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) =>
+      Text(title, style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24));
 }
 
 class _CriterionFeedback extends StatelessWidget {
@@ -339,39 +509,104 @@ class _CriterionFeedback extends StatelessWidget {
       for (final finding in criterion.upgradeExamples)
         (label: '提升表达', finding: finding),
     ];
-    return Column(
+    return Card(
       key: Key('ielts-speaking-criterion-${criterion.id.name}'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(_criterionLabel(criterion.id), style: SpeakUpDesign.label),
-        const SizedBox(height: 5),
-        if (criterion.estimatedBand case final band?)
-          Text(
-            '练习估分 Band $band（暂定）',
-            key: Key('ielts-speaking-band-${criterion.id.name}'),
-            style: SpeakUpDesign.cardTitle,
-          )
-        else
-          Text(_unscoredCriterionLabel(criterion), style: SpeakUpDesign.meta),
-        if (criterion.bandDescriptor case final descriptor?) ...[
-          const SizedBox(height: 4),
-          Text(descriptor, style: SpeakUpDesign.body),
-        ],
-        for (final item in findings) ...[
-          const SizedBox(height: 10),
-          Text(item.label, style: SpeakUpDesign.meta),
-          const SizedBox(height: 3),
-          Text(item.finding.message, style: SpeakUpDesign.body),
-          if (item.finding.suggestion case final suggestion?) ...[
-            const SizedBox(height: 3),
-            Text('建议：$suggestion', style: SpeakUpDesign.body),
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: _criterionColor(
+                      criterion.id,
+                    ).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    _criterionIcon(criterion.id),
+                    color: _criterionColor(criterion.id),
+                  ),
+                ),
+                const SizedBox(width: SpeakUpDesign.space12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _criterionChineseLabel(criterion.id),
+                        style: SpeakUpDesign.cardTitle,
+                      ),
+                      Text(
+                        _criterionEnglishLabel(criterion.id),
+                        style: SpeakUpDesign.meta,
+                      ),
+                    ],
+                  ),
+                ),
+                if (criterion.estimatedBand case final band?)
+                  Text(
+                    '$band',
+                    key: Key('ielts-speaking-band-${criterion.id.name}'),
+                    style: SpeakUpDesign.pageTitle.copyWith(
+                      color: _criterionColor(criterion.id),
+                      fontSize: 38,
+                    ),
+                  )
+                else
+                  Text(
+                    '--',
+                    style: SpeakUpDesign.pageTitle.copyWith(
+                      color: SpeakUpDesign.tertiary,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: SpeakUpDesign.space16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(SpeakUpDesign.space16),
+              decoration: BoxDecoration(
+                color: SpeakUpDesign.canvas,
+                borderRadius: BorderRadius.circular(
+                  SpeakUpDesign.radiusControl,
+                ),
+                border: Border.all(color: SpeakUpDesign.border),
+              ),
+              child: Text(criterion.explanation, style: SpeakUpDesign.body),
+            ),
+            if (findings.isEmpty) ...[
+              const SizedBox(height: SpeakUpDesign.space12),
+              Text(
+                _unscoredCriterionLabel(criterion),
+                style: SpeakUpDesign.meta,
+              ),
+            ],
+            for (final item in findings) ...[
+              const SizedBox(height: SpeakUpDesign.space12),
+              Text(item.label, style: SpeakUpDesign.label),
+              const SizedBox(height: SpeakUpDesign.space4),
+              Text(item.finding.message, style: SpeakUpDesign.body),
+              if (item.finding.suggestion case final suggestion?) ...[
+                const SizedBox(height: SpeakUpDesign.space4),
+                Text('建议：$suggestion', style: SpeakUpDesign.body),
+              ],
+              for (final evidence in item.finding.evidence) ...[
+                const SizedBox(height: SpeakUpDesign.space4),
+                Text(
+                  '原句：“${evidence.originalExcerpt}”',
+                  style: SpeakUpDesign.meta,
+                ),
+              ],
+            ],
           ],
-          for (final evidence in item.finding.evidence) ...[
-            const SizedBox(height: 5),
-            Text('原句：“${evidence.originalExcerpt}”', style: SpeakUpDesign.meta),
-          ],
-        ],
-      ],
+        ),
+      ),
     );
   }
 }
@@ -583,15 +818,53 @@ String _unscoredCriterionLabel(IeltsSpeakingCriterion criterion) {
   return '定性反馈，不提供完整 Band';
 }
 
-String _criterionLabel(IeltsSpeakingCriterionId criterion) =>
+String _criterionChineseLabel(IeltsSpeakingCriterionId criterion) =>
+    switch (criterion) {
+      IeltsSpeakingCriterionId.fluencyAndCoherence => '流利性与连贯性',
+      IeltsSpeakingCriterionId.lexicalResource => '词汇丰富度',
+      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy => '语法多样性及准确性',
+      IeltsSpeakingCriterionId.pronunciation => '发音',
+    };
+
+String _criterionEnglishLabel(IeltsSpeakingCriterionId criterion) =>
+    switch (criterion) {
+      IeltsSpeakingCriterionId.fluencyAndCoherence => 'Fluency and Coherence',
+      IeltsSpeakingCriterionId.lexicalResource => 'Lexical Resource',
+      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy =>
+        'Grammatical Range and Accuracy',
+      IeltsSpeakingCriterionId.pronunciation => 'Pronunciation',
+    };
+
+Color _criterionColor(IeltsSpeakingCriterionId criterion) =>
+    switch (criterion) {
+      IeltsSpeakingCriterionId.fluencyAndCoherence => const Color(0xFF7651C8),
+      IeltsSpeakingCriterionId.lexicalResource => const Color(0xFFDA633B),
+      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy => const Color(
+        0xFF3E8A5B,
+      ),
+      IeltsSpeakingCriterionId.pronunciation => const Color(0xFF3478C8),
+    };
+
+IconData _criterionIcon(IeltsSpeakingCriterionId criterion) =>
     switch (criterion) {
       IeltsSpeakingCriterionId.fluencyAndCoherence =>
-        'Fluency and Coherence (FC)',
-      IeltsSpeakingCriterionId.lexicalResource => 'Lexical Resource (LR)',
+        Icons.auto_stories_rounded,
+      IeltsSpeakingCriterionId.lexicalResource => Icons.translate_rounded,
       IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy =>
-        'Grammatical Range and Accuracy (GRA)',
-      IeltsSpeakingCriterionId.pronunciation => 'Pronunciation (PR)',
+        Icons.task_alt_rounded,
+      IeltsSpeakingCriterionId.pronunciation => Icons.record_voice_over_rounded,
     };
+
+String _durationLabel(int durationMs) {
+  final totalSeconds = durationMs ~/ 1000;
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  return '$minutes分${seconds.toString().padLeft(2, '0')}秒';
+}
+
+String _bandLabel(double band) => band == band.roundToDouble()
+    ? band.toInt().toString()
+    : band.toStringAsFixed(1);
 
 String _partLabel(IeltsSpeakingPartId part) => switch (part) {
   IeltsSpeakingPartId.part1 => 'Part 1',
@@ -601,4 +874,4 @@ String _partLabel(IeltsSpeakingPartId part) => switch (part) {
 
 String _questionRange(List<int> indexes) => indexes.length == 1
     ? '${indexes.single}'
-    : '${indexes.first}–${indexes.last}';
+    : '${indexes.first}-${indexes.last}';

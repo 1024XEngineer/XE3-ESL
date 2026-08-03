@@ -22,7 +22,16 @@ void main() {
       find.byKey(const Key('ielts-speaking-report-ready')),
       findsOneWidget,
     );
-    expect(find.text('练习估分 Band 6（暂定）'), findsNWidgets(2));
+    expect(
+      find.byKey(const Key('ielts-speaking-band-lexicalResource')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('ielts-speaking-band-grammaticalRangeAndAccuracy')),
+      findsOneWidget,
+    );
+    expect(find.text('IELTS Speaking'), findsOneWidget);
+    expect(find.textContaining('共 14/14 题'), findsOneWidget);
     expect(find.textContaining('缺少可信发音工件'), findsOneWidget);
     expect(
       find.byKey(const Key('ielts-speaking-overall-unavailable')),

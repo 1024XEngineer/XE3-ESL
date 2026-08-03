@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,9 +17,9 @@ import (
 
 const (
 	IELTSSpeakingShadowSchemaVersion         = "ielts-speaking-full-mock-shadow/v1"
-	IELTSSpeakingShadowProviderSchemaVersion = "ielts-speaking-full-mock-shadow-provider/v1"
-	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v1"
-	IELTSSpeakingShadowRubricVersion         = "ielts-speaking-transcript-rubric/v1"
+	IELTSSpeakingShadowProviderSchemaVersion = "ielts-speaking-full-mock-shadow-provider/v2"
+	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v2"
+	IELTSSpeakingShadowRubricVersion         = "ielts-speaking-public-band-rubric/v2"
 
 	ieltsFullMockSceneID      = "scn_ielts_speaking_full"
 	ieltsFullMockSceneVersion = 2
@@ -35,6 +34,10 @@ const (
 
 var ErrInvalidIELTSSpeakingShadow = errors.New(
 	"evaluation: invalid IELTS Speaking shadow",
+)
+
+var ErrIELTSSpeakingAcousticsPending = errors.New(
+	"evaluation: IELTS Speaking acoustics pending",
 )
 
 type IELTSCriterion string
@@ -95,6 +98,7 @@ const (
 	IELTSReasonASRConfidenceUnavailable         IELTSSpeakingReasonCode = "ASR_CONFIDENCE_UNAVAILABLE"
 	IELTSReasonFluencyTimingUnavailable         IELTSSpeakingReasonCode = "FLUENCY_TIMING_UNAVAILABLE"
 	IELTSReasonPronunciationArtifactUnavailable IELTSSpeakingReasonCode = "PRONUNCIATION_ARTIFACT_UNAVAILABLE"
+	IELTSReasonPracticeEstimateUncalibrated     IELTSSpeakingReasonCode = "PRACTICE_ESTIMATE_UNCALIBRATED"
 	IELTSReasonInsufficientEvidence             IELTSSpeakingReasonCode = "INSUFFICIENT_EVIDENCE"
 	IELTSReasonOpportunityNotProvided           IELTSSpeakingReasonCode = "OPPORTUNITY_NOT_PROVIDED"
 )
@@ -113,7 +117,11 @@ const (
 	IELTSAssessmentNotAssessed IELTSSpeakingAssessmentStatus = "NOT_ASSESSED"
 )
 
-type IELTSRubricDescriptor string
+type IELTSRubricDescriptor struct {
+	ID          string `json:"descriptor_id"`
+	Band        int    `json:"band"`
+	Description string `json:"description"`
+}
 
 type IELTSRubricDescriptorSet struct {
 	CriterionID IELTSCriterion          `json:"criterion_id"`
@@ -154,9 +162,38 @@ type IELTSSpeakingProviderQuestion struct {
 }
 
 type IELTSSpeakingProviderResponse struct {
-	TurnID        string `json:"turn_id"`
-	EvidenceRefID string `json:"evidence_ref_id"`
-	Transcript    string `json:"confirmed_transcript"`
+	TurnID               string   `json:"turn_id"`
+	EvidenceRefID        string   `json:"evidence_ref_id"`
+	Transcript           string   `json:"confirmed_transcript"`
+	RecordingDurationMS  int64    `json:"recording_duration_ms"`
+	PronunciationScore   *float64 `json:"pronunciation_score,omitempty"`
+	AcousticFluencyScore *float64 `json:"acoustic_fluency_score,omitempty"`
+	SpeakingSpeedWPM     *float64 `json:"speaking_speed_wpm,omitempty"`
+	AcousticProvider     string   `json:"acoustic_provider,omitempty"`
+	AcousticProviderRun  string   `json:"acoustic_provider_run,omitempty"`
+}
+
+type IELTSSpeakingAcousticRequest struct {
+	TurnID        string
+	EvidenceRefID string
+}
+
+type IELTSSpeakingTurnAcoustics struct {
+	TurnID               string
+	EvidenceRefID        string
+	PronunciationScore   float64
+	AcousticFluencyScore *float64
+	SpeakingSpeedWPM     *float64
+	Provider             string
+	ProviderRun          string
+}
+
+type IELTSSpeakingAcousticSource interface {
+	GetIELTSSpeakingAcoustics(
+		context.Context,
+		string,
+		[]IELTSSpeakingAcousticRequest,
+	) ([]IELTSSpeakingTurnAcoustics, error)
 }
 
 type IELTSSpeakingShadowProviderLineage struct {
@@ -231,13 +268,24 @@ type IELTSSpeakingShadowEvidence struct {
 }
 
 type IELTSSpeakingShadowEngine struct {
-	provider IELTSSpeakingShadowProvider
+	provider  IELTSSpeakingShadowProvider
+	acoustics IELTSSpeakingAcousticSource
 }
 
 func NewIELTSSpeakingShadowEngine(
 	provider IELTSSpeakingShadowProvider,
 ) *IELTSSpeakingShadowEngine {
 	return &IELTSSpeakingShadowEngine{provider: provider}
+}
+
+func NewIELTSSpeakingShadowEngineWithAcoustics(
+	provider IELTSSpeakingShadowProvider,
+	acoustics IELTSSpeakingAcousticSource,
+) *IELTSSpeakingShadowEngine {
+	return &IELTSSpeakingShadowEngine{
+		provider:  provider,
+		acoustics: acoustics,
+	}
 }
 
 func (engine *IELTSSpeakingShadowEngine) Evaluate(
@@ -254,6 +302,12 @@ func (engine *IELTSSpeakingShadowEngine) Evaluate(
 	if prepared.result.Scoreability ==
 		IELTSSpeakingScoreabilityInsufficient {
 		return prepared.result, nil
+	}
+	if engine.acoustics != nil {
+		prepared, err = engine.withAcoustics(ctx, snapshot, prepared)
+		if err != nil {
+			return IELTSSpeakingShadowResult{}, err
+		}
 	}
 	generated, err := engine.provider.AnalyzeIELTSSpeaking(
 		ctx,
@@ -276,6 +330,94 @@ func (engine *IELTSSpeakingShadowEngine) Evaluate(
 		return IELTSSpeakingShadowResult{}, err
 	}
 	return result, nil
+}
+
+func (engine *IELTSSpeakingShadowEngine) withAcoustics(
+	ctx context.Context,
+	snapshot EvidenceSnapshot,
+	prepared preparedIELTSSpeakingShadow,
+) (preparedIELTSSpeakingShadow, error) {
+	requests := make(
+		[]IELTSSpeakingAcousticRequest,
+		0,
+		len(prepared.input.Questions),
+	)
+	for _, question := range prepared.input.Questions {
+		if question.Response == nil {
+			return preparedIELTSSpeakingShadow{}, ErrInvalidRequest
+		}
+		requests = append(requests, IELTSSpeakingAcousticRequest{
+			TurnID:        question.Response.TurnID,
+			EvidenceRefID: question.Response.EvidenceRefID,
+		})
+	}
+	values, err := engine.acoustics.GetIELTSSpeakingAcoustics(
+		ctx,
+		snapshot.OwnerUserID,
+		requests,
+	)
+	if err != nil {
+		return preparedIELTSSpeakingShadow{}, err
+	}
+	if len(values) != len(requests) {
+		return prepared, nil
+	}
+	byTurn := make(map[string]IELTSSpeakingTurnAcoustics, len(values))
+	for _, value := range values {
+		if !validIELTSSpeakingTurnAcoustics(value) {
+			return preparedIELTSSpeakingShadow{}, ErrInvalidRequest
+		}
+		byTurn[value.TurnID] = value
+	}
+	for index := range prepared.input.Questions {
+		response := prepared.input.Questions[index].Response
+		value, ok := byTurn[response.TurnID]
+		if !ok || value.EvidenceRefID != response.EvidenceRefID {
+			return preparedIELTSSpeakingShadow{}, ErrInvalidRequest
+		}
+		pronunciation := value.PronunciationScore
+		response.PronunciationScore = &pronunciation
+		if value.AcousticFluencyScore != nil {
+			fluency := *value.AcousticFluencyScore
+			response.AcousticFluencyScore = &fluency
+		}
+		if value.SpeakingSpeedWPM != nil {
+			speed := *value.SpeakingSpeedWPM
+			response.SpeakingSpeedWPM = &speed
+		}
+		response.AcousticProvider = value.Provider
+		response.AcousticProviderRun = value.ProviderRun
+	}
+	prepared.input.AssessableCriteria = slices.Clone(ieltsCriterionOrder[:])
+	prepared.input.RubricDescriptors = ieltsRubricDescriptorSetsFor(
+		prepared.input.AssessableCriteria,
+	)
+	prepared.result.ReasonCodes = []IELTSSpeakingReasonCode{
+		IELTSReasonPracticeEstimateUncalibrated,
+	}
+	return prepared, nil
+}
+
+func validIELTSSpeakingTurnAcoustics(
+	value IELTSSpeakingTurnAcoustics,
+) bool {
+	return validIdentifier(value.TurnID) &&
+		validIdentifier(value.EvidenceRefID) &&
+		value.PronunciationScore >= 0 &&
+		value.PronunciationScore <= 100 &&
+		validOptionalIELTSAcousticScore(value.AcousticFluencyScore) &&
+		validOptionalIELTSSpeakingSpeed(value.SpeakingSpeedWPM) &&
+		(value.AcousticFluencyScore != nil || value.SpeakingSpeedWPM != nil) &&
+		validProviderIdentifier(value.Provider) &&
+		validProviderIdentifier(value.ProviderRun)
+}
+
+func validOptionalIELTSAcousticScore(value *float64) bool {
+	return value == nil || (*value >= 0 && *value <= 100)
+}
+
+func validOptionalIELTSSpeakingSpeed(value *float64) bool {
+	return value == nil || (*value > 0 && *value <= 1000)
 }
 
 type preparedIELTSSpeakingShadow struct {
@@ -350,9 +492,10 @@ func prepareIELTSSpeakingShadow(
 			responseRefs[ref.EvidenceRefID] = struct{}{}
 			providerQuestion.Response =
 				&IELTSSpeakingProviderResponse{
-					TurnID:        turn.TurnID,
-					EvidenceRefID: ref.EvidenceRefID,
-					Transcript:    turn.Transcript.Text,
+					TurnID:              turn.TurnID,
+					EvidenceRefID:       ref.EvidenceRefID,
+					Transcript:          turn.Transcript.Text,
+					RecordingDurationMS: turn.Audio.DurationMS,
 				}
 		}
 		questions = append(questions, providerQuestion)
@@ -509,7 +652,7 @@ type ieltsProviderPayload struct {
 
 type ieltsProviderCriterion struct {
 	CriterionID      IELTSCriterion         `json:"criterion_id"`
-	RubricDescriptor IELTSRubricDescriptor  `json:"rubric_descriptor,omitempty"`
+	RubricDescriptor string                 `json:"rubric_descriptor,omitempty"`
 	Strengths        []ieltsProviderFinding `json:"strengths"`
 	Improvements     []ieltsProviderFinding `json:"improvements"`
 	UpgradeExamples  []ieltsProviderFinding `json:"upgrade_examples"`
@@ -548,8 +691,9 @@ func lookupIELTSFeedbackTemplate(
 		IELTSCriterionFC:  "coherence",
 		IELTSCriterionLR:  "lexical resource",
 		IELTSCriterionGRA: "grammar",
+		IELTSCriterionPR:  "pronunciation",
 	}[criterion]
-	if criterionName == "" || criterion == IELTSCriterionPR {
+	if criterionName == "" {
 		return ieltsFeedbackTemplate{}, false
 	}
 	switch kind {
@@ -601,7 +745,7 @@ func normalizeIELTSSpeakingProviderResult(
 		ensureJSONEOF(decoder) != nil ||
 		payload.SchemaVersion !=
 			IELTSSpeakingShadowProviderSchemaVersion ||
-		len(payload.Criteria) != 3 {
+		len(payload.Criteria) != len(prepared.input.AssessableCriteria) {
 		return IELTSSpeakingShadowResult{},
 			ErrInvalidIELTSSpeakingShadow
 	}
@@ -610,9 +754,8 @@ func normalizeIELTSSpeakingProviderResult(
 		len(payload.Criteria),
 	)
 	for index, criterion := range payload.Criteria {
-		expected := ieltsCriterionOrder[index]
-		if expected == IELTSCriterionPR ||
-			criterion.CriterionID != expected {
+		expected := prepared.input.AssessableCriteria[index]
+		if criterion.CriterionID != expected {
 			return IELTSSpeakingShadowResult{},
 				ErrInvalidIELTSSpeakingShadow
 		}
@@ -637,7 +780,7 @@ func normalizeIELTSSpeakingProviderResult(
 		ResponseSchema: IELTSSpeakingShadowProviderSchemaVersion,
 		RubricVersion:  IELTSSpeakingShadowRubricVersion,
 	}
-	for _, criterionID := range ieltsCriterionOrder[:3] {
+	for _, criterionID := range prepared.input.AssessableCriteria {
 		criterion, err := normalizeIELTSProviderCriterion(
 			prepared,
 			byCriterion[criterionID],
@@ -647,14 +790,16 @@ func normalizeIELTSSpeakingProviderResult(
 		}
 		result.Criteria = append(result.Criteria, criterion)
 	}
-	result.Criteria = append(
-		result.Criteria,
-		blockedIELTSCriterion(
-			IELTSCriterionPR,
-			1,
-			IELTSReasonPronunciationArtifactUnavailable,
-		),
-	)
+	if !slices.Contains(prepared.input.AssessableCriteria, IELTSCriterionPR) {
+		result.Criteria = append(
+			result.Criteria,
+			blockedIELTSCriterion(
+				IELTSCriterionPR,
+				1,
+				IELTSReasonPronunciationArtifactUnavailable,
+			),
+		)
+	}
 	result.QuestionResults = ieltsSpeakingQuestionResults(
 		prepared,
 		result.Criteria,
@@ -666,8 +811,7 @@ func normalizeIELTSProviderCriterion(
 	prepared preparedIELTSSpeakingShadow,
 	source ieltsProviderCriterion,
 ) (IELTSSpeakingShadowCriterionResult, error) {
-	if source.CriterionID == IELTSCriterionPR ||
-		source.Strengths == nil ||
+	if source.Strengths == nil ||
 		source.Improvements == nil ||
 		source.UpgradeExamples == nil ||
 		len(source.Strengths) > ieltsMaximumFindings ||
@@ -691,7 +835,11 @@ func normalizeIELTSProviderCriterion(
 		Improvements:    []IELTSSpeakingShadowFinding{},
 		UpgradeExamples: []IELTSSpeakingShadowFinding{},
 	}
-	if source.CriterionID == IELTSCriterionFC {
+	fullAcoustics := slices.Contains(
+		prepared.input.AssessableCriteria,
+		IELTSCriterionPR,
+	)
+	if source.CriterionID == IELTSCriterionFC && !fullAcoustics {
 		if source.RubricDescriptor != "" {
 			return IELTSSpeakingShadowCriterionResult{},
 				ErrInvalidIELTSSpeakingShadow
@@ -711,6 +859,13 @@ func normalizeIELTSProviderCriterion(
 		}
 		result.EstimatedBand = &band
 		result.BandDescriptor = descriptor
+		if fullAcoustics &&
+			(source.CriterionID == IELTSCriterionFC ||
+				source.CriterionID == IELTSCriterionPR) {
+			result.ReasonCodes = []IELTSSpeakingReasonCode{
+				IELTSReasonPracticeEstimateUncalibrated,
+			}
+		}
 	}
 	var err error
 	result.Strengths, err = normalizeIELTSFindings(
@@ -951,55 +1106,113 @@ func ieltsFindingIDsForEvidenceRef(
 }
 
 func ieltsRubricDescriptorSets() []IELTSRubricDescriptorSet {
-	return []IELTSRubricDescriptorSet{
-		{CriterionID: IELTSCriterionLR, Descriptors: ieltsDescriptorsFor(
-			IELTSCriterionLR,
-		)},
-		{CriterionID: IELTSCriterionGRA, Descriptors: ieltsDescriptorsFor(
-			IELTSCriterionGRA,
-		)},
+	return ieltsRubricDescriptorSetsFor([]IELTSCriterion{
+		IELTSCriterionLR,
+		IELTSCriterionGRA,
+	})
+}
+
+func ieltsRubricDescriptorSetsFor(
+	criteria []IELTSCriterion,
+) []IELTSRubricDescriptorSet {
+	result := make([]IELTSRubricDescriptorSet, 0, len(criteria))
+	for _, criterion := range criteria {
+		result = append(result, IELTSRubricDescriptorSet{
+			CriterionID: criterion,
+			Descriptors: ieltsDescriptorsFor(criterion),
+		})
 	}
+	return result
 }
 
 func ieltsDescriptorsFor(
 	criterion IELTSCriterion,
 ) []IELTSRubricDescriptor {
-	if criterion != IELTSCriterionLR &&
-		criterion != IELTSCriterionGRA {
+	if !slices.Contains(ieltsCriterionOrder[:], criterion) {
 		return []IELTSRubricDescriptor{}
 	}
 	prefix := strings.TrimPrefix(string(criterion), "IELTS_")
+	descriptions := ieltsPublicBandDescriptions(criterion)
 	result := make([]IELTSRubricDescriptor, 0, 9)
 	for band := 1; band <= 9; band++ {
 		result = append(
 			result,
-			IELTSRubricDescriptor(
-				prefix+"_PRACTICE_BAND_"+strconv.Itoa(band),
-			),
+			IELTSRubricDescriptor{
+				ID:          prefix + "_PRACTICE_BAND_" + strconv.Itoa(band),
+				Band:        band,
+				Description: descriptions[band-1],
+			},
 		)
 	}
 	return result
 }
 
+func ieltsPublicBandDescriptions(criterion IELTSCriterion) []string {
+	switch criterion {
+	case IELTSCriterionFC:
+		return []string{
+			"No rateable language is available.",
+			"Communication is extremely limited and pauses occur before most words.",
+			"Long pauses are common, simple sentences are difficult to link, and responses often fail to convey a basic message.",
+			"Noticeable pauses, slow delivery, frequent repetition, and basic repetitive links cause coherence breakdowns.",
+			"Usually maintains speech flow using repetition, self-correction, or slow speech; complex communication causes fluency problems.",
+			"Can speak at length but sometimes loses coherence through hesitation, repetition, or self-correction and does not always use discourse markers appropriately.",
+			"Speaks at length without noticeable effort, uses connectives flexibly, and remains coherent despite occasional language-related hesitation or correction.",
+			"Speaks fluently with only occasional repetition or correction, with hesitation mainly related to content, and develops topics coherently.",
+			"Speaks fluently and coherently with only rare repetition or correction and develops topics fully and appropriately.",
+		}
+	case IELTSCriterionLR:
+		return []string{
+			"No rateable lexical resource is available.",
+			"Produces only isolated words or memorised utterances.",
+			"Uses simple vocabulary for personal information but has insufficient vocabulary for less familiar topics.",
+			"Conveys basic meaning on familiar topics, makes frequent word-choice errors, and rarely attempts paraphrase.",
+			"Discusses familiar and unfamiliar topics with limited flexibility and attempts paraphrase with mixed success.",
+			"Has enough vocabulary to discuss topics at length despite some inappropriate choices and generally paraphrases successfully.",
+			"Uses vocabulary flexibly across topics, includes some less common or idiomatic language, and paraphrases effectively despite occasional inappropriate choices.",
+			"Uses a wide vocabulary readily and flexibly, handles less common and idiomatic language skilfully, and paraphrases effectively with only occasional inaccuracies.",
+			"Uses vocabulary with full flexibility and precision across topics and uses idiomatic language naturally and accurately.",
+		}
+	case IELTSCriterionGRA:
+		return []string{
+			"No rateable grammatical language is available.",
+			"Cannot produce basic sentence forms.",
+			"Attempts basic sentence forms with limited success or relies on memorised utterances, with numerous errors outside memorised expressions.",
+			"Produces basic sentence forms and some correct simple sentences, but subordinate structures are rare and frequent errors may cause misunderstanding.",
+			"Produces basic sentence forms with reasonable accuracy and attempts a limited range of complex structures that often contain errors.",
+			"Uses a mix of simple and complex structures with limited flexibility; frequent errors in complex structures rarely impede understanding.",
+			"Uses a range of complex structures with some flexibility and frequently produces error-free sentences, though some mistakes persist.",
+			"Uses a wide range of structures flexibly and produces a majority of error-free sentences with only occasional non-systematic errors.",
+			"Uses a full range of structures naturally and appropriately with consistently accurate grammar apart from native-like slips.",
+		}
+	case IELTSCriterionPR:
+		return []string{
+			"No rateable pronunciation is available.",
+			"Speech is often unintelligible.",
+			"Shows some features of Band 2 and some positive features of Band 4.",
+			"Uses a limited range of pronunciation features; frequent lapses and mispronunciations cause listener difficulty.",
+			"Shows all positive features of Band 4 and some positive features of Band 6.",
+			"Uses a range of pronunciation features with mixed control and is generally understandable, though individual sounds or words sometimes reduce clarity.",
+			"Shows all positive features of Band 6 and some positive features of Band 8.",
+			"Uses a wide range of pronunciation features flexibly, is easy to understand throughout, and the first-language accent has minimal effect.",
+			"Uses a full range of pronunciation features precisely and subtly and is effortless to understand.",
+		}
+	default:
+		return []string{}
+	}
+}
+
 func mapIELTSRubricDescriptor(
 	criterion IELTSCriterion,
-	descriptor IELTSRubricDescriptor,
+	descriptor string,
 ) (int, string, bool) {
 	allowed := ieltsDescriptorsFor(criterion)
-	index := slices.Index(allowed, descriptor)
-	if index < 0 {
-		return 0, "", false
+	for _, candidate := range allowed {
+		if candidate.ID == descriptor {
+			return candidate.Band, candidate.Description, true
+		}
 	}
-	band := index + 1
-	label := "Vocabulary"
-	if criterion == IELTSCriterionGRA {
-		label = "Grammar"
-	}
-	return band, fmt.Sprintf(
-		"%s transcript evidence aligns with the practice Band %d descriptor.",
-		label,
-		band,
-	), true
+	return 0, "", false
 }
 
 func validIELTSSpeakingProviderInput(
@@ -1012,23 +1225,33 @@ func validIELTSSpeakingProviderInput(
 		input.SceneType != SceneIELTSSpeaking ||
 		input.SceneModel !=
 			string(scene.SceneModelIELTSSpeakingFullMock) ||
-		!slices.Equal(
-			input.AssessableCriteria,
-			[]IELTSCriterion{
-				IELTSCriterionFC,
-				IELTSCriterionLR,
-				IELTSCriterionGRA,
-			},
-		) ||
-		len(input.RubricDescriptors) != 2 ||
 		len(input.Questions) != ieltsQuestionCount {
 		return false
 	}
-	for index, set := range input.RubricDescriptors {
-		expected := []IELTSCriterion{
+	fullAcoustics := slices.Equal(
+		input.AssessableCriteria,
+		ieltsCriterionOrder[:],
+	)
+	textOnly := slices.Equal(input.AssessableCriteria, []IELTSCriterion{
+		IELTSCriterionFC,
+		IELTSCriterionLR,
+		IELTSCriterionGRA,
+	})
+	if !fullAcoustics && !textOnly {
+		return false
+	}
+	expectedRubricCriteria := input.AssessableCriteria
+	if textOnly {
+		expectedRubricCriteria = []IELTSCriterion{
 			IELTSCriterionLR,
 			IELTSCriterionGRA,
-		}[index]
+		}
+	}
+	if len(input.RubricDescriptors) != len(expectedRubricCriteria) {
+		return false
+	}
+	for index, set := range input.RubricDescriptors {
+		expected := expectedRubricCriteria[index]
 		if set.CriterionID != expected ||
 			!slices.Equal(
 				set.Descriptors,
@@ -1055,7 +1278,33 @@ func validIELTSSpeakingProviderInput(
 			!validInterviewText(
 				question.Response.Transcript,
 				interviewShadowMaximumInputString,
-			) {
+			) || question.Response.RecordingDurationMS < 0 {
+			return false
+		}
+		hasAcoustics := question.Response.PronunciationScore != nil ||
+			question.Response.AcousticFluencyScore != nil ||
+			question.Response.SpeakingSpeedWPM != nil ||
+			question.Response.AcousticProvider != "" ||
+			question.Response.AcousticProviderRun != ""
+		if fullAcoustics {
+			if !hasAcoustics || question.Response.PronunciationScore == nil ||
+				(question.Response.AcousticFluencyScore == nil &&
+					question.Response.SpeakingSpeedWPM == nil) ||
+				question.Response.RecordingDurationMS <= 0 ||
+				!validIELTSSpeakingTurnAcoustics(
+					IELTSSpeakingTurnAcoustics{
+						TurnID:               question.Response.TurnID,
+						EvidenceRefID:        question.Response.EvidenceRefID,
+						PronunciationScore:   *question.Response.PronunciationScore,
+						AcousticFluencyScore: question.Response.AcousticFluencyScore,
+						SpeakingSpeedWPM:     question.Response.SpeakingSpeedWPM,
+						Provider:             question.Response.AcousticProvider,
+						ProviderRun:          question.Response.AcousticProviderRun,
+					},
+				) {
+				return false
+			}
+		} else if hasAcoustics {
 			return false
 		}
 		if _, duplicate := seenQuestions[question.QuestionID]; duplicate {
@@ -1127,15 +1376,22 @@ func ValidateIELTSSpeakingShadowResult(
 	}
 	switch result.Scoreability {
 	case IELTSSpeakingScoreabilityProvisional:
+		fullAcoustics := len(result.Criteria) == len(ieltsCriterionOrder) &&
+			result.Criteria[len(result.Criteria)-1].CriterionID == IELTSCriterionPR &&
+			result.Criteria[len(result.Criteria)-1].Scoreability ==
+				IELTSSpeakingScoreabilityProvisional
+		expectedReasons := []IELTSSpeakingReasonCode{
+			IELTSReasonASRConfidenceUnavailable,
+			IELTSReasonFluencyTimingUnavailable,
+			IELTSReasonPronunciationArtifactUnavailable,
+		}
+		if fullAcoustics {
+			expectedReasons = []IELTSSpeakingReasonCode{
+				IELTSReasonPracticeEstimateUncalibrated,
+			}
+		}
 		if result.Gate != IELTSSpeakingGateFeedbackOnly ||
-			!slices.Equal(
-				result.ReasonCodes,
-				[]IELTSSpeakingReasonCode{
-					IELTSReasonASRConfidenceUnavailable,
-					IELTSReasonFluencyTimingUnavailable,
-					IELTSReasonPronunciationArtifactUnavailable,
-				},
-			) ||
+			!slices.Equal(result.ReasonCodes, expectedReasons) ||
 			result.Provider == nil ||
 			!validIELTSProviderLineage(*result.Provider) {
 			return ErrInvalidIELTSSpeakingShadow
@@ -1166,9 +1422,15 @@ func ValidateIELTSSpeakingShadowResult(
 			answered++
 		}
 	}
+	fullAcoustics := result.Scoreability ==
+		IELTSSpeakingScoreabilityProvisional &&
+		len(result.Criteria) == len(ieltsCriterionOrder) &&
+		result.Criteria[len(result.Criteria)-1].CriterionID == IELTSCriterionPR &&
+		result.Criteria[len(result.Criteria)-1].Scoreability ==
+			IELTSSpeakingScoreabilityProvisional
 	for index, criterion := range result.Criteria {
 		expectedScoreability := result.Scoreability
-		if criterion.CriterionID == IELTSCriterionPR {
+		if criterion.CriterionID == IELTSCriterionPR && !fullAcoustics {
 			expectedScoreability =
 				IELTSSpeakingScoreabilityInsufficient
 		}
@@ -1258,7 +1520,16 @@ func ValidateIELTSSpeakingShadowResult(
 			}
 			switch criterion.CriterionID {
 			case IELTSCriterionFC:
-				if criterion.EstimatedBand != nil ||
+				if fullAcoustics {
+					if !validIELTSProvisionalBandCriterion(
+						criterion,
+						[]IELTSSpeakingReasonCode{
+							IELTSReasonPracticeEstimateUncalibrated,
+						},
+					) {
+						return ErrInvalidIELTSSpeakingShadow
+					}
+				} else if criterion.EstimatedBand != nil ||
 					criterion.BandDescriptor != "" ||
 					!slices.Equal(
 						criterion.ReasonCodes,
@@ -1270,21 +1541,22 @@ func ValidateIELTSSpeakingShadowResult(
 					return ErrInvalidIELTSSpeakingShadow
 				}
 			case IELTSCriterionLR, IELTSCriterionGRA:
-				if criterion.EstimatedBand == nil ||
-					!slices.Equal(
-						criterion.ReasonCodes,
-						[]IELTSSpeakingReasonCode{
-							IELTSReasonASRConfidenceUnavailable,
-						},
-					) {
+				if !validIELTSProvisionalBandCriterion(
+					criterion,
+					[]IELTSSpeakingReasonCode{
+						IELTSReasonASRConfidenceUnavailable,
+					},
+				) {
 					return ErrInvalidIELTSSpeakingShadow
 				}
-				_, descriptor, ok := mapIELTSBand(
-					criterion.CriterionID,
-					*criterion.EstimatedBand,
-				)
-				if !ok ||
-					criterion.BandDescriptor != descriptor {
+			case IELTSCriterionPR:
+				if !fullAcoustics ||
+					!validIELTSProvisionalBandCriterion(
+						criterion,
+						[]IELTSSpeakingReasonCode{
+							IELTSReasonPracticeEstimateUncalibrated,
+						},
+					) {
 					return ErrInvalidIELTSSpeakingShadow
 				}
 			default:
@@ -1375,6 +1647,21 @@ func ValidateIELTSSpeakingShadowResult(
 		}
 	}
 	return nil
+}
+
+func validIELTSProvisionalBandCriterion(
+	criterion IELTSSpeakingShadowCriterionResult,
+	reasons []IELTSSpeakingReasonCode,
+) bool {
+	if criterion.EstimatedBand == nil ||
+		!slices.Equal(criterion.ReasonCodes, reasons) {
+		return false
+	}
+	_, descriptor, ok := mapIELTSBand(
+		criterion.CriterionID,
+		*criterion.EstimatedBand,
+	)
+	return ok && criterion.BandDescriptor == descriptor
 }
 
 func validIELTSProviderLineage(
@@ -1495,7 +1782,7 @@ func validIELTSQuestionFindingIDs(
 func mapIELTSBand(
 	criterion IELTSCriterion,
 	band int,
-) (IELTSRubricDescriptor, string, bool) {
+) (string, string, bool) {
 	descriptors := ieltsDescriptorsFor(criterion)
 	if band < 1 || band > len(descriptors) {
 		return "", "", false
@@ -1503,7 +1790,7 @@ func mapIELTSBand(
 	descriptor := descriptors[band-1]
 	_, label, ok := mapIELTSRubricDescriptor(
 		criterion,
-		descriptor,
+		descriptor.ID,
 	)
-	return descriptor, label, ok
+	return descriptor.ID, label, ok
 }
