@@ -307,6 +307,11 @@ void main() {
         find.byKey(const Key('ielts-mock-part-2-complete')),
         findsOneWidget,
       );
+      expect(
+        find.byKey(const Key('ielts-part2-answer-feedback')),
+        findsOneWidget,
+      );
+      expect(find.text('Answer 9'), findsOneWidget);
       expect(store.value?.notes, contains('weekly practice'));
 
       await tester.tap(find.text('Continue to Part 3'));

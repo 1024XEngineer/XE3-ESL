@@ -1150,10 +1150,18 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                 key: const Key('ielts-mock-part-2-complete'),
                 title: 'Part 2 Complete',
                 message: "Well done! You've finished Part 2. Next up: Part 3.",
+                detail: _Part2AnswerFeedback(
+                  controller: widget.controller,
+                  speechFeedbackController: widget.speechFeedbackController,
+                ),
                 buttonLabel: 'Continue to Part 3',
                 onPressed: _beginPart3,
               )
             : _Part2PracticeComplete(
+                detail: _Part2AnswerFeedback(
+                  controller: widget.controller,
+                  speechFeedbackController: widget.speechFeedbackController,
+                ),
                 onContinuePart3: _beginPart3,
                 onNext: () =>
                     _finishSection(IeltsPracticeCompletionAction.next),
@@ -1732,6 +1740,7 @@ class _CompletionStep extends StatelessWidget {
     required this.message,
     required this.buttonLabel,
     required this.onPressed,
+    this.detail,
     this.buttonKey = const Key('ielts-mock-continue'),
     super.key,
   });
@@ -1741,6 +1750,7 @@ class _CompletionStep extends StatelessWidget {
   final String buttonLabel;
   final VoidCallback onPressed;
   final Key buttonKey;
+  final Widget? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -1773,6 +1783,10 @@ class _CompletionStep extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: SpeakUpDesign.body,
               ),
+              if (detail case final content?) ...[
+                const SizedBox(height: 20),
+                content,
+              ],
               const SizedBox(height: 36),
               FilledButton(
                 key: buttonKey,
@@ -1799,14 +1813,67 @@ class _CompletionStep extends StatelessWidget {
   }
 }
 
+class _Part2AnswerFeedback extends StatelessWidget {
+  const _Part2AnswerFeedback({
+    required this.controller,
+    required this.speechFeedbackController,
+  });
+
+  final AgentController controller;
+  final SpeechFeedbackController? speechFeedbackController;
+
+  @override
+  Widget build(BuildContext context) {
+    final answer = controller.practiceMessages
+        .where((message) => message.role == AgentMessageRole.user)
+        .lastOrNull;
+    if (answer == null) {
+      return const SizedBox.shrink();
+    }
+    final candidateProjection =
+        answer.speechFeedbackStatusUrl != null &&
+            speechFeedbackController != null
+        ? speechFeedbackController!.projectionFor(
+            _ieltsFeedbackSourceKey(controller, answer),
+          )
+        : null;
+    final projection =
+        candidateProjection?.feedback?.scoreabilityStatus ==
+            SpeechFeedbackScoreabilityStatus.insufficient
+        ? null
+        : candidateProjection;
+    return Column(
+      key: const Key('ielts-part2-answer-feedback'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        PracticeChatBubble(message: answer, maxWidth: 420),
+        if (projection != null) ...[
+          const SizedBox(height: 10),
+          SpeechFeedbackDisclosure(
+            key: ValueKey('ielts-speech-feedback-${projection.sourceKey}'),
+            projection: projection,
+            onRetry: projection.canRetry
+                ? () => unawaited(
+                    speechFeedbackController!.retry(projection.sourceKey),
+                  )
+                : null,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _Part2PracticeComplete extends StatelessWidget {
   const _Part2PracticeComplete({
+    required this.detail,
     required this.onContinuePart3,
     required this.onNext,
     required this.onRetry,
     required this.onList,
   });
 
+  final Widget detail;
   final VoidCallback onContinuePart3;
   final VoidCallback onNext;
   final VoidCallback onRetry;
@@ -1818,6 +1885,7 @@ class _Part2PracticeComplete extends StatelessWidget {
       key: const Key('ielts-part2-practice-complete'),
       title: 'Part 2 Complete',
       message: '题卡陈述已完成。你可以继续练同主题 Part 3，或切换下一张题卡。',
+      detail: detail,
       primaryLabel: '继续对应 Part 3',
       onPrimary: onContinuePart3,
       onNext: onNext,
@@ -1870,6 +1938,7 @@ class _SectionActionLayout extends StatelessWidget {
     required this.onNext,
     required this.onRetry,
     required this.onList,
+    this.detail,
     super.key,
   });
 
@@ -1880,6 +1949,7 @@ class _SectionActionLayout extends StatelessWidget {
   final VoidCallback? onNext;
   final VoidCallback onRetry;
   final VoidCallback onList;
+  final Widget? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -1912,6 +1982,10 @@ class _SectionActionLayout extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: SpeakUpDesign.body,
               ),
+              if (detail case final content?) ...[
+                const SizedBox(height: 20),
+                content,
+              ],
               const SizedBox(height: 30),
               FilledButton(
                 key: const Key('ielts-section-primary-action'),

@@ -155,7 +155,7 @@ void main() {
     },
   );
 
-  testWidgets('IELTS user voice bubble shows the shared feedback entry', (
+  testWidgets('IELTS Part 2 English answer shows the shared feedback entry', (
     tester,
   ) async {
     final feedback = _practiceFeedback();
@@ -171,8 +171,8 @@ void main() {
         _practiceSnapshot(
           feedback.statusUrl,
           scenarioType: 'EXAM',
-          scenarioModel: 'IELTS_SPEAKING_FULL_MOCK',
-          turnLimit: 14,
+          scenarioModel: 'IELTS_SPEAKING_PART_2',
+          turnLimit: 6,
         ),
       ),
     );
@@ -194,6 +194,15 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(client.calls, 1);
+    expect(
+      find.byKey(const Key('ielts-part2-practice-complete')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('ielts-part2-answer-feedback')),
+      findsOneWidget,
+    );
+    expect(find.text('I manage the release.'), findsOneWidget);
     expect(
       feedbackController.projectionFor(
         'practice:practice_session_001:practice_turn_001',
@@ -224,8 +233,8 @@ void main() {
     final snapshot = _practiceSnapshot(
       feedback.statusUrl,
       scenarioType: 'EXAM',
-      scenarioModel: 'IELTS_SPEAKING_FULL_MOCK',
-      turnLimit: 14,
+      scenarioModel: 'IELTS_SPEAKING_PART_2',
+      turnLimit: 6,
     );
     final practiceController = AgentController(
       client: FakeAgentClient(),
@@ -279,6 +288,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text('然后，黄天宇主要来把这个。'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-part2-practice-complete')),
+      findsOneWidget,
+    );
     expect(find.textContaining('证据不足'), findsNothing);
     expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
   });
@@ -481,6 +494,13 @@ PracticeSessionSnapshot _practiceSnapshot(
   int turnLimit = 3,
 }) {
   const sessionId = 'practice_session_001';
+  final scene = scenarioModel == 'IELTS_SPEAKING_PART_2'
+      ? const AgentScene(
+          id: 'scn_ielts_speaking_part_2',
+          title: 'IELTS Speaking Part 2',
+          description: 'Part 2 cue card with bound Part 3',
+        )
+      : agentScenes.first;
   const question = PracticeQuestion(
     id: 'practice_question_001',
     sessionId: sessionId,
@@ -491,7 +511,7 @@ PracticeSessionSnapshot _practiceSnapshot(
     threadId: 'thread_001',
     scenarioType: scenarioType,
     scenarioModel: scenarioModel,
-    matter: AgentMatter(id: 'matter_001', scene: agentScenes.first),
+    matter: AgentMatter(id: 'matter_001', scene: scene),
     completedTurns: 1,
     turnLimit: turnLimit,
     sessionCompleted: false,
