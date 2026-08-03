@@ -121,9 +121,10 @@ func TestRetryAuthorizationAllowsEligibleProgressAndCompletedSession(
 			ctx,
 			owner.Actor,
 			persistence.ConsumeTurnCommand{
-				SessionID: created.Session.ID,
-				TurnID:    "effective-turn-" + string(rune('a'+turn)),
-				Payload:   []byte("agent.voice_effective_turn/v1"),
+				SessionID:             created.Session.ID,
+				TurnID:                "effective-turn-" + string(rune('a'+turn)),
+				CountsTowardTurnLimit: true,
+				Payload:               []byte("agent.voice_effective_turn/v1"),
 			},
 		); err != nil {
 			t.Fatalf("complete effective Turn %d: %v", turn, err)
