@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
 	"github.com/gin-gonic/gin"
 )
 
@@ -46,7 +46,7 @@ func (h *HTTPHandler) transcribeRetryVoiceCandidate(c *gin.Context) {
 	candidate, err := h.sameQuestionRetry.Transcribe(
 		c.Request.Context(),
 		actor,
-		agentvoice.RetryTranscriptionCommand{
+		practicevoice.RetryTranscriptionCommand{
 			RetryTurnID:    c.Param("retry_turn_id"),
 			IdempotencyKey: key,
 			ContentType:    platformmedia.ContentTypeWAV,
@@ -82,7 +82,7 @@ func (h *HTTPHandler) confirmRetryVoiceCandidate(c *gin.Context) {
 	turn, err := h.sameQuestionRetry.Confirm(
 		c.Request.Context(),
 		actor,
-		agentvoice.ConfirmRetryTranscriptionCommand{
+		practicevoice.ConfirmRetryTranscriptionCommand{
 			RetryTurnID:    c.Param("retry_turn_id"),
 			CandidateID:    c.Param("candidate_id"),
 			IdempotencyKey: key,
@@ -96,7 +96,7 @@ func (h *HTTPHandler) confirmRetryVoiceCandidate(c *gin.Context) {
 }
 
 func retryTranscriptionCandidateResponse(
-	result agentvoice.RetryTranscriptionCandidate,
+	result practicevoice.RetryTranscriptionCandidate,
 ) gin.H {
 	candidate := result.Candidate
 	return gin.H{
@@ -116,7 +116,7 @@ func retryTranscriptionCandidateResponse(
 }
 
 func confirmedRetryTurnResponse(
-	result agentvoice.ConfirmedRetryTurn,
+	result practicevoice.ConfirmedRetryTurn,
 ) gin.H {
 	turn := result.Turn
 	response := gin.H{

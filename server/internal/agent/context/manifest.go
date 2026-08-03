@@ -1,0 +1,89 @@
+package context
+
+import (
+	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+)
+
+type MessageSource struct {
+	MessageID string                   `json:"message_id"`
+	Sequence  int64                    `json:"sequence"`
+	Role      conversation.MessageRole `json:"role"`
+}
+
+type MemorySource struct {
+	MemoryID               string  `json:"memory_id"`
+	MemoryVersion          int64   `json:"memory_version"`
+	Type                   string  `json:"type"`
+	Scope                  string  `json:"scope"`
+	MatterID               string  `json:"matter_id,omitempty"`
+	Similarity             float64 `json:"similarity"`
+	Score                  float64 `json:"score"`
+	EmbeddingProvider      string  `json:"embedding_provider"`
+	EmbeddingModel         string  `json:"embedding_model"`
+	EmbeddingDimensions    int     `json:"embedding_dimensions"`
+	EmbeddingPolicyVersion string  `json:"embedding_policy_version"`
+	RetrievalPolicyVersion string  `json:"retrieval_policy_version"`
+}
+
+type StableProfileSource struct {
+	MemoryID      string `json:"memory_id"`
+	MemoryVersion int64  `json:"memory_version"`
+	CanonicalKey  string `json:"canonical_key"`
+	Type          string `json:"type"`
+	Scope         string `json:"scope"`
+}
+
+type SummarySource struct {
+	CheckpointID           string `json:"checkpoint_id"`
+	SourceFromSequence     int64  `json:"source_from_sequence"`
+	CoveredThroughSequence int64  `json:"covered_through_sequence"`
+	PolicyVersion          string `json:"policy_version"`
+	PromptVersion          string `json:"prompt_version"`
+	Provider               string `json:"provider"`
+	Model                  string `json:"model"`
+}
+
+type Manifest struct {
+	RunID                             string
+	OwnerID                           string
+	ThreadID                          string
+	InputMessageID                    string
+	ActiveMatterID                    string
+	ActiveMatterVersion               int64
+	InstructionVersion                string
+	StableProfileContextPolicyVersion string
+	SelectedStableProfile             []StableProfileSource
+	MemoryContextPolicyVersion        string
+	SelectedMemories                  []MemorySource
+	SummaryContextPolicyVersion       string
+	SummaryContextStatus              string
+	SelectedSummary                   *SummarySource
+	SelectedMessages                  []MessageSource
+	OmittedMessageCount               int
+	TrimReason                        string
+	MaxInputCharacters                int
+	UsedInputCharacters               int
+	RequestedProvider                 string
+	RequestedModel                    string
+	MaxOutputTokens                   int
+	ExposedTools                      []string
+	ToolSchemaHashes                  map[string]string
+	CreatedAt                         time.Time
+}
+
+func (manifest Manifest) Valid() bool {
+	return uuidPattern.MatchString(manifest.RunID) &&
+		uuidPattern.MatchString(manifest.OwnerID) &&
+		uuidPattern.MatchString(manifest.ThreadID) &&
+		uuidPattern.MatchString(manifest.InputMessageID) &&
+		providerPattern.MatchString(manifest.RequestedProvider) &&
+		modelPattern.MatchString(manifest.RequestedModel) &&
+		manifest.MaxOutputTokens > 0 &&
+		manifest.MaxOutputTokens <= maxBudget &&
+		manifest.MaxInputCharacters >= 5000 &&
+		manifest.MaxInputCharacters <= maxBudget &&
+		manifest.UsedInputCharacters >= 0 &&
+		manifest.UsedInputCharacters <= manifest.MaxInputCharacters
+}

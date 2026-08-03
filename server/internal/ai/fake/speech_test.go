@@ -37,6 +37,36 @@ func TestSpeechRecognizerReturnsDeterministicResult(t *testing.T) {
 	}
 }
 
+func TestSpeechRecognizerStreamsUpdateAndFinalResult(t *testing.T) {
+	t.Parallel()
+
+	expected := ai.TranscriptionResult{
+		ID:         "fake-asr-stream-1",
+		Provider:   "fake",
+		Model:      "deterministic",
+		Transcript: "A stable streamed transcript.",
+	}
+	observer := &fakeTranscriptionObserver{}
+	result, err := NewSpeechRecognizer(expected).TranscribeStream(
+		context.Background(),
+		validFakeTranscriptionRequest(),
+		observer,
+	)
+	if err != nil {
+		t.Fatalf("stream transcription failed: %v", err)
+	}
+	if result != expected {
+		t.Fatalf("stream result = %#v, want %#v", result, expected)
+	}
+	if len(observer.updates) != 2 ||
+		observer.updates[0].Final ||
+		observer.updates[0].Transcript != expected.Transcript ||
+		!observer.updates[1].Final ||
+		observer.updates[1].Transcript != expected.Transcript {
+		t.Fatalf("stream updates = %#v", observer.updates)
+	}
+}
+
 func TestSpeechSynthesizerReturnsDeterministicMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -154,6 +184,18 @@ func assertFakeSpeechError(t *testing.T, err error, kind ai.ErrorKind) {
 }
 
 type fakeAudioSource struct{}
+
+type fakeTranscriptionObserver struct {
+	updates []ai.TranscriptionUpdate
+}
+
+func (observer *fakeTranscriptionObserver) OnTranscriptionUpdate(
+	_ context.Context,
+	update ai.TranscriptionUpdate,
+) error {
+	observer.updates = append(observer.updates, update)
+	return nil
+}
 
 func (fakeAudioSource) Open() (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("audio")), nil

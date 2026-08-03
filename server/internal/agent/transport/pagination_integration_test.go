@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
@@ -27,7 +28,7 @@ func TestPostgresAgentPaginationAndFocusedThread(t *testing.T) {
 	}
 
 	const threadCount = 105
-	threads := make([]Thread, 0, threadCount)
+	threads := make([]agentconversation.Thread, 0, threadCount)
 	for index := 0; index < threadCount; index++ {
 		thread, err := service.CreateThread(context.Background(), actorA, "")
 		if err != nil {
@@ -69,7 +70,7 @@ func TestPostgresAgentPaginationAndFocusedThread(t *testing.T) {
 		context.Background(),
 		actorA,
 		foreignThread.ID,
-	); !errors.Is(err, ErrNotFound) {
+	); !errors.Is(err, agentconversation.ErrNotFound) {
 		t.Fatalf("cross-owner focused Thread error = %v, want not found", err)
 	}
 	if _, err := database.pool.Exec(context.Background(), `
@@ -93,7 +94,7 @@ WHERE owner_user_id = $1`,
 	}
 	var (
 		cursor    string
-		collected []Thread
+		collected []agentconversation.Thread
 	)
 	for pageNumber := 0; ; pageNumber++ {
 		if pageNumber > threadCount {
@@ -275,7 +276,7 @@ WHERE id = $2 AND owner_user_id = $1`,
 		}
 	}
 
-	messageCursor, err := encodeMessagePageCursor(MessagePageCursor{
+	messageCursor, err := encodeMessagePageCursor(agentconversation.MessagePageCursor{
 		ThreadID:       threads[0].ID,
 		BeforeSequence: 500,
 	})
@@ -288,7 +289,7 @@ WHERE id = $2 AND owner_user_id = $1`,
 		threads[1].ID,
 		73,
 		messageCursor,
-	); !errors.Is(err, ErrInvalidRequest) {
+	); !errors.Is(err, agentconversation.ErrInvalidRequest) {
 		t.Fatalf("cross-Thread Message cursor error = %v, want invalid", err)
 	}
 	if _, err := service.PageMessages(
@@ -297,7 +298,7 @@ WHERE id = $2 AND owner_user_id = $1`,
 		threads[0].ID,
 		73,
 		messageCursor,
-	); !errors.Is(err, ErrNotFound) {
+	); !errors.Is(err, agentconversation.ErrNotFound) {
 		t.Fatalf("cross-owner Message page error = %v, want not found", err)
 	}
 
@@ -463,7 +464,7 @@ func TestPostgresAgentPaginationAndFocusedHTTP(t *testing.T) {
 		t.Fatalf("empty focused response: %d %q", noFocus.Code, noFocus.Body.String())
 	}
 
-	threads := make([]Thread, 0, defaultThreadPageSize+1)
+	threads := make([]agentconversation.Thread, 0, defaultThreadPageSize+1)
 	for index := 0; index < defaultThreadPageSize+1; index++ {
 		thread, createErr := service.CreateThread(
 			context.Background(),

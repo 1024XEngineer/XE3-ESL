@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
@@ -40,7 +40,7 @@ type Server struct {
 	application  *Application
 	idempotency  *idempotencyStore
 	identity     *mockIdentityStore
-	tools        []mocktool.CapabilitySummary
+	tools        []capabilityfixture.CapabilitySummary
 }
 
 func NewServer(logger *slog.Logger) *Server {
@@ -56,7 +56,9 @@ func NewServer(logger *slog.Logger) *Server {
 		provider,
 	)
 	reviewService := review.NewService(reviewBackend{runtime: runtime}, provider)
-	toolRegistry, err := mocktool.NewRegistry(mocktool.NewStore())
+	toolRegistry, err := capabilityfixture.NewRegistry(
+		capabilityfixture.NewStore(),
+	)
 	if err != nil {
 		panic("build mock tool registry: " + err.Error())
 	}
@@ -81,7 +83,7 @@ func NewServer(logger *slog.Logger) *Server {
 		),
 		idempotency: newIdempotencyStore(),
 		identity:    newMockIdentityStore(),
-		tools:       mocktool.CapabilitySummaries(toolRegistry),
+		tools:       capabilityfixture.CapabilitySummaries(toolRegistry),
 	}
 	bootstrap.RegisterPreparationCatalog(router, preparationService)
 	logger.Info("agent.tools.registered", slog.Any("tools", server.tools))

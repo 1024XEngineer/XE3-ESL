@@ -3,13 +3,13 @@ package transport
 import (
 	"reflect"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 )
 
-const maxAgentPageSize = core.MaxAgentPageSize
+const maxAgentPageSize = agentconversation.MaxPageSize
 
 func validUUID(value string) bool {
-	return core.ValidUUID(value)
+	return agentconversation.ValidUUID(value)
 }
 
 func nilVoiceDependency(value any) bool {

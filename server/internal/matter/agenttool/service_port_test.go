@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -27,10 +27,10 @@ func (stub *activeMatterLinkerStub) SetActiveMatter(
 	_ requestcontext.Actor,
 	threadID string,
 	matterID string,
-) (core.ThreadMatterLink, error) {
+) (agentconversation.ThreadMatterLink, error) {
 	stub.threadID = threadID
 	stub.matterID = matterID
-	return core.ThreadMatterLink{
+	return agentconversation.ThreadMatterLink{
 		ThreadID: threadID,
 		MatterID: matterID,
 		Active:   true,

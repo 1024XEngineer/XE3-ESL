@@ -11,9 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agentstore "github.com/1024XEngineer/XE3-ESL/server/internal/agent/store"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
@@ -145,7 +144,7 @@ func (database agentTestDatabase) reopen(t *testing.T) *pgxpool.Pool {
 func newAgentDataServices(
 	t *testing.T,
 	pool *pgxpool.Pool,
-) (*matter.Service, *Service) {
+) (*matter.Service, *agentconversation.Service) {
 	t.Helper()
 	ids := identity.NewUUIDv4Generator(nil)
 	matterRepository, err := matter.NewPostgresRepository(pool, ids)
@@ -156,11 +155,11 @@ func newAgentDataServices(
 	if err != nil {
 		t.Fatalf("new Matter service: %v", err)
 	}
-	repository, err := agentpersistence.NewPostgresRepository(pool, ids)
+	repository, err := agentstore.NewPostgresStore(pool, ids)
 	if err != nil {
 		t.Fatalf("new Agent repository: %v", err)
 	}
-	service, err := agentapp.NewService(repository, matterService)
+	service, err := agentconversation.NewService(repository, matterService)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
@@ -198,6 +197,6 @@ func performAgentRequest(
 	return response
 }
 
-func encodeMessagePageCursor(cursor MessagePageCursor) (string, error) {
-	return core.EncodeMessagePageCursor(cursor)
+func encodeMessagePageCursor(cursor agentconversation.MessagePageCursor) (string, error) {
+	return agentconversation.EncodeMessagePageCursor(cursor)
 }

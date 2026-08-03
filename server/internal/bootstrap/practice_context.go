@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
-	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -58,7 +59,7 @@ func NewIdentityAgentAndPracticeComposition(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration core.RunConfiguration,
+	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog preparation.CatalogReader,
 	voiceConfigurations ...VoiceConfiguration,
@@ -87,7 +88,7 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration core.RunConfiguration,
+	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog preparation.CatalogReader,
 	memoryExtractionNotifier interface{ Notify() },
@@ -120,7 +121,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration core.RunConfiguration,
+	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog preparation.CatalogReader,
 	wakeups AgentWorkerWakeups,
@@ -148,7 +149,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration core.RunConfiguration,
+	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog preparation.CatalogReader,
 	wakeups AgentWorkerWakeups,
@@ -177,7 +178,7 @@ func newIdentityAgentAndPracticeComposition(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration core.RunConfiguration,
+	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog preparation.CatalogReader,
 	memoryExtractionNotifier interface{ Notify() },
@@ -458,7 +459,7 @@ type agentThreadReader interface {
 		context.Context,
 		requestcontext.Actor,
 		string,
-	) (core.Thread, error)
+	) (agentconversation.Thread, error)
 }
 
 type agentPracticeContextReader struct {
@@ -523,11 +524,11 @@ func (r *agentPracticeContextReader) ValidatePracticeAnchor(
 
 func mapAgentPracticeContextError(err error) error {
 	switch {
-	case errors.Is(err, core.ErrInvalidRequest):
+	case errors.Is(err, agentconversation.ErrInvalidRequest):
 		return practicepersistence.ErrInvalidArgument
-	case errors.Is(err, core.ErrNotFound):
+	case errors.Is(err, agentconversation.ErrNotFound):
 		return practicepersistence.ErrNotFound
-	case errors.Is(err, core.ErrConflict):
+	case errors.Is(err, agentconversation.ErrConflict):
 		return practicepersistence.ErrConflict
 	default:
 		return fmt.Errorf("bootstrap: read Agent practice context: %w", err)

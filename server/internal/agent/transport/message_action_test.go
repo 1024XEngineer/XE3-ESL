@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 )
 
 func TestInterviewPreparationActionsRequireSucceededRealMatter(t *testing.T) {
@@ -21,11 +21,11 @@ func TestInterviewPreparationActionsRequireSucceededRealMatter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal result: %v", err)
 	}
-	actions := interviewPreparationActions([]core.ToolCallRecord{{
+	actions := interviewPreparationActions([]agentrun.ToolCall{{
 		Name:   scenarioCreateToolName,
-		Status: core.ToolCallStatusSucceeded,
+		Status: agentrun.ToolCallSucceeded,
 		Result: result,
-		SourceRefs: []core.ToolSourceRef{{
+		SourceRefs: []agentrun.ToolSourceRef{{
 			Type: "matter",
 			ID:   matterID,
 		}},
@@ -37,11 +37,11 @@ func TestInterviewPreparationActionsRequireSucceededRealMatter(t *testing.T) {
 	}
 
 	mockResult := []byte(`{"content":{"matter":{"matter_id":"mock-created","title":"Mock"}}}`)
-	if got := interviewPreparationActions([]core.ToolCallRecord{{
+	if got := interviewPreparationActions([]agentrun.ToolCall{{
 		Name:   scenarioCreateToolName,
-		Status: core.ToolCallStatusSucceeded,
+		Status: agentrun.ToolCallSucceeded,
 		Result: mockResult,
-		SourceRefs: []core.ToolSourceRef{{
+		SourceRefs: []agentrun.ToolSourceRef{{
 			Type: "mock_matter",
 			ID:   "mock-created",
 		}},

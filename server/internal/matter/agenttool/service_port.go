@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -26,7 +26,7 @@ type ActiveMatterLinker interface {
 		requestcontext.Actor,
 		string,
 		string,
-	) (core.ThreadMatterLink, error)
+	) (agentconversation.ThreadMatterLink, error)
 }
 
 func NewServicePort(

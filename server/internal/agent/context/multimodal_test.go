@@ -4,8 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/image"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
+	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -22,17 +23,17 @@ func TestAssemblerAddsSignedImagesToMultimodalUserMessage(
 		messageID = "30000000-0000-4000-8000-000000000001"
 		runID     = "40000000-0000-4000-8000-000000000001"
 	)
-	message := core.Message{
+	message := conversation.Message{
 		ID:       messageID,
 		OwnerID:  ownerID,
 		ThreadID: threadID,
 		Sequence: 1,
-		Role:     core.MessageRoleUser,
-		Modality: core.MessageModalityMultimodal,
+		Role:     conversation.MessageRoleUser,
+		Modality: conversation.MessageModalityMultimodal,
 		Content:  "What should I improve?",
 	}
 	repository := multimodalRepository{
-		thread:  core.Thread{ID: threadID, OwnerID: ownerID},
+		thread:  conversation.Thread{ID: threadID, OwnerID: ownerID},
 		message: message,
 	}
 	assembler, err := NewAssembler(
@@ -45,7 +46,11 @@ func TestAssemblerAddsSignedImagesToMultimodalUserMessage(
 	if err != nil {
 		t.Fatalf("new assembler: %v", err)
 	}
-	configuration := core.RunConfiguration{
+	command := AssembleCommand{
+		RunID:              runID,
+		OwnerID:            ownerID,
+		ThreadID:           threadID,
+		InputMessageID:     messageID,
 		Provider:           "fake",
 		Model:              "fake-multimodal",
 		MaxOutputTokens:    256,
@@ -57,18 +62,7 @@ func TestAssemblerAddsSignedImagesToMultimodalUserMessage(
 			UserID:    ownerID,
 			SessionID: "multimodal-session",
 		},
-		core.Run{
-			ID:                 runID,
-			OwnerID:            ownerID,
-			ThreadID:           threadID,
-			InputMessageID:     messageID,
-			Status:             core.RunStatusPending,
-			RequestedProvider:  configuration.Provider,
-			RequestedModel:     configuration.Model,
-			MaxOutputTokens:    configuration.MaxOutputTokens,
-			MaxInputCharacters: configuration.MaxInputCharacters,
-		},
-		configuration,
+		command,
 	)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
@@ -95,7 +89,7 @@ func TestAssemblerImageBudgetKeepsNewestImages(t *testing.T) {
 		threadID = "20000000-0000-4000-8000-000000000001"
 		runID    = "40000000-0000-4000-8000-000000000001"
 	)
-	messages := []core.Message{
+	messages := []conversation.Message{
 		multimodalContextMessage(
 			"30000000-0000-4000-8000-000000000001",
 			ownerID,
@@ -116,7 +110,7 @@ func TestAssemblerImageBudgetKeepsNewestImages(t *testing.T) {
 		),
 	}
 	repository := multimodalBudgetRepository{
-		thread:   core.Thread{ID: threadID, OwnerID: ownerID},
+		thread:   conversation.Thread{ID: threadID, OwnerID: ownerID},
 		messages: messages,
 	}
 	assembler, err := NewAssembler(
@@ -129,7 +123,11 @@ func TestAssemblerImageBudgetKeepsNewestImages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new assembler: %v", err)
 	}
-	configuration := core.RunConfiguration{
+	command := AssembleCommand{
+		RunID:              runID,
+		OwnerID:            ownerID,
+		ThreadID:           threadID,
+		InputMessageID:     messages[2].ID,
 		Provider:           "fake",
 		Model:              "fake-multimodal",
 		MaxOutputTokens:    256,
@@ -141,18 +139,7 @@ func TestAssemblerImageBudgetKeepsNewestImages(t *testing.T) {
 			UserID:    ownerID,
 			SessionID: "multimodal-session",
 		},
-		core.Run{
-			ID:                 runID,
-			OwnerID:            ownerID,
-			ThreadID:           threadID,
-			InputMessageID:     messages[2].ID,
-			Status:             core.RunStatusPending,
-			RequestedProvider:  configuration.Provider,
-			RequestedModel:     configuration.Model,
-			MaxOutputTokens:    configuration.MaxOutputTokens,
-			MaxInputCharacters: configuration.MaxInputCharacters,
-		},
-		configuration,
+		command,
 	)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
@@ -170,38 +157,38 @@ func multimodalContextMessage(
 	ownerID string,
 	threadID string,
 	sequence int64,
-) core.Message {
-	return core.Message{
+) conversation.Message {
+	return conversation.Message{
 		ID:       id,
 		OwnerID:  ownerID,
 		ThreadID: threadID,
 		Sequence: sequence,
-		Role:     core.MessageRoleUser,
-		Modality: core.MessageModalityMultimodal,
+		Role:     conversation.MessageRoleUser,
+		Modality: conversation.MessageModalityMultimodal,
 		Content:  "Message with images.",
 	}
 }
 
 type multimodalRepository struct {
-	thread  core.Thread
-	message core.Message
+	thread  conversation.Thread
+	message conversation.Message
 }
 
 func (repository multimodalRepository) FindThread(
 	context.Context,
 	string,
 	string,
-) (core.Thread, error) {
+) (conversation.Thread, error) {
 	return repository.thread, nil
 }
 
-func (multimodalRepository) FindLatestSummaryCheckpoint(
+func (multimodalRepository) FindLatestCheckpoint(
 	context.Context,
 	string,
 	string,
 	int64,
-) (core.ThreadSummaryCheckpoint, error) {
-	return core.ThreadSummaryCheckpoint{}, core.ErrNotFound
+) (summary.Checkpoint, error) {
+	return summary.Checkpoint{}, conversation.ErrNotFound
 }
 
 func (repository multimodalRepository) ListMessagesForContext(
@@ -211,8 +198,8 @@ func (repository multimodalRepository) ListMessagesForContext(
 	int64,
 	int64,
 	int,
-) ([]core.Message, int, error) {
-	return []core.Message{repository.message}, 0, nil
+) ([]conversation.Message, int, error) {
+	return []conversation.Message{repository.message}, 0, nil
 }
 
 func (repository multimodalRepository) FindMessage(
@@ -220,7 +207,7 @@ func (repository multimodalRepository) FindMessage(
 	string,
 	string,
 	string,
-) (core.Message, error) {
+) (conversation.Message, error) {
 	return repository.message, nil
 }
 
@@ -267,25 +254,25 @@ func (multimodalContextImages) MessageImages(
 }
 
 type multimodalBudgetRepository struct {
-	thread   core.Thread
-	messages []core.Message
+	thread   conversation.Thread
+	messages []conversation.Message
 }
 
 func (repository multimodalBudgetRepository) FindThread(
 	context.Context,
 	string,
 	string,
-) (core.Thread, error) {
+) (conversation.Thread, error) {
 	return repository.thread, nil
 }
 
-func (multimodalBudgetRepository) FindLatestSummaryCheckpoint(
+func (multimodalBudgetRepository) FindLatestCheckpoint(
 	context.Context,
 	string,
 	string,
 	int64,
-) (core.ThreadSummaryCheckpoint, error) {
-	return core.ThreadSummaryCheckpoint{}, core.ErrNotFound
+) (summary.Checkpoint, error) {
+	return summary.Checkpoint{}, conversation.ErrNotFound
 }
 
 func (repository multimodalBudgetRepository) ListMessagesForContext(
@@ -295,8 +282,8 @@ func (repository multimodalBudgetRepository) ListMessagesForContext(
 	int64,
 	int64,
 	int,
-) ([]core.Message, int, error) {
-	return append([]core.Message(nil), repository.messages...), 0, nil
+) ([]conversation.Message, int, error) {
+	return append([]conversation.Message(nil), repository.messages...), 0, nil
 }
 
 func (repository multimodalBudgetRepository) FindMessage(
@@ -304,7 +291,7 @@ func (repository multimodalBudgetRepository) FindMessage(
 	string,
 	string,
 	string,
-) (core.Message, error) {
+) (conversation.Message, error) {
 	return repository.messages[len(repository.messages)-1], nil
 }
 

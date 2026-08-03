@@ -4,9 +4,9 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 
@@ -43,7 +43,7 @@ func agentRunServiceOptions(
 		return agentRunOptions{},
 			errors.New("bootstrap: Agent tool fixtures are disabled in production")
 	}
-	registry, err := mocktool.NewRegistry(mocktool.NewStore())
+	registry, err := capabilityfixture.NewRegistry(capabilityfixture.NewStore())
 	if err != nil {
 		return agentRunOptions{}, err
 	}

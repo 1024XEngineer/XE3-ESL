@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 )
 
 const (
@@ -147,10 +147,10 @@ func threadSummaryErrorKind(err error) string {
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "deadline_exceeded"
-	case errors.Is(err, core.ErrConflict):
+	case errors.Is(err, agentconversation.ErrConflict):
 		return "concurrent_update"
 	case errors.Is(err, agentsummary.ErrInvalidArgument),
-		errors.Is(err, core.ErrInvalidRequest):
+		errors.Is(err, agentconversation.ErrInvalidRequest):
 		return "invalid_argument"
 	default:
 		return "dependency"

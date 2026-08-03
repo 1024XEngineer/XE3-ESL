@@ -11,10 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/image"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
@@ -22,7 +24,7 @@ import (
 func TestImageAssetHTTPUploadContentAndDelete(t *testing.T) {
 	now := time.Date(2026, 7, 30, 8, 0, 0, 0, time.UTC)
 	images := &imageHTTPApplication{
-		asset: ImageAsset{
+		asset: agentimage.Asset{
 			ID:          "30000000-0000-4000-8000-000000000001",
 			OwnerID:     "user-a",
 			ThreadID:    "thread-1",
@@ -30,10 +32,10 @@ func TestImageAssetHTTPUploadContentAndDelete(t *testing.T) {
 			Size:        4,
 			Width:       2,
 			Height:      2,
-			Status:      image.StatusStaged,
+			Status:      agentimage.StatusStaged,
 			CreatedAt:   now,
 		},
-		content: ImageContent{
+		content: objectstore.SignedGetResult{
 			URL:       "https://objects.invalid/image.png?signature=safe",
 			ExpiresAt: now.Add(2 * time.Minute),
 		},
@@ -155,7 +157,7 @@ func TestImageAssetHTTPUsesStableValidationErrors(t *testing.T) {
 		{
 			name:          "oversized content length",
 			contentType:   "image/png",
-			contentLength: core.MaxImageBytes + 1,
+			contentLength: agentimage.MaxBytes + 1,
 			application:   &imageHTTPApplication{},
 			wantStatus:    http.StatusRequestEntityTooLarge,
 			wantCode:      "image_too_large",
@@ -163,7 +165,7 @@ func TestImageAssetHTTPUsesStableValidationErrors(t *testing.T) {
 		{
 			name:        "invalid decoded image",
 			contentType: "image/png",
-			application: &imageHTTPApplication{uploadErr: image.ErrInvalidImage},
+			application: &imageHTTPApplication{uploadErr: agentimage.ErrInvalid},
 			wantStatus:  http.StatusBadRequest,
 			wantCode:    "invalid_image",
 		},
@@ -295,7 +297,7 @@ func TestSubmitRunTreatsEmptyImageAssetIDsAsText(t *testing.T) {
 
 func newImageHTTPRouter(
 	t *testing.T,
-	images ImageApplication,
+	images agentimage.Application,
 ) http.Handler {
 	t.Helper()
 	handler, err := NewHTTPHandlerWithRunsVoiceAudioAndImages(
@@ -318,9 +320,9 @@ func newImageHTTPRouter(
 }
 
 type imageHTTPApplication struct {
-	asset          ImageAsset
-	content        ImageContent
-	upload         UploadImageRequest
+	asset          agentimage.Asset
+	content        objectstore.SignedGetResult
+	upload         agentimage.UploadRequest
 	uploadBody     []byte
 	uploadCalls    int
 	contentAssetID string
@@ -329,7 +331,7 @@ type imageHTTPApplication struct {
 }
 
 type imageHTTPRuns struct {
-	RunApplication
+	agentrun.Application
 	threadID      string
 	imageAssetIDs []string
 	textCalls     int
@@ -341,32 +343,32 @@ func (runs *imageHTTPRuns) SubmitText(
 	threadID string,
 	_ string,
 	_ string,
-) (RunSubmission, error) {
+) (agentrun.Submission, error) {
 	runs.textCalls++
 	return imageHTTPRunSubmission(threadID), nil
 }
 
-func (runs *imageHTTPRuns) SubmitMultimodal(
+func (runs *imageHTTPRuns) SubmitWithImages(
 	_ context.Context,
 	_ requestcontext.Actor,
 	threadID string,
 	_ string,
 	_ string,
 	imageAssetIDs []string,
-) (RunSubmission, error) {
+) (agentrun.Submission, error) {
 	runs.threadID = threadID
 	runs.imageAssetIDs = append([]string(nil), imageAssetIDs...)
 	return imageHTTPRunSubmission(threadID), nil
 }
 
-func imageHTTPRunSubmission(threadID string) RunSubmission {
-	return RunSubmission{
-		Run: Run{
+func imageHTTPRunSubmission(threadID string) agentrun.Submission {
+	return agentrun.Submission{
+		Run: agentrun.Run{
 			ID:                "40000000-0000-4000-8000-000000000001",
 			ThreadID:          threadID,
 			InputMessageID:    "50000000-0000-4000-8000-000000000001",
 			Attempt:           1,
-			Status:            RunStatusCompleted,
+			Status:            agentrun.StatusCompleted,
 			RequestedProvider: "fake",
 			RequestedModel:    "fake-multimodal",
 			MaxOutputTokens:   256,
@@ -412,17 +414,17 @@ func imageHTTPRunSubmission(threadID string) RunSubmission {
 func (application *imageHTTPApplication) Upload(
 	_ context.Context,
 	_ requestcontext.Actor,
-	request UploadImageRequest,
-) (ImageAsset, error) {
+	request agentimage.UploadRequest,
+) (agentimage.Asset, error) {
 	application.uploadCalls++
 	application.upload = request
 	body, err := io.ReadAll(request.Body)
 	if err != nil {
-		return ImageAsset{}, err
+		return agentimage.Asset{}, err
 	}
 	application.uploadBody = body
 	if application.uploadErr != nil {
-		return ImageAsset{}, application.uploadErr
+		return agentimage.Asset{}, application.uploadErr
 	}
 	return application.asset, nil
 }
@@ -431,7 +433,7 @@ func (application *imageHTTPApplication) Get(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (ImageAsset, error) {
+) (agentimage.Asset, error) {
 	return application.asset, nil
 }
 
@@ -439,7 +441,7 @@ func (application *imageHTTPApplication) Content(
 	_ context.Context,
 	_ requestcontext.Actor,
 	assetID string,
-) (ImageContent, error) {
+) (objectstore.SignedGetResult, error) {
 	application.contentAssetID = assetID
 	return application.content, nil
 }
@@ -458,8 +460,8 @@ func (application *imageHTTPApplication) MessageAssets(
 	requestcontext.Actor,
 	string,
 	string,
-) ([]ImageAsset, error) {
-	return []ImageAsset{application.asset}, nil
+) ([]agentimage.Asset, error) {
+	return []agentimage.Asset{application.asset}, nil
 }
 
 func (application *imageHTTPApplication) Attach(
@@ -468,30 +470,30 @@ func (application *imageHTTPApplication) Attach(
 	string,
 	string,
 	[]string,
-) ([]ImageAsset, error) {
+) ([]agentimage.Asset, error) {
 	return nil, nil
 }
 
 func (application *imageHTTPApplication) Reclaim(
 	context.Context,
 	int,
-) (image.CleanupResult, error) {
-	return image.CleanupResult{}, nil
+) (agentimage.CleanupResult, error) {
+	return agentimage.CleanupResult{}, nil
 }
 
 type imageHTTPThreads struct {
-	Application
+	agentconversation.Application
 }
 
 func (imageHTTPThreads) GetThread(
 	_ context.Context,
 	actor requestcontext.Actor,
 	threadID string,
-) (Thread, error) {
+) (agentconversation.Thread, error) {
 	if actor.UserID != "user-a" || threadID != "thread-1" {
-		return Thread{}, ErrNotFound
+		return agentconversation.Thread{}, agentconversation.ErrNotFound
 	}
-	return Thread{ID: threadID, OwnerID: actor.UserID}, nil
+	return agentconversation.Thread{ID: threadID, OwnerID: actor.UserID}, nil
 }
 
 type imageHTTPMatters struct {

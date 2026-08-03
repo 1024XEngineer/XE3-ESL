@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -27,9 +27,9 @@ func TestDeferredAgentVoiceRunReturnsPendingBeforeModelCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newDeferredAgentVoiceRunProcessor() error = %v", err)
 	}
-	run := agentvoice.Run{
+	run := agentrun.Run{
 		ID:       "30000000-0000-4000-8000-000000000001",
-		Status:   agentvoice.RunStatusPending,
+		Status:   agentrun.StatusPending,
 		OwnerID:  "10000000-0000-4000-8000-000000000001",
 		ThreadID: "20000000-0000-4000-8000-000000000001",
 	}
@@ -45,7 +45,7 @@ func TestDeferredAgentVoiceRunReturnsPendingBeforeModelCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessPending() error = %v", err)
 	}
-	if returned.Status != agentvoice.RunStatusPending {
+	if returned.Status != agentrun.StatusPending {
 		t.Fatalf("ProcessPending() returned %#v, want pending", returned)
 	}
 	cancelRequest()
@@ -72,15 +72,15 @@ type blockingAgentVoiceRunProcessor struct {
 func (processor *blockingAgentVoiceRunProcessor) ProcessPending(
 	ctx context.Context,
 	_ requestcontext.Actor,
-	run agentvoice.Run,
-) (agentvoice.Run, error) {
+	run agentrun.Run,
+) (agentrun.Run, error) {
 	close(processor.started)
 	select {
 	case <-ctx.Done():
-		return agentvoice.Run{}, ctx.Err()
+		return agentrun.Run{}, ctx.Err()
 	case <-processor.release:
 	}
-	run.Status = agentvoice.RunStatusCompleted
+	run.Status = agentrun.StatusCompleted
 	close(processor.completed)
 	return run, nil
 }

@@ -84,8 +84,8 @@ func (application *RetryTurnApplication) AuthorizeSameQuestionRetry(
 	}
 }
 
-// ResolveAuthorizedParticipant is separate from VoiceApplication's ordinary
-// progression gate. It requires a durable retry authorization and deliberately
+// ResolveAuthorizedParticipant is separate from ordinary voice progression.
+// It requires a durable retry authorization and deliberately
 // allows both in-progress and completed eligible Sessions.
 func (application *RetryTurnApplication) ResolveAuthorizedParticipant(
 	ctx context.Context,
@@ -137,6 +137,22 @@ func validRetryTurnID(value string) bool {
 		default:
 			return false
 		}
+	}
+	return true
+}
+
+func validSubjectNamespace(namespace string) bool {
+	if namespace == "" || namespace[0] < 'a' || namespace[0] > 'z' {
+		return false
+	}
+	for index := 1; index < len(namespace); index++ {
+		character := namespace[index]
+		if (character >= 'a' && character <= 'z') ||
+			(character >= '0' && character <= '9') ||
+			character == '.' || character == '_' || character == '-' {
+			continue
+		}
+		return false
 	}
 	return true
 }

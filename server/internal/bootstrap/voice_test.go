@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	conversationpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
@@ -21,6 +20,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
@@ -204,7 +204,7 @@ func TestVoiceReviewAdapterQueuesInterviewShadowAfterFormalReview(
 	checkpoint, err := adapter.EnsureSessionReview(
 		context.Background(),
 		actor,
-		agent.VoiceReviewSource{
+		practicevoice.ReviewSource{
 			TurnID:    source.SourceTurnID,
 			SessionID: source.PracticeSessionID,
 		},
@@ -260,7 +260,7 @@ func TestVoiceReviewAdapterSkipsInterviewShadowForOtherContexts(
 				requestcontext.Actor{
 					UserID: "00000000-0000-4000-8000-000000000001",
 				},
-				agent.VoiceReviewSource{
+				practicevoice.ReviewSource{
 					TurnID:    source.SourceTurnID,
 					SessionID: source.PracticeSessionID,
 				},
@@ -308,7 +308,7 @@ func TestVoiceReviewAdapterPropagatesInterviewShadowFailure(
 			UserID:    "00000000-0000-4000-8000-000000000001",
 			SessionID: "auth-session-1",
 		},
-		agent.VoiceReviewSource{
+		practicevoice.ReviewSource{
 			TurnID:    source.SourceTurnID,
 			SessionID: source.PracticeSessionID,
 		},
@@ -316,7 +316,7 @@ func TestVoiceReviewAdapterPropagatesInterviewShadowFailure(
 	if !errors.Is(err, triggerErr) {
 		t.Fatalf("error = %v, want %v", err, triggerErr)
 	}
-	if checkpoint != (agent.VoiceReviewCheckpoint{}) {
+	if checkpoint != (practicevoice.ReviewCheckpoint{}) {
 		t.Fatalf("checkpoint = %+v, want empty", checkpoint)
 	}
 	if !reflect.DeepEqual(events, []string{"formal_review", "shadow"}) {
@@ -332,7 +332,7 @@ func TestVoiceCompletionEvaluationAdapterRoutesOnlyCompletedIELTSFullMock(
 		UserID:    "00000000-0000-4000-8000-000000000001",
 		SessionID: "auth-session-1",
 	}
-	session := agent.VoicePracticeSession{
+	session := practicevoice.Session{
 		ID:             "practice-session-1",
 		ScenarioType:   "EXAM",
 		ScenarioModel:  "IELTS_SPEAKING_FULL_MOCK",
@@ -348,7 +348,7 @@ func TestVoiceCompletionEvaluationAdapterRoutesOnlyCompletedIELTSFullMock(
 		interviewShadow: interviewCoordinator,
 		ieltsShadow:     coordinator,
 	}
-	source := agent.VoiceCompletionEvaluationSource{
+	source := practicevoice.CompletionEvaluationSource{
 		SessionID: session.ID,
 		TurnID:    "turn-14",
 	}
@@ -399,7 +399,7 @@ func TestVoiceCompletionEvaluationAdapterFailsExplicitly(t *testing.T) {
 		UserID:    "00000000-0000-4000-8000-000000000001",
 		SessionID: "auth-session-1",
 	}
-	session := agent.VoicePracticeSession{
+	session := practicevoice.Session{
 		ID:             "practice-session-1",
 		ScenarioType:   "EXAM",
 		ScenarioModel:  "IELTS_SPEAKING_FULL_MOCK",
@@ -408,7 +408,7 @@ func TestVoiceCompletionEvaluationAdapterFailsExplicitly(t *testing.T) {
 		EffectiveTurns: 14,
 		TurnLimit:      14,
 	}
-	source := agent.VoiceCompletionEvaluationSource{
+	source := practicevoice.CompletionEvaluationSource{
 		SessionID: session.ID,
 		TurnID:    "turn-14",
 	}
@@ -471,7 +471,7 @@ func TestVoiceCompletionEvaluationAdapterFailsExplicitly(t *testing.T) {
 		context.Background(),
 		actor,
 		source,
-	); !errors.Is(err, agent.ErrInvalidContext) {
+	); !errors.Is(err, practicevoice.ErrInvalidContext) {
 		t.Fatalf("incomplete Session error = %v", err)
 	}
 	if coordinator.calls != 0 {
@@ -549,7 +549,7 @@ func (stub *ieltsSpeakingCompletionCoordinatorStub) EnsureForCompletedIELTSSpeak
 }
 
 type voiceCompletionSessionPortStub struct {
-	session agent.VoicePracticeSession
+	session practicevoice.Session
 	err     error
 }
 
@@ -559,7 +559,7 @@ func (stub voiceCompletionSessionPortStub) Start(
 	string,
 	string,
 	string,
-) (agent.VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return stub.session, stub.err
 }
 
@@ -568,7 +568,7 @@ func (stub voiceCompletionSessionPortStub) GetByThread(
 	requestcontext.Actor,
 	string,
 	string,
-) (agent.VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return stub.session, stub.err
 }
 
@@ -576,7 +576,7 @@ func (stub voiceCompletionSessionPortStub) GetByID(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (agent.VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return stub.session, stub.err
 }
 
@@ -844,12 +844,12 @@ func TestVoiceQuestionRequestUsesFrozenScenarioPrompt(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			session := agent.VoicePracticeSession{
+			session := practicevoice.Session{
 				ScenarioType:         test.scenarioType,
 				ScenarioModel:        test.scenarioModel,
 				TurnLimit:            4,
 				PreviousUserResponse: "I completed the first milestone.",
-				PromptModel: agent.VoiceScenarioPrompt{
+				PromptModel: practicevoice.ScenarioPrompt{
 					PublicSceneBrief: "A realistic spoken English scene.",
 					PracticeGoal:     "Complete the exchange clearly.",
 					UserRole:         "Learner",
@@ -889,9 +889,9 @@ func TestVoiceQuestionRequestUsesFrozenScenarioPrompt(t *testing.T) {
 
 func TestFrozenIELTSFullMockQuestionUsesExactBlueprintSequence(t *testing.T) {
 	t.Parallel()
-	session := agent.VoicePracticeSession{
+	session := practicevoice.Session{
 		ScenarioModel: "IELTS_SPEAKING_FULL_MOCK",
-		PromptModel: agent.VoiceScenarioPrompt{
+		PromptModel: practicevoice.ScenarioPrompt{
 			TurnBlueprints: []string{
 				"Part 1 question: Where is your hometown?",
 				"Part 2 cue card: Describe a skill you would like to learn.\nYou should say:\n• What the skill is",
@@ -916,13 +916,13 @@ func TestFrozenIELTSFullMockQuestionUsesExactBlueprintSequence(t *testing.T) {
 
 	if _, err := frozenIELTSFullMockQuestion(session, 0); !errors.Is(
 		err,
-		agent.ErrInvalidContext,
+		practicevoice.ErrInvalidContext,
 	) {
 		t.Fatalf("sequence 0 error=%v, want invalid context", err)
 	}
 	if _, err := frozenIELTSFullMockQuestion(session, 4); !errors.Is(
 		err,
-		agent.ErrInvalidContext,
+		practicevoice.ErrInvalidContext,
 	) {
 		t.Fatalf("sequence 4 error=%v, want invalid context", err)
 	}
@@ -939,7 +939,7 @@ func TestMapRecordingConfirmationError(t *testing.T) {
 	for _, input := range terminalConflicts {
 		if mapped := mapRecordingConfirmationError(input); !errors.Is(
 			mapped,
-			agent.ErrConflict,
+			practicevoice.ErrConflict,
 		) {
 			t.Errorf("map terminal recording error %v = %v", input, mapped)
 		}
@@ -1044,7 +1044,7 @@ func setSpeechRegistryEnvironment(t *testing.T) {
 }
 
 type voiceTestRecognizer struct {
-	ai.SpeechRecognizer
+	ai.StreamingSpeechRecognizer
 }
 
 type voiceTestSynthesizer struct {
@@ -1060,28 +1060,28 @@ type voiceTestStore struct {
 }
 
 type voiceTestPractice struct {
-	agent.VoicePracticePort
+	practicevoice.PracticePort
 }
 
 type voiceTestSessions struct {
-	agent.VoiceSessionPort
+	practicevoice.SessionPort
 }
 
 type voiceTestQuestions struct {
-	agent.VoiceQuestionPort
+	practicevoice.QuestionPort
 }
 
 type voiceTestCheckpoints struct {
-	agent.VoiceCheckpointPort
+	practicevoice.CheckpointPort
 }
 
 type voiceTestReviews struct {
-	agent.VoiceReviewPort
-	agent.VoiceReviewReader
+	practicevoice.ReviewPort
+	practicevoice.ReviewReader
 }
 
 type voiceTestCompletions struct {
-	agent.VoiceCompletionEvaluationPort
+	practicevoice.CompletionEvaluationPort
 }
 
 type voiceTestMatters struct {

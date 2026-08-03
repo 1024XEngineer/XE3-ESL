@@ -2,6 +2,7 @@ package fake
 
 import (
 	"context"
+	"errors"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
@@ -23,6 +24,50 @@ func NewFailingSpeechRecognizer(err error) *SpeechRecognizer {
 }
 
 func (recognizer *SpeechRecognizer) Transcribe(
+	ctx context.Context,
+	request ai.TranscriptionRequest,
+) (ai.TranscriptionResult, error) {
+	return recognizer.transcribe(ctx, request)
+}
+
+func (recognizer *SpeechRecognizer) TranscribeStream(
+	ctx context.Context,
+	request ai.TranscriptionRequest,
+	observer ai.TranscriptionObserver,
+) (ai.TranscriptionResult, error) {
+	if observer == nil {
+		return ai.TranscriptionResult{}, ai.NewSpeechError(
+			ai.SpeechOperationTranscription,
+			ai.ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			errors.New("transcription observer is required"),
+		)
+	}
+	result, err := recognizer.transcribe(ctx, request)
+	if err != nil {
+		return ai.TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		ai.TranscriptionUpdate{Transcript: result.Transcript},
+	); err != nil {
+		return ai.TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		ai.TranscriptionUpdate{
+			Transcript: result.Transcript,
+			Final:      true,
+		},
+	); err != nil {
+		return ai.TranscriptionResult{}, err
+	}
+	return result, nil
+}
+
+func (recognizer *SpeechRecognizer) transcribe(
 	ctx context.Context,
 	request ai.TranscriptionRequest,
 ) (ai.TranscriptionResult, error) {
@@ -118,5 +163,5 @@ func speechContextError(ctx context.Context, operation ai.SpeechOperation) error
 	return nil
 }
 
-var _ ai.SpeechRecognizer = (*SpeechRecognizer)(nil)
+var _ ai.StreamingSpeechRecognizer = (*SpeechRecognizer)(nil)
 var _ ai.SpeechSynthesizer = (*SpeechSynthesizer)(nil)

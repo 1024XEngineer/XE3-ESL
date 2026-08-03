@@ -18,14 +18,19 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
+	audioconversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
 	"github.com/gin-gonic/gin"
 )
 
@@ -56,19 +61,18 @@ type SpeechFeedbackProjectionReader interface {
 type VoiceHTTPOptions struct {
 	AudioReadTimeout       time.Duration
 	ReviewHistoryCursorKey []byte
-	AgentMessages          VoiceMessageApplication
+	VoiceInput             agentvoice.Application
 	SpeechFeedback         SpeechFeedbackProjectionReader
-	SameQuestionRetry      *SameQuestionRetryApplication
+	SameQuestionRetry      *practicevoice.SameQuestionRetryApplication
 }
 
 type HTTPHandler struct {
-	application       Application
-	runs              RunApplication
-	multimodalRuns    MultimodalRunApplication
-	voice             *VoiceSessionApplication
-	agentMessages     VoiceMessageApplication
-	audioAssets       conversation.AudioAssetHTTPService
-	images            ImageApplication
+	application       agentconversation.Application
+	runs              agentrun.Application
+	voice             *practicevoice.SessionApplication
+	voiceInput        agentvoice.Application
+	audioAssets       audioconversation.AudioAssetHTTPService
+	images            agentimage.Application
 	matters           matter.Application
 	authenticator     identity.Authenticator
 	correlationID     CorrelationIDGenerator
@@ -76,11 +80,11 @@ type HTTPHandler struct {
 	imageReadTimeout  time.Duration
 	reviewCursorKey   []byte
 	speechFeedback    SpeechFeedbackProjectionReader
-	sameQuestionRetry *SameQuestionRetryApplication
+	sameQuestionRetry *practicevoice.SameQuestionRetryApplication
 }
 
 func NewHTTPHandler(
-	application Application,
+	application agentconversation.Application,
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
@@ -95,8 +99,8 @@ func NewHTTPHandler(
 }
 
 func NewHTTPHandlerWithRuns(
-	application Application,
-	runs RunApplication,
+	application agentconversation.Application,
+	runs agentrun.Application,
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
@@ -112,9 +116,9 @@ func NewHTTPHandlerWithRuns(
 }
 
 func NewHTTPHandlerWithRunsAndVoice(
-	application Application,
-	runs RunApplication,
-	voice *VoiceSessionApplication,
+	application agentconversation.Application,
+	runs agentrun.Application,
+	voice *practicevoice.SessionApplication,
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
@@ -133,10 +137,10 @@ func NewHTTPHandlerWithRunsAndVoice(
 }
 
 func NewHTTPHandlerWithRunsVoiceAndAudio(
-	application Application,
-	runs RunApplication,
-	voice *VoiceSessionApplication,
-	audioAssets conversation.AudioAssetHTTPService,
+	application agentconversation.Application,
+	runs agentrun.Application,
+	voice *practicevoice.SessionApplication,
+	audioAssets audioconversation.AudioAssetHTTPService,
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
@@ -156,11 +160,11 @@ func NewHTTPHandlerWithRunsVoiceAndAudio(
 }
 
 func NewHTTPHandlerWithRunsVoiceAudioAndImages(
-	application Application,
-	runs RunApplication,
-	voice *VoiceSessionApplication,
-	audioAssets conversation.AudioAssetHTTPService,
-	images ImageApplication,
+	application agentconversation.Application,
+	runs agentrun.Application,
+	voice *practicevoice.SessionApplication,
+	audioAssets audioconversation.AudioAssetHTTPService,
+	images agentimage.Application,
 	matters matter.Application,
 	authenticator identity.Authenticator,
 	correlationID CorrelationIDGenerator,
@@ -175,12 +179,8 @@ func NewHTTPHandlerWithRunsVoiceAudioAndImages(
 	if correlationID == nil {
 		correlationID = newCorrelationID
 	}
-	var multimodalRuns MultimodalRunApplication
-	if runs != nil {
-		multimodalRuns, _ = runs.(MultimodalRunApplication)
-	}
 	voiceReadTimeout := defaultVoiceReadTimeout
-	var agentMessages VoiceMessageApplication
+	var voiceInput agentvoice.Application
 	if len(voiceOptions) > 1 {
 		return nil, errors.New("agent: duplicate voice HTTP options")
 	}
@@ -194,7 +194,7 @@ func NewHTTPHandlerWithRunsVoiceAudioAndImages(
 	}
 	var reviewCursorKey []byte
 	var speechFeedback SpeechFeedbackProjectionReader
-	var sameQuestionRetry *SameQuestionRetryApplication
+	var sameQuestionRetry *practicevoice.SameQuestionRetryApplication
 	if voice != nil {
 		if len(voiceOptions) != 1 ||
 			len(voiceOptions[0].ReviewHistoryCursorKey) <
@@ -209,13 +209,13 @@ func NewHTTPHandlerWithRunsVoiceAudioAndImages(
 		)
 	}
 	if len(voiceOptions) == 1 {
-		if voiceOptions[0].AgentMessages != nil {
-			if nilVoiceDependency(voiceOptions[0].AgentMessages) {
+		if voiceOptions[0].VoiceInput != nil {
+			if nilVoiceDependency(voiceOptions[0].VoiceInput) {
 				return nil, errors.New(
-					"agent: voice message application is required",
+					"agent: voice input application is required",
 				)
 			}
-			agentMessages = voiceOptions[0].AgentMessages
+			voiceInput = voiceOptions[0].VoiceInput
 		}
 		speechFeedback = voiceOptions[0].SpeechFeedback
 		sameQuestionRetry = voiceOptions[0].SameQuestionRetry
@@ -228,9 +228,8 @@ func NewHTTPHandlerWithRunsVoiceAudioAndImages(
 	return &HTTPHandler{
 		application:       application,
 		runs:              runs,
-		multimodalRuns:    multimodalRuns,
 		voice:             voice,
-		agentMessages:     agentMessages,
+		voiceInput:        voiceInput,
 		audioAssets:       audioAssets,
 		images:            images,
 		matters:           matters,
@@ -331,7 +330,7 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 			h.confirmRetryVoiceCandidate,
 		)
 	}
-	if h.agentMessages != nil {
+	if h.voiceInput != nil {
 		protected.POST(
 			"/v1/agent-threads/:thread_id/voice-message-candidates",
 			h.uploadAgentVoiceCandidate,
@@ -388,18 +387,18 @@ func (h *HTTPHandler) RegisterRoutes(router *gin.Engine) {
 		)
 	}
 	if h.audioAssets != nil {
-		_ = conversation.RegisterAudioAssetRoutes(
+		_ = audioconversation.RegisterAudioAssetRoutes(
 			protected,
 			h.audioAssets,
-			conversation.AudioAssetActorResolverFunc(
+			audioconversation.AudioAssetActorResolverFunc(
 				func(request *http.Request) (
-					conversation.AudioAssetActor,
+					audioconversation.AudioAssetActor,
 					bool,
 				) {
 					actor, ok := requestcontext.ActorFromContext(
 						request.Context(),
 					)
-					return conversation.AudioAssetActor{
+					return audioconversation.AudioAssetActor{
 						UserID: actor.UserID,
 					}, ok && actor.Valid()
 				},
@@ -665,12 +664,7 @@ func (h *HTTPHandler) deleteThread(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	application, ok := h.application.(ThreadDeletionApplication)
-	if !ok {
-		h.writeAgentError(c, ErrRepository)
-		return
-	}
-	if err := application.DeleteThread(
+	if err := h.application.DeleteThread(
 		c.Request.Context(),
 		actor,
 		c.Param("thread_id"),
@@ -819,7 +813,7 @@ func (h *HTTPHandler) submitRun(c *gin.Context) {
 	var imageAssetIDs []string
 	if raw, exists := values["image_asset_ids"]; exists {
 		imageAssetIDs, ok = decodeStringArray(raw)
-		if !ok || len(imageAssetIDs) > core.MaxImagesPerMessage {
+		if !ok || len(imageAssetIDs) > agentimage.MaxPerMessage {
 			h.writeError(c, http.StatusBadRequest, "invalid_request", false)
 			return
 		}
@@ -829,7 +823,7 @@ func (h *HTTPHandler) submitRun(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	var submission RunSubmission
+	var submission agentrun.Submission
 	var err error
 	if len(imageAssetIDs) == 0 {
 		submission, err = h.runs.SubmitText(
@@ -839,11 +833,8 @@ func (h *HTTPHandler) submitRun(c *gin.Context) {
 			clientMessageID,
 			content,
 		)
-	} else if h.multimodalRuns == nil {
-		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
-		return
 	} else {
-		submission, err = h.multimodalRuns.SubmitMultimodal(
+		submission, err = h.runs.SubmitWithImages(
 			c.Request.Context(),
 			actor,
 			c.Param("thread_id"),
@@ -857,24 +848,6 @@ func (h *HTTPHandler) submitRun(c *gin.Context) {
 		return
 	}
 	c.JSON(runWriteStatus(submission.Run), runResponse(submission.Run))
-}
-
-type streamingRunApplication interface {
-	SubmitTextStream(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		string,
-		string,
-		RunStreamObserver,
-	) (RunSubmission, error)
-	RetryTextStream(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		string,
-		RunStreamObserver,
-	) (RunRetry, error)
 }
 
 func (h *HTTPHandler) retryRunStream(c *gin.Context) {
@@ -897,27 +870,22 @@ func (h *HTTPHandler) retryRunStream(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	runs, ok := h.runs.(streamingRunApplication)
-	if !ok {
-		h.writeError(c, http.StatusNotImplemented, "streaming_unavailable", false)
-		return
-	}
 	stream := &agentRunSSEWriter{context: c}
-	retry, err := runs.RetryTextStream(
+	retry, err := h.runs.RetryTextStream(
 		c.Request.Context(),
 		actor,
 		c.Param("run_id"),
 		retryClientID,
 		stream,
 	)
-	submission := RunSubmission{Run: retry.Run}
+	submission := agentrun.Submission{Run: retry.Run}
 	h.finishRunStream(c, stream, submission, err)
 }
 
 func (h *HTTPHandler) finishRunStream(
 	c *gin.Context,
 	stream *agentRunSSEWriter,
-	submission RunSubmission,
+	submission agentrun.Submission,
 	err error,
 ) {
 	if err != nil {
@@ -933,11 +901,11 @@ func (h *HTTPHandler) finishRunStream(
 		return
 	}
 	switch submission.Run.Status {
-	case RunStatusCompleted:
+	case agentrun.StatusCompleted:
 		_ = stream.write("run.completed", gin.H{
 			"run": runResponse(submission.Run),
 		})
-	case RunStatusFailed:
+	case agentrun.StatusFailed:
 		_ = stream.write("run.failed", gin.H{
 			"run":       runResponse(submission.Run),
 			"kind":      submission.Run.FailureKind,
@@ -973,13 +941,8 @@ func (h *HTTPHandler) submitRunStream(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	runs, ok := h.runs.(streamingRunApplication)
-	if !ok {
-		h.writeError(c, http.StatusNotImplemented, "streaming_unavailable", false)
-		return
-	}
 	stream := &agentRunSSEWriter{context: c}
-	submission, err := runs.SubmitTextStream(
+	submission, err := h.runs.SubmitTextStream(
 		c.Request.Context(),
 		actor,
 		c.Param("thread_id"),
@@ -998,7 +961,7 @@ type agentRunSSEWriter struct {
 
 func (writer *agentRunSSEWriter) OnInputCommitted(
 	_ context.Context,
-	submission RunSubmission,
+	submission agentrun.Submission,
 ) error {
 	writer.runID = submission.Run.ID
 	return writer.write("input.committed", gin.H{
@@ -1009,7 +972,7 @@ func (writer *agentRunSSEWriter) OnInputCommitted(
 
 func (writer *agentRunSSEWriter) OnAssistantStarted(
 	_ context.Context,
-	run Run,
+	run agentrun.Run,
 ) error {
 	writer.runID = run.ID
 	return writer.write("assistant.started", gin.H{"run_id": run.ID})
@@ -1127,7 +1090,7 @@ func (h *HTTPHandler) uploadImageAsset(c *gin.Context) {
 		h.writeError(c, http.StatusBadRequest, "unsupported_image_format", false)
 		return
 	}
-	if c.Request.ContentLength > core.MaxImageBytes {
+	if c.Request.ContentLength > agentimage.MaxBytes {
 		h.writeError(c, http.StatusRequestEntityTooLarge, "image_too_large", false)
 		return
 	}
@@ -1159,12 +1122,12 @@ func (h *HTTPHandler) uploadImageAsset(c *gin.Context) {
 	body := http.MaxBytesReader(
 		c.Writer,
 		c.Request.Body,
-		core.MaxImageBytes,
+		agentimage.MaxBytes,
 	)
 	asset, err := h.images.Upload(
 		c.Request.Context(),
 		actor,
-		UploadImageRequest{
+		agentimage.UploadRequest{
 			ThreadID:       thread.ID,
 			IdempotencyKey: key,
 			ContentType:    contentType,
@@ -1330,7 +1293,7 @@ func (h *HTTPHandler) transcribeVoiceCandidate(c *gin.Context) {
 	candidate, err := h.voice.Transcribe(
 		c.Request.Context(),
 		actor,
-		conversation.TranscribeVoiceCommand{
+		audioconversation.TranscribeVoiceCommand{
 			SessionID:      c.Param("practice_session_id"),
 			QuestionID:     c.Param("question_id"),
 			IdempotencyKey: key,
@@ -1363,7 +1326,7 @@ func (h *HTTPHandler) confirmVoiceCandidate(c *gin.Context) {
 	state, err := h.voice.Confirm(
 		c.Request.Context(),
 		actor,
-		conversation.ConfirmVoiceTurnCommand{
+		audioconversation.ConfirmVoiceTurnCommand{
 			CandidateID:    c.Param("candidate_id"),
 			IdempotencyKey: key,
 		},
@@ -1403,7 +1366,7 @@ func (h *HTTPHandler) submitPracticeText(c *gin.Context) {
 	state, err := h.voice.SubmitText(
 		c.Request.Context(),
 		actor,
-		conversation.SubmitTextAnswerCommand{
+		audioconversation.SubmitTextAnswerCommand{
 			SessionID:      c.Param("practice_session_id"),
 			QuestionID:     c.Param("question_id"),
 			IdempotencyKey: key,
@@ -1468,33 +1431,19 @@ func (h *HTTPHandler) uploadAgentVoiceCandidate(c *gin.Context) {
 		return
 	}
 	defer cleanup()
-	candidate, err := h.agentMessages.Upload(
+	candidate, err := h.voiceInput.Upload(
 		c.Request.Context(),
 		actor,
 		request,
 	)
 	if err != nil {
-		h.writeAgentVoiceMessageError(c, err)
+		h.writeVoiceInputError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, agentVoiceCandidateResponse(candidate))
 }
 
-type streamingVoiceMessageApplication interface {
-	UploadStream(
-		context.Context,
-		requestcontext.Actor,
-		UploadVoiceCandidateRequest,
-		ai.TranscriptionObserver,
-	) (VoiceCandidate, error)
-}
-
 func (h *HTTPHandler) uploadAgentVoiceCandidateStream(c *gin.Context) {
-	application, ok := h.agentMessages.(streamingVoiceMessageApplication)
-	if !ok {
-		h.writeError(c, http.StatusNotImplemented, "streaming_unavailable", false)
-		return
-	}
 	actor, request, cleanup, ok := h.prepareAgentVoiceUpload(c)
 	if !ok {
 		return
@@ -1510,7 +1459,7 @@ func (h *HTTPHandler) uploadAgentVoiceCandidateStream(c *gin.Context) {
 	if err := stream.write("transcription.started", gin.H{}); err != nil {
 		return
 	}
-	candidate, err := application.UploadStream(
+	candidate, err := h.voiceInput.UploadStream(
 		c.Request.Context(),
 		actor,
 		request,
@@ -1524,7 +1473,7 @@ func (h *HTTPHandler) uploadAgentVoiceCandidateStream(c *gin.Context) {
 		return
 	}
 	event := "candidate.ready"
-	if candidate.Status == VoiceCandidateFailed {
+	if candidate.Status == agentvoice.StatusFailed {
 		event = "candidate.failed"
 	}
 	_ = stream.write(event, gin.H{
@@ -1574,7 +1523,7 @@ func (writer *agentVoiceTranscriptionSSEWriter) write(
 
 func (h *HTTPHandler) prepareAgentVoiceUpload(c *gin.Context) (
 	requestcontext.Actor,
-	UploadVoiceCandidateRequest,
+	agentvoice.UploadRequest,
 	func(),
 	bool,
 ) {
@@ -1586,12 +1535,12 @@ func (h *HTTPHandler) prepareAgentVoiceUpload(c *gin.Context) (
 			platformmedia.ContentTypeWAV,
 		) {
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
-		return requestcontext.Actor{}, UploadVoiceCandidateRequest{}, nil, false
+		return requestcontext.Actor{}, agentvoice.UploadRequest{}, nil, false
 	}
 	actor, ok := trustedActor(c)
 	if !ok {
 		h.writeAuthenticationRequired(c)
-		return requestcontext.Actor{}, UploadVoiceCandidateRequest{}, nil, false
+		return requestcontext.Actor{}, agentvoice.UploadRequest{}, nil, false
 	}
 	thread, err := h.application.GetThread(
 		c.Request.Context(),
@@ -1600,14 +1549,14 @@ func (h *HTTPHandler) prepareAgentVoiceUpload(c *gin.Context) (
 	)
 	if err != nil {
 		h.writeAgentError(c, err)
-		return requestcontext.Actor{}, UploadVoiceCandidateRequest{}, nil, false
+		return requestcontext.Actor{}, agentvoice.UploadRequest{}, nil, false
 	}
 	controller := http.NewResponseController(c.Writer)
 	if err := controller.SetReadDeadline(
 		time.Now().Add(h.voiceReadTimeout),
 	); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
-		return requestcontext.Actor{}, UploadVoiceCandidateRequest{}, nil, false
+		return requestcontext.Actor{}, agentvoice.UploadRequest{}, nil, false
 	}
 	cleanup := func() {
 		_ = controller.SetReadDeadline(time.Time{})
@@ -1618,7 +1567,7 @@ func (h *HTTPHandler) prepareAgentVoiceUpload(c *gin.Context) (
 		platformmedia.MaxAudioBytes,
 	)
 	return actor,
-		UploadVoiceCandidateRequest{
+		agentvoice.UploadRequest{
 			ThreadID:       thread.ID,
 			IdempotencyKey: key,
 			ContentType:    platformmedia.ContentTypeWAV,
@@ -1634,13 +1583,13 @@ func (h *HTTPHandler) getAgentVoiceCandidate(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	candidate, err := h.agentMessages.GetCandidate(
+	candidate, err := h.voiceInput.GetCandidate(
 		c.Request.Context(),
 		actor,
 		c.Param("candidate_id"),
 	)
 	if err != nil {
-		h.writeAgentVoiceMessageError(c, err)
+		h.writeVoiceInputError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, agentVoiceCandidateResponse(candidate))
@@ -1656,13 +1605,13 @@ func (h *HTTPHandler) retryAgentVoiceCandidate(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	candidate, err := h.agentMessages.Retry(
+	candidate, err := h.voiceInput.Retry(
 		c.Request.Context(),
 		actor,
 		c.Param("candidate_id"),
 	)
 	if err != nil {
-		h.writeAgentVoiceMessageError(c, err)
+		h.writeVoiceInputError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, agentVoiceCandidateResponse(candidate))
@@ -1678,12 +1627,12 @@ func (h *HTTPHandler) deleteAgentVoiceCandidate(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	if err := h.agentMessages.DeleteCandidate(
+	if err := h.voiceInput.DeleteCandidate(
 		c.Request.Context(),
 		actor,
 		c.Param("candidate_id"),
 	); err != nil {
-		h.writeAgentVoiceMessageError(c, err)
+		h.writeVoiceInputError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -1719,10 +1668,10 @@ func (h *HTTPHandler) confirmAgentVoiceCandidate(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	confirmation, err := h.agentMessages.Confirm(
+	confirmation, err := h.voiceInput.Confirm(
 		c.Request.Context(),
 		actor,
-		ConfirmVoiceCandidateCommand{
+		agentvoice.ConfirmCandidateCommand{
 			CandidateID:      c.Param("candidate_id"),
 			CandidateVersion: version,
 			ClientMessageID:  clientMessageID,
@@ -1730,7 +1679,7 @@ func (h *HTTPHandler) confirmAgentVoiceCandidate(c *gin.Context) {
 		},
 	)
 	if err != nil {
-		h.writeAgentVoiceMessageError(c, err)
+		h.writeVoiceInputError(c, err)
 		return
 	}
 	confirmation.Message.Audio = &confirmation.Audio
@@ -1746,13 +1695,13 @@ func (h *HTTPHandler) agentMessageAudioPlayback(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	result, err := h.agentMessages.Playback(
+	result, err := h.voiceInput.Playback(
 		c.Request.Context(),
 		actor,
 		c.Param("audio_id"),
 	)
 	if err != nil {
-		h.writeAgentVoiceMessageError(c, err)
+		h.writeVoiceInputError(c, err)
 		return
 	}
 	c.Header("Cache-Control", "no-store")
@@ -1772,12 +1721,12 @@ func (h *HTTPHandler) deleteAgentMessageAudio(c *gin.Context) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	if err := h.agentMessages.DeleteAudio(
+	if err := h.voiceInput.DeleteAudio(
 		c.Request.Context(),
 		actor,
 		c.Param("audio_id"),
 	); err != nil {
-		h.writeAgentVoiceMessageError(c, err)
+		h.writeVoiceInputError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -1807,14 +1756,14 @@ func (h *HTTPHandler) serveAgentMessageSpeech(c *gin.Context, text string) {
 		h.writeAuthenticationRequired(c)
 		return
 	}
-	speech, err := h.agentMessages.SynthesizeMessage(
+	speech, err := h.voiceInput.SynthesizeMessage(
 		c.Request.Context(),
 		actor,
 		c.Param("message_id"),
 		text,
 	)
 	if err != nil {
-		h.writeAgentVoiceMessageError(c, err)
+		h.writeVoiceInputError(c, err)
 		return
 	}
 	if speech.Audio == nil {
@@ -1850,7 +1799,7 @@ func (h *HTTPHandler) getFormalReview(c *gin.Context) {
 		c.Param("review_id"),
 	)
 	if err != nil {
-		if errors.Is(err, ErrInvalidContext) {
+		if errors.Is(err, practicevoice.ErrInvalidContext) {
 			h.writeError(
 				c,
 				http.StatusInternalServerError,
@@ -1878,7 +1827,7 @@ func (h *HTTPHandler) listFormalReviews(c *gin.Context) {
 	}
 	page, err := h.voice.ListReviews(c.Request.Context(), actor, query)
 	if err != nil {
-		if errors.Is(err, ErrInvalidContext) {
+		if errors.Is(err, practicevoice.ErrInvalidContext) {
 			h.writeError(
 				c,
 				http.StatusInternalServerError,
@@ -1993,13 +1942,19 @@ func (h *HTTPHandler) writeMatterError(c *gin.Context, err error) {
 
 func (h *HTTPHandler) writeAgentError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, ErrInvalidRequest):
+	case errors.Is(err, agentconversation.ErrInvalidRequest),
+		errors.Is(err, agentrun.ErrInvalidRequest):
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, agentconversation.ErrNotFound),
+		errors.Is(err, agentrun.ErrNotFound),
+		errors.Is(err, agentcontext.ErrNotFound):
 		h.writeError(c, http.StatusNotFound, "resource_not_found", false)
-	case errors.Is(err, ErrIdempotencyConflict):
+	case errors.Is(err, agentconversation.ErrIdempotencyConflict),
+		errors.Is(err, agentrun.ErrIdempotencyConflict):
 		h.writeError(c, http.StatusConflict, "idempotency_key_conflict", false)
-	case errors.Is(err, ErrConflict):
+	case errors.Is(err, agentconversation.ErrConflict),
+		errors.Is(err, agentrun.ErrConflict),
+		errors.Is(err, agentcontext.ErrConflict):
 		h.writeError(c, http.StatusConflict, "resource_conflict", false)
 	default:
 		h.writeError(c, http.StatusInternalServerError, "internal_error", true)
@@ -2010,22 +1965,22 @@ func (h *HTTPHandler) writeVoiceError(c *gin.Context, err error) {
 	var speechError *ai.SpeechError
 	var generationError *ai.GenerationError
 	switch {
-	case errors.Is(err, ErrInvalidRequest),
-		errors.Is(err, ErrInvalidContext),
-		errors.Is(err, conversation.ErrVoiceRoundInvalid):
+	case errors.Is(err, practicevoice.ErrInvalidRequest),
+		errors.Is(err, practicevoice.ErrInvalidContext),
+		errors.Is(err, audioconversation.ErrVoiceRoundInvalid):
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
-	case errors.Is(err, ErrNotFound),
-		errors.Is(err, conversation.ErrVoiceRoundNotFound):
+	case errors.Is(err, practicevoice.ErrNotFound),
+		errors.Is(err, audioconversation.ErrVoiceRoundNotFound):
 		h.writeError(c, http.StatusNotFound, "resource_not_found", false)
-	case errors.Is(err, ErrIdempotencyConflict),
-		errors.Is(err, conversation.ErrVoiceRoundConflict):
+	case errors.Is(err, practicevoice.ErrIdempotencyConflict),
+		errors.Is(err, audioconversation.ErrVoiceRoundConflict):
 		h.writeError(c, http.StatusConflict, "idempotency_key_conflict", false)
-	case errors.Is(err, ErrConflict):
+	case errors.Is(err, practicevoice.ErrConflict):
 		h.writeError(c, http.StatusConflict, "resource_conflict", false)
-	case errors.Is(err, conversation.ErrVoiceRoundProcessing):
+	case errors.Is(err, audioconversation.ErrVoiceRoundProcessing):
 		c.Header("Retry-After", "1")
 		h.writeError(c, http.StatusConflict, "resource_processing", true)
-	case errors.Is(err, conversation.ErrVoiceRoundCapacity):
+	case errors.Is(err, audioconversation.ErrVoiceRoundCapacity):
 		c.Header("Retry-After", "1")
 		h.writeError(
 			c,
@@ -2042,25 +1997,25 @@ func (h *HTTPHandler) writeVoiceError(c *gin.Context, err error) {
 	}
 }
 
-func (h *HTTPHandler) writeAgentVoiceMessageError(
+func (h *HTTPHandler) writeVoiceInputError(
 	c *gin.Context,
 	err error,
 ) {
 	var speechError *ai.SpeechError
 	switch {
-	case errors.Is(err, ErrInvalidRequest):
+	case errors.Is(err, agentvoice.ErrInvalidRequest):
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, agentvoice.ErrNotFound):
 		h.writeError(c, http.StatusNotFound, "resource_not_found", false)
-	case errors.Is(err, ErrIdempotencyConflict):
+	case errors.Is(err, agentvoice.ErrIdempotencyConflict):
 		h.writeError(c, http.StatusConflict, "idempotency_key_conflict", false)
-	case errors.Is(err, ErrVoiceCandidateProcessing):
+	case errors.Is(err, agentvoice.ErrCandidateProcessing):
 		c.Header("Retry-After", "1")
 		h.writeError(c, http.StatusConflict, "resource_processing", true)
-	case errors.Is(err, ErrVoiceCandidateStale),
-		errors.Is(err, ErrConflict):
+	case errors.Is(err, agentvoice.ErrCandidateStale),
+		errors.Is(err, agentvoice.ErrConflict):
 		h.writeError(c, http.StatusConflict, "resource_conflict", false)
-	case errors.Is(err, ErrVoiceCleanupPending),
+	case errors.Is(err, agentvoice.ErrCleanupPending),
 		errors.Is(err, objectstore.ErrOperationFailed),
 		errors.Is(err, objectstore.ErrDisabled),
 		errors.Is(err, objectstore.ErrCredentials):
@@ -2080,19 +2035,19 @@ func (h *HTTPHandler) writeAgentVoiceMessageError(
 
 func (h *HTTPHandler) writeImageError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, core.ErrImageTooLarge):
+	case errors.Is(err, agentimage.ErrTooLarge):
 		h.writeError(c, http.StatusRequestEntityTooLarge, "image_too_large", false)
-	case errors.Is(err, core.ErrUnsupportedImage):
+	case errors.Is(err, agentimage.ErrUnsupported):
 		h.writeError(c, http.StatusBadRequest, "unsupported_image_format", false)
-	case errors.Is(err, core.ErrInvalidImage):
+	case errors.Is(err, agentimage.ErrInvalid):
 		h.writeError(c, http.StatusBadRequest, "invalid_image", false)
-	case errors.Is(err, ErrInvalidRequest):
+	case errors.Is(err, agentimage.ErrInvalidRequest):
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, agentimage.ErrNotFound):
 		h.writeError(c, http.StatusNotFound, "resource_not_found", false)
-	case errors.Is(err, ErrIdempotencyConflict):
+	case errors.Is(err, agentimage.ErrIdempotencyConflict):
 		h.writeError(c, http.StatusConflict, "idempotency_key_conflict", false)
-	case errors.Is(err, ErrConflict):
+	case errors.Is(err, agentimage.ErrConflict):
 		h.writeError(c, http.StatusConflict, "resource_conflict", false)
 	case errors.Is(err, objectstore.ErrOperationFailed),
 		errors.Is(err, objectstore.ErrDisabled),
@@ -2190,7 +2145,7 @@ func imageUploadContentType(c *gin.Context) (string, bool) {
 	}
 }
 
-func voiceSessionStateResponse(state VoiceSessionState) gin.H {
+func voiceSessionStateResponse(state practicevoice.SessionState) gin.H {
 	result := gin.H{
 		"practice_session_id": state.Session.ID,
 		"practice_plan_id":    state.Session.PlanID,
@@ -2225,7 +2180,7 @@ func voiceSessionStateResponse(state VoiceSessionState) gin.H {
 	return result
 }
 
-func voiceQuestionResponse(question conversation.VoiceQuestion) gin.H {
+func voiceQuestionResponse(question audioconversation.VoiceQuestion) gin.H {
 	result := gin.H{
 		"question_id":               question.ID,
 		"practice_session_id":       question.SessionID,
@@ -2242,7 +2197,7 @@ func voiceQuestionResponse(question conversation.VoiceQuestion) gin.H {
 }
 
 func transcriptionCandidateResponse(
-	candidate conversation.TranscriptionCandidate,
+	candidate audioconversation.TranscriptionCandidate,
 ) gin.H {
 	return gin.H{
 		"candidate_id":              candidate.ID,
@@ -2256,7 +2211,7 @@ func transcriptionCandidateResponse(
 	}
 }
 
-func confirmedVoiceTurnResponse(turn conversation.ConfirmedVoiceTurn) gin.H {
+func confirmedVoiceTurnResponse(turn audioconversation.ConfirmedVoiceTurn) gin.H {
 	result := gin.H{
 		"turn_id":                            turn.ID,
 		"practice_session_id":                turn.SessionID,
@@ -2282,7 +2237,7 @@ func confirmedVoiceTurnResponse(turn conversation.ConfirmedVoiceTurn) gin.H {
 	return result
 }
 
-func formalReviewResponse(item VoiceSessionReview) gin.H {
+func formalReviewResponse(item practicevoice.SessionReview) gin.H {
 	result := gin.H{
 		"review_id":              item.ID,
 		"practice_session_id":    item.SessionID,
@@ -2311,38 +2266,38 @@ func formalReviewResponse(item VoiceSessionReview) gin.H {
 func (h *HTTPHandler) decodeReviewHistoryQuery(
 	request *http.Request,
 	actorUserID string,
-) (VoiceReviewHistoryQuery, bool) {
+) (practicevoice.ReviewHistoryQuery, bool) {
 	const defaultLimit = 20
 	values, err := url.ParseQuery(request.URL.RawQuery)
 	if err != nil {
-		return VoiceReviewHistoryQuery{}, false
+		return practicevoice.ReviewHistoryQuery{}, false
 	}
 	for key := range values {
 		if key != "limit" && key != "cursor" {
-			return VoiceReviewHistoryQuery{}, false
+			return practicevoice.ReviewHistoryQuery{}, false
 		}
 	}
-	query := VoiceReviewHistoryQuery{Limit: defaultLimit}
+	query := practicevoice.ReviewHistoryQuery{Limit: defaultLimit}
 	if limitValues, exists := values["limit"]; exists {
 		if len(limitValues) != 1 {
-			return VoiceReviewHistoryQuery{}, false
+			return practicevoice.ReviewHistoryQuery{}, false
 		}
 		limit, err := strconv.Atoi(limitValues[0])
 		if err != nil || limit < 1 || limit > 50 {
-			return VoiceReviewHistoryQuery{}, false
+			return practicevoice.ReviewHistoryQuery{}, false
 		}
 		query.Limit = limit
 	}
 	if cursorValues, exists := values["cursor"]; exists {
 		if len(cursorValues) != 1 {
-			return VoiceReviewHistoryQuery{}, false
+			return practicevoice.ReviewHistoryQuery{}, false
 		}
 		cursor, ok := h.decodeReviewHistoryCursor(
 			actorUserID,
 			cursorValues[0],
 		)
 		if !ok {
-			return VoiceReviewHistoryQuery{}, false
+			return practicevoice.ReviewHistoryQuery{}, false
 		}
 		query.Before = &cursor
 	}
@@ -2358,7 +2313,7 @@ type reviewHistoryCursorEnvelope struct {
 
 func (h *HTTPHandler) encodeReviewHistoryCursor(
 	actorUserID string,
-	cursor VoiceReviewHistoryCursor,
+	cursor practicevoice.ReviewHistoryCursor,
 ) (string, bool) {
 	if h == nil || len(h.reviewCursorKey) < minReviewCursorKeyBytes ||
 		strings.TrimSpace(actorUserID) == "" ||
@@ -2387,17 +2342,17 @@ func (h *HTTPHandler) encodeReviewHistoryCursor(
 func (h *HTTPHandler) decodeReviewHistoryCursor(
 	actorUserID string,
 	value string,
-) (VoiceReviewHistoryCursor, bool) {
+) (practicevoice.ReviewHistoryCursor, bool) {
 	if h == nil || len(h.reviewCursorKey) < minReviewCursorKeyBytes ||
 		strings.TrimSpace(actorUserID) == "" ||
 		value == "" || len(value) > 512 ||
 		strings.Count(value, ".") != 1 {
-		return VoiceReviewHistoryCursor{}, false
+		return practicevoice.ReviewHistoryCursor{}, false
 	}
 	parts := strings.SplitN(value, ".", 2)
 	payload, err := base64.RawURLEncoding.Strict().DecodeString(parts[0])
 	if err != nil || len(payload) > 256 {
-		return VoiceReviewHistoryCursor{}, false
+		return practicevoice.ReviewHistoryCursor{}, false
 	}
 	signature, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
 	if err != nil || len(signature) != sha256.Size ||
@@ -2409,7 +2364,7 @@ func (h *HTTPHandler) decodeReviewHistoryCursor(
 				payload,
 			),
 		) {
-		return VoiceReviewHistoryCursor{}, false
+		return practicevoice.ReviewHistoryCursor{}, false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
@@ -2419,19 +2374,19 @@ func (h *HTTPHandler) decodeReviewHistoryCursor(
 		envelope.Version != reviewCursorVersion ||
 		envelope.Kind != reviewCursorKind ||
 		!validUUID(envelope.ReviewID) {
-		return VoiceReviewHistoryCursor{}, false
+		return practicevoice.ReviewHistoryCursor{}, false
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, envelope.CreatedAt)
 	if err != nil || createdAt.IsZero() {
-		return VoiceReviewHistoryCursor{}, false
+		return practicevoice.ReviewHistoryCursor{}, false
 	}
-	cursor := VoiceReviewHistoryCursor{
+	cursor := practicevoice.ReviewHistoryCursor{
 		CreatedAt: createdAt,
 		ReviewID:  envelope.ReviewID,
 	}
 	canonical, ok := h.encodeReviewHistoryCursor(actorUserID, cursor)
 	if !ok || canonical != value {
-		return VoiceReviewHistoryCursor{}, false
+		return practicevoice.ReviewHistoryCursor{}, false
 	}
 	return cursor, true
 }
@@ -2461,7 +2416,7 @@ func matterResponse(item matter.Matter) gin.H {
 	}
 }
 
-func threadResponse(thread Thread) gin.H {
+func threadResponse(thread agentconversation.Thread) gin.H {
 	result := gin.H{
 		"thread_id":  thread.ID,
 		"title":      nil,
@@ -2477,7 +2432,7 @@ func threadResponse(thread Thread) gin.H {
 	return result
 }
 
-func linkResponse(link ThreadMatterLink) gin.H {
+func linkResponse(link agentconversation.ThreadMatterLink) gin.H {
 	return gin.H{
 		"thread_id":  link.ThreadID,
 		"matter_id":  link.MatterID,
@@ -2487,7 +2442,7 @@ func linkResponse(link ThreadMatterLink) gin.H {
 	}
 }
 
-func messageResponse(message Message) gin.H {
+func messageResponse(message agentconversation.Message) gin.H {
 	result := gin.H{
 		"message_id": message.ID,
 		"thread_id":  message.ThreadID,
@@ -2503,10 +2458,10 @@ func messageResponse(message Message) gin.H {
 		result["produced_by_run_id"] = message.ProducedByRunID
 	}
 	if message.Audio != nil {
-		result["modality"] = MessageModalityVoice
+		result["modality"] = agentconversation.MessageModalityVoice
 		result["audio"] = agentMessageAudioResponse(*message.Audio)
-	} else if message.Modality == MessageModalityMultimodal {
-		result["modality"] = MessageModalityMultimodal
+	} else if message.Modality == agentconversation.MessageModalityMultimodal {
+		result["modality"] = agentconversation.MessageModalityMultimodal
 	}
 	if message.SpeechFeedbackStatusURL != "" {
 		result["speech_feedback_status_url"] =
@@ -2515,7 +2470,7 @@ func messageResponse(message Message) gin.H {
 	return result
 }
 
-func imageAssetResponse(asset ImageAsset) gin.H {
+func imageAssetResponse(asset agentimage.Asset) gin.H {
 	response := gin.H{
 		"image_asset_id": asset.ID,
 		"thread_id":      asset.ThreadID,
@@ -2539,11 +2494,11 @@ func imageAssetResponse(asset ImageAsset) gin.H {
 func (h *HTTPHandler) messageResponseWithActions(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	message Message,
+	message agentconversation.Message,
 ) (gin.H, error) {
 	if h.speechFeedback != nil &&
 		message.SpeechFeedbackStatusURL == "" &&
-		message.Role == MessageRoleUser &&
+		message.Role == agentconversation.MessageRoleUser &&
 		message.Audio != nil {
 		statusURL, found, err :=
 			h.speechFeedback.StatusURLForAgentVoiceMessage(
@@ -2559,9 +2514,9 @@ func (h *HTTPHandler) messageResponseWithActions(
 		}
 	}
 	response := messageResponse(message)
-	if message.Modality == MessageModalityMultimodal {
+	if message.Modality == agentconversation.MessageModalityMultimodal {
 		if h.images == nil {
-			return nil, ErrRepository
+			return nil, agentimage.ErrRepository
 		}
 		assets, err := h.images.MessageAssets(
 			ctx,
@@ -2578,7 +2533,7 @@ func (h *HTTPHandler) messageResponseWithActions(
 		}
 		response["images"] = images
 	}
-	if h.runs == nil || message.Role != MessageRoleAssistant ||
+	if h.runs == nil || message.Role != agentconversation.MessageRoleAssistant ||
 		message.ProducedByRunID == "" {
 		return response, nil
 	}
@@ -2598,12 +2553,12 @@ func (h *HTTPHandler) messageResponseWithActions(
 }
 
 func interviewPreparationActions(
-	records []core.ToolCallRecord,
+	records []agentrun.ToolCall,
 ) []gin.H {
 	actions := make([]gin.H, 0, 1)
 	for _, record := range records {
 		if record.Name != scenarioCreateToolName ||
-			record.Status != core.ToolCallStatusSucceeded {
+			record.Status != agentrun.ToolCallSucceeded {
 			continue
 		}
 		var result struct {
@@ -2615,7 +2570,7 @@ func interviewPreparationActions(
 			} `json:"content"`
 		}
 		if json.Unmarshal(record.Result, &result) != nil ||
-			!core.ValidUUID(result.Content.Matter.ID) ||
+			!validUUID(result.Content.Matter.ID) ||
 			strings.TrimSpace(result.Content.Matter.Title) == "" {
 			continue
 		}
@@ -2640,7 +2595,7 @@ func interviewPreparationActions(
 	return actions
 }
 
-func agentVoiceCandidateResponse(candidate VoiceCandidate) gin.H {
+func agentVoiceCandidateResponse(candidate agentvoice.Candidate) gin.H {
 	result := gin.H{
 		"candidate_id":      candidate.ID,
 		"thread_id":         candidate.ThreadID,
@@ -2696,7 +2651,7 @@ func agentVoiceCandidateResponse(candidate VoiceCandidate) gin.H {
 }
 
 func agentVoiceConfirmationResponse(
-	confirmation VoiceConfirmation,
+	confirmation agentvoice.Confirmation,
 ) gin.H {
 	return gin.H{
 		"candidate": agentVoiceCandidateResponse(confirmation.Candidate),
@@ -2705,7 +2660,7 @@ func agentVoiceConfirmationResponse(
 	}
 }
 
-func agentMessageAudioResponse(audio MessageAudio) gin.H {
+func agentMessageAudioResponse(audio agentconversation.MessageAudio) gin.H {
 	result := gin.H{
 		"audio_id":     audio.ID,
 		"status":       audio.Status,
@@ -2713,7 +2668,7 @@ func agentMessageAudioResponse(audio MessageAudio) gin.H {
 		"size_bytes":   audio.Size,
 		"duration_ms":  durationMilliseconds(audio.Duration),
 	}
-	if audio.Status == MessageAudioReadable {
+	if audio.Status == agentconversation.MessageAudioReadable {
 		result["playback_path"] =
 			"/v1/agent-message-audios/" + audio.ID + "/playback"
 	}
@@ -2731,14 +2686,14 @@ func durationMilliseconds(duration time.Duration) int64 {
 	return int64((duration + time.Millisecond - 1) / time.Millisecond)
 }
 
-func runWriteStatus(run Run) int {
-	if run.Status == RunStatusPending || run.Status == RunStatusRunning {
+func runWriteStatus(run agentrun.Run) int {
+	if run.Status == agentrun.StatusPending || run.Status == agentrun.StatusRunning {
 		return http.StatusAccepted
 	}
 	return http.StatusCreated
 }
 
-func runResponse(run Run) gin.H {
+func runResponse(run agentrun.Run) gin.H {
 	result := gin.H{
 		"run_id":             run.ID,
 		"thread_id":          run.ThreadID,
@@ -2761,7 +2716,7 @@ func runResponse(run Run) gin.H {
 	if !run.CompletedAt.IsZero() {
 		result["completed_at"] = run.CompletedAt.UTC().Format(time.RFC3339Nano)
 	}
-	if run.Status == RunStatusCompleted {
+	if run.Status == agentrun.StatusCompleted {
 		result["assistant_message_id"] = run.AssistantMessageID
 		result["provider_completion_id"] = run.ProviderCompletionID
 		result["provider_model"] = run.ProviderModel
@@ -2772,7 +2727,7 @@ func runResponse(run Run) gin.H {
 			"total_tokens":  run.Usage.TotalTokens,
 		}
 	}
-	if run.Status == RunStatusFailed {
+	if run.Status == agentrun.StatusFailed {
 		result["failure"] = gin.H{
 			"kind":      run.FailureKind,
 			"retryable": run.FailureRetryable,
@@ -2781,7 +2736,7 @@ func runResponse(run Run) gin.H {
 	return result
 }
 
-func contextManifestResponse(manifest ContextManifest) gin.H {
+func contextManifestResponse(manifest agentcontext.Manifest) gin.H {
 	messages := make([]gin.H, 0, len(manifest.SelectedMessages))
 	for _, message := range manifest.SelectedMessages {
 		messages = append(messages, gin.H{

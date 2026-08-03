@@ -14,6 +14,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
 )
 
 const (
@@ -27,12 +28,12 @@ const (
 
 func newAgentVoiceOrchestrator(
 	t *testing.T,
-	conversations VoiceConversationPort,
-	practice VoicePracticePort,
-	reviews VoiceReviewPort,
-) *VoiceRoundOrchestrator {
+	conversations practicevoice.ConversationPort,
+	practice practicevoice.PracticePort,
+	reviews practicevoice.ReviewPort,
+) *practicevoice.RoundOrchestrator {
 	t.Helper()
-	orchestrator, err := NewVoiceRoundOrchestrator(
+	orchestrator, err := practicevoice.NewRoundOrchestrator(
 		conversations,
 		practice,
 		reviews,
@@ -285,13 +286,13 @@ func (port *agentVoiceConversation) replaceTurn(
 
 type agentVoicePractice struct {
 	mu             sync.Mutex
-	turns          map[string]VoiceTurnProgress
+	turns          map[string]practicevoice.TurnProgress
 	effectiveTurns int
 }
 
 func newAgentVoicePractice(effectiveTurns int) *agentVoicePractice {
 	return &agentVoicePractice{
-		turns:          make(map[string]VoiceTurnProgress),
+		turns:          make(map[string]practicevoice.TurnProgress),
 		effectiveTurns: effectiveTurns,
 	}
 }
@@ -313,11 +314,11 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	sessionID string,
 	turnID string,
 	countsTowardTurnLimit bool,
-) (VoiceTurnProgress, error) {
+) (practicevoice.TurnProgress, error) {
 	practice.mu.Lock()
 	defer practice.mu.Unlock()
 	if actor.UserID != "user-a" || sessionID != "session-1" {
-		return VoiceTurnProgress{}, conversation.ErrVoiceRoundNotFound
+		return practicevoice.TurnProgress{}, conversation.ErrVoiceRoundNotFound
 	}
 	if existing, found := practice.turns[turnID]; found {
 		return existing, nil
@@ -325,7 +326,7 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	if countsTowardTurnLimit {
 		practice.effectiveTurns++
 	}
-	result := VoiceTurnProgress{
+	result := practicevoice.TurnProgress{
 		EffectiveTurns:   practice.effectiveTurns,
 		SessionVersion:   practice.effectiveTurns + 1,
 		TurnLimit:        3,
@@ -353,7 +354,7 @@ var errAgentVoiceCheckpoint = errors.New("conversation checkpoint failed")
 
 type agentVoiceReview struct {
 	mu              sync.Mutex
-	bySession       map[string]VoiceReviewCheckpoint
+	bySession       map[string]practicevoice.ReviewCheckpoint
 	creations       int
 	failAfterCreate bool
 }
@@ -363,33 +364,33 @@ type agentVoiceCompletionEvaluation struct{}
 func (agentVoiceCompletionEvaluation) EnsureCompletedSessionEvaluation(
 	context.Context,
 	requestcontext.Actor,
-	VoiceCompletionEvaluationSource,
+	practicevoice.CompletionEvaluationSource,
 ) error {
 	return nil
 }
 
 func newAgentVoiceReview() *agentVoiceReview {
 	return &agentVoiceReview{
-		bySession: make(map[string]VoiceReviewCheckpoint),
+		bySession: make(map[string]practicevoice.ReviewCheckpoint),
 	}
 }
 
 func (reviews *agentVoiceReview) EnsureSessionReview(
 	_ context.Context,
 	actor requestcontext.Actor,
-	source VoiceReviewSource,
-) (VoiceReviewCheckpoint, error) {
+	source practicevoice.ReviewSource,
+) (practicevoice.ReviewCheckpoint, error) {
 	reviews.mu.Lock()
 	defer reviews.mu.Unlock()
 	if actor.UserID != "user-a" ||
 		source.TurnID == "" ||
 		source.SessionID == "" {
-		return VoiceReviewCheckpoint{}, conversation.ErrVoiceRoundNotFound
+		return practicevoice.ReviewCheckpoint{}, conversation.ErrVoiceRoundNotFound
 	}
 	if existing, found := reviews.bySession[source.SessionID]; found {
 		return existing, nil
 	}
-	result := VoiceReviewCheckpoint{
+	result := practicevoice.ReviewCheckpoint{
 		ID:           "review-" + source.SessionID,
 		SessionID:    source.SessionID,
 		SourceTurnID: source.TurnID,
@@ -398,7 +399,7 @@ func (reviews *agentVoiceReview) EnsureSessionReview(
 	reviews.creations++
 	if reviews.failAfterCreate {
 		reviews.failAfterCreate = false
-		return VoiceReviewCheckpoint{}, errAgentVoiceLostAcknowledgement
+		return practicevoice.ReviewCheckpoint{}, errAgentVoiceLostAcknowledgement
 	}
 	return result, nil
 }
@@ -414,18 +415,18 @@ func agentVoiceActor(suffix string) requestcontext.Actor {
 	}
 }
 
-func maximumVoiceReviewResult(t *testing.T) *VoiceReviewResult {
+func maximumVoiceReviewResult(t *testing.T) *practicevoice.ReviewResult {
 	t.Helper()
-	result := &VoiceReviewResult{
+	result := &practicevoice.ReviewResult{
 		OverallScore: 100,
 		Summary:      strings.Repeat("s", maxVoiceReviewSummaryUTF8Bytes),
 		Conclusions: make(
-			[]VoiceReviewConclusion,
+			[]practicevoice.ReviewConclusion,
 			maxVoiceReviewConclusions,
 		),
 	}
 	for index := range result.Conclusions {
-		result.Conclusions[index] = VoiceReviewConclusion{
+		result.Conclusions[index] = practicevoice.ReviewConclusion{
 			Key: fmt.Sprintf("%02d", index) +
 				strings.Repeat("k", maxVoiceReviewLabelUTF8Bytes-2),
 			Category: strings.Repeat(
@@ -490,15 +491,15 @@ func reviewHistoryKeyBefore(
 		(createdAt.Equal(boundaryCreatedAt) && reviewID < boundaryReviewID)
 }
 
-var _ VoiceConversationPort = (*conversation.VoiceRoundService)(nil)
+var _ practicevoice.ConversationPort = (*conversation.VoiceRoundService)(nil)
 
 func newVoiceSessionTestApplication(
 	t *testing.T,
 	conversations *agentVoiceConversation,
 	practice *agentVoicePractice,
 	reviews *agentVoiceReview,
-	orchestrator *VoiceRoundOrchestrator,
-) *VoiceSessionApplication {
+	orchestrator *practicevoice.RoundOrchestrator,
+) *practicevoice.SessionApplication {
 	t.Helper()
 	return newVoiceSessionTestApplicationWithReader(
 		t,
@@ -513,11 +514,11 @@ func newVoiceSessionTestApplicationWithReader(
 	t *testing.T,
 	conversations *agentVoiceConversation,
 	practice *agentVoicePractice,
-	orchestrator *VoiceRoundOrchestrator,
-	reader VoiceReviewReader,
-) *VoiceSessionApplication {
+	orchestrator *practicevoice.RoundOrchestrator,
+	reader practicevoice.ReviewReader,
+) *practicevoice.SessionApplication {
 	t.Helper()
-	application, err := NewVoiceSessionApplication(
+	application, err := practicevoice.NewSessionApplication(
 		&voiceSessionTestSessions{practice: practice},
 		voiceSessionTestQuestions{},
 		voiceSessionTestCheckpoints{conversations: conversations},
@@ -536,7 +537,7 @@ type voiceSessionTestSessions struct {
 }
 
 type fixedVoiceSessionPort struct {
-	session VoicePracticeSession
+	session practicevoice.Session
 }
 
 func (port fixedVoiceSessionPort) Start(
@@ -545,7 +546,7 @@ func (port fixedVoiceSessionPort) Start(
 	string,
 	string,
 	string,
-) (VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return port.session, nil
 }
 
@@ -554,7 +555,7 @@ func (port fixedVoiceSessionPort) GetByThread(
 	requestcontext.Actor,
 	string,
 	string,
-) (VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return port.session, nil
 }
 
@@ -562,7 +563,7 @@ func (port fixedVoiceSessionPort) GetByID(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return port.session, nil
 }
 
@@ -584,7 +585,7 @@ func (sessions *voiceSessionTestSessions) Start(
 	string,
 	string,
 	string,
-) (VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return sessions.current(), nil
 }
 
@@ -593,7 +594,7 @@ func (sessions *voiceSessionTestSessions) GetByThread(
 	requestcontext.Actor,
 	string,
 	string,
-) (VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return sessions.current(), nil
 }
 
@@ -601,22 +602,22 @@ func (sessions *voiceSessionTestSessions) GetByID(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return sessions.current(), nil
 }
 
-func (sessions *voiceSessionTestSessions) current() VoicePracticeSession {
+func (sessions *voiceSessionTestSessions) current() practicevoice.Session {
 	sessions.practice.mu.Lock()
 	defer sessions.practice.mu.Unlock()
 	effective := sessions.practice.effectiveTurns
-	return VoicePracticeSession{
+	return practicevoice.Session{
 		ID:            "session-1",
 		PlanID:        "plan-1",
 		ThreadID:      "thread-1",
 		MatterID:      "matter-1",
 		ScenarioType:  "INTERVIEW",
 		ScenarioModel: "PROJECT_EXPERIENCE_DEEP_DIVE",
-		PromptModel: VoiceScenarioPrompt{
+		PromptModel: practicevoice.ScenarioPrompt{
 			PublicSceneBrief: "Discuss one project.",
 			PracticeGoal:     "Explain decisions clearly.",
 			UserRole:         "Candidate",
@@ -645,7 +646,7 @@ type voiceSessionTestQuestions struct{}
 func (voiceSessionTestQuestions) EnsureQuestion(
 	_ context.Context,
 	_ requestcontext.Actor,
-	session VoicePracticeSession,
+	session practicevoice.Session,
 	sequence int,
 ) (conversation.VoiceQuestion, error) {
 	return conversation.VoiceQuestion{
@@ -693,32 +694,69 @@ func (checkpoints voiceSessionTestCheckpoints) LatestTurn(
 	return latest, latest.ID != "", nil
 }
 
+func (checkpoints voiceSessionTestCheckpoints) ListTurnHistory(
+	_ context.Context,
+	_ requestcontext.Actor,
+	sessionID string,
+) ([]practicevoice.TurnExchange, error) {
+	checkpoints.conversations.mu.Lock()
+	defer checkpoints.conversations.mu.Unlock()
+	history := make(
+		[]practicevoice.TurnExchange,
+		0,
+		len(checkpoints.conversations.turns),
+	)
+	for _, turn := range checkpoints.conversations.turns {
+		if turn.SessionID != sessionID || turn.EffectiveTurns < 1 {
+			continue
+		}
+		history = append(history, practicevoice.TurnExchange{
+			Question: conversation.VoiceQuestion{
+				ID:        turn.QuestionID,
+				SessionID: sessionID,
+				Type:      "PRIMARY",
+				Text:      "Question " + turn.QuestionID,
+			},
+			Turn: turn,
+		})
+	}
+	for index := 1; index < len(history); index++ {
+		for current := index; current > 0 &&
+			history[current].Turn.EffectiveTurns <
+				history[current-1].Turn.EffectiveTurns; current-- {
+			history[current], history[current-1] =
+				history[current-1], history[current]
+		}
+	}
+	return history, nil
+}
+
 type voiceSessionTestReviews struct {
 	reviews *agentVoiceReview
-	history []VoiceSessionReview
+	history []practicevoice.SessionReview
 }
 
 func (reader voiceSessionTestReviews) GetReview(
 	_ context.Context,
 	_ requestcontext.Actor,
 	reviewID string,
-) (VoiceSessionReview, error) {
+) (practicevoice.SessionReview, error) {
 	reader.reviews.mu.Lock()
 	defer reader.reviews.mu.Unlock()
 	for _, item := range reader.reviews.bySession {
 		if item.ID == reviewID {
 			now := time.Unix(2, 0).UTC()
-			return VoiceSessionReview{
+			return practicevoice.SessionReview{
 				ID:                    item.ID,
 				SessionID:             item.SessionID,
 				SourceTurnID:          item.SourceTurnID,
 				Status:                "completed",
 				ImplementationVersion: "review-v1",
 				SourceTurnVersion:     "conversation-turn:evidence-v1",
-				Result: &VoiceReviewResult{
+				Result: &practicevoice.ReviewResult{
 					OverallScore: 80,
 					Summary:      "Clear answer.",
-					Conclusions: []VoiceReviewConclusion{{
+					Conclusions: []practicevoice.ReviewConclusion{{
 						Key:      "overall",
 						Category: "fluency",
 						Message:  "Clear.",
@@ -730,15 +768,15 @@ func (reader voiceSessionTestReviews) GetReview(
 			}, nil
 		}
 	}
-	return VoiceSessionReview{}, ErrNotFound
+	return practicevoice.SessionReview{}, practicevoice.ErrNotFound
 }
 
 func (reader voiceSessionTestReviews) ListReviews(
 	_ context.Context,
 	_ requestcontext.Actor,
-	query VoiceReviewHistoryQuery,
-) (VoiceReviewHistoryPage, error) {
-	items := make([]VoiceSessionReview, 0, query.Limit)
+	query practicevoice.ReviewHistoryQuery,
+) (practicevoice.ReviewHistoryPage, error) {
+	items := make([]practicevoice.SessionReview, 0, query.Limit)
 	for _, item := range reader.history {
 		if query.Before != nil &&
 			!reviewHistoryKeyBefore(
@@ -754,7 +792,7 @@ func (reader voiceSessionTestReviews) ListReviews(
 			break
 		}
 	}
-	page := VoiceReviewHistoryPage{Items: items}
+	page := practicevoice.ReviewHistoryPage{Items: items}
 	consumed := 0
 	for _, item := range reader.history {
 		if query.Before == nil ||
@@ -769,7 +807,7 @@ func (reader voiceSessionTestReviews) ListReviews(
 	}
 	if consumed > len(items) && len(items) > 0 {
 		last := items[len(items)-1]
-		page.Next = &VoiceReviewHistoryCursor{
+		page.Next = &practicevoice.ReviewHistoryCursor{
 			CreatedAt: last.CreatedAt,
 			ReviewID:  last.ID,
 		}
@@ -778,22 +816,22 @@ func (reader voiceSessionTestReviews) ListReviews(
 }
 
 type fixedVoiceReviewPageReader struct {
-	page VoiceReviewHistoryPage
+	page practicevoice.ReviewHistoryPage
 }
 
 func (reader fixedVoiceReviewPageReader) GetReview(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (VoiceSessionReview, error) {
-	return VoiceSessionReview{}, ErrNotFound
+) (practicevoice.SessionReview, error) {
+	return practicevoice.SessionReview{}, practicevoice.ErrNotFound
 }
 
 func (reader fixedVoiceReviewPageReader) ListReviews(
 	context.Context,
 	requestcontext.Actor,
-	VoiceReviewHistoryQuery,
-) (VoiceReviewHistoryPage, error) {
+	practicevoice.ReviewHistoryQuery,
+) (practicevoice.ReviewHistoryPage, error) {
 	return reader.page, nil
 }
 

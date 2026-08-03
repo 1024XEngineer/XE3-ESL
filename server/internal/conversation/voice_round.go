@@ -149,8 +149,8 @@ type VoiceTurnProgress struct {
 // return Reserved with a new opaque LeaseToken. Complete/Fail must reject a
 // stale LeaseToken so a timed-out worker cannot overwrite the recovered result.
 //
-// Confirmation persistence supplies local checkpoints to the Agent-owned
-// cross-module saga. ReserveConfirmation must atomically bind actor +
+// Confirmation persistence supplies local checkpoints to the Practice Voice
+// round saga. ReserveConfirmation must atomically bind actor +
 // operation + IdempotencyKey to CandidateID, replay the same Turn for an
 // identical request, reject a different CandidateID, and return that same
 // immutable Turn if recovery uses a new key for an already confirmed

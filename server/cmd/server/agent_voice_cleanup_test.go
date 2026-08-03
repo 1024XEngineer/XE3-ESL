@@ -10,19 +10,19 @@ import (
 	"testing"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 
 type agentVoiceObjectReclaimerFunc func(
 	context.Context,
 	int,
-) (agent.VoiceCleanupResult, error)
+) (agentvoice.CleanupResult, error)
 
-func (reclaim agentVoiceObjectReclaimerFunc) ReclaimVoiceObjects(
+func (reclaim agentVoiceObjectReclaimerFunc) ReclaimObjects(
 	ctx context.Context,
 	limit int,
-) (agent.VoiceCleanupResult, error) {
+) (agentvoice.CleanupResult, error) {
 	return reclaim(ctx, limit)
 }
 
@@ -75,7 +75,7 @@ func TestAgentVoiceCleanupWorkerRecoversImmediatelyAndSanitizesLogs(
 	reclaimer := agentVoiceObjectReclaimerFunc(func(
 		ctx context.Context,
 		limit int,
-	) (agent.VoiceCleanupResult, error) {
+	) (agentvoice.CleanupResult, error) {
 		call := calls.Add(1)
 		current := inFlight.Add(1)
 		defer inFlight.Add(-1)
@@ -96,10 +96,10 @@ func TestAgentVoiceCleanupWorkerRecoversImmediatelyAndSanitizesLogs(
 			t.Error("cleanup sweep context has no deadline")
 		}
 		if call == 1 {
-			return agent.VoiceCleanupResult{Failed: 1},
+			return agentvoice.CleanupResult{Failed: 1},
 				errors.New(sensitive)
 		}
-		return agent.VoiceCleanupResult{Deleted: 1}, nil
+		return agentvoice.CleanupResult{Deleted: 1}, nil
 	})
 	worker, err := newAgentVoiceCleanupWorker(
 		reclaimer,
@@ -134,10 +134,10 @@ func TestAgentVoiceCleanupWorkerStopsWithApplicationContext(t *testing.T) {
 	reclaimer := agentVoiceObjectReclaimerFunc(func(
 		ctx context.Context,
 		_ int,
-	) (agent.VoiceCleanupResult, error) {
+	) (agentvoice.CleanupResult, error) {
 		close(started)
 		<-ctx.Done()
-		return agent.VoiceCleanupResult{}, ctx.Err()
+		return agentvoice.CleanupResult{}, ctx.Err()
 	})
 	worker, err := newAgentVoiceCleanupWorker(
 		reclaimer,

@@ -4,13 +4,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 )
 
 func TestThreadResponseIncludesRequiredNullableTitle(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, time.July, 29, 10, 0, 0, 0, time.UTC)
-	withoutTitle := threadResponse(core.Thread{
+	withoutTitle := threadResponse(agentconversation.Thread{
 		ID:        "10000000-0000-4000-8000-000000000001",
 		OwnerID:   "20000000-0000-4000-8000-000000000001",
 		CreatedAt: now,
@@ -20,7 +20,7 @@ func TestThreadResponseIncludesRequiredNullableTitle(t *testing.T) {
 		t.Fatalf("empty Thread title = %#v, present = %t", value, present)
 	}
 
-	withTitle := threadResponse(core.Thread{
+	withTitle := threadResponse(agentconversation.Thread{
 		ID:        "10000000-0000-4000-8000-000000000002",
 		OwnerID:   "20000000-0000-4000-8000-000000000001",
 		Title:     "英文自我介绍",

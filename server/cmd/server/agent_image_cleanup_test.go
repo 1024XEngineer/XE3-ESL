@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"testing"
 
-	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/image"
+	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 

@@ -14,11 +14,13 @@ import (
 	"testing"
 	"time"
 
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
 	"github.com/gin-gonic/gin"
 )
 
@@ -183,6 +185,7 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 			"session_completed",
 			"session_version",
 			"thread_id",
+			"turn_history",
 			"turn_limit",
 		)
 		requireVoiceKeys(
@@ -208,8 +211,8 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 func TestVoiceSessionStateResponseProjectsFullMockScenarioIdentity(
 	t *testing.T,
 ) {
-	response := voiceSessionStateResponse(VoiceSessionState{
-		Session: VoicePracticeSession{
+	response := voiceSessionStateResponse(practicevoice.SessionState{
+		Session: practicevoice.Session{
 			ScenarioType:  "EXAM",
 			ScenarioModel: "IELTS_SPEAKING_FULL_MOCK",
 		},
@@ -335,7 +338,7 @@ func TestVoiceHTTPListsAuthenticatedReviewHistoryWithOpaqueCursor(
 		orchestrator,
 		voiceSessionTestReviews{
 			reviews: reviews,
-			history: []VoiceSessionReview{newer, older},
+			history: []practicevoice.SessionReview{newer, older},
 		},
 	)
 	handler, err := NewHTTPHandlerWithRunsAndVoice(
@@ -445,7 +448,7 @@ func TestVoiceHTTPListsAuthenticatedReviewHistoryWithOpaqueCursor(
 func TestReviewHistoryCursorIsSignedCanonicalAndActorBound(t *testing.T) {
 	key := testVoiceHTTPOptions().ReviewHistoryCursorKey
 	handler := &HTTPHandler{reviewCursorKey: key}
-	cursor := VoiceReviewHistoryCursor{
+	cursor := practicevoice.ReviewHistoryCursor{
 		CreatedAt: time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC),
 		ReviewID:  "20000000-0000-4000-8000-000000000002",
 	}
@@ -639,7 +642,7 @@ func TestVoiceHTTPRestoresLegacyOverBudgetReviewResult(
 	}
 	response := voiceHTTPRequest(
 		t,
-		voiceHistoryTestRouter(t, []VoiceSessionReview{item}),
+		voiceHistoryTestRouter(t, []practicevoice.SessionReview{item}),
 		http.MethodGet,
 		"/v1/formal-reviews?limit=1",
 		nil,
@@ -716,7 +719,7 @@ func TestVoiceHTTPReadDeadlineInterruptsStalledUpload(t *testing.T) {
 	reading := &readingVoiceConversation{
 		agentVoiceConversation: conversations,
 	}
-	orchestrator, err := NewVoiceRoundOrchestrator(
+	orchestrator, err := practicevoice.NewRoundOrchestrator(
 		reading,
 		practice,
 		reviews,
@@ -902,14 +905,14 @@ func TestVoiceHTTPResumeUsesFrozenSessionMatter(t *testing.T) {
 				reviews,
 			)
 			sessions := &voiceHTTPRecordingSessionPort{
-				session: VoicePracticeSession{
+				session: practicevoice.Session{
 					ID:            "session-1",
 					PlanID:        "plan-1",
 					ThreadID:      "thread-1",
 					MatterID:      "matter-1",
 					ScenarioType:  "INTERVIEW",
 					ScenarioModel: "PROJECT_EXPERIENCE_DEEP_DIVE",
-					PromptModel: VoiceScenarioPrompt{
+					PromptModel: practicevoice.ScenarioPrompt{
 						PublicSceneBrief: "Discuss one project.",
 						PracticeGoal:     "Explain decisions clearly.",
 						UserRole:         "Candidate",
@@ -925,7 +928,7 @@ func TestVoiceHTTPResumeUsesFrozenSessionMatter(t *testing.T) {
 					CandidateParticipantID:   "participant-a",
 				},
 			}
-			voice, err := NewVoiceSessionApplication(
+			voice, err := practicevoice.NewSessionApplication(
 				sessions,
 				voiceSessionTestQuestions{},
 				voiceSessionTestCheckpoints{conversations: conversations},
@@ -984,18 +987,18 @@ func TestVoiceHTTPResumeUsesFrozenSessionMatter(t *testing.T) {
 }
 
 type voiceHTTPApplication struct {
-	Application
+	agentconversation.Application
 }
 
 func (voiceHTTPApplication) GetThread(
 	_ context.Context,
 	actor requestcontext.Actor,
 	threadID string,
-) (Thread, error) {
+) (agentconversation.Thread, error) {
 	if actor.UserID != "user-a" || threadID != "thread-1" {
-		return Thread{}, ErrNotFound
+		return agentconversation.Thread{}, agentconversation.ErrNotFound
 	}
-	return Thread{
+	return agentconversation.Thread{
 		ID:             threadID,
 		OwnerID:        actor.UserID,
 		ActiveMatterID: "matter-1",
@@ -1003,7 +1006,7 @@ func (voiceHTTPApplication) GetThread(
 }
 
 type voiceHTTPThreadApplication struct {
-	Application
+	agentconversation.Application
 	activeMatterID string
 }
 
@@ -1011,11 +1014,11 @@ func (application voiceHTTPThreadApplication) GetThread(
 	_ context.Context,
 	actor requestcontext.Actor,
 	threadID string,
-) (Thread, error) {
+) (agentconversation.Thread, error) {
 	if actor.UserID != "user-a" || threadID != "thread-1" {
-		return Thread{}, ErrNotFound
+		return agentconversation.Thread{}, agentconversation.ErrNotFound
 	}
-	return Thread{
+	return agentconversation.Thread{
 		ID:             threadID,
 		OwnerID:        actor.UserID,
 		ActiveMatterID: application.activeMatterID,
@@ -1023,7 +1026,7 @@ func (application voiceHTTPThreadApplication) GetThread(
 }
 
 type voiceHTTPRecordingSessionPort struct {
-	session        VoicePracticeSession
+	session        practicevoice.Session
 	resumeCalls    int
 	resumeMatterID string
 }
@@ -1034,7 +1037,7 @@ func (port *voiceHTTPRecordingSessionPort) Start(
 	string,
 	string,
 	string,
-) (VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return port.session, nil
 }
 
@@ -1043,7 +1046,7 @@ func (port *voiceHTTPRecordingSessionPort) GetByThread(
 	_ requestcontext.Actor,
 	_ string,
 	matterID string,
-) (VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	port.resumeCalls++
 	port.resumeMatterID = matterID
 	return port.session, nil
@@ -1053,7 +1056,7 @@ func (port *voiceHTTPRecordingSessionPort) GetByID(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	return port.session, nil
 }
 
@@ -1085,19 +1088,19 @@ func completedVoiceHistoryReview(
 	id string,
 	createdAt time.Time,
 	score int,
-) VoiceSessionReview {
+) practicevoice.SessionReview {
 	completedAt := createdAt.Add(time.Minute)
-	return VoiceSessionReview{
+	return practicevoice.SessionReview{
 		ID:                    id,
 		SessionID:             "session-" + id,
 		Status:                "completed",
 		ImplementationVersion: "review-v1",
 		SourceTurnID:          "turn-" + id,
 		SourceTurnVersion:     "conversation-turn:evidence-v1",
-		Result: &VoiceReviewResult{
+		Result: &practicevoice.ReviewResult{
 			OverallScore: score,
 			Summary:      "Server-owned review history.",
-			Conclusions: []VoiceReviewConclusion{{
+			Conclusions: []practicevoice.ReviewConclusion{{
 				Key:        "clarity",
 				Category:   "clarity",
 				Message:    "Clear response.",
@@ -1112,7 +1115,7 @@ func completedVoiceHistoryReview(
 
 func voiceHistoryTestRouter(
 	t *testing.T,
-	history []VoiceSessionReview,
+	history []practicevoice.SessionReview,
 ) http.Handler {
 	t.Helper()
 	reviews := newAgentVoiceReview()
@@ -1127,7 +1130,7 @@ func voiceHistoryTestRouter(
 
 func voiceHistoryTestRouterWithReader(
 	t *testing.T,
-	reader VoiceReviewReader,
+	reader practicevoice.ReviewReader,
 ) http.Handler {
 	t.Helper()
 	conversations := newAgentVoiceConversation(3)
@@ -1173,10 +1176,10 @@ func voiceHistoryTestRouterWithReader(
 
 func maximumVoiceHistoryPage(
 	t *testing.T,
-) []VoiceSessionReview {
+) []practicevoice.SessionReview {
 	t.Helper()
 	result := maximumVoiceReviewResult(t)
-	history := make([]VoiceSessionReview, 51)
+	history := make([]practicevoice.SessionReview, 51)
 	escapedMetadata := strings.Repeat(
 		"<",
 		maxVoiceReviewMetadataUTF8Bytes,
@@ -1189,7 +1192,7 @@ func maximumVoiceHistoryPage(
 			"20000000-0000-4000-8000-%012d",
 			50-index,
 		)
-		history[index] = VoiceSessionReview{
+		history[index] = practicevoice.SessionReview{
 			ID:                    id,
 			SessionID:             escapedMetadata,
 			Status:                "completed",
@@ -1206,23 +1209,23 @@ func maximumVoiceHistoryPage(
 }
 
 type oversizedVoiceHistoryReader struct {
-	items []VoiceSessionReview
+	items []practicevoice.SessionReview
 }
 
 func (reader oversizedVoiceHistoryReader) GetReview(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (VoiceSessionReview, error) {
-	return VoiceSessionReview{}, ErrNotFound
+) (practicevoice.SessionReview, error) {
+	return practicevoice.SessionReview{}, practicevoice.ErrNotFound
 }
 
 func (reader oversizedVoiceHistoryReader) ListReviews(
 	context.Context,
 	requestcontext.Actor,
-	VoiceReviewHistoryQuery,
-) (VoiceReviewHistoryPage, error) {
-	return VoiceReviewHistoryPage{Items: reader.items}, nil
+	practicevoice.ReviewHistoryQuery,
+) (practicevoice.ReviewHistoryPage, error) {
+	return practicevoice.ReviewHistoryPage{Items: reader.items}, nil
 }
 
 func voiceHTTPRequest(

@@ -3,8 +3,6 @@ package context
 import (
 	"strings"
 	"testing"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 )
 
 func TestSelectStableProfileContextInjectsWholeEscapedFields(t *testing.T) {
@@ -94,7 +92,7 @@ func TestSelectStableProfileContextRejectsUnsupportedOrDuplicateFields(
 		"system",
 		[]StableProfileMemory{unsupported},
 		4096,
-	); err != core.ErrRepository {
+	); err != ErrRepository {
 		t.Fatalf("unsupported error = %v", err)
 	}
 	duplicate := valid
@@ -103,7 +101,7 @@ func TestSelectStableProfileContextRejectsUnsupportedOrDuplicateFields(
 		"system",
 		[]StableProfileMemory{valid, duplicate},
 		4096,
-	); err != core.ErrRepository {
+	); err != ErrRepository {
 		t.Fatalf("duplicate error = %v", err)
 	}
 	occupation := valid
@@ -114,7 +112,7 @@ func TestSelectStableProfileContextRejectsUnsupportedOrDuplicateFields(
 		"system",
 		[]StableProfileMemory{occupation, valid},
 		4096,
-	); err != core.ErrRepository {
+	); err != ErrRepository {
 		t.Fatalf("out-of-order error = %v", err)
 	}
 }
