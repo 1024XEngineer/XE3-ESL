@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
+	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
 	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
+	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
@@ -92,6 +94,42 @@ func BaselineCases() []RoutingCase {
 			ExpectedToolNames: []string{reviewtool.ReviewSearchToolName},
 		},
 		{
+			Name:              "practice_preview",
+			Messages:          userOnly("先预览一下英文产品经理面试的练习方案"),
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{practicetool.PracticePreviewToolName},
+			ExpectedArgs: map[string]map[string]any{
+				practicetool.PracticePreviewToolName: {
+					"scenario_query": "英文产品经理面试",
+				},
+			},
+		},
+		{
+			Name:             "practice_start_requires_confirmation",
+			Messages:         userOnly("开始练习"),
+			ExpectedDecision: DecisionClarify,
+			ForbiddenTools:   []string{practicetool.PracticeStartToolName},
+		},
+		{
+			Name:              "confirmed_practice_start",
+			Messages:          userOnly("确认开始练习"),
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{practicetool.PracticeStartToolName},
+			ExpectedArgs: map[string]map[string]any{
+				practicetool.PracticeStartToolName: {
+					"practice_plan_id":       "eval-practice-plan-001",
+					"expected_plan_revision": 1,
+					"user_confirmed":         true,
+				},
+			},
+		},
+		{
+			Name:              "latest_practice_report",
+			Messages:          userOnly("看看我刚完成练习的最新报告"),
+			ExpectedDecision:  DecisionToolCall,
+			ExpectedToolNames: []string{evaluationtool.LatestPracticeReportToolName},
+		},
+		{
 			Name: "expand_first_review_candidate",
 			Messages: []EvalMessage{
 				{Role: "user", Content: "看看我上次面试评价"},
@@ -160,6 +198,9 @@ func allToolNames() []string {
 	return []string{
 		mattertool.ScenarioCreateToolName,
 		mattertool.ScenarioSearchToolName,
+		practicetool.PracticePreviewToolName,
+		practicetool.PracticeStartToolName,
+		evaluationtool.LatestPracticeReportToolName,
 		reviewtool.ReviewSearchToolName,
 		reviewtool.ReviewGetToolName,
 		mocktool.MaterialSearchToolName,
