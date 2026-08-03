@@ -391,6 +391,16 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   Future<void> _playQuestionNarration(String questionId, String text) async {
+    final currentQuestion = widget.controller.currentQuestion;
+    if (currentQuestion?.id == questionId &&
+        widget.controller.canUsePracticeAudio) {
+      await _stopExaminerSpeakerSafely();
+      _questionNarrationGeneration++;
+      _playingQuestionId = null;
+      _questionNarrationErrorId = null;
+      await widget.controller.toggleQuestionAudio();
+      return;
+    }
     if (_playingQuestionId == questionId) {
       await _stopQuestionNarration();
       return;
@@ -419,6 +429,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   Future<void> _stopQuestionNarration() async {
     _questionNarrationGeneration++;
+    await widget.controller.stopPracticeAudio();
     await _stopExaminerSpeakerSafely();
     if (mounted && _playingQuestionId != null) {
       setState(() => _playingQuestionId = null);
@@ -787,6 +798,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   Future<void> _sendShortVoice() async {
     _conversionRequested = false;
     await widget.controller.finishRecordingGesture();
+    if (widget.controller.hasPendingPracticeAudio) {
+      await widget.controller.discardPendingPracticeAudio();
+      return;
+    }
     _confirmPendingTranscript();
   }
 
@@ -1206,6 +1221,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
             revealedQuestionIds: _revealedQuestionIds,
             playingQuestionId: _playingQuestionId,
             narrationErrorQuestionId: _questionNarrationErrorId,
+            mediaPlayingQuestionId: widget.controller.isQuestionAudioPlaying
+                ? widget.controller.questionId
+                : null,
             onPlayQuestion: _playQuestionNarration,
             onToggleTranscript: _toggleQuestionTranscript,
           ),
@@ -1307,6 +1325,7 @@ class _ExamConversation extends StatelessWidget {
     required this.revealedQuestionIds,
     required this.playingQuestionId,
     required this.narrationErrorQuestionId,
+    required this.mediaPlayingQuestionId,
     required this.onPlayQuestion,
     required this.onToggleTranscript,
     this.speechFeedbackController,
@@ -1317,6 +1336,7 @@ class _ExamConversation extends StatelessWidget {
   final Set<String> revealedQuestionIds;
   final String? playingQuestionId;
   final String? narrationErrorQuestionId;
+  final String? mediaPlayingQuestionId;
   final Future<void> Function(String questionId, String text) onPlayQuestion;
   final ValueChanged<String> onToggleTranscript;
   final SpeechFeedbackController? speechFeedbackController;
@@ -1346,7 +1366,9 @@ class _ExamConversation extends StatelessWidget {
               child: assistant
                   ? _ExaminerQuestionBubble(
                       message: message,
-                      playing: playingQuestionId == message.id,
+                      playing:
+                          playingQuestionId == message.id ||
+                          mediaPlayingQuestionId == message.id,
                       transcriptVisible: revealedQuestionIds.contains(
                         message.id,
                       ),
@@ -1556,8 +1578,6 @@ class _RecorderDock extends StatelessWidget {
                 onSubmit: onSubmitConvertedAnswer,
                 onCancel: onCancelConvertedAnswer,
               )
-            : controller.hasPendingPracticeAudio
-            ? _IeltsPendingAudioDock(controller: controller)
             : working
             ? _IeltsRecorderWorkingState(state: state)
             : _IeltsVoiceCaptureDock(

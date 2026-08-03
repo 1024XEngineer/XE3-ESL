@@ -40,7 +40,9 @@ final class PracticeWorkspaceController extends ChangeNotifier {
   PracticeWorkspaceController({
     required this.agentController,
     required this.recordStore,
-  });
+  }) {
+    agentController.addListener(_capturePracticeProgress);
+  }
 
   final AgentController agentController;
   final PracticeLaunchRecordStore recordStore;
@@ -67,6 +69,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       _accountId != null &&
       _loadedAccountId != _accountId;
   bool get hasResumable => _current?.isCommitted ?? false;
+  bool get resumableHasProgress => _current?.hasMeaningfulProgress ?? false;
   PracticeWorkspaceLease? get currentLease => _current?.lease;
   String? get currentPracticeThreadId => _current?.practiceThreadId;
   String? get currentMatterId => _current?.matterId;
@@ -303,6 +306,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
         scenarioTitle: scenarioTitle,
         scenarioType: scenarioType,
         presentationMode: presentationMode,
+        completedTurns: agentController.completedTurns,
       );
       _current = committed;
       notifyListeners();
@@ -414,6 +418,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     final operationGeneration = ++_operationGeneration;
     _beginOperation();
     try {
+      _capturePracticeProgress();
       final terminalPracticeWasFocused =
           current.isCommitted &&
           agentController.threadId == current.practiceThreadId &&
@@ -742,6 +747,39 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       scenarioTitle: matter.scene.title,
       scenarioType: matter.scene.scenarioType,
       presentationMode: matter.scene.presentationMode,
+      completedTurns: agentController.completedTurns,
+    );
+  }
+
+  void _capturePracticeProgress() {
+    final current = _current;
+    if (_disposed ||
+        current == null ||
+        !current.isCommitted ||
+        agentController.threadId != current.practiceThreadId ||
+        agentController.practiceSessionId != current.sessionId) {
+      return;
+    }
+    final completedTurns = agentController.completedTurns;
+    if (current.completedTurns == completedTurns) {
+      return;
+    }
+    final updated = current.withCompletedTurns(completedTurns);
+    _current = updated;
+    notifyListeners();
+    final accountId = _accountId;
+    final accountGeneration = _accountGeneration;
+    if (accountId == null || current.accountId != accountId) {
+      return;
+    }
+    unawaited(
+      _enqueueStoreWrite(
+        () => recordStore.write(accountId, updated.encode()),
+      ).catchError((_) {
+        if (_isCurrentAccount(accountGeneration, accountId)) {
+          _setErrorIfAbsent('练习进度暂时无法保存，请稍后重试。');
+        }
+      }),
     );
   }
 
@@ -1004,6 +1042,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    agentController.removeListener(_capturePracticeProgress);
     ++_accountGeneration;
     ++_operationGeneration;
     super.dispose();
@@ -1024,6 +1063,7 @@ final class _StoredPracticeWorkspace {
     required this.scenarioTitle,
     required this.scenarioType,
     required this.presentationMode,
+    required this.completedTurns,
   });
 
   factory _StoredPracticeWorkspace.pending({
@@ -1043,10 +1083,11 @@ final class _StoredPracticeWorkspace {
       scenarioTitle: null,
       scenarioType: null,
       presentationMode: AgentScenePresentationMode.standard,
+      completedTurns: null,
     );
   }
 
-  static const schemaVersion = 2;
+  static const schemaVersion = 3;
 
   final String accountId;
   final String operationId;
@@ -1058,12 +1099,16 @@ final class _StoredPracticeWorkspace {
   final String? scenarioTitle;
   final String? scenarioType;
   final AgentScenePresentationMode presentationMode;
+  final int? completedTurns;
 
   bool get isCommitted =>
       matterId != null &&
       sessionId != null &&
       scenarioId != null &&
       scenarioTitle != null;
+
+  bool get hasMeaningfulProgress =>
+      isCommitted && (completedTurns == null || completedTurns! > 0);
 
   PracticeWorkspaceLease get lease => PracticeWorkspaceLease(
     operationId: operationId,
@@ -1079,6 +1124,7 @@ final class _StoredPracticeWorkspace {
     String? scenarioType,
     AgentScenePresentationMode presentationMode =
         AgentScenePresentationMode.standard,
+    int completedTurns = 0,
   }) {
     return _StoredPracticeWorkspace(
       accountId: accountId,
@@ -1091,6 +1137,7 @@ final class _StoredPracticeWorkspace {
       scenarioTitle: scenarioTitle,
       scenarioType: scenarioType,
       presentationMode: presentationMode,
+      completedTurns: completedTurns,
     );
   }
 
@@ -1106,6 +1153,23 @@ final class _StoredPracticeWorkspace {
       scenarioTitle: scenarioTitle,
       scenarioType: scenarioType,
       presentationMode: presentationMode,
+      completedTurns: completedTurns,
+    );
+  }
+
+  _StoredPracticeWorkspace withCompletedTurns(int value) {
+    return _StoredPracticeWorkspace(
+      accountId: accountId,
+      operationId: operationId,
+      practiceThreadId: practiceThreadId,
+      returnThreadId: returnThreadId,
+      matterId: matterId,
+      sessionId: sessionId,
+      scenarioId: scenarioId,
+      scenarioTitle: scenarioTitle,
+      scenarioType: scenarioType,
+      presentationMode: presentationMode,
+      completedTurns: value,
     );
   }
 
@@ -1122,6 +1186,7 @@ final class _StoredPracticeWorkspace {
       'scenario_title': scenarioTitle,
       'scenario_type': scenarioType,
       'presentation_mode': presentationMode.name,
+      'completed_turns': completedTurns,
     });
   }
 
@@ -1147,6 +1212,20 @@ final class _StoredPracticeWorkspace {
               'scenario_definition_id',
               'scenario_title',
             }
+          : version == 2
+          ? const <String>{
+              'schema_version',
+              'account_id',
+              'operation_id',
+              'practice_thread_id',
+              'return_thread_id',
+              'matter_id',
+              'practice_session_id',
+              'scenario_definition_id',
+              'scenario_title',
+              'scenario_type',
+              'presentation_mode',
+            }
           : const <String>{
               'schema_version',
               'account_id',
@@ -1159,9 +1238,10 @@ final class _StoredPracticeWorkspace {
               'scenario_title',
               'scenario_type',
               'presentation_mode',
+              'completed_turns',
             };
       if (!setEquals(decoded.keys.toSet(), expectedKeys) ||
-          (version != 1 && version != schemaVersion) ||
+          (version != 1 && version != 2 && version != schemaVersion) ||
           decoded['account_id'] != expectedAccountId) {
         return null;
       }
@@ -1180,6 +1260,9 @@ final class _StoredPracticeWorkspace {
       final storedPresentationMode = AgentScenePresentationMode.values
           .where((value) => value.name == presentationModeName)
           .firstOrNull;
+      final completedTurns = version == schemaVersion
+          ? decoded['completed_turns']
+          : null;
       if (accountId is! String ||
           operationId is! String ||
           practiceThreadId is! String ||
@@ -1189,6 +1272,8 @@ final class _StoredPracticeWorkspace {
           (scenarioId != null && scenarioId is! String) ||
           (scenarioTitle != null && scenarioTitle is! String) ||
           (scenarioType != null && scenarioType is! String) ||
+          (completedTurns != null &&
+              (completedTurns is! int || completedTurns < 0)) ||
           storedPresentationMode == null ||
           !_validOpaqueId(accountId) ||
           !_validOperationId(operationId) ||
@@ -1235,6 +1320,7 @@ final class _StoredPracticeWorkspace {
         scenarioTitle: scenarioTitle as String?,
         scenarioType: scenarioType as String?,
         presentationMode: presentationMode,
+        completedTurns: completedTurns as int?,
       );
     } on Object {
       return null;

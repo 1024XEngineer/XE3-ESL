@@ -48,7 +48,7 @@ void main() {
         containsPair('practice_thread_id', retried?.practiceThreadId),
       );
       expect(record, containsPair('return_thread_id', homeThreadId));
-      expect(record, containsPair('schema_version', 2));
+      expect(record, containsPair('schema_version', 3));
 
       final replacement = await workspace.acquireThread(
         'different-operation-2',
@@ -83,6 +83,7 @@ void main() {
       );
 
       expect(firstWorkspace.hasResumable, isTrue);
+      expect(firstWorkspace.resumableHasProgress, isFalse);
       expect(await firstWorkspace.parkCurrentPractice(), isTrue);
       expect(harness.agent.threadId, homeThreadId);
       expect(await harness.agent.createThread(), isTrue);

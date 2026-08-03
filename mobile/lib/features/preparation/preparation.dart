@@ -308,28 +308,32 @@ class _PreparationPageState extends State<PreparationPage> {
     final launch = widget.launchController;
     if ((launch?.hasResumablePractice ?? false) &&
         !forceReplaceCurrentPractice) {
-      if (launch?.resumableScenarioId == scenario.id) {
-        final resumableSessionId = launch?.resumableSessionId;
-        final resumableSelection = resumableSessionId == null
-            ? null
-            : controller.ieltsSelectionForSession(resumableSessionId);
-        if (ieltsSelection == null || resumableSelection == ieltsSelection) {
+      if (!(launch?.resumableHasProgress ?? true)) {
+        replaceCurrentPractice = true;
+      } else {
+        if (launch?.resumableScenarioId == scenario.id) {
+          final resumableSessionId = launch?.resumableSessionId;
+          final resumableSelection = resumableSessionId == null
+              ? null
+              : controller.ieltsSelectionForSession(resumableSessionId);
+          if (ieltsSelection == null || resumableSelection == ieltsSelection) {
+            await _continueCurrentPractice();
+            return;
+          }
+        }
+        final action = await _chooseExistingPracticeAction(
+          currentTitle: launch?.resumablePracticeTitle,
+          nextTitle: scenario.name,
+        );
+        if (!mounted || action == null) {
+          return;
+        }
+        if (action == _ExistingPracticeAction.continuePractice) {
           await _continueCurrentPractice();
           return;
         }
+        replaceCurrentPractice = true;
       }
-      final action = await _chooseExistingPracticeAction(
-        currentTitle: launch?.resumablePracticeTitle,
-        nextTitle: scenario.name,
-      );
-      if (!mounted || action == null) {
-        return;
-      }
-      if (action == _ExistingPracticeAction.continuePractice) {
-        await _continueCurrentPractice();
-        return;
-      }
-      replaceCurrentPractice = true;
     }
     await controller.selectScenario(scenario);
     if (!mounted || controller.selectedScenario?.id != scenario.id) {
