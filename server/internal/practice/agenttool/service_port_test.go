@@ -41,12 +41,18 @@ type previewCatalogStub struct {
 }
 
 type previewProfileApplicationStub struct {
-	calls          int
-	actor          requestcontext.Actor
-	idempotencyKey string
-	request        preparation.CreateProfileRequest
-	profile        preparation.Profile
-	err            error
+	calls                  int
+	actor                  requestcontext.Actor
+	idempotencyKey         string
+	request                preparation.CreateProfileRequest
+	profile                preparation.Profile
+	err                    error
+	snapshotCalls          int
+	snapshotProfileID      string
+	snapshotIdempotencyKey string
+	snapshotRequest        preparation.CreateSnapshotRequest
+	snapshot               preparation.Snapshot
+	snapshotErr            error
 }
 
 func (stub *previewProfileApplicationStub) CreateProfile(
@@ -60,6 +66,20 @@ func (stub *previewProfileApplicationStub) CreateProfile(
 	stub.idempotencyKey = idempotencyKey
 	stub.request = request
 	return stub.profile, false, stub.err
+}
+
+func (stub *previewProfileApplicationStub) CreateSnapshot(
+	_ context.Context,
+	_ requestcontext.Actor,
+	profileID string,
+	idempotencyKey string,
+	request preparation.CreateSnapshotRequest,
+) (preparation.Snapshot, bool, error) {
+	stub.snapshotCalls++
+	stub.snapshotProfileID = profileID
+	stub.snapshotIdempotencyKey = idempotencyKey
+	stub.snapshotRequest = request
+	return stub.snapshot, false, stub.snapshotErr
 }
 
 func (stub previewCatalogStub) ResolvePreviewCatalog(
@@ -187,6 +207,11 @@ func TestServicePortCreatesPreparationProfileFromNaturalBackground(t *testing.T)
 	}}
 	profiles := &previewProfileApplicationStub{
 		profile: preparation.Profile{ID: "profile-1", Version: 1},
+		snapshot: preparation.Snapshot{
+			ID:              "snapshot-1",
+			SourceProfileID: "profile-1",
+			SourceVersion:   1,
+		},
 	}
 	port, err := NewServicePort(application, previewCatalogStub{
 		items: []preparation.PreviewCatalogCandidate{candidate},
@@ -210,7 +235,11 @@ func TestServicePortCreatesPreparationProfileFromNaturalBackground(t *testing.T)
 	if result.Status != "preview_ready" || profiles.calls != 1 ||
 		profiles.actor != call.Actor || profiles.idempotencyKey != call.RequestID ||
 		profiles.request.BackgroundSummary != "AI 产品经理，重点练习项目影响力表达。" ||
-		application.request.PreparationProfileID != "profile-1" {
+		profiles.snapshotCalls != 1 || profiles.snapshotProfileID != "profile-1" ||
+		profiles.snapshotIdempotencyKey != call.RequestID ||
+		profiles.snapshotRequest.SourceVersion != 1 ||
+		application.request.PreparationProfileID != "profile-1" ||
+		application.request.PreparationSnapshotID != "snapshot-1" {
 		t.Fatalf(
 			"profile/result/request = %#v / %#v / %#v",
 			profiles,

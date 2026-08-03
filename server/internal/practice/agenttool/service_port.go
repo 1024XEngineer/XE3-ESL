@@ -34,6 +34,13 @@ type PreparationProfileApplication interface {
 		string,
 		preparation.CreateProfileRequest,
 	) (preparation.Profile, bool, error)
+	CreateSnapshot(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+		preparation.CreateSnapshotRequest,
+	) (preparation.Snapshot, bool, error)
 }
 
 func NewServicePort(
@@ -91,6 +98,17 @@ func (port *ServicePort) PreviewPractice(
 			return PreviewResult{}, mapPracticeToolError(createErr)
 		}
 		input.PreparationProfileID = profile.ID
+		snapshot, _, createErr := port.profiles.CreateSnapshot(
+			ctx,
+			call.Actor,
+			profile.ID,
+			call.RequestID,
+			preparation.CreateSnapshotRequest{SourceVersion: profile.Version},
+		)
+		if createErr != nil {
+			return PreviewResult{}, mapPracticeToolError(createErr)
+		}
+		input.PreparationSnapshotID = snapshot.ID
 	}
 
 	plan, replayed, err := port.practice.CreatePlan(
