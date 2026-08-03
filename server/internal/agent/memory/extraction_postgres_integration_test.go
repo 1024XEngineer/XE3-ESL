@@ -7,9 +7,10 @@ import (
 	"testing"
 
 	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
-	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -51,7 +52,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
-	assembler, err := agentruntime.NewContextAssembler(
+	assembler, err := agentcontext.NewAssembler(
 		agentRepository,
 		matterService,
 		emptyAgentStableProfileReader{},
@@ -78,7 +79,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 			TotalTokens:  18,
 		},
 	})
-	runService, err := agentruntime.NewRunService(
+	runService, err := agentrun.NewService(
 		agentRepository,
 		assembler,
 		generator,
@@ -337,14 +338,14 @@ type emptyAgentStableProfileReader struct{}
 
 func (emptyAgentStableProfileReader) ReadStableProfile(
 	context.Context,
-	agentruntime.StableProfileReadRequest,
-) ([]agentruntime.StableProfileMemory, error) {
-	return []agentruntime.StableProfileMemory{}, nil
+	agentcontext.StableProfileReadRequest,
+) ([]agentcontext.StableProfileMemory, error) {
+	return []agentcontext.StableProfileMemory{}, nil
 }
 
 func (emptyAgentMemorySearcher) Search(
 	context.Context,
-	agentruntime.MemorySearchRequest,
-) ([]agentruntime.MemorySearchHit, error) {
-	return []agentruntime.MemorySearchHit{}, nil
+	agentcontext.MemorySearchRequest,
+) ([]agentcontext.MemorySearchHit, error) {
+	return []agentcontext.MemorySearchHit{}, nil
 }

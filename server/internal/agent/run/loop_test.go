@@ -1,4 +1,4 @@
-package runtime
+package run
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/command"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
@@ -29,7 +30,7 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("帮我把这句话说得委婉一点"),
 	)
 	if err != nil {
@@ -67,7 +68,7 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("请结合我的信息处理一下"),
 	)
 	if err != nil {
@@ -121,7 +122,7 @@ func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest(
 			"我刚完成了面试练习。请直接读取这次练习的真实评分与报告。",
 		),
@@ -202,7 +203,7 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("比较我两次面试评价"),
 	)
 	if err != nil {
@@ -255,7 +256,7 @@ func TestRunLoopSupportsConsecutiveToolRoundsBeforeFinalResponse(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("结合我的评价和简历准备下一轮面试"),
 	)
 	if err != nil {
@@ -286,7 +287,7 @@ func TestRunLoopAllowsModelToAnswerWithoutToolCall(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("帮我找一下上次 PM interview 的 review"),
 	)
 	if err != nil {
@@ -310,7 +311,7 @@ func TestRunLoopExecutesExplicitCommandBeforeModelResponse(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("/查评价 last interview"),
 	)
 	if err != nil {
@@ -369,7 +370,7 @@ func TestRunLoopContinuesToolCallingAfterExplicitCommand(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("/查评价 last interview"),
 	)
 	if err != nil {
@@ -405,7 +406,7 @@ func TestRunLoopFeedsToolErrorBackToModel(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("结合我的简历准备面试"),
 	)
 	if err != nil {
@@ -441,7 +442,7 @@ func TestRunLoopFeedsInvalidArgumentsBackToModel(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("找评价"),
 	)
 	if err != nil {
@@ -470,7 +471,7 @@ func TestRunLoopReturnsFallbackWhenToolBudgetExhausted(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("看看我面试评价"),
 	)
 	if err != nil {
@@ -495,7 +496,7 @@ func TestRunLoopRejectsUnexposedToolCall(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("帮我润色这句话"),
 	)
 	if err != nil {
@@ -523,7 +524,7 @@ func TestRunLoopStopsAfterToolIterationBudget(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("先找评价，再找材料"),
 	)
 	if err != nil {
@@ -557,7 +558,7 @@ func TestRunLoopRejectsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("创建两个练习场景"),
 	)
 	if err != nil {
@@ -587,7 +588,7 @@ func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
 			context.Background(),
 			loopActor(),
 			loopRun(),
-			ContextManifest{},
+			core.ContextManifest{},
 			loopRequest("创建面试场景"),
 		); err != nil {
 			t.Fatalf("generate() error = %v", err)
@@ -632,7 +633,7 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("帮我创建一个英文 PM 面试练习场景"),
 	)
 	if err != nil {
@@ -707,7 +708,7 @@ func TestRunLoopLogsEndToEndToolSequence(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest("看看我上次面试评价"),
 	)
 	if err != nil {
@@ -764,7 +765,7 @@ func TestRunLoopLogOptionsAndPayloadSummariesDoNotLeakSensitiveContent(t *testin
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		ContextManifest{},
+		core.ContextManifest{},
 		loopRequest(secretInput),
 	)
 	if err != nil {
@@ -887,7 +888,7 @@ func (generator *scriptedGenerator) CallCount() int {
 func newLoopTestService(
 	t *testing.T,
 	generator ai.TextGenerator,
-) *RunService {
+) *Service {
 	t.Helper()
 	return newLoopTestServiceWithStore(t, generator, mocktool.NewStore())
 }
@@ -896,15 +897,15 @@ func newLoopTestServiceWithStore(
 	t *testing.T,
 	generator ai.TextGenerator,
 	store *mocktool.Store,
-) *RunService {
+) *Service {
 	t.Helper()
 	registry, err := mocktool.NewRegistry(store)
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
-	return &RunService{
+	return &Service{
 		generator: generator,
-		configuration: RunConfiguration{
+		configuration: core.RunConfiguration{
 			Provider:           "fake",
 			Model:              "configured-model",
 			MaxOutputTokens:    512,
@@ -920,8 +921,8 @@ func loopActor() requestcontext.Actor {
 	return requestcontext.Actor{UserID: "user-1", SessionID: "session-1"}
 }
 
-func loopRun() Run {
-	return Run{ID: "run-1", OwnerID: "user-1", ThreadID: "thread-1"}
+func loopRun() core.Run {
+	return core.Run{ID: "run-1", OwnerID: "user-1", ThreadID: "thread-1"}
 }
 
 func loopRequest(input string) ai.TextRequest {

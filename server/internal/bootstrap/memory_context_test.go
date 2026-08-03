@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
-	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -34,7 +34,7 @@ func TestAgentMemoryContextSearcherPreservesSearchAuditFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAgentMemoryContextSearcher: %v", err)
 	}
-	request := agentruntime.MemorySearchRequest{
+	request := agentcontext.MemorySearchRequest{
 		Actor: requestcontext.Actor{
 			UserID:    "30000000-0000-4000-8000-000000000001",
 			SessionID: "40000000-0000-4000-8000-000000000001",
@@ -90,7 +90,7 @@ func TestAgentMemoryContextSearcherRequiresDependencyAndPropagatesFailure(
 	}
 	if _, err := adapter.Search(
 		context.Background(),
-		agentruntime.MemorySearchRequest{},
+		agentcontext.MemorySearchRequest{},
 	); !errors.Is(err, dependencyError) {
 		t.Fatalf("Search error = %v", err)
 	}
