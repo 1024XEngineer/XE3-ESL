@@ -757,10 +757,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       }
       notifyListeners();
       return true;
-    } on AgentClientException catch (error) {
-      _threadHistoryErrorMessage = error.kind == AgentClientFailureKind.conflict
-          ? '练习使用中的对话不能删除。'
-          : '暂时无法删除对话，请稍后再试。';
+    } on AgentClientException catch (_) {
+      _threadHistoryErrorMessage = '暂时无法删除对话，请稍后再试。';
       return false;
     } catch (_) {
       _threadHistoryErrorMessage = '暂时无法删除对话，请稍后再试。';

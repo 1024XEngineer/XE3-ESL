@@ -239,10 +239,10 @@ paths:
         - Agent
       summary: Delete one owned Agent Thread
       description: |
-        Deletes only a Thread owned by the trusted Actor. Threads referenced by
-        a Practice Plan are protected and return conflict so conversation
-        cleanup cannot erase practice history. Deleting the focused Thread also
-        clears the focused selection.
+        Removes only a Thread owned by the trusted Actor from conversation
+        history. Practice-linked records remain available to the training and
+        review flows. Deleting the focused Thread also clears the focused
+        selection.
       operationId: deleteAgentThread
       responses:
         '204':
@@ -251,8 +251,6 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-threads/{thread_id}/active-matter:

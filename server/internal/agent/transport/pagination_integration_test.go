@@ -719,6 +719,20 @@ WHERE id = $2 AND owner_user_id = $1`,
 			deletedThread.Body.String(),
 		)
 	}
+	var sidebarDeleted bool
+	if err := database.pool.QueryRow(context.Background(), `
+SELECT sidebar_deleted_at IS NOT NULL
+FROM agent_threads
+WHERE id = $1 AND owner_user_id = $2`,
+		threads[2].ID,
+		actorA.UserID,
+	).Scan(&sidebarDeleted); err != nil || !sidebarDeleted {
+		t.Fatalf(
+			"sidebar deletion marker = %t, error %v; want marked",
+			sidebarDeleted,
+			err,
+		)
+	}
 	repeatedDelete := performAgentRequest(
 		router,
 		http.MethodDelete,

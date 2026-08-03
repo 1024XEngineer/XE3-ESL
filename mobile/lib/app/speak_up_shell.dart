@@ -618,7 +618,7 @@ class _ConversationDrawer extends StatelessWidget {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('删除对话？'),
-        content: Text('“$displayTitle”及其中的消息将被永久删除。'),
+        content: Text('“$displayTitle”将从对话列表中删除，相关练习与复盘记录会保留。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),

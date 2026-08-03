@@ -138,6 +138,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS first_user ON true
 WHERE threads.owner_user_id = $1
+  AND threads.sidebar_deleted_at IS NULL
 ORDER BY threads.updated_at DESC, threads.id DESC`,
 		ownerID,
 	)
@@ -199,6 +200,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS first_user ON true
 WHERE threads.owner_user_id = $1
+  AND threads.sidebar_deleted_at IS NULL
 ORDER BY threads.updated_at DESC, threads.id DESC
 LIMIT $2`
 	arguments := []any{ownerID, limit}
@@ -227,6 +229,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS first_user ON true
 WHERE threads.owner_user_id = $1
+  AND threads.sidebar_deleted_at IS NULL
   AND (threads.updated_at, threads.id) < ($2, $3)
 ORDER BY threads.updated_at DESC, threads.id DESC
 LIMIT $4`
@@ -476,7 +479,9 @@ func (r *PostgresRepository) DeleteThread(
 	if err := tx.QueryRow(ctx, `
 SELECT id::text
 FROM agent_threads
-WHERE id = $1 AND owner_user_id = $2
+WHERE id = $1
+  AND owner_user_id = $2
+  AND sidebar_deleted_at IS NULL
 FOR UPDATE`,
 		threadID,
 		ownerID,
@@ -486,26 +491,12 @@ FOR UPDATE`,
 		return mapPostgresError(err)
 	}
 
-	var protected bool
-	if err := tx.QueryRow(ctx, `
-SELECT EXISTS (
-    SELECT 1
-    FROM practice_plans
-    WHERE owner_user_id = $1
-      AND agent_thread_id = $2
-)`,
-		ownerID,
-		threadID,
-	).Scan(&protected); err != nil {
-		return mapPostgresError(err)
-	}
-	if protected {
-		return ErrConflict
-	}
-
 	tag, err := tx.Exec(ctx, `
-DELETE FROM agent_threads
-WHERE id = $1 AND owner_user_id = $2`,
+UPDATE agent_threads
+SET sidebar_deleted_at = CURRENT_TIMESTAMP
+WHERE id = $1
+  AND owner_user_id = $2
+  AND sidebar_deleted_at IS NULL`,
 		threadID,
 		ownerID,
 	)
@@ -514,6 +505,14 @@ WHERE id = $1 AND owner_user_id = $2`,
 	}
 	if tag.RowsAffected() != 1 {
 		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM agent_thread_focuses
+WHERE owner_user_id = $1 AND thread_id = $2`,
+		ownerID,
+		threadID,
+	); err != nil {
+		return mapPostgresError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ErrRepository
