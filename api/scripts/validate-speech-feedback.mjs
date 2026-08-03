@@ -181,6 +181,7 @@ const assertValid = (validator, value, label) => {
 for (const name of [
   'queued',
   'running',
+  'running_topic',
   'ready_provisional',
   'ready_provisional_agent',
   'ready_insufficient',
@@ -474,6 +475,13 @@ const forbiddenPropertyNames = new Set([
 ]);
 const forbiddenNumericFieldPattern =
   /(^|_)(raw|display|score|overall|total|weight|weights)($|_)/;
+const trustedAcousticScoreFields = new Set([
+  'accuracy_score',
+  'fluency_score',
+  'integrity_score',
+  'pronunciation_score',
+  'semantic_score',
+]);
 const collectPropertyNames = (value, names = new Set()) => {
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -495,13 +503,14 @@ const feedbackPropertyNames = collectPropertyNames(definitions);
 for (const fieldName of feedbackPropertyNames) {
   assert.ok(
     !forbiddenPropertyNames.has(fieldName) &&
-      !forbiddenNumericFieldPattern.test(fieldName),
+      (!forbiddenNumericFieldPattern.test(fieldName) ||
+        trustedAcousticScoreFields.has(fieldName)),
     `SpeechFeedback must not declare ${fieldName}.`,
   );
 }
 
 console.log(
-  'Validated six SpeechFeedback examples, three RetryRequest states, one ' +
+  'Validated seven SpeechFeedback examples, three RetryRequest states, one ' +
     'retry candidate, one confirmed retry Turn, strict source/anchor unions, ' +
     'and retry/effective-state isolation.',
 );

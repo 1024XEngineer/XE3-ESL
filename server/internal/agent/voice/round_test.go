@@ -133,8 +133,13 @@ func TestVoiceRoundOrchestratorOwnsThreeTurnReviewSaga(t *testing.T) {
 		third = result
 	}
 
-	if !third.SessionCompleted || third.ReviewID != "review-session-1" {
+	if !third.SessionCompleted || third.ReviewID != "" {
 		t.Fatalf("third round = %#v", third)
+	}
+	orchestrator.completionTasks.Wait()
+	if persisted := conversations.turns[third.ID]; persisted.ReviewID !=
+		"review-session-1" {
+		t.Fatalf("persisted third round = %#v", persisted)
 	}
 	replayed, err := orchestrator.Confirm(
 		context.Background(),
@@ -144,9 +149,10 @@ func TestVoiceRoundOrchestratorOwnsThreeTurnReviewSaga(t *testing.T) {
 			IdempotencyKey: "confirm-candidate-3",
 		},
 	)
-	if err != nil || replayed.ReviewID != third.ReviewID {
+	if err != nil || replayed.ReviewID != "review-session-1" {
 		t.Fatalf("replay = %#v, %v", replayed, err)
 	}
+	orchestrator.completionTasks.Wait()
 	if practice.effectiveTurns != 3 ||
 		reviews.creations != 1 ||
 		conversations.reviewSaves != 1 ||
@@ -189,6 +195,7 @@ func TestVoiceRoundOrchestratorCompletesWhenReviewIsDeferred(t *testing.T) {
 	if !result.SessionCompleted || result.ReviewID != "" {
 		t.Fatalf("completed result = %#v", result)
 	}
+	orchestrator.completionTasks.Wait()
 	if reviews.creations != 0 || conversations.reviewSaves != 0 {
 		t.Fatalf(
 			"deferred review generated: reviews=%d saves=%d",
@@ -202,6 +209,70 @@ func TestVoiceRoundOrchestratorCompletesWhenReviewIsDeferred(t *testing.T) {
 			completions.creations,
 		)
 	}
+}
+
+func TestVoiceRoundOrchestratorReturnsCompletedTurnBeforeReview(
+	t *testing.T,
+) {
+	conversations := newAgentVoiceConversation(1)
+	practice := newAgentVoicePractice(2)
+	reviews := &blockingAgentVoiceReview{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	var releaseOnce sync.Once
+	releaseReview := func() {
+		releaseOnce.Do(func() { close(reviews.release) })
+	}
+	defer releaseReview()
+	feedback := &agentVoiceTurnFeedback{}
+	orchestrator, err := NewVoiceRoundOrchestrator(
+		conversations,
+		practice,
+		reviews,
+		newAgentVoiceCompletionEvaluation(),
+		feedback,
+	)
+	if err != nil {
+		t.Fatalf("NewVoiceRoundOrchestrator: %v", err)
+	}
+
+	type confirmation struct {
+		turn conversation.ConfirmedVoiceTurn
+		err  error
+	}
+	result := make(chan confirmation, 1)
+	go func() {
+		turn, confirmErr := orchestrator.Confirm(
+			context.Background(),
+			agentVoiceActor("a"),
+			conversation.ConfirmVoiceTurnCommand{
+				CandidateID:    "candidate-1",
+				IdempotencyKey: "confirm-candidate-1",
+			},
+		)
+		result <- confirmation{turn: turn, err: confirmErr}
+	}()
+
+	select {
+	case confirmed := <-result:
+		if confirmed.err != nil ||
+			!confirmed.turn.SessionCompleted ||
+			confirmed.turn.ReviewID != "" ||
+			confirmed.turn.SpeechFeedbackStatusURL !=
+				"/v1/speech-feedback/feedback-1" {
+			t.Fatalf("completed confirmation = %#v, %v", confirmed.turn, confirmed.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("completed confirmation waited for formal Review")
+	}
+	select {
+	case <-reviews.started:
+	case <-time.After(time.Second):
+		t.Fatal("formal Review did not start asynchronously")
+	}
+	releaseReview()
+	orchestrator.completionTasks.Wait()
 }
 
 func TestVoiceRoundOrchestratorConcurrentThirdTurnCreatesOneReview(t *testing.T) {
@@ -241,6 +312,7 @@ func TestVoiceRoundOrchestratorConcurrentThirdTurnCreatesOneReview(t *testing.T)
 		}()
 	}
 	group.Wait()
+	orchestrator.completionTasks.Wait()
 	close(results)
 	close(failures)
 
@@ -250,7 +322,8 @@ func TestVoiceRoundOrchestratorConcurrentThirdTurnCreatesOneReview(t *testing.T)
 	for result := range results {
 		if result.EffectiveTurns != 3 ||
 			!result.SessionCompleted ||
-			result.ReviewID != "review-session-1" {
+			(result.ReviewID != "" &&
+				result.ReviewID != "review-session-1") {
 			t.Errorf("concurrent result = %#v", result)
 		}
 	}
@@ -290,16 +363,22 @@ func TestVoiceRoundOrchestratorRecoversReviewAcknowledgementLoss(t *testing.T) {
 		context.Background(),
 		agentVoiceActor("a"),
 		command,
-	); !errors.Is(err, errAgentVoiceLostAcknowledgement) {
+	); err != nil {
 		t.Fatalf("first confirm error = %v", err)
 	}
+	orchestrator.completionTasks.Wait()
 	recovered, err := orchestrator.Confirm(
 		context.Background(),
 		agentVoiceActor("a"),
 		command,
 	)
-	if err != nil || recovered.ReviewID != "review-session-1" {
+	if err != nil || !recovered.SessionCompleted {
 		t.Fatalf("recovered = %#v, %v", recovered, err)
+	}
+	orchestrator.completionTasks.Wait()
+	if persisted := conversations.turns[recovered.ID]; persisted.ReviewID !=
+		"review-session-1" {
+		t.Fatalf("persisted recovered turn = %#v", persisted)
 	}
 	if reviews.creations != 1 ||
 		practice.effectiveTurns != 3 ||
@@ -344,20 +423,31 @@ func TestVoiceRoundOrchestratorRecoversLocalCheckpointFailures(t *testing.T) {
 				IdempotencyKey: "confirm-candidate-1",
 			}
 
-			if _, err := orchestrator.Confirm(
+			_, firstErr := orchestrator.Confirm(
 				context.Background(),
 				agentVoiceActor("a"),
 				command,
-			); !errors.Is(err, errAgentVoiceCheckpoint) {
-				t.Fatalf("first confirm error = %v", err)
+			)
+			if test.failProgressSaves > 0 {
+				if !errors.Is(firstErr, errAgentVoiceCheckpoint) {
+					t.Fatalf("first confirm error = %v", firstErr)
+				}
+			} else if firstErr != nil {
+				t.Fatalf("first confirm error = %v", firstErr)
 			}
+			orchestrator.completionTasks.Wait()
 			recovered, err := orchestrator.Confirm(
 				context.Background(),
 				agentVoiceActor("a"),
 				command,
 			)
-			if err != nil || recovered.ReviewID != "review-session-1" {
+			if err != nil || !recovered.SessionCompleted {
 				t.Fatalf("recovered = %#v, %v", recovered, err)
+			}
+			orchestrator.completionTasks.Wait()
+			if persisted := conversations.turns[recovered.ID]; persisted.ReviewID !=
+				"review-session-1" {
+				t.Fatalf("persisted recovered turn = %#v", persisted)
 			}
 			if practice.effectiveTurns != 3 ||
 				reviews.creations != 1 ||
@@ -399,9 +489,10 @@ func TestVoiceRoundOrchestratorRetriesFailedCompletionEvaluation(
 		context.Background(),
 		agentVoiceActor("a"),
 		command,
-	); !errors.Is(err, errAgentVoiceCompletionAcknowledgement) {
+	); err != nil {
 		t.Fatalf("first completion error = %v", err)
 	}
+	orchestrator.completionTasks.Wait()
 	recovered, err := orchestrator.Confirm(
 		context.Background(),
 		agentVoiceActor("a"),
@@ -411,6 +502,7 @@ func TestVoiceRoundOrchestratorRetriesFailedCompletionEvaluation(
 		recovered.ReviewID != "" {
 		t.Fatalf("recovered = %#v, %v", recovered, err)
 	}
+	orchestrator.completionTasks.Wait()
 	if completions.creations != 1 || completions.calls != 2 ||
 		practice.effectiveTurns != 3 ||
 		conversations.turnCreations != 1 {
@@ -455,6 +547,7 @@ func TestVoiceRoundOrchestratorTriggersCompletionOnlyAtFourteenthTurn(
 		if result.SessionCompleted != (round == 2) {
 			t.Fatalf("round %d result = %#v", round+12, result)
 		}
+		orchestrator.completionTasks.Wait()
 		if got := completions.creations; got != max(0, round-1) {
 			t.Fatalf(
 				"round %d completion creations = %d",
@@ -803,6 +896,39 @@ type agentVoiceReview struct {
 	bySession       map[string]VoiceReviewCheckpoint
 	creations       int
 	failAfterCreate bool
+}
+
+type blockingAgentVoiceReview struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (reviews *blockingAgentVoiceReview) EnsureSessionReview(
+	_ context.Context,
+	_ requestcontext.Actor,
+	source VoiceReviewSource,
+) (VoiceReviewCheckpoint, error) {
+	close(reviews.started)
+	<-reviews.release
+	return VoiceReviewCheckpoint{
+		ID:           "review-" + source.SessionID,
+		SessionID:    source.SessionID,
+		SourceTurnID: source.TurnID,
+	}, nil
+}
+
+type agentVoiceTurnFeedback struct{}
+
+func (*agentVoiceTurnFeedback) EnsureConversationTurn(
+	_ context.Context,
+	_ requestcontext.Actor,
+	_ string,
+	_ string,
+) (VoiceTurnFeedbackReference, error) {
+	return VoiceTurnFeedbackReference{
+		StatusURL:  "/v1/speech-feedback/feedback-1",
+		Applicable: true,
+	}, nil
 }
 
 func newAgentVoiceReview() *agentVoiceReview {

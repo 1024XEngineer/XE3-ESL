@@ -124,7 +124,8 @@ func (service *Service) IssueSessionToken(
 	}
 	if session.ID != practiceSessionID ||
 		(session.ScenarioType != persistence.ScenarioFamilyWorkplace &&
-			session.ScenarioType != persistence.ScenarioFamilyDaily) ||
+			session.ScenarioType != persistence.ScenarioFamilyDaily &&
+			session.ScenarioType != persistence.ScenarioFamilyInterview) ||
 		(session.Status != persistence.ContextSessionStarting &&
 			session.Status != persistence.ContextSessionProgress) {
 		return SessionToken{}, apperror.New(

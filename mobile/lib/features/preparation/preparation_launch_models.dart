@@ -41,14 +41,17 @@ final class PreparationLaunchSelection {
     required PreparationRole role,
     required PreparationOption option,
     IeltsPracticeSelection? ieltsSelection,
+    String? scenarioDisplayName,
+    String? scenarioDescription,
   }) {
     return PreparationLaunchSelection(
       scenarioDefinitionId: scenario.id,
       scenarioDefinitionVersion: scenario.version,
       scenarioType: scenario.type,
       scenarioModel: scenario.model,
-      scenarioDisplayName: scenario.name,
-      scenarioDescription: config.prompt.publicSceneBrief,
+      scenarioDisplayName: scenarioDisplayName ?? scenario.name,
+      scenarioDescription:
+          scenarioDescription ?? config.prompt.publicSceneBrief,
       scenarioConfigId: config.id,
       scenarioConfigVersion: config.version,
       roleDefinitionId: role.id,

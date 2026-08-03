@@ -554,8 +554,7 @@ func (application *VoiceSessionApplication) state(
 	}
 	if found && (latest.EffectiveTurns == 0 ||
 		(latest.SessionCompleted && latest.ReviewID == "" &&
-			(requiresSynchronousSessionReview(session) ||
-				recoverCompletion))) {
+			recoverCompletion)) {
 		recovered, recoveryErr := application.orchestrator.Confirm(
 			ctx,
 			actor,
@@ -595,12 +594,34 @@ func (application *VoiceSessionApplication) state(
 	if err != nil {
 		return VoiceSessionState{}, err
 	}
+	for index := range history {
+		history[index].Turn, err =
+			application.orchestrator.attachTurnFeedback(
+				ctx,
+				actor,
+				history[index].Turn,
+			)
+		if err != nil {
+			return VoiceSessionState{}, err
+		}
+	}
 	state.TurnHistory = history
 	if len(history) > 0 {
 		historyLatest := history[len(history)-1].Turn
 		if state.Turn == nil || historyLatest.ID != state.Turn.ID {
 			return VoiceSessionState{}, ErrInvalidContext
 		}
+		state.Turn = &historyLatest
+	} else if state.Turn != nil {
+		enriched, feedbackErr := application.orchestrator.attachTurnFeedback(
+			ctx,
+			actor,
+			*state.Turn,
+		)
+		if feedbackErr != nil {
+			return VoiceSessionState{}, feedbackErr
+		}
+		state.Turn = &enriched
 	}
 	if state.Turn != nil && state.Turn.ReviewID != "" {
 		formalReview, reviewErr := application.GetReview(
@@ -623,9 +644,7 @@ func (application *VoiceSessionApplication) state(
 		return VoiceSessionState{}, ErrInvalidContext
 	}
 	if state.Session.Completed {
-		if state.Turn == nil ||
-			(requiresSynchronousSessionReview(session) &&
-				state.Review == nil) {
+		if state.Turn == nil {
 			return VoiceSessionState{}, ErrInvalidContext
 		}
 		return state, nil
@@ -685,18 +704,6 @@ func (application *VoiceSessionApplication) restoreTurnHistory(
 		}
 	}
 	return history, nil
-}
-
-func requiresSynchronousSessionReview(session VoicePracticeSession) bool {
-	switch session.ScenarioModel {
-	case "IELTS_SPEAKING_PART_1",
-		"IELTS_SPEAKING_PART_2",
-		"IELTS_SPEAKING_PART_3",
-		"IELTS_SPEAKING_FULL_MOCK":
-		return false
-	default:
-		return true
-	}
 }
 
 func validVoiceScenarioPrompt(session VoicePracticeSession) bool {

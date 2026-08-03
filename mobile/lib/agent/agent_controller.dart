@@ -468,7 +468,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _errorMessage = textRecovery.retryable
           ? '上次 Agent 运行未能完成，可以继续重试。'
           : '上次 Agent 运行未能完成，服务端不允许重试。';
-    } else if (_isSessionCompleted && _review == null) {
+    } else if (_isSessionCompleted &&
+        _review == null &&
+        !usesAsynchronousPracticeReport(
+          _practiceScenarioType,
+          _practiceScenarioModel,
+        )) {
       _errorMessage = '练习已完成，正在等待服务端恢复同一次复盘。';
     }
   }
@@ -999,8 +1004,30 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  bool prepareActiveMatterForScenario(String matterId) {
-    final current = _activeMatter;
+  Future<bool> prepareActiveMatterForScenario(String matterId) async {
+    final fence = _captureOperationFence(threadId: _threadId);
+    var current = _activeMatter;
+    if (current?.id != matterId) {
+      final selector = switch (client) {
+        final AgentMatterSelectionClient supported => supported,
+        _ => null,
+      };
+      final threadId = _threadId;
+      if (selector == null || threadId == null) {
+        return false;
+      }
+      try {
+        current = await selector.selectExistingMatter(
+          threadId: threadId,
+          matterId: matterId,
+        );
+      } on Object {
+        return false;
+      }
+      if (!_isOperationCurrent(fence) || _threadId != threadId) {
+        return false;
+      }
+    }
     if (current == null ||
         current.id != matterId ||
         current.status != 'active' ||
@@ -2972,7 +2999,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       ?confirmation.nextQuestion?.presentation,
     ]);
     if (confirmation.sessionCompleted) {
-      final usesAsynchronousReport = isIeltsSpeakingFullMockScenario(
+      final usesAsynchronousReport = usesAsynchronousPracticeReport(
         _practiceScenarioType,
         _practiceScenarioModel,
       );
@@ -3341,7 +3368,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _appendPracticeMessages([?currentQuestion]);
     }
-    final usesAsynchronousReport = isIeltsSpeakingFullMockScenario(
+    final usesAsynchronousReport = usesAsynchronousPracticeReport(
       snapshot.scenarioType,
       snapshot.scenarioModel,
     );

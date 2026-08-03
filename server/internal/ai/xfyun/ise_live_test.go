@@ -43,9 +43,17 @@ func TestISELive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new ISE evaluator: %v", err)
 	}
+	category := xfyun.CategoryReadSentence
+	topicTitle := ""
+	if os.Getenv("XFYUN_ISE_LIVE_TEST_CATEGORY") == "topic" {
+		category = xfyun.CategoryTopic
+		topicTitle = os.Getenv("XFYUN_ISE_LIVE_TEST_TOPIC_TITLE")
+	}
 	result, err := evaluator.Evaluate(context.Background(), xfyun.EvaluationRequest{
 		Audio:         audio,
 		ReferenceText: referenceText,
+		TopicTitle:    topicTitle,
+		Category:      category,
 	})
 	if err != nil {
 		t.Fatalf("evaluate live audio: %v", err)
@@ -62,12 +70,14 @@ func TestISELive(t *testing.T) {
 	sort.Strings(available)
 	t.Logf("sid=%s", result.SessionID)
 	t.Logf(
-		"scores total=%s accuracy=%s fluency=%s integrity=%s standard=%s rejected=%s exception=%s",
+		"scores total=%s accuracy=%s fluency=%s integrity=%s standard=%s phone=%s speaking_speed=%s rejected=%s exception=%s",
 		floatValue(result.Summary.TotalScore),
 		floatValue(result.Summary.AccuracyScore),
 		floatValue(result.Summary.FluencyScore),
 		floatValue(result.Summary.IntegrityScore),
 		floatValue(result.Summary.StandardScore),
+		floatValue(result.Summary.PhoneScore),
+		floatValue(result.Summary.SpeakingSpeed),
 		boolValue(result.Summary.Rejected),
 		result.Summary.ExceptionInfo,
 	)

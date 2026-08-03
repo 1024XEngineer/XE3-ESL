@@ -5,6 +5,7 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/conversation/conversation.dart';
 import 'package:speakup/features/practice/practice.dart';
+import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
@@ -57,7 +58,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.calls, 1);
-      expect(find.text('本轮表达反馈'), findsOneWidget);
+      expect(find.text('评分与纠错'), findsOneWidget);
       expect(find.text('I managed'), findsNothing);
 
       await tester.tap(
@@ -111,7 +112,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.calls, 1);
-      expect(find.text('本轮表达反馈'), findsOneWidget);
+      expect(find.text('评分与纠错'), findsOneWidget);
       expect(find.text('I managed'), findsNothing);
 
       await tester.tap(
@@ -152,6 +153,62 @@ void main() {
       expect(find.text('同题复练已提交，不影响场景进度。'), findsOneWidget);
     },
   );
+
+  testWidgets('IELTS user voice bubble shows the shared feedback entry', (
+    tester,
+  ) async {
+    final feedback = _practiceFeedback();
+    final client = _Client(feedback);
+    final feedbackController = SpeechFeedbackController(
+      client: client,
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 1,
+    );
+    final practiceController = AgentController(
+      client: FakeAgentClient(),
+      practiceClient: _PracticeClient(
+        _practiceSnapshot(
+          feedback.statusUrl,
+          scenarioType: 'EXAM',
+          scenarioModel: 'IELTS_SPEAKING_FULL_MOCK',
+          turnLimit: 14,
+        ),
+      ),
+    );
+    addTearDown(feedbackController.dispose);
+    addTearDown(practiceController.dispose);
+    await practiceController.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PracticePage(
+          agentController: practiceController,
+          speechFeedbackController: feedbackController,
+          ieltsMockProgressStore: _MemoryIeltsProgressStore(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(client.calls, 1);
+    expect(
+      feedbackController.projectionFor(
+        'practice:practice_session_001:practice_turn_001',
+      ),
+      isNotNull,
+    );
+    expect(find.text('评分与纠错'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey(
+          'ielts-speech-feedback-practice:practice_session_001:practice_turn_001',
+        ),
+      ),
+      findsOneWidget,
+    );
+  });
 
   testWidgets(
     'shared feedback controller does not rebuild another route mid-frame',
@@ -219,6 +276,27 @@ void main() {
       );
     },
   );
+}
+
+final class _MemoryIeltsProgressStore implements IeltsMockProgressStore {
+  IeltsMockProgress? value;
+
+  @override
+  Future<IeltsMockProgress?> read(String sessionId) async {
+    return value?.sessionId == sessionId ? value : null;
+  }
+
+  @override
+  Future<void> write(IeltsMockProgress progress) async {
+    value = progress;
+  }
+
+  @override
+  Future<void> delete(String sessionId) async {
+    if (value?.sessionId == sessionId) {
+      value = null;
+    }
+  }
 }
 
 SpeechFeedback _agentFeedback() {
@@ -317,7 +395,12 @@ SpeechFeedback _practiceFeedback() {
   );
 }
 
-PracticeSessionSnapshot _practiceSnapshot(String statusUrl) {
+PracticeSessionSnapshot _practiceSnapshot(
+  String statusUrl, {
+  String scenarioType = 'WORKPLACE',
+  String scenarioModel = 'WORKPLACE_BASIC_DIALOGUE',
+  int turnLimit = 3,
+}) {
   const sessionId = 'practice_session_001';
   const question = PracticeQuestion(
     id: 'practice_question_001',
@@ -327,11 +410,11 @@ PracticeSessionSnapshot _practiceSnapshot(String statusUrl) {
   return PracticeSessionSnapshot(
     sessionId: sessionId,
     threadId: 'thread_001',
-    scenarioType: 'WORKPLACE',
-    scenarioModel: 'WORKPLACE_BASIC_DIALOGUE',
+    scenarioType: scenarioType,
+    scenarioModel: scenarioModel,
     matter: AgentMatter(id: 'matter_001', scene: agentScenes.first),
     completedTurns: 1,
-    turnLimit: 3,
+    turnLimit: turnLimit,
     sessionCompleted: false,
     currentQuestion: const PracticeQuestion(
       id: 'practice_question_002',

@@ -308,8 +308,11 @@ func classifyInterviewShadowFailure(cause error) InterviewShadowFailure {
 	case errors.Is(cause, ErrInvalidInterviewShadow),
 		errors.Is(cause, ErrInvalidRequest):
 		return InterviewShadowFailure{
-			Code:      "provider_invalid_response",
-			Retryable: false,
+			Code: "provider_invalid_response",
+			// Provider JSON can be malformed on one generation and valid on
+			// the next. The durable worker bounds this retry by MaxAttempts;
+			// the client still receives a terminal failure after exhaustion.
+			Retryable: errors.Is(cause, ErrInvalidInterviewShadow),
 		}
 	case errors.Is(cause, context.Canceled):
 		return InterviewShadowFailure{

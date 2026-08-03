@@ -407,6 +407,7 @@ void main() {
       expect(harness.agentController.hasActivePractice, isTrue);
       expect(harness.agentController.practiceSessionId, _sessionId);
       expect(harness.launchController.hasResumablePractice, isTrue);
+      expect(harness.launchController.resumableMatterId, matterId);
 
       final persisted =
           jsonDecode((await harness.recordStore.read(_userId))!)
@@ -419,6 +420,7 @@ void main() {
         persisted,
         containsPair('scenario_definition_id', _selection.scenarioDefinitionId),
       );
+      expect(persisted, containsPair('presentation_mode', 'immersiveRoleplay'));
 
       expect(await harness.launchController.parkCurrentPractice(), isTrue);
       expect(harness.agentController.threadId, harness.homeThreadId);

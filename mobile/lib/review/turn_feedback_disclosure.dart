@@ -66,7 +66,18 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
                   ),
                   child: Row(
                     children: [
-                      Icon(content.icon, size: 18, color: content.color),
+                      if (content.loading)
+                        SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            key: const Key('speech-feedback-loading-indicator'),
+                            strokeWidth: 2,
+                            color: content.color,
+                          ),
+                        )
+                      else
+                        Icon(content.icon, size: 18, color: content.color),
                       const SizedBox(width: SpeakUpDesign.space8),
                       Expanded(
                         child: Text(
@@ -75,16 +86,6 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
                               ?.copyWith(color: SpeakUpDesign.ink),
                         ),
                       ),
-                      if (content.badge != null) ...[
-                        const SizedBox(width: SpeakUpDesign.space8),
-                        Text(
-                          content.badge!,
-                          style: SpeakUpDesign.meta.copyWith(
-                            color: content.color,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
                       if (content.canExpand) ...[
                         const SizedBox(width: SpeakUpDesign.space4),
                         Icon(
@@ -148,13 +149,15 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
       case SpeechFeedbackStatus.ready:
         if (feedback.scoreabilityStatus ==
             SpeechFeedbackScoreabilityStatus.insufficient) {
-          return const _InsufficientDetails();
+          return _InsufficientDetails(feedback: feedback);
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '以下仅基于已确认文本，是暂定的表达反馈；不包含发音或声学流利度判断。',
+              feedback.acousticAssessment.isAssessed
+                  ? '表达反馈基于已确认文本，发音表现基于本次录音。'
+                  : '以下表达反馈仅基于已确认文本；当前不包含发音或声学流利度判断。',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
@@ -168,7 +171,7 @@ class _SpeechFeedbackDisclosureState extends State<SpeechFeedbackDisclosure> {
               ),
             ],
             const SizedBox(height: SpeakUpDesign.space12),
-            const _AcousticBoundary(),
+            _AcousticBoundary(assessment: feedback.acousticAssessment),
           ],
         );
     }
@@ -181,24 +184,25 @@ final class _DisclosureContent {
     required this.icon,
     required this.color,
     required this.canExpand,
-    this.badge,
+    this.loading = false,
   });
 
   final String title;
   final IconData icon;
   final Color color;
   final bool canExpand;
-  final String? badge;
+  final bool loading;
 }
 
 _DisclosureContent _contentFor(SpeechFeedbackProjection projection) {
   final feedback = projection.feedback;
   if (projection.isPolling) {
     return const _DisclosureContent(
-      title: '正在生成文字反馈…',
+      title: '正在生成评分与纠错…',
       icon: Icons.schedule_rounded,
       color: SpeakUpDesign.secondary,
       canExpand: false,
+      loading: true,
     );
   }
   if (projection.errorMessage != null) {
@@ -211,10 +215,11 @@ _DisclosureContent _contentFor(SpeechFeedbackProjection projection) {
   }
   if (feedback?.isPending == true) {
     return const _DisclosureContent(
-      title: '正在生成文字反馈…',
+      title: '正在生成评分与纠错…',
       icon: Icons.schedule_rounded,
       color: SpeakUpDesign.secondary,
       canExpand: false,
+      loading: true,
     );
   }
   if (feedback == null) {
@@ -243,8 +248,7 @@ _DisclosureContent _contentFor(SpeechFeedbackProjection projection) {
     );
   }
   return const _DisclosureContent(
-    title: '本轮表达反馈',
-    badge: '暂定',
+    title: '评分与纠错',
     icon: Icons.chat_bubble_outline_rounded,
     color: SpeakUpDesign.primary,
     canExpand: true,
@@ -321,7 +325,9 @@ class _FeedbackItemDetails extends StatelessWidget {
 }
 
 class _InsufficientDetails extends StatelessWidget {
-  const _InsufficientDetails();
+  const _InsufficientDetails({required this.feedback});
+
+  final SpeechFeedback feedback;
 
   @override
   Widget build(BuildContext context) {
@@ -329,39 +335,83 @@ class _InsufficientDetails extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '这次已确认文本不足以生成可靠纠错，不会按低分处理。',
+          _insufficientMessage(feedback.reasonCodes),
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
         ),
         const SizedBox(height: SpeakUpDesign.space12),
-        const _AcousticBoundary(),
+        _AcousticBoundary(assessment: feedback.acousticAssessment),
       ],
     );
   }
 }
 
+String _insufficientMessage(List<String> reasonCodes) {
+  if (reasonCodes.contains('TRANSCRIPT_CONFIDENCE_INSUFFICIENT')) {
+    return '本轮转写或英语内容不足，无法生成可靠评分；不会按低分处理。请尽量全程使用英语回答。';
+  }
+  if (reasonCodes.contains('EVIDENCE_INCONSISTENT')) {
+    return '本轮录音与转写证据不一致，无法生成可靠评分；不会按低分处理。';
+  }
+  return '输入太短：这次已确认文本不足以生成可靠纠错，不会按低分处理。';
+}
+
 class _AcousticBoundary extends StatelessWidget {
-  const _AcousticBoundary();
+  const _AcousticBoundary({required this.assessment});
+
+  final SpeechFeedbackAcousticAssessment assessment;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(
-          Icons.hearing_disabled_rounded,
+        Icon(
+          assessment.isAssessed
+              ? Icons.graphic_eq_rounded
+              : Icons.hearing_disabled_rounded,
           size: 18,
           color: SpeakUpDesign.secondary,
         ),
         const SizedBox(width: SpeakUpDesign.space8),
         Expanded(
-          child: Text(
-            '发音与声学流利度未评估：当前没有可信声学证据。',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: SpeakUpDesign.secondary),
-          ),
+          child: assessment.isAssessed
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      assessment.category == 'topic'
+                          ? '发音准确度 '
+                                '${assessment.pronunciationScore!.round()} · '
+                                '语速 '
+                                '${assessment.speakingSpeedWpm!.round()} '
+                                '词/分钟 · '
+                                '题意相关 '
+                                '${assessment.semanticScore!.round()}'
+                          : '发音准确度 '
+                                '${assessment.accuracyScore!.round()} · '
+                                '流利度 '
+                                '${assessment.fluencyScore!.round()} · '
+                                '完整度 '
+                                '${assessment.integrityScore!.round()}',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: SpeakUpDesign.space4),
+                    Text(
+                      assessment.notice!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: SpeakUpDesign.secondary,
+                      ),
+                    ),
+                  ],
+                )
+              : Text(
+                  '本轮发音与声学流利度未评估，但已保留文字纠错；无需重新录音。',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: SpeakUpDesign.secondary,
+                  ),
+                ),
         ),
       ],
     );

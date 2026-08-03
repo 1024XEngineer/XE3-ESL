@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestNormalizeSpeechFeedbackProviderResultRequiresExactAnchors(
+func TestNormalizeSpeechFeedbackProviderResultBuildsAgentAnchor(
 	t *testing.T,
 ) {
 	t.Parallel()
@@ -23,15 +23,7 @@ func TestNormalizeSpeechFeedbackProviderResultRequiresExactAnchors(
 	}
 	payload := map[string]any{
 		"items": []any{map[string]any{
-			"kind": "CORRECTION",
-			"anchor": map[string]any{
-				"anchor_kind":            "AGENT_TRANSCRIPT",
-				"transcript_evidence_id": input.Source.TranscriptEvidenceID,
-				"message_id":             input.Source.MessageID,
-				"start_utf8_byte":        0,
-				"end_utf8_byte":          len(input.ConfirmedText),
-				"original_excerpt":       input.ConfirmedText,
-			},
+			"kind":           "CORRECTION",
 			"explanation":    "Use a preposition with this verb.",
 			"suggested_text": "I work on this project.",
 		}},
@@ -54,7 +46,15 @@ func TestNormalizeSpeechFeedbackProviderResultRequiresExactAnchors(
 	}
 	if len(items) != 1 ||
 		items[0].RepracticeMode !=
-			SpeechFeedbackRepracticeSameThread {
+			SpeechFeedbackRepracticeSameThread ||
+		items[0].Anchor.AnchorKind !=
+			SpeechFeedbackAnchorAgentTranscript ||
+		items[0].Anchor.TranscriptEvidenceID !=
+			input.Source.TranscriptEvidenceID ||
+		items[0].Anchor.MessageID != input.Source.MessageID ||
+		items[0].Anchor.StartUTF8Byte != 0 ||
+		items[0].Anchor.EndUTF8Byte != len(input.ConfirmedText) ||
+		items[0].Anchor.OriginalExcerpt != input.ConfirmedText {
 		t.Fatalf("normalized items = %#v", items)
 	}
 
@@ -73,7 +73,7 @@ func TestNormalizeSpeechFeedbackProviderResultRequiresExactAnchors(
 	}
 }
 
-func TestNormalizeSpeechFeedbackProviderResultRejectsUTF8RuneSplit(
+func TestNormalizeSpeechFeedbackProviderResultRejectsProviderAnchor(
 	t *testing.T,
 ) {
 	t.Parallel()
@@ -97,9 +97,9 @@ func TestNormalizeSpeechFeedbackProviderResultRejectsUTF8RuneSplit(
 				"anchor_kind": "CONVERSATION_TRANSCRIPT",
 				"evidence_ref_id": "review_evidence_1",
 				"turn_id": "turn-1",
-				"start_utf8_byte": 1,
-				"end_utf8_byte": 6,
-				"original_excerpt": "好"
+				"start_utf8_byte": 0,
+				"end_utf8_byte": 14,
+				"original_excerpt": "你好 English"
 			},
 			"explanation": "Add more context.",
 			"suggested_text": "你好, could you help me?"
@@ -114,11 +114,11 @@ func TestNormalizeSpeechFeedbackProviderResultRejectsUTF8RuneSplit(
 			RequestID: "request-1",
 		},
 	); err == nil {
-		t.Fatal("UTF-8 rune-splitting anchor was accepted")
+		t.Fatal("provider-controlled anchor was accepted")
 	}
 }
 
-func TestNormalizeSpeechFeedbackProviderResultRejectsDifferentFrozenEvidence(
+func TestNormalizeSpeechFeedbackProviderResultBuildsConversationAnchor(
 	t *testing.T,
 ) {
 	t.Parallel()
@@ -138,18 +138,10 @@ func TestNormalizeSpeechFeedbackProviderResultRejectsDifferentFrozenEvidence(
 	encoded := json.RawMessage(`{
 		"items": [{
 			"kind": "STRENGTH",
-			"anchor": {
-				"anchor_kind": "CONVERSATION_TRANSCRIPT",
-				"evidence_ref_id": "different_review_evidence",
-				"turn_id": "turn-1",
-				"start_utf8_byte": 0,
-				"end_utf8_byte": 1,
-				"original_excerpt": "I"
-			},
 			"explanation": "The answer starts directly."
 		}]
 	}`)
-	if _, err := normalizeSpeechFeedbackProviderResult(
+	items, err := normalizeSpeechFeedbackProviderResult(
 		input,
 		SpeechFeedbackProviderResult{
 			Payload:   encoded,
@@ -157,8 +149,19 @@ func TestNormalizeSpeechFeedbackProviderResultRejectsDifferentFrozenEvidence(
 			Model:     "qwen-plus",
 			RequestID: "request-1",
 		},
-	); err == nil {
-		t.Fatal("anchor for a different frozen evidence snapshot was accepted")
+	)
+	if err != nil {
+		t.Fatalf("normalize provider result: %v", err)
+	}
+	if len(items) != 1 ||
+		items[0].Anchor.AnchorKind !=
+			SpeechFeedbackAnchorConversationTranscript ||
+		items[0].Anchor.EvidenceRefID != input.EvidenceRefID ||
+		items[0].Anchor.TurnID != input.Source.TurnID ||
+		items[0].Anchor.StartUTF8Byte != 0 ||
+		items[0].Anchor.EndUTF8Byte != len(input.ConfirmedText) ||
+		items[0].Anchor.OriginalExcerpt != input.ConfirmedText {
+		t.Fatalf("normalized items = %#v", items)
 	}
 }
 
@@ -180,18 +183,9 @@ func TestNormalizeSpeechFeedbackProviderResultCapsItemsAtEight(
 	}
 	items := make([]any, 9)
 	for index := range items {
-		start := index * 4
 		items[index] = map[string]any{
-			"kind": "STRENGTH",
-			"anchor": map[string]any{
-				"anchor_kind":            "AGENT_TRANSCRIPT",
-				"transcript_evidence_id": input.Source.TranscriptEvidenceID,
-				"message_id":             input.Source.MessageID,
-				"start_utf8_byte":        start,
-				"end_utf8_byte":          start + 3,
-				"original_excerpt":       input.ConfirmedText[start : start+3],
-			},
-			"explanation": "Clear word choice.",
+			"kind":        "STRENGTH",
+			"explanation": "Clear word choice " + string(rune('A'+index)) + ".",
 		}
 	}
 	encoded, _ := json.Marshal(map[string]any{"items": items})

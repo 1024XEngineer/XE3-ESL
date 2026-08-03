@@ -15,6 +15,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 )
 
 const (
@@ -1405,11 +1406,23 @@ func (service *RunService) writeToolCallCount(
 	count := 0
 	for _, call := range calls {
 		definition, ok := service.toolDefinition(call.Name)
-		if ok && !definition.ReadOnly {
+		if ok && !definition.ReadOnly && toolCallMayWrite(call) {
 			count++
 		}
 	}
 	return count
+}
+
+func toolCallMayWrite(call ai.ToolCall) bool {
+	if call.Name != practiceagenttool.PracticePreviewToolName {
+		return true
+	}
+	var input practiceagenttool.PreviewInput
+	if err := json.Unmarshal(call.Arguments, &input); err != nil {
+		return true
+	}
+	return (input.PreparationProfileID != "" ||
+		input.PreparationSnapshotID != "") && input.MaxEffectiveTurns > 0
 }
 
 func (service *RunService) loopBudgetFallback(

@@ -122,6 +122,13 @@ abstract interface class AgentThreadHistoryClient {
   });
 }
 
+abstract interface class AgentMatterSelectionClient {
+  Future<AgentMatter> selectExistingMatter({
+    required String threadId,
+    required String matterId,
+  });
+}
+
 /// Optional capability declaration for the preview-only practice flow.
 ///
 /// Clients that do not implement this interface retain the existing Fake/test
@@ -189,6 +196,7 @@ final class FakeAgentClient
     implements
         AgentClient,
         AgentThreadHistoryClient,
+        AgentMatterSelectionClient,
         AgentVoiceClient,
         AgentImageClient,
         AgentMultimodalClient {
@@ -203,6 +211,7 @@ final class FakeAgentClient
   final Map<String, AgentThreadSummary> _threads = {};
   final Map<String, List<AgentMessage>> _threadMessages = {};
   final Map<String, AgentMatter> _threadMatters = {};
+  final Map<String, AgentMatter> _matters = {};
   final Map<String, AgentSceneStart> _sceneStarts = {};
   final Map<String, AgentExchange> _textExchanges = {};
   final Map<String, String> _transcripts = {};
@@ -228,6 +237,7 @@ final class FakeAgentClient
     _threads.clear();
     _threadMessages.clear();
     _threadMatters.clear();
+    _matters.clear();
     _sceneStarts.clear();
     _textExchanges.clear();
     _transcripts.clear();
@@ -393,6 +403,7 @@ final class FakeAgentClient
           role: AgentMessageRole.assistant,
           text: '我们开始“${scene.title}”。第一轮：请先用英文回答，你希望面试官首先了解你的哪段经历？',
         );
+        _matters[activeMatter.id] = activeMatter;
         _threadMatters[threadId] = activeMatter;
         _appendThreadMessages(threadId, <AgentMessage>[assistantMessage]);
         return AgentSceneStart(
@@ -400,6 +411,23 @@ final class FakeAgentClient
           assistantMessage: assistantMessage,
         );
       });
+    });
+  }
+
+  @override
+  Future<AgentMatter> selectExistingMatter({
+    required String threadId,
+    required String matterId,
+  }) {
+    return _runAccountOperation((generation) async {
+      await _wait(generation);
+      _requireCurrentGeneration(generation);
+      final matter = _matters[matterId];
+      if (matter == null || !_threadMessages.containsKey(threadId)) {
+        throw const AgentClientException(kind: AgentClientFailureKind.notFound);
+      }
+      _threadMatters[threadId] = matter;
+      return matter;
     });
   }
 

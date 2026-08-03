@@ -26,7 +26,7 @@ final class SpeechFeedbackController extends ChangeNotifier {
   SpeechFeedbackController({
     required this.client,
     this.pollInterval = const Duration(seconds: 2),
-    this.maximumPollAttempts = 8,
+    this.maximumPollAttempts = 30,
   }) {
     if (pollInterval < Duration.zero) {
       throw ArgumentError.value(pollInterval, 'pollInterval');

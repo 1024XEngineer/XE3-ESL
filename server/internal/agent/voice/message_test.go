@@ -753,6 +753,46 @@ func TestVoiceConfirmationReplayResumesOriginalPendingRun(t *testing.T) {
 	}
 }
 
+func TestVoiceConfirmationAllowsFeedbackNotApplicable(t *testing.T) {
+	fixture := newVoiceMessageFixture(
+		t,
+		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
+		&voiceTestRunProcessor{},
+	)
+	fixture.service.feedback = voiceMessageFeedbackStub{}
+	candidate, err := fixture.service.Upload(
+		context.Background(),
+		voiceTestActor(),
+		UploadVoiceCandidateRequest{
+			ThreadID:       voiceTestThread,
+			IdempotencyKey: "voice-feedback-not-applicable",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(voiceTestWAV(0x41)),
+		},
+	)
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+
+	confirmation, err := fixture.service.Confirm(
+		context.Background(),
+		voiceTestActor(),
+		ConfirmVoiceCandidateCommand{
+			CandidateID:      candidate.ID,
+			CandidateVersion: candidate.CandidateVersion,
+			ClientMessageID:  "voice-message-client-not-applicable",
+			ConfirmedText:    "你好，我叫奶龙。",
+		},
+	)
+	if err != nil {
+		t.Fatalf("Confirm() error = %v", err)
+	}
+	if confirmation.Run.Status != RunStatusCompleted ||
+		confirmation.Message.SpeechFeedbackStatusURL != "" {
+		t.Fatalf("confirmation = %#v", confirmation)
+	}
+}
+
 func TestVoicePlaybackRejectsExpiredOrUntrustedCapabilities(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	cases := map[string]objectstore.SignedGetResult{
@@ -985,6 +1025,17 @@ func (processor *voiceTestRunProcessor) ProcessPending(
 		processor.repository.mu.Unlock()
 	}
 	return run, nil
+}
+
+type voiceMessageFeedbackStub struct{}
+
+func (voiceMessageFeedbackStub) EnsureAgentVoiceMessage(
+	context.Context,
+	requestcontext.Actor,
+	string,
+	string,
+) (VoiceMessageFeedbackReference, error) {
+	return VoiceMessageFeedbackReference{}, nil
 }
 
 type signedVoiceStore struct {

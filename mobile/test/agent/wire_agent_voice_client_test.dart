@@ -175,6 +175,42 @@ void main() {
     },
   );
 
+  test('restores an assistant Message carrying a scene action', () async {
+    final assistant = _assistantMessageJson()
+      ..['actions'] = <Object?>[
+        <String, Object?>{
+          'type': 'open_interview_preparation',
+          'label': '开始准备',
+          'matter_id': _matterId,
+          'title': '阿里高级 Java 开发面试',
+        },
+      ];
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'GET',
+        path: '/v1/agent-threads/$_threadId/messages?page_size=100',
+        response: _jsonResponse(HttpStatus.ok, {
+          'messages': [assistant],
+        }),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    final message = await client.getMessage(
+      threadId: _threadId,
+      messageId: _assistantMessageId,
+    );
+
+    expect(message?.actions, hasLength(1));
+    expect(
+      message?.actions.single.type,
+      AgentMessageActionType.openInterviewPreparation,
+    );
+    expect(message?.actions.single.matterId, _matterId);
+    transport.expectDone();
+  });
+
   test(
     'loads private recording without forwarding Session auth to OSS',
     () async {
@@ -410,6 +446,7 @@ const _messageId = '33333333-3333-4333-8333-333333333333';
 const _runId = '44444444-4444-4444-8444-444444444444';
 const _audioId = '55555555-5555-4555-8555-555555555555';
 const _assistantMessageId = '66666666-6666-4666-8666-666666666666';
+const _matterId = '77777777-7777-4777-8777-777777777777';
 const _timestamp = '2026-07-26T12:00:00Z';
 
 const _waveBytes = <int>[

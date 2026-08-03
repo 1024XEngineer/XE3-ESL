@@ -28,6 +28,15 @@ const testResultXML = `<?xml version="1.0" encoding="UTF-8"?>
   </read_sentence>
 </xml_result>`
 
+const testTopicResultXML = `<?xml version="1.0" encoding="UTF-8"?>
+<xml_result>
+  <topic>
+    <rec_paper total_score="88.4" accuracy_score="84.2" phone_score="91.5" speeking_speed="156.0" except_info="0" content="I use artificial intelligence at work.">
+      <sentence content="I use artificial intelligence at work." index="0"/>
+    </rec_paper>
+  </topic>
+</xml_result>`
+
 func TestEvaluatorSendsDocumentedFramesAndParsesFinalResult(t *testing.T) {
 	connection := &fakeConnection{
 		responses: []responseMessage{{
@@ -49,6 +58,7 @@ func TestEvaluatorSendsDocumentedFramesAndParsesFinalResult(t *testing.T) {
 	result, err := evaluator.Evaluate(context.Background(), EvaluationRequest{
 		Audio:         []byte{1, 2, 3},
 		ReferenceText: "Hello.",
+		Category:      CategoryReadSentence,
 	})
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
@@ -115,6 +125,7 @@ func TestEvaluatorReportsProviderFailureWithoutFallback(t *testing.T) {
 	_, err := evaluator.Evaluate(context.Background(), EvaluationRequest{
 		Audio:         []byte{1},
 		ReferenceText: "Hello.",
+		Category:      CategoryReadSentence,
 	})
 	if err == nil ||
 		!strings.Contains(err.Error(), "code=10105") ||
@@ -160,11 +171,168 @@ func TestEvaluatorRejectsInvalidInputBeforeDial(t *testing.T) {
 		{},
 		{Audio: []byte{1}},
 		{ReferenceText: "Hello."},
+		{
+			Audio:         []byte{1},
+			ReferenceText: "Hello.",
+			Category:      "read_chapter",
+		},
 	}
 	for _, request := range tests {
 		if _, err := evaluator.Evaluate(context.Background(), request); err == nil {
 			t.Fatalf("request %#v should fail", request)
 		}
+	}
+}
+
+func TestEvaluatorUsesReadWordCategory(t *testing.T) {
+	connection := &fakeConnection{
+		responses: []responseMessage{{
+			Code:      0,
+			Message:   "success",
+			SessionID: "ise-word",
+			Data: &responseData{
+				Status: 2,
+				Data: base64.StdEncoding.EncodeToString(
+					[]byte(testResultXML),
+				),
+			},
+		}},
+	}
+	evaluator := newTestEvaluator(t, connection)
+	evaluator.frameInterval = 0
+
+	if _, err := evaluator.Evaluate(
+		context.Background(),
+		EvaluationRequest{
+			Audio:         []byte{1},
+			ReferenceText: "Hello",
+			Category:      CategoryReadWord,
+		},
+	); err != nil {
+		t.Fatalf("evaluate word: %v", err)
+	}
+	initial := decodeObject(t, connection.writes[0])
+	business := objectValue(t, initial, "business")
+	if business["category"] != "read_word" {
+		t.Fatalf("category = %v, want read_word", business["category"])
+	}
+}
+
+func TestEvaluatorUsesDocumentedTopicPaperAndParsesTopicScores(t *testing.T) {
+	connection := &fakeConnection{
+		responses: []responseMessage{{
+			Code:      0,
+			Message:   "success",
+			SessionID: "ise-topic",
+			Data: &responseData{
+				Status: 2,
+				Data: base64.StdEncoding.EncodeToString(
+					[]byte(testTopicResultXML),
+				),
+			},
+		}},
+	}
+	evaluator := newTestEvaluator(t, connection)
+	evaluator.frameInterval = 0
+
+	result, err := evaluator.Evaluate(
+		context.Background(),
+		EvaluationRequest{
+			Audio:         []byte{1},
+			ReferenceText: "How do you use artificial intelligence at work?",
+			TopicTitle:    "Artificial intelligence at work",
+			Category:      CategoryTopic,
+		},
+	)
+	if err != nil {
+		t.Fatalf("evaluate topic: %v", err)
+	}
+	if result.Summary.PhoneScore == nil ||
+		*result.Summary.PhoneScore != 91.5 ||
+		result.Summary.SpeakingSpeed == nil ||
+		*result.Summary.SpeakingSpeed != 156 ||
+		result.Summary.AccuracyScore == nil ||
+		*result.Summary.AccuracyScore != 84.2 ||
+		result.Summary.Rejected != nil {
+		t.Fatalf("unexpected topic summary: %#v", result.Summary)
+	}
+	initial := decodeObject(t, connection.writes[0])
+	business := objectValue(t, initial, "business")
+	if business["category"] != "topic" ||
+		business["text"] != "\ufeff[topic]\n"+
+			"1. Artificial intelligence at work\n"+
+			"1.1. How do you use artificial intelligence at work?" {
+		t.Fatalf("unexpected topic business: %#v", business)
+	}
+	if business["extra_ability"] != "multi_dimension" {
+		t.Fatalf("unexpected topic extra_ability: %#v", business)
+	}
+}
+
+func TestEvaluatorRejectsInvalidTopicPaperBeforeDial(t *testing.T) {
+	evaluator := newTestEvaluator(t, &fakeConnection{})
+	for _, request := range []EvaluationRequest{
+		{
+			Audio:         []byte{1},
+			ReferenceText: "How do you use AI?",
+			Category:      CategoryTopic,
+		},
+		{
+			Audio:         []byte{1},
+			ReferenceText: "How do you\nuse AI?",
+			TopicTitle:    "Artificial intelligence",
+			Category:      CategoryTopic,
+		},
+		{
+			Audio:         []byte{1},
+			ReferenceText: "How do you use AI?",
+			TopicTitle:    "人工智能",
+			Category:      CategoryTopic,
+		},
+	} {
+		if _, err := evaluator.Evaluate(
+			context.Background(),
+			request,
+		); err == nil {
+			t.Fatalf("request %#v should fail", request)
+		}
+	}
+}
+
+func TestEvaluatorNormalizesTypographicPunctuationInTopicPaper(t *testing.T) {
+	connection := &fakeConnection{
+		responses: []responseMessage{{
+			Code:      0,
+			Message:   "success",
+			SessionID: "ise-topic-normalized",
+			Data: &responseData{
+				Status: 2,
+				Data: base64.StdEncoding.EncodeToString(
+					[]byte(testTopicResultXML),
+				),
+			},
+		}},
+	}
+	evaluator := newTestEvaluator(t, connection)
+	evaluator.frameInterval = 0
+
+	if _, err := evaluator.Evaluate(
+		context.Background(),
+		EvaluationRequest{
+			Audio:         []byte{1},
+			ReferenceText: "How would you describe the role you’re applying for?",
+			TopicTitle:    "Interview question",
+			Category:      CategoryTopic,
+		},
+	); err != nil {
+		t.Fatalf("evaluate topic with typographic punctuation: %v", err)
+	}
+	initial := decodeObject(t, connection.writes[0])
+	business := objectValue(t, initial, "business")
+	if business["text"] != "\ufeff[topic]\n"+
+		"1. Interview question\n"+
+		"1.1. How would you describe the role you're applying for?" {
+		t.Fatalf("unexpected normalized topic business: %#v", business)
 	}
 }
 

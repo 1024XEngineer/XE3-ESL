@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 )
@@ -89,6 +90,95 @@ func TestPostgresSpeechFeedbackRejectsTextTurnWithoutReadableAudio(
 		t.Fatalf("idempotent references = %#v / %#v", first, second)
 	}
 	assertSpeechFeedbackCounts(t, pool, ownerID, 1, 1)
+}
+
+func TestPostgresSpeechFeedbackPersistsTopicAcousticEvidence(t *testing.T) {
+	pool := speechFeedbackDatabase(t)
+	const (
+		ownerID     = "10000000-0000-4000-8000-000000000001"
+		sessionID   = "practice-interview-topic"
+		turnID      = "turn-interview-topic"
+		candidateID = "candidate-interview-topic"
+	)
+	insertConversationSpeechFeedbackFixture(
+		t,
+		pool,
+		ownerID,
+		sessionID,
+		turnID,
+		candidateID,
+		true,
+	)
+	repository := review.NewPostgresRepository(pool)
+	reference, err := repository.EnsureConfirmedConversationTurn(
+		context.Background(),
+		ownerID,
+		sessionID,
+		turnID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration := review.SpeechFeedbackWorkerConfiguration{
+		MaxAttempts:     3,
+		LeaseDuration:   time.Second,
+		RetryDelay:      time.Second,
+		StrategyRef:     review.SpeechFeedbackStrategyRef,
+		PipelineVersion: review.SpeechFeedbackPipelineVersion,
+		PromptVersion:   review.SpeechFeedbackPromptVersion,
+		Provider:        "qianwen",
+		Model:           "qwen-plus",
+	}
+	claim, acquired, err := repository.ClaimSpeechFeedback(
+		context.Background(),
+		configuration,
+	)
+	if err != nil || !acquired {
+		t.Fatalf("claim = %#v, %t, %v", claim, acquired, err)
+	}
+	pronunciation, speed, semantic := 88.5, 156.0, 82.0
+	err = repository.SaveSpeechFeedbackAcousticEvidence(
+		context.Background(),
+		claim,
+		review.SpeechFeedbackAcousticEvidence{
+			Assessment: review.SpeechFeedbackAcousticAssessment{
+				Pronunciation:      review.SpeechFeedbackAssessed,
+				AcousticFluency:    review.SpeechFeedbackAssessed,
+				PronunciationScore: &pronunciation,
+				SpeakingSpeedWPM:   &speed,
+				SemanticScore:      &semantic,
+				Provider: review.
+					SpeechFeedbackAcousticProviderName,
+				ProviderSession: "ise-topic-session-1",
+				Category:        "topic",
+				Notice: review.
+					SpeechFeedbackAcousticNotice,
+			},
+			RawResult:       "<xml_result/>",
+			AvailableFields: []xfyun.ResultField{},
+		},
+	)
+	if err != nil {
+		t.Fatalf("save topic acoustics: %v", err)
+	}
+	feedback, err := repository.GetSpeechFeedback(
+		context.Background(),
+		ownerID,
+		reference.SpeechFeedbackID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment := feedback.AcousticAssessment
+	if assessment.Category != "topic" ||
+		assessment.PronunciationScore == nil ||
+		*assessment.PronunciationScore != pronunciation ||
+		assessment.SpeakingSpeedWPM == nil ||
+		*assessment.SpeakingSpeedWPM != speed ||
+		assessment.SemanticScore == nil ||
+		*assessment.SemanticScore != semantic {
+		t.Fatalf("topic assessment = %#v", assessment)
+	}
 }
 
 func TestPostgresSpeechFeedbackLeaseFencingAndExactItemRead(
@@ -211,6 +301,97 @@ func TestPostgresSpeechFeedbackLeaseFencingAndExactItemRead(
 	}
 }
 
+func TestPostgresSpeechFeedbackPersistsTerminalRetryableFailure(
+	t *testing.T,
+) {
+	pool := speechFeedbackDatabase(t)
+	const (
+		ownerID     = "10000000-0000-4000-8000-000000000001"
+		sessionID   = "practice-daily-1"
+		turnID      = "turn-daily-1"
+		candidateID = "candidate-daily-1"
+	)
+	insertConversationSpeechFeedbackFixture(
+		t,
+		pool,
+		ownerID,
+		sessionID,
+		turnID,
+		candidateID,
+		true,
+	)
+	repository := review.NewPostgresRepository(pool)
+	if _, err := repository.EnsureConfirmedConversationTurn(
+		context.Background(),
+		ownerID,
+		sessionID,
+		turnID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	configuration := review.SpeechFeedbackWorkerConfiguration{
+		MaxAttempts:     1,
+		LeaseDuration:   time.Minute,
+		RetryDelay:      time.Second,
+		StrategyRef:     review.SpeechFeedbackStrategyRef,
+		PipelineVersion: review.SpeechFeedbackPipelineVersion,
+		PromptVersion:   review.SpeechFeedbackPromptVersion,
+		Provider:        "qianwen",
+		Model:           "qwen-plus",
+	}
+	claim, acquired, err := repository.ClaimSpeechFeedback(
+		context.Background(),
+		configuration,
+	)
+	if err != nil || !acquired {
+		t.Fatalf("claim = %#v, %t, %v", claim, acquired, err)
+	}
+	status, err := repository.FailSpeechFeedback(
+		context.Background(),
+		claim,
+		review.SpeechFeedbackStableFailure{
+			ReasonCode: review.SpeechFeedbackFailureProviderUnavailable,
+			Retryable:  true,
+		},
+		configuration,
+	)
+	if err != nil {
+		t.Fatalf("persist terminal failure: %v", err)
+	}
+	if status != review.SpeechFeedbackFailed {
+		t.Fatalf("failure status = %q", status)
+	}
+	var (
+		persistedCode      string
+		persistedRetryable bool
+		leaseExpiresAt     *time.Time
+	)
+	if err := pool.QueryRow(context.Background(), `
+		SELECT
+			stable_failure_code,
+			stable_failure_retryable,
+			lease_expires_at
+		FROM review_speech_feedbacks
+		WHERE id = $1
+	`, claim.SpeechFeedbackID).Scan(
+		&persistedCode,
+		&persistedRetryable,
+		&leaseExpiresAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if persistedCode != string(
+		review.SpeechFeedbackFailureProviderUnavailable,
+	) || persistedRetryable || leaseExpiresAt != nil {
+		t.Fatalf(
+			"persisted failure = %q, %t, %v",
+			persistedCode,
+			persistedRetryable,
+			leaseExpiresAt,
+		)
+	}
+}
+
 func TestPostgresSpeechFeedbackDeletionFencesLateWorker(
 	t *testing.T,
 ) {
@@ -303,6 +484,64 @@ func TestPostgresSpeechFeedbackDeletionFencesLateWorker(
 	); !errors.Is(err, review.ErrSpeechFeedbackNotApplicable) {
 		t.Fatalf("post-delete ensure error = %v", err)
 	}
+}
+
+func TestPostgresSpeechFeedbackPublishesInsufficientForMixedLanguageTurn(
+	t *testing.T,
+) {
+	pool := speechFeedbackDatabase(t)
+	const (
+		ownerID     = "10000000-0000-4000-8000-000000000009"
+		sessionID   = "practice-mixed-language-1"
+		turnID      = "turn-mixed-language-1"
+		candidateID = "candidate-mixed-language-1"
+	)
+	ctx := context.Background()
+	insertConversationSpeechFeedbackFixture(
+		t,
+		pool,
+		ownerID,
+		sessionID,
+		turnID,
+		candidateID,
+		true,
+	)
+	if _, err := pool.Exec(ctx, `
+		UPDATE conversation_confirmed_turns
+		SET answer_text = '是不是拿下了？ My name is Nai Long. I like AI.'
+		WHERE owner_user_id = $1
+		  AND turn_id = $2
+	`, ownerID, turnID); err != nil {
+		t.Fatal(err)
+	}
+
+	repository := review.NewPostgresRepository(pool)
+	reference, err := repository.EnsureConfirmedConversationTurn(
+		ctx,
+		ownerID,
+		sessionID,
+		turnID,
+	)
+	if err != nil {
+		t.Fatalf("ensure mixed-language SpeechFeedback: %v", err)
+	}
+	feedback, err := repository.GetSpeechFeedback(
+		ctx,
+		ownerID,
+		reference.SpeechFeedbackID,
+	)
+	if err != nil {
+		t.Fatalf("get mixed-language SpeechFeedback: %v", err)
+	}
+	if feedback.FeedbackStatus != review.SpeechFeedbackReady ||
+		feedback.ScoreabilityStatus == nil ||
+		*feedback.ScoreabilityStatus != review.SpeechFeedbackInsufficient ||
+		len(feedback.ReasonCodes) != 1 ||
+		feedback.ReasonCodes[0] !=
+			review.SpeechFeedbackReasonTranscriptConfidenceInsufficient {
+		t.Fatalf("mixed-language SpeechFeedback = %#v", feedback)
+	}
+	assertSpeechFeedbackCounts(t, pool, ownerID, 1, 1)
 }
 
 func TestPostgresSpeechFeedbackUsesAgentTranscriptIdentityWithoutPracticeIDs(
@@ -436,6 +675,22 @@ func insertConversationSpeechFeedbackFixture(
 		t.Fatalf("insert Practice Session fixture: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
+		INSERT INTO conversation_questions (
+			owner_user_id,
+			question_id,
+			practice_session_id,
+			content
+		)
+		VALUES (
+			$1,
+			'question-1',
+			$2,
+			'Could you describe what you need from the hotel staff?'
+		)
+	`, ownerID, sessionID); err != nil {
+		t.Fatalf("insert question fixture: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
 		INSERT INTO conversation_transcript_candidates (
 			owner_user_id,
 			candidate_id,
@@ -553,6 +808,24 @@ func speechFeedbackDatabase(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, string(up)); err != nil {
 		t.Fatalf("apply SpeechFeedback migration: %v", err)
 	}
+	iseEvidenceUp, err := migrations.Files.ReadFile(
+		"000043_speech_feedback_ise_evidence.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(iseEvidenceUp)); err != nil {
+		t.Fatalf("apply SpeechFeedback ISE evidence migration: %v", err)
+	}
+	iseTopicUp, err := migrations.Files.ReadFile(
+		"000045_speech_feedback_ise_topic.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(iseTopicUp)); err != nil {
+		t.Fatalf("apply SpeechFeedback ISE topic migration: %v", err)
+	}
 	return pool
 }
 
@@ -578,6 +851,13 @@ const speechFeedbackModulePrerequisiteSQL = `
 		scenario_type text,
 		scenario_model text,
 		PRIMARY KEY (owner_user_id, session_id)
+	);
+	CREATE TABLE conversation_questions (
+		owner_user_id uuid NOT NULL,
+		question_id text NOT NULL,
+		practice_session_id text NOT NULL,
+		content text NOT NULL,
+		PRIMARY KEY (owner_user_id, question_id)
 	);
 	CREATE TABLE conversation_transcript_candidates (
 		owner_user_id uuid NOT NULL,
@@ -634,6 +914,16 @@ const speechFeedbackModulePrerequisiteSQL = `
 		candidate_version bigint NOT NULL,
 		message_id uuid NOT NULL,
 		confirmed_text text NOT NULL
+	);
+	CREATE TABLE agent_message_audios (
+		audio_id uuid PRIMARY KEY,
+		owner_user_id uuid NOT NULL,
+		thread_id uuid NOT NULL,
+		message_id uuid NOT NULL,
+		candidate_id uuid NOT NULL,
+		checksum_sha256 text NOT NULL,
+		object_key text NOT NULL,
+		status text NOT NULL
 	);
 `
 

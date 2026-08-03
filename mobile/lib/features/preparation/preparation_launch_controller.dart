@@ -70,6 +70,7 @@ final class PreparationLaunchController extends ChangeNotifier {
   bool get hasValidBackground => _validBackground(_backgroundSummary.trim());
   bool get hasResumablePractice => workspaceController?.hasResumable ?? false;
   String? get resumablePracticeTitle => workspaceController?.currentTitle;
+  String? get resumableMatterId => workspaceController?.currentMatterId;
   String? get resumableScenarioId => workspaceController?.currentScenarioId;
   String? get resumableScenarioType => workspaceController?.currentScenarioType;
   AgentScenePresentationMode get resumablePresentationMode =>
@@ -90,6 +91,12 @@ final class PreparationLaunchController extends ChangeNotifier {
     return workspace == null ||
         workspace.currentLease == null ||
         await workspace.parkCurrentPractice();
+  }
+
+  Future<bool> completeAndContinueWithAgent(String reportSummary) async {
+    final workspace = workspaceController;
+    return workspace != null &&
+        await workspace.completeAndContinueWithAgent(reportSummary);
   }
 
   Future<void> activateAccount(String accountId) async {
@@ -337,7 +344,8 @@ final class PreparationLaunchController extends ChangeNotifier {
           scenarioType: activeAttempt.selection.scenarioType,
           presentationMode:
               activeAttempt.selection.scenarioType == 'WORKPLACE' ||
-                  activeAttempt.selection.scenarioType == 'DAILY'
+                  activeAttempt.selection.scenarioType == 'DAILY' ||
+                  activeAttempt.selection.scenarioType == 'INTERVIEW'
               ? AgentScenePresentationMode.immersiveRoleplay
               : AgentScenePresentationMode.standard,
         );

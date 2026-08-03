@@ -1,12 +1,99 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/review/interview_report.dart';
 import 'package:speakup/review/interview_report_controller.dart';
+import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/review/turn_feedback_disclosure.dart';
+
+class InterviewReportPage extends StatefulWidget {
+  const InterviewReportPage({
+    required this.practiceSessionId,
+    required this.controller,
+    this.title = '面试复盘报告',
+    this.speechFeedbackController,
+    this.speechFeedbackSourceKeys = const <String>[],
+    this.onContinueWithAgent,
+    super.key,
+  });
+
+  final String practiceSessionId;
+  final InterviewReportController controller;
+  final String title;
+  final SpeechFeedbackController? speechFeedbackController;
+  final List<String> speechFeedbackSourceKeys;
+  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
+
+  @override
+  State<InterviewReportPage> createState() => _InterviewReportPageState();
+}
+
+class _InterviewReportPageState extends State<InterviewReportPage> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(widget.controller.load(widget.practiceSessionId));
+  }
+
+  @override
+  void didUpdateWidget(covariant InterviewReportPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller &&
+        oldWidget.practiceSessionId == widget.practiceSessionId) {
+      return;
+    }
+    oldWidget.controller.cancel(oldWidget.practiceSessionId);
+    unawaited(widget.controller.load(widget.practiceSessionId));
+  }
+
+  @override
+  void dispose() {
+    widget.controller.cancel(widget.practiceSessionId);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: const Key('interview-report-page'),
+      appBar: AppBar(title: Text(widget.title)),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(SpeakUpDesign.space16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (widget.speechFeedbackController != null &&
+                  widget.speechFeedbackSourceKeys.isNotEmpty) ...[
+                _LanguagePerformancePanel(
+                  controller: widget.speechFeedbackController!,
+                  sourceKeys: widget.speechFeedbackSourceKeys,
+                ),
+                const SizedBox(height: SpeakUpDesign.space12),
+              ],
+              InterviewReportPanel(
+                controller: widget.controller,
+                onContinueWithAgent: widget.onContinueWithAgent,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class InterviewReportPanel extends StatefulWidget {
-  const InterviewReportPanel({required this.controller, super.key});
+  const InterviewReportPanel({
+    required this.controller,
+    this.onContinueWithAgent,
+    super.key,
+  });
 
   final InterviewReportController controller;
+  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
 
   @override
   State<InterviewReportPanel> createState() => _InterviewReportPanelState();
@@ -63,6 +150,7 @@ class _InterviewReportPanelState extends State<InterviewReportPanel> {
       ),
       InterviewReportEvaluationStatus.ready => _ReadyInterviewReport(
         report: envelope.report!,
+        onContinueWithAgent: widget.onContinueWithAgent,
       ),
       InterviewReportEvaluationStatus.failed => _ReportFailure(
         message: '报告生成遇到技术问题，这不代表你的面试表现较差。',
@@ -70,6 +158,156 @@ class _InterviewReportPanelState extends State<InterviewReportPanel> {
         onRetry: controller.retry,
       ),
     };
+  }
+}
+
+class _LanguagePerformancePanel extends StatefulWidget {
+  const _LanguagePerformancePanel({
+    required this.controller,
+    required this.sourceKeys,
+  });
+
+  final SpeechFeedbackController controller;
+  final List<String> sourceKeys;
+
+  @override
+  State<_LanguagePerformancePanel> createState() =>
+      _LanguagePerformancePanelState();
+}
+
+class _LanguagePerformancePanelState extends State<_LanguagePerformancePanel> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_rebuild);
+  }
+
+  @override
+  void didUpdateWidget(covariant _LanguagePerformancePanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_rebuild);
+      widget.controller.addListener(_rebuild);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_rebuild);
+    super.dispose();
+  }
+
+  void _rebuild() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final projections = <SpeechFeedbackProjection>[
+      for (final sourceKey in widget.sourceKeys)
+        ?widget.controller.projectionFor(sourceKey),
+    ];
+    return Card(
+      key: const Key('interview-report-language-performance'),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('语言表现 · 逐轮真实数据', style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: 6),
+            const Text(
+              '每轮纠错来自确认后的转写文本；发音、语速等声学指标来自该轮实际录音。',
+              style: SpeakUpDesign.meta,
+            ),
+            const SizedBox(height: 14),
+            if (projections.isEmpty)
+              const Text('逐轮评分仍在准备，请稍候。', style: SpeakUpDesign.body)
+            else
+              for (var index = 0; index < projections.length; index++) ...[
+                if (index > 0) const SizedBox(height: 12),
+                Text('第 ${index + 1} 轮', style: SpeakUpDesign.label),
+                const SizedBox(height: 6),
+                SpeechFeedbackDisclosure(
+                  key: ValueKey('interview-report-turn-feedback-$index'),
+                  projection: projections[index],
+                  onRetry: projections[index].canRetry
+                      ? () => widget.controller.retry(
+                          projections[index].sourceKey,
+                        )
+                      : null,
+                ),
+              ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ContinueWithAgentButton extends StatefulWidget {
+  const _ContinueWithAgentButton({required this.onPressed});
+
+  final Future<bool> Function() onPressed;
+
+  @override
+  State<_ContinueWithAgentButton> createState() =>
+      _ContinueWithAgentButtonState();
+}
+
+class _ContinueWithAgentButtonState extends State<_ContinueWithAgentButton> {
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _continue() async {
+    if (_busy) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final completed = await widget.onPressed();
+    if (!mounted) {
+      return;
+    }
+    if (completed) {
+      Navigator.of(context).pop(CompletedPracticeRouteResult.continueWithAgent);
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _error = '暂时无法回到 Agent，请稍后重试。';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FilledButton.icon(
+          key: const Key('interview-report-continue-agent'),
+          onPressed: _busy ? null : _continue,
+          icon: _busy
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.chat_bubble_outline_rounded),
+          label: Text(_busy ? '正在回到原会话…' : '和 Agent 继续复盘'),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _error!,
+            style: SpeakUpDesign.meta.copyWith(color: SpeakUpDesign.error),
+          ),
+        ],
+      ],
+    );
   }
 }
 
@@ -170,9 +408,10 @@ class _ReportFailure extends StatelessWidget {
 }
 
 class _ReadyInterviewReport extends StatelessWidget {
-  const _ReadyInterviewReport({required this.report});
+  const _ReadyInterviewReport({required this.report, this.onContinueWithAgent});
 
   final InterviewReport report;
+  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
 
   @override
   Widget build(BuildContext context) {
@@ -192,6 +431,12 @@ class _ReadyInterviewReport extends StatelessWidget {
         if (report.priorityActions.isNotEmpty) ...[
           const SizedBox(height: 12),
           _PriorityActions(report: report),
+        ],
+        if (onContinueWithAgent != null) ...[
+          const SizedBox(height: 16),
+          _ContinueWithAgentButton(
+            onPressed: () => onContinueWithAgent!(_agentReportSummary(report)),
+          ),
         ],
       ],
     );
@@ -214,7 +459,7 @@ class _ReportNotice extends StatelessWidget {
             Text('暂定文本反馈', style: SpeakUpDesign.cardTitle),
             SizedBox(height: 8),
             Text(
-              '本报告只基于本次练习中已确认的文字回答，不评估发音、语速或纯声学流利度。',
+              '面试专项能力基于本次练习中已确认的文字回答；语言表现中的发音与语速来自上方逐轮真实录音评分，两类结果不会混算。',
               style: SpeakUpDesign.body,
             ),
             SizedBox(height: 6),
@@ -463,3 +708,42 @@ String _dimensionLabel(InterviewReportDimensionId dimension) =>
       InterviewReportDimensionId.professional => '职业表达',
       InterviewReportDimensionId.interaction => '追问互动',
     };
+
+String _agentReportSummary(InterviewReport report) {
+  const maximumCharacters = 5500;
+  final lines = <String>['以下是系统刚生成的真实面试报告摘要，请直接基于这些结果复盘：'];
+  var length = lines.first.length;
+
+  void addLine(String value) {
+    if (length + value.length + 1 > maximumCharacters) {
+      return;
+    }
+    lines.add(value);
+    length += value.length + 1;
+  }
+
+  for (final dimension in report.dimensions) {
+    addLine('【${_dimensionLabel(dimension.id)}】');
+    if (dimension.strengths.firstOrNull case final finding?) {
+      addLine('做得好：${finding.message}');
+    }
+    if (dimension.improvements.firstOrNull case final finding?) {
+      addLine('可改进：${finding.message}');
+      if (finding.suggestion case final suggestion?) {
+        addLine('改进建议：$suggestion');
+      }
+    }
+    if (dimension.recommendedExpressions.firstOrNull case final finding?) {
+      addLine('推荐表达：${finding.suggestion ?? finding.message}');
+    }
+  }
+  if (report.priorityActions.isNotEmpty) {
+    addLine('【优先改进】');
+    for (var index = 0; index < report.priorityActions.length; index++) {
+      addLine(
+        '${index + 1}. ${_actionText(report, report.priorityActions[index])}',
+      );
+    }
+  }
+  return lines.join('\n');
+}

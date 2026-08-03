@@ -12,6 +12,8 @@ import 'package:speakup/features/review/ielts_speaking_report_view.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/review/turn_feedback_disclosure.dart';
 
 const ieltsSpeakingFullMockScenarioId = 'scn_ielts_speaking_full';
 const _ieltsSpeakingPart1ScenarioId = 'scn_ielts_speaking_part_1';
@@ -64,6 +66,7 @@ class IeltsSpeakingMockPage extends StatefulWidget {
     this.progressStore,
     this.preparationController,
     this.reportController,
+    this.speechFeedbackController,
     this.now = DateTime.now,
     super.key,
   });
@@ -73,6 +76,7 @@ class IeltsSpeakingMockPage extends StatefulWidget {
   final IeltsMockProgressStore? progressStore;
   final PreparationController? preparationController;
   final IeltsSpeakingReportController? reportController;
+  final SpeechFeedbackController? speechFeedbackController;
   final DateTime Function() now;
 
   @override
@@ -1005,6 +1009,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
           child: _ExamConversation(
             messages: _sectionMessages(sectionStart, completed),
             controller: widget.controller,
+            speechFeedbackController: widget.speechFeedbackController,
           ),
         ),
         if (widget.controller.errorMessage case final error?)
@@ -1023,7 +1028,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   List<AgentMessage> _sectionMessages(int sectionStart, int completed) {
     final relevantCount = completed * 2 + 1;
-    final all = widget.controller.messages
+    final all = widget.controller.practiceMessages
         .where(
           (message) =>
               message.role == AgentMessageRole.assistant ||
@@ -1037,7 +1042,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   String _currentQuestionText() {
-    for (final message in widget.controller.messages.reversed) {
+    for (final message in widget.controller.practiceMessages.reversed) {
       if (message.role == AgentMessageRole.assistant) {
         return message.text;
       }
@@ -1098,10 +1103,15 @@ class _SectionProgress extends StatelessWidget {
 }
 
 class _ExamConversation extends StatelessWidget {
-  const _ExamConversation({required this.messages, required this.controller});
+  const _ExamConversation({
+    required this.messages,
+    required this.controller,
+    this.speechFeedbackController,
+  });
 
   final List<AgentMessage> messages;
   final AgentController controller;
+  final SpeechFeedbackController? speechFeedbackController;
 
   @override
   Widget build(BuildContext context) {
@@ -1112,116 +1122,161 @@ class _ExamConversation extends StatelessWidget {
       itemBuilder: (context, index) {
         final message = messages[index];
         final assistant = message.role == AgentMessageRole.assistant;
-        return Align(
-          alignment: assistant ? Alignment.centerLeft : Alignment.centerRight,
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (assistant) ...[
-                  const CircleAvatar(
-                    radius: 17,
-                    backgroundColor: Color(0xFF5C97E5),
-                    foregroundColor: Colors.white,
-                    child: Text(
-                      'E',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                ],
-                Flexible(
-                  child: Container(
-                    constraints: const BoxConstraints(maxWidth: 290),
-                    padding: const EdgeInsets.fromLTRB(14, 11, 14, 12),
-                    decoration: BoxDecoration(
-                      color: assistant
-                          ? SpeakUpDesign.surfaceMuted
-                          : const Color(0xFF197782),
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          assistant ? 'Examiner' : 'You',
-                          style: TextStyle(
-                            color: assistant
-                                ? SpeakUpDesign.secondary
-                                : Colors.white70,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
+        final projection =
+            !assistant &&
+                message.speechFeedbackStatusUrl != null &&
+                speechFeedbackController != null
+            ? speechFeedbackController!.projectionFor(
+                _ieltsFeedbackSourceKey(controller, message),
+              )
+            : null;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Align(
+              alignment: assistant
+                  ? Alignment.centerLeft
+                  : Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (assistant) ...[
+                      const CircleAvatar(
+                        radius: 17,
+                        backgroundColor: Color(0xFF5C97E5),
+                        foregroundColor: Colors.white,
+                        child: Text(
+                          'E',
+                          style: TextStyle(fontWeight: FontWeight.w700),
                         ),
-                        const SizedBox(height: 5),
-                        Text(
-                          message.text,
-                          style: TextStyle(
-                            color: assistant ? SpeakUpDesign.ink : Colors.white,
-                            fontSize: 15,
-                            height: 1.4,
-                          ),
+                      ),
+                      const SizedBox(width: 9),
+                    ],
+                    Flexible(
+                      child: Container(
+                        constraints: const BoxConstraints(maxWidth: 290),
+                        padding: const EdgeInsets.fromLTRB(14, 11, 14, 12),
+                        decoration: BoxDecoration(
+                          color: assistant
+                              ? SpeakUpDesign.surfaceMuted
+                              : const Color(0xFF197782),
+                          borderRadius: BorderRadius.circular(15),
                         ),
-                        if (assistant &&
-                            message.id == controller.questionId) ...[
-                          const SizedBox(height: 8),
-                          InkWell(
-                            key: const Key('ielts-mock-question-audio'),
-                            onTap: controller.canUsePracticeAudio
-                                ? controller.toggleQuestionAudio
-                                : null,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  controller.isQuestionAudioPlaying
-                                      ? Icons.stop_rounded
-                                      : Icons.graphic_eq_rounded,
-                                  size: 20,
-                                  color: SpeakUpDesign.secondary,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  controller.isQuestionAudioLoading
-                                      ? 'Loading…'
-                                      : controller.isQuestionAudioPlaying
-                                      ? 'Stop'
-                                      : 'Play question',
-                                  style: SpeakUpDesign.meta,
-                                ),
-                              ],
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              assistant ? 'Examiner' : 'You',
+                              style: TextStyle(
+                                color: assistant
+                                    ? SpeakUpDesign.secondary
+                                    : Colors.white70,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
+                            const SizedBox(height: 5),
+                            Text(
+                              message.text,
+                              style: TextStyle(
+                                color: assistant
+                                    ? SpeakUpDesign.ink
+                                    : Colors.white,
+                                fontSize: 15,
+                                height: 1.4,
+                              ),
+                            ),
+                            if (assistant &&
+                                message.id == controller.questionId) ...[
+                              const SizedBox(height: 8),
+                              InkWell(
+                                key: const Key('ielts-mock-question-audio'),
+                                onTap: controller.canUsePracticeAudio
+                                    ? controller.toggleQuestionAudio
+                                    : null,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      controller.isQuestionAudioPlaying
+                                          ? Icons.stop_rounded
+                                          : Icons.graphic_eq_rounded,
+                                      size: 20,
+                                      color: SpeakUpDesign.secondary,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      controller.isQuestionAudioLoading
+                                          ? 'Loading…'
+                                          : controller.isQuestionAudioPlaying
+                                          ? 'Stop'
+                                          : 'Play question',
+                                      style: SpeakUpDesign.meta,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (!assistant) ...[
+                      const SizedBox(width: 9),
+                      const CircleAvatar(
+                        radius: 17,
+                        backgroundColor: Color(0xFF197782),
+                        foregroundColor: Colors.white,
+                        child: Text(
+                          'Me',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
                           ),
-                        ],
-                      ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            if (projection != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: FractionallySizedBox(
+                  widthFactor: 0.82,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: SpeechFeedbackDisclosure(
+                      key: ValueKey(
+                        'ielts-speech-feedback-${projection.sourceKey}',
+                      ),
+                      projection: projection,
+                      onRetry: projection.canRetry
+                          ? () => unawaited(
+                              speechFeedbackController!.retry(
+                                projection.sourceKey,
+                              ),
+                            )
+                          : null,
                     ),
                   ),
                 ),
-                if (!assistant) ...[
-                  const SizedBox(width: 9),
-                  const CircleAvatar(
-                    radius: 17,
-                    backgroundColor: Color(0xFF197782),
-                    foregroundColor: Colors.white,
-                    child: Text(
-                      'Me',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+              ),
+          ],
         );
       },
     );
   }
 }
+
+String _ieltsFeedbackSourceKey(
+  AgentController controller,
+  AgentMessage message,
+) => 'practice:${controller.practiceSessionId}:${message.id}';
 
 class _RecorderDock extends StatelessWidget {
   const _RecorderDock({

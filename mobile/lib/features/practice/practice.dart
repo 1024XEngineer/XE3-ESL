@@ -10,8 +10,11 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/review/interview_report_view.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
+import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recordings.dart';
+import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
@@ -22,8 +25,10 @@ class PracticePage extends StatefulWidget {
     this.previewMode = false,
     this.agentController,
     this.onExitRequested,
+    this.onContinueWithAgent,
     this.ieltsMockProgressStore,
     this.preparationController,
+    this.interviewReportController,
     this.ieltsSpeakingReportController,
     this.speechFeedbackController,
     super.key,
@@ -32,8 +37,10 @@ class PracticePage extends StatefulWidget {
   final bool previewMode;
   final AgentController? agentController;
   final Future<bool> Function()? onExitRequested;
+  final Future<bool> Function(String reportSummary)? onContinueWithAgent;
   final IeltsMockProgressStore? ieltsMockProgressStore;
   final PreparationController? preparationController;
+  final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final SpeechFeedbackController? speechFeedbackController;
 
@@ -171,6 +178,39 @@ class _PracticePageState extends State<PracticePage>
       return;
     }
     _scheduleReviewExitIfNeeded();
+  }
+
+  Future<void> _openInterviewReport() async {
+    final reportController = widget.interviewReportController;
+    final agentController = widget.agentController;
+    final sessionId = agentController?.practiceSessionId;
+    if (reportController == null ||
+        agentController == null ||
+        sessionId == null ||
+        agentController.recordingState != PracticeRecordingState.completed ||
+        !isInterviewPracticeScenario(
+          agentController.practiceScenarioType,
+          agentController.practiceScenarioModel,
+        )) {
+      return;
+    }
+    final result = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute<Object?>(
+        builder: (_) => InterviewReportPage(
+          practiceSessionId: sessionId,
+          controller: reportController,
+          title: '${agentController.scene?.title ?? '面试'} · 复盘',
+          speechFeedbackController: widget.speechFeedbackController,
+          speechFeedbackSourceKeys: List<String>.unmodifiable(
+            _feedbackSources.keys,
+          ),
+          onContinueWithAgent: widget.onContinueWithAgent,
+        ),
+      ),
+    );
+    if (mounted && result == CompletedPracticeRouteResult.continueWithAgent) {
+      Navigator.of(context).pop(result);
+    }
   }
 
   void _syncSpeechFeedbackSources() {
@@ -534,6 +574,7 @@ class _PracticePageState extends State<PracticePage>
         progressStore: widget.ieltsMockProgressStore,
         preparationController: widget.preparationController,
         reportController: widget.ieltsSpeakingReportController,
+        speechFeedbackController: widget.speechFeedbackController,
       );
     }
     final scene = controller?.scene;
@@ -569,6 +610,11 @@ class _PracticePageState extends State<PracticePage>
               ? const _NoScene()
               : Column(
                   children: [
+                    if (controller.review != null)
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: Text('复盘已生成，正在打开'),
+                      ),
                     if (_isInterview(controller))
                       _InterviewProgress(controller: controller),
                     Expanded(
@@ -589,6 +635,7 @@ class _PracticePageState extends State<PracticePage>
                       textMode: _textAnswerMode,
                       onToggleTextMode: _toggleTextAnswerMode,
                       recordingSeconds: _recordingSeconds,
+                      onOpenReport: _openInterviewReport,
                     ),
                   ],
                 ),
@@ -978,6 +1025,7 @@ class _RecordingPanel extends StatefulWidget {
     required this.textMode,
     required this.onToggleTextMode,
     required this.recordingSeconds,
+    required this.onOpenReport,
   });
 
   final AgentController controller;
@@ -987,6 +1035,7 @@ class _RecordingPanel extends StatefulWidget {
   final bool textMode;
   final VoidCallback onToggleTextMode;
   final int recordingSeconds;
+  final VoidCallback onOpenReport;
 
   @override
   State<_RecordingPanel> createState() => _RecordingPanelState();
@@ -1095,8 +1144,8 @@ class _RecordingPanelState extends State<_RecordingPanel> {
           PracticeRecordingState.reviewFailed => _ReviewRetry(
             onPressed: widget.controller.retryReview,
           ),
-          PracticeRecordingState.completed => const _WorkingState(
-            label: '复盘已生成，正在打开',
+          PracticeRecordingState.completed => _CompletedPracticePanel(
+            onOpenReport: widget.onOpenReport,
           ),
         };
         return Material(
@@ -1111,6 +1160,31 @@ class _RecordingPanelState extends State<_RecordingPanel> {
           ),
         );
       },
+    );
+  }
+}
+
+class _CompletedPracticePanel extends StatelessWidget {
+  const _CompletedPracticePanel({required this.onOpenReport});
+
+  final VoidCallback onOpenReport;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('practice-completed-actions'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('本次练习已完成', style: SpeakUpDesign.cardTitle),
+        const SizedBox(height: 4),
+        const Text('可以先查看上方最后一轮回答与评分，再进入完整报告。', style: SpeakUpDesign.body),
+        const SizedBox(height: 12),
+        FilledButton(
+          key: const Key('practice-open-report'),
+          onPressed: onOpenReport,
+          child: const Text('查看完整报告'),
+        ),
+      ],
     );
   }
 }

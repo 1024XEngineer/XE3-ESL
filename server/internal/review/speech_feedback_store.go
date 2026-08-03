@@ -69,7 +69,12 @@ type storedSpeechFeedback struct {
 	SourceDigest       [sha256.Size]byte
 	DeletionGeneration int64
 	CanonicalText      string
+	PromptText         string
 	EvidenceRefID      string
+	AudioAssetID       string
+	AudioAssetVersion  int64
+	AudioChecksum      string
+	AudioObjectKey     string
 	AttemptCount       int
 	FencingToken       int64
 	LeaseExpiresAt     *time.Time
@@ -118,6 +123,9 @@ func (r *PostgresRepository) EnsureConfirmedConversationTurn(
 	if err != nil {
 		return SpeechFeedbackReference{}, err
 	}
+	englishEvidence := classifySpeechFeedbackLanguage(
+		snapshot.CanonicalText,
+	) == speechFeedbackLanguageEnglish
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO review_speech_feedbacks (
 			owner_user_id,
@@ -129,7 +137,12 @@ func (r *PostgresRepository) EnsureConfirmedConversationTurn(
 			source_digest,
 			schema_version,
 			strategy_ref,
-			pipeline_version
+			pipeline_version,
+			feedback_status,
+			scoreability_status,
+			gate_status,
+			reason_codes,
+			completed_at
 		)
 		VALUES (
 			$1,
@@ -141,13 +154,27 @@ func (r *PostgresRepository) EnsureConfirmedConversationTurn(
 			$6,
 			$7,
 			$8,
-			$9
+			$9,
+			CASE WHEN $10::boolean THEN 'QUEUED' ELSE 'READY' END,
+			CASE
+				WHEN $10::boolean THEN NULL
+				ELSE 'INSUFFICIENT'
+			END,
+			CASE WHEN $10::boolean THEN NULL ELSE 'BLOCKED' END,
+			CASE
+				WHEN $10::boolean THEN ARRAY[]::text[]
+				ELSE ARRAY['TRANSCRIPT_CONFIDENCE_INSUFFICIENT']::text[]
+			END,
+			CASE
+				WHEN $10::boolean THEN NULL
+				ELSE transaction_timestamp()
+			END
 		)
 		ON CONFLICT DO NOTHING
 	`, ownerUserID, practiceSessionID, turnID,
 		snapshot.InputRevision, snapshot.ID, snapshot.SourceDigest[:],
 		SpeechFeedbackSchemaVersion, SpeechFeedbackStrategyRef,
-		SpeechFeedbackPipelineVersion); err != nil {
+		SpeechFeedbackPipelineVersion, englishEvidence); err != nil {
 		return SpeechFeedbackReference{}, fmt.Errorf(
 			"insert Conversation SpeechFeedback: %w",
 			err,
@@ -221,6 +248,9 @@ func (r *PostgresRepository) EnsureConfirmedAgentVoiceMessage(
 	if err != nil {
 		return SpeechFeedbackReference{}, err
 	}
+	englishEvidence := classifySpeechFeedbackLanguage(
+		canonicalText,
+	) == speechFeedbackLanguageEnglish
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO review_speech_feedbacks (
 			owner_user_id,
@@ -232,7 +262,12 @@ func (r *PostgresRepository) EnsureConfirmedAgentVoiceMessage(
 			source_digest,
 			schema_version,
 			strategy_ref,
-			pipeline_version
+			pipeline_version,
+			feedback_status,
+			scoreability_status,
+			gate_status,
+			reason_codes,
+			completed_at
 		)
 		VALUES (
 			$1,
@@ -244,14 +279,28 @@ func (r *PostgresRepository) EnsureConfirmedAgentVoiceMessage(
 			$6,
 			$7,
 			$8,
-			$9
+			$9,
+			CASE WHEN $10::boolean THEN 'QUEUED' ELSE 'READY' END,
+			CASE
+				WHEN $10::boolean THEN NULL
+				ELSE 'INSUFFICIENT'
+			END,
+			CASE WHEN $10::boolean THEN NULL ELSE 'BLOCKED' END,
+			CASE
+				WHEN $10::boolean THEN ARRAY[]::text[]
+				ELSE ARRAY['TRANSCRIPT_CONFIDENCE_INSUFFICIENT']::text[]
+			END,
+			CASE
+				WHEN $10::boolean THEN NULL
+				ELSE transaction_timestamp()
+			END
 		)
 		ON CONFLICT DO NOTHING
 	`, ownerUserID, source.ThreadID, source.MessageID,
 		source.TranscriptEvidenceID, source.CandidateVersion,
 		sourceDigest[:], SpeechFeedbackSchemaVersion,
 		SpeechFeedbackStrategyRef,
-		SpeechFeedbackPipelineVersion); err != nil {
+		SpeechFeedbackPipelineVersion, englishEvidence); err != nil {
 		return SpeechFeedbackReference{}, fmt.Errorf(
 			"insert Agent SpeechFeedback: %w",
 			err,
@@ -326,6 +375,18 @@ func (r *PostgresRepository) GetSpeechFeedback(
 		return SpeechFeedback{}, err
 	}
 	stored.Feedback.Items = items
+	acoustics, found, err := getSpeechFeedbackAcousticAssessment(
+		ctx,
+		tx,
+		ownerUserID,
+		speechFeedbackID,
+	)
+	if err != nil {
+		return SpeechFeedback{}, err
+	}
+	if found {
+		stored.Feedback.AcousticAssessment = acoustics
+	}
 	if !stored.Feedback.valid(
 		stored.EvidenceRefID,
 		stored.CanonicalText,
@@ -398,6 +459,9 @@ type speechFeedbackTurnSnapshot struct {
 	InputRevision int64
 	EvidenceRefID string
 	CanonicalText string
+	AudioAssetID  string
+	AudioVersion  int64
+	AudioChecksum string
 	SourceDigest  [sha256.Size]byte
 }
 
@@ -503,12 +567,16 @@ func ensureSpeechFeedbackTurnSnapshot(
 			input_revision,
 			evidence_ref_id,
 			transcript_text,
-			source_digest
+			source_digest,
+			audio_asset_id,
+			audio_asset_version,
+			audio_checksum_sha256
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (owner_user_id, turn_id) DO NOTHING
 	`, snapshotID, ownerUserID, practiceSessionID, turnID,
-		evidenceVersion, evidenceRefID, answerText, digest[:]); err != nil {
+		evidenceVersion, evidenceRefID, answerText, digest[:],
+		audioAssetID, audioVersion, audioChecksum); err != nil {
 		return speechFeedbackTurnSnapshot{}, fmt.Errorf(
 			"insert SpeechFeedback Turn snapshot: %w",
 			err,
@@ -522,7 +590,10 @@ func ensureSpeechFeedbackTurnSnapshot(
 			input_revision,
 			evidence_ref_id,
 			transcript_text,
-			source_digest
+			source_digest,
+			audio_asset_id,
+			audio_asset_version,
+			audio_checksum_sha256
 		FROM review_speech_feedback_turn_snapshots
 		WHERE owner_user_id = $1
 		  AND practice_session_id = $2
@@ -533,6 +604,9 @@ func ensureSpeechFeedbackTurnSnapshot(
 		&snapshot.EvidenceRefID,
 		&snapshot.CanonicalText,
 		&persistedDigest,
+		&snapshot.AudioAssetID,
+		&snapshot.AudioVersion,
+		&snapshot.AudioChecksum,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return speechFeedbackTurnSnapshot{},
@@ -553,6 +627,9 @@ func ensureSpeechFeedbackTurnSnapshot(
 		snapshot.InputRevision != evidenceVersion ||
 		snapshot.EvidenceRefID != evidenceRefID ||
 		snapshot.CanonicalText != answerText ||
+		snapshot.AudioAssetID != audioAssetID ||
+		snapshot.AudioVersion != audioVersion ||
+		snapshot.AudioChecksum != audioChecksum ||
 		snapshot.SourceDigest != digest {
 		return speechFeedbackTurnSnapshot{},
 			ErrSpeechFeedbackConflict
@@ -644,6 +721,15 @@ func eligibleSpeechFeedbackScenario(
 	case "WORKPLACE":
 		return scenarioModel == "PROGRESS_AND_RISK_UPDATE" ||
 			scenarioModel == "WORKPLACE_BASIC_DIALOGUE"
+	case "INTERVIEW":
+		return scenarioModel == "PROJECT_EXPERIENCE_DEEP_DIVE" ||
+			scenarioModel == "INTERVIEW_BASIC_DIALOGUE"
+	case "EXAM":
+		return scenarioModel == "IELTS_SPEAKING_PART_1" ||
+			scenarioModel == "IELTS_SPEAKING_PART_2" ||
+			scenarioModel == "IELTS_SPEAKING_PART_3" ||
+			scenarioModel == "IELTS_SPEAKING_FULL_MOCK" ||
+			scenarioModel == "EXAM_BASIC_DIALOGUE"
 	default:
 		return false
 	}
@@ -816,7 +902,15 @@ const speechFeedbackSelect = `
 		feedback.updated_at,
 		feedback.completed_at,
 		coalesce(snapshot.transcript_text, evidence.confirmed_text, ''),
-		coalesce(snapshot.evidence_ref_id, '')
+		coalesce(snapshot.evidence_ref_id, ''),
+		coalesce(snapshot.audio_asset_id, agent_audio.audio_id::text, ''),
+		coalesce(snapshot.audio_asset_version, evidence.candidate_version, 0),
+		coalesce(
+			snapshot.audio_checksum_sha256,
+			agent_audio.checksum_sha256,
+			''
+		),
+		coalesce(agent_audio.object_key, '')
 	FROM review_speech_feedbacks AS feedback
 	JOIN identity_users AS owner
 	  ON owner.id = feedback.owner_user_id
@@ -828,6 +922,12 @@ const speechFeedbackSelect = `
 	LEFT JOIN agent_voice_transcript_evidence AS evidence
 	  ON evidence.evidence_id = feedback.transcript_evidence_id
 	 AND evidence.owner_user_id = feedback.owner_user_id
+	LEFT JOIN agent_message_audios AS agent_audio
+	  ON agent_audio.owner_user_id = feedback.owner_user_id
+	 AND agent_audio.thread_id = feedback.thread_id
+	 AND agent_audio.message_id = feedback.message_id
+	 AND agent_audio.candidate_id = evidence.candidate_id
+	 AND agent_audio.status = 'readable'
 `
 
 func scanStoredSpeechFeedback(
@@ -885,6 +985,10 @@ func scanStoredSpeechFeedback(
 		&completedAt,
 		&stored.CanonicalText,
 		&stored.EvidenceRefID,
+		&stored.AudioAssetID,
+		&stored.AudioAssetVersion,
+		&stored.AudioChecksum,
+		&stored.AudioObjectKey,
 	)
 	if err != nil {
 		return storedSpeechFeedback{}, err

@@ -17,7 +17,6 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
         sync: true,
       );
 
-  static const _avatarLoadTimeout = Duration(seconds: 15);
   static const _cancelLoadingTimeout = Duration(seconds: 1);
 
   final StreamController<AvatarRendererState> _stateController;
@@ -76,12 +75,7 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
       final avatarId = grant.avatarId;
       _loadingAvatarId = avatarId;
       try {
-        _avatar = await kit.AvatarManager.shared
-            .load(id: avatarId)
-            .timeout(_avatarLoadTimeout);
-      } on TimeoutException {
-        await _cancelLoadingBestEffort(avatarId);
-        throw const AvatarRendererException(AvatarRendererFailure.network);
+        _avatar = await kit.AvatarManager.shared.load(id: avatarId);
       } finally {
         if (_loadingAvatarId == avatarId) {
           _loadingAvatarId = null;

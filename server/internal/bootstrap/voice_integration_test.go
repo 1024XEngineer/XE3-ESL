@@ -537,7 +537,6 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	for failure := range failures {
 		t.Error(failure)
 	}
-	var reviewID string
 	var completedAudioAssetID string
 	var thirdTurnID string
 	for result := range results {
@@ -557,14 +556,6 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		} else if thirdTurnID != currentTurnID {
 			t.Errorf("concurrent confirmations returned different Turns")
 		}
-		currentReview, _ := result["review"].(map[string]any)
-		currentReviewID, _ := currentReview["review_id"].(string)
-		if currentReviewID == "" {
-			t.Errorf("third-round response has no Review: %#v", result)
-		}
-		if turn["review_id"] != currentReviewID {
-			t.Errorf("current Turn does not link its Review: %#v", result)
-		}
 		currentAudioAssetID, _ := turn["audio_asset_id"].(string)
 		if currentAudioAssetID == "" {
 			t.Errorf("current Turn does not link its AudioAsset: %#v", result)
@@ -574,11 +565,25 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		} else if completedAudioAssetID != currentAudioAssetID {
 			t.Errorf("concurrent confirmations returned different AudioAssets")
 		}
-		if reviewID == "" {
-			reviewID = currentReviewID
-		} else if reviewID != currentReviewID {
-			t.Errorf("concurrent confirmations returned different Reviews")
-		}
+	}
+	completedState := waitForVoicePracticeState(
+		t,
+		server.URL,
+		token,
+		threadID,
+		func(state map[string]any) bool {
+			sessionReview, ok := state["review"].(map[string]any)
+			return ok && sessionReview["status"] == "completed"
+		},
+	)
+	completedReview := completedState["review"].(map[string]any)
+	reviewID, _ := completedReview["review_id"].(string)
+	completedTurn := completedState["current_turn"].(map[string]any)
+	if reviewID == "" || completedTurn["review_id"] != reviewID {
+		t.Fatalf(
+			"async Review was not linked to completed Turn: %#v",
+			completedState,
+		)
 	}
 	if text.ReviewCalls() != 1 {
 		t.Fatalf("Review generator calls = %d, want 1", text.ReviewCalls())
@@ -1102,47 +1107,42 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		nextSession,
 		"retry-review-round-3",
 	)
-	failedConfirm, err := voiceRawRequest(
+	failedConfirm := voiceJSONRequest(
+		t,
 		restartedServer.URL,
 		token,
 		http.MethodPost,
 		"/v1/transcription-candidates/"+
 			retryCandidate["candidate_id"].(string)+"/confirmations",
-		nil,
-		"confirm-retry-review-round-3",
 		"",
+		"confirm-retry-review-round-3",
+		http.StatusOK,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = failedConfirm.Body.Close()
-	if failedConfirm.StatusCode != http.StatusServiceUnavailable ||
-		failedConfirm.Header.Get("Retry-After") == "" {
-		t.Fatalf(
-			"failed Review status = %d, Retry-After = %q",
-			failedConfirm.StatusCode,
-			failedConfirm.Header.Get("Retry-After"),
-		)
+	if failedConfirm["session_completed"] != true {
+		t.Fatalf("failed Review blocked answer submission: %#v", failedConfirm)
 	}
 	retrySessionID := nextSession["practice_session_id"].(string)
 	var failedReviewID string
 	var failedReviewStatus string
 	var failedAttempts int
-	if err := pool.QueryRow(
-		context.Background(),
-		`SELECT r.id::text, r.status, count(a.id)::int
+	waitForVoiceCondition(t, "failed Review attempt", func() bool {
+		err := pool.QueryRow(
+			context.Background(),
+			`SELECT r.id::text, r.status, count(a.id)::int
 FROM reviews r
 JOIN review_generation_attempts a ON a.review_id = r.id
 WHERE r.practice_session_id = $1
 GROUP BY r.id, r.status`,
-		retrySessionID,
-	).Scan(
-		&failedReviewID,
-		&failedReviewStatus,
-		&failedAttempts,
-	); err != nil {
-		t.Fatalf("read failed Review attempt: %v", err)
-	}
+			retrySessionID,
+		).Scan(
+			&failedReviewID,
+			&failedReviewStatus,
+			&failedAttempts,
+		)
+		return err == nil &&
+			failedReviewStatus == "failed" &&
+			failedAttempts == 1
+	})
 	if failedReviewStatus != "failed" || failedAttempts != 1 {
 		t.Fatalf(
 			"failed Review state = %s/%d attempts",
@@ -1150,16 +1150,15 @@ GROUP BY r.id, r.status`,
 			failedAttempts,
 		)
 	}
-	retried := voiceJSONRequest(
+	retried := waitForVoicePracticeState(
 		t,
 		restartedServer.URL,
 		token,
-		http.MethodGet,
-		"/v1/agent-threads/"+retryContext.ThreadID+
-			"/voice-practice-session",
-		"",
-		"",
-		http.StatusOK,
+		retryContext.ThreadID,
+		func(state map[string]any) bool {
+			sessionReview, ok := state["review"].(map[string]any)
+			return ok && sessionReview["status"] == "completed"
+		},
 	)
 	retriedReview := retried["review"].(map[string]any)
 	retriedTurn := retried["current_turn"].(map[string]any)
@@ -1224,24 +1223,39 @@ WHERE review_id = $1`,
 		"quota-review-round-3",
 	)
 	text.FailNextQuotaReview()
-	quotaConfirm, err := voiceRawRequest(
+	quotaConfirm := voiceJSONRequest(
+		t,
 		restartedServer.URL,
 		token,
 		http.MethodPost,
 		"/v1/transcription-candidates/"+
 			quotaCandidate["candidate_id"].(string)+"/confirmations",
-		nil,
-		"confirm-quota-review-round-3",
 		"",
+		"confirm-quota-review-round-3",
+		http.StatusOK,
 	)
-	if err != nil {
-		t.Fatal(err)
+	if quotaConfirm["session_completed"] != true {
+		t.Fatalf("quota Review blocked answer submission: %#v", quotaConfirm)
 	}
-	assertQuotaExhaustedVoiceResponse(t, quotaConfirm)
+	waitForVoiceCondition(t, "terminal quota Review", func() bool {
+		var status string
+		var category string
+		err := pool.QueryRow(
+			context.Background(),
+			`SELECT status, coalesce(stable_error_category, '')
+FROM reviews
+WHERE practice_session_id = $1`,
+			quotaSession["practice_session_id"].(string),
+		).Scan(&status, &category)
+		return err == nil &&
+			status == "failed" &&
+			category == "quota_exhausted"
+	})
 	quotaReviewCalls := text.ReviewCalls()
 
 	// A fresh composition root exercises a real service restart. The failed
-	// Review row must remain terminal across every subsequent Resume.
+	// Review row must remain terminal across every subsequent Resume without
+	// blocking access to the completed Practice Session.
 	restartedServer.Close()
 	if err := restartedVault.Close(); err != nil {
 		t.Fatalf("close retry audio vault: %v", err)
@@ -1264,20 +1278,23 @@ WHERE review_id = $1`,
 		},
 	)
 	for resume := 0; resume < 3; resume++ {
-		response, err := voiceRawRequest(
+		resumed := voiceJSONRequest(
+			t,
 			terminalServer.URL,
 			token,
 			http.MethodGet,
 			"/v1/agent-threads/"+quotaContext.ThreadID+
 				"/voice-practice-session",
-			nil,
 			"",
 			"",
+			http.StatusOK,
 		)
-		if err != nil {
-			t.Fatal(err)
+		if resumed["session_completed"] != true {
+			t.Fatalf(
+				"terminal Review Resume did not restore completed Session: %#v",
+				resumed,
+			)
 		}
-		assertQuotaExhaustedVoiceResponse(t, response)
 	}
 	if got := text.ReviewCalls(); got != quotaReviewCalls {
 		t.Fatalf(
@@ -1737,10 +1754,10 @@ func createVoiceFormalContext(
 		}`,
 			threadID,
 			matterID,
-			preparation.ProgrammerInterviewScenarioID,
-			preparation.BackendEngineerConfigID,
+			preparation.WorkplaceProgressRiskScenarioID,
+			preparation.WorkplaceProgressRiskConfigID,
 			profileID,
-			preparation.TechnicalInterviewerRoleID,
+			preparation.DirectManagerRoleID,
 		),
 		"voice-"+key+"-plan",
 		http.StatusCreated,
@@ -1778,8 +1795,8 @@ func createVoiceFormalContextSession(
 			"role_definition_ids":[%q]
 		}`,
 			formalContext.PreparationSnapshotID,
-			preparation.TechnicalFocusOptionID,
-			preparation.TechnicalInterviewerRoleID,
+			preparation.DirectManagerFocusOptionID,
+			preparation.DirectManagerRoleID,
 		),
 		"voice-"+key+"-context-session",
 		http.StatusCreated,
@@ -1826,40 +1843,6 @@ func assertNoLegacyVoiceSession(
 			formalCount,
 			legacyCount,
 		)
-	}
-}
-
-func assertQuotaExhaustedVoiceResponse(
-	t *testing.T,
-	response *http.Response,
-) {
-	t.Helper()
-	defer response.Body.Close()
-	raw, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != http.StatusServiceUnavailable ||
-		response.Header.Get("Retry-After") != "" {
-		t.Fatalf(
-			"quota response status = %d, Retry-After = %q: %s",
-			response.StatusCode,
-			response.Header.Get("Retry-After"),
-			raw,
-		)
-	}
-	var payload struct {
-		Error struct {
-			Code      string `json:"code"`
-			Retryable bool   `json:"retryable"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		t.Fatalf("decode quota response: %v", err)
-	}
-	if payload.Error.Code != "quota_exhausted" ||
-		payload.Error.Retryable {
-		t.Fatalf("quota response = %#v", payload)
 	}
 }
 
@@ -2028,6 +2011,49 @@ func createVoiceCandidate(
 	return candidate
 }
 
+func waitForVoicePracticeState(
+	t *testing.T,
+	baseURL string,
+	token string,
+	threadID string,
+	ready func(map[string]any) bool,
+) map[string]any {
+	t.Helper()
+	var state map[string]any
+	waitForVoiceCondition(t, "voice Practice state", func() bool {
+		state = voiceJSONRequest(
+			t,
+			baseURL,
+			token,
+			http.MethodGet,
+			"/v1/agent-threads/"+threadID+"/voice-practice-session",
+			"",
+			"",
+			http.StatusOK,
+		)
+		return ready(state)
+	})
+	return state
+}
+
+func waitForVoiceCondition(
+	t *testing.T,
+	description string,
+	ready func() bool,
+) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if ready() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", description)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func voiceJSONRequest(
 	t *testing.T,
 	baseURL string,
@@ -2180,6 +2206,15 @@ func voiceReviewFixture(prompt string) (string, error) {
 		"ownership_decisions",
 		"evidence_impact",
 		"language_clarity",
+	}
+	if strings.Contains(prompt, "workplace.progress_risk_update") {
+		dimensions = []string{
+			"progress_clarity",
+			"risk_specificity",
+			"impact_priority",
+			"next_step_ask",
+			"language_clarity",
+		}
 	}
 	conclusions := make([]map[string]any, len(dimensions))
 	for dimensionIndex, dimension := range dimensions {

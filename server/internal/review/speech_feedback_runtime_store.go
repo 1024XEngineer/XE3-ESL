@@ -91,6 +91,14 @@ func (r *PostgresRepository) ClaimSpeechFeedback(
 	if err != nil {
 		return SpeechFeedbackClaim{}, false, err
 	}
+	stored.PromptText, err = selectSpeechFeedbackAcousticPrompt(
+		ctx,
+		tx,
+		stored,
+	)
+	if err != nil {
+		return SpeechFeedbackClaim{}, false, err
+	}
 	sourceConsistent, err := verifyStoredSpeechFeedbackSource(
 		ctx,
 		tx,
@@ -108,7 +116,12 @@ func (r *PostgresRepository) ClaimSpeechFeedback(
 		OwnerUserID:        stored.OwnerUserID,
 		Source:             stored.Feedback.Source,
 		CanonicalText:      stored.CanonicalText,
+		PromptText:         stored.PromptText,
 		EvidenceRefID:      stored.EvidenceRefID,
+		AudioAssetID:       stored.AudioAssetID,
+		AudioAssetVersion:  stored.AudioAssetVersion,
+		AudioChecksum:      stored.AudioChecksum,
+		AudioObjectKey:     stored.AudioObjectKey,
 		SourceDigest:       stored.SourceDigest,
 		DeletionGeneration: stored.DeletionGeneration,
 		AttemptCount:       stored.AttemptCount,
@@ -392,21 +405,30 @@ func (r *PostgresRepository) FailSpeechFeedback(
 	err = tx.QueryRow(ctx, `
 		UPDATE review_speech_feedbacks
 		SET feedback_status =
-		        CASE WHEN $6 THEN 'QUEUED' ELSE 'FAILED' END,
+		        CASE
+		            WHEN $6::boolean THEN 'QUEUED'
+		            ELSE 'FAILED'
+		        END,
 		    stable_failure_code =
-		        CASE WHEN $6 THEN NULL ELSE $7 END,
+		        CASE
+		            WHEN $6::boolean THEN NULL
+		            ELSE $7::text
+		        END,
 		    stable_failure_retryable =
-		        CASE WHEN $6 THEN NULL ELSE $8 END,
+		        CASE
+		            WHEN $6::boolean THEN NULL
+		            ELSE $8::boolean
+		        END,
 		    lease_expires_at = NULL,
 		    available_at =
 		        CASE
-		            WHEN $6 THEN transaction_timestamp() +
-		                make_interval(secs => $9)
+		            WHEN $6::boolean THEN transaction_timestamp() +
+		                make_interval(secs => $9::double precision)
 		            ELSE available_at
 		        END,
 		    completed_at =
 		        CASE
-		            WHEN $6 THEN NULL
+		            WHEN $6::boolean THEN NULL
 		            ELSE transaction_timestamp()
 		        END,
 		    updated_at = transaction_timestamp()
@@ -479,10 +501,19 @@ func lockSpeechFeedbackClaim(
 	if err != nil {
 		return storedSpeechFeedback{}, err
 	}
+	stored.PromptText, err = selectSpeechFeedbackAcousticPrompt(
+		ctx,
+		tx,
+		stored,
+	)
+	if err != nil {
+		return storedSpeechFeedback{}, err
+	}
 	if stored.OwnerUserID != claim.OwnerUserID ||
 		stored.Feedback.FeedbackStatus != SpeechFeedbackRunning ||
 		stored.DeletionGeneration != claim.DeletionGeneration ||
 		stored.SourceDigest != claim.SourceDigest ||
+		stored.PromptText != claim.PromptText ||
 		stored.FencingToken != claim.FencingToken ||
 		stored.AttemptCount != claim.AttemptCount ||
 		stored.LeaseExpiresAt == nil ||
@@ -490,6 +521,48 @@ func lockSpeechFeedbackClaim(
 		return storedSpeechFeedback{}, ErrSpeechFeedbackClaimLost
 	}
 	return stored, nil
+}
+
+func selectSpeechFeedbackAcousticPrompt(
+	ctx context.Context,
+	database queryer,
+	stored storedSpeechFeedback,
+) (string, error) {
+	switch stored.Feedback.Source.SourceKind {
+	case SpeechFeedbackSourceAgentVoiceMessage:
+		return "", nil
+	case SpeechFeedbackSourceConversationTurn:
+		var promptText string
+		err := database.QueryRow(ctx, `
+			SELECT question.content
+			FROM conversation_confirmed_turns AS turn
+			JOIN conversation_questions AS question
+			  ON question.owner_user_id = turn.owner_user_id
+			 AND question.practice_session_id =
+			     turn.practice_session_id
+			 AND question.question_id = turn.question_id
+			WHERE turn.owner_user_id = $1
+			  AND turn.practice_session_id = $2
+			  AND turn.turn_id = $3
+		`, stored.OwnerUserID,
+			stored.Feedback.Source.PracticeSessionID,
+			stored.Feedback.Source.TurnID).Scan(&promptText)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrSpeechFeedbackClaimLost
+		}
+		if err != nil {
+			return "", fmt.Errorf(
+				"read Conversation SpeechFeedback prompt: %w",
+				err,
+			)
+		}
+		if !validSpeechFeedbackText(promptText, 10_000) {
+			return "", ErrInvalidSpeechFeedback
+		}
+		return promptText, nil
+	default:
+		return "", ErrInvalidSpeechFeedback
+	}
 }
 
 func verifyStoredSpeechFeedbackSource(
@@ -503,16 +576,31 @@ func verifyStoredSpeechFeedbackSource(
 			digest        []byte
 			canonicalText string
 			evidenceRefID string
+			promptText    string
 		)
 		err := tx.QueryRow(ctx, `
-			SELECT source_digest, transcript_text, evidence_ref_id
-			FROM review_speech_feedback_turn_snapshots
-			WHERE id = $1
-			  AND owner_user_id = $2
-			  AND practice_session_id = $3
-			  AND turn_id = $4
-			  AND input_revision = $5
-			FOR SHARE
+			SELECT
+				snapshot.source_digest,
+				snapshot.transcript_text,
+				snapshot.evidence_ref_id,
+				question.content
+			FROM review_speech_feedback_turn_snapshots AS snapshot
+			JOIN conversation_confirmed_turns AS turn
+			  ON turn.owner_user_id = snapshot.owner_user_id
+			 AND turn.practice_session_id =
+			     snapshot.practice_session_id
+			 AND turn.turn_id = snapshot.turn_id
+			JOIN conversation_questions AS question
+			  ON question.owner_user_id = turn.owner_user_id
+			 AND question.practice_session_id =
+			     turn.practice_session_id
+			 AND question.question_id = turn.question_id
+			WHERE snapshot.id = $1
+			  AND snapshot.owner_user_id = $2
+			  AND snapshot.practice_session_id = $3
+			  AND snapshot.turn_id = $4
+			  AND snapshot.input_revision = $5
+			FOR SHARE OF snapshot, turn, question
 		`, stored.Feedback.Source.EvidenceSnapshotID,
 			stored.OwnerUserID,
 			stored.Feedback.Source.PracticeSessionID,
@@ -521,6 +609,7 @@ func verifyStoredSpeechFeedbackSource(
 			&digest,
 			&canonicalText,
 			&evidenceRefID,
+			&promptText,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
@@ -538,7 +627,8 @@ func verifyStoredSpeechFeedbackSource(
 		copy(sourceDigest[:], digest)
 		return sourceDigest == stored.SourceDigest &&
 			canonicalText == stored.CanonicalText &&
-			evidenceRefID == stored.EvidenceRefID, nil
+			evidenceRefID == stored.EvidenceRefID &&
+			promptText == stored.PromptText, nil
 	case SpeechFeedbackSourceAgentVoiceMessage:
 		source, canonicalText, digest, err :=
 			selectConfirmedAgentSpeechFeedbackSource(

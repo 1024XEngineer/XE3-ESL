@@ -17,6 +17,7 @@ import 'package:speakup/features/preparation/preparation_launch_controller.dart'
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
+import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
@@ -205,7 +206,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     if (!reloaded ||
-        !widget.agentController.prepareActiveMatterForScenario(
+        !await widget.agentController.prepareActiveMatterForScenario(
           action.matterId,
         )) {
       _showMockNotice('这场面试暂时无法打开，请稍后重试');
@@ -271,6 +272,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             selection: result.selection,
           ),
         );
+      } else if (mounted &&
+          result == CompletedPracticeRouteResult.continueWithAgent) {
+        setState(() => _selectedIndex = 0);
       }
     } finally {
       _practiceRouteInFlight = false;

@@ -1625,6 +1625,40 @@ void main() {
     },
   );
 
+  test('selects an existing Matter without creating a duplicate', () async {
+    final transport = _ScriptedTransport([
+      _Step(
+        method: 'GET',
+        path: '/v1/matters/$_matterId',
+        response: _jsonResponse(
+          HttpStatus.ok,
+          _matterJson(id: _matterId, title: 'Saved interview'),
+        ),
+      ),
+      _Step(
+        method: 'PUT',
+        path: '/v1/agent-threads/$_threadId/active-matter',
+        verify: (call) {
+          expect(jsonDecode(call.body!), {'matter_id': _matterId});
+        },
+        response: _jsonResponse(
+          HttpStatus.ok,
+          _matterLinkJson(matterId: _matterId),
+        ),
+      ),
+    ]);
+    final harness = _Harness(transport);
+
+    final matter = await harness.client.selectExistingMatter(
+      threadId: _threadId,
+      matterId: _matterId,
+    );
+
+    expect(matter.id, _matterId);
+    expect(matter.scene.title, 'Saved interview');
+    transport.expectDone();
+  });
+
   test('recovers exactly one Matter after an ambiguous create', () async {
     final scene = agentScenes.first;
     final transport = _ScriptedTransport([

@@ -137,6 +137,40 @@ func TestAgentImageMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestSpeechFeedbackISEEvidenceMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000043_speech_feedback_ise_evidence.up.sql",
+		"000043_speech_feedback_ise_evidence.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf(
+				"read embedded SpeechFeedback ISE evidence migration %q: %v",
+				name,
+				err,
+			)
+		}
+	}
+}
+
+func TestSpeechFeedbackPracticeSessionIDMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000044_speech_feedback_practice_session_ids.up.sql",
+		"000044_speech_feedback_practice_session_ids.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf(
+				"read embedded SpeechFeedback practice session migration %q: %v",
+				name,
+				err,
+			)
+		}
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 

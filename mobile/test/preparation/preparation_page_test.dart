@@ -297,6 +297,71 @@ void main() {
     expect(launchController.bootstrap?.maxEffectiveTurns, 6);
   });
 
+  testWidgets(
+    'Agent-created interview opens the custom scene and starts directly',
+    (tester) async {
+      final agentController = AgentController(client: FakeAgentClient());
+      final preparationController = PreparationController(
+        client: _CustomInterviewClient(),
+      );
+      final launchClient = _PageLaunchClient();
+      final launchController = PreparationLaunchController(
+        client: launchClient,
+        contextProvider: () => _pageContext,
+        threadIdProvider: () => _pageContext.threadId,
+        matterActivator:
+            ({
+              required threadId,
+              required selection,
+              required clientOperationId,
+            }) async => _pageContext,
+        voiceActivator:
+            ({
+              required context,
+              required bootstrap,
+              required clientOperationId,
+            }) async {},
+        idFactory: (scope) => '$scope-agent-created-key',
+      );
+      var navigations = 0;
+      await agentController.initialize();
+      await agentController.selectScene(
+        const AgentScene(
+          id: 'agent-created-interview',
+          title: '阿里高级 Java 开发面试',
+          description: '重点练习 JVM、并发和系统设计。',
+        ),
+      );
+      addTearDown(agentController.dispose);
+      addTearDown(preparationController.dispose);
+      addTearDown(launchController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PreparationPage(
+            agentController: agentController,
+            preparationController: preparationController,
+            launchController: launchController,
+            onPracticeStarted: () => navigations++,
+            openInterviewRequestGeneration: 1,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
+      expect(launchClient.selection?.scenarioDefinitionId, _customScenarioId);
+      expect(launchClient.selection?.scenarioDisplayName, '阿里高级 Java 开发面试');
+      expect(launchClient.selection?.scenarioDescription, '重点练习 JVM、并发和系统设计。');
+      expect(launchClient.selection?.roleDefinitionId, _customRole.id);
+      expect(navigations, 1);
+      expect(
+        find.byKey(const Key('preparation-hub-list-interview')),
+        findsNothing,
+      );
+    },
+  );
+
   testWidgets('direct start reports a missing practice context in place', (
     tester,
   ) async {
@@ -463,6 +528,25 @@ class _FixtureClient implements PreparationCatalogClient {
   Future<List<PreparationRole>> listRoles(String scenarioId) async => _roles;
 }
 
+final class _CustomInterviewClient implements PreparationCatalogClient {
+  @override
+  Future<void> clearAccountState() async {}
+
+  @override
+  Future<PreparationScenarioDetail> getScenario(String scenarioId) async =>
+      _customDetail;
+
+  @override
+  Future<List<PreparationScenario>> listScenarios() async => const [
+    _customScenario,
+  ];
+
+  @override
+  Future<List<PreparationRole>> listRoles(String scenarioId) async => const [
+    _customRole,
+  ];
+}
+
 final class _MultiScenarioClient implements PreparationCatalogClient {
   @override
   Future<void> clearAccountState() async {}
@@ -558,6 +642,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
 
   final Completer<PreparationPracticeBootstrap>? sessionCompleter;
   final calls = <String>[];
+  PreparationLaunchSelection? selection;
 
   @override
   Future<void> clearAccountState() async {}
@@ -599,6 +684,7 @@ final class _PageLaunchClient implements PreparationLaunchClient {
     required String idempotencyKey,
   }) async {
     calls.add('plan');
+    selection = input.selection;
     return PreparationPracticePlan(
       id: 'plan-1',
       userId: input.preparationUserId,
@@ -641,6 +727,7 @@ const _pageContext = AgentPracticeContext(
 );
 
 const _scenarioId = 'scn_programmer_interview';
+const _customScenarioId = 'scn_interview_custom';
 
 const _scenario = PreparationScenario(
   id: _scenarioId,
@@ -648,6 +735,16 @@ const _scenario = PreparationScenario(
   model: 'PROJECT_EXPERIENCE_DEEP_DIVE',
   name: 'English interview for technical roles',
   summary: 'Discuss one backend project.',
+  version: 1,
+  status: 'active',
+);
+
+const _customScenario = PreparationScenario(
+  id: _customScenarioId,
+  type: 'INTERVIEW',
+  model: 'INTERVIEW_BASIC_DIALOGUE',
+  name: 'Custom interview',
+  summary: 'Practice the interview created with the Agent.',
   version: 1,
   status: 'active',
 );
@@ -700,6 +797,17 @@ const _otherRole = PreparationRole(
   responsibilities: 'Guide a focused conversation.',
   style: 'Supportive.',
   focusAreas: ['fluency'],
+  version: 1,
+);
+
+const _customRole = PreparationRole(
+  id: 'role_custom_interviewer',
+  scenarioId: _customScenarioId,
+  type: 'CUSTOM_INTERVIEWER',
+  displayName: 'Custom interviewer',
+  responsibilities: 'Follow the user-created interview context.',
+  style: 'Professional.',
+  focusAreas: ['custom_goal'],
   version: 1,
 );
 
@@ -854,6 +962,46 @@ const _detail = PreparationScenarioDetail(
       roleId: 'role_executive_interviewer',
       type: PreparationOptionType.focus,
       displayName: 'Leadership and impact focus',
+      version: 1,
+    ),
+  ],
+);
+
+const _customDetail = PreparationScenarioDetail(
+  scenario: _customScenario,
+  config: PreparationScenarioConfig(
+    id: 'scfg_interview_custom',
+    scenarioId: _customScenarioId,
+    type: 'INTERVIEW',
+    model: 'INTERVIEW_BASIC_DIALOGUE',
+    version: 1,
+    jobTitle: 'Custom role',
+    jobDescription: 'Use the user-created interview context.',
+    prompt: PreparationScenarioPrompt(
+      publicSceneBrief: 'Practice the interview created with the Agent.',
+      practiceGoal: 'Answer relevant interview questions.',
+      userRole: 'Candidate',
+      aiRole: 'Interviewer',
+      personaSummary: 'Professional and focused.',
+      focusAreas: ['custom_goal'],
+      turnBlueprints: ['Ask one relevant interview question.'],
+      suggestedDurationSeconds: 600,
+    ),
+  ),
+  options: [
+    PreparationOption(
+      id: 'option_custom_full',
+      scenarioId: _customScenarioId,
+      type: PreparationOptionType.fullSimulation,
+      displayName: 'Full simulation',
+      version: 1,
+    ),
+    PreparationOption(
+      id: 'option_custom_focus',
+      scenarioId: _customScenarioId,
+      roleId: 'role_custom_interviewer',
+      type: PreparationOptionType.focus,
+      displayName: 'Custom interview focus',
       version: 1,
     ),
   ],

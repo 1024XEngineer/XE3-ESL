@@ -314,9 +314,11 @@ func TestVoiceCompletionEvaluationAdapterRoutesOnlyCompletedIELTSFullMock(
 		TurnLimit:      14,
 	}
 	coordinator := &ieltsSpeakingCompletionCoordinatorStub{}
+	interviewCoordinator := &interviewShadowCoordinatorStub{}
 	adapter := &voiceCompletionEvaluationAdapter{
-		sessions:    voiceCompletionSessionPortStub{session: session},
-		ieltsShadow: coordinator,
+		sessions:        voiceCompletionSessionPortStub{session: session},
+		interviewShadow: interviewCoordinator,
+		ieltsShadow:     coordinator,
 	}
 	source := agent.VoiceCompletionEvaluationSource{
 		SessionID: session.ID,
@@ -351,6 +353,14 @@ func TestVoiceCompletionEvaluationAdapterRoutesOnlyCompletedIELTSFullMock(
 		t.Fatalf(
 			"Interview also invoked IELTS coordinator: %d",
 			coordinator.calls,
+		)
+	}
+	if interviewCoordinator.calls != 1 ||
+		interviewCoordinator.actor != actor ||
+		interviewCoordinator.sessionID != session.ID {
+		t.Fatalf(
+			"Interview coordinator call = %+v",
+			interviewCoordinator,
 		)
 	}
 }
@@ -394,6 +404,33 @@ func TestVoiceCompletionEvaluationAdapterFailsExplicitly(t *testing.T) {
 		source,
 	); !errors.Is(err, want) {
 		t.Fatalf("coordinator error = %v, want %v", err, want)
+	}
+
+	interview := session
+	interview.ScenarioType = "INTERVIEW"
+	interview.ScenarioModel = "INTERVIEW_BASIC_DIALOGUE"
+	interview.EffectiveTurns = 3
+	interview.TurnLimit = 3
+	adapter.sessions = voiceCompletionSessionPortStub{session: interview}
+	adapter.interviewShadow = nil
+	if err := adapter.EnsureCompletedSessionEvaluation(
+		context.Background(),
+		actor,
+		source,
+	); err == nil {
+		t.Fatal("missing Interview coordinator was silently ignored")
+	}
+
+	interviewErr := errors.New("Interview completion failed")
+	adapter.interviewShadow = &interviewShadowCoordinatorStub{
+		err: interviewErr,
+	}
+	if err := adapter.EnsureCompletedSessionEvaluation(
+		context.Background(),
+		actor,
+		source,
+	); !errors.Is(err, interviewErr) {
+		t.Fatalf("Interview coordinator error = %v, want %v", err, interviewErr)
 	}
 
 	session.EffectiveTurns = 13

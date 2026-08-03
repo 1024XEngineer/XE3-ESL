@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode"
@@ -44,7 +45,12 @@ type SpeechFeedbackClaim struct {
 	OwnerUserID        string
 	Source             SpeechFeedbackSource
 	CanonicalText      string
+	PromptText         string
 	EvidenceRefID      string
+	AudioAssetID       string
+	AudioAssetVersion  int64
+	AudioChecksum      string
+	AudioObjectKey     string
 	SourceDigest       [sha256.Size]byte
 	DeletionGeneration int64
 	AttemptCount       int
@@ -60,6 +66,7 @@ func (claim SpeechFeedbackClaim) Valid() bool {
 		validUUID(claim.OwnerUserID) &&
 		claim.Source.valid() &&
 		validSpeechFeedbackText(claim.CanonicalText, 16*1024) &&
+		claim.validAcousticPrompt() &&
 		((claim.Source.SourceKind ==
 			SpeechFeedbackSourceConversationTurn &&
 			validSpeechFeedbackIdentifier(claim.EvidenceRefID)) ||
@@ -75,6 +82,36 @@ func (claim SpeechFeedbackClaim) Valid() bool {
 		claim.PipelineVersion == SpeechFeedbackPipelineVersion
 }
 
+func (claim SpeechFeedbackClaim) validAcousticPrompt() bool {
+	switch claim.Source.SourceKind {
+	case SpeechFeedbackSourceConversationTurn:
+		return validSpeechFeedbackText(claim.PromptText, 10_000)
+	case SpeechFeedbackSourceAgentVoiceMessage:
+		return claim.PromptText == ""
+	default:
+		return false
+	}
+}
+
+func (claim SpeechFeedbackClaim) hasAcousticSource() bool {
+	if !validSpeechFeedbackIdentifier(claim.AudioAssetID) ||
+		claim.AudioAssetVersion <= 0 ||
+		len(claim.AudioChecksum) != 64 {
+		return false
+	}
+	switch claim.Source.SourceKind {
+	case SpeechFeedbackSourceConversationTurn:
+		return claim.AudioObjectKey == ""
+	case SpeechFeedbackSourceAgentVoiceMessage:
+		return strings.HasPrefix(
+			claim.AudioObjectKey,
+			"audio/v1/agent/",
+		)
+	default:
+		return false
+	}
+}
+
 type SpeechFeedbackSweepResult struct {
 	Claimed      int
 	Completed    int
@@ -84,9 +121,34 @@ type SpeechFeedbackSweepResult struct {
 }
 
 type SpeechFeedbackWorker struct {
-	repository    SpeechFeedbackRepository
-	provider      SpeechFeedbackProvider
-	configuration SpeechFeedbackWorkerConfiguration
+	repository         SpeechFeedbackRepository
+	provider           SpeechFeedbackProvider
+	acousticRepository SpeechFeedbackAcousticRepository
+	acousticProvider   SpeechFeedbackAcousticProvider
+	configuration      SpeechFeedbackWorkerConfiguration
+}
+
+func NewSpeechFeedbackWorkerWithAcoustics(
+	repository SpeechFeedbackRepository,
+	provider SpeechFeedbackProvider,
+	acousticRepository SpeechFeedbackAcousticRepository,
+	acousticProvider SpeechFeedbackAcousticProvider,
+	configuration SpeechFeedbackWorkerConfiguration,
+) (*SpeechFeedbackWorker, error) {
+	worker, err := NewSpeechFeedbackWorker(
+		repository,
+		provider,
+		configuration,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if acousticRepository == nil || acousticProvider == nil {
+		return nil, ErrInvalidSpeechFeedback
+	}
+	worker.acousticRepository = acousticRepository
+	worker.acousticProvider = acousticProvider
+	return worker, nil
 }
 
 func NewSpeechFeedbackWorker(
@@ -166,6 +228,45 @@ func (worker *SpeechFeedbackWorker) processClaim(
 				},
 			)
 		return SpeechFeedbackReady, true, err
+	}
+	if worker.acousticProvider != nil && claim.hasAcousticSource() {
+		evidence, acousticErr :=
+			worker.acousticProvider.EvaluateSpeechFeedbackAcoustics(
+				ctx,
+				SpeechFeedbackAcousticInput{
+					OwnerUserID:       claim.OwnerUserID,
+					AudioAssetID:      claim.AudioAssetID,
+					AudioAssetVersion: claim.AudioAssetVersion,
+					AudioChecksum:     claim.AudioChecksum,
+					AudioObjectKey:    claim.AudioObjectKey,
+					ConfirmedText:     claim.CanonicalText,
+					PromptText:        claim.PromptText,
+				},
+			)
+		if acousticErr == nil {
+			if err := worker.acousticRepository.
+				SaveSpeechFeedbackAcousticEvidence(
+					context.WithoutCancel(ctx),
+					claim,
+					evidence,
+				); err != nil {
+				return "", false, err
+			}
+		} else {
+			slog.WarnContext(
+				ctx,
+				"speech feedback acoustic evaluation unavailable",
+				slog.String(
+					"speech_feedback_id",
+					claim.SpeechFeedbackID,
+				),
+				slog.String(
+					"source_kind",
+					string(claim.Source.SourceKind),
+				),
+				slog.Any("error", acousticErr),
+			)
+		}
 	}
 	if !speechFeedbackTextHasEnoughEvidence(claim.CanonicalText) {
 		_, err := worker.repository.

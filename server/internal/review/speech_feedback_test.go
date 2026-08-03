@@ -268,6 +268,13 @@ func TestSpeechFeedbackScenarioGateUsesExactTypeModelPairs(t *testing.T) {
 		{"DAILY", "DAILY_BASIC_DIALOGUE"},
 		{"WORKPLACE", "PROGRESS_AND_RISK_UPDATE"},
 		{"WORKPLACE", "WORKPLACE_BASIC_DIALOGUE"},
+		{"INTERVIEW", "PROJECT_EXPERIENCE_DEEP_DIVE"},
+		{"INTERVIEW", "INTERVIEW_BASIC_DIALOGUE"},
+		{"EXAM", "IELTS_SPEAKING_PART_1"},
+		{"EXAM", "IELTS_SPEAKING_PART_2"},
+		{"EXAM", "IELTS_SPEAKING_PART_3"},
+		{"EXAM", "IELTS_SPEAKING_FULL_MOCK"},
+		{"EXAM", "EXAM_BASIC_DIALOGUE"},
 	} {
 		if !eligibleSpeechFeedbackScenario(eligible[0], eligible[1]) {
 			t.Fatalf("eligible pair rejected: %#v", eligible)
@@ -276,8 +283,8 @@ func TestSpeechFeedbackScenarioGateUsesExactTypeModelPairs(t *testing.T) {
 	for _, hidden := range [][2]string{
 		{"DAILY", "WORKPLACE_BASIC_DIALOGUE"},
 		{"WORKPLACE", "DAILY_BASIC_DIALOGUE"},
-		{"INTERVIEW", "INTERVIEW_BASIC_DIALOGUE"},
-		{"EXAM", "IELTS_SPEAKING_PART_2"},
+		{"INTERVIEW", "IELTS_SPEAKING_PART_2"},
+		{"EXAM", "INTERVIEW_BASIC_DIALOGUE"},
 		{"", ""},
 	} {
 		if eligibleSpeechFeedbackScenario(hidden[0], hidden[1]) {

@@ -58,6 +58,35 @@ func TestServiceIssuesFrozenClientContractForOwnedInteractiveSession(
 	}
 }
 
+func TestServiceIssuesSessionTokenForInterview(t *testing.T) {
+	now := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
+	session := interactiveSession()
+	session.ScenarioType = persistence.ScenarioFamilyInterview
+	provider := &tokenProviderStub{
+		token: ProviderSessionToken{
+			Value:     "provider-session-token",
+			ExpiresAt: now.Add(10 * time.Minute),
+		},
+	}
+	service := newTestService(
+		t,
+		contextSessionReaderStub{session: session},
+		provider,
+	)
+	service.now = func() time.Time { return now }
+
+	if _, err := service.IssueSessionToken(
+		context.Background(),
+		testActor(),
+		"practice-session-1",
+	); err != nil {
+		t.Fatalf("IssueSessionToken() error = %v", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+}
+
 func TestServiceRejectsUnownedAndNonInteractiveSessionsBeforeProvider(
 	t *testing.T,
 ) {
@@ -105,7 +134,7 @@ func TestServiceRejectsUnownedAndNonInteractiveSessionsBeforeProvider(
 				session: func() persistence.ContextSession {
 					session := interactiveSession()
 					session.ScenarioType =
-						persistence.ScenarioFamilyInterview
+						persistence.ScenarioFamilyExam
 					return session
 				}(),
 			},

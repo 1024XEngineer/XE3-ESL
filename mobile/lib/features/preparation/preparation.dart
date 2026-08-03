@@ -15,6 +15,7 @@ import 'package:speakup/features/preparation/preparation_models.dart';
 
 const _jobInterviewScenarioId = 'scn_programmer_interview';
 const _interviewFullScenarioId = _jobInterviewScenarioId;
+const _agentCreatedInterviewScenarioId = 'scn_interview_custom';
 const _ieltsFullScenarioId = 'scn_ielts_speaking_full';
 const _ieltsScenarioIds = <String>{
   'scn_ielts_speaking_part_1',
@@ -67,6 +68,7 @@ class _PreparationPageState extends State<PreparationPage> {
   IeltsPracticeMode? _selectedIeltsSection;
   IeltsPracticeSelection? _launchingIeltsSelection;
   bool _handlingIeltsNavigation = false;
+  int _handledOpenInterviewRequestGeneration = 0;
 
   @override
   void initState() {
@@ -75,9 +77,7 @@ class _PreparationPageState extends State<PreparationPage> {
     widget.preparationController?.addListener(_rebuild);
     widget.launchController?.addListener(_rebuild);
     _backgroundController = _newBackgroundController(widget.launchController);
-    if (widget.openInterviewRequestGeneration > 0) {
-      _selectedHub = _PracticeHub.interview;
-    }
+    _scheduleOpenInterviewRequest();
     unawaited(widget.preparationController?.loadIfNeeded());
   }
 
@@ -101,9 +101,59 @@ class _PreparationPageState extends State<PreparationPage> {
     }
     if (oldWidget.openInterviewRequestGeneration !=
         widget.openInterviewRequestGeneration) {
-      _selectedHub = _PracticeHub.interview;
-      unawaited(widget.preparationController?.loadIfNeeded());
+      _scheduleOpenInterviewRequest();
     }
+  }
+
+  void _scheduleOpenInterviewRequest() {
+    final generation = widget.openInterviewRequestGeneration;
+    if (generation <= 0 ||
+        generation == _handledOpenInterviewRequestGeneration) {
+      return;
+    }
+    _handledOpenInterviewRequestGeneration = generation;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.openInterviewRequestGeneration == generation) {
+        unawaited(_openAgentCreatedInterview());
+      }
+    });
+  }
+
+  Future<void> _openAgentCreatedInterview() async {
+    final controller = widget.preparationController;
+    if (controller == null) {
+      return;
+    }
+    await controller.loadIfNeeded();
+    if (!mounted) {
+      return;
+    }
+    final scenario = _scenarioById(
+      controller.scenarios,
+      _agentCreatedInterviewScenarioId,
+    );
+    if (scenario == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('专属面试场景暂时不可用，请稍后重试')));
+      return;
+    }
+    final matter = widget.agentController?.activeMatter;
+    final background = matter?.scene.description.trim().isNotEmpty == true
+        ? matter!.scene.description.trim()
+        : matter?.scene.title.trim();
+    if (background != null && background.isNotEmpty) {
+      widget.launchController?.updateBackgroundSummary(background);
+    }
+    await _startScenarioDirectly(
+      controller,
+      scenario,
+      forceReplaceCurrentPractice:
+          widget.launchController?.hasResumablePractice == true &&
+          widget.launchController?.resumableMatterId != matter?.id,
+      scenarioDisplayName: matter?.scene.title,
+      scenarioDescription: background,
+    );
   }
 
   @override
@@ -180,6 +230,8 @@ class _PreparationPageState extends State<PreparationPage> {
   Future<void> _startPractice({
     required bool replaceCurrentPractice,
     IeltsPracticeSelection? ieltsSelection,
+    String? scenarioDisplayName,
+    String? scenarioDescription,
   }) async {
     final catalog = widget.preparationController;
     final launch = widget.launchController;
@@ -205,6 +257,8 @@ class _PreparationPageState extends State<PreparationPage> {
         role: role,
         option: option,
         ieltsSelection: ieltsSelection,
+        scenarioDisplayName: scenarioDisplayName,
+        scenarioDescription: scenarioDescription,
       ),
       replaceCurrentPractice: replaceCurrentPractice,
     );
@@ -247,6 +301,8 @@ class _PreparationPageState extends State<PreparationPage> {
     PreparationScenario scenario, {
     IeltsPracticeSelection? ieltsSelection,
     bool forceReplaceCurrentPractice = false,
+    String? scenarioDisplayName,
+    String? scenarioDescription,
   }) async {
     var replaceCurrentPractice = forceReplaceCurrentPractice;
     final launch = widget.launchController;
@@ -291,6 +347,8 @@ class _PreparationPageState extends State<PreparationPage> {
     await _startPractice(
       replaceCurrentPractice: replaceCurrentPractice,
       ieltsSelection: ieltsSelection,
+      scenarioDisplayName: scenarioDisplayName,
+      scenarioDescription: scenarioDescription,
     );
   }
 

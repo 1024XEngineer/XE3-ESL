@@ -8,7 +8,7 @@ final class InterviewReportController extends ChangeNotifier {
   InterviewReportController({
     required this.client,
     this.pollInterval = const Duration(seconds: 2),
-    this.maximumPollAttempts = 8,
+    this.maximumPollAttempts = 30,
   }) {
     if (pollInterval < Duration.zero) {
       throw ArgumentError.value(pollInterval, 'pollInterval');
@@ -85,6 +85,14 @@ final class InterviewReportController extends ChangeNotifier {
         if (!_isCurrent(generation, practiceSessionId) ||
             error.kind == InterviewReportFailureKind.superseded) {
           return;
+        }
+        if (error.kind == InterviewReportFailureKind.notFound &&
+            attempt + 1 < maximumPollAttempts) {
+          await Future<void>.delayed(pollInterval);
+          if (!_isCurrent(generation, practiceSessionId)) {
+            return;
+          }
+          continue;
         }
         _loading = false;
         _failureKind = error.kind;

@@ -16,14 +16,18 @@ void main() {
         ),
       ),
     );
-    expect(find.text('正在生成文字反馈…'), findsOneWidget);
+    expect(find.text('正在生成评分与纠错…'), findsOneWidget);
+    expect(
+      find.byKey(const Key('speech-feedback-loading-indicator')),
+      findsOneWidget,
+    );
 
     await tester.pumpWidget(
       _app(_projection(_feedback(status: SpeechFeedbackStatus.ready))),
     );
     await tester.pump();
 
-    expect(find.text('本轮表达反馈'), findsOneWidget);
+    expect(find.text('评分与纠错'), findsOneWidget);
     expect(
       find.byKey(const Key('speech-feedback-disclosure-content')),
       findsNothing,
@@ -46,7 +50,7 @@ void main() {
     expect(find.textContaining('基于已确认文本'), findsOneWidget);
     expect(find.text('I was'), findsOneWidget);
     expect(find.textContaining('发音与声学流利度未评估'), findsOneWidget);
-    expect(find.textContaining('分'), findsNothing);
+    expect(find.textContaining('发音准确度'), findsNothing);
   });
 
   testWidgets('shows repractice only from the server-declared mode', (
@@ -89,6 +93,48 @@ void main() {
     expect(action, findsNothing);
   });
 
+  testWidgets('shows the three trusted acoustic scores and notice', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        _projection(
+          _feedback(status: SpeechFeedbackStatus.ready, assessed: true),
+        ),
+      ),
+    );
+    await tester.tap(
+      find.byKey(const Key('speech-feedback-disclosure-toggle')),
+    );
+    await tester.pump();
+
+    expect(find.text('发音准确度 82 · 流利度 92 · 完整度 100'), findsOneWidget);
+    expect(find.text('根据本次录音自动评估，仅供练习参考。'), findsOneWidget);
+    expect(find.textContaining('未评估'), findsNothing);
+  });
+
+  testWidgets('shows topic pronunciation, speed, and relevance', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        _projection(
+          _feedback(
+            status: SpeechFeedbackStatus.ready,
+            assessed: true,
+            topic: true,
+          ),
+        ),
+      ),
+    );
+    await tester.tap(
+      find.byKey(const Key('speech-feedback-disclosure-toggle')),
+    );
+    await tester.pump();
+
+    expect(find.text('发音准确度 89 · 语速 156 词/分钟 · 题意相关 82'), findsOneWidget);
+  });
+
   testWidgets('separates insufficient evidence and technical failure', (
     tester,
   ) async {
@@ -103,7 +149,22 @@ void main() {
       find.byKey(const Key('speech-feedback-disclosure-toggle')),
     );
     await tester.pump();
+    expect(find.textContaining('输入太短'), findsOneWidget);
     expect(find.textContaining('不会按低分处理'), findsOneWidget);
+
+    await tester.pumpWidget(
+      _app(
+        _projection(
+          _feedback(
+            status: SpeechFeedbackStatus.ready,
+            insufficient: true,
+            reasonCodes: const ['TRANSCRIPT_CONFIDENCE_INSUFFICIENT'],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.textContaining('请尽量全程使用英语回答'), findsOneWidget);
 
     var retried = false;
     await tester.pumpWidget(
@@ -174,6 +235,9 @@ SpeechFeedback _feedback({
   String statusUrl = '/v1/speech-feedback/feedback_000000000001',
   required SpeechFeedbackStatus status,
   bool insufficient = false,
+  bool assessed = false,
+  bool topic = false,
+  List<String>? reasonCodes,
   SpeechFeedbackRepracticeMode repracticeMode =
       SpeechFeedbackRepracticeMode.sameQuestion,
 }) {
@@ -198,7 +262,9 @@ SpeechFeedback _feedback({
               ? SpeechFeedbackGateStatus.blocked
               : SpeechFeedbackGateStatus.feedbackOnly
         : null,
-    reasonCodes: insufficient ? const ['INSUFFICIENT_EVIDENCE'] : const [],
+    reasonCodes:
+        reasonCodes ??
+        (insufficient ? const ['INSUFFICIENT_EVIDENCE'] : const []),
     schemaVersion: 'speech-feedback/v1',
     strategyRef: 'qianwen-speech-feedback/v1',
     pipelineVersion: 'speech-feedback-pipeline/v1',
@@ -223,11 +289,38 @@ SpeechFeedback _feedback({
             ),
           ]
         : const [],
-    acousticAssessment: const SpeechFeedbackAcousticAssessment(
-      pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
-      acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
-      reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
-    ),
+    acousticAssessment: assessed
+        ? topic
+              ? const SpeechFeedbackAcousticAssessment(
+                  pronunciation: SpeechFeedbackAssessmentStatus.assessed,
+                  acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
+                  pronunciationScore: 88.5,
+                  speakingSpeedWpm: 156,
+                  semanticScore: 82,
+                  provider: 'xfyun-ise',
+                  providerSessionId: 'ise-topic-session-1',
+                  category: 'topic',
+                  notice: '根据本次录音自动评估，仅供练习参考。',
+                  reasonCode: '',
+                )
+              : const SpeechFeedbackAcousticAssessment(
+                  pronunciation: SpeechFeedbackAssessmentStatus.assessed,
+                  acousticFluency: SpeechFeedbackAssessmentStatus.assessed,
+                  integrity: SpeechFeedbackAssessmentStatus.assessed,
+                  accuracyScore: 81.5,
+                  fluencyScore: 92.25,
+                  integrityScore: 100,
+                  provider: 'xfyun-ise',
+                  providerSessionId: 'ise-session-1',
+                  category: 'read_sentence',
+                  notice: '根据本次录音自动评估，仅供练习参考。',
+                  reasonCode: '',
+                )
+        : const SpeechFeedbackAcousticAssessment(
+            pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
+            acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
+            reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
+          ),
     stableFailure: status == SpeechFeedbackStatus.failed
         ? const SpeechFeedbackStableFailure(
             reasonCode: 'INTERNAL_RETRYABLE',

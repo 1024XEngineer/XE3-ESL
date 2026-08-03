@@ -40,6 +40,18 @@ bool isIeltsSpeakingFullMockScenario(
   String? scenarioModel,
 ) => scenarioType == 'EXAM' && scenarioModel == 'IELTS_SPEAKING_FULL_MOCK';
 
+bool isInterviewPracticeScenario(String? scenarioType, String? scenarioModel) =>
+    scenarioType == 'INTERVIEW' &&
+    (scenarioModel == 'PROJECT_EXPERIENCE_DEEP_DIVE' ||
+        scenarioModel == 'INTERVIEW_BASIC_DIALOGUE');
+
+bool usesAsynchronousPracticeReport(
+  String? scenarioType,
+  String? scenarioModel,
+) =>
+    isInterviewPracticeScenario(scenarioType, scenarioModel) ||
+    isIeltsSpeakingFullMockScenario(scenarioType, scenarioModel);
+
 bool isTurnFeedbackEligiblePracticeScenario(
   String? scenarioType,
   String? scenarioModel,
@@ -346,6 +358,8 @@ enum PracticeSessionLifecycleStatus {
   completed,
   endedEarly,
 }
+
+enum CompletedPracticeRouteResult { continueWithAgent }
 
 final class PracticeSessionLifecycle {
   const PracticeSessionLifecycle({

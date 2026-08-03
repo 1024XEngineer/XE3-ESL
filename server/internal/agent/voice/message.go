@@ -481,11 +481,10 @@ func (service *VoiceMessageService) Confirm(
 		if feedbackErr != nil {
 			return VoiceConfirmation{}, feedbackErr
 		}
-		if strings.TrimSpace(reference.StatusURL) == "" {
-			return VoiceConfirmation{}, ErrInvalidRequest
+		if strings.TrimSpace(reference.StatusURL) != "" {
+			confirmation.Message.SpeechFeedbackStatusURL =
+				reference.StatusURL
 		}
-		confirmation.Message.SpeechFeedbackStatusURL =
-			reference.StatusURL
 	}
 	if confirmation.Run.Status == RunStatusPending {
 		confirmation.Run, err = service.runs.ProcessPending(

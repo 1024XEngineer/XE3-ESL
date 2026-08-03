@@ -457,6 +457,37 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     }
   }
 
+  Future<bool> completeAndContinueWithAgent(String reportSummary) async {
+    final current = _current;
+    final summary = reportSummary.trim();
+    if (current == null ||
+        summary.isEmpty ||
+        summary.length > 6000 ||
+        !current.isCommitted ||
+        current.returnThreadId == null ||
+        agentController.threadId != current.practiceThreadId ||
+        agentController.practiceSessionId != current.sessionId ||
+        agentController.recordingState != PracticeRecordingState.completed) {
+      _setError('练习尚未完整结束，暂时无法回到 Agent 复盘。');
+      return false;
+    }
+    final title = current.scenarioTitle!;
+    final completedTurns = agentController.completedTurns;
+    if (!await parkCurrentPractice()) {
+      return false;
+    }
+    final sent = await agentController.sendText(
+      '我刚完成了“$title”的 $completedTurns 轮练习。'
+      '下面附上这次练习已生成的真实报告摘要，请直接基于它先概括我的主要表现，再问我想重点复盘哪一部分：\n$summary',
+    );
+    if (!sent) {
+      _setError('已回到原会话，但暂时无法把练习结果发送给 Agent。');
+      return false;
+    }
+    _errorMessage = null;
+    return true;
+  }
+
   Future<PracticeWorkspaceLease?> replaceCurrentPractice(
     String operationId,
   ) async {
@@ -1140,7 +1171,7 @@ final class _StoredPracticeWorkspace {
       final presentationModeName = version == 1
           ? AgentScenePresentationMode.standard.name
           : decoded['presentation_mode'];
-      final presentationMode = AgentScenePresentationMode.values
+      final storedPresentationMode = AgentScenePresentationMode.values
           .where((value) => value.name == presentationModeName)
           .firstOrNull;
       if (accountId is! String ||
@@ -1152,7 +1183,7 @@ final class _StoredPracticeWorkspace {
           (scenarioId != null && scenarioId is! String) ||
           (scenarioTitle != null && scenarioTitle is! String) ||
           (scenarioType != null && scenarioType is! String) ||
-          presentationMode == null ||
+          storedPresentationMode == null ||
           !_validOpaqueId(accountId) ||
           !_validOperationId(operationId) ||
           !_validOpaqueId(practiceThreadId) ||
@@ -1161,6 +1192,11 @@ final class _StoredPracticeWorkspace {
                   returnThreadId == practiceThreadId))) {
         return null;
       }
+      final presentationMode =
+          scenarioType == 'INTERVIEW' &&
+              storedPresentationMode == AgentScenePresentationMode.standard
+          ? AgentScenePresentationMode.immersiveRoleplay
+          : storedPresentationMode;
       final committedValues = <Object?>[
         matterId,
         sessionId,
@@ -1213,7 +1249,8 @@ bool _validScenePresentation(
   }
   return presentationMode != AgentScenePresentationMode.immersiveRoleplay ||
       scenarioType == 'WORKPLACE' ||
-      scenarioType == 'DAILY';
+      scenarioType == 'DAILY' ||
+      scenarioType == 'INTERVIEW';
 }
 
 bool _validOpaqueId(String value) {
