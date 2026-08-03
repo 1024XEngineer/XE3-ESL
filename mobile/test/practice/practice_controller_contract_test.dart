@@ -175,6 +175,55 @@ void main() {
   });
 
   test(
+    'does not apply final recovery after private state is cleared',
+    () async {
+      final practice = _TwoTurnPracticeClient(
+        scenarioType: 'INTERVIEW',
+        scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+      );
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.selectScene(agentScenes.first);
+      await controller.startRecording();
+      await controller.stopRecording();
+      await controller.confirmTranscript();
+      await controller.startRecording();
+      await controller.stopRecording();
+      final matter = controller.activeMatter!;
+
+      final restoreGate = Completer<PracticeSessionSnapshot?>();
+      practice
+        ..confirmFailure = const AgentClientException(
+          kind: AgentClientFailureKind.network,
+          retryable: true,
+        )
+        ..restoreGate = restoreGate;
+      final confirmation = controller.confirmTranscript();
+      await Future<void>.delayed(Duration.zero);
+
+      await controller.clearPrivateState();
+      restoreGate.complete(
+        _completedInterviewSnapshot(
+          matter: matter,
+          questionId: 'question-2',
+          candidateId: 'candidate-2',
+          answer: 'Answer 2',
+        ),
+      );
+      await confirmation;
+
+      expect(controller.practiceSessionId, isNull);
+      expect(controller.recordingState, PracticeRecordingState.idle);
+      expect(controller.completedTurns, 0);
+    },
+  );
+
+  test(
     'retains failed transcription audio and retries with one Turn identity',
     () async {
       final practice = _TwoTurnPracticeClient()
@@ -1425,6 +1474,7 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   Object? textFailure;
   Object? restoreFailure;
   PracticeSessionSnapshot? restoreResult;
+  Completer<PracticeSessionSnapshot?>? restoreGate;
   int transcribeCount = 0;
   int restoreCount = 0;
   final List<String> transcriptionClientTurnIds = <String>[];
@@ -1443,6 +1493,9 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     restoreCount++;
     if (restoreFailure case final failure?) {
       throw failure;
+    }
+    if (restoreGate case final gate?) {
+      return gate.future;
     }
     return restoreResult;
   }

@@ -2850,6 +2850,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         final reconciled = isFinalInterviewTurn && _canRetry(error)
             ? await _reconcileFinalInterviewSubmission(
                 practice: practice,
+                fence: fence,
                 expectedSessionId: sessionId,
                 expectedQuestionId: question.id,
                 expectedCandidateId: candidate.id,
@@ -2995,6 +2996,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         final reconciled = isFinalInterviewTurn && _canRetry(error)
             ? await _reconcileFinalInterviewSubmission(
                 practice: practice,
+                fence: fence,
                 expectedSessionId: sessionId,
                 expectedQuestionId: question.id,
                 expectedAnswer: text,
@@ -3072,6 +3074,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<bool> _reconcileFinalInterviewSubmission({
     required PracticeClient practice,
+    required _AgentOperationFence fence,
     required String expectedSessionId,
     required String expectedQuestionId,
     required String expectedAnswer,
@@ -3088,6 +3091,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         threadId: threadId,
         activeMatter: _activeMatter,
       );
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
       final currentTurn = snapshot?.currentTurn;
       if (snapshot == null ||
           snapshot.sessionId != expectedSessionId ||
