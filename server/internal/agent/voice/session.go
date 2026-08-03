@@ -37,9 +37,11 @@ type VoicePracticeSession struct {
 	ScenarioModel            string
 	PromptModel              VoiceScenarioPrompt
 	PreviousUserResponse     string
+	PreviousQuestion         string
 	SessionVersion           int
 	EffectiveTurns           int
 	TurnLimit                int
+	MaxFollowUpsPerQuestion  int
 	Completed                bool
 	Status                   string
 	InterviewerParticipantID string
@@ -651,12 +653,19 @@ func (application *VoiceSessionApplication) state(
 	}
 	if state.Turn != nil {
 		state.Session.PreviousUserResponse = state.Turn.AnswerText
+		if len(history) > 0 {
+			state.Session.PreviousQuestion = history[len(history)-1].Question.Text
+		}
+	}
+	nextQuestionSequence := len(history) + 1
+	if len(history) == 0 && state.Session.EffectiveTurns > 0 {
+		nextQuestionSequence = state.Session.EffectiveTurns + 1
 	}
 	question, err := application.questions.EnsureQuestion(
 		ctx,
 		actor,
 		state.Session,
-		state.Session.EffectiveTurns+1,
+		nextQuestionSequence,
 	)
 	if err != nil {
 		return VoiceSessionState{}, err
@@ -688,20 +697,40 @@ func (application *VoiceSessionApplication) restoreTurnHistory(
 	if err != nil {
 		return nil, err
 	}
-	if len(history) != session.EffectiveTurns {
-		return nil, ErrInvalidContext
-	}
+	effectiveTurns := 0
+	primaryQuestionIDs := make(map[string]struct{})
 	for index, exchange := range history {
-		expectedTurn := index + 1
+		if exchange.Turn.CountsTowardTurnLimit {
+			effectiveTurns++
+		}
 		if exchange.Question.SessionID != session.ID ||
 			exchange.Turn.SessionID != session.ID ||
 			exchange.Question.ID != exchange.Turn.QuestionID ||
-			exchange.Turn.EffectiveTurns != expectedTurn ||
+			exchange.Turn.EffectiveTurns != effectiveTurns ||
+			(exchange.Question.Type == "PRIMARY") !=
+				exchange.Turn.CountsTowardTurnLimit ||
+			(exchange.Question.Type == "PRIMARY" &&
+				exchange.Question.ParentQuestionID != "") ||
+			(exchange.Question.Type == "FOLLOW_UP" &&
+				exchange.Question.ParentQuestionID == "") ||
+			(exchange.Question.Type != "PRIMARY" &&
+				exchange.Question.Type != "FOLLOW_UP") ||
 			(exchange.Turn.SessionCompleted !=
-				(expectedTurn == session.EffectiveTurns &&
+				(effectiveTurns == session.EffectiveTurns &&
+					index == len(history)-1 &&
 					session.Completed)) {
 			return nil, ErrInvalidContext
 		}
+		if exchange.Question.Type == "FOLLOW_UP" {
+			if _, found := primaryQuestionIDs[exchange.Question.ParentQuestionID]; !found {
+				return nil, ErrInvalidContext
+			}
+		} else {
+			primaryQuestionIDs[exchange.Question.ID] = struct{}{}
+		}
+	}
+	if effectiveTurns != session.EffectiveTurns {
+		return nil, ErrInvalidContext
 	}
 	return history, nil
 }

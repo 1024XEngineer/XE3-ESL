@@ -212,6 +212,7 @@ func (port *agentVoiceConversation) Confirm(
 		TranscriptID:            candidate.TranscriptID,
 		EvidenceVersion:         candidate.EvidenceVersion,
 		AnswerText:              candidate.Transcript,
+		CountsTowardTurnLimit:   true,
 	}
 	port.confirmations[command.IdempotencyKey] = turn.ID
 	port.turns[turn.ID] = turn
@@ -311,6 +312,7 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	actor requestcontext.Actor,
 	sessionID string,
 	turnID string,
+	countsTowardTurnLimit bool,
 ) (VoiceTurnProgress, error) {
 	practice.mu.Lock()
 	defer practice.mu.Unlock()
@@ -320,7 +322,9 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	if existing, found := practice.turns[turnID]; found {
 		return existing, nil
 	}
-	practice.effectiveTurns++
+	if countsTowardTurnLimit {
+		practice.effectiveTurns++
+	}
 	result := VoiceTurnProgress{
 		EffectiveTurns:   practice.effectiveTurns,
 		SessionVersion:   practice.effectiveTurns + 1,
@@ -647,6 +651,7 @@ func (voiceSessionTestQuestions) EnsureQuestion(
 	return conversation.VoiceQuestion{
 		ID:                      "question-next",
 		SessionID:               session.ID,
+		Type:                    "PRIMARY",
 		Text:                    "What happened next?",
 		SpeakerParticipantID:    session.InterviewerParticipantID,
 		AddresseeParticipantIDs: []string{session.CandidateParticipantID},
@@ -661,6 +666,7 @@ func (voiceSessionTestQuestions) GetQuestion(
 	return conversation.VoiceQuestion{
 		ID:        questionID,
 		SessionID: "session-1",
+		Type:      "PRIMARY",
 		Text:      "What happened next?",
 	}, nil
 }

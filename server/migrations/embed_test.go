@@ -171,6 +171,21 @@ func TestSpeechFeedbackPracticeSessionIDMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestPracticeFollowUpMigrationsAreEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000047_practice_follow_up_turns.up.sql",
+		"000047_practice_follow_up_turns.down.sql",
+		"000048_follow_up_confirmed_turn_shape.up.sql",
+		"000048_follow_up_confirmed_turn_shape.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf("read embedded Practice follow-up migration %q: %v", name, err)
+		}
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 

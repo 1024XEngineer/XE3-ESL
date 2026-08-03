@@ -121,8 +121,14 @@ func (r *Repository) AdvanceContextVoiceTurn(
 		return persistence.TurnResult{}, persistence.ErrSessionCompleted
 	}
 
-	round := effectiveTurns + 1
-	completed := round == turnLimit
+	round := effectiveTurns
+	if command.CountsTowardTurnLimit {
+		round++
+	}
+	if round < 1 {
+		return persistence.TurnResult{}, persistence.ErrConflict
+	}
+	completed := command.CountsTowardTurnLimit && round == turnLimit
 	nextVersion := version + 1
 	completionToken := ""
 	if completed {

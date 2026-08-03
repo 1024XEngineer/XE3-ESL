@@ -32,4 +32,6 @@ import "embed"
 //go:embed 000044_speech_feedback_practice_session_ids.*.sql
 //go:embed 000045_speech_feedback_ise_topic.*.sql
 //go:embed 000046_agent_thread_sidebar_deletion.*.sql
+//go:embed 000047_practice_follow_up_turns.*.sql
+//go:embed 000048_follow_up_confirmed_turn_shape.*.sql
 var Files embed.FS

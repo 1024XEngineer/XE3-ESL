@@ -135,6 +135,37 @@ void main() {
     expect(interruptedBeforeSubmit, isTrue);
   });
 
+  testWidgets('keeps a follow-up in the current displayed interview round', (
+    tester,
+  ) async {
+    final controller = await _roleplayController(
+      practiceClient: _AsyncReviewPracticeClient(
+        scenarioType: 'INTERVIEW',
+        scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+        followUpAfterAnswer: true,
+      ),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: ImmersiveRoleplayPage(agentController: controller)),
+    );
+    await tester.pump();
+
+    expect(find.text('第 1 轮 · 共 3 轮'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('immersive-open-keyboard')));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('immersive-text-answer')),
+      'I led the API redesign for our checkout flow.',
+    );
+    await tester.tap(find.byKey(const Key('immersive-submit-text')));
+    await tester.pumpAndSettle();
+
+    expect(controller.completedTurns, 1);
+    expect(controller.currentQuestion?.isFollowUp, isTrue);
+    expect(find.text('第 1 轮 · 共 3 轮'), findsOneWidget);
+  });
+
   testWidgets('bounds avatar interruption before opening the microphone', (
     tester,
   ) async {
@@ -549,11 +580,16 @@ final class _FailOncePracticeClient implements PracticeClient {
 }
 
 final class _AsyncReviewPracticeClient implements PracticeClient {
-  _AsyncReviewPracticeClient({this.scenarioType, this.scenarioModel});
+  _AsyncReviewPracticeClient({
+    this.scenarioType,
+    this.scenarioModel,
+    this.followUpAfterAnswer = false,
+  });
 
   final _delegate = FakePracticeClient();
   final String? scenarioType;
   final String? scenarioModel;
+  final bool followUpAfterAnswer;
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
@@ -647,12 +683,45 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
     required String questionId,
     required String answerText,
     required String idempotencyKey,
-  }) => _delegate.submitText(
-    sessionId: sessionId,
-    questionId: questionId,
-    answerText: answerText,
-    idempotencyKey: idempotencyKey,
-  );
+  }) async {
+    final confirmation = await _delegate.submitText(
+      sessionId: sessionId,
+      questionId: questionId,
+      answerText: answerText,
+      idempotencyKey: idempotencyKey,
+    );
+    if (!followUpAfterAnswer || confirmation.nextQuestion == null) {
+      return confirmation;
+    }
+    final nextQuestion = confirmation.nextQuestion!;
+    return PracticeTurnConfirmation(
+      turnId: confirmation.turnId,
+      sessionId: confirmation.sessionId,
+      questionId: confirmation.questionId,
+      candidateId: confirmation.candidateId,
+      answer: confirmation.answer,
+      completedTurns: confirmation.completedTurns,
+      turnLimit: confirmation.turnLimit,
+      sessionCompleted: confirmation.sessionCompleted,
+      scenarioType: scenarioType,
+      scenarioModel: scenarioModel,
+      sessionVersion: confirmation.sessionVersion,
+      nextQuestion: PracticeQuestion(
+        id: nextQuestion.id,
+        sessionId: nextQuestion.sessionId,
+        text: nextQuestion.text,
+        questionType: 'FOLLOW_UP',
+        parentQuestionId: questionId,
+        speakerParticipantId: nextQuestion.speakerParticipantId,
+        addresseeParticipantIds: nextQuestion.addresseeParticipantIds,
+        speechPath: nextQuestion.speechPath,
+      ),
+      review: confirmation.review,
+      formalReview: confirmation.formalReview,
+      audioAssetId: confirmation.audioAssetId,
+      speechFeedbackStatusUrl: confirmation.speechFeedbackStatusUrl,
+    );
+  }
 }
 
 final class _PendingSpeechFeedbackClient implements SpeechFeedbackClient {

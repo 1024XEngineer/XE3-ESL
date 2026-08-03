@@ -29,6 +29,8 @@ const voicePersistenceTimeout = 5 * time.Second
 type VoiceQuestion struct {
 	ID                      string
 	SessionID               string
+	Type                    string
+	ParentQuestionID        string
 	Text                    string
 	SpeakerParticipantID    string
 	AddresseeParticipantIDs []string

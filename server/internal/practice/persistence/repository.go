@@ -95,8 +95,9 @@ type Session struct {
 }
 
 type ConsumeTurnCommand struct {
-	SessionID string
-	TurnID    string
+	SessionID             string
+	TurnID                string
+	CountsTowardTurnLimit bool
 	// Payload is used only to derive an idempotency fingerprint. Practice
 	// never persists the transcript, audio, or provider request body.
 	Payload []byte

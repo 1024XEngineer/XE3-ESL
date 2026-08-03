@@ -39,6 +39,121 @@ var testReviewHistoryCursorKey = []byte(
 	"0123456789abcdef0123456789abcdef",
 )
 
+func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
+	pool := voiceIntegrationDatabase(t)
+	text := &followUpVoiceTextGenerator{}
+	catalog, err := preparation.NewBuiltinCatalog()
+	if err != nil {
+		t.Fatalf("build Preparation catalog: %v", err)
+	}
+	server := newVoiceProductionIntegrationServer(
+		t,
+		pool,
+		catalog,
+		text,
+		VoiceConfiguration{
+			Recognizer: &voiceRecognizer{},
+			Synthesizer: fake.NewFailingSpeechSynthesizer(
+				fmt.Errorf("tts unavailable"),
+			),
+			TemporaryAudio:          newVoiceTestVault(t),
+			ObjectStore:             newVoiceObjectStore(),
+			AudioStagedTTL:          time.Hour,
+			ASRLease:                5 * time.Second,
+			ReviewGenerationTimeout: 2 * time.Second,
+			ReviewHistoryCursorKey:  testReviewHistoryCursorKey,
+		},
+	)
+
+	token := registerAndLoginVoiceUser(
+		t,
+		server.URL,
+		"voice-follow-up@example.com",
+	)
+	formalContext := createVoiceInterviewFormalContext(
+		t,
+		server.URL,
+		token,
+		"follow-up",
+	)
+	state := voiceJSONRequest(
+		t,
+		server.URL,
+		token,
+		http.MethodPost,
+		"/v1/agent-threads/"+formalContext.ThreadID+
+			"/voice-practice-sessions",
+		"",
+		"start-follow-up-session",
+		http.StatusCreated,
+	)
+	primary := state["current_question"].(map[string]any)
+	if primary["question_type"] != "PRIMARY" {
+		t.Fatalf("initial Question = %#v, want PRIMARY", primary)
+	}
+
+	state = submitVoiceTextAnswer(
+		t,
+		server.URL,
+		token,
+		state,
+		"I led the migration and coordinated the rollout.",
+		"follow-up-primary-answer",
+	)
+	followUp := state["current_question"].(map[string]any)
+	if state["effective_turns"] != float64(1) ||
+		followUp["question_type"] != "FOLLOW_UP" ||
+		followUp["parent_question_id"] != primary["question_id"] {
+		t.Fatalf("first follow-up state = %#v", state)
+	}
+
+	state = submitVoiceTextAnswer(
+		t,
+		server.URL,
+		token,
+		state,
+		"The main trade-off was delivery speed versus rollback safety.",
+		"follow-up-answer",
+	)
+	nextPrimary := state["current_question"].(map[string]any)
+	currentTurn := state["current_turn"].(map[string]any)
+	if state["effective_turns"] != float64(1) ||
+		currentTurn["counts_toward_effective_turn_limit"] != false ||
+		nextPrimary["question_type"] != "PRIMARY" {
+		t.Fatalf("confirmed follow-up state = %#v", state)
+	}
+	if _, found := nextPrimary["parent_question_id"]; found {
+		t.Fatalf("next PRIMARY retained parent: %#v", nextPrimary)
+	}
+
+	var storedType string
+	var storedCounts bool
+	var storedEffectiveTurns int
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT question.question_type,
+		        turn.counts_toward_effective_turn_limit,
+		        turn.effective_turns
+		 FROM conversation_confirmed_turns AS turn
+		 JOIN conversation_questions AS question
+		   ON question.owner_user_id = turn.owner_user_id
+		  AND question.question_id = turn.question_id
+		 WHERE turn.practice_session_id = $1
+		   AND question.question_type = 'FOLLOW_UP'`,
+		formalContext.SessionID,
+	).Scan(&storedType, &storedCounts, &storedEffectiveTurns); err != nil {
+		t.Fatalf("read stored follow-up Turn: %v", err)
+	}
+	if storedType != "FOLLOW_UP" || storedCounts || storedEffectiveTurns != 1 {
+		t.Fatalf(
+			"stored follow-up = (%q, %v, %d)",
+			storedType,
+			storedCounts,
+			storedEffectiveTurns,
+		)
+	}
+}
+
 func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	t *testing.T,
 ) {
@@ -1697,6 +1812,115 @@ func createVoiceFormalThreadContext(
 	)
 }
 
+func createVoiceInterviewFormalContext(
+	t *testing.T,
+	baseURL string,
+	token string,
+	key string,
+) voiceFormalContext {
+	t.Helper()
+	matterID := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/matters",
+		fmt.Sprintf(`{"title":"Interview %s"}`, key),
+		"",
+		http.StatusCreated,
+	)["matter_id"].(string)
+	threadID := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/agent-threads",
+		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		"",
+		http.StatusCreated,
+	)["thread_id"].(string)
+	profile := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/preparation-profiles",
+		fmt.Sprintf(`{
+			"resume_ref":"resume-%s",
+			"job_description_ref":"job-%s",
+			"background_summary":"Interview follow-up context %s."
+		}`, key, key, key),
+		"voice-"+key+"-profile",
+		http.StatusCreated,
+	)
+	profileID := profile["preparation_profile_id"].(string)
+	snapshot := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/preparation-profiles/"+profileID+"/snapshots",
+		`{"source_version":1}`,
+		"voice-"+key+"-preparation-snapshot",
+		http.StatusCreated,
+	)
+	formalContext := voiceFormalContext{
+		PreparationSnapshotID: snapshot["preparation_snapshot_id"].(string),
+		ThreadID:              threadID,
+		MatterID:              matterID,
+	}
+	plan := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/practice-plans",
+		fmt.Sprintf(`{
+			"agent_thread_id":%q,
+			"matter_id":%q,
+			"scenario_definition_id":%q,
+			"scenario_definition_version":1,
+			"scenario_config_id":%q,
+			"scenario_config_version":1,
+			"preparation_profile_id":%q,
+			"selected_role_ids":[%q]
+		}`,
+			threadID,
+			matterID,
+			preparation.ProgrammerInterviewScenarioID,
+			preparation.BackendEngineerConfigID,
+			profileID,
+			preparation.TechnicalInterviewerRoleID,
+		),
+		"voice-"+key+"-plan",
+		http.StatusCreated,
+	)
+	formalContext.PlanID = plan["practice_plan_id"].(string)
+	bootstrap := voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/practice-plans/"+formalContext.PlanID+"/practice-sessions",
+		fmt.Sprintf(`{
+			"expected_plan_revision":1,
+			"user_confirmed":true,
+			"preparation_snapshot_id":%q,
+			"practice_option_id":%q,
+			"role_definition_ids":[%q]
+		}`,
+			formalContext.PreparationSnapshotID,
+			preparation.TechnicalFocusOptionID,
+			preparation.TechnicalInterviewerRoleID,
+		),
+		"voice-"+key+"-context-session",
+		http.StatusCreated,
+	)
+	session := bootstrap["practice_session"].(map[string]any)
+	formalContext.SessionID = session["practice_session_id"].(string)
+	return formalContext
+}
+
 func createVoiceFormalContext(
 	t *testing.T,
 	baseURL string,
@@ -1944,6 +2168,31 @@ func registerAndLoginVoiceUser(
 	return login["session_token"].(string)
 }
 
+func submitVoiceTextAnswer(
+	t *testing.T,
+	baseURL string,
+	token string,
+	state map[string]any,
+	answer string,
+	key string,
+) map[string]any {
+	t.Helper()
+	sessionID := state["practice_session_id"].(string)
+	question := state["current_question"].(map[string]any)
+	return voiceJSONRequest(
+		t,
+		baseURL,
+		token,
+		http.MethodPost,
+		"/v1/voice-practice-sessions/"+sessionID+
+			"/questions/"+question["question_id"].(string)+
+			"/text-answers",
+		fmt.Sprintf(`{"answer_text":%q}`, answer),
+		key,
+		http.StatusOK,
+	)
+}
+
 func transcribeAndConfirmVoiceRound(
 	t *testing.T,
 	baseURL string,
@@ -2131,6 +2380,29 @@ type voiceTextGenerator struct {
 	reviewCalls           atomic.Int64
 	reviewFailuresPending atomic.Int64
 	quotaReviewPending    atomic.Bool
+}
+
+type followUpVoiceTextGenerator struct {
+	questionCalls atomic.Int64
+}
+
+func (generator *followUpVoiceTextGenerator) Generate(
+	_ context.Context,
+	_ ai.TextRequest,
+) (ai.TextResult, error) {
+	call := generator.questionCalls.Add(1)
+	content := "Tell me about a project you led."
+	if call == 2 {
+		content = `{"question_type":"FOLLOW_UP","content":"What trade-off did you make in that project?"}`
+	} else if call > 2 {
+		content = `{"question_type":"PRIMARY","content":"Tell me about another difficult decision."}`
+	}
+	return ai.TextResult{
+		ID:       fmt.Sprintf("follow-up-question-completion-%d", call),
+		Provider: "fake",
+		Model:    "fake-text-v1",
+		Content:  content,
+	}, nil
 }
 
 func (generator *voiceTextGenerator) Generate(

@@ -77,6 +77,7 @@ type VoicePracticePort interface {
 		requestcontext.Actor,
 		string,
 		string,
+		bool,
 	) (VoiceTurnProgress, error)
 	RequiresSessionReview(
 		context.Context,
@@ -324,6 +325,7 @@ func (orchestrator *VoiceRoundOrchestrator) finishTurn(
 			actor,
 			turn.SessionID,
 			turn.ID,
+			turn.CountsTowardTurnLimit,
 		)
 		if applyErr != nil {
 			return conversation.ConfirmedVoiceTurn{}, applyErr

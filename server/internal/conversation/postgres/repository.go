@@ -875,7 +875,7 @@ func (r *Repository) confirmTurnInTransaction(
 		}
 		turnID := newID("turn")
 		turnKind := conversation.TurnKindEffective
-		countsTowardTurnLimit := true
+		countsTowardTurnLimit := question.Type == "PRIMARY"
 		retryRequestID := ""
 		originalTurnID := ""
 		if command.RetryTurnID != "" {
@@ -1053,8 +1053,7 @@ func (r *Repository) SaveTurnProgress(
 	if err != nil {
 		return conversation.ConfirmedTurn{}, err
 	}
-	if turn.Kind != conversation.TurnKindEffective ||
-		!turn.CountsTowardTurnLimit {
+	if turn.Kind != conversation.TurnKindEffective {
 		return conversation.ConfirmedTurn{},
 			conversation.ErrPersistenceConflict
 	}

@@ -1510,6 +1510,9 @@ func defaultContextSessionPolicy(
 		TargetObjectives:         objectives,
 		EarlyCompletionRule:      "COVERAGE_SATISFIED_AFTER_CHECKPOINT",
 	}
+	if config.Type == persistence.ScenarioFamilyInterview {
+		policy.MaxFollowUpsPerQuestion = 3
+	}
 	if policy.SuggestedDurationSeconds == 0 {
 		policy.SuggestedDurationSeconds = 900
 	}

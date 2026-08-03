@@ -104,6 +104,7 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 		"content",
 		"practice_session_id",
 		"question_id",
+		"question_type",
 		"speaker_participant_id",
 		"speech_path",
 	)
@@ -189,6 +190,7 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 			state["current_turn"].(map[string]any),
 			"answer_text",
 			"candidate_id",
+			"counts_toward_effective_turn_limit",
 			"effective_turns",
 			"evidence_version",
 			"practice_session_id",

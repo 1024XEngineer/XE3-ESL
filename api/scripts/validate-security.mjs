@@ -1518,11 +1518,31 @@ for (const [schemaName, propertyName] of [
   );
 }
 const voiceSessionState = resolveLocalReference(schemas.VoiceSessionState);
+const voiceQuestion = resolveLocalReference(schemas.VoiceQuestion);
+assert.ok(
+  voiceQuestion?.required?.includes('question_type'),
+  'VoiceQuestion must expose its PRIMARY/FOLLOW_UP classification.',
+);
+assert.deepEqual(voiceQuestion.properties.question_type.enum, [
+  'PRIMARY',
+  'FOLLOW_UP',
+]);
+const confirmedVoiceTurn = resolveLocalReference(schemas.ConfirmedVoiceTurn);
+assert.ok(
+  confirmedVoiceTurn?.required?.includes(
+    'counts_toward_effective_turn_limit',
+  ),
+  'ConfirmedVoiceTurn must expose whether it advances the displayed round.',
+);
 assert.ok(
   voiceSessionState?.properties?.turn_history,
   'VoiceSessionState must expose the bounded cold-start Turn history.',
 );
-assert.equal(voiceSessionState.properties.turn_history.maxItems, 14);
+assert.equal(
+  voiceSessionState.properties.turn_history.maxItems,
+  56,
+  'Turn history must allow 14 primary Questions with three follow-ups each.',
+);
 assert.ok(
   !(voiceSessionState.required ?? []).includes('turn_history'),
   'turn_history must remain an optional projection.',

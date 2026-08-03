@@ -541,8 +541,9 @@ func contextVoiceTurnCommand(
 	turnID string,
 ) persistence.ConsumeTurnCommand {
 	return persistence.ConsumeTurnCommand{
-		SessionID: sessionID,
-		TurnID:    turnID,
-		Payload:   []byte("conversation-turn:" + turnID),
+		SessionID:             sessionID,
+		TurnID:                turnID,
+		CountsTowardTurnLimit: true,
+		Payload:               []byte("conversation-turn:" + turnID),
 	}
 }

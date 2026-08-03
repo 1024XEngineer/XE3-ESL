@@ -816,10 +816,10 @@ class _ConversationHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final current = (controller.completedTurns + 1).clamp(
-      1,
-      controller.turnLimit,
-    );
+    final current =
+        (controller.completedTurns +
+                (controller.currentQuestion?.isFollowUp == true ? 0 : 1))
+            .clamp(1, controller.turnLimit);
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
       decoration: const BoxDecoration(

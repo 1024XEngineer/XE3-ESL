@@ -103,6 +103,7 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 		owner.Actor,
 		created.Session.ID,
 		"voice-turn-1",
+		true,
 	)
 	if err != nil {
 		t.Fatalf("ApplyEffectiveTurn: %v", err)
@@ -127,6 +128,7 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 		owner.Actor,
 		created.Session.ID,
 		"voice-turn-1",
+		true,
 	)
 	if err != nil {
 		t.Fatalf("replay after restart: %v", err)

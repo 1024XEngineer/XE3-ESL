@@ -257,6 +257,16 @@ func TestSessionPolicyIsFrozenByPracticeOptionType(t *testing.T) {
 		focus.MaxEffectiveTurns != 3 {
 		t.Fatalf("FOCUS policy = %+v", focus)
 	}
+	interview := defaultContextSessionPolicy(
+		persistence.ScenarioConfigSnapshot{
+			Type:       persistence.ScenarioFamilyInterview,
+			FocusAreas: []string{"system_design"},
+		},
+		persistence.PracticeOptionSnapshot{Type: "FOCUS"},
+	)
+	if interview.MaxFollowUpsPerQuestion != 3 {
+		t.Fatalf("INTERVIEW policy = %+v", interview)
+	}
 
 	ieltsFull := defaultContextSessionPolicy(
 		persistence.ScenarioConfigSnapshot{
