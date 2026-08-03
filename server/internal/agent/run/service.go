@@ -36,6 +36,7 @@ const (
 
 type Service struct {
 	repository       Repository
+	messages         MessageReader
 	imageSubmissions ImageSubmissionRepository
 	manifests        agentcontext.ManifestRepository
 	assembler        *agentcontext.Assembler
@@ -68,18 +69,21 @@ type Option func(*Service) error
 
 func NewService(
 	repository Repository,
+	messages MessageReader,
 	manifests agentcontext.ManifestRepository,
 	assembler *agentcontext.Assembler,
 	generator ai.TextGenerator,
 	configuration Configuration,
 	options ...Option,
 ) (*Service, error) {
-	if repository == nil || manifests == nil || assembler == nil || generator == nil ||
+	if repository == nil || messages == nil || manifests == nil ||
+		assembler == nil || generator == nil ||
 		!configuration.Valid() {
 		return nil, errors.New("agent: run dependency or configuration is invalid")
 	}
 	service := &Service{
 		repository:    repository,
+		messages:      messages,
 		manifests:     manifests,
 		assembler:     assembler,
 		generator:     generator,
@@ -364,7 +368,7 @@ func (service *Service) RetryTextStream(
 	if err != nil {
 		return Retry{}, err
 	}
-	userMessage, err := service.repository.FindMessage(
+	userMessage, err := service.messages.FindMessage(
 		ctx,
 		actor.UserID,
 		retry.Run.ThreadID,

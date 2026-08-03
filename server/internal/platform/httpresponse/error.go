@@ -138,6 +138,8 @@ func statusForCategory(category apperror.Category) (int, bool) {
 	switch category {
 	case apperror.InvalidArgument:
 		return http.StatusBadRequest, true
+	case apperror.PayloadTooLarge:
+		return http.StatusRequestEntityTooLarge, true
 	case apperror.Unauthenticated:
 		return http.StatusUnauthorized, true
 	case apperror.PermissionDenied:

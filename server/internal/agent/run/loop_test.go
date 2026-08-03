@@ -12,7 +12,6 @@ import (
 	"time"
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	slashcommand "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/slashcommand"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
@@ -1226,15 +1225,6 @@ func (loopRepository) Claim(context.Context, string, string) (Run, bool, error) 
 
 func (loopRepository) Find(context.Context, string, string) (Run, error) {
 	panic("unexpected Find")
-}
-
-func (loopRepository) FindMessage(
-	context.Context,
-	string,
-	string,
-	string,
-) (conversation.Message, error) {
-	panic("unexpected FindMessage")
 }
 
 func (loopRepository) ProposeToolCall(

@@ -16,7 +16,7 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 	t.Parallel()
 
 	completedAt := time.Now().UTC()
-	repository := &fakeCompletedAgentRunRepository{
+	runs := &fakeCompletedAgentRunReader{
 		run: agentrun.Run{
 			ID:                 "10000000-0000-4000-8000-000000000001",
 			OwnerID:            "20000000-0000-4000-8000-000000000001",
@@ -27,6 +27,8 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 			Status:             agentrun.StatusCompleted,
 			CompletedAt:        completedAt,
 		},
+	}
+	messages := &fakeCompletedAgentMessageReader{
 		messages: map[string]agentconversation.Message{
 			"40000000-0000-4000-8000-000000000001": {
 				ID:      "40000000-0000-4000-8000-000000000001",
@@ -37,18 +39,24 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 				Content: "I will tailor the practice.",
 			},
 		},
+	}
+	manifests := &fakeCompletedAgentManifestReader{
 		manifest: agentcontext.Manifest{
 			ActiveMatterID: "60000000-0000-4000-8000-000000000001",
 		},
 	}
-	reader, err := newAgentCompletedRunReader(repository)
+	reader, err := newAgentCompletedRunReader(
+		runs,
+		messages,
+		manifests,
+	)
 	if err != nil {
 		t.Fatalf("newAgentCompletedRunReader: %v", err)
 	}
 	source, err := reader.ReadCompletedRun(
 		context.Background(),
-		repository.run.OwnerID,
-		repository.run.ID,
+		runs.run.OwnerID,
+		runs.run.ID,
 	)
 	if err != nil {
 		t.Fatalf("ReadCompletedRun: %v", err)
@@ -56,7 +64,7 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 	if !source.Valid() ||
 		source.UserText != "I am a Java backend engineer." ||
 		source.AssistantText != "I will tailor the practice." ||
-		source.MatterID != repository.manifest.ActiveMatterID {
+		source.MatterID != manifests.manifest.ActiveMatterID {
 		t.Fatalf("source = %#v", source)
 	}
 }
@@ -64,18 +72,22 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 func TestAgentCompletedRunReaderRejectsNonCompletedRun(t *testing.T) {
 	t.Parallel()
 
-	repository := &fakeCompletedAgentRunRepository{
+	runs := &fakeCompletedAgentRunReader{
 		run: agentrun.Run{
 			ID:      "10000000-0000-4000-8000-000000000001",
 			OwnerID: "20000000-0000-4000-8000-000000000001",
 			Status:  agentrun.StatusRunning,
 		},
 	}
-	reader, _ := newAgentCompletedRunReader(repository)
+	reader, _ := newAgentCompletedRunReader(
+		runs,
+		&fakeCompletedAgentMessageReader{},
+		&fakeCompletedAgentManifestReader{},
+	)
 	if _, err := reader.ReadCompletedRun(
 		context.Background(),
-		repository.run.OwnerID,
-		repository.run.ID,
+		runs.run.OwnerID,
+		runs.run.ID,
 	); !errors.Is(err, memory.ErrNotFound) {
 		t.Fatalf("ReadCompletedRun error = %v", err)
 	}
@@ -93,38 +105,49 @@ func TestAgentCompletedRunReaderTreatsInvalidStoredManifestAsDependencyFailure(
 	}
 }
 
-type fakeCompletedAgentRunRepository struct {
-	run      agentrun.Run
-	messages map[string]agentconversation.Message
-	manifest agentcontext.Manifest
-	err      error
+type fakeCompletedAgentRunReader struct {
+	run agentrun.Run
+	err error
 }
 
-func (repository *fakeCompletedAgentRunRepository) Find(
+func (reader *fakeCompletedAgentRunReader) Find(
 	context.Context,
 	string,
 	string,
 ) (agentrun.Run, error) {
-	return repository.run, repository.err
+	return reader.run, reader.err
 }
 
-func (repository *fakeCompletedAgentRunRepository) FindMessage(
+type fakeCompletedAgentMessageReader struct {
+	messages map[string]agentconversation.Message
+	err      error
+}
+
+func (reader *fakeCompletedAgentMessageReader) FindMessage(
 	_ context.Context,
 	_ string,
 	_ string,
 	messageID string,
 ) (agentconversation.Message, error) {
-	message, ok := repository.messages[messageID]
+	if reader.err != nil {
+		return agentconversation.Message{}, reader.err
+	}
+	message, ok := reader.messages[messageID]
 	if !ok {
 		return agentconversation.Message{}, agentconversation.ErrNotFound
 	}
 	return message, nil
 }
 
-func (repository *fakeCompletedAgentRunRepository) FindManifest(
+type fakeCompletedAgentManifestReader struct {
+	manifest agentcontext.Manifest
+	err      error
+}
+
+func (reader *fakeCompletedAgentManifestReader) FindManifest(
 	context.Context,
 	string,
 	string,
 ) (agentcontext.Manifest, error) {
-	return repository.manifest, repository.err
+	return reader.manifest, reader.err
 }

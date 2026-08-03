@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -22,7 +21,6 @@ type Repository interface {
 	CreateRetry(stdcontext.Context, string, string, string, Configuration) (Retry, error)
 	Claim(stdcontext.Context, string, string) (Run, bool, error)
 	Find(stdcontext.Context, string, string) (Run, error)
-	FindMessage(stdcontext.Context, string, string, string) (conversation.Message, error)
 	ProposeToolCall(stdcontext.Context, ToolCall) (ToolCall, error)
 	StartToolCall(stdcontext.Context, string, string, string, string) (ToolCall, error)
 	CompleteToolCall(

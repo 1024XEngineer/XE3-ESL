@@ -21,14 +21,20 @@ const (
 	memoryExtractionRetries = 3
 )
 
-type completedAgentRunRepository interface {
+type completedAgentRunReader interface {
 	Find(context.Context, string, string) (agentrun.Run, error)
+}
+
+type completedAgentMessageReader interface {
 	FindMessage(
 		context.Context,
 		string,
 		string,
 		string,
 	) (agentconversation.Message, error)
+}
+
+type completedAgentManifestReader interface {
 	FindManifest(
 		context.Context,
 		string,
@@ -37,18 +43,26 @@ type completedAgentRunRepository interface {
 }
 
 type agentCompletedRunReader struct {
-	runs completedAgentRunRepository
+	runs      completedAgentRunReader
+	messages  completedAgentMessageReader
+	manifests completedAgentManifestReader
 }
 
 func newAgentCompletedRunReader(
-	runs completedAgentRunRepository,
+	runs completedAgentRunReader,
+	messages completedAgentMessageReader,
+	manifests completedAgentManifestReader,
 ) (*agentCompletedRunReader, error) {
-	if runs == nil {
+	if runs == nil || messages == nil || manifests == nil {
 		return nil, errors.New(
-			"bootstrap: completed AgentRun reader is required",
+			"bootstrap: completed Agent Run sources are required",
 		)
 	}
-	return &agentCompletedRunReader{runs: runs}, nil
+	return &agentCompletedRunReader{
+		runs:      runs,
+		messages:  messages,
+		manifests: manifests,
+	}, nil
 }
 
 func (reader *agentCompletedRunReader) ReadCompletedRun(
@@ -68,7 +82,7 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 		run.Status != agentrun.StatusCompleted {
 		return memory.CompletedRunSource{}, memory.ErrNotFound
 	}
-	input, err := reader.runs.FindMessage(
+	input, err := reader.messages.FindMessage(
 		ctx,
 		ownerID,
 		run.ThreadID,
@@ -77,7 +91,7 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 	if err != nil {
 		return memory.CompletedRunSource{}, mapAgentMemorySourceError(err)
 	}
-	assistant, err := reader.runs.FindMessage(
+	assistant, err := reader.messages.FindMessage(
 		ctx,
 		ownerID,
 		run.ThreadID,
@@ -86,7 +100,7 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 	if err != nil {
 		return memory.CompletedRunSource{}, mapAgentMemorySourceError(err)
 	}
-	manifest, err := reader.runs.FindManifest(ctx, ownerID, runID)
+	manifest, err := reader.manifests.FindManifest(ctx, ownerID, runID)
 	if err != nil {
 		return memory.CompletedRunSource{}, mapAgentMemorySourceError(err)
 	}
@@ -113,7 +127,9 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 func buildMemoryExtractionProcessor(
 	database memory.PostgreSQL,
 	ids memory.IDGenerator,
-	runs completedAgentRunRepository,
+	runs completedAgentRunReader,
+	messages completedAgentMessageReader,
+	manifests completedAgentManifestReader,
 	generator ai.TextGenerator,
 	runConfiguration agentrun.Configuration,
 ) (memory.ExtractionProcessor, error) {
@@ -130,7 +146,7 @@ func buildMemoryExtractionProcessor(
 	if err != nil {
 		return nil, err
 	}
-	sources, err := newAgentCompletedRunReader(runs)
+	sources, err := newAgentCompletedRunReader(runs, messages, manifests)
 	if err != nil {
 		return nil, err
 	}
