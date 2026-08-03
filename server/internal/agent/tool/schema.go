@@ -68,6 +68,27 @@ type Invocation struct {
 	Input json.RawMessage
 }
 
+type InvocationEffect uint8
+
+const (
+	InvocationEffectReadOnly InvocationEffect = iota + 1
+	InvocationEffectMayWrite
+)
+
+// MayWrite reports whether an invocation must consume the write budget.
+// Unknown values fail closed and therefore also report a possible write.
+func (effect InvocationEffect) MayWrite() bool {
+	return effect != InvocationEffectReadOnly
+}
+
+// InvocationEffectClassifier lets a conditionally writing tool classify one
+// invocation after Registry has normalized its input against the tool schema.
+type InvocationEffectClassifier interface {
+	ClassifyInvocationEffect(
+		input json.RawMessage,
+	) (InvocationEffect, error)
+}
+
 type Result struct {
 	Content    map[string]any `json:"content"`
 	SourceRefs []SourceRef    `json:"source_refs,omitempty"`

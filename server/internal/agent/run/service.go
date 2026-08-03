@@ -17,7 +17,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 )
 
 const (
@@ -715,6 +714,10 @@ func (service *Service) generateObserved(
 			Name:      parsed.Invocation.Name,
 			Arguments: parsed.Invocation.Input,
 		}
+		commandEffect := service.registry.InvocationEffect(parsed.Invocation)
+		if commandEffect.MayWrite() {
+			writeCalls++
+		}
 		if err := service.saveToolCallProposed(loopCtx, run, commandCall); err != nil {
 			return ai.TextResult{}, err
 		}
@@ -734,10 +737,6 @@ func (service *Service) generateObserved(
 		seenToolCallIDs[commandCall.ID] = struct{}{}
 		toolCalls = 1
 		toolIterations = 1
-		if definition, ok := service.toolDefinition(commandCall.Name); ok &&
-			!definition.ReadOnly {
-			writeCalls = 1
-		}
 		finalDecision = "tool_call_then_response"
 	}
 	for {
@@ -834,8 +833,10 @@ func (service *Service) generateObserved(
 			)
 			return result, nil
 		}
-		// 先检查整批调用，防止同一批写操作只执行一部分后才发现预算不足。
-		if writeCalls+service.writeToolCallCount(result.ToolCalls) >
+		// 先分类并预留整批调用的写预算，防止部分执行以及未知、
+		// 非法调用在后续循环中重新获得写额度。
+		pendingWriteCalls := service.writeToolCallCount(result.ToolCalls)
+		if writeCalls+pendingWriteCalls >
 			service.loopLimits.MaxWriteToolCalls {
 			result := fallbackResult(
 				service.configuration,
@@ -851,6 +852,7 @@ func (service *Service) generateObserved(
 			)
 			return result, nil
 		}
+		writeCalls += pendingWriteCalls
 		request.Messages = append(request.Messages, ai.TextMessage{
 			Content:   result.Content,
 			Role:      ai.TextRoleAssistant,
@@ -882,7 +884,7 @@ func (service *Service) generateObserved(
 				)
 				continue
 			}
-			definition, ok := service.toolDefinition(call.Name)
+			_, ok := service.toolDefinition(call.Name)
 			if !ok {
 				if err := service.markToolCallRejected(
 					loopCtx,
@@ -897,9 +899,6 @@ func (service *Service) generateObserved(
 					toolFailureMessage(call.ID, tool.ErrUnknownTool),
 				)
 				continue
-			}
-			if !definition.ReadOnly {
-				writeCalls++
 			}
 			toolMessage, err := service.executeToolCall(
 				loopCtx,
@@ -1458,25 +1457,15 @@ func (service *Service) writeToolCallCount(
 ) int {
 	count := 0
 	for _, call := range calls {
-		definition, ok := service.toolDefinition(call.Name)
-		if ok && !definition.ReadOnly && toolCallMayWrite(call) {
+		effect := service.registry.InvocationEffect(tool.Invocation{
+			Name:  call.Name,
+			Input: call.Arguments,
+		})
+		if effect.MayWrite() {
 			count++
 		}
 	}
 	return count
-}
-
-func toolCallMayWrite(call ai.ToolCall) bool {
-	if call.Name != practiceagenttool.PracticePreviewToolName {
-		return true
-	}
-	var input practiceagenttool.PreviewInput
-	if err := json.Unmarshal(call.Arguments, &input); err != nil {
-		return true
-	}
-	return (input.BackgroundSummary != "" ||
-		input.PreparationProfileID != "" ||
-		input.PreparationSnapshotID != "") && input.MaxEffectiveTurns > 0
 }
 
 func (service *Service) loopBudgetFallback(

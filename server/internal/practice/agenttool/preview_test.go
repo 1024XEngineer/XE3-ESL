@@ -63,3 +63,49 @@ func TestPreviewToolSchemaAllowsNeedsInputRequest(t *testing.T) {
 		t.Fatalf("properties expose internal Preparation identifiers: %#v", properties)
 	}
 }
+
+func TestPreviewToolClassifiesInvocationEffect(t *testing.T) {
+	registry, err := tool.NewRegistry(NewPreviewTool(&previewPortStub{}))
+	if err != nil {
+		t.Fatalf("tool.NewRegistry() error = %v", err)
+	}
+	tests := []struct {
+		name  string
+		input string
+		want  tool.InvocationEffect
+	}{
+		{
+			name:  "candidate lookup",
+			input: `{"scenario_query":"AI product manager interview"}`,
+			want:  tool.InvocationEffectReadOnly,
+		},
+		{
+			name:  "missing effective turns",
+			input: `{"background_summary":"AI product manager"}`,
+			want:  tool.InvocationEffectReadOnly,
+		},
+		{
+			name: "schema invalid effective turns fails closed",
+			input: `{"background_summary":"AI product manager",` +
+				`"max_effective_turns":0}`,
+			want: tool.InvocationEffectMayWrite,
+		},
+		{
+			name: "ready plan input",
+			input: `{"background_summary":"AI product manager",` +
+				`"max_effective_turns":3}`,
+			want: tool.InvocationEffectMayWrite,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := registry.InvocationEffect(tool.Invocation{
+				Name:  PracticePreviewToolName,
+				Input: json.RawMessage(test.input),
+			})
+			if got != test.want {
+				t.Fatalf("InvocationEffect() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}

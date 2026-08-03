@@ -393,6 +393,42 @@ func TestRunLoopContinuesToolCallingAfterExplicitCommand(t *testing.T) {
 	}
 }
 
+func TestRunLoopCountsExplicitWriteCommand(t *testing.T) {
+	store := mocktool.NewStore()
+	firstTitle := "explicit-write-first-unique"
+	secondTitle := "explicit-write-second-unique"
+	generator := newScriptedGenerator(toolLoopResult(
+		"call-create-after-command",
+		mattertool.ScenarioCreateToolName,
+		`{"title":"`+secondTitle+`"}`,
+	))
+	service := newLoopTestServiceWithStore(t, generator, store)
+	commandRegistry, err := command.NewRegistry(command.Builtins()...)
+	if err != nil {
+		t.Fatalf("command.NewRegistry() error = %v", err)
+	}
+	service.commands = command.NewRouter(commandRegistry)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		core.ContextManifest{},
+		loopRequest("/创建面试 "+firstTitle),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if !strings.Contains(result.Content, "写操作上限") {
+		t.Fatalf("fallback content = %q", result.Content)
+	}
+	if got, want := generator.CallCount(), 1; got != want {
+		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+	assertScenarioCreated(t, store, firstTitle)
+	assertScenarioNotCreated(t, store, secondTitle)
+}
+
 func TestRunLoopFeedsToolErrorBackToModel(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult("call-material-1", mocktool.MaterialSearchToolName, `{"query":"backend"}`),
@@ -608,6 +644,9 @@ func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
 }
 
 func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
+	store := mocktool.NewStore()
+	firstTitle := "write-budget-first-unique"
+	secondTitle := "write-budget-second-unique"
 	generator := newScriptedGenerator(ai.TextResult{
 		ID:           "fake-completion-tools",
 		Provider:     "fake",
@@ -617,17 +656,17 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 			{
 				ID:        "call-create-1",
 				Name:      mattertool.ScenarioCreateToolName,
-				Arguments: json.RawMessage(`{"title":"PM interview"}`),
+				Arguments: json.RawMessage(`{"title":"` + firstTitle + `"}`),
 			},
 			{
 				ID:        "call-create-2",
 				Name:      mattertool.ScenarioCreateToolName,
-				Arguments: json.RawMessage(`{"title":"Client meeting"}`),
+				Arguments: json.RawMessage(`{"title":"` + secondTitle + `"}`),
 			},
 		},
 		Usage: ai.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 	})
-	service := newLoopTestService(t, generator)
+	service := newLoopTestServiceWithStore(t, generator, store)
 
 	result, err := service.generate(
 		context.Background(),
@@ -642,42 +681,168 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 	if !strings.Contains(result.Content, "写操作上限") {
 		t.Fatalf("fallback content = %q", result.Content)
 	}
+	assertScenarioNotCreated(t, store, firstTitle)
+	assertScenarioNotCreated(t, store, secondTitle)
 }
 
-func TestPracticePreviewOnlyConsumesWriteBudgetWhenItCanCreatePlan(
-	t *testing.T,
-) {
+func TestRunLoopCountsConditionalWritesAcrossExplicitCommand(t *testing.T) {
+	store := mocktool.NewStore()
+	conditional := &loopConditionalTool{}
+	generator := newScriptedGenerator(
+		toolLoopResult(
+			"call-conditional-write",
+			loopConditionalToolName,
+			`{"write_value":"persisted-value"}`,
+		),
+		toolLoopResult(
+			"call-create-after-conditional",
+			mattertool.ScenarioCreateToolName,
+			`{"title":"write-after-conditional-unique"}`,
+		),
+	)
+	service := newLoopTestServiceWithStore(t, generator, store)
+	setLoopTools(t, service, store, conditional)
+	commandRegistry, err := command.NewRegistry(command.Definition{
+		Name:        "条件查询",
+		Description: "Run the query-only form of a conditional tool.",
+		ToolName:    loopConditionalToolName,
+		BuildInput: func(_ string) (json.RawMessage, error) {
+			return command.JSONObjectInput(nil)
+		},
+	})
+	if err != nil {
+		t.Fatalf("command.NewRegistry() error = %v", err)
+	}
+	service.commands = command.NewRouter(commandRegistry)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		core.ContextManifest{},
+		loopRequest("/条件查询"),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if !strings.Contains(result.Content, "写操作上限") {
+		t.Fatalf("fallback content = %q", result.Content)
+	}
+	if got, want := len(conditional.inputs), 2; got != want {
+		t.Fatalf("conditional calls = %d, want %d", got, want)
+	}
+	if conditional.inputs[0].WriteValue != "" ||
+		conditional.inputs[1].WriteValue == "" {
+		t.Fatalf("conditional inputs = %#v", conditional.inputs)
+	}
+	if got, want := generator.CallCount(), 2; got != want {
+		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+	assertScenarioNotCreated(t, store, "write-after-conditional-unique")
+}
+
+func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
+	store := mocktool.NewStore()
+	conditional := &loopConditionalTool{}
+	generator := newScriptedGenerator(
+		toolLoopResult(
+			"call-conditional-query",
+			loopConditionalToolName,
+			`{}`,
+		),
+		toolLoopResult(
+			"call-conditional-write",
+			loopConditionalToolName,
+			`{"write_value":"persisted-value"}`,
+		),
+		finalLoopResult("The conditional write completed."),
+	)
+	service := newLoopTestServiceWithStore(t, generator, store)
+	setLoopTools(t, service, store, conditional)
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		core.ContextManifest{},
+		loopRequest("先查询，再执行一次条件写入"),
+	)
+	if err != nil {
+		t.Fatalf("generate() error = %v", err)
+	}
+	if got, want := result.Content, "The conditional write completed."; got != want {
+		t.Fatalf("Content = %q, want %q", got, want)
+	}
+	if got, want := len(conditional.inputs), 2; got != want {
+		t.Fatalf("conditional calls = %d, want %d", got, want)
+	}
+	if conditional.inputs[0].WriteValue != "" ||
+		conditional.inputs[1].WriteValue == "" {
+		t.Fatalf("conditional inputs = %#v", conditional.inputs)
+	}
+	if got, want := generator.CallCount(), 3; got != want {
+		t.Fatalf("Generate calls = %d, want %d", got, want)
+	}
+}
+
+func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 	tests := []struct {
-		name      string
-		arguments string
-		want      bool
+		name string
+		call ai.TextResult
 	}{
 		{
-			name:      "candidate lookup",
-			arguments: `{"scenario_query":"AI product manager interview"}`,
-			want:      false,
+			name: "unknown tool",
+			call: toolLoopResult(
+				"call-unknown-write",
+				"missing.write.v1",
+				`{}`,
+			),
 		},
 		{
-			name: "ready plan input",
-			arguments: `{"background_summary":"AI PM interview",` +
-				`"max_effective_turns":3}`,
-			want: true,
-		},
-		{
-			name:      "invalid input fails closed",
-			arguments: `{`,
-			want:      true,
+			name: "schema invalid conditional tool",
+			call: toolLoopResult(
+				"call-invalid-conditional",
+				loopConditionalToolName,
+				`{"write_value":0}`,
+			),
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			call := ai.ToolCall{
-				Name:      "practice.preview.v1",
-				Arguments: json.RawMessage(test.arguments),
+			store := mocktool.NewStore()
+			conditional := &loopConditionalTool{}
+			title := "write-after-rejected-" + strings.ReplaceAll(test.name, " ", "-")
+			generator := newScriptedGenerator(
+				test.call,
+				toolLoopResult(
+					"call-create-after-rejected",
+					mattertool.ScenarioCreateToolName,
+					`{"title":"`+title+`"}`,
+				),
+			)
+			service := newLoopTestServiceWithStore(t, generator, store)
+			setLoopTools(t, service, store, conditional)
+
+			result, err := service.generate(
+				context.Background(),
+				loopActor(),
+				loopRun(),
+				core.ContextManifest{},
+				loopRequest("attempt a guarded write"),
+			)
+			if err != nil {
+				t.Fatalf("generate() error = %v", err)
 			}
-			if got := toolCallMayWrite(call); got != test.want {
-				t.Fatalf("toolCallMayWrite() = %t, want %t", got, test.want)
+			if !strings.Contains(result.Content, "写操作上限") {
+				t.Fatalf("fallback content = %q", result.Content)
 			}
+			if got, want := generator.CallCount(), 2; got != want {
+				t.Fatalf("Generate calls = %d, want %d", got, want)
+			}
+			if len(conditional.inputs) != 0 {
+				t.Fatalf("rejected invocation reached tool: %#v", conditional.inputs)
+			}
+			assertScenarioNotCreated(t, store, title)
 		})
 	}
 }
@@ -829,6 +994,118 @@ func TestValidLoopTextResultRejectsInvalidToolCalls(t *testing.T) {
 				t.Fatal("invalid tool call accepted")
 			}
 		})
+	}
+}
+
+const loopConditionalToolName = "conditional.write.v1"
+
+type loopConditionalInput struct {
+	WriteValue string `json:"write_value,omitempty"`
+}
+
+type loopConditionalTool struct {
+	inputs []loopConditionalInput
+}
+
+func (conditional *loopConditionalTool) Definition() tool.Definition {
+	return tool.Definition{
+		Name:        loopConditionalToolName,
+		Description: "Query without input or perform one conditional write.",
+		InputSchema: tool.ObjectSchema(map[string]any{
+			"write_value": tool.TextSchema("Value to persist.", 100),
+		}, nil),
+		ReadOnly: false,
+		Risk:     tool.RiskLowRiskWrite,
+	}
+}
+
+func (conditional *loopConditionalTool) ClassifyInvocationEffect(
+	input json.RawMessage,
+) (tool.InvocationEffect, error) {
+	parsed, err := parseLoopConditionalInput(input)
+	if err != nil {
+		return 0, err
+	}
+	if parsed.WriteValue != "" {
+		return tool.InvocationEffectMayWrite, nil
+	}
+	return tool.InvocationEffectReadOnly, nil
+}
+
+func (conditional *loopConditionalTool) Execute(
+	_ context.Context,
+	_ tool.CallContext,
+	input json.RawMessage,
+) (tool.Result, error) {
+	parsed, err := parseLoopConditionalInput(input)
+	if err != nil {
+		return tool.Result{}, err
+	}
+	conditional.inputs = append(conditional.inputs, parsed)
+	return tool.Result{Content: map[string]any{"ok": true}}, nil
+}
+
+func parseLoopConditionalInput(
+	input json.RawMessage,
+) (loopConditionalInput, error) {
+	var parsed loopConditionalInput
+	if err := json.Unmarshal(input, &parsed); err != nil {
+		return loopConditionalInput{}, tool.ErrInvalidInput
+	}
+	return parsed, nil
+}
+
+func setLoopTools(
+	t *testing.T,
+	service *Service,
+	store *mocktool.Store,
+	extra ...tool.Tool,
+) {
+	t.Helper()
+	items := append(mocktool.Tools(store), extra...)
+	registry, err := tool.NewRegistry(items...)
+	if err != nil {
+		t.Fatalf("tool.NewRegistry() error = %v", err)
+	}
+	service.registry = registry
+	service.executor = tool.NewExecutor(registry)
+}
+
+func assertScenarioNotCreated(
+	t *testing.T,
+	store *mocktool.Store,
+	title string,
+) {
+	t.Helper()
+	items, err := store.SearchScenarios(
+		context.Background(),
+		tool.CallContext{},
+		mattertool.ScenarioSearchInput{Query: title},
+	)
+	if err != nil {
+		t.Fatalf("SearchScenarios() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("scenario %q was created before batch rejection: %#v", title, items)
+	}
+}
+
+func assertScenarioCreated(
+	t *testing.T,
+	store *mocktool.Store,
+	title string,
+) {
+	t.Helper()
+	items, err := store.SearchScenarios(
+		context.Background(),
+		tool.CallContext{},
+		mattertool.ScenarioSearchInput{Query: title},
+	)
+	if err != nil {
+		t.Fatalf("SearchScenarios() error = %v", err)
+	}
+	if len(items) != 1 || items[0].Title != title {
+		t.Fatalf("scenario %q was not created: %#v", title, items)
 	}
 }
 
