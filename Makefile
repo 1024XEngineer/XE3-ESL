@@ -19,7 +19,8 @@ SHELL := /bin/bash
 	check-api-dependencies \
 	check-api-contracts \
 	check-smoke \
-	dev-android
+	dev-android \
+	dev-ios-simulator
 
 help:
 	@printf '%s\n' \
@@ -30,7 +31,8 @@ help:
 		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-smoke    Run the deterministic Mock main flow' \
-		'  make dev-android    Start the backend and run the App on an Android device'
+		'  make dev-android    Start the backend and run the App on an Android device' \
+		'  make dev-ios-simulator  Start the backend and run without AvatarKit on an iOS Simulator'
 
 check: check-flutter check-go check-api check-smoke
 
@@ -114,3 +116,6 @@ check-smoke:
 
 dev-android:
 	./tools/android-dev/run.sh
+
+dev-ios-simulator:
+	./tools/ios-simulator-dev/run.sh
