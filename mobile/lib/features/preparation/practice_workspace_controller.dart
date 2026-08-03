@@ -1108,7 +1108,7 @@ final class _StoredPracticeWorkspace {
       scenarioTitle != null;
 
   bool get hasMeaningfulProgress =>
-      isCommitted && (completedTurns == null || completedTurns! > 0);
+      isCommitted && completedTurns != null && completedTurns! > 0;
 
   PracticeWorkspaceLease get lease => PracticeWorkspaceLease(
     operationId: operationId,

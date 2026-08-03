@@ -14,6 +14,7 @@ import 'package:speakup/features/review/ielts_speaking_report_view.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
 import 'package:speakup/review/turn_feedback_disclosure.dart';
 
@@ -1350,7 +1351,7 @@ class _ExamConversation extends StatelessWidget {
       itemBuilder: (context, index) {
         final message = messages[index];
         final assistant = message.role == AgentMessageRole.assistant;
-        final projection =
+        final candidateProjection =
             !assistant &&
                 message.speechFeedbackStatusUrl != null &&
                 speechFeedbackController != null
@@ -1358,6 +1359,11 @@ class _ExamConversation extends StatelessWidget {
                 _ieltsFeedbackSourceKey(controller, message),
               )
             : null;
+        final projection =
+            candidateProjection?.feedback?.scoreabilityStatus ==
+                SpeechFeedbackScoreabilityStatus.insufficient
+            ? null
+            : candidateProjection;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
