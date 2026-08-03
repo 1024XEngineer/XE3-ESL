@@ -58,6 +58,13 @@ components:
         - account_registration_unavailable
         - profile_not_found
         - profile_version_conflict
+        - resume_not_found
+        - resume_limit_exceeded
+        - resume_version_conflict
+        - unsupported_resume_format
+        - resume_file_too_large
+        - resume_parse_failed
+        - resume_not_implemented
         - rate_limited
         - resource_not_found
         - resource_conflict
@@ -135,6 +142,13 @@ components:
         profile_not_found: 404
         account_registration_unavailable: 409
         profile_version_conflict: 409
+        resume_not_found: 404
+        resume_limit_exceeded: 409
+        resume_version_conflict: 409
+        unsupported_resume_format: 400
+        resume_file_too_large: 400
+        resume_parse_failed: 503
+        resume_not_implemented: 501
         idempotency_key_conflict: 409
         resource_conflict: 409
         resource_processing: 409
