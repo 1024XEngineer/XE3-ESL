@@ -31,6 +31,11 @@ func (registry *Registry) Register(tool Tool) error {
 	if err := ValidateDefinition(definition); err != nil {
 		return err
 	}
+	if definition.ReadOnly {
+		if _, conditional := tool.(InvocationEffectClassifier); conditional {
+			return ErrInvalidDefinition
+		}
+	}
 	if registry.tools == nil {
 		registry.tools = make(map[string]Tool)
 	}
@@ -48,6 +53,38 @@ func (registry *Registry) Get(name string) (Tool, bool) {
 	}
 	tool, ok := registry.tools[name]
 	return tool, ok
+}
+
+// InvocationEffect is the authoritative write-effect classification for one
+// registered invocation. Anything unknown or invalid fails closed as a
+// possible write; Executor remains responsible for returning execution errors.
+func (registry *Registry) InvocationEffect(
+	invocation Invocation,
+) InvocationEffect {
+	registered, ok := registry.Get(invocation.Name)
+	if !ok {
+		return InvocationEffectMayWrite
+	}
+	definition := registered.Definition()
+	normalizedInput, err := NormalizeInput(
+		definition.InputSchema,
+		invocation.Input,
+	)
+	if err != nil {
+		return InvocationEffectMayWrite
+	}
+	if definition.ReadOnly {
+		return InvocationEffectReadOnly
+	}
+	classifier, conditional := registered.(InvocationEffectClassifier)
+	if !conditional {
+		return InvocationEffectMayWrite
+	}
+	effect, err := classifier.ClassifyInvocationEffect(normalizedInput)
+	if err != nil || !validInvocationEffect(effect) {
+		return InvocationEffectMayWrite
+	}
+	return effect
 }
 
 // Definitions 按稳定顺序返回所有工具定义，供模型侧暴露使用。
@@ -68,6 +105,11 @@ func (registry *Registry) Definitions() []Definition {
 func cloneDefinition(definition Definition) Definition {
 	definition.InputSchema = cloneSchemaMap(definition.InputSchema)
 	return definition
+}
+
+func validInvocationEffect(effect InvocationEffect) bool {
+	return effect == InvocationEffectReadOnly ||
+		effect == InvocationEffectMayWrite
 }
 
 func cloneSchemaMap(schema map[string]any) map[string]any {
