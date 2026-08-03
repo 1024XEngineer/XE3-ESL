@@ -68,6 +68,8 @@ final class PracticeQuestion {
     required this.id,
     required this.sessionId,
     required this.text,
+    this.questionType = 'PRIMARY',
+    this.parentQuestionId,
     this.speakerParticipantId,
     this.addresseeParticipantIds = const <String>[],
     this.speechPath,
@@ -76,9 +78,13 @@ final class PracticeQuestion {
   final String id;
   final String sessionId;
   final String text;
+  final String questionType;
+  final String? parentQuestionId;
   final String? speakerParticipantId;
   final List<String> addresseeParticipantIds;
   final String? speechPath;
+
+  bool get isFollowUp => questionType == 'FOLLOW_UP';
 
   AgentMessage get presentation =>
       AgentMessage(id: id, role: AgentMessageRole.assistant, text: text);
@@ -143,6 +149,7 @@ final class PracticeTurnSnapshot {
     required this.evidenceVersion,
     required this.effectiveTurns,
     required this.sessionCompleted,
+    this.countsTowardEffectiveTurnLimit = true,
     this.reviewId,
     this.audioAssetId,
     this.speechFeedbackStatusUrl,
@@ -157,6 +164,7 @@ final class PracticeTurnSnapshot {
   final int evidenceVersion;
   final int effectiveTurns;
   final bool sessionCompleted;
+  final bool countsTowardEffectiveTurnLimit;
   final String? reviewId;
   final String? audioAssetId;
   final String? speechFeedbackStatusUrl;

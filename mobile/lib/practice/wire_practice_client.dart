@@ -778,6 +778,9 @@ PracticeSessionSnapshot _decodeSessionState(
   final formalReview = root['review'] == null
       ? null
       : _decodeFormalReview(_object(root['review']));
+  final historyEffectiveTurns = turnHistory
+      .where((exchange) => exchange.turn.countsTowardEffectiveTurnLimit)
+      .length;
   if ((expectedSessionId != null && sessionId != expectedSessionId) ||
       (expectedThreadId != null && threadId != expectedThreadId) ||
       (expectedMatterId != null && matter.id != expectedMatterId) ||
@@ -798,7 +801,7 @@ PracticeSessionSnapshot _decodeSessionState(
           effectiveTurns > 0 &&
           !root.containsKey('turn_history')) ||
       (turnHistory.isNotEmpty &&
-          (turnHistory.length != effectiveTurns ||
+          (historyEffectiveTurns != effectiveTurns ||
               turnHistory.last.turn.id != turn?.id ||
               turnHistory.any(
                 (exchange) =>
@@ -835,12 +838,14 @@ PracticeSessionSnapshot _decodeSessionState(
 }
 
 List<PracticeTurnExchange> _decodeTurnHistory(Object? value) {
-  if (value is! List<Object?> || value.isEmpty || value.length > 14) {
+  if (value is! List<Object?> || value.isEmpty || value.length > 56) {
     throw _invalidResponse();
   }
   final exchanges = <PracticeTurnExchange>[];
   final questionIds = <String>{};
   final turnIds = <String>{};
+  final primaryQuestionIds = <String>{};
+  var effectiveTurns = 0;
   for (var index = 0; index < value.length; index++) {
     final root = _exactObject(
       value[index],
@@ -848,11 +853,20 @@ List<PracticeTurnExchange> _decodeTurnHistory(Object? value) {
     );
     final question = _decodeQuestion(_object(root['question']));
     final turn = _decodeTurn(_object(root['turn']));
+    if (turn.countsTowardEffectiveTurnLimit) {
+      effectiveTurns++;
+    }
     if (!questionIds.add(question.id) ||
         !turnIds.add(turn.id) ||
-        turn.effectiveTurns != index + 1 ||
-        question.id != turn.questionId) {
+        turn.effectiveTurns != effectiveTurns ||
+        question.id != turn.questionId ||
+        question.isFollowUp == turn.countsTowardEffectiveTurnLimit ||
+        (question.isFollowUp &&
+            !primaryQuestionIds.contains(question.parentQuestionId))) {
       throw _invalidResponse();
+    }
+    if (!question.isFollowUp) {
+      primaryQuestionIds.add(question.id);
     }
     exchanges.add(PracticeTurnExchange(question: question, turn: turn));
   }
@@ -1285,9 +1299,20 @@ PracticeQuestion _decodeQuestion(Map<String, Object?> value) {
       'addressee_participant_ids',
       'speech_path',
     },
+    optional: const {'question_type', 'parent_question_id'},
   );
   final addressees = _stringList(root, 'addressee_participant_ids');
-  if (addressees.isEmpty || addressees.toSet().length != addressees.length) {
+  final questionType = root.containsKey('question_type')
+      ? _string(root, 'question_type', maxLength: 16)
+      : 'PRIMARY';
+  final parentQuestionId = root.containsKey('parent_question_id')
+      ? _string(root, 'parent_question_id')
+      : null;
+  if (addressees.isEmpty ||
+      addressees.toSet().length != addressees.length ||
+      (questionType != 'PRIMARY' && questionType != 'FOLLOW_UP') ||
+      (questionType == 'PRIMARY' && parentQuestionId != null) ||
+      (questionType == 'FOLLOW_UP' && parentQuestionId == null)) {
     throw _invalidResponse();
   }
   return PracticeQuestion(
@@ -1297,6 +1322,8 @@ PracticeQuestion _decodeQuestion(Map<String, Object?> value) {
     speakerParticipantId: _string(root, 'speaker_participant_id'),
     addresseeParticipantIds: addressees,
     speechPath: _string(root, 'speech_path'),
+    questionType: questionType,
+    parentQuestionId: parentQuestionId,
   );
 }
 
@@ -1318,6 +1345,7 @@ PracticeTurnSnapshot _decodeTurn(Map<String, Object?> value) {
       'review_id',
       'audio_asset_id',
       'speech_feedback_status_url',
+      'counts_toward_effective_turn_limit',
     },
   );
   if (root.containsKey('audio_asset_id') && root['audio_asset_id'] == null) {
@@ -1339,6 +1367,10 @@ PracticeTurnSnapshot _decodeTurn(Map<String, Object?> value) {
     evidenceVersion: _integer(root, 'evidence_version'),
     effectiveTurns: _integer(root, 'effective_turns'),
     sessionCompleted: _boolean(root, 'session_completed'),
+    countsTowardEffectiveTurnLimit:
+        root.containsKey('counts_toward_effective_turn_limit')
+        ? _boolean(root, 'counts_toward_effective_turn_limit')
+        : true,
     reviewId: root.containsKey('review_id') ? _string(root, 'review_id') : null,
     audioAssetId: audioAssetId,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,

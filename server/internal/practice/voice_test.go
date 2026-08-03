@@ -135,6 +135,7 @@ func TestVoiceApplicationAppliesStableTurnWithoutContent(t *testing.T) {
 		actor,
 		"practice-session",
 		"confirmed-turn",
+		true,
 	)
 	if err != nil {
 		t.Fatalf("ApplyEffectiveTurn: %v", err)
@@ -149,6 +150,45 @@ func TestVoiceApplicationAppliesStableTurnWithoutContent(t *testing.T) {
 		repository.consumed.TurnID != "confirmed-turn" ||
 		string(repository.consumed.Payload) != voiceEffectiveTurnPayload {
 		t.Fatalf("ConsumeTurn command = %#v", repository.consumed)
+	}
+}
+
+func TestVoiceApplicationAppliesFollowUpWithoutAdvancingEffectiveTurns(
+	t *testing.T,
+) {
+	repository := &voiceRepositoryStub{turnResult: persistence.TurnResult{
+		SessionID:      "practice-session",
+		TurnID:         "follow-up-turn",
+		Round:          1,
+		EffectiveTurns: 1,
+		SessionVersion: 3,
+		TurnLimit:      3,
+	}}
+	application, err := NewVoiceApplication(repository, "speakup.user")
+	if err != nil {
+		t.Fatalf("NewVoiceApplication: %v", err)
+	}
+	progress, err := application.ApplyEffectiveTurn(
+		context.Background(),
+		persistence.Actor{
+			UserID:    "10000000-0000-4000-8000-000000000005",
+			SessionID: "20000000-0000-4000-8000-000000000005",
+		},
+		"practice-session",
+		"follow-up-turn",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ApplyEffectiveTurn: %v", err)
+	}
+	if progress.EffectiveTurns != 1 || progress.SessionCompleted ||
+		repository.consumed.CountsTowardTurnLimit ||
+		string(repository.consumed.Payload) != voiceFollowUpTurnPayload {
+		t.Fatalf(
+			"follow-up progress = %#v, command = %#v",
+			progress,
+			repository.consumed,
+		)
 	}
 }
 
@@ -186,6 +226,7 @@ func TestVoiceApplicationRejectsIncompleteProgressEvidence(t *testing.T) {
 		actor,
 		"practice-session",
 		"confirmed-turn",
+		true,
 	); !errors.Is(err, persistence.ErrConflict) {
 		t.Fatalf("ApplyEffectiveTurn error = %v", err)
 	}

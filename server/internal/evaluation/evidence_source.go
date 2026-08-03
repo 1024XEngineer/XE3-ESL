@@ -160,7 +160,13 @@ func (r *EvidenceSourceReader) Compose(
 		}
 		return strings.Compare(left.ID, right.ID)
 	})
-	if len(turns) != session.EffectiveTurns {
+	effectiveTurnCount := 0
+	for _, turn := range turns {
+		if turn.CountsTowardTurnLimit {
+			effectiveTurnCount++
+		}
+	}
+	if effectiveTurnCount != session.EffectiveTurns {
 		return EnsureEvidenceSnapshotCommand{}, ErrInvalidRequest
 	}
 	questions, err := r.conversation.ListSessionQuestions(

@@ -778,6 +778,7 @@ func (voiceSessionTestQuestions) EnsureQuestion(
 	return conversation.VoiceQuestion{
 		ID:                      "question-next",
 		SessionID:               session.ID,
+		Type:                    "PRIMARY",
 		Text:                    "What happened next?",
 		SpeakerParticipantID:    session.InterviewerParticipantID,
 		AddresseeParticipantIDs: []string{session.CandidateParticipantID},
@@ -792,6 +793,7 @@ func (voiceSessionTestQuestions) GetQuestion(
 	return conversation.VoiceQuestion{
 		ID:        questionID,
 		SessionID: "session-1",
+		Type:      "PRIMARY",
 		Text:      "What happened next?",
 	}, nil
 }

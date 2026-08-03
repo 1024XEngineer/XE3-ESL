@@ -15,6 +15,7 @@ import (
 	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
+	conversationpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
@@ -22,6 +23,33 @@ import (
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
+
+func TestVoiceFollowUpParentAllowsAtMostThreePerPrimaryQuestion(t *testing.T) {
+	questions := []conversationpersistence.PersistentQuestion{{
+		ID:   "primary-1",
+		Type: "PRIMARY",
+	}}
+	for followUp := 1; followUp <= 3; followUp++ {
+		parentID, allowed := voiceFollowUpParent(questions, 3)
+		if !allowed || parentID != "primary-1" {
+			t.Fatalf(
+				"follow-up %d parent = %q, allowed = %t",
+				followUp,
+				parentID,
+				allowed,
+			)
+		}
+		questions = append(questions, conversationpersistence.PersistentQuestion{
+			ID:               fmt.Sprintf("follow-up-%d", followUp),
+			Type:             "FOLLOW_UP",
+			ParentQuestionID: "primary-1",
+		})
+	}
+	if parentID, allowed := voiceFollowUpParent(questions, 3); allowed ||
+		parentID != "primary-1" {
+		t.Fatalf("fourth follow-up parent = %q, allowed = %t", parentID, allowed)
+	}
+}
 
 func TestReviewEvaluationContextMapsFourScenesAndGeneric(t *testing.T) {
 	t.Parallel()

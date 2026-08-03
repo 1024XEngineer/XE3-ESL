@@ -8,6 +8,7 @@ import (
 )
 
 const voiceEffectiveTurnPayload = "agent.voice_effective_turn/v1"
+const voiceFollowUpTurnPayload = "agent.voice_follow_up_turn/v1"
 
 // VoiceRepository is the Practice-owned persistence view needed by the
 // voice-round application boundary. It deliberately excludes deletion and
@@ -192,6 +193,7 @@ func (a *VoiceApplication) ApplyEffectiveTurn(
 	actor persistence.Actor,
 	sessionID string,
 	turnID string,
+	countsTowardTurnLimit bool,
 ) (VoiceTurnProgress, error) {
 	if a == nil || a.repository == nil || ctx == nil ||
 		sessionID == "" || sessionID != strings.TrimSpace(sessionID) ||
@@ -202,13 +204,18 @@ func (a *VoiceApplication) ApplyEffectiveTurn(
 		return VoiceTurnProgress{}, err
 	}
 
+	payload := voiceEffectiveTurnPayload
+	if !countsTowardTurnLimit {
+		payload = voiceFollowUpTurnPayload
+	}
 	result, err := a.repository.AdvanceContextVoiceTurn(
 		ctx,
 		actor,
 		persistence.ConsumeTurnCommand{
-			SessionID: sessionID,
-			TurnID:    turnID,
-			Payload:   []byte(voiceEffectiveTurnPayload),
+			SessionID:             sessionID,
+			TurnID:                turnID,
+			CountsTowardTurnLimit: countsTowardTurnLimit,
+			Payload:               []byte(payload),
 		},
 	)
 	if err != nil {

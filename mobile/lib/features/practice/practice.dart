@@ -734,7 +734,9 @@ class _InterviewProgress extends StatelessWidget {
     final total = controller.turnLimit;
     final current = total < 1
         ? 1
-        : (controller.completedTurns + 1).clamp(1, total);
+        : (controller.completedTurns +
+                  (controller.currentQuestion?.isFollowUp == true ? 0 : 1))
+              .clamp(1, total);
     final state = switch (controller.recordingState) {
       PracticeRecordingState.starting ||
       PracticeRecordingState.recording => '正在作答',

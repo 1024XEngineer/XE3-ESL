@@ -43,6 +43,7 @@ func TestPracticeVoicePortMapsTrustedActorAndProgress(t *testing.T) {
 		actor,
 		"practice-session",
 		"confirmed-turn",
+		true,
 	)
 	if err != nil {
 		t.Fatalf("ApplyEffectiveTurn: %v", err)
@@ -86,6 +87,7 @@ func TestPracticeVoicePortPropagatesPracticeFailure(t *testing.T) {
 		},
 		"practice-session",
 		"confirmed-turn",
+		true,
 	)
 	if !errors.Is(err, want) {
 		t.Fatalf("ApplyEffectiveTurn error = %v", err)
@@ -136,6 +138,7 @@ func TestPracticeVoicePortRejectsIncompleteProgressEvidence(t *testing.T) {
 		},
 		"practice-session",
 		"confirmed-turn",
+		true,
 	); !errors.Is(err, persistence.ErrConflict) {
 		t.Fatalf("ApplyEffectiveTurn error = %v", err)
 	}
@@ -162,6 +165,7 @@ func (s *practiceVoiceApplicationStub) ApplyEffectiveTurn(
 	actor persistence.Actor,
 	_ string,
 	_ string,
+	_ bool,
 ) (practice.VoiceTurnProgress, error) {
 	s.actor = actor
 	return s.progress, s.err

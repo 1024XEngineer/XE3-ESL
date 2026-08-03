@@ -886,9 +886,12 @@ components:
           $ref: '#/components/schemas/ConfirmedVoiceTurn'
         turn_history:
           type: array
-          maxItems: 14
+          maxItems: 56
           description: |
-            Confirmed `EFFECTIVE` turns ordered by effective Turn sequence.
+            Confirmed `EFFECTIVE` turns ordered by Question sequence. A
+            `PRIMARY` Turn advances `effective_turns`; a `FOLLOW_UP` Turn keeps
+            the previous value. With at most 14 primary Questions and three
+            follow-ups per Question, the projection is bounded to 56 entries.
             `RETRY` turns are intentionally excluded so same-question practice
             cannot change the Session's current Question, latest effective
             checkpoint, or `effective_turns` history invariant. This projection
@@ -924,6 +927,7 @@ components:
       required:
         - question_id
         - practice_session_id
+        - question_type
         - content
         - speaker_participant_id
         - addressee_participant_ids
@@ -932,6 +936,11 @@ components:
         question_id:
           $ref: '#/components/schemas/ResourceId'
         practice_session_id:
+          $ref: '#/components/schemas/ResourceId'
+        question_type:
+          type: string
+          enum: [PRIMARY, FOLLOW_UP]
+        parent_question_id:
           $ref: '#/components/schemas/ResourceId'
         content:
           type: string
@@ -947,6 +956,22 @@ components:
         speech_path:
           type: string
           pattern: '^/v1/'
+      allOf:
+        - if:
+            properties:
+              question_type:
+                const: FOLLOW_UP
+            required: [question_type]
+          then:
+            required: [parent_question_id]
+        - if:
+            properties:
+              question_type:
+                const: PRIMARY
+            required: [question_type]
+          then:
+            not:
+              required: [parent_question_id]
     VoiceTurnHistoryEntry:
       type: object
       additionalProperties: false
@@ -1137,6 +1162,7 @@ components:
         - answer_text
         - evidence_version
         - effective_turns
+        - counts_toward_effective_turn_limit
         - session_completed
       properties:
         turn_id:
@@ -1159,6 +1185,8 @@ components:
         effective_turns:
           type: integer
           minimum: 1
+        counts_toward_effective_turn_limit:
+          type: boolean
         session_completed:
           type: boolean
         review_id:

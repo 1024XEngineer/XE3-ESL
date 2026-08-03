@@ -743,6 +743,7 @@ func (port *agentVoiceConversation) Confirm(
 		TranscriptID:            candidate.TranscriptID,
 		EvidenceVersion:         candidate.EvidenceVersion,
 		AnswerText:              candidate.Transcript,
+		CountsTowardTurnLimit:   true,
 	}
 	port.confirmations[command.IdempotencyKey] = turn.ID
 	port.turns[turn.ID] = turn
@@ -852,6 +853,7 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	actor requestcontext.Actor,
 	sessionID string,
 	turnID string,
+	countsTowardTurnLimit bool,
 ) (VoiceTurnProgress, error) {
 	practice.mu.Lock()
 	defer practice.mu.Unlock()
@@ -861,7 +863,9 @@ func (practice *agentVoicePractice) ApplyEffectiveTurn(
 	if existing, found := practice.turns[turnID]; found {
 		return existing, nil
 	}
-	practice.effectiveTurns++
+	if countsTowardTurnLimit {
+		practice.effectiveTurns++
+	}
 	result := VoiceTurnProgress{
 		EffectiveTurns:   practice.effectiveTurns,
 		SessionVersion:   practice.effectiveTurns + 1,

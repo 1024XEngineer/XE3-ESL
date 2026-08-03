@@ -602,9 +602,10 @@ func mapContextPracticeSession(
 				snapshot.ScenarioConfig.PromptModel.TurnBlueprints,
 			),
 		},
-		SessionVersion: session.Version,
-		EffectiveTurns: session.EffectiveTurns,
-		TurnLimit:      snapshot.SessionPolicy.MaxEffectiveTurns,
+		SessionVersion:          session.Version,
+		EffectiveTurns:          session.EffectiveTurns,
+		TurnLimit:               snapshot.SessionPolicy.MaxEffectiveTurns,
+		MaxFollowUpsPerQuestion: snapshot.SessionPolicy.MaxFollowUpsPerQuestion,
 		Completed: session.Status ==
 			practicepersistence.ContextSessionCompleted,
 		Status: string(session.Status),
@@ -1210,6 +1211,8 @@ func mapVoiceQuestion(
 	return conversation.VoiceQuestion{
 		ID:                      question.ID,
 		SessionID:               question.SessionID,
+		Type:                    question.Type,
+		ParentQuestionID:        question.ParentQuestionID,
 		Text:                    question.Content,
 		SpeakerParticipantID:    question.SpeakerParticipantID,
 		AddresseeParticipantIDs: slices.Clone(question.AddresseeParticipantIDs),
@@ -1265,6 +1268,19 @@ type voiceQuestionAdapter struct {
 	speech     *conversation.VoiceRoundService
 }
 
+type voiceSessionQuestionLister interface {
+	ListSessionQuestions(
+		context.Context,
+		conversationpersistence.Actor,
+		string,
+	) ([]conversationpersistence.PersistentQuestion, error)
+}
+
+type generatedInterviewQuestion struct {
+	QuestionType string `json:"question_type"`
+	Content      string `json:"content"`
+}
+
 func (adapter *voiceQuestionAdapter) EnsureQuestion(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -1288,23 +1304,71 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 	if !errors.Is(err, conversationpersistence.ErrPersistenceNotFound) {
 		return conversation.VoiceQuestion{}, mapConversationError(err)
 	}
-	request, err := voiceQuestionRequest(session, sequence)
+	var request ai.TextRequest
+	parentQuestionID := ""
+	followUpAllowed := false
+	if session.ScenarioType == "INTERVIEW" &&
+		session.MaxFollowUpsPerQuestion > 0 && sequence > 1 {
+		lister, ok := adapter.repository.(voiceSessionQuestionLister)
+		if !ok {
+			return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+		}
+		questions, listErr := lister.ListSessionQuestions(
+			ctx,
+			conversationActor,
+			session.ID,
+		)
+		if listErr != nil {
+			return conversation.VoiceQuestion{}, mapConversationError(listErr)
+		}
+		parentQuestionID, followUpAllowed = voiceFollowUpParent(
+			questions,
+			session.MaxFollowUpsPerQuestion,
+		)
+		request, err = voiceInterviewQuestionRequest(
+			session,
+			sequence,
+			followUpAllowed,
+		)
+	} else {
+		request, err = voiceQuestionRequest(session, sequence)
+	}
 	if err != nil {
 		return conversation.VoiceQuestion{}, err
 	}
 	content := ""
+	questionType := "PRIMARY"
 	if isFrozenIELTSSpeakingModel(session.ScenarioModel) {
 		content, err = frozenIELTSFullMockQuestion(session, sequence)
 	} else {
 		var generated ai.TextResult
 		generated, err = adapter.generator.Generate(ctx, request)
 		content = strings.TrimSpace(generated.Content)
+		if err == nil && session.ScenarioType == "INTERVIEW" &&
+			session.MaxFollowUpsPerQuestion > 0 && sequence > 1 {
+			var decision generatedInterviewQuestion
+			if decodeErr := json.Unmarshal([]byte(content), &decision); decodeErr != nil {
+				return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+			}
+			questionType = strings.TrimSpace(decision.QuestionType)
+			content = strings.TrimSpace(decision.Content)
+			if questionType != "PRIMARY" && questionType != "FOLLOW_UP" {
+				return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+			}
+		}
 	}
 	if err != nil {
 		return conversation.VoiceQuestion{}, err
 	}
 	if strings.TrimSpace(content) == "" {
 		return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+	}
+	if questionType == "FOLLOW_UP" {
+		if !followUpAllowed || parentQuestionID == "" {
+			return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+		}
+	} else {
+		parentQuestionID = ""
 	}
 	saved, err := adapter.repository.SaveQuestion(
 		ctx,
@@ -1315,7 +1379,8 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 			SpeakerParticipantID:    session.InterviewerParticipantID,
 			AddresseeParticipantIDs: []string{session.CandidateParticipantID},
 			ObjectiveID:             voiceQuestionObjective,
-			Type:                    "PRIMARY",
+			Type:                    questionType,
+			ParentQuestionID:        parentQuestionID,
 			Content:                 content,
 			Sequence:                sequence,
 		},
@@ -1336,6 +1401,27 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		return conversation.VoiceQuestion{}, mapConversationError(err)
 	}
 	return mapVoiceQuestion(saved), nil
+}
+
+func voiceFollowUpParent(
+	questions []conversationpersistence.PersistentQuestion,
+	maximum int,
+) (string, bool) {
+	if maximum < 1 {
+		return "", false
+	}
+	followUps := 0
+	for index := len(questions) - 1; index >= 0; index-- {
+		question := questions[index]
+		if question.Type == "PRIMARY" {
+			return question.ID, question.ID != "" && followUps < maximum
+		}
+		if question.Type != "FOLLOW_UP" {
+			return "", false
+		}
+		followUps++
+	}
+	return "", false
 }
 
 func isFrozenIELTSSpeakingModel(model string) bool {
@@ -1433,6 +1519,61 @@ func voiceQuestionRequest(
 			},
 		},
 	}, nil
+}
+
+func voiceInterviewQuestionRequest(
+	session agent.VoicePracticeSession,
+	sequence int,
+	followUpAllowed bool,
+) (ai.TextRequest, error) {
+	prompt := session.PromptModel
+	maxQuestions := session.TurnLimit * (session.MaxFollowUpsPerQuestion + 1)
+	if sequence < 2 || sequence > maxQuestions ||
+		session.EffectiveTurns < 1 ||
+		session.EffectiveTurns >= session.TurnLimit ||
+		session.MaxFollowUpsPerQuestion < 1 ||
+		strings.TrimSpace(session.PreviousQuestion) == "" ||
+		strings.TrimSpace(session.PreviousUserResponse) == "" ||
+		strings.TrimSpace(prompt.PublicSceneBrief) == "" ||
+		strings.TrimSpace(prompt.PracticeGoal) == "" ||
+		strings.TrimSpace(prompt.UserRole) == "" ||
+		strings.TrimSpace(prompt.AIRole) == "" ||
+		strings.TrimSpace(prompt.PersonaSummary) == "" ||
+		len(prompt.FocusAreas) == 0 || len(prompt.TurnBlueprints) == 0 {
+		return ai.TextRequest{}, agent.ErrInvalidContext
+	}
+	nextBlueprintIndex := session.EffectiveTurns
+	if nextBlueprintIndex >= len(prompt.TurnBlueprints) {
+		nextBlueprintIndex = len(prompt.TurnBlueprints) - 1
+	}
+	decisionRule := "A FOLLOW_UP is available when the latest answer needs clarification or useful depth; otherwise choose PRIMARY."
+	if !followUpAllowed {
+		decisionRule = "The follow-up limit for this displayed round has been reached. You MUST choose PRIMARY."
+	}
+	return ai.TextRequest{Messages: []ai.TextMessage{
+		{
+			Role: ai.TextRoleSystem,
+			Content: fmt.Sprintf(
+				"You are %s, acting as %s in an English interview. %s Return only valid JSON with exactly two string fields: {\"question_type\":\"PRIMARY|FOLLOW_UP\",\"content\":\"...\"}. Do not include markdown, numbering, coaching, scoring, or explanations.",
+				prompt.AIRole,
+				prompt.PersonaSummary,
+				decisionRule,
+			),
+		},
+		{
+			Role: ai.TextRoleUser,
+			Content: strings.Join([]string{
+				fmt.Sprintf("Scene: %s", prompt.PublicSceneBrief),
+				fmt.Sprintf("Practice goal: %s", prompt.PracticeGoal),
+				fmt.Sprintf("Focus areas: %s", strings.Join(prompt.FocusAreas, "; ")),
+				fmt.Sprintf("Current displayed round: %d of %d.", session.EffectiveTurns, session.TurnLimit),
+				fmt.Sprintf("Previous interviewer question: %s", session.PreviousQuestion),
+				fmt.Sprintf("Latest learner answer: %s", session.PreviousUserResponse),
+				fmt.Sprintf("Next independent-question blueprint: %s", prompt.TurnBlueprints[nextBlueprintIndex]),
+				fmt.Sprintf("The server permits at most %d follow-ups for one displayed round.", session.MaxFollowUpsPerQuestion),
+			}, "\n"),
+		},
+	}}, nil
 }
 
 func (adapter *voiceQuestionAdapter) GetQuestion(
@@ -2067,11 +2208,17 @@ func (reader *voiceReviewSourceReader) ReadReviewSource(
 		return review.ReviewSourceSnapshot{}, mapPracticeError(err)
 	}
 	turnLimit := snapshot.SessionPolicy.MaxEffectiveTurns
+	effectiveTurnCount := 0
+	for _, turn := range turns {
+		if turn.CountsTowardTurnLimit {
+			effectiveTurnCount++
+		}
+	}
 	if session.Status != practicepersistence.ContextSessionCompleted ||
 		session.EffectiveTurns < 1 ||
 		session.EffectiveTurns > turnLimit ||
 		turnLimit < 1 || turnLimit > 14 ||
-		len(turns) != session.EffectiveTurns {
+		effectiveTurnCount != session.EffectiveTurns {
 		return review.ReviewSourceSnapshot{}, review.ErrInvalidReview
 	}
 	sources := make([]review.SourceObject, 0, len(turns))

@@ -2226,14 +2226,19 @@ func voiceSessionStateResponse(state VoiceSessionState) gin.H {
 }
 
 func voiceQuestionResponse(question conversation.VoiceQuestion) gin.H {
-	return gin.H{
+	result := gin.H{
 		"question_id":               question.ID,
 		"practice_session_id":       question.SessionID,
+		"question_type":             question.Type,
 		"content":                   question.Text,
 		"speaker_participant_id":    question.SpeakerParticipantID,
 		"addressee_participant_ids": question.AddresseeParticipantIDs,
 		"speech_path":               "/v1/voice-questions/" + question.ID + "/speech",
 	}
+	if question.ParentQuestionID != "" {
+		result["parent_question_id"] = question.ParentQuestionID
+	}
+	return result
 }
 
 func transcriptionCandidateResponse(
@@ -2253,15 +2258,16 @@ func transcriptionCandidateResponse(
 
 func confirmedVoiceTurnResponse(turn conversation.ConfirmedVoiceTurn) gin.H {
 	result := gin.H{
-		"turn_id":                   turn.ID,
-		"practice_session_id":       turn.SessionID,
-		"question_id":               turn.QuestionID,
-		"respondent_participant_id": turn.RespondentParticipantID,
-		"candidate_id":              turn.CandidateID,
-		"answer_text":               turn.AnswerText,
-		"evidence_version":          turn.EvidenceVersion,
-		"effective_turns":           turn.EffectiveTurns,
-		"session_completed":         turn.SessionCompleted,
+		"turn_id":                            turn.ID,
+		"practice_session_id":                turn.SessionID,
+		"question_id":                        turn.QuestionID,
+		"respondent_participant_id":          turn.RespondentParticipantID,
+		"candidate_id":                       turn.CandidateID,
+		"answer_text":                        turn.AnswerText,
+		"evidence_version":                   turn.EvidenceVersion,
+		"effective_turns":                    turn.EffectiveTurns,
+		"counts_toward_effective_turn_limit": turn.CountsTowardTurnLimit,
+		"session_completed":                  turn.SessionCompleted,
 	}
 	if turn.ReviewID != "" {
 		result["review_id"] = turn.ReviewID
