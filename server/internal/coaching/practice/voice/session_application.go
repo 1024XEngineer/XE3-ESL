@@ -100,6 +100,7 @@ type SessionApplication struct {
 	checkpoints  CheckpointPort
 	orchestrator *RoundOrchestrator
 	translator   QuestionTranslator
+	tips         QuestionTipPort
 }
 
 func NewSessionApplication(
@@ -170,6 +171,45 @@ func (application *SessionApplication) QuestionTranslation(
 		TargetLanguage: "zh-CN",
 		Content:        content,
 	}, nil
+}
+
+func (application *SessionApplication) EnsureQuestionTip(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+	questionID string,
+	idempotencyKey string,
+) (QuestionTipResult, error) {
+	if application.tips == nil || validateVoiceActor(ctx, actor) != nil ||
+		strings.TrimSpace(sessionID) == "" ||
+		strings.TrimSpace(questionID) == "" ||
+		strings.TrimSpace(idempotencyKey) == "" {
+		return QuestionTipResult{}, ErrInvalidRequest
+	}
+	session, err := application.sessions.GetByID(ctx, actor, sessionID)
+	if err != nil {
+		return QuestionTipResult{}, err
+	}
+	if session.ID != sessionID || session.SceneFamily != "INTERVIEW" ||
+		session.Completed || session.Status == "paused" ||
+		session.Status == "ended_early" {
+		return QuestionTipResult{}, ErrInvalidContext
+	}
+	state, err := application.state(ctx, actor, session)
+	if err != nil {
+		return QuestionTipResult{}, err
+	}
+	if state.Question == nil || state.Question.ID != questionID {
+		return QuestionTipResult{}, ErrInvalidContext
+	}
+	return application.tips.EnsureQuestionTip(
+		ctx,
+		actor,
+		state.Session,
+		*state.Question,
+		state.TurnHistory,
+		idempotencyKey,
+	)
 }
 
 func (application *SessionApplication) Start(

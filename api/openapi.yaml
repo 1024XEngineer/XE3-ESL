@@ -153,6 +153,8 @@ paths:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates~1{candidate_id}~1confirmations
   /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/text-answers:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1text-answers
+  /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/tips:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1tips
   /v1/transcription-candidates/{candidate_id}/confirmations:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1transcription-candidates~1{candidate_id}~1confirmations
   /v1/voice-questions/{question_id}/speech:

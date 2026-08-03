@@ -28,6 +28,9 @@ final class PracticeWireEndpoints {
     this.submitText =
         '/v1/voice-practice-sessions/{practice_session_id}/questions/'
         '{question_id}/text-answers',
+    this.questionTip =
+        '/v1/voice-practice-sessions/{practice_session_id}/questions/'
+        '{question_id}/tips',
     this.confirm = '/v1/transcription-candidates/{candidate_id}/confirmations',
     this.endEarly = '/v1/practice-sessions/{practice_session_id}/end-early',
     this.retryRequest = '/v1/feedback-items/{feedback_item_id}/retry-requests',
@@ -42,6 +45,7 @@ final class PracticeWireEndpoints {
   final String voiceState;
   final String transcribe;
   final String submitText;
+  final String questionTip;
   final String confirm;
   final String endEarly;
   final String retryRequest;
@@ -70,6 +74,10 @@ final class PracticeWireEndpoints {
 
   String questionTranslationPath(String questionId) =>
       questionTranslation.replaceAll('{question_id}', _pathSegment(questionId));
+
+  String questionTipPath(String sessionId, String questionId) => questionTip
+      .replaceAll('{practice_session_id}', _pathSegment(sessionId))
+      .replaceAll('{question_id}', _pathSegment(questionId));
 
   String endEarlyPath(String sessionId) =>
       endEarly.replaceAll('{practice_session_id}', _pathSegment(sessionId));
@@ -136,6 +144,7 @@ final class WirePracticeClient
         PracticeClient,
         PracticeLifecycleClient,
         PracticeSpeechFeedbackRetryClient,
+        PracticeQuestionTipClient,
         PracticeQuestionTranslationClient {
   factory WirePracticeClient({
     required Uri baseUri,
@@ -460,6 +469,32 @@ final class WirePracticeClient
       _requireStatus(response, const {HttpStatus.ok});
       return _decodeQuestionTranslation(
         response.body,
+        expectedQuestionId: questionId,
+      );
+    });
+  }
+
+  @override
+  Future<PracticeQuestionTip> ensureQuestionTip({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(sessionId);
+      _requireOpaqueId(questionId);
+      _requireClientId(idempotencyKey);
+      final response = await _send(
+        generation: generation,
+        timeout: _jsonTimeout,
+        method: 'POST',
+        path: _endpoints.questionTipPath(sessionId, questionId),
+        extraHeaders: <String, String>{'Idempotency-Key': idempotencyKey},
+      );
+      _requireStatus(response, const {HttpStatus.ok});
+      return _decodeQuestionTip(
+        response.body,
+        expectedSessionId: sessionId,
         expectedQuestionId: questionId,
       );
     });
@@ -962,6 +997,35 @@ TranscriptionCandidate _decodeCandidate(
     throw _invalidResponse();
   }
   return candidate;
+}
+
+PracticeQuestionTip _decodeQuestionTip(
+  String body, {
+  required String expectedSessionId,
+  required String expectedQuestionId,
+}) {
+  final root = _exactObject(
+    jsonDecode(body),
+    required: const {
+      'tip_id',
+      'practice_session_id',
+      'question_id',
+      'content',
+      'created_at',
+    },
+  );
+  final tip = PracticeQuestionTip(
+    id: _string(root, 'tip_id'),
+    sessionId: _string(root, 'practice_session_id'),
+    questionId: _string(root, 'question_id'),
+    content: _utf8String(root, 'content', maxLength: 800, maxBytes: 2400),
+    createdAt: _dateTime(root, 'created_at'),
+  );
+  if (tip.sessionId != expectedSessionId ||
+      tip.questionId != expectedQuestionId) {
+    throw _invalidResponse();
+  }
+  return tip;
 }
 
 PracticeRetryRequest _decodeRetryRequest(

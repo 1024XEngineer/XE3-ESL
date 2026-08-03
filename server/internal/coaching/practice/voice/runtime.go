@@ -16,6 +16,7 @@ type RuntimeRepository interface {
 	RecordingConfirmationStore
 	RetryTurnStore
 	practice.RetryTurnRepository
+	QuestionTipStore
 }
 
 // TurnFeedbackStatusReader is the read-only Evaluation boundary used when a
@@ -37,6 +38,7 @@ type RuntimeConfiguration struct {
 	Synthesizer        SpeechSynthesizer
 	QuestionGenerator  QuestionGenerator
 	QuestionTranslator QuestionTranslator
+	AnswerTipGenerator AnswerTipGenerator
 	Recordings         VoiceRecordingLifecycle
 	AudioAssets        *AudioAssetService
 	ASRLease           time.Duration
@@ -120,6 +122,17 @@ func NewRuntimeApplications(
 			configuration.QuestionTranslator,
 		)
 	}
+	var tipPort QuestionTipPort
+	if configuration.AnswerTipGenerator != nil {
+		tipService, tipErr := NewQuestionTipService(
+			configuration.Repository,
+			configuration.AnswerTipGenerator,
+		)
+		if tipErr != nil {
+			return nil, nil, tipErr
+		}
+		tipPort = tipService
+	}
 	application, err := NewSessionApplication(
 		&sessionAdapter{repository: configuration.Repository},
 		&questionAdapter{
@@ -137,5 +150,6 @@ func NewRuntimeApplications(
 	if err != nil {
 		return nil, nil, err
 	}
+	application.tips = tipPort
 	return application, retryApplication, nil
 }

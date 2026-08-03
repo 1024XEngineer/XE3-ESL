@@ -25,6 +25,7 @@ type VoiceConfiguration struct {
 	PracticeSynthesizer       practicevoice.SpeechSynthesizer
 	QuestionGenerator         practicevoice.QuestionGenerator
 	QuestionTranslator        practicevoice.QuestionTranslator
+	AnswerTipGenerator        practicevoice.AnswerTipGenerator
 	TemporaryAudio            practicevoice.TemporaryAudioVault
 	ObjectStore               objectstore.Store
 	AgentVoiceInputEnabled    bool
@@ -166,6 +167,26 @@ func NewPracticeQuestionTranslator(
 	)
 }
 
+// NewPracticeAnswerTipGenerator selects the Practice Voice Tip adapter.
+func NewPracticeAnswerTipGenerator(
+	configuration config.TextGenerationConfig,
+) (practicevoice.AnswerTipGenerator, error) {
+	if configuration.Provider != config.TextProviderQianwen {
+		return nil, errors.New(
+			"bootstrap: Practice answer Tip provider is not registered",
+		)
+	}
+	return qianwen.NewPracticeVoiceAnswerTipGenerator(
+		qianwen.TextConfig{
+			BaseURL:         configuration.BaseURL,
+			Model:           configuration.Model,
+			Timeout:         configuration.Timeout,
+			MaxOutputTokens: configuration.MaxOutputTokens,
+		},
+		configuration.APIKey.Reveal(),
+	)
+}
+
 // buildProductionVoiceApplication constructs infrastructure and delegates all
 // Practice Voice business wiring to the owning package.
 func buildProductionVoiceApplication(
@@ -236,6 +257,7 @@ func buildProductionVoiceApplication(
 				Synthesizer:        configuration.PracticeSynthesizer,
 				QuestionGenerator:  configuration.QuestionGenerator,
 				QuestionTranslator: configuration.QuestionTranslator,
+				AnswerTipGenerator: configuration.AnswerTipGenerator,
 				Recordings:         recordings,
 				AudioAssets:        audioAssets,
 				ASRLease:           configuration.ASRLease,
