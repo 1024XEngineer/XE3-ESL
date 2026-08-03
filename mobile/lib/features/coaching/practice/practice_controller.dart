@@ -202,6 +202,8 @@ final class PracticeController extends ChangeNotifier
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
+  bool get isInterviewPractice =>
+      isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
   bool get isFinalInterviewSubmission =>
       _recordingState == PracticeRecordingState.submitting &&
       _speechFeedbackRetry == null &&
@@ -1558,10 +1560,9 @@ final class PracticeController extends ChangeNotifier
   }
 
   Future<PracticeQuestionTip?> requestQuestionTip() async {
-    final tipClient = client;
     final sessionId = _practiceSessionId;
     final question = _currentQuestion;
-    if (tipClient is! PracticeQuestionTipClient ||
+    if (client is! PracticeQuestionTipClient ||
         sessionId == null ||
         question == null ||
         !isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel) ||
@@ -1569,6 +1570,7 @@ final class PracticeController extends ChangeNotifier
         _recordingState != PracticeRecordingState.idle) {
       return null;
     }
+    final tipClient = client as PracticeQuestionTipClient;
     final cached = _questionTip;
     if (cached != null &&
         cached.sessionId == sessionId &&

@@ -8,6 +8,8 @@ import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
+import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
@@ -78,6 +80,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   String? _scheduledInterviewReportSessionId;
   String? _autoOpenedInterviewReportSessionId;
   bool _interviewReportRouteActive = false;
+  IeltsExaminerSpeaker? _ownedTipSpeaker;
 
   @override
   void initState() {
@@ -131,7 +134,37 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     _textController.dispose();
     _textFocusNode.dispose();
     unawaited(widget.practiceController.stopPracticeAudio(notify: false));
+    if (_ownedTipSpeaker case final speaker?) {
+      unawaited(speaker.dispose());
+    }
     super.dispose();
+  }
+
+  Future<void> _showQuestionTip() async {
+    final controller = widget.practiceController;
+    final tip = await controller.requestQuestionTip();
+    if (!mounted ||
+        tip == null ||
+        controller.currentQuestion?.id != tip.questionId) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => QuestionTipSheet(
+        content: tip.content,
+        onSpeak: () async {
+          final speaker = _ownedTipSpeaker ??= SystemIeltsExaminerSpeaker();
+          await speaker.speak(tip.content);
+        },
+      ),
+    );
+    try {
+      await _ownedTipSpeaker?.stop();
+    } on Object {
+      // Closing the reference sheet must not be blocked by a platform TTS error.
+    }
   }
 
   void _handleControllerState() {
@@ -473,6 +506,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                                   is PracticeQuestionTranslationClient
                           ? _translateQuestion
                           : null,
+                      onShowTip: _showQuestionTip,
                       onOpenReport: _openInterviewReport,
                     );
                     if (landscape) {
@@ -700,6 +734,7 @@ class _ConversationPanel extends StatelessWidget {
     required this.onSubmitText,
     required this.onToggleConversationText,
     required this.onTranslateQuestion,
+    required this.onShowTip,
     required this.onOpenReport,
   });
 
@@ -720,6 +755,7 @@ class _ConversationPanel extends StatelessWidget {
   final VoidCallback onSubmitText;
   final VoidCallback onToggleConversationText;
   final Future<String> Function(PracticeMessage message)? onTranslateQuestion;
+  final VoidCallback onShowTip;
   final VoidCallback onOpenReport;
 
   @override
@@ -824,6 +860,7 @@ class _ConversationPanel extends StatelessWidget {
             onBeforeStartRecording: onBeforeStartRecording,
             onToggleTextMode: onToggleTextMode,
             onSubmitText: onSubmitText,
+            onShowTip: onShowTip,
             onOpenReport: onOpenReport,
           ),
         ],
@@ -1003,6 +1040,7 @@ class _ImmersiveComposer extends StatefulWidget {
     required this.onBeforeStartRecording,
     required this.onToggleTextMode,
     required this.onSubmitText,
+    required this.onShowTip,
     required this.onOpenReport,
   });
 
@@ -1014,6 +1052,7 @@ class _ImmersiveComposer extends StatefulWidget {
   final ImmersiveAsyncAction? onBeforeStartRecording;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
+  final VoidCallback onShowTip;
   final VoidCallback onOpenReport;
 
   @override
@@ -1085,11 +1124,13 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
             widget.controller.hasPendingPracticeAudio
                 ? _PendingImmersiveAudio(controller: widget.controller)
                 : _IdleComposer(
+                    controller: widget.controller,
                     textController: widget.textController,
                     textFocusNode: widget.textFocusNode,
                     textMode: widget.textMode,
                     onToggleTextMode: widget.onToggleTextMode,
                     onSubmitText: widget.onSubmitText,
+                    onShowTip: widget.onShowTip,
                     capture: capture,
                   ),
           PracticeRecordingState.starting ||
@@ -1122,31 +1163,70 @@ class _ImmersiveComposerState extends State<_ImmersiveComposer> {
 
 class _IdleComposer extends StatelessWidget {
   const _IdleComposer({
+    required this.controller,
     required this.textController,
     required this.textFocusNode,
     required this.textMode,
     required this.onToggleTextMode,
     required this.onSubmitText,
+    required this.onShowTip,
     required this.capture,
   });
 
+  final PracticeController controller;
   final TextEditingController textController;
   final FocusNode textFocusNode;
   final bool textMode;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
+  final VoidCallback onShowTip;
   final VoiceCaptureView capture;
 
   @override
   Widget build(BuildContext context) {
-    return PracticeIdleComposer(
-      capture: capture,
-      textController: textController,
-      textFocusNode: textFocusNode,
-      textMode: textMode,
-      onToggleTextMode: onToggleTextMode,
-      onSubmitText: onSubmitText,
-      keyPrefix: 'immersive',
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (controller.isInterviewPractice) ...[
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              key: const Key('immersive-question-tip'),
+              onPressed: controller.canRequestQuestionTip ? onShowTip : null,
+              icon: controller.isQuestionTipLoading
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.lightbulb_outline_rounded, size: 19),
+              label: Text(controller.isQuestionTipLoading ? '正在生成' : 'Tips'),
+            ),
+          ),
+          if (controller.questionTipErrorMessage case final message?)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                message,
+                key: const Key('immersive-question-tip-error'),
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                  color: SpeakUpDesign.error,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+        ],
+        PracticeIdleComposer(
+          capture: capture,
+          textController: textController,
+          textFocusNode: textFocusNode,
+          textMode: textMode,
+          onToggleTextMode: onToggleTextMode,
+          onSubmitText: onSubmitText,
+          keyPrefix: 'immersive',
+        ),
+      ],
     );
   }
 }
