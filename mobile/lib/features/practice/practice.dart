@@ -851,9 +851,52 @@ class _SceneAIMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return KeyedSubtree(
-      key: Key('practice-ai-message-${message.id}'),
-      child: PracticeChatBubble(message: message, actions: actions),
+    return LayoutBuilder(
+      builder: (context, constraints) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const CircleAvatar(
+            radius: 17,
+            backgroundColor: SpeakUpDesign.primaryMuted,
+            foregroundColor: SpeakUpDesign.primary,
+            child: Icon(Icons.person_outline_rounded, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            key: Key('practice-ai-message-${message.id}'),
+            constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.76),
+            padding: const EdgeInsets.fromLTRB(14, 11, 14, 12),
+            decoration: BoxDecoration(
+              color: SpeakUpDesign.surface,
+              borderRadius: const BorderRadius.only(
+                topRight: Radius.circular(SpeakUpDesign.radiusControl),
+                bottomLeft: Radius.circular(SpeakUpDesign.radiusControl),
+                bottomRight: Radius.circular(SpeakUpDesign.radiusControl),
+              ),
+              border: Border.all(color: SpeakUpDesign.border),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  roleName,
+                  style: SpeakUpDesign.meta.copyWith(
+                    color: SpeakUpDesign.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  message.text,
+                  style: SpeakUpDesign.body.copyWith(height: 1.45),
+                ),
+                if (actions != null) ...[const SizedBox(height: 8), actions!],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -865,9 +908,30 @@ class _SceneUserMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return KeyedSubtree(
-      key: Key('practice-user-message-${message.id}'),
-      child: PracticeChatBubble(message: message),
+    return LayoutBuilder(
+      builder: (context, constraints) => Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          key: Key('practice-user-message-${message.id}'),
+          constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.78),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: const BoxDecoration(
+            color: SpeakUpDesign.primary,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(SpeakUpDesign.radiusControl),
+              bottomLeft: Radius.circular(SpeakUpDesign.radiusControl),
+              bottomRight: Radius.circular(SpeakUpDesign.radiusControl),
+            ),
+          ),
+          child: Text(
+            message.text,
+            style: SpeakUpDesign.body.copyWith(
+              color: Colors.white,
+              height: 1.45,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1037,7 +1101,6 @@ class _RecordingPanelState extends State<_RecordingPanel> {
       onSendVoice: _sendVoice,
       onConvertToText: _convertToText,
       onCancel: _cancel,
-      upwardCancelOnly: true,
       builder: (context, capture) {
         final panel = switch (state) {
           PracticeRecordingState.idle =>

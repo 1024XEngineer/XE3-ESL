@@ -1303,6 +1303,7 @@ class _IeltsVoiceCaptureDock extends StatelessWidget {
       capture: capture,
       phase: phase,
       keyPrefix: 'ielts-mock',
+      upwardCancelOnly: true,
     );
   }
 }

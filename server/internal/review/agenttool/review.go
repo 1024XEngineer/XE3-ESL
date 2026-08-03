@@ -141,7 +141,7 @@ func NewReviewGetTool(port ReviewPort) ReviewGetTool {
 func (tool ReviewGetTool) Definition() Definition {
 	return Definition{
 		Name:        ReviewGetToolName,
-		Description: "Read the full structured details of exactly one review by the internal review_id returned from review.search.v1. Never ask the user to provide, repeat, or understand this identifier, and never expose it in the reply. Do not use for broad historical review searches or guess an id from natural language.",
+		Description: "Use this tool to read the full structured details of exactly one review by the internal review_id returned from review.search.v1. Never ask the user to provide, repeat, or understand this identifier, and never expose it in the reply. Do not use for broad historical review searches or guess an id from natural language.",
 		InputSchema: ObjectSchema(map[string]any{
 			"review_id": IdentifierSchema(
 				"Exact review id returned by a previous review search.",

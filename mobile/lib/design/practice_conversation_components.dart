@@ -201,6 +201,7 @@ class PracticeRecordingComposer extends StatelessWidget {
     required this.phase,
     required this.keyPrefix,
     this.elapsed,
+    this.upwardCancelOnly = false,
     super.key,
   });
 
@@ -208,50 +209,66 @@ class PracticeRecordingComposer extends StatelessWidget {
   final VoiceCapturePhase phase;
   final String keyPrefix;
   final Duration? elapsed;
+  final bool upwardCancelOnly;
 
   @override
   Widget build(BuildContext context) {
     final preparing = phase == VoiceCapturePhase.starting;
     final canceling = capture.releaseIntent == VoiceCaptureReleaseIntent.cancel;
-    final duration = elapsed == null ? null : _formatDuration(elapsed!);
     final label = canceling
         ? '松开取消'
         : preparing
         ? '正在打开麦克风…'
         : capture.tapMode
-        ? '点击发送 · 上滑取消'
-        : '松开发送 · 上滑取消';
+        ? '点击发送语音'
+        : upwardCancelOnly
+        ? '松开发送 · 上滑取消'
+        : '松开发送 · 左滑取消 · 右滑转文字';
     final color = canceling ? SpeakUpDesign.error : SpeakUpDesign.primary;
-    return capture.wrapTarget(
-      key: Key('$keyPrefix-record'),
-      semanticsLabel: label,
-      child: SizedBox(
-        height: 48,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              canceling ? Icons.close_rounded : Icons.graphic_eq_rounded,
-              size: 21,
-              color: color,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                duration == null ? label : '$label  $duration',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        VoiceCaptureIntentTargets(
+          capture: capture,
+          elapsed: elapsed ?? Duration.zero,
+          keyPrefix: keyPrefix,
+        ),
+        const SizedBox(height: 10),
+        capture.wrapTarget(
+          key: Key('$keyPrefix-record'),
+          semanticsLabel: label,
+          child: KeyedSubtree(
+            key: Key('$keyPrefix-stop-recording'),
+            child: SizedBox(
+              height: 48,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    canceling ? Icons.close_rounded : Icons.graphic_eq_rounded,
+                    size: 21,
+                    color: color,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }
@@ -290,10 +307,4 @@ class PracticeLoadingComposer extends StatelessWidget {
       ),
     );
   }
-}
-
-String _formatDuration(Duration value) {
-  final minutes = value.inMinutes.toString().padLeft(2, '0');
-  final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
-  return '$minutes:$seconds';
 }

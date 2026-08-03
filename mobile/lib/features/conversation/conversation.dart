@@ -971,7 +971,6 @@ class _MessageList extends StatelessWidget {
                     'agent-speech-feedback-${projection.sourceKey}',
                   ),
                   projection: projection,
-                  compact: true,
                   onRetry: projection.canRetry
                       ? () => unawaited(
                           speechFeedbackController!.retry(projection.sourceKey),

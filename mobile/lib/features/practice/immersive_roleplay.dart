@@ -1047,6 +1047,7 @@ class _RecordingComposer extends StatelessWidget {
       phase: phase,
       keyPrefix: 'immersive',
       elapsed: Duration(seconds: seconds),
+      upwardCancelOnly: true,
     );
   }
 }
