@@ -308,7 +308,9 @@ class _PreparationPageState extends State<PreparationPage> {
     final launch = widget.launchController;
     if ((launch?.hasResumablePractice ?? false) &&
         !forceReplaceCurrentPractice) {
-      if (!(launch?.resumableHasProgress ?? true)) {
+      if (ieltsSelection != null) {
+        replaceCurrentPractice = true;
+      } else if (!(launch?.resumableHasProgress ?? true)) {
         replaceCurrentPractice = true;
       } else {
         if (launch?.resumableScenarioId == scenario.id) {

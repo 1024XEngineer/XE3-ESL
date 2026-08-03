@@ -317,7 +317,7 @@ void main() {
   );
 
   testWidgets(
-    'failed Part 2 transcription stays on speaking and retry reaches Part 3',
+    'failed Part 2 transcription returns to recording without recovery actions',
     (tester) async {
       final practice = _IeltsPracticeClient(
         initialCompleted: 8,
@@ -359,8 +359,10 @@ void main() {
         find.byKey(const Key('ielts-mock-part-2-speaking')),
         findsOneWidget,
       );
-      expect(find.text('Record Again →'), findsOneWidget);
-      expect(find.textContaining('请重新录音'), findsOneWidget);
+      expect(find.text('Start Speaking →'), findsOneWidget);
+      expect(controller.hasPendingPracticeAudio, isFalse);
+      expect(find.text('Delete'), findsNothing);
+      expect(find.text('Retry transcript'), findsNothing);
 
       await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
       await tester.pump();
@@ -425,7 +427,7 @@ void main() {
     expect(find.text('restored note'), findsOneWidget);
   });
 
-  testWidgets('Part 2 keeps failed audio reachable and retries in place', (
+  testWidgets('Part 2 clears failed audio without Delete or Retry actions', (
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 8)
@@ -460,18 +462,11 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('ielts-mock-part-2-speaking')), findsOneWidget);
-    expect(find.byKey(const Key('ielts-mock-pending-audio')), findsOneWidget);
-    expect(controller.hasPendingPracticeAudio, isTrue);
-
-    practice.transcribeFailure = null;
-    await tester.tap(find.byKey(const Key('ielts-mock-retry-transcription')));
-    await tester.pump();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 220));
-
     expect(controller.hasPendingPracticeAudio, isFalse);
-    expect(controller.completedTurns, 9);
-    expect(find.byKey(const Key('ielts-mock-part-2-complete')), findsOneWidget);
+    expect(controller.completedTurns, 8);
+    expect(find.text('Delete'), findsNothing);
+    expect(find.text('Retry transcript'), findsNothing);
+    expect(find.text('Start Speaking →'), findsOneWidget);
   });
 
   testWidgets('Part 1 clears failed transcription without a recovery dock', (

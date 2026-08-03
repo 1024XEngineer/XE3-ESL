@@ -110,6 +110,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   bool _convertedAnswerSubmitting = false;
   bool _startingPart2Recording = false;
   bool _finishingPart2Recording = false;
+  bool _part2RetryNeeded = false;
   bool _exitApproved = false;
   bool _exitInFlight = false;
   bool _narrationBusy = false;
@@ -331,7 +332,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         IeltsMockPhase.part2CueCard ||
         IeltsMockPhase.part2Preparation => value.phase,
         IeltsMockPhase.part2Speaking
-            when widget.controller.errorMessage != null ||
+            when _part2RetryNeeded ||
+                widget.controller.errorMessage != null ||
                 widget.controller.hasPendingPracticeAudio ||
                 widget.controller.recordingState !=
                     PracticeRecordingState.idle =>
@@ -721,6 +723,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     _startingPart2Recording = true;
+    _part2RetryNeeded = false;
     final now = widget.now().toUtc();
     final speaking = progress.copyWith(
       phase: IeltsMockPhase.part2Speaking,
@@ -782,6 +785,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (state == PracticeRecordingState.starting ||
         state == PracticeRecordingState.recording) {
       await widget.controller.finishRecordingGesture();
+      if (widget.controller.hasPendingPracticeAudio) {
+        _part2RetryNeeded = true;
+        await widget.controller.discardPendingPracticeAudio();
+      }
     } else if (state == PracticeRecordingState.awaitingConfirmation) {
       _confirmPendingTranscript();
     }
@@ -1719,47 +1726,6 @@ class _IeltsConvertedAnswerDock extends StatelessWidget {
   }
 }
 
-class _IeltsPendingAudioDock extends StatelessWidget {
-  const _IeltsPendingAudioDock({required this.controller});
-
-  final AgentController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      key: const Key('ielts-mock-pending-audio'),
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text(
-          'Recording kept after transcription failed.',
-          style: SpeakUpDesign.cardTitle,
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('ielts-mock-delete-pending-audio'),
-                onPressed: controller.discardPendingPracticeAudio,
-                child: const Text('Delete'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton(
-                key: const Key('ielts-mock-retry-transcription'),
-                onPressed: controller.retryPracticeTranscription,
-                child: const Text('Retry transcript'),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
 class _CompletionStep extends StatelessWidget {
   const _CompletionStep({
     required this.title,
@@ -2296,51 +2262,32 @@ class _Part2Speaking extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 26),
-          if (controller.hasPendingPracticeAudio)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _IeltsPendingAudioDock(controller: controller),
-                const SizedBox(height: 12),
-                FilledButton(
-                  key: const Key('ielts-mock-finish-speaking'),
-                  onPressed: busy ? null : onPressed,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(58),
-                    backgroundColor: SpeakUpDesign.ink,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('Record Again →'),
-                ),
-              ],
-            )
-          else
-            FilledButton(
-              key: const Key('ielts-mock-finish-speaking'),
-              onPressed: busy ? null : onPressed,
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(58),
-                backgroundColor: SpeakUpDesign.ink,
-                foregroundColor: Colors.white,
-              ),
-              child: busy
-                  ? const SizedBox.square(
-                      dimension: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.4,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text(switch (recordingState) {
-                      PracticeRecordingState.idle =>
-                        errorMessage == null
-                            ? 'Start Speaking →'
-                            : 'Record Again →',
-                      PracticeRecordingState.awaitingConfirmation =>
-                        'Submit Answer →',
-                      _ => 'Finish Speaking →',
-                    }),
+          FilledButton(
+            key: const Key('ielts-mock-finish-speaking'),
+            onPressed: busy ? null : onPressed,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(58),
+              backgroundColor: SpeakUpDesign.ink,
+              foregroundColor: Colors.white,
             ),
+            child: busy
+                ? const SizedBox.square(
+                    dimension: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.4,
+                      color: Colors.white,
+                    ),
+                  )
+                : Text(switch (recordingState) {
+                    PracticeRecordingState.idle =>
+                      errorMessage == null
+                          ? 'Start Speaking →'
+                          : 'Record Again →',
+                    PracticeRecordingState.awaitingConfirmation =>
+                      'Submit Answer →',
+                    _ => 'Finish Speaking →',
+                  }),
+          ),
         ],
       ),
     );
