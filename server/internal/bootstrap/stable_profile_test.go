@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
