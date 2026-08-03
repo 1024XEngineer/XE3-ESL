@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
@@ -1742,7 +1742,7 @@ func newVoiceProductionIntegrationServer(
 		nil,
 		"",
 		generator,
-		agent.RunConfiguration{
+		agentrun.Configuration{
 			Provider:           "fake",
 			Model:              "fake-text-v1",
 			MaxOutputTokens:    256,
@@ -2557,6 +2557,27 @@ func (recognizer *voiceRecognizer) Transcribe(
 		Model:      "fake-asr-v1",
 		Transcript: fmt.Sprintf("Confirmed answer number %d.", call),
 	}, nil
+}
+
+func (recognizer *voiceRecognizer) TranscribeStream(
+	ctx context.Context,
+	request ai.TranscriptionRequest,
+	observer ai.TranscriptionObserver,
+) (ai.TranscriptionResult, error) {
+	result, err := recognizer.Transcribe(ctx, request)
+	if err != nil {
+		return ai.TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		ai.TranscriptionUpdate{
+			Transcript: result.Transcript,
+			Final:      true,
+		},
+	); err != nil {
+		return ai.TranscriptionResult{}, err
+	}
+	return result, nil
 }
 
 type voiceObjectStore struct {

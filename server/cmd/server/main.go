@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
@@ -299,7 +299,7 @@ func run() int {
 			cfg.TrustedProxyCIDRs,
 			cfg.TrustedProxyHeader,
 			textGenerator,
-			agent.RunConfiguration{
+			agentrun.Configuration{
 				Provider:           textConfig.Provider,
 				Model:              textConfig.Model,
 				MaxOutputTokens:    textConfig.MaxOutputTokens,
@@ -313,16 +313,16 @@ func run() int {
 			},
 			agentImageConfig,
 			bootstrap.VoiceConfiguration{
-				Recognizer:                recognizer,
-				Synthesizer:               synthesizer,
-				TemporaryAudio:            audioVault,
-				ObjectStore:               recordingStore,
-				AgentVoiceMessagesEnabled: storageConfig.Enabled,
-				ScratchDirectory:          ttsConfig.TempDirectory,
-				ObjectReadAllowedHosts:    agentVoiceObjectReadHosts,
-				AudioStagedTTL:            24 * time.Hour,
-				AudioUploadLease:          2 * time.Minute,
-				ASRLease:                  asrConfig.Timeout + 15*time.Second,
+				Recognizer:             recognizer,
+				Synthesizer:            synthesizer,
+				TemporaryAudio:         audioVault,
+				ObjectStore:            recordingStore,
+				AgentVoiceInputEnabled: storageConfig.Enabled,
+				ScratchDirectory:       ttsConfig.TempDirectory,
+				ObjectReadAllowedHosts: agentVoiceObjectReadHosts,
+				AudioStagedTTL:         24 * time.Hour,
+				AudioUploadLease:       2 * time.Minute,
+				ASRLease:               asrConfig.Timeout + 15*time.Second,
 				// Keep report generation within the Review lease while allowing
 				// the same provider budget used by scene-level reports.
 				ReviewGenerationTimeout: 45 * time.Second,

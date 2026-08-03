@@ -18,9 +18,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	persistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
 	migrationfiles "github.com/1024XEngineer/XE3-ESL/server/migrations"
 )
 
@@ -28,6 +29,10 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	repository, pool := newContextRepository(t)
 	ctx := context.Background()
 	owner := contextOwnerA()
+	actor := requestcontext.Actor{
+		UserID:    owner.Actor.UserID,
+		SessionID: owner.Actor.SessionID,
+	}
 	seedContextOwner(t, pool, &owner)
 	plan, _, err := repository.CreatePlan(
 		ctx,
@@ -80,7 +85,7 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 		t.Fatalf("ActivateContextSession: %v", err)
 	}
 
-	application, err := practice.NewVoiceApplication(
+	application, err := practicevoice.NewApplication(
 		repository,
 		"speakup.user",
 	)
@@ -89,7 +94,7 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	}
 	participantID, err := application.ResolveActorParticipant(
 		ctx,
-		owner.Actor,
+		actor,
 		created.Session.ID,
 	)
 	if err != nil {
@@ -100,7 +105,7 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	}
 	first, err := application.ApplyEffectiveTurn(
 		ctx,
-		owner.Actor,
+		actor,
 		created.Session.ID,
 		"voice-turn-1",
 		true,
@@ -116,7 +121,7 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 		t.Fatalf("first progress evidence = %#v", first)
 	}
 
-	restarted, err := practice.NewVoiceApplication(
+	restarted, err := practicevoice.NewApplication(
 		practicepostgres.New(pool),
 		"speakup.user",
 	)
@@ -125,7 +130,7 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	}
 	replayed, err := restarted.ApplyEffectiveTurn(
 		ctx,
-		owner.Actor,
+		actor,
 		created.Session.ID,
 		"voice-turn-1",
 		true,
@@ -138,7 +143,7 @@ func TestVoiceApplicationUsesDurableSnapshotAndTurnIdempotency(t *testing.T) {
 	}
 	if recoveredID, err := restarted.ResolveActorParticipant(
 		ctx,
-		owner.Actor,
+		actor,
 		created.Session.ID,
 	); err != nil || recoveredID != participantID {
 		t.Fatalf("resolved after restart = %q, %v", recoveredID, err)

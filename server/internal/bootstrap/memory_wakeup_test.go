@@ -5,25 +5,25 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 func TestRunCompletionNotifierFiresOnlyAfterSuccessfulCommit(t *testing.T) {
 	t.Parallel()
 
-	completedRun := core.Run{Status: core.RunStatusCompleted}
+	completedRun := agentrun.Run{Status: agentrun.StatusCompleted}
 	underlying := &completionRepositoryStub{
-		complete: func() (core.Run, error) {
+		complete: func() (agentrun.Run, error) {
 			return completedRun, nil
 		},
 	}
 	notifier := &countingNotifier{}
 	repository := &runCompletionNotifyingRepository{
-		RunRepository: underlying,
-		notifiers:     []interface{ Notify() }{notifier},
+		Repository: underlying,
+		notifiers:  []interface{ Notify() }{notifier},
 	}
-	if _, err := repository.CompleteRun(
+	if _, err := repository.Complete(
 		context.Background(),
 		"owner",
 		"run",
@@ -37,10 +37,10 @@ func TestRunCompletionNotifierFiresOnlyAfterSuccessfulCommit(t *testing.T) {
 		t.Fatalf("notifier calls = %d, want 1", notifier.calls)
 	}
 
-	underlying.complete = func() (core.Run, error) {
-		return core.Run{}, errors.New("commit failed")
+	underlying.complete = func() (agentrun.Run, error) {
+		return agentrun.Run{}, errors.New("commit failed")
 	}
-	if _, err := repository.CompleteRun(
+	if _, err := repository.Complete(
 		context.Background(),
 		"owner",
 		"run",
@@ -61,14 +61,14 @@ func TestRunCompletionNotifierFansOutPayloadFreeWakeups(t *testing.T) {
 	first := &countingNotifier{}
 	second := &countingNotifier{}
 	repository := &runCompletionNotifyingRepository{
-		RunRepository: &completionRepositoryStub{
-			complete: func() (core.Run, error) {
-				return core.Run{Status: core.RunStatusCompleted}, nil
+		Repository: &completionRepositoryStub{
+			complete: func() (agentrun.Run, error) {
+				return agentrun.Run{Status: agentrun.StatusCompleted}, nil
 			},
 		},
 		notifiers: []interface{ Notify() }{first, second},
 	}
-	if _, err := repository.CompleteRun(
+	if _, err := repository.Complete(
 		context.Background(),
 		"owner",
 		"run",
@@ -88,18 +88,18 @@ func TestRunCompletionNotifierFansOutPayloadFreeWakeups(t *testing.T) {
 }
 
 type completionRepositoryStub struct {
-	core.RunRepository
-	complete func() (core.Run, error)
+	agentrun.Repository
+	complete func() (agentrun.Run, error)
 }
 
-func (repository *completionRepositoryStub) CompleteRun(
+func (repository *completionRepositoryStub) Complete(
 	context.Context,
 	string,
 	string,
 	string,
 	string,
 	ai.TextResult,
-) (core.Run, error) {
+) (agentrun.Run, error) {
 	return repository.complete()
 }
 

@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 )
@@ -23,10 +23,10 @@ var errAgentVoiceCleanupDependency = errors.New(
 )
 
 type agentVoiceObjectReclaimer interface {
-	ReclaimVoiceObjects(
+	ReclaimObjects(
 		context.Context,
 		int,
-	) (agent.VoiceCleanupResult, error)
+	) (agentvoice.CleanupResult, error)
 }
 
 type agentVoiceCleanupWaiter func(context.Context, time.Duration) bool
@@ -114,7 +114,7 @@ func (worker *agentVoiceCleanupWorker) sweep(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, worker.sweepTimeout)
 	defer cancel()
 
-	result, err := worker.reclaimer.ReclaimVoiceObjects(
+	result, err := worker.reclaimer.ReclaimObjects(
 		ctx,
 		worker.claimLimit,
 	)
@@ -174,11 +174,11 @@ func agentVoiceCleanupErrorKind(err error) string {
 		errors.Is(err, objectstore.ErrCredentials),
 		errors.Is(err, objectstore.ErrOperationFailed):
 		return "object_storage"
-	case errors.Is(err, agent.ErrConflict):
+	case errors.Is(err, agentvoice.ErrConflict):
 		return "concurrent_update"
-	case errors.Is(err, agent.ErrInvalidRequest):
+	case errors.Is(err, agentvoice.ErrInvalidRequest):
 		return "invalid_state"
-	case errors.Is(err, agent.ErrRepository):
+	case errors.Is(err, agentvoice.ErrRepository):
 		return "repository"
 	default:
 		return "dependency"

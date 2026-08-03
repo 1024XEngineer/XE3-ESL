@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
@@ -570,7 +570,7 @@ func newPracticeContextIntegrationComposition(
 		nil,
 		"",
 		practiceContextTextGenerator{},
-		agent.RunConfiguration{
+		agentrun.Configuration{
 			Provider:           "test",
 			Model:              "test-context-v1",
 			MaxOutputTokens:    128,

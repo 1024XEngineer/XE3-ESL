@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/command"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/mocktool"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	slashcommand "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/slashcommand"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
 	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
@@ -30,7 +30,7 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("帮我把这句话说得委婉一点"),
 	)
 	if err != nil {
@@ -42,8 +42,8 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 	requests := generator.Requests()
 	gotTools := exposedToolNameList(requests[0].Tools)
 	wantTools := []string{
-		mocktool.MaterialSearchToolName,
-		mocktool.MistakeSearchToolName,
+		capabilityfixture.MaterialSearchToolName,
+		capabilityfixture.MistakeSearchToolName,
 		reviewtool.ReviewGetToolName,
 		reviewtool.ReviewSearchToolName,
 		mattertool.ScenarioCreateToolName,
@@ -68,7 +68,7 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("请结合我的信息处理一下"),
 	)
 	if err != nil {
@@ -107,9 +107,9 @@ func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
 		finalLoopResult("Here is your latest practice feedback."),
 	)
 	service := newLoopTestService(t, generator)
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	registry, err := tool.NewRegistry(append(
-		mocktool.Tools(store),
+		capabilityfixture.Tools(store),
 		evaluationtool.NewLatestPracticeReportTool(loopLatestReportPort{}),
 	)...)
 	if err != nil {
@@ -122,7 +122,7 @@ func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest(
 			"我刚完成了面试练习。请直接读取这次练习的真实评分与报告。",
 		),
@@ -203,7 +203,7 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("比较我两次面试评价"),
 	)
 	if err != nil {
@@ -245,7 +245,7 @@ func TestRunLoopSupportsConsecutiveToolRoundsBeforeFinalResponse(t *testing.T) {
 		),
 		toolLoopResult(
 			"call-material-1",
-			mocktool.MaterialSearchToolName,
+			capabilityfixture.MaterialSearchToolName,
 			`{"query":"backend","limit":1}`,
 		),
 		finalLoopResult("I combined the review with your resume."),
@@ -256,7 +256,7 @@ func TestRunLoopSupportsConsecutiveToolRoundsBeforeFinalResponse(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("结合我的评价和简历准备下一轮面试"),
 	)
 	if err != nil {
@@ -287,7 +287,7 @@ func TestRunLoopAllowsModelToAnswerWithoutToolCall(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("帮我找一下上次 PM interview 的 review"),
 	)
 	if err != nil {
@@ -301,17 +301,17 @@ func TestRunLoopAllowsModelToAnswerWithoutToolCall(t *testing.T) {
 func TestRunLoopExecutesExplicitCommandBeforeModelResponse(t *testing.T) {
 	generator := newScriptedGenerator(finalLoopResult("I found your review."))
 	service := newLoopTestService(t, generator)
-	commandRegistry, err := command.NewRegistry(command.Builtins()...)
+	commandRegistry, err := slashcommand.NewRegistry(slashcommand.Builtins()...)
 	if err != nil {
-		t.Fatalf("command.NewRegistry() error = %v", err)
+		t.Fatalf("slashcommand.NewRegistry() error = %v", err)
 	}
-	service.commands = command.NewRouter(commandRegistry)
+	service.slashCommands = slashcommand.NewRouter(commandRegistry)
 
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("/查评价 last interview"),
 	)
 	if err != nil {
@@ -354,23 +354,23 @@ func TestRunLoopContinuesToolCallingAfterExplicitCommand(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-material-after-command",
-			mocktool.MaterialSearchToolName,
+			capabilityfixture.MaterialSearchToolName,
 			`{"query":"backend","limit":1}`,
 		),
 		finalLoopResult("I combined the command result with your material."),
 	)
 	service := newLoopTestService(t, generator)
-	commandRegistry, err := command.NewRegistry(command.Builtins()...)
+	commandRegistry, err := slashcommand.NewRegistry(slashcommand.Builtins()...)
 	if err != nil {
-		t.Fatalf("command.NewRegistry() error = %v", err)
+		t.Fatalf("slashcommand.NewRegistry() error = %v", err)
 	}
-	service.commands = command.NewRouter(commandRegistry)
+	service.slashCommands = slashcommand.NewRouter(commandRegistry)
 
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("/查评价 last interview"),
 	)
 	if err != nil {
@@ -394,7 +394,7 @@ func TestRunLoopContinuesToolCallingAfterExplicitCommand(t *testing.T) {
 }
 
 func TestRunLoopCountsExplicitWriteCommand(t *testing.T) {
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	firstTitle := "explicit-write-first-unique"
 	secondTitle := "explicit-write-second-unique"
 	generator := newScriptedGenerator(toolLoopResult(
@@ -403,17 +403,17 @@ func TestRunLoopCountsExplicitWriteCommand(t *testing.T) {
 		`{"title":"`+secondTitle+`"}`,
 	))
 	service := newLoopTestServiceWithStore(t, generator, store)
-	commandRegistry, err := command.NewRegistry(command.Builtins()...)
+	commandRegistry, err := slashcommand.NewRegistry(slashcommand.Builtins()...)
 	if err != nil {
-		t.Fatalf("command.NewRegistry() error = %v", err)
+		t.Fatalf("slashcommand.NewRegistry() error = %v", err)
 	}
-	service.commands = command.NewRouter(commandRegistry)
+	service.slashCommands = slashcommand.NewRouter(commandRegistry)
 
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("/创建面试 "+firstTitle),
 	)
 	if err != nil {
@@ -431,18 +431,18 @@ func TestRunLoopCountsExplicitWriteCommand(t *testing.T) {
 
 func TestRunLoopFeedsToolErrorBackToModel(t *testing.T) {
 	generator := newScriptedGenerator(
-		toolLoopResult("call-material-1", mocktool.MaterialSearchToolName, `{"query":"backend"}`),
+		toolLoopResult("call-material-1", capabilityfixture.MaterialSearchToolName, `{"query":"backend"}`),
 		finalLoopResult("I could not read the material, so I will continue without it."),
 	)
-	store := mocktool.NewStore()
-	store.SetUnavailable(mocktool.MaterialSearchToolName, true)
+	store := capabilityfixture.NewStore()
+	store.SetUnavailable(capabilityfixture.MaterialSearchToolName, true)
 	service := newLoopTestServiceWithStore(t, generator, store)
 
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("结合我的简历准备面试"),
 	)
 	if err != nil {
@@ -478,7 +478,7 @@ func TestRunLoopFeedsInvalidArgumentsBackToModel(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("找评价"),
 	)
 	if err != nil {
@@ -507,7 +507,7 @@ func TestRunLoopReturnsFallbackWhenToolBudgetExhausted(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("看看我面试评价"),
 	)
 	if err != nil {
@@ -532,7 +532,7 @@ func TestRunLoopRejectsUnexposedToolCall(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("帮我润色这句话"),
 	)
 	if err != nil {
@@ -551,7 +551,7 @@ func TestRunLoopRejectsUnexposedToolCall(t *testing.T) {
 func TestRunLoopStopsAfterToolIterationBudget(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult("call-1", reviewtool.ReviewSearchToolName, `{"query":"one"}`),
-		toolLoopResult("call-2", mocktool.MaterialSearchToolName, `{"query":"two"}`),
+		toolLoopResult("call-2", capabilityfixture.MaterialSearchToolName, `{"query":"two"}`),
 	)
 	service := newLoopTestService(t, generator)
 	service.loopLimits.MaxIterations = 1
@@ -560,7 +560,7 @@ func TestRunLoopStopsAfterToolIterationBudget(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("先找评价，再找材料"),
 	)
 	if err != nil {
@@ -594,7 +594,7 @@ func TestRunLoopRejectsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("创建两个练习场景"),
 	)
 	if err != nil {
@@ -609,7 +609,7 @@ func TestRunLoopRejectsRepeatedToolCallIDBeforeSecondExecution(t *testing.T) {
 }
 
 func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	runOnce := func() string {
 		generator := newScriptedGenerator(
 			toolLoopResult(
@@ -624,7 +624,7 @@ func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
 			context.Background(),
 			loopActor(),
 			loopRun(),
-			core.ContextManifest{},
+			agentcontext.Manifest{},
 			loopRequest("创建面试场景"),
 		); err != nil {
 			t.Fatalf("generate() error = %v", err)
@@ -644,7 +644,7 @@ func TestRunLoopReplaysWriteToolWithStableIdempotencyID(t *testing.T) {
 }
 
 func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	firstTitle := "write-budget-first-unique"
 	secondTitle := "write-budget-second-unique"
 	generator := newScriptedGenerator(ai.TextResult{
@@ -672,7 +672,7 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("帮我创建一个英文 PM 面试练习场景"),
 	)
 	if err != nil {
@@ -686,7 +686,7 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 }
 
 func TestRunLoopCountsConditionalWritesAcrossExplicitCommand(t *testing.T) {
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	conditional := &loopConditionalTool{}
 	generator := newScriptedGenerator(
 		toolLoopResult(
@@ -702,24 +702,24 @@ func TestRunLoopCountsConditionalWritesAcrossExplicitCommand(t *testing.T) {
 	)
 	service := newLoopTestServiceWithStore(t, generator, store)
 	setLoopTools(t, service, store, conditional)
-	commandRegistry, err := command.NewRegistry(command.Definition{
+	commandRegistry, err := slashcommand.NewRegistry(slashcommand.Definition{
 		Name:        "条件查询",
 		Description: "Run the query-only form of a conditional tool.",
 		ToolName:    loopConditionalToolName,
 		BuildInput: func(_ string) (json.RawMessage, error) {
-			return command.JSONObjectInput(nil)
+			return slashcommand.JSONObjectInput(nil)
 		},
 	})
 	if err != nil {
-		t.Fatalf("command.NewRegistry() error = %v", err)
+		t.Fatalf("slashcommand.NewRegistry() error = %v", err)
 	}
-	service.commands = command.NewRouter(commandRegistry)
+	service.slashCommands = slashcommand.NewRouter(commandRegistry)
 
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("/条件查询"),
 	)
 	if err != nil {
@@ -742,7 +742,7 @@ func TestRunLoopCountsConditionalWritesAcrossExplicitCommand(t *testing.T) {
 }
 
 func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
-	store := mocktool.NewStore()
+	store := capabilityfixture.NewStore()
 	conditional := &loopConditionalTool{}
 	generator := newScriptedGenerator(
 		toolLoopResult(
@@ -764,7 +764,7 @@ func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("先查询，再执行一次条件写入"),
 	)
 	if err != nil {
@@ -809,7 +809,7 @@ func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := mocktool.NewStore()
+			store := capabilityfixture.NewStore()
 			conditional := &loopConditionalTool{}
 			title := "write-after-rejected-" + strings.ReplaceAll(test.name, " ", "-")
 			generator := newScriptedGenerator(
@@ -827,7 +827,7 @@ func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 				context.Background(),
 				loopActor(),
 				loopRun(),
-				core.ContextManifest{},
+				agentcontext.Manifest{},
 				loopRequest("attempt a guarded write"),
 			)
 			if err != nil {
@@ -873,7 +873,7 @@ func TestRunLoopLogsEndToEndToolSequence(t *testing.T) {
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest("看看我上次面试评价"),
 	)
 	if err != nil {
@@ -913,7 +913,7 @@ func TestRunLoopLogOptionsAndPayloadSummariesDoNotLeakSensitiveContent(t *testin
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-material-1",
-			mocktool.MaterialSearchToolName,
+			capabilityfixture.MaterialSearchToolName,
 			`{"query":"简历正文请不要泄漏 Bearer token-123","limit":1}`,
 		),
 	)
@@ -930,7 +930,7 @@ func TestRunLoopLogOptionsAndPayloadSummariesDoNotLeakSensitiveContent(t *testin
 		context.Background(),
 		loopActor(),
 		loopRun(),
-		core.ContextManifest{},
+		agentcontext.Manifest{},
 		loopRequest(secretInput),
 	)
 	if err != nil {
@@ -1058,11 +1058,11 @@ func parseLoopConditionalInput(
 func setLoopTools(
 	t *testing.T,
 	service *Service,
-	store *mocktool.Store,
+	store *capabilityfixture.Store,
 	extra ...tool.Tool,
 ) {
 	t.Helper()
-	items := append(mocktool.Tools(store), extra...)
+	items := append(capabilityfixture.Tools(store), extra...)
 	registry, err := tool.NewRegistry(items...)
 	if err != nil {
 		t.Fatalf("tool.NewRegistry() error = %v", err)
@@ -1073,7 +1073,7 @@ func setLoopTools(
 
 func assertScenarioNotCreated(
 	t *testing.T,
-	store *mocktool.Store,
+	store *capabilityfixture.Store,
 	title string,
 ) {
 	t.Helper()
@@ -1092,7 +1092,7 @@ func assertScenarioNotCreated(
 
 func assertScenarioCreated(
 	t *testing.T,
-	store *mocktool.Store,
+	store *capabilityfixture.Store,
 	title string,
 ) {
 	t.Helper()
@@ -1167,22 +1167,24 @@ func newLoopTestService(
 	generator ai.TextGenerator,
 ) *Service {
 	t.Helper()
-	return newLoopTestServiceWithStore(t, generator, mocktool.NewStore())
+	return newLoopTestServiceWithStore(t, generator, capabilityfixture.NewStore())
 }
 
 func newLoopTestServiceWithStore(
 	t *testing.T,
 	generator ai.TextGenerator,
-	store *mocktool.Store,
+	store *capabilityfixture.Store,
 ) *Service {
 	t.Helper()
-	registry, err := mocktool.NewRegistry(store)
+	registry, err := capabilityfixture.NewRegistry(store)
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
 	return &Service{
-		generator: generator,
-		configuration: core.RunConfiguration{
+		repository: loopRepository{},
+		manifests:  loopManifestRepository{},
+		generator:  generator,
+		configuration: Configuration{
 			Provider:           "fake",
 			Model:              "configured-model",
 			MaxOutputTokens:    512,
@@ -1194,12 +1196,136 @@ func newLoopTestServiceWithStore(
 	}
 }
 
+type loopRepository struct{}
+
+func (loopRepository) CreateInitial(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+	Configuration,
+) (Submission, error) {
+	panic("unexpected CreateInitial")
+}
+
+func (loopRepository) CreateRetry(
+	context.Context,
+	string,
+	string,
+	string,
+	Configuration,
+) (Retry, error) {
+	panic("unexpected CreateRetry")
+}
+
+func (loopRepository) Claim(context.Context, string, string) (Run, bool, error) {
+	panic("unexpected Claim")
+}
+
+func (loopRepository) Find(context.Context, string, string) (Run, error) {
+	panic("unexpected Find")
+}
+
+func (loopRepository) ProposeToolCall(
+	_ context.Context,
+	call ToolCall,
+) (ToolCall, error) {
+	return call, nil
+}
+
+func (loopRepository) StartToolCall(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+) (ToolCall, error) {
+	return ToolCall{}, nil
+}
+
+func (loopRepository) CompleteToolCall(
+	context.Context,
+	string,
+	string,
+	string,
+	json.RawMessage,
+	[]ToolSourceRef,
+) (ToolCall, error) {
+	return ToolCall{}, nil
+}
+
+func (loopRepository) FailToolCall(
+	context.Context,
+	string,
+	string,
+	string,
+	ToolCallStatus,
+	string,
+) (ToolCall, error) {
+	return ToolCall{}, nil
+}
+
+func (loopRepository) ListToolCalls(context.Context, string, string) ([]ToolCall, error) {
+	panic("unexpected ListToolCalls")
+}
+
+func (loopRepository) Complete(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+	ai.TextResult,
+) (Run, error) {
+	panic("unexpected Complete")
+}
+
+func (loopRepository) Fail(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+	bool,
+) (Run, error) {
+	panic("unexpected Fail")
+}
+
+func (loopRepository) RecoverInterrupted(context.Context) (int64, error) {
+	panic("unexpected RecoverInterrupted")
+}
+
+type loopManifestRepository struct{}
+
+func (loopManifestRepository) SaveManifest(
+	context.Context,
+	agentcontext.Manifest,
+) (agentcontext.Manifest, error) {
+	panic("unexpected SaveManifest")
+}
+
+func (loopManifestRepository) FindManifest(
+	context.Context,
+	string,
+	string,
+) (agentcontext.Manifest, error) {
+	panic("unexpected FindManifest")
+}
+
+func (loopManifestRepository) SaveToolSnapshot(
+	_ context.Context,
+	manifest agentcontext.Manifest,
+) (agentcontext.Manifest, error) {
+	return manifest, nil
+}
+
 func loopActor() requestcontext.Actor {
 	return requestcontext.Actor{UserID: "user-1", SessionID: "session-1"}
 }
 
-func loopRun() core.Run {
-	return core.Run{ID: "run-1", OwnerID: "user-1", ThreadID: "thread-1"}
+func loopRun() Run {
+	return Run{ID: "run-1", OwnerID: "user-1", ThreadID: "thread-1"}
 }
 
 func loopRequest(input string) ai.TextRequest {

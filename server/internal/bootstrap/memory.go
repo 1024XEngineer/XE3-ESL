@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
@@ -19,34 +21,48 @@ const (
 	memoryExtractionRetries = 3
 )
 
-type completedAgentRunRepository interface {
-	FindRun(context.Context, string, string) (core.Run, error)
+type completedAgentRunReader interface {
+	Find(context.Context, string, string) (agentrun.Run, error)
+}
+
+type completedAgentMessageReader interface {
 	FindMessage(
 		context.Context,
 		string,
 		string,
 		string,
-	) (core.Message, error)
-	FindContextManifest(
+	) (agentconversation.Message, error)
+}
+
+type completedAgentManifestReader interface {
+	FindManifest(
 		context.Context,
 		string,
 		string,
-	) (core.ContextManifest, error)
+	) (agentcontext.Manifest, error)
 }
 
 type agentCompletedRunReader struct {
-	runs completedAgentRunRepository
+	runs      completedAgentRunReader
+	messages  completedAgentMessageReader
+	manifests completedAgentManifestReader
 }
 
 func newAgentCompletedRunReader(
-	runs completedAgentRunRepository,
+	runs completedAgentRunReader,
+	messages completedAgentMessageReader,
+	manifests completedAgentManifestReader,
 ) (*agentCompletedRunReader, error) {
-	if runs == nil {
+	if runs == nil || messages == nil || manifests == nil {
 		return nil, errors.New(
-			"bootstrap: completed AgentRun reader is required",
+			"bootstrap: completed Agent Run sources are required",
 		)
 	}
-	return &agentCompletedRunReader{runs: runs}, nil
+	return &agentCompletedRunReader{
+		runs:      runs,
+		messages:  messages,
+		manifests: manifests,
+	}, nil
 }
 
 func (reader *agentCompletedRunReader) ReadCompletedRun(
@@ -57,16 +73,16 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 	if ctx == nil || ownerID == "" || runID == "" {
 		return memory.CompletedRunSource{}, memory.ErrInvalidArgument
 	}
-	run, err := reader.runs.FindRun(ctx, ownerID, runID)
+	run, err := reader.runs.Find(ctx, ownerID, runID)
 	if err != nil {
 		return memory.CompletedRunSource{}, mapAgentMemorySourceError(err)
 	}
 	if run.OwnerID != ownerID ||
 		run.ID != runID ||
-		run.Status != core.RunStatusCompleted {
+		run.Status != agentrun.StatusCompleted {
 		return memory.CompletedRunSource{}, memory.ErrNotFound
 	}
-	input, err := reader.runs.FindMessage(
+	input, err := reader.messages.FindMessage(
 		ctx,
 		ownerID,
 		run.ThreadID,
@@ -75,7 +91,7 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 	if err != nil {
 		return memory.CompletedRunSource{}, mapAgentMemorySourceError(err)
 	}
-	assistant, err := reader.runs.FindMessage(
+	assistant, err := reader.messages.FindMessage(
 		ctx,
 		ownerID,
 		run.ThreadID,
@@ -84,7 +100,7 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 	if err != nil {
 		return memory.CompletedRunSource{}, mapAgentMemorySourceError(err)
 	}
-	manifest, err := reader.runs.FindContextManifest(ctx, ownerID, runID)
+	manifest, err := reader.manifests.FindManifest(ctx, ownerID, runID)
 	if err != nil {
 		return memory.CompletedRunSource{}, mapAgentMemorySourceError(err)
 	}
@@ -111,9 +127,11 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 func buildMemoryExtractionProcessor(
 	database memory.PostgreSQL,
 	ids memory.IDGenerator,
-	runs completedAgentRunRepository,
+	runs completedAgentRunReader,
+	messages completedAgentMessageReader,
+	manifests completedAgentManifestReader,
 	generator ai.TextGenerator,
-	runConfiguration core.RunConfiguration,
+	runConfiguration agentrun.Configuration,
 ) (memory.ExtractionProcessor, error) {
 	configuration := memory.ExtractionConfig{
 		Provider:      runConfiguration.Provider,
@@ -128,7 +146,7 @@ func buildMemoryExtractionProcessor(
 	if err != nil {
 		return nil, err
 	}
-	sources, err := newAgentCompletedRunReader(runs)
+	sources, err := newAgentCompletedRunReader(runs, messages, manifests)
 	if err != nil {
 		return nil, err
 	}
@@ -155,11 +173,16 @@ func buildMemoryExtractionProcessor(
 
 func mapAgentMemorySourceError(err error) error {
 	switch {
-	case errors.Is(err, core.ErrNotFound):
+	case errors.Is(err, agentrun.ErrNotFound),
+		errors.Is(err, agentconversation.ErrNotFound),
+		errors.Is(err, agentcontext.ErrNotFound):
 		return memory.ErrNotFound
-	case errors.Is(err, core.ErrInvalidRequest):
+	case errors.Is(err, agentrun.ErrInvalidRequest),
+		errors.Is(err, agentconversation.ErrInvalidRequest):
 		return memory.ErrInvalidArgument
-	case errors.Is(err, core.ErrConflict):
+	case errors.Is(err, agentrun.ErrConflict),
+		errors.Is(err, agentconversation.ErrConflict),
+		errors.Is(err, agentcontext.ErrConflict):
 		return memory.ErrConflict
 	default:
 		return fmt.Errorf(

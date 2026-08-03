@@ -3,24 +3,24 @@ package bootstrap
 import (
 	"context"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 type runCompletionNotifyingRepository struct {
-	core.RunRepository
+	agentrun.Repository
 	notifiers []interface{ Notify() }
 }
 
-func (repository *runCompletionNotifyingRepository) CompleteRun(
+func (repository *runCompletionNotifyingRepository) Complete(
 	ctx context.Context,
 	ownerID string,
 	runID string,
 	workerLeaseToken string,
 	content string,
 	result ai.TextResult,
-) (core.Run, error) {
-	run, err := repository.RunRepository.CompleteRun(
+) (agentrun.Run, error) {
+	run, err := repository.Repository.Complete(
 		ctx,
 		ownerID,
 		runID,
@@ -28,7 +28,7 @@ func (repository *runCompletionNotifyingRepository) CompleteRun(
 		content,
 		result,
 	)
-	if err == nil && run.Status == core.RunStatusCompleted {
+	if err == nil && run.Status == agentrun.StatusCompleted {
 		for _, notifier := range repository.notifiers {
 			if notifier != nil {
 				notifier.Notify()

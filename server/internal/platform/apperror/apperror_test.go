@@ -14,6 +14,7 @@ func TestEveryPublicCategoryIsValid(t *testing.T) {
 
 	categories := []apperror.Category{
 		apperror.InvalidArgument,
+		apperror.PayloadTooLarge,
 		apperror.Unauthenticated,
 		apperror.PermissionDenied,
 		apperror.NotFound,

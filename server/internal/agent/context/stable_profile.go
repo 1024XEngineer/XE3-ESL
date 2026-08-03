@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -50,7 +49,7 @@ type StableProfileMemory struct {
 
 func (item StableProfileMemory) Valid() bool {
 	expectedType, supported := stableProfileTypes[item.CanonicalKey]
-	return core.ValidUUID(item.MemoryID) &&
+	return uuidPattern.MatchString(item.MemoryID) &&
 		item.MemoryVersion > 0 &&
 		stableProfileCanonicalKeyPattern.MatchString(item.CanonicalKey) &&
 		supported &&

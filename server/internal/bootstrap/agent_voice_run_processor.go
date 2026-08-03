@@ -6,7 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -17,7 +18,7 @@ const (
 
 type deferredAgentVoiceRun struct {
 	actor requestcontext.Actor
-	run   agentvoice.Run
+	run   agentrun.Run
 }
 
 // deferredAgentVoiceRunProcessor separates the durable voice confirmation
@@ -26,14 +27,14 @@ type deferredAgentVoiceRun struct {
 // processed under the server lifecycle rather than the HTTP request context.
 type deferredAgentVoiceRunProcessor struct {
 	ctx      context.Context
-	delegate agentvoice.VoicePendingRunProcessor
+	delegate agentvoice.PendingRunProcessor
 	logger   *slog.Logger
 	queue    chan deferredAgentVoiceRun
 }
 
 func newDeferredAgentVoiceRunProcessor(
 	ctx context.Context,
-	delegate agentvoice.VoicePendingRunProcessor,
+	delegate agentvoice.PendingRunProcessor,
 	logger *slog.Logger,
 ) (*deferredAgentVoiceRunProcessor, error) {
 	if ctx == nil || delegate == nil || logger == nil {
@@ -54,10 +55,10 @@ func newDeferredAgentVoiceRunProcessor(
 func (processor *deferredAgentVoiceRunProcessor) ProcessPending(
 	requestContext context.Context,
 	actor requestcontext.Actor,
-	run agentvoice.Run,
-) (agentvoice.Run, error) {
+	run agentrun.Run,
+) (agentrun.Run, error) {
 	if requestContext == nil {
-		return agentvoice.Run{}, errors.New(
+		return agentrun.Run{}, errors.New(
 			"bootstrap: Agent voice Run request context is required",
 		)
 	}
@@ -66,9 +67,9 @@ func (processor *deferredAgentVoiceRunProcessor) ProcessPending(
 	case processor.queue <- request:
 		return run, nil
 	case <-requestContext.Done():
-		return agentvoice.Run{}, requestContext.Err()
+		return agentrun.Run{}, requestContext.Err()
 	case <-processor.ctx.Done():
-		return agentvoice.Run{}, processor.ctx.Err()
+		return agentrun.Run{}, processor.ctx.Err()
 	}
 }
 
@@ -105,4 +106,4 @@ func (processor *deferredAgentVoiceRunProcessor) process(
 	}
 }
 
-var _ agentvoice.VoicePendingRunProcessor = (*deferredAgentVoiceRunProcessor)(nil)
+var _ agentvoice.PendingRunProcessor = (*deferredAgentVoiceRunProcessor)(nil)

@@ -7,17 +7,25 @@ import (
 	"net/http"
 	"time"
 
-	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/image"
+	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agentaudiohttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/audio/http"
+	agentconversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
+	summarypostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary/postgres"
+	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
+	agentimagehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image/http"
+	imagepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image/postgres"
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
+	agentvoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/http"
+	voicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
-	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
+	agentrunhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
+	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
-	agenttransport "github.com/1024XEngineer/XE3-ESL/server/internal/agent/transport"
-	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
@@ -25,8 +33,13 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	matteragenttool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
+	matterhttp "github.com/1024XEngineer/XE3-ESL/server/internal/matter/http"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
+	practicevoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
+	reviewhttp "github.com/1024XEngineer/XE3-ESL/server/internal/review/http"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -40,14 +53,14 @@ func NewIdentityAndAgentModules(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration core.RunConfiguration,
+	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identity.Module, RouteRegistrar, error) {
 	if len(voiceConfigurations) == 1 &&
-		voiceConfigurations[0].AgentVoiceMessagesEnabled {
+		voiceConfigurations[0].AgentVoiceInputEnabled {
 		return nil, nil, errors.New(
-			"bootstrap: Agent voice messages require the cleanup-aware composition",
+			"bootstrap: Agent voice input requires the cleanup-aware composition",
 		)
 	}
 	composition, err := buildIdentityAgentComposition(
@@ -75,7 +88,7 @@ func NewIdentityAndAgentModules(
 type identityAgentComposition struct {
 	identity            *identityComposition
 	agentModule         RouteRegistrar
-	agentService        *agentapp.Service
+	agentService        *agentconversation.Service
 	agentVoiceReclaimer AgentVoiceObjectReclaimer
 	agentImageReclaimer AgentImageObjectReclaimer
 	matterService       *matter.Service
@@ -90,10 +103,10 @@ type identityAgentComposition struct {
 // the production composition. The command owns scheduling and shutdown while
 // Agent keeps repository and object-key details private.
 type AgentVoiceObjectReclaimer interface {
-	ReclaimVoiceObjects(
+	ReclaimObjects(
 		context.Context,
 		int,
-	) (core.VoiceCleanupResult, error)
+	) (agentvoice.CleanupResult, error)
 }
 
 type AgentImageObjectReclaimer interface {
@@ -106,7 +119,7 @@ func buildIdentityAgentComposition(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration core.RunConfiguration,
+	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
@@ -136,11 +149,14 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	agentRepository, err := agentpersistence.NewPostgresRepository(database, ids)
+	conversationRepository, err := conversationpostgres.New(database, ids)
 	if err != nil {
 		return nil, err
 	}
-	agentService, err := agentapp.NewService(agentRepository, matterService)
+	agentService, err := agentconversation.NewService(
+		conversationRepository,
+		matterService,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -200,8 +216,12 @@ func buildIdentityAgentComposition(
 			agentcontext.WithImageReader(agentImages),
 		)
 	}
+	contextRepository, err := contextpostgres.New(database)
+	if err != nil {
+		return nil, err
+	}
 	contextAssembler, err := agentcontext.NewAssembler(
-		agentRepository,
+		contextRepository,
 		matterService,
 		stableProfileReader,
 		contextMemorySearcher,
@@ -214,7 +234,11 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	runRepository := core.RunRepository(agentRepository)
+	runRepository, err := runpostgres.New(database, ids)
+	if err != nil {
+		return nil, err
+	}
+	var runStore agentrun.Repository = runRepository
 	notifiers := make([]interface{ Notify() }, 0, 2)
 	if memoryExtractionNotifier != nil {
 		notifiers = append(notifiers, memoryExtractionNotifier)
@@ -223,28 +247,31 @@ func buildIdentityAgentComposition(
 		notifiers = append(notifiers, summaryNotifier)
 	}
 	if len(notifiers) > 0 {
-		runRepository = &runCompletionNotifyingRepository{
-			RunRepository: agentRepository,
-			notifiers:     notifiers,
+		runStore = &runCompletionNotifyingRepository{
+			Repository: runStore,
+			notifiers:  notifiers,
 		}
 	}
-	if imageConfiguration != nil {
-		runRepository, err =
-			agentpersistence.NewGormMultimodalRunRepositoryFromPool(
-				runRepository,
-				database,
-				ids,
-			)
-		if err != nil {
-			return nil, err
+	runOptions := append([]agentrun.Option(nil), toolOptions.runOptions...)
+	if agentImages != nil {
+		imageSubmissions, imageSubmissionErr :=
+			runpostgres.NewImageSubmissionRepository(database, ids)
+		if imageSubmissionErr != nil {
+			return nil, imageSubmissionErr
 		}
+		runOptions = append(
+			runOptions,
+			agentrun.WithImageSubmissions(imageSubmissions),
+		)
 	}
 	runService, err := agentrun.NewService(
-		runRepository,
+		runStore,
+		conversationRepository,
+		contextRepository,
 		contextAssembler,
 		generator,
 		runConfiguration,
-		toolOptions.runOptions...,
+		runOptions...,
 	)
 	if err != nil {
 		return nil, err
@@ -252,15 +279,21 @@ func buildIdentityAgentComposition(
 	memoryExtraction, err := buildMemoryExtractionProcessor(
 		database,
 		ids,
-		agentRepository,
+		runRepository,
+		conversationRepository,
+		contextRepository,
 		generator,
 		runConfiguration,
 	)
 	if err != nil {
 		return nil, err
 	}
+	summaryRepository, err := summarypostgres.New(database, ids)
+	if err != nil {
+		return nil, err
+	}
 	summaryService, err := agentsummary.NewService(
-		agentRepository,
+		summaryRepository,
 		generator,
 		agentsummary.Configuration{
 			PolicyVersion: "summary-policy-v1",
@@ -273,8 +306,8 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	summaryProcessor, err := agentsummary.NewWorker(
-		agentRepository,
-		agentRepository,
+		summaryRepository,
+		summaryRepository,
 		summaryService,
 		agentsummary.WorkerConfiguration{
 			TriggerPolicyVersion: agentsummary.TriggerPolicyV2,
@@ -293,9 +326,9 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	voiceRunProcessor := agentvoice.VoicePendingRunProcessor(runService)
+	voiceRunProcessor := agentvoice.PendingRunProcessor(runService)
 	if len(voiceConfigurations) == 1 &&
-		voiceConfigurations[0].AgentVoiceMessagesEnabled {
+		voiceConfigurations[0].AgentVoiceInputEnabled {
 		voiceRunProcessor, err = newDeferredAgentVoiceRunProcessor(
 			ctx,
 			runService,
@@ -305,9 +338,17 @@ func buildIdentityAgentComposition(
 			return nil, err
 		}
 	}
-	agentVoiceMessages, err := buildAgentVoiceMessageApplication(
+	var voiceInputRepository agentvoice.Repository
+	if len(voiceConfigurations) == 1 &&
+		voiceConfigurations[0].AgentVoiceInputEnabled {
+		voiceInputRepository, err = voicepostgres.New(database, ids)
+		if err != nil {
+			return nil, err
+		}
+	}
+	voiceInput, err := buildAgentVoiceInputApplication(
 		voiceConfigurations,
-		agentRepository,
+		voiceInputRepository,
 		voiceRunProcessor,
 		ids,
 		runConfiguration,
@@ -315,8 +356,8 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	var voiceApplication *agentvoice.VoiceSessionApplication
-	var sameQuestionRetry *agentvoice.SameQuestionRetryApplication
+	var voiceApplication *practicevoice.SessionApplication
+	var sameQuestionRetry *practicevoice.SameQuestionRetryApplication
 	var audioAssets *conversation.AudioAssetService
 	if len(voiceConfigurations) == 1 {
 		voiceApplication, sameQuestionRetry, audioAssets, err =
@@ -332,49 +373,109 @@ func buildIdentityAgentComposition(
 			return nil, err
 		}
 	}
-	var voiceHTTPOptions []agenttransport.VoiceHTTPOptions
-	if len(voiceConfigurations) == 1 {
-		voiceHTTPOption := agenttransport.VoiceHTTPOptions{
-			AudioReadTimeout: voiceConfigurations[0].AudioReadTimeout,
-			ReviewHistoryCursorKey: append(
-				[]byte(nil),
-				voiceConfigurations[0].ReviewHistoryCursorKey...,
-			),
-		}
-		if agentVoiceMessages != nil {
-			voiceHTTPOption.AgentMessages = agentVoiceMessages
-		}
-		if voiceConfigurations[0].SpeechFeedbackCoordinator != nil {
-			voiceHTTPOption.SpeechFeedback =
-				voiceConfigurations[0].SpeechFeedbackCoordinator
-		}
-		voiceHTTPOption.SameQuestionRetry = sameQuestionRetry
-		voiceHTTPOptions = append(
-			voiceHTTPOptions,
-			voiceHTTPOption,
+	errorRenderer := httpresponse.NewRenderer(nil)
+	matterHTTP, err := matterhttp.NewHandler(matterService, errorRenderer)
+	if err != nil {
+		return nil, err
+	}
+	conversationHTTPOptions := []agentconversationhttp.Option{
+		agentconversationhttp.WithToolCalls(runService),
+	}
+	if agentImages != nil {
+		conversationHTTPOptions = append(
+			conversationHTTPOptions,
+			agentconversationhttp.WithMessageImages(agentImages),
 		)
 	}
-	var imageApplication agenttransport.ImageApplication
-	if agentImages != nil {
-		imageApplication = agentImages
+	if len(voiceConfigurations) == 1 &&
+		voiceConfigurations[0].SpeechFeedbackCoordinator != nil {
+		conversationHTTPOptions = append(
+			conversationHTTPOptions,
+			agentconversationhttp.WithSpeechFeedback(
+				voiceConfigurations[0].SpeechFeedbackCoordinator,
+			),
+		)
 	}
-	handler, err := agenttransport.NewHTTPHandlerWithRunsVoiceAudioAndImages(
+	conversationHTTP, err := agentconversationhttp.NewHandler(
 		agentService,
-		runService,
-		voiceApplication,
-		audioAssets,
-		imageApplication,
-		matterService,
-		identityContext.service,
-		nil,
-		voiceHTTPOptions...,
+		errorRenderer,
+		conversationHTTPOptions...,
 	)
 	if err != nil {
 		return nil, err
 	}
+	runHTTP, err := agentrunhttp.NewHandler(runService, errorRenderer)
+	if err != nil {
+		return nil, err
+	}
+	registrars := []ProtectedRouteRegistrar{
+		matterHTTP,
+		conversationHTTP,
+		runHTTP,
+	}
+	if agentImages != nil {
+		imageHTTP, imageHTTPErr := agentimagehttp.NewHandler(
+			agentImages,
+			agentService,
+			0,
+			errorRenderer,
+		)
+		if imageHTTPErr != nil {
+			return nil, imageHTTPErr
+		}
+		registrars = append(registrars, imageHTTP)
+	}
+	if voiceInput != nil {
+		voiceHTTP, voiceHTTPErr := agentvoicehttp.NewHandler(
+			voiceInput,
+			agentService,
+			voiceConfigurations[0].AudioReadTimeout,
+			errorRenderer,
+		)
+		if voiceHTTPErr != nil {
+			return nil, voiceHTTPErr
+		}
+		audioHTTP, audioHTTPErr := agentaudiohttp.NewHandler(
+			voiceInput,
+			errorRenderer,
+		)
+		if audioHTTPErr != nil {
+			return nil, audioHTTPErr
+		}
+		registrars = append(registrars, voiceHTTP, audioHTTP)
+	}
+	if voiceApplication != nil {
+		practiceHTTP, practiceHTTPErr := practicevoicehttp.NewHandler(
+			voiceApplication,
+			agentService,
+			matterService,
+			practicevoicehttp.Options{
+				AudioReadTimeout:  voiceConfigurations[0].AudioReadTimeout,
+				SameQuestionRetry: sameQuestionRetry,
+				AudioAssets:       audioAssets,
+			},
+			errorRenderer,
+		)
+		if practiceHTTPErr != nil {
+			return nil, practiceHTTPErr
+		}
+		reviewHTTP, reviewHTTPErr := reviewhttp.NewHandler(
+			reviewHistory,
+			voiceConfigurations[0].ReviewHistoryCursorKey,
+			errorRenderer,
+		)
+		if reviewHTTPErr != nil {
+			return nil, reviewHTTPErr
+		}
+		registrars = append(registrars, practiceHTTP, reviewHTTP)
+	}
+	handler := &bearerProtectedRoutes{
+		authentication: identityContext.handler.AuthenticationMiddleware(),
+		registrars:     registrars,
+	}
 	var agentVoiceReclaimer AgentVoiceObjectReclaimer
-	if agentVoiceMessages != nil {
-		agentVoiceReclaimer = agentVoiceMessages
+	if voiceInput != nil {
+		agentVoiceReclaimer = voiceInput
 	}
 	var agentImageReclaimer AgentImageObjectReclaimer
 	if agentImages != nil {
@@ -398,7 +499,7 @@ func buildIdentityAgentComposition(
 func buildAgentImageApplication(
 	configuration *AgentImageConfiguration,
 	database *pgxpool.Pool,
-	ids core.IDGenerator,
+	ids agentimage.IDGenerator,
 ) (*agentimage.Service, error) {
 	if configuration == nil {
 		return nil, nil
@@ -408,8 +509,7 @@ func buildAgentImageApplication(
 			"bootstrap: Agent image object storage is required",
 		)
 	}
-	repository, err :=
-		agentpersistence.NewGormImageAssetRepositoryFromPool(database)
+	repository, err := imagepostgres.New(database)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +533,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 	generator ai.TextGenerator,
-	runConfiguration core.RunConfiguration,
+	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	voiceConfigurations ...VoiceConfiguration,
 ) (
@@ -473,25 +573,25 @@ func (composition *identityAgentComposition) recoverInterruptedRuns(
 	if composition == nil || composition.runService == nil {
 		return errors.New("bootstrap: Agent Run service is required")
 	}
-	_, err := composition.runService.RecoverInterruptedRuns(ctx)
+	_, err := composition.runService.RecoverInterrupted(ctx)
 	return err
 }
 
-func buildAgentVoiceMessageApplication(
+func buildAgentVoiceInputApplication(
 	voiceConfigurations []VoiceConfiguration,
-	repository agentvoice.VoiceMessageRepository,
-	runs agentvoice.VoicePendingRunProcessor,
-	ids core.IDGenerator,
-	runConfiguration core.RunConfiguration,
-) (*agentvoice.VoiceMessageService, error) {
+	repository agentvoice.Repository,
+	runs agentvoice.PendingRunProcessor,
+	ids agentvoice.IDGenerator,
+	runConfiguration agentrun.Configuration,
+) (*agentvoice.Service, error) {
 	if len(voiceConfigurations) == 0 ||
-		!voiceConfigurations[0].AgentVoiceMessagesEnabled {
+		!voiceConfigurations[0].AgentVoiceInputEnabled {
 		return nil, nil
 	}
 	configuration := voiceConfigurations[0]
 	if configuration.ObjectStore == nil {
 		return nil, errors.New(
-			"bootstrap: Agent voice message object storage is required",
+			"bootstrap: Agent voice input object storage is required",
 		)
 	}
 	var client *http.Client
@@ -506,7 +606,7 @@ func buildAgentVoiceMessageApplication(
 			},
 		}
 	}
-	sources, err := agentvoice.NewSignedVoiceAudioLoader(
+	sources, err := agentvoice.NewSignedAudioLoader(
 		configuration.ObjectStore,
 		client,
 		configuration.ScratchDirectory,
@@ -515,7 +615,7 @@ func buildAgentVoiceMessageApplication(
 	if err != nil {
 		return nil, err
 	}
-	feedbackPorts := make([]agentvoice.VoiceMessageFeedbackPort, 0, 1)
+	feedbackPorts := make([]agentvoice.FeedbackPort, 0, 1)
 	if configuration.SpeechFeedbackCoordinator != nil {
 		feedbackPorts = append(
 			feedbackPorts,
@@ -524,7 +624,7 @@ func buildAgentVoiceMessageApplication(
 			},
 		)
 	}
-	return agentvoice.NewVoiceMessageService(
+	return agentvoice.NewService(
 		repository,
 		configuration.ObjectStore,
 		sources,
@@ -532,8 +632,8 @@ func buildAgentVoiceMessageApplication(
 		configuration.Synthesizer,
 		runs,
 		ids,
-		agentvoice.VoiceMessageConfig{
-			RunConfiguration: runConfiguration,
+		agentvoice.Config{
+			Configuration:    runConfiguration,
 			ScratchDirectory: configuration.ScratchDirectory,
 			CandidateTTL:     configuration.AudioStagedTTL,
 			UploadLease:      configuration.AudioUploadLease,

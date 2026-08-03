@@ -21,6 +21,7 @@ func TestStatusForCategoryMapsEveryCategoryExplicitly(t *testing.T) {
 		status   int
 	}{
 		{apperror.InvalidArgument, http.StatusBadRequest},
+		{apperror.PayloadTooLarge, http.StatusRequestEntityTooLarge},
 		{apperror.Unauthenticated, http.StatusUnauthorized},
 		{apperror.PermissionDenied, http.StatusForbidden},
 		{apperror.NotFound, http.StatusNotFound},

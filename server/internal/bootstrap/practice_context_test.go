@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
+	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
@@ -22,7 +22,7 @@ func TestAgentPracticeContextReaderRequiresExactActiveOwnedMatter(
 	actor := contextCompositionActor()
 	tests := []struct {
 		name        string
-		thread      agent.Thread
+		thread      agentconversation.Thread
 		threadError error
 		item        matter.Matter
 		matterError error
@@ -30,7 +30,7 @@ func TestAgentPracticeContextReaderRequiresExactActiveOwnedMatter(
 	}{
 		{
 			name: "exact active anchor",
-			thread: agent.Thread{
+			thread: agentconversation.Thread{
 				ID:             "thread-1",
 				OwnerID:        actor.UserID,
 				ActiveMatterID: "matter-1",
@@ -43,7 +43,7 @@ func TestAgentPracticeContextReaderRequiresExactActiveOwnedMatter(
 		},
 		{
 			name: "different active matter",
-			thread: agent.Thread{
+			thread: agentconversation.Thread{
 				ID:             "thread-1",
 				OwnerID:        actor.UserID,
 				ActiveMatterID: "matter-other",
@@ -52,7 +52,7 @@ func TestAgentPracticeContextReaderRequiresExactActiveOwnedMatter(
 		},
 		{
 			name: "thread from different owner",
-			thread: agent.Thread{
+			thread: agentconversation.Thread{
 				ID:             "thread-1",
 				OwnerID:        "user-other",
 				ActiveMatterID: "matter-1",
@@ -61,7 +61,7 @@ func TestAgentPracticeContextReaderRequiresExactActiveOwnedMatter(
 		},
 		{
 			name: "archived matter",
-			thread: agent.Thread{
+			thread: agentconversation.Thread{
 				ID:             "thread-1",
 				OwnerID:        actor.UserID,
 				ActiveMatterID: "matter-1",
@@ -75,7 +75,7 @@ func TestAgentPracticeContextReaderRequiresExactActiveOwnedMatter(
 		},
 		{
 			name:        "cross account thread is hidden",
-			threadError: agent.ErrNotFound,
+			threadError: agentconversation.ErrNotFound,
 			wantError:   practicepersistence.ErrNotFound,
 		},
 	}
@@ -330,7 +330,7 @@ func TestPracticeCatalogContextReaderAcceptsIELTSFullMockSelection(
 }
 
 type agentThreadReaderStub struct {
-	thread agent.Thread
+	thread agentconversation.Thread
 	err    error
 }
 
@@ -338,7 +338,7 @@ func (s agentThreadReaderStub) GetThread(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (agent.Thread, error) {
+) (agentconversation.Thread, error) {
 	return s.thread, s.err
 }
 

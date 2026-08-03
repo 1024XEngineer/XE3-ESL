@@ -26,6 +26,11 @@ func TestRendererAcceptsMatchingCanonicalCodeStatusPairs(t *testing.T) {
 		status   int
 	}{
 		{apperror.InvalidArgument, "invalid_request", http.StatusBadRequest},
+		{
+			apperror.PayloadTooLarge,
+			"image_too_large",
+			http.StatusRequestEntityTooLarge,
+		},
 		{apperror.Unauthenticated, "invalid_credentials", http.StatusUnauthorized},
 		{
 			apperror.PermissionDenied,

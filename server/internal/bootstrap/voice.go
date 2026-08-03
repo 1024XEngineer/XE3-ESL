@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	agent "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
+	inputvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/qianwen"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
@@ -27,6 +27,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -38,11 +39,11 @@ const (
 	voiceQuestionObjective          = "targeted-english-practice"
 )
 
-// VoiceReviewGateway is the narrow Review capability consumed by the Agent
-// voice Saga. Review implementations keep their Repository private.
+// VoiceReviewGateway is the narrow Review capability consumed by the Practice
+// voice flow. Review implementations keep their Repository private.
 type VoiceReviewGateway interface {
-	agent.VoiceReviewPort
-	agent.VoiceReviewReader
+	practicevoice.ReviewPort
+	practicevoice.ReviewReader
 }
 
 // IELTSSpeakingCompletionCoordinator is the narrow Evaluation capability used
@@ -59,23 +60,23 @@ type IELTSSpeakingCompletionCoordinator interface {
 // Repository types remain confined to their module and the composition root.
 type VoicePorts struct {
 	ConversationStore conversation.VoiceRoundStore
-	Practice          agent.VoicePracticePort
-	Sessions          agent.VoiceSessionPort
-	Questions         agent.VoiceQuestionPort
-	Checkpoints       agent.VoiceCheckpointPort
+	Practice          practicevoice.PracticePort
+	Sessions          practicevoice.SessionPort
+	Questions         practicevoice.QuestionPort
+	Checkpoints       practicevoice.CheckpointPort
 	Reviews           VoiceReviewGateway
-	Completions       agent.VoiceCompletionEvaluationPort
-	SpeechFeedback    agent.VoiceTurnFeedbackPort
+	Completions       practicevoice.CompletionEvaluationPort
+	SpeechFeedback    practicevoice.TurnFeedbackPort
 }
 
 type VoiceConfiguration struct {
-	Recognizer                     ai.SpeechRecognizer
+	Recognizer                     ai.StreamingSpeechRecognizer
 	Synthesizer                    ai.SpeechSynthesizer
 	TemporaryAudio                 conversation.TemporaryAudioVault
 	Ports                          VoicePorts
 	Recordings                     conversation.VoiceRecordingLifecycle
 	ObjectStore                    objectstore.Store
-	AgentVoiceMessagesEnabled      bool
+	AgentVoiceInputEnabled         bool
 	ScratchDirectory               string
 	ObjectReadAllowedHosts         []string
 	AudioStagedTTL                 time.Duration
@@ -99,7 +100,7 @@ type AgentImageConfiguration struct {
 // never silently substitutes a Fake or another provider.
 func NewSpeechRecognizer(
 	configuration config.SpeechRecognitionConfig,
-) (ai.SpeechRecognizer, error) {
+) (ai.StreamingSpeechRecognizer, error) {
 	if configuration.Provider != config.SpeechProviderQianwen {
 		return nil, errors.New(
 			"bootstrap: speech recognition provider is not registered",
@@ -140,7 +141,7 @@ func NewSpeechSynthesizer(
 func buildVoiceApplication(
 	matters matter.Reader,
 	configuration VoiceConfiguration,
-) (*agent.VoiceSessionApplication, error) {
+) (*practicevoice.SessionApplication, error) {
 	ports := configuration.Ports
 	if matters == nil ||
 		configuration.Recognizer == nil ||
@@ -165,11 +166,11 @@ func buildVoiceApplication(
 	if err != nil {
 		return nil, err
 	}
-	feedbackPorts := make([]agent.VoiceTurnFeedbackPort, 0, 1)
+	feedbackPorts := make([]practicevoice.TurnFeedbackPort, 0, 1)
 	if ports.SpeechFeedback != nil {
 		feedbackPorts = append(feedbackPorts, ports.SpeechFeedback)
 	}
-	orchestrator, err := agent.NewVoiceRoundOrchestrator(
+	orchestrator, err := practicevoice.NewRoundOrchestrator(
 		conversations,
 		ports.Practice,
 		ports.Reviews,
@@ -179,7 +180,7 @@ func buildVoiceApplication(
 	if err != nil {
 		return nil, err
 	}
-	return agent.NewVoiceSessionApplication(
+	return practicevoice.NewSessionApplication(
 		ports.Sessions,
 		ports.Questions,
 		ports.Checkpoints,
@@ -197,8 +198,8 @@ func buildProductionVoiceApplication(
 	reviewHistory *review.HistoryService,
 	configuration VoiceConfiguration,
 ) (
-	*agent.VoiceSessionApplication,
-	*agent.SameQuestionRetryApplication,
+	*practicevoice.SessionApplication,
+	*practicevoice.SameQuestionRetryApplication,
 	*conversation.AudioAssetService,
 	error,
 ) {
@@ -215,14 +216,10 @@ func buildProductionVoiceApplication(
 	}
 
 	practiceRepository := practicepostgres.New(database)
-	practiceApplication, err := practice.NewVoiceApplication(
+	practiceApplication, err := practicevoice.NewApplication(
 		practiceRepository,
 		"speakup.user",
 	)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	practiceProgressPort, err := NewPracticeVoicePort(practiceApplication)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -282,7 +279,7 @@ func buildProductionVoiceApplication(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	retryApplication, err := agent.NewSameQuestionRetryApplication(
+	retryApplication, err := practicevoice.NewSameQuestionRetryApplication(
 		&voiceRetryTurnAdapter{service: retryTurnService},
 		&voiceRetryPracticeAdapter{
 			application: retryPracticeApplication,
@@ -335,7 +332,7 @@ func buildProductionVoiceApplication(
 		interviewShadow: interviewShadowCoordinator,
 		ieltsShadow:     configuration.IELTSSpeakingShadowCoordinator,
 	}
-	feedbackPorts := make([]agent.VoiceTurnFeedbackPort, 0, 1)
+	feedbackPorts := make([]practicevoice.TurnFeedbackPort, 0, 1)
 	if configuration.SpeechFeedbackCoordinator != nil {
 		feedbackPorts = append(
 			feedbackPorts,
@@ -344,9 +341,9 @@ func buildProductionVoiceApplication(
 			},
 		)
 	}
-	orchestrator, err := agent.NewVoiceRoundOrchestrator(
+	orchestrator, err := practicevoice.NewRoundOrchestrator(
 		conversationService,
-		practiceProgressPort,
+		practiceApplication,
 		reviewAdapter,
 		completionAdapter,
 		feedbackPorts...,
@@ -354,7 +351,7 @@ func buildProductionVoiceApplication(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	application, err := agent.NewVoiceSessionApplication(
+	application, err := practicevoice.NewSessionApplication(
 		practiceAdapter,
 		questionAdapter,
 		checkpointAdapter,
@@ -378,12 +375,12 @@ func (adapter *voicePracticeAdapter) Start(
 	threadID string,
 	matterID string,
 	idempotencyKey string,
-) (agent.VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	if adapter == nil || adapter.repository == nil ||
 		!actor.Valid() ||
 		strings.TrimSpace(threadID) == "" ||
 		strings.TrimSpace(idempotencyKey) == "" {
-		return agent.VoicePracticeSession{}, agent.ErrInvalidRequest
+		return practicevoice.Session{}, practicevoice.ErrInvalidRequest
 	}
 	practiceActor := practiceActor(actor)
 	intent := practicepersistence.ContextIdempotencyIntent{
@@ -399,7 +396,7 @@ func (adapter *voicePracticeAdapter) Start(
 		intent,
 	)
 	if err != nil {
-		return agent.VoicePracticeSession{}, mapPracticeError(err)
+		return practicevoice.Session{}, mapPracticeError(err)
 	}
 	if found {
 		return adapter.mapContextPracticeSession(
@@ -427,7 +424,7 @@ func (adapter *voicePracticeAdapter) Start(
 		)
 	}
 	if err != nil {
-		return agent.VoicePracticeSession{}, mapPracticeError(err)
+		return practicevoice.Session{}, mapPracticeError(err)
 	}
 	activated, err := adapter.repository.ActivateContextSession(
 		ctx,
@@ -438,7 +435,7 @@ func (adapter *voicePracticeAdapter) Start(
 		intent,
 	)
 	if err != nil {
-		return agent.VoicePracticeSession{}, mapPracticeError(err)
+		return practicevoice.Session{}, mapPracticeError(err)
 	}
 	return adapter.mapContextPracticeSession(
 		ctx,
@@ -455,10 +452,10 @@ func (adapter *voicePracticeAdapter) GetByThread(
 	actor requestcontext.Actor,
 	threadID string,
 	matterID string,
-) (agent.VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	if adapter == nil || adapter.repository == nil || !actor.Valid() ||
 		strings.TrimSpace(threadID) == "" {
-		return agent.VoicePracticeSession{}, agent.ErrInvalidRequest
+		return practicevoice.Session{}, practicevoice.ErrInvalidRequest
 	}
 	practiceActor := practiceActor(actor)
 	resolved, err := adapter.repository.ResolveContextSessionByThread(
@@ -467,7 +464,7 @@ func (adapter *voicePracticeAdapter) GetByThread(
 		threadID,
 	)
 	if err != nil {
-		return agent.VoicePracticeSession{}, mapPracticeError(err)
+		return practicevoice.Session{}, mapPracticeError(err)
 	}
 	return adapter.mapContextPracticeSession(
 		ctx,
@@ -483,10 +480,10 @@ func (adapter *voicePracticeAdapter) GetByID(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	sessionID string,
-) (agent.VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	if adapter == nil || adapter.repository == nil || !actor.Valid() ||
 		strings.TrimSpace(sessionID) == "" {
-		return agent.VoicePracticeSession{}, agent.ErrInvalidRequest
+		return practicevoice.Session{}, practicevoice.ErrInvalidRequest
 	}
 	practiceActor := practiceActor(actor)
 	session, err := adapter.repository.GetContextSession(
@@ -495,7 +492,7 @@ func (adapter *voicePracticeAdapter) GetByID(
 		sessionID,
 	)
 	if err != nil {
-		return agent.VoicePracticeSession{}, mapPracticeError(err)
+		return practicevoice.Session{}, mapPracticeError(err)
 	}
 	snapshot, err := adapter.repository.GetContextSessionSnapshot(
 		ctx,
@@ -503,11 +500,11 @@ func (adapter *voicePracticeAdapter) GetByID(
 		sessionID,
 	)
 	if err != nil {
-		return agent.VoicePracticeSession{}, mapPracticeError(err)
+		return practicevoice.Session{}, mapPracticeError(err)
 	}
 	plan, err := adapter.repository.GetPlan(ctx, practiceActor, session.PlanID)
 	if err != nil {
-		return agent.VoicePracticeSession{}, mapPracticeError(err)
+		return practicevoice.Session{}, mapPracticeError(err)
 	}
 	return mapContextPracticeSession(
 		practicepersistence.ContextSessionBootstrap{
@@ -528,14 +525,14 @@ func (adapter *voicePracticeAdapter) mapContextPracticeSession(
 	actorUserID string,
 	threadID string,
 	matterID string,
-) (agent.VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	plan, err := adapter.repository.GetPlan(
 		ctx,
 		actor,
 		bootstrap.Session.PlanID,
 	)
 	if err != nil {
-		return agent.VoicePracticeSession{}, mapPracticeError(err)
+		return practicevoice.Session{}, mapPracticeError(err)
 	}
 	return mapContextPracticeSession(
 		bootstrap,
@@ -559,7 +556,7 @@ func mapContextPracticeSession(
 	actorUserID string,
 	threadID string,
 	matterID string,
-) (agent.VoicePracticeSession, error) {
+) (practicevoice.Session, error) {
 	session := bootstrap.Session
 	snapshot := bootstrap.Snapshot
 	if plan.ID == "" ||
@@ -580,16 +577,16 @@ func mapContextPracticeSession(
 			plan.PreparationProfileID ||
 		(threadID != "" && plan.AgentThreadID != threadID) ||
 		(matterID != "" && plan.MatterID != matterID) {
-		return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+		return practicevoice.Session{}, practicevoice.ErrInvalidContext
 	}
-	result := agent.VoicePracticeSession{
+	result := practicevoice.Session{
 		ID:            session.ID,
 		PlanID:        session.PlanID,
 		ThreadID:      plan.AgentThreadID,
 		MatterID:      plan.MatterID,
 		ScenarioType:  string(snapshot.ScenarioType),
 		ScenarioModel: string(snapshot.ScenarioModel),
-		PromptModel: agent.VoiceScenarioPrompt{
+		PromptModel: practicevoice.ScenarioPrompt{
 			PublicSceneBrief: snapshot.ScenarioConfig.PromptModel.PublicSceneBrief,
 			PracticeGoal:     snapshot.ScenarioConfig.PromptModel.PracticeGoal,
 			UserRole:         snapshot.ScenarioConfig.PromptModel.UserRole,
@@ -622,13 +619,13 @@ func mapContextPracticeSession(
 		if participant.ID == "" ||
 			participant.SessionID != session.ID ||
 			participant.Order < 1 {
-			return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+			return practicevoice.Session{}, practicevoice.ErrInvalidContext
 		}
 		if _, duplicate := participantIDs[participant.ID]; duplicate {
-			return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+			return practicevoice.Session{}, practicevoice.ErrInvalidContext
 		}
 		if _, duplicate := participantOrders[participant.Order]; duplicate {
-			return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+			return practicevoice.Session{}, practicevoice.ErrInvalidContext
 		}
 		participantIDs[participant.ID] = struct{}{}
 		participantOrders[participant.Order] = struct{}{}
@@ -641,13 +638,13 @@ func mapContextPracticeSession(
 				participant.RoleSnapshot == nil ||
 				participant.RoleSnapshot.ID !=
 					participant.RoleDefinitionID {
-				return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+				return practicevoice.Session{}, practicevoice.ErrInvalidContext
 			}
 			if _, selected := selectedRoles[participant.RoleDefinitionID]; !selected {
-				return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+				return practicevoice.Session{}, practicevoice.ErrInvalidContext
 			}
 			if _, duplicate := interviewerRoles[participant.RoleDefinitionID]; duplicate {
-				return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+				return practicevoice.Session{}, practicevoice.ErrInvalidContext
 			}
 			interviewerRoles[participant.RoleDefinitionID] = struct{}{}
 			if result.InterviewerParticipantID == "" ||
@@ -661,11 +658,11 @@ func mapContextPracticeSession(
 				participant.SubjectRef.SubjectID != actorUserID ||
 				participant.RoleDefinitionID != "" ||
 				participant.RoleSnapshot != nil {
-				return agent.VoicePracticeSession{}, agent.ErrNotFound
+				return practicevoice.Session{}, practicevoice.ErrNotFound
 			}
 			result.CandidateParticipantID = participant.ID
 		default:
-			return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+			return practicevoice.Session{}, practicevoice.ErrInvalidContext
 		}
 	}
 	if result.InterviewerParticipantID == "" ||
@@ -679,7 +676,7 @@ func mapContextPracticeSession(
 			practicepersistence.ContextSessionCompleted,
 		)) != result.Completed ||
 		!validMappedContextVoiceLifecycle(session, result.TurnLimit) {
-		return agent.VoicePracticeSession{}, agent.ErrInvalidContext
+		return practicevoice.Session{}, practicevoice.ErrInvalidContext
 	}
 	return result, nil
 }
@@ -735,14 +732,14 @@ func validMappedContextVoiceLifecycle(
 func mapPracticeError(err error) error {
 	switch {
 	case errors.Is(err, practicepersistence.ErrInvalidArgument):
-		return agent.ErrInvalidRequest
+		return practicevoice.ErrInvalidRequest
 	case errors.Is(err, practicepersistence.ErrNotFound):
-		return agent.ErrNotFound
+		return practicevoice.ErrNotFound
 	case errors.Is(err, practicepersistence.ErrIdempotencyConflict):
-		return agent.ErrIdempotencyConflict
+		return practicevoice.ErrIdempotencyConflict
 	case errors.Is(err, practicepersistence.ErrConflict),
 		errors.Is(err, practicepersistence.ErrSessionCompleted):
-		return agent.ErrConflict
+		return practicevoice.ErrConflict
 	default:
 		return err
 	}
@@ -758,17 +755,17 @@ func (adapter *voiceRetryTurnAdapter) Get(
 	retryTurnID string,
 ) (conversation.RetryTurnDraft, error) {
 	if adapter == nil || adapter.service == nil {
-		return conversation.RetryTurnDraft{}, agent.ErrInvalidContext
+		return conversation.RetryTurnDraft{}, practicevoice.ErrInvalidContext
 	}
 	draft, err := adapter.service.Get(ctx, actor, retryTurnID)
 	switch {
 	case errors.Is(err, conversation.ErrRetryTurnInvalid):
-		return conversation.RetryTurnDraft{}, agent.ErrInvalidRequest
+		return conversation.RetryTurnDraft{}, practicevoice.ErrInvalidRequest
 	case errors.Is(err, conversation.ErrRetryTurnNotFound):
-		return conversation.RetryTurnDraft{}, agent.ErrNotFound
+		return conversation.RetryTurnDraft{}, practicevoice.ErrNotFound
 	case errors.Is(err, conversation.ErrRetryTurnConflict),
 		errors.Is(err, conversation.ErrRetryTurnNotReady):
-		return conversation.RetryTurnDraft{}, agent.ErrConflict
+		return conversation.RetryTurnDraft{}, practicevoice.ErrConflict
 	default:
 		return draft, err
 	}
@@ -784,7 +781,7 @@ func (adapter *voiceRetryPracticeAdapter) ResolveAuthorizedParticipant(
 	retryRequestID string,
 ) (string, error) {
 	if adapter == nil || adapter.application == nil {
-		return "", agent.ErrInvalidContext
+		return "", practicevoice.ErrInvalidContext
 	}
 	participantID, err := adapter.application.ResolveAuthorizedParticipant(
 		ctx,
@@ -793,11 +790,11 @@ func (adapter *voiceRetryPracticeAdapter) ResolveAuthorizedParticipant(
 	)
 	switch {
 	case errors.Is(err, practice.ErrRetryTurnInvalid):
-		return "", agent.ErrInvalidRequest
+		return "", practicevoice.ErrInvalidRequest
 	case errors.Is(err, practice.ErrRetryTurnNotAvailable):
-		return "", agent.ErrNotFound
+		return "", practicevoice.ErrNotFound
 	case errors.Is(err, practice.ErrRetryTurnConflict):
-		return "", agent.ErrConflict
+		return "", practicevoice.ErrConflict
 	default:
 		return participantID, err
 	}
@@ -1113,7 +1110,7 @@ func mapRecordingConfirmationError(err error) error {
 		errors.Is(err, conversation.ErrAudioAssetUploadTerminated):
 		// A recording that cleanup removed, another Turn already bound, or
 		// otherwise left the confirmable state is a terminal request conflict.
-		return agent.ErrConflict
+		return practicevoice.ErrConflict
 	case errors.Is(err, conversation.ErrAudioAssetConcurrentUpdate):
 		// A lost optimistic update can be retried safely with the same
 		// idempotency key. The HTTP boundary exposes resource_processing,
@@ -1199,7 +1196,7 @@ func mapConversationError(err error) error {
 	case errors.Is(err, conversationpersistence.ErrPersistenceConflict):
 		return conversation.ErrVoiceRoundConflict
 	case errors.Is(err, conversationpersistence.ErrActorDeleted):
-		return agent.ErrNotFound
+		return practicevoice.ErrNotFound
 	default:
 		return err
 	}
@@ -1284,7 +1281,7 @@ type generatedInterviewQuestion struct {
 func (adapter *voiceQuestionAdapter) EnsureQuestion(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	session agent.VoicePracticeSession,
+	session practicevoice.Session,
 	sequence int,
 ) (conversation.VoiceQuestion, error) {
 	questionID := fmt.Sprintf(
@@ -1311,7 +1308,7 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		session.MaxFollowUpsPerQuestion > 0 && sequence > 1 {
 		lister, ok := adapter.repository.(voiceSessionQuestionLister)
 		if !ok {
-			return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+			return conversation.VoiceQuestion{}, practicevoice.ErrInvalidContext
 		}
 		questions, listErr := lister.ListSessionQuestions(
 			ctx,
@@ -1348,12 +1345,12 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 			session.MaxFollowUpsPerQuestion > 0 && sequence > 1 {
 			var decision generatedInterviewQuestion
 			if decodeErr := json.Unmarshal([]byte(content), &decision); decodeErr != nil {
-				return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+				return conversation.VoiceQuestion{}, practicevoice.ErrInvalidContext
 			}
 			questionType = strings.TrimSpace(decision.QuestionType)
 			content = strings.TrimSpace(decision.Content)
 			if questionType != "PRIMARY" && questionType != "FOLLOW_UP" {
-				return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+				return conversation.VoiceQuestion{}, practicevoice.ErrInvalidContext
 			}
 		}
 	}
@@ -1361,11 +1358,11 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		return conversation.VoiceQuestion{}, err
 	}
 	if strings.TrimSpace(content) == "" {
-		return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+		return conversation.VoiceQuestion{}, practicevoice.ErrInvalidContext
 	}
 	if questionType == "FOLLOW_UP" {
 		if !followUpAllowed || parentQuestionID == "" {
-			return conversation.VoiceQuestion{}, agent.ErrInvalidContext
+			return conversation.VoiceQuestion{}, practicevoice.ErrInvalidContext
 		}
 	} else {
 		parentQuestionID = ""
@@ -1437,23 +1434,23 @@ func isFrozenIELTSSpeakingModel(model string) bool {
 }
 
 func frozenIELTSFullMockQuestion(
-	session agent.VoicePracticeSession,
+	session practicevoice.Session,
 	sequence int,
 ) (string, error) {
 	blueprints := session.PromptModel.TurnBlueprints
 	if sequence < 1 || sequence > len(blueprints) {
-		return "", agent.ErrInvalidContext
+		return "", practicevoice.ErrInvalidContext
 	}
 	blueprint := strings.TrimSpace(blueprints[sequence-1])
 	separator := strings.Index(blueprint, ":")
 	if separator < 0 || separator == len(blueprint)-1 {
-		return "", agent.ErrInvalidContext
+		return "", practicevoice.ErrInvalidContext
 	}
 	return strings.TrimSpace(blueprint[separator+1:]), nil
 }
 
 func voiceQuestionRequest(
-	session agent.VoicePracticeSession,
+	session practicevoice.Session,
 	sequence int,
 ) (ai.TextRequest, error) {
 	prompt := session.PromptModel
@@ -1467,7 +1464,7 @@ func voiceQuestionRequest(
 		strings.TrimSpace(prompt.PersonaSummary) == "" ||
 		len(prompt.FocusAreas) == 0 ||
 		len(prompt.TurnBlueprints) == 0 {
-		return ai.TextRequest{}, agent.ErrInvalidContext
+		return ai.TextRequest{}, practicevoice.ErrInvalidContext
 	}
 	blueprintIndex := sequence - 1
 	if blueprintIndex >= len(prompt.TurnBlueprints) {
@@ -1522,7 +1519,7 @@ func voiceQuestionRequest(
 }
 
 func voiceInterviewQuestionRequest(
-	session agent.VoicePracticeSession,
+	session practicevoice.Session,
 	sequence int,
 	followUpAllowed bool,
 ) (ai.TextRequest, error) {
@@ -1540,7 +1537,7 @@ func voiceInterviewQuestionRequest(
 		strings.TrimSpace(prompt.AIRole) == "" ||
 		strings.TrimSpace(prompt.PersonaSummary) == "" ||
 		len(prompt.FocusAreas) == 0 || len(prompt.TurnBlueprints) == 0 {
-		return ai.TextRequest{}, agent.ErrInvalidContext
+		return ai.TextRequest{}, practicevoice.ErrInvalidContext
 	}
 	nextBlueprintIndex := session.EffectiveTurns
 	if nextBlueprintIndex >= len(prompt.TurnBlueprints) {
@@ -1618,7 +1615,7 @@ func (adapter *voiceCheckpointAdapter) ListTurnHistory(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	sessionID string,
-) ([]agent.VoiceTurnExchange, error) {
+) ([]practicevoice.TurnExchange, error) {
 	turns, err := adapter.repository.ListSessionTurns(
 		ctx,
 		conversationActor(actor),
@@ -1627,7 +1624,7 @@ func (adapter *voiceCheckpointAdapter) ListTurnHistory(
 	if err != nil {
 		return nil, mapConversationError(err)
 	}
-	history := make([]agent.VoiceTurnExchange, 0, len(turns))
+	history := make([]practicevoice.TurnExchange, 0, len(turns))
 	for _, persistedTurn := range turns {
 		candidate, candidateErr := adapter.repository.GetCandidate(
 			ctx,
@@ -1668,7 +1665,7 @@ func (adapter *voiceCheckpointAdapter) ListTurnHistory(
 		if questionErr != nil {
 			return nil, mapConversationError(questionErr)
 		}
-		history = append(history, agent.VoiceTurnExchange{
+		history = append(history, practicevoice.TurnExchange{
 			Question: mapVoiceQuestion(question),
 			Turn:     turn,
 		})
@@ -1769,15 +1766,15 @@ type voiceSpeechFeedbackAdapter struct {
 	coordinator *review.SpeechFeedbackCoordinator
 }
 
-func (adapter *voiceSpeechFeedbackAdapter) EnsureAgentVoiceMessage(
+func (adapter *voiceSpeechFeedbackAdapter) EnsureMessage(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	threadID string,
 	messageID string,
-) (agent.VoiceMessageFeedbackReference, error) {
+) (inputvoice.FeedbackReference, error) {
 	if adapter == nil || adapter.coordinator == nil {
-		return agent.VoiceMessageFeedbackReference{},
-			agent.ErrInvalidContext
+		return inputvoice.FeedbackReference{},
+			inputvoice.ErrInvalidContext
 	}
 	reference, err := adapter.coordinator.EnsureAgentVoiceMessage(
 		ctx,
@@ -1786,12 +1783,12 @@ func (adapter *voiceSpeechFeedbackAdapter) EnsureAgentVoiceMessage(
 		messageID,
 	)
 	if errors.Is(err, review.ErrSpeechFeedbackNotApplicable) {
-		return agent.VoiceMessageFeedbackReference{}, nil
+		return inputvoice.FeedbackReference{}, nil
 	}
 	if err != nil {
-		return agent.VoiceMessageFeedbackReference{}, err
+		return inputvoice.FeedbackReference{}, err
 	}
-	return agent.VoiceMessageFeedbackReference{
+	return inputvoice.FeedbackReference{
 		StatusURL: reference.StatusURL,
 	}, nil
 }
@@ -1801,10 +1798,10 @@ func (adapter *voiceSpeechFeedbackAdapter) EnsureConversationTurn(
 	actor requestcontext.Actor,
 	sessionID string,
 	turnID string,
-) (agent.VoiceTurnFeedbackReference, error) {
+) (practicevoice.TurnFeedbackReference, error) {
 	if adapter == nil || adapter.coordinator == nil {
-		return agent.VoiceTurnFeedbackReference{},
-			agent.ErrInvalidContext
+		return practicevoice.TurnFeedbackReference{},
+			practicevoice.ErrInvalidContext
 	}
 	reference, err := adapter.coordinator.EnsureConversationTurn(
 		ctx,
@@ -1813,12 +1810,12 @@ func (adapter *voiceSpeechFeedbackAdapter) EnsureConversationTurn(
 		turnID,
 	)
 	if errors.Is(err, review.ErrSpeechFeedbackNotApplicable) {
-		return agent.VoiceTurnFeedbackReference{}, nil
+		return practicevoice.TurnFeedbackReference{}, nil
 	}
 	if err != nil {
-		return agent.VoiceTurnFeedbackReference{}, err
+		return practicevoice.TurnFeedbackReference{}, err
 	}
-	return agent.VoiceTurnFeedbackReference{
+	return practicevoice.TurnFeedbackReference{
 		StatusURL:  reference.StatusURL,
 		Applicable: true,
 	}, nil
@@ -1832,7 +1829,7 @@ type voiceReviewAdapter struct {
 }
 
 type voiceCompletionEvaluationAdapter struct {
-	sessions        agent.VoiceSessionPort
+	sessions        practicevoice.SessionPort
 	interviewShadow interviewShadowCompletionCoordinator
 	ieltsShadow     IELTSSpeakingCompletionCoordinator
 }
@@ -1840,13 +1837,13 @@ type voiceCompletionEvaluationAdapter struct {
 func (adapter *voiceCompletionEvaluationAdapter) EnsureCompletedSessionEvaluation(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	source agent.VoiceCompletionEvaluationSource,
+	source practicevoice.CompletionEvaluationSource,
 ) error {
 	if adapter == nil || adapter.sessions == nil || ctx == nil ||
 		!actor.Valid() ||
 		strings.TrimSpace(source.SessionID) == "" ||
 		strings.TrimSpace(source.TurnID) == "" {
-		return agent.ErrInvalidRequest
+		return practicevoice.ErrInvalidRequest
 	}
 	session, err := adapter.sessions.GetByID(ctx, actor, source.SessionID)
 	if err != nil {
@@ -1857,7 +1854,7 @@ func (adapter *voiceCompletionEvaluationAdapter) EnsureCompletedSessionEvaluatio
 		session.Status != "completed" ||
 		session.EffectiveTurns < 1 ||
 		session.EffectiveTurns > session.TurnLimit {
-		return agent.ErrInvalidContext
+		return practicevoice.ErrInvalidContext
 	}
 	if session.ScenarioType == string(
 		practicepersistence.ScenarioFamilyInterview,
@@ -1882,7 +1879,7 @@ func (adapter *voiceCompletionEvaluationAdapter) EnsureCompletedSessionEvaluatio
 		return nil
 	}
 	if session.EffectiveTurns != 14 || session.TurnLimit != 14 {
-		return agent.ErrInvalidContext
+		return practicevoice.ErrInvalidContext
 	}
 	if adapter.ieltsShadow == nil {
 		return errors.New(
@@ -1915,8 +1912,8 @@ type interviewShadowCompletionCoordinator interface {
 func (adapter *voiceReviewAdapter) EnsureSessionReview(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	source agent.VoiceReviewSource,
-) (agent.VoiceReviewCheckpoint, error) {
+	source practicevoice.ReviewSource,
+) (practicevoice.ReviewCheckpoint, error) {
 	reviewActor := review.Actor{
 		UserID: actor.UserID,
 	}
@@ -1926,11 +1923,11 @@ func (adapter *voiceReviewAdapter) EnsureSessionReview(
 		source.SessionID,
 	)
 	if err != nil {
-		return agent.VoiceReviewCheckpoint{}, mapReviewError(err)
+		return practicevoice.ReviewCheckpoint{}, mapReviewError(err)
 	}
 	if snapshot.SourceTurnID != source.TurnID ||
 		snapshot.PracticeSessionID != source.SessionID {
-		return agent.VoiceReviewCheckpoint{}, agent.ErrInvalidContext
+		return practicevoice.ReviewCheckpoint{}, practicevoice.ErrInvalidContext
 	}
 	formalReview, err := adapter.service.EnsureReview(
 		ctx,
@@ -1947,7 +1944,7 @@ func (adapter *voiceReviewAdapter) EnsureSessionReview(
 		},
 	)
 	if err != nil {
-		return agent.VoiceReviewCheckpoint{}, mapReviewError(err)
+		return practicevoice.ReviewCheckpoint{}, mapReviewError(err)
 	}
 	if snapshot.EvaluationContext.ContextType ==
 		review.ContextInterviewProjectDeepDive &&
@@ -1958,10 +1955,10 @@ func (adapter *voiceReviewAdapter) EnsureSessionReview(
 				actor,
 				source.SessionID,
 			); err != nil {
-			return agent.VoiceReviewCheckpoint{}, err
+			return practicevoice.ReviewCheckpoint{}, err
 		}
 	}
-	return agent.VoiceReviewCheckpoint{
+	return practicevoice.ReviewCheckpoint{
 		ID:           formalReview.ID,
 		SessionID:    formalReview.PracticeSessionID,
 		SourceTurnID: formalReview.SourceTurnID,
@@ -1972,12 +1969,12 @@ func (adapter *voiceReviewAdapter) GetReview(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	reviewID string,
-) (agent.VoiceSessionReview, error) {
+) (practicevoice.SessionReview, error) {
 	formalReview, err := adapter.history.Get(ctx, review.Actor{
 		UserID: actor.UserID,
 	}, reviewID)
 	if err != nil {
-		return agent.VoiceSessionReview{}, mapReviewReadError(err)
+		return practicevoice.SessionReview{}, mapReviewReadError(err)
 	}
 	return mapVoiceSessionReview(formalReview), nil
 }
@@ -1985,8 +1982,8 @@ func (adapter *voiceReviewAdapter) GetReview(
 func (adapter *voiceReviewAdapter) ListReviews(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	query agent.VoiceReviewHistoryQuery,
-) (agent.VoiceReviewHistoryPage, error) {
+	query practicevoice.ReviewHistoryQuery,
+) (practicevoice.ReviewHistoryPage, error) {
 	reviewQuery := review.HistoryQuery{Limit: query.Limit}
 	if query.Before != nil {
 		reviewQuery.Before = &review.HistoryCursor{
@@ -2000,16 +1997,16 @@ func (adapter *voiceReviewAdapter) ListReviews(
 		reviewQuery,
 	)
 	if err != nil {
-		return agent.VoiceReviewHistoryPage{}, mapReviewReadError(err)
+		return practicevoice.ReviewHistoryPage{}, mapReviewReadError(err)
 	}
-	result := agent.VoiceReviewHistoryPage{
-		Items: make([]agent.VoiceSessionReview, len(page.Items)),
+	result := practicevoice.ReviewHistoryPage{
+		Items: make([]practicevoice.SessionReview, len(page.Items)),
 	}
 	for index, item := range page.Items {
 		result.Items[index] = mapVoiceSessionReview(item)
 	}
 	if page.Next != nil {
-		result.Next = &agent.VoiceReviewHistoryCursor{
+		result.Next = &practicevoice.ReviewHistoryCursor{
 			CreatedAt: page.Next.CreatedAt,
 			ReviewID:  page.Next.ReviewID,
 		}
@@ -2019,7 +2016,7 @@ func (adapter *voiceReviewAdapter) ListReviews(
 
 func mapReviewReadError(err error) error {
 	if errors.Is(err, review.ErrInvalidReview) {
-		return agent.ErrInvalidContext
+		return practicevoice.ErrInvalidContext
 	}
 	return mapReviewError(err)
 }
@@ -2058,15 +2055,15 @@ func mapReviewError(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, review.ErrInvalidReview):
-		return agent.ErrInvalidRequest
+		return practicevoice.ErrInvalidRequest
 	case errors.Is(err, review.ErrReviewNotFound),
 		errors.Is(err, review.ErrAccountDeleted):
-		return agent.ErrNotFound
+		return practicevoice.ErrNotFound
 	case errors.Is(err, review.ErrReviewSourceConflict),
 		errors.Is(err, review.ErrReviewImplementationConflict),
 		errors.Is(err, review.ErrGenerationClaimLost),
 		errors.Is(err, review.ErrDeletionGenerationStale):
-		return agent.ErrConflict
+		return practicevoice.ErrConflict
 	case errors.Is(err, review.ErrGenerationFailed):
 		return ai.NewGenerationError(
 			ai.ErrorProviderUnavailable,
@@ -2082,12 +2079,12 @@ func mapReviewError(err error) error {
 
 func mapVoiceSessionReview(
 	formalReview review.FormalReview,
-) agent.VoiceSessionReview {
+) practicevoice.SessionReview {
 	var evaluationContext json.RawMessage
 	if formalReview.EvaluationContext.ContextType != "" {
 		evaluationContext, _ = json.Marshal(formalReview.EvaluationContext)
 	}
-	item := agent.VoiceSessionReview{
+	item := practicevoice.SessionReview{
 		ID:                    formalReview.ID,
 		SessionID:             formalReview.PracticeSessionID,
 		Status:                string(formalReview.Status),
@@ -2104,11 +2101,11 @@ func mapVoiceSessionReview(
 		return item
 	}
 	conclusions := make(
-		[]agent.VoiceReviewConclusion,
+		[]practicevoice.ReviewConclusion,
 		len(formalReview.Result.Conclusions),
 	)
 	for index, conclusion := range formalReview.Result.Conclusions {
-		conclusions[index] = agent.VoiceReviewConclusion{
+		conclusions[index] = practicevoice.ReviewConclusion{
 			Key:          conclusion.Key,
 			Category:     conclusion.Category,
 			Score:        conclusion.Score,
@@ -2118,18 +2115,18 @@ func mapVoiceSessionReview(
 		}
 	}
 	feedback := make(
-		[]agent.VoiceReviewFeedbackItem,
+		[]practicevoice.ReviewFeedbackItem,
 		len(formalReview.Result.FeedbackItems),
 	)
 	for index, item := range formalReview.Result.FeedbackItems {
-		feedback[index] = agent.VoiceReviewFeedbackItem{
+		feedback[index] = practicevoice.ReviewFeedbackItem{
 			Key:        item.Key,
 			Kind:       string(item.Kind),
 			Message:    item.Message,
 			Suggestion: item.Suggestion,
 		}
 	}
-	item.Result = &agent.VoiceReviewResult{
+	item.Result = &practicevoice.ReviewResult{
 		SummaryEligibility: string(
 			formalReview.Result.SummaryEligibility,
 		),
@@ -2773,13 +2770,13 @@ func stripJSONFence(value string) string {
 }
 
 var (
-	_ agent.VoiceSessionPort              = (*voicePracticeAdapter)(nil)
-	_ conversation.VoiceRoundStore        = (*voiceConversationStore)(nil)
-	_ agent.VoiceQuestionPort             = (*voiceQuestionAdapter)(nil)
-	_ agent.VoiceCheckpointPort           = (*voiceCheckpointAdapter)(nil)
-	_ agent.VoiceReviewPort               = (*voiceReviewAdapter)(nil)
-	_ agent.VoiceReviewReader             = (*voiceReviewAdapter)(nil)
-	_ agent.VoiceCompletionEvaluationPort = (*voiceCompletionEvaluationAdapter)(nil)
-	_ review.ReviewSourceReader           = (*voiceReviewSourceReader)(nil)
-	_ review.ReviewGenerator              = (*voiceReviewGenerator)(nil)
+	_ practicevoice.SessionPort              = (*voicePracticeAdapter)(nil)
+	_ conversation.VoiceRoundStore           = (*voiceConversationStore)(nil)
+	_ practicevoice.QuestionPort             = (*voiceQuestionAdapter)(nil)
+	_ practicevoice.CheckpointPort           = (*voiceCheckpointAdapter)(nil)
+	_ practicevoice.ReviewPort               = (*voiceReviewAdapter)(nil)
+	_ practicevoice.ReviewReader             = (*voiceReviewAdapter)(nil)
+	_ practicevoice.CompletionEvaluationPort = (*voiceCompletionEvaluationAdapter)(nil)
+	_ review.ReviewSourceReader              = (*voiceReviewSourceReader)(nil)
+	_ review.ReviewGenerator                 = (*voiceReviewGenerator)(nil)
 )

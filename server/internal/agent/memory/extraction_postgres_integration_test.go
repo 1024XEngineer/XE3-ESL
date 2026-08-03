@@ -6,11 +6,12 @@ import (
 	"errors"
 	"testing"
 
-	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
-	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
+	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
+	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -36,11 +37,22 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("new Matter service: %v", err)
 	}
-	agentRepository, err := agentpersistence.NewPostgresRepository(database, ids)
+	conversationRepository, err := conversationpostgres.New(database, ids)
 	if err != nil {
-		t.Fatalf("new Agent repository: %v", err)
+		t.Fatalf("new Agent Conversation repository: %v", err)
 	}
-	agentService, err := agentapp.NewService(agentRepository, matterService)
+	contextRepository, err := contextpostgres.New(database)
+	if err != nil {
+		t.Fatalf("new Agent Context repository: %v", err)
+	}
+	runRepository, err := runpostgres.New(database, ids)
+	if err != nil {
+		t.Fatalf("new Agent Run repository: %v", err)
+	}
+	agentService, err := conversation.NewService(
+		conversationRepository,
+		matterService,
+	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
@@ -53,7 +65,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 		t.Fatalf("CreateThread: %v", err)
 	}
 	assembler, err := agentcontext.NewAssembler(
-		agentRepository,
+		contextRepository,
 		matterService,
 		emptyAgentStableProfileReader{},
 		emptyAgentMemorySearcher{},
@@ -61,7 +73,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("NewContextAssembler: %v", err)
 	}
-	runConfiguration := core.RunConfiguration{
+	runConfiguration := agentrun.Configuration{
 		Provider:           "qianwen",
 		Model:              "qwen-plus",
 		MaxOutputTokens:    128,
@@ -80,7 +92,9 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 		},
 	})
 	runService, err := agentrun.NewService(
-		agentRepository,
+		runRepository,
+		conversationRepository,
+		contextRepository,
 		assembler,
 		generator,
 		runConfiguration,
@@ -98,7 +112,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("SubmitText: %v", err)
 	}
-	if submission.Run.Status != core.RunStatusCompleted {
+	if submission.Run.Status != agentrun.StatusCompleted {
 		t.Fatalf("completed Run = %#v", submission.Run)
 	}
 

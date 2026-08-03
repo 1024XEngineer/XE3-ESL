@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -62,7 +61,7 @@ func (hit MemorySearchHit) valid(matterID string) bool {
 }
 
 func coreValidMemoryHit(hit MemorySearchHit) bool {
-	return core.ValidUUID(hit.MemoryID) &&
+	return uuidPattern.MatchString(hit.MemoryID) &&
 		hit.MemoryVersion > 0 &&
 		stableProfileCanonicalKeyPattern.MatchString(hit.CanonicalKey) &&
 		hit.Type != "" &&
@@ -77,8 +76,8 @@ func coreValidMemoryHit(hit MemorySearchHit) bool {
 		hit.Similarity <= 1 &&
 		!math.IsNaN(hit.Score) &&
 		!math.IsInf(hit.Score, 0) &&
-		core.ValidProviderID(hit.EmbeddingProvider) &&
-		core.ValidModelID(hit.EmbeddingModel) &&
+		providerPattern.MatchString(hit.EmbeddingProvider) &&
+		modelPattern.MatchString(hit.EmbeddingModel) &&
 		hit.EmbeddingDimensions == memoryEmbeddingDimensions &&
 		memoryPolicyVersionPattern.MatchString(
 			hit.EmbeddingPolicyVersion,
