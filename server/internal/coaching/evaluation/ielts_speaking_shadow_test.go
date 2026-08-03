@@ -102,6 +102,76 @@ func TestIELTSSpeakingShadowProducesFourBandsAndOverallWithAcoustics(
 	}
 }
 
+func TestIELTSSpeakingShadowUsesVerifiedPartialAcousticCoverage(t *testing.T) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	provider := &ieltsProviderStub{}
+	result, err := NewIELTSSpeakingShadowEngineWithAcoustics(
+		provider,
+		&ieltsAcousticSourceStub{limit: 4},
+	).Evaluate(context.Background(), snapshot)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	pronunciation := result.Criteria[3]
+	if pronunciation.EstimatedBand == nil ||
+		!sameRatio(pronunciation.Coverage, ratio(4, ieltsQuestionCount)) {
+		t.Fatalf("pronunciation = %#v", pronunciation)
+	}
+	report, err := ProjectIELTSSpeakingReport(snapshot, result)
+	if err != nil || report.SpeakingOverall.Status != IELTSSpeakingOverallAvailable {
+		t.Fatalf("report = %#v; err = %v", report, err)
+	}
+}
+
+func TestIELTSSpeakingShadowClassifiesMixedLanguageWithoutScoringChinese(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingSnapshotWithTranscript(
+		t,
+		"I explain my English answer clearly. 这是中文补充。",
+	)
+	provider := &ieltsProviderStub{}
+	_, err := NewIELTSSpeakingShadowEngine(provider).Evaluate(
+		context.Background(),
+		snapshot,
+	)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	response := provider.input.Questions[0].Response
+	if response == nil || response.LanguageEvidence != ieltsLanguageMixed ||
+		response.EnglishWordCount != 6 || response.CJKCharacterCount == 0 {
+		t.Fatalf("mixed response = %#v", response)
+	}
+}
+
+func TestIELTSSpeakingShadowRejectsChineseOnlySessionAsUnscoreable(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingSnapshotWithTranscript(t, "这是中文回答。")
+	provider := &ieltsProviderStub{}
+	result, err := NewIELTSSpeakingShadowEngine(provider).Evaluate(
+		context.Background(),
+		snapshot,
+	)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if provider.calls != 0 ||
+		result.Scoreability != IELTSSpeakingScoreabilityInsufficient ||
+		!slices.Equal(result.ReasonCodes, []IELTSSpeakingReasonCode{
+			IELTSReasonInsufficientEvidence,
+		}) {
+		t.Fatalf("result = %#v; provider calls = %d", result, provider.calls)
+	}
+	if err := ValidateIELTSSpeakingShadowResult(snapshot, result); err != nil {
+		t.Fatalf("ValidateIELTSSpeakingShadowResult: %v", err)
+	}
+	if _, err := ProjectIELTSSpeakingReport(snapshot, result); err != nil {
+		t.Fatalf("ProjectIELTSSpeakingReport: %v", err)
+	}
+}
+
 func TestIELTSSpeakingShadowDoesNotCallProviderWithoutFourteenAnswers(
 	t *testing.T,
 ) {
@@ -360,10 +430,12 @@ type ieltsProviderStub struct {
 	payload []byte
 	err     error
 	calls   int
+	input   IELTSSpeakingShadowProviderInput
 }
 
 type ieltsAcousticSourceStub struct {
 	calls int
+	limit int
 }
 
 func (source *ieltsAcousticSourceStub) GetIELTSSpeakingAcoustics(
@@ -374,6 +446,9 @@ func (source *ieltsAcousticSourceStub) GetIELTSSpeakingAcoustics(
 	source.calls++
 	result := make([]IELTSSpeakingTurnAcoustics, 0, len(requests))
 	for _, request := range requests {
+		if source.limit > 0 && len(result) == source.limit {
+			break
+		}
 		fluency := 76.0
 		result = append(result, IELTSSpeakingTurnAcoustics{
 			TurnID:               request.TurnID,
@@ -392,6 +467,7 @@ func (provider *ieltsProviderStub) AnalyzeIELTSSpeaking(
 	input IELTSSpeakingShadowProviderInput,
 ) (IELTSSpeakingShadowProviderResult, error) {
 	provider.calls++
+	provider.input = input
 	if provider.err != nil {
 		return IELTSSpeakingShadowProviderResult{}, provider.err
 	}
@@ -658,6 +734,23 @@ func ieltsSpeakingTestSnapshot(
 			payload.OpportunityManifest,
 			opportunity,
 		)
+	}
+	return rebuildIELTSSpeakingSnapshot(t, payload)
+}
+
+func ieltsSpeakingSnapshotWithTranscript(
+	t *testing.T,
+	transcript string,
+) EvidenceSnapshot {
+	t.Helper()
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	var payload evidencePayload
+	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
+		t.Fatalf("decode IELTS Snapshot: %v", err)
+	}
+	for index := range payload.ConfirmedTurns {
+		payload.ConfirmedTurns[index].Transcript.Text = transcript
+		payload.EvidenceRefs[index].TranscriptSpan.EndUTF8Byte = len(transcript)
 	}
 	return rebuildIELTSSpeakingSnapshot(t, payload)
 }

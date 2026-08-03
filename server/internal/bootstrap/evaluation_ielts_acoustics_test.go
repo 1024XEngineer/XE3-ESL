@@ -44,24 +44,69 @@ func TestIELTSSpeakingAcousticSourceAcceptsSentenceAssessment(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingAcousticSourceKeepsValidPartialEvidence(t *testing.T) {
+	accuracy := 82.0
+	fluency := 79.0
+	reader := &ieltsSpeakingFeedbackReaderStub{
+		referenceByTurn: map[string]string{
+			"turn_ready":  "feedback_ready",
+			"turn_failed": "feedback_failed",
+		},
+		feedbackByID: map[string]review.SpeechFeedback{
+			"feedback_ready": {
+				FeedbackStatus: review.SpeechFeedbackReady,
+				AcousticAssessment: review.SpeechFeedbackAcousticAssessment{
+					Pronunciation:   review.SpeechFeedbackAssessed,
+					AcousticFluency: review.SpeechFeedbackAssessed,
+					AccuracyScore:   &accuracy,
+					FluencyScore:    &fluency,
+					Provider:        "xfyun_ise",
+					ProviderSession: "session-ready",
+				},
+			},
+			"feedback_failed": {FeedbackStatus: review.SpeechFeedbackFailed},
+		},
+	}
+	values, err := (&ieltsSpeakingAcousticSource{feedback: reader}).
+		GetIELTSSpeakingAcoustics(
+			context.Background(),
+			"10000000-0000-4000-8000-000000000001",
+			[]evaluation.IELTSSpeakingAcousticRequest{
+				{TurnID: "turn_ready", EvidenceRefID: "evidence_ready"},
+				{TurnID: "turn_failed", EvidenceRefID: "evidence_failed"},
+			},
+		)
+	if err != nil || len(values) != 1 || values[0].TurnID != "turn_ready" {
+		t.Fatalf("acoustics = %#v; err = %v", values, err)
+	}
+}
+
 type ieltsSpeakingFeedbackReaderStub struct {
-	feedback review.SpeechFeedback
+	feedback        review.SpeechFeedback
+	referenceByTurn map[string]string
+	feedbackByID    map[string]review.SpeechFeedback
 }
 
 func (stub *ieltsSpeakingFeedbackReaderStub) FindSpeechFeedbackByConversationTurn(
-	context.Context,
-	string,
-	string,
+	_ context.Context,
+	_ string,
+	turnID string,
 ) (review.SpeechFeedbackReference, bool, error) {
+	if id, ok := stub.referenceByTurn[turnID]; ok {
+		return review.SpeechFeedbackReference{SpeechFeedbackID: id}, true, nil
+	}
 	return review.SpeechFeedbackReference{
 		SpeechFeedbackID: "20000000-0000-4000-8000-000000000001",
 	}, true, nil
 }
 
 func (stub *ieltsSpeakingFeedbackReaderStub) GetSpeechFeedback(
-	context.Context,
-	string,
-	string,
+	_ context.Context,
+	_ string,
+	feedbackID string,
 ) (review.SpeechFeedback, error) {
+	if feedback, ok := stub.feedbackByID[feedbackID]; ok {
+		return feedback, nil
+	}
 	return stub.feedback, nil
 }

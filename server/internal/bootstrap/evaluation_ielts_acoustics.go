@@ -65,7 +65,7 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 		case review.SpeechFeedbackQueued, review.SpeechFeedbackRunning:
 			return nil, evaluation.ErrIELTSSpeakingAcousticsPending
 		case review.SpeechFeedbackFailed:
-			return []evaluation.IELTSSpeakingTurnAcoustics{}, nil
+			continue
 		case review.SpeechFeedbackReady:
 		default:
 			return nil, errors.New("bootstrap: unsupported speech feedback status")
@@ -73,7 +73,7 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 		assessment := feedback.AcousticAssessment
 		if assessment.Pronunciation != review.SpeechFeedbackAssessed ||
 			assessment.AcousticFluency != review.SpeechFeedbackAssessed {
-			return []evaluation.IELTSSpeakingTurnAcoustics{}, nil
+			continue
 		}
 		pronunciation := assessment.PronunciationScore
 		if pronunciation == nil {
@@ -82,7 +82,7 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 		if pronunciation == nil ||
 			(assessment.FluencyScore == nil &&
 				assessment.SpeakingSpeedWPM == nil) {
-			return []evaluation.IELTSSpeakingTurnAcoustics{}, nil
+			continue
 		}
 		result = append(result, evaluation.IELTSSpeakingTurnAcoustics{
 			TurnID:               request.TurnID,

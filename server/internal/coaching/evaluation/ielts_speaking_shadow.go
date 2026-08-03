@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -19,7 +21,7 @@ import (
 const (
 	IELTSSpeakingShadowSchemaVersion         = "ielts-speaking-full-mock-shadow/v1"
 	IELTSSpeakingShadowProviderSchemaVersion = "ielts-speaking-full-mock-shadow-provider/v2"
-	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v3"
+	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v4"
 	IELTSSpeakingShadowRubricVersion         = "ielts-speaking-public-band-rubric/v2"
 
 	ieltsFullMockSceneID      = "scn_ielts_speaking_full"
@@ -31,6 +33,9 @@ const (
 	ieltsMaximumAnchors         = 4
 	ieltsMaximumOccurrence      = 16
 	ieltsQuestionCount          = 14
+	ieltsMinimumEnglishWords    = 10
+	ieltsMinimumEnglishTurns    = 3
+	ieltsMinimumAcousticMS      = 3000
 )
 
 var ErrInvalidIELTSSpeakingShadow = errors.New(
@@ -167,6 +172,9 @@ type IELTSSpeakingProviderResponse struct {
 	EvidenceRefID        string   `json:"evidence_ref_id"`
 	Transcript           string   `json:"confirmed_transcript"`
 	RecordingDurationMS  int64    `json:"recording_duration_ms"`
+	EnglishWordCount     int      `json:"english_word_count"`
+	CJKCharacterCount    int      `json:"cjk_character_count"`
+	LanguageEvidence     string   `json:"language_evidence"`
 	PronunciationScore   *float64 `json:"pronunciation_score,omitempty"`
 	AcousticFluencyScore *float64 `json:"acoustic_fluency_score,omitempty"`
 	SpeakingSpeedWPM     *float64 `json:"speaking_speed_wpm,omitempty"`
@@ -360,12 +368,22 @@ func (engine *IELTSSpeakingShadowEngine) withAcoustics(
 	if err != nil {
 		return preparedIELTSSpeakingShadow{}, err
 	}
-	if len(values) != len(requests) {
+	if len(values) == 0 {
 		return prepared, nil
 	}
 	byTurn := make(map[string]IELTSSpeakingTurnAcoustics, len(values))
+	requestedTurns := make(map[string]struct{}, len(requests))
+	for _, request := range requests {
+		requestedTurns[request.TurnID] = struct{}{}
+	}
 	for _, value := range values {
 		if !validIELTSSpeakingTurnAcoustics(value) {
+			return preparedIELTSSpeakingShadow{}, ErrInvalidRequest
+		}
+		if _, requested := requestedTurns[value.TurnID]; !requested {
+			return preparedIELTSSpeakingShadow{}, ErrInvalidRequest
+		}
+		if _, duplicate := byTurn[value.TurnID]; duplicate {
 			return preparedIELTSSpeakingShadow{}, ErrInvalidRequest
 		}
 		byTurn[value.TurnID] = value
@@ -373,7 +391,13 @@ func (engine *IELTSSpeakingShadowEngine) withAcoustics(
 	for index := range prepared.input.Questions {
 		response := prepared.input.Questions[index].Response
 		value, ok := byTurn[response.TurnID]
-		if !ok || value.EvidenceRefID != response.EvidenceRefID {
+		if !ok {
+			continue
+		}
+		if response.EnglishWordCount == 0 {
+			continue
+		}
+		if value.EvidenceRefID != response.EvidenceRefID {
 			return preparedIELTSSpeakingShadow{}, ErrInvalidRequest
 		}
 		pronunciation := value.PronunciationScore
@@ -388,6 +412,24 @@ func (engine *IELTSSpeakingShadowEngine) withAcoustics(
 		}
 		response.AcousticProvider = value.Provider
 		response.AcousticProviderRun = value.ProviderRun
+		prepared.acousticRefs[response.EvidenceRefID] = struct{}{}
+		prepared.acousticMS += response.RecordingDurationMS
+	}
+	legacyCoverageWithoutDuration := prepared.acousticMS == 0 &&
+		len(prepared.acousticRefs) >= ieltsMinimumEnglishTurns
+	if (prepared.acousticMS < ieltsMinimumAcousticMS &&
+		!legacyCoverageWithoutDuration) || len(prepared.acousticRefs) == 0 {
+		for _, question := range prepared.input.Questions {
+			response := question.Response
+			response.PronunciationScore = nil
+			response.AcousticFluencyScore = nil
+			response.SpeakingSpeedWPM = nil
+			response.AcousticProvider = ""
+			response.AcousticProviderRun = ""
+		}
+		prepared.acousticRefs = make(map[string]struct{})
+		prepared.acousticMS = 0
+		return prepared, nil
 	}
 	prepared.input.AssessableCriteria = slices.Clone(ieltsCriterionOrder[:])
 	prepared.input.RubricDescriptors = ieltsRubricDescriptorSetsFor(
@@ -429,7 +471,17 @@ type preparedIELTSSpeakingShadow struct {
 	refsByID     map[string]evidenceRef
 	refsByTurnID map[string]evidenceRef
 	responseRefs map[string]struct{}
+	englishTurns int
+	englishWords int
+	acousticRefs map[string]struct{}
+	acousticMS   int64
 }
+
+const (
+	ieltsLanguageEnglish = "ENGLISH"
+	ieltsLanguageMixed   = "MIXED_ENGLISH_ASSESSABLE"
+	ieltsLanguageOther   = "NON_ENGLISH_INSUFFICIENT"
+)
 
 func prepareIELTSSpeakingShadow(
 	snapshot EvidenceSnapshot,
@@ -469,6 +521,8 @@ func prepareIELTSSpeakingShadow(
 		ieltsQuestionCount,
 	)
 	answered := 0
+	englishTurns := 0
+	englishWords := 0
 	for index, opportunity := range evidence.OpportunityManifest {
 		sequence := index + 1
 		if opportunity.Sequence != sequence {
@@ -491,12 +545,25 @@ func prepareIELTSSpeakingShadow(
 			}
 			answered++
 			responseRefs[ref.EvidenceRefID] = struct{}{}
+			wordCount, cjkCount := ieltsLanguageEvidence(turn.Transcript.Text)
+			language := ieltsLanguageOther
+			if wordCount > 0 {
+				language = ieltsLanguageEnglish
+				if cjkCount > 0 {
+					language = ieltsLanguageMixed
+				}
+				englishTurns++
+				englishWords += wordCount
+			}
 			providerQuestion.Response =
 				&IELTSSpeakingProviderResponse{
 					TurnID:              turn.TurnID,
 					EvidenceRefID:       ref.EvidenceRefID,
 					Transcript:          turn.Transcript.Text,
 					RecordingDurationMS: turn.Audio.DurationMS,
+					EnglishWordCount:    wordCount,
+					CJKCharacterCount:   cjkCount,
+					LanguageEvidence:    language,
 				}
 		}
 		questions = append(questions, providerQuestion)
@@ -509,6 +576,9 @@ func prepareIELTSSpeakingShadow(
 		refsByID:     refsByID,
 		refsByTurnID: refsByTurnID,
 		responseRefs: responseRefs,
+		englishTurns: englishTurns,
+		englishWords: englishWords,
+		acousticRefs: make(map[string]struct{}),
 	}
 	if answered != ieltsQuestionCount {
 		prepared.result.Scoreability =
@@ -526,6 +596,23 @@ func prepareIELTSSpeakingShadow(
 				prepared,
 				prepared.result.Criteria,
 			)
+		return prepared, nil
+	}
+	if englishWords < ieltsMinimumEnglishWords ||
+		englishTurns < ieltsMinimumEnglishTurns {
+		prepared.result.Scoreability = IELTSSpeakingScoreabilityInsufficient
+		prepared.result.Gate = IELTSSpeakingGateBlocked
+		prepared.result.ReasonCodes = []IELTSSpeakingReasonCode{
+			IELTSReasonInsufficientEvidence,
+		}
+		prepared.result.Criteria = blockedIELTSCriteria(
+			ratio(englishTurns, ieltsQuestionCount),
+			IELTSReasonInsufficientEvidence,
+		)
+		prepared.result.QuestionResults = ieltsSpeakingQuestionResults(
+			prepared,
+			prepared.result.Criteria,
+		)
 		return prepared, nil
 	}
 
@@ -555,6 +642,26 @@ func prepareIELTSSpeakingShadow(
 		return preparedIELTSSpeakingShadow{}, ErrInvalidRequest
 	}
 	return prepared, nil
+}
+
+func ieltsLanguageEvidence(text string) (englishWords int, cjkCharacters int) {
+	inEnglishWord := false
+	for _, character := range text {
+		isEnglishLetter := unicode.In(character, unicode.Latin) &&
+			unicode.IsLetter(character)
+		if isEnglishLetter {
+			if !inEnglishWord {
+				englishWords++
+			}
+			inEnglishWord = true
+		} else {
+			inEnglishWord = false
+		}
+		if unicode.In(character, unicode.Han) {
+			cjkCharacters++
+		}
+	}
+	return englishWords, cjkCharacters
 }
 
 func isFrozenIELTSFullMock(context evidencePracticeContext) bool {
@@ -608,7 +715,8 @@ func blockedIELTSCriteria(
 		criterionReason := reason
 		switch criterion {
 		case IELTSCriterionFC:
-			if reason != IELTSReasonOpportunityNotProvided {
+			if reason != IELTSReasonOpportunityNotProvided &&
+				reason != IELTSReasonInsufficientEvidence {
 				criterionReason = IELTSReasonFluencyTimingUnavailable
 			}
 		case IELTSCriterionPR:
@@ -944,6 +1052,12 @@ func normalizeIELTSProviderCriterion(
 		len(result.EvidenceRefIDs),
 		ieltsQuestionCount,
 	)
+	if source.CriterionID == IELTSCriterionPR && fullAcoustics {
+		result.Coverage = ratio(
+			len(prepared.acousticRefs),
+			ieltsQuestionCount,
+		)
+	}
 	return result, nil
 }
 
@@ -984,6 +1098,12 @@ func normalizeIELTSFindings(
 			)
 			if err != nil {
 				return nil, err
+			}
+			if criterion == IELTSCriterionPR &&
+				len(prepared.acousticRefs) > 0 {
+				if _, acousticallyAssessed := prepared.acousticRefs[resolved.EvidenceRefID]; !acousticallyAssessed {
+					return nil, ErrInvalidIELTSSpeakingShadow
+				}
 			}
 			key := resolved.EvidenceRefID + "\x00" +
 				strconv.Itoa(resolved.StartUTF8Byte) + "\x00" +
@@ -1285,6 +1405,7 @@ func validIELTSSpeakingProviderInput(
 	seenQuestions := make(map[string]struct{}, ieltsQuestionCount)
 	seenTurns := make(map[string]struct{}, ieltsQuestionCount)
 	seenRefs := make(map[string]struct{}, ieltsQuestionCount)
+	acousticResponses := 0
 	for index, question := range input.Questions {
 		expected := index + 1
 		if question.Index != expected ||
@@ -1300,7 +1421,22 @@ func validIELTSSpeakingProviderInput(
 			!validInterviewText(
 				question.Response.Transcript,
 				interviewShadowMaximumInputString,
-			) || question.Response.RecordingDurationMS < 0 {
+			) || question.Response.RecordingDurationMS < 0 ||
+			question.Response.EnglishWordCount < 0 ||
+			question.Response.CJKCharacterCount < 0 {
+			return false
+		}
+		words, cjk := ieltsLanguageEvidence(question.Response.Transcript)
+		expectedLanguage := ieltsLanguageOther
+		if words > 0 {
+			expectedLanguage = ieltsLanguageEnglish
+			if cjk > 0 {
+				expectedLanguage = ieltsLanguageMixed
+			}
+		}
+		if question.Response.EnglishWordCount != words ||
+			question.Response.CJKCharacterCount != cjk ||
+			question.Response.LanguageEvidence != expectedLanguage {
 			return false
 		}
 		hasAcoustics := question.Response.PronunciationScore != nil ||
@@ -1309,10 +1445,12 @@ func validIELTSSpeakingProviderInput(
 			question.Response.AcousticProvider != "" ||
 			question.Response.AcousticProviderRun != ""
 		if fullAcoustics {
-			if !hasAcoustics || question.Response.PronunciationScore == nil ||
+			if !hasAcoustics {
+				continue
+			}
+			if question.Response.PronunciationScore == nil ||
 				(question.Response.AcousticFluencyScore == nil &&
 					question.Response.SpeakingSpeedWPM == nil) ||
-				question.Response.RecordingDurationMS <= 0 ||
 				!validIELTSSpeakingTurnAcoustics(
 					IELTSSpeakingTurnAcoustics{
 						TurnID:               question.Response.TurnID,
@@ -1326,6 +1464,7 @@ func validIELTSSpeakingProviderInput(
 				) {
 				return false
 			}
+			acousticResponses++
 		} else if hasAcoustics {
 			return false
 		}
@@ -1342,7 +1481,7 @@ func validIELTSSpeakingProviderInput(
 		seenTurns[question.Response.TurnID] = struct{}{}
 		seenRefs[question.Response.EvidenceRefID] = struct{}{}
 	}
-	return true
+	return !fullAcoustics || acousticResponses > 0
 }
 
 func stableIELTSFindingID(
@@ -1420,12 +1559,9 @@ func ValidateIELTSSpeakingShadowResult(
 		}
 	case IELTSSpeakingScoreabilityInsufficient:
 		if result.Gate != IELTSSpeakingGateBlocked ||
-			!slices.Equal(
-				result.ReasonCodes,
-				[]IELTSSpeakingReasonCode{
-					IELTSReasonOpportunityNotProvided,
-				},
-			) ||
+			(len(result.ReasonCodes) != 1 ||
+				(result.ReasonCodes[0] != IELTSReasonOpportunityNotProvided &&
+					result.ReasonCodes[0] != IELTSReasonInsufficientEvidence)) ||
 			result.Provider != nil {
 			return ErrInvalidIELTSSpeakingShadow
 		}
@@ -1529,15 +1665,23 @@ func ValidateIELTSSpeakingShadowResult(
 				len(criterion.EvidenceRefIDs) == 0 ||
 				len(criterion.Strengths)+
 					len(criterion.Improvements) == 0 ||
-				!sameRatio(
-					criterion.Coverage,
-					ratio(
-						len(criterion.EvidenceRefIDs),
-						ieltsQuestionCount,
-					),
-				) ||
 				result.Scoreability !=
 					IELTSSpeakingScoreabilityProvisional {
+				return ErrInvalidIELTSSpeakingShadow
+			}
+			expectedCoverage := ratio(
+				len(criterion.EvidenceRefIDs),
+				ieltsQuestionCount,
+			)
+			if criterion.CriterionID == IELTSCriterionPR && fullAcoustics {
+				if criterion.Coverage <= 0 || criterion.Coverage > 1 ||
+					!sameRatio(
+						criterion.Coverage*ieltsQuestionCount,
+						math.Round(criterion.Coverage*ieltsQuestionCount),
+					) {
+					return ErrInvalidIELTSSpeakingShadow
+				}
+			} else if !sameRatio(criterion.Coverage, expectedCoverage) {
 				return ErrInvalidIELTSSpeakingShadow
 			}
 			switch criterion.CriterionID {
@@ -1585,6 +1729,14 @@ func ValidateIELTSSpeakingShadowResult(
 				return ErrInvalidIELTSSpeakingShadow
 			}
 		case IELTSSpeakingScoreabilityInsufficient:
+			expectedBlockedCoverage := ratio(answered, ieltsQuestionCount)
+			if len(result.ReasonCodes) == 1 &&
+				result.ReasonCodes[0] == IELTSReasonInsufficientEvidence {
+				expectedBlockedCoverage = ratio(
+					prepared.englishTurns,
+					ieltsQuestionCount,
+				)
+			}
 			if criterion.Gate != IELTSSpeakingGateBlocked ||
 				criterion.EstimatedBand != nil ||
 				criterion.BandDescriptor != "" ||
@@ -1592,10 +1744,7 @@ func ValidateIELTSSpeakingShadowResult(
 				len(criterion.Strengths) != 0 ||
 				len(criterion.Improvements) != 0 ||
 				len(criterion.UpgradeExamples) != 0 ||
-				!sameRatio(
-					criterion.Coverage,
-					ratio(answered, ieltsQuestionCount),
-				) ||
+				!sameRatio(criterion.Coverage, expectedBlockedCoverage) ||
 				len(criterion.ReasonCodes) != 1 ||
 				!validIELTSBlockedReason(
 					criterion.CriterionID,

@@ -31,6 +31,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('IELTS Speaking'), findsOneWidget);
+    expect(find.textContaining('Part 2&3'), findsOneWidget);
     expect(find.textContaining('共 14/14 题'), findsOneWidget);
     expect(find.textContaining('缺少可信发音工件'), findsOneWidget);
     expect(
@@ -40,8 +41,46 @@ void main() {
     expect(find.text('暂不可用'), findsOneWidget);
     expect(find.textContaining('非 IELTS 官方成绩'), findsOneWidget);
     expect(find.textContaining('距目标差值'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-speaking-score-radar')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-speaking-evidence-standard')),
+      findsOneWidget,
+    );
+    expect(find.text('部分练习报告'), findsNothing);
+    expect(find.text('分 Part 复盘'), findsNothing);
+    expect(find.text('同题复练'), findsOneWidget);
     expect(find.byKey(const Key('ielts-speaking-question-14')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-speaking-repractice-14')),
+      findsOneWidget,
+    );
     expect(find.textContaining('Band 0'), findsNothing);
+  });
+
+  testWidgets('same-question list starts the selected question directly', (
+    tester,
+  ) async {
+    final controller = await _controllerFor('ready');
+    addTearDown(controller.dispose);
+    IeltsSpeakingQuestionReview? selected;
+
+    await tester.pumpWidget(
+      _app(
+        controller,
+        onRepracticeQuestion: (question) async {
+          selected = question;
+          return true;
+        },
+      ),
+    );
+    await tester.pump();
+    final button = find.byKey(const Key('ielts-speaking-repractice-1'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(selected?.index, 1);
+    expect(selected?.questionText, isNotEmpty);
   });
 
   testWidgets('renders insufficient evidence without a zero score', (
@@ -95,10 +134,17 @@ Future<IeltsSpeakingReportController> _controllerFor(String fixtureKey) async {
   return controller;
 }
 
-Widget _app(IeltsSpeakingReportController controller) => MaterialApp(
+Widget _app(
+  IeltsSpeakingReportController controller, {
+  Future<bool> Function(IeltsSpeakingQuestionReview question)?
+  onRepracticeQuestion,
+}) => MaterialApp(
   home: Scaffold(
     body: SingleChildScrollView(
-      child: IeltsSpeakingReportPanel(controller: controller),
+      child: IeltsSpeakingReportPanel(
+        controller: controller,
+        onRepracticeQuestion: onRepracticeQuestion,
+      ),
     ),
   ),
 );
