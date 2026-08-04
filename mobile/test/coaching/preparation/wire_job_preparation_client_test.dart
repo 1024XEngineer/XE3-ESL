@@ -99,10 +99,13 @@ void main() {
       expect(bootstrap.session.id, _sessionId);
       expect(transport.calls, hasLength(7));
       expect(jsonDecode(transport.calls.last.body!), <String, Object?>{
-        'practice_plan_id': _planId,
         'expected_plan_revision': 1,
         'user_confirmed': true,
       });
+      expect(
+        transport.calls.last.uri.path,
+        '/v1/practice-plans/$_planId/practice-sessions',
+      );
       expect(
         transport.calls.last.body,
         isNot(

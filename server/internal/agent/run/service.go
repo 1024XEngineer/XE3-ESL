@@ -1051,6 +1051,7 @@ func (service *Service) executeToolCall(
 		call.ID,
 		json.RawMessage(content),
 		toolSourceRefs(result.SourceRefs),
+		result.Handoffs,
 	); err != nil {
 		return ai.TextMessage{}, err
 	}

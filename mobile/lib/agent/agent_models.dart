@@ -1,26 +1,11 @@
 import 'package:speakup/features/coaching/goal/goal.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 
 enum AgentMessageRole { user, assistant }
 
 enum AgentMessageModality { text, voice, multimodal }
 
 enum AgentMessageAudioStatus { readable, deleting, deleted }
-
-enum AgentMessageActionType { openInterviewPreparation }
-
-final class AgentMessageAction {
-  const AgentMessageAction({
-    required this.type,
-    required this.label,
-    required this.goalId,
-    required this.title,
-  });
-
-  final AgentMessageActionType type;
-  final String label;
-  final String goalId;
-  final String title;
-}
 
 final class AgentMessageAudio {
   const AgentMessageAudio({
@@ -141,7 +126,7 @@ final class AgentMessage {
     this.images = const <AgentImageAsset>[],
     this.isStreaming = false,
     this.hasFailed = false,
-    this.actions = const <AgentMessageAction>[],
+    this.handoffs = const <AgentHandoff>[],
     this.speechFeedbackStatusUrl,
   }) : assert(
          (modality == AgentMessageModality.voice && audio != null) ||
@@ -158,7 +143,7 @@ final class AgentMessage {
   final List<AgentImageAsset> images;
   final bool isStreaming;
   final bool hasFailed;
-  final List<AgentMessageAction> actions;
+  final List<AgentHandoff> handoffs;
   final String? speechFeedbackStatusUrl;
 
   AgentMessage copyWith({
@@ -169,6 +154,7 @@ final class AgentMessage {
     List<AgentImageAsset>? images,
     bool? isStreaming,
     bool? hasFailed,
+    List<AgentHandoff>? handoffs,
     String? speechFeedbackStatusUrl,
     bool clearSpeechFeedbackStatusUrl = false,
   }) {
@@ -183,7 +169,7 @@ final class AgentMessage {
       images: images ?? this.images,
       isStreaming: isStreaming ?? this.isStreaming,
       hasFailed: hasFailed ?? this.hasFailed,
-      actions: actions,
+      handoffs: handoffs ?? this.handoffs,
       speechFeedbackStatusUrl: clearSpeechFeedbackStatusUrl
           ? null
           : speechFeedbackStatusUrl ?? this.speechFeedbackStatusUrl,

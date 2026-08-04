@@ -8,6 +8,7 @@ import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_image_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
+import 'package:speakup/features/agent/handoff/practice_plan_handoff_controller.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/ielts_practice_history_store.dart';
@@ -55,6 +56,7 @@ void main() {
       preparationController: dependencies.preparationController,
       jobPreparationController: dependencies.jobPreparationController,
       preparationLaunchController: dependencies.preparationLaunchController,
+      practicePlanHandoffController: dependencies.practicePlanHandoffController,
       reviewHistoryController: dependencies.reviewHistoryController,
       avatarControllerFactory: dependencies.avatarControllerFactory,
       interviewReportController: dependencies.interviewReportController,
@@ -71,6 +73,7 @@ final class ProductionAppDependencies {
     required this.preparationController,
     required this.jobPreparationController,
     required this.preparationLaunchController,
+    required this.practicePlanHandoffController,
     required this.reviewHistoryController,
     required this.avatarControllerFactory,
     required this.interviewReportController,
@@ -83,6 +86,7 @@ final class ProductionAppDependencies {
   final PreparationController preparationController;
   final JobPreparationController jobPreparationController;
   final PreparationLaunchController preparationLaunchController;
+  final PracticePlanHandoffController practicePlanHandoffController;
   final ReviewHistoryController reviewHistoryController;
   final AvatarControllerFactory avatarControllerFactory;
   final InterviewReportController interviewReportController;
@@ -308,19 +312,20 @@ ProductionAppDependencies createProductionAppDependencies({
     recordStore:
         practiceLaunchRecordStore ?? const SecurePracticeLaunchRecordStore(),
   );
+  final preparationLaunchClient = WirePreparationLaunchClient(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    transport: preparationLaunchTransport,
+  );
   final preparationLaunchController = PreparationLaunchController(
-    client: WirePreparationLaunchClient(
-      baseUri: baseUri,
-      credentialProvider: () => authController.currentCredential,
-      invalidateSession:
-          ({required expectedSessionToken, required expectedGeneration}) {
-            return authController.invalidateSession(
-              expectedSessionToken: expectedSessionToken,
-              expectedGeneration: expectedGeneration,
-            );
-          },
-      transport: preparationLaunchTransport,
-    ),
+    client: preparationLaunchClient,
     workspaceController: practiceWorkspaceController,
     contextProvider: () {
       final threadId = agentController.threadId;
@@ -352,12 +357,22 @@ ProductionAppDependencies createProductionAppDependencies({
           required clientOperationId,
         }) => agentController.activateCreatedPractice(
           threadId: context.threadId,
-          goalId: context.goalId,
           scene: scene,
           sessionId: bootstrap.session.id,
           planId: bootstrap.session.planId,
           turnLimit: bootstrap.maxEffectiveTurns,
           clientOperationId: clientOperationId,
+        ),
+  );
+  final practicePlanHandoffController = PracticePlanHandoffController(
+    agentController: agentController,
+    workspaceController: practiceWorkspaceController,
+    readPlan: preparationLaunchClient.getPlan,
+    confirmPlan: ({required plan, required input, required idempotencyKey}) =>
+        preparationLaunchClient.createSession(
+          plan: plan,
+          input: input,
+          idempotencyKey: idempotencyKey,
         ),
   );
   final jobPreparationController = JobPreparationController(
@@ -404,7 +419,6 @@ ProductionAppDependencies createProductionAppDependencies({
           required clientOperationId,
         }) => agentController.activateCreatedPractice(
           threadId: context.threadId,
-          goalId: context.goalId,
           scene: scene,
           sessionId: bootstrap.session.id,
           planId: bootstrap.session.planId,
@@ -440,6 +454,7 @@ ProductionAppDependencies createProductionAppDependencies({
           .clearPrivateState();
       try {
         await preparationLaunchController.clearPrivateState();
+        await practicePlanHandoffController.clearAccountState();
         await clearAvatarPrivateState();
         await Future.wait<void>([
           agentController.clearPrivateState(),
@@ -462,6 +477,7 @@ ProductionAppDependencies createProductionAppDependencies({
     preparationController: preparationController,
     jobPreparationController: jobPreparationController,
     preparationLaunchController: preparationLaunchController,
+    practicePlanHandoffController: practicePlanHandoffController,
     reviewHistoryController: reviewHistoryController,
     avatarControllerFactory: createAvatarController,
     interviewReportController: interviewReportController,

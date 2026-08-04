@@ -297,84 +297,6 @@ void main() {
     expect(launchController.bootstrap?.maxEffectiveTurns, 6);
   });
 
-  testWidgets(
-    'Agent-created interview starts the catalog-backed custom scene directly',
-    (tester) async {
-      final agentController = AgentController(client: FakeAgentClient());
-      final preparationController = PreparationController(
-        client: _CustomInterviewClient(),
-      );
-      final launchClient = _PageLaunchClient();
-      final launchController = PreparationLaunchController(
-        client: launchClient,
-        contextProvider: () => _pageContext,
-        threadIdProvider: () => _pageContext.threadId,
-        goalActivator:
-            ({
-              required threadId,
-              required selection,
-              required clientOperationId,
-            }) async => _pageContext,
-        voiceActivator:
-            ({
-              required context,
-              required scene,
-              required bootstrap,
-              required clientOperationId,
-            }) async {},
-        idFactory: (scope) => '$scope-agent-created-key',
-      );
-      var navigations = 0;
-      await agentController.initialize();
-      await agentController.selectScene(
-        testScene(
-          id: 'agent-created-interview',
-          name: '阿里高级 Java 开发面试',
-          prompt: const ScenePrompt(
-            publicSceneBrief: '重点练习 JVM、并发和系统设计。',
-            practiceGoal: '完成定制面试练习。',
-            userRole: 'Candidate',
-            aiRole: 'Interviewer',
-            personaSummary: 'Professional and focused.',
-            focusAreas: <String>['system_design'],
-            turnBlueprints: <String>['Ask one relevant question.'],
-            suggestedDurationSeconds: 600,
-          ),
-        ),
-      );
-      addTearDown(agentController.dispose);
-      addTearDown(preparationController.dispose);
-      addTearDown(launchController.dispose);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: PreparationPage(
-            agentController: agentController,
-            preparationController: preparationController,
-            launchController: launchController,
-            onPracticeStarted: () => navigations++,
-            openInterviewRequestGeneration: 1,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
-      expect(launchClient.selection?.scene.id, _customSceneId);
-      expect(launchClient.selection?.scene.name, _customScene.name);
-      expect(
-        launchClient.selection?.scene.prompt.publicSceneBrief,
-        _customPrompt.publicSceneBrief,
-      );
-      expect(launchClient.selection?.selectedRoleIds, [_customRole.id]);
-      expect(navigations, 1);
-      expect(
-        find.byKey(const Key('preparation-hub-list-interview')),
-        findsNothing,
-      );
-    },
-  );
-
   testWidgets('direct start reports a missing practice context in place', (
     tester,
   ) async {
@@ -539,17 +461,6 @@ class _FixtureClient implements SceneClient {
   Future<List<RoleDefinition>> listRoles(String sceneId) async => _roles;
 }
 
-final class _CustomInterviewClient implements SceneClient {
-  @override
-  Future<SceneDefinition> getScene(String sceneId) async => _customDetail;
-
-  @override
-  Future<List<SceneDefinition>> listScenes() async => [_customScene];
-
-  @override
-  Future<List<RoleDefinition>> listRoles(String sceneId) async => [_customRole];
-}
-
 final class _MultiSceneClient implements SceneClient {
   @override
   Future<SceneDefinition> getScene(String sceneId) async =>
@@ -677,7 +588,6 @@ final class _PageLaunchClient implements PreparationLaunchClient {
     calls.add('plan');
     final scene = switch (input.sceneId) {
       _sceneId => _detail,
-      _customSceneId => _customDetail,
       'scn_general_speaking' => _otherDetail,
       _ => throw StateError('Unknown Page test Scene.'),
     };
@@ -757,7 +667,6 @@ const _pageContext = AgentPracticeContext(
 );
 
 const _sceneId = 'scn_programmer_interview';
-const _customSceneId = 'scn_interview_custom';
 
 final _scene = testScene(
   id: _sceneId,
@@ -766,15 +675,6 @@ final _scene = testScene(
   name: 'English interview for technical roles',
   version: 1,
   prompt: _interviewPrompt,
-);
-
-final _customScene = testScene(
-  id: _customSceneId,
-  family: SceneFamily.interview,
-  model: SceneModel.interviewBasicDialogue,
-  name: 'Custom interview',
-  version: 1,
-  prompt: _customPrompt,
 );
 
 final _secondInterviewScene = testScene(
@@ -819,16 +719,6 @@ final _otherRole = testRole(
   responsibilities: 'Guide a focused conversation.',
   style: 'Supportive.',
   practiceObjectiveIds: ['fluency'],
-);
-
-final _customRole = testRole(
-  id: 'role_custom_interviewer',
-  sceneId: _customSceneId,
-  type: 'CUSTOM_INTERVIEWER',
-  displayName: 'Custom interviewer',
-  responsibilities: 'Follow the user-created interview context.',
-  style: 'Professional.',
-  practiceObjectiveIds: ['custom_goal'],
 );
 
 final _otherDetail = testScene(
@@ -889,17 +779,6 @@ const _recruiterPrompt = ScenePrompt(
   personaSummary: 'Warm and structured.',
   focusAreas: ['motivation'],
   turnBlueprints: ['Ask about motivation and role fit.'],
-  suggestedDurationSeconds: 600,
-);
-
-const _customPrompt = ScenePrompt(
-  publicSceneBrief: 'Practice the interview created with the Agent.',
-  practiceGoal: 'Answer relevant interview questions.',
-  userRole: 'Candidate',
-  aiRole: 'Interviewer',
-  personaSummary: 'Professional and focused.',
-  focusAreas: ['custom_goal'],
-  turnBlueprints: ['Ask one relevant interview question.'],
   suggestedDurationSeconds: 600,
 );
 
@@ -990,34 +869,6 @@ final _detail = testScene(
       roleId: 'role_executive_interviewer',
       type: PracticeOptionType.focus,
       displayName: 'Leadership and impact focus',
-    ),
-  ],
-);
-
-final _customDetail = testScene(
-  id: _customScene.id,
-  family: _customScene.family,
-  model: _customScene.model,
-  name: _customScene.name,
-  version: _customScene.version,
-  status: _customScene.status,
-  turnPolicyRef: _customScene.turnPolicyRef,
-  sessionPolicyRef: _customScene.sessionPolicyRef,
-  prompt: _customPrompt,
-  roles: [_customRole],
-  practiceOptions: [
-    testPracticeOption(
-      id: 'option_custom_full',
-      sceneId: _customSceneId,
-      type: PracticeOptionType.fullSimulation,
-      displayName: 'Full simulation',
-    ),
-    testPracticeOption(
-      id: 'option_custom_focus',
-      sceneId: _customSceneId,
-      roleId: 'role_custom_interviewer',
-      type: PracticeOptionType.focus,
-      displayName: 'Custom interview focus',
     ),
   ],
 );

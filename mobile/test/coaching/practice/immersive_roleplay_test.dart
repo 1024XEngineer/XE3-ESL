@@ -536,7 +536,6 @@ Future<AgentController> _roleplayController({
   await controller.selectScene(scene);
   await controller.activateCreatedPractice(
     threadId: controller.threadId!,
-    goalId: controller.activeGoal!.id,
     scene: scene,
     sessionId: _roleplaySessionId,
     planId: 'practice-plan-$_roleplaySessionId',

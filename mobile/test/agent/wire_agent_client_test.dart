@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
@@ -41,12 +42,23 @@ void main() {
                 role: 'assistant',
                 content: 'Start with the result.',
                 producedByRunId: _runId,
-                actions: const <Object?>[
+                handoffs: const <Object?>[
                   {
-                    'type': 'open_interview_preparation',
-                    'label': '配置并开始面试',
-                    'goal_id': _goalId,
-                    'title': 'Java Interview Practice',
+                    'type': 'confirm_practice_plan',
+                    'label': '确认并开始练习',
+                    'practice_plan_id': _practicePlanId,
+                    'plan_revision': 2,
+                    'target': 'Java Interview Practice',
+                    'scene_name': '项目经历深挖',
+                    'scene_family': 'INTERVIEW',
+                    'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+                    'roles': ['面试官', '候选人'],
+                    'practice_scope': '围绕项目难点完成三轮追问',
+                    'suggested_duration_seconds': 720,
+                    'min_effective_turns': 3,
+                    'max_effective_turns': 5,
+                    'executable_status': 'ready',
+                    'confirmation_prompt': '请确认是否按此方案开始练习。',
                   },
                 ],
               ),
@@ -63,8 +75,14 @@ void main() {
       expect(snapshot.messages, hasLength(2));
       expect(snapshot.messages.first.text, 'Help me explain this.');
       expect(snapshot.messages.last.role, AgentMessageRole.assistant);
-      expect(snapshot.messages.last.actions, hasLength(1));
-      expect(snapshot.messages.last.actions.single.goalId, _goalId);
+      expect(snapshot.messages.last.handoffs, hasLength(1));
+      final handoff = snapshot.messages.last.handoffs.single;
+      expect(handoff, isA<ConfirmPracticePlanHandoff>());
+      expect(
+        (handoff as ConfirmPracticePlanHandoff).practicePlanId,
+        _practicePlanId,
+      );
+      expect(handoff.planRevision, 2);
       expect(
         transport.calls.every(
           (call) =>
@@ -2327,7 +2345,7 @@ Map<String, Object?> _messageJson({
   required String content,
   String? clientMessageId,
   String? producedByRunId,
-  List<Object?>? actions,
+  List<Object?>? handoffs,
   String? modality,
   List<Object?>? images,
 }) {
@@ -2338,7 +2356,7 @@ Map<String, Object?> _messageJson({
     'role': role,
     'client_message_id': ?clientMessageId,
     'produced_by_run_id': ?producedByRunId,
-    'actions': ?actions,
+    'handoffs': ?handoffs,
     'modality': ?modality,
     'images': ?images,
     'content': content,
@@ -2402,6 +2420,7 @@ IdentityHttpResponse _jsonResponse(int statusCode, Object? body) {
 }
 
 const _threadId = '10000000-0000-4000-8000-000000000001';
+const _practicePlanId = '50000000-0000-4000-8000-000000000001';
 const _goalId = '40000000-0000-4000-8000-000000000001';
 const _goalBId = '40000000-0000-4000-8000-000000000002';
 const _goalCId = '40000000-0000-4000-8000-000000000003';

@@ -270,12 +270,12 @@ final class PracticeWorkspaceController extends ChangeNotifier {
 
   Future<bool> commitSession({
     required PracticeWorkspaceLease lease,
-    required String goalId,
+    required String? goalId,
     required String sessionId,
     required SceneDefinition scene,
   }) async {
     if (!_canStartOperation() ||
-        !_validOpaqueId(goalId) ||
+        (goalId != null && !_validOpaqueId(goalId)) ||
         !_validOpaqueId(sessionId) ||
         !_validOpaqueId(scene.id) ||
         !_validTitle(scene.name) ||
@@ -294,7 +294,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       if (current == null ||
           current.lease != lease ||
           agentController.threadId != lease.practiceThreadId ||
-          agentController.activeGoal?.id != goalId) {
+          (goalId != null && agentController.activeGoal?.id != goalId)) {
         _setError('练习空间已经变化，未保存本次练习。');
         return false;
       }
@@ -419,7 +419,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
           current.isCommitted &&
           agentController.threadId == current.practiceThreadId &&
           agentController.practiceSessionId == current.sessionId &&
-          agentController.activeGoal?.id == current.goalId &&
+          (current.goalId == null ||
+              agentController.activeGoal?.id == current.goalId) &&
           !agentController.hasActivePractice;
       if (!await _prepareToLeavePractice()) {
         return false;
@@ -722,11 +723,10 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     final scene = agentController.scene;
     final sessionId = agentController.practiceSessionId;
     if (practiceThreadId == null ||
-        goal == null ||
         scene == null ||
         sessionId == null ||
         !_validOpaqueId(practiceThreadId) ||
-        !_validOpaqueId(goal.id) ||
+        (goal != null && !_validOpaqueId(goal.id)) ||
         !_validOpaqueId(sessionId) ||
         !_validOpaqueId(scene.id) ||
         !_validTitle(scene.name)) {
@@ -739,7 +739,7 @@ final class PracticeWorkspaceController extends ChangeNotifier {
       practiceThreadId: practiceThreadId,
       returnThreadId: null,
     ).commit(
-      goalId: goal.id,
+      goalId: goal?.id,
       sessionId: sessionId,
       scene: scene,
       completedTurns: agentController.completedTurns,
@@ -857,7 +857,8 @@ final class PracticeWorkspaceController extends ChangeNotifier {
     }
     if (agentController.threadId != record.practiceThreadId ||
         agentController.practiceSessionId != record.sessionId ||
-        agentController.activeGoal?.id != record.goalId) {
+        (record.goalId != null &&
+            agentController.activeGoal?.id != record.goalId)) {
       return _PracticeResumeVerification.mismatch;
     }
     return agentController.hasActivePractice
@@ -1084,7 +1085,7 @@ final class _StoredPracticeWorkspace {
     );
   }
 
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
 
   final String accountId;
   final String operationId;
@@ -1095,7 +1096,7 @@ final class _StoredPracticeWorkspace {
   final SceneDefinition? scene;
   final int? completedTurns;
 
-  bool get isCommitted => goalId != null && sessionId != null && scene != null;
+  bool get isCommitted => sessionId != null && scene != null;
 
   bool get hasMeaningfulProgress =>
       isCommitted && completedTurns != null && completedTurns! > 0;
@@ -1107,7 +1108,7 @@ final class _StoredPracticeWorkspace {
   );
 
   _StoredPracticeWorkspace commit({
-    required String goalId,
+    required String? goalId,
     required String sessionId,
     required SceneDefinition scene,
     int completedTurns = 0,
@@ -1205,7 +1206,9 @@ final class _StoredPracticeWorkspace {
           (goalId != null && goalId is! String) ||
           (sessionId != null && sessionId is! String) ||
           (completedTurns != null &&
-              (completedTurns is! int || completedTurns < 0)) ||
+              (completedTurns is! int ||
+                  completedTurns < 0 ||
+                  completedTurns > 14)) ||
           !_validOpaqueId(accountId) ||
           !_validOperationId(operationId) ||
           !_validOpaqueId(practiceThreadId) ||
@@ -1214,16 +1217,22 @@ final class _StoredPracticeWorkspace {
                   returnThreadId == practiceThreadId))) {
         return null;
       }
-      final committedValues = <Object?>[goalId, sessionId, sceneValue];
+      final committedValues = <Object?>[sessionId, sceneValue];
       final committed = committedValues.every((value) => value != null);
       if (!committed && committedValues.any((value) => value != null)) {
         return null;
       }
+      if ((!committed && (goalId != null || completedTurns != null)) ||
+          (committed && completedTurns == null)) {
+        return null;
+      }
       final scene = committed ? decodeSceneDefinition(sceneValue) : null;
       if (committed &&
-          (!_validOpaqueId(goalId! as String) ||
-              !_validOpaqueId(sessionId! as String) ||
+          (!_validOpaqueId(sessionId! as String) ||
               scene!.status != SceneStatus.active)) {
+        return null;
+      }
+      if (goalId is String && !_validOpaqueId(goalId)) {
         return null;
       }
       return _StoredPracticeWorkspace(

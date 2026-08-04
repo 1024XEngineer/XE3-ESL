@@ -7,7 +7,6 @@ import (
 
 	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 )
@@ -49,12 +48,14 @@ func TestEvaluationRegistryContainsInterviewMainlineTools(t *testing.T) {
 		goalcapability.GoalCreateCapabilityName:       true,
 		goalcapability.GoalSearchCapabilityName:       true,
 		preparationcapability.PracticePreviewToolName: true,
-		practicetool.PracticeStartToolName:            true,
 		evaluationtool.LatestPracticeReportToolName:   true,
 		reviewtool.ReviewSearchToolName:               true,
 		reviewtool.ReviewGetToolName:                  true,
 	}
 	for _, definition := range evaluator.registry.Definitions() {
+		if definition.Name == removedPracticeStartToolName {
+			t.Fatalf("removed practice start tool remains registered")
+		}
 		delete(want, definition.Name)
 	}
 	if len(want) != 0 {
@@ -71,7 +72,6 @@ func TestRegisteredWriteToolNamesUsesToolDefinitions(t *testing.T) {
 	for _, name := range []string{
 		goalcapability.GoalCreateCapabilityName,
 		preparationcapability.PracticePreviewToolName,
-		practicetool.PracticeStartToolName,
 	} {
 		if !containsString(writes, name) {
 			t.Errorf("write tools missing %q", name)

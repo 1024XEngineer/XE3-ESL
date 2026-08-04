@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 )
@@ -36,16 +37,8 @@ type PreviewResult struct {
 	Status                string
 	RequiredMissingFields []string
 	Candidates            []CatalogCandidate
-	PracticePlanID        string
-	PlanRevision          int
-	PracticePlanStatus    string
-	SceneName             string
-	SceneFamily           string
-	SceneModel            string
-	SelectedRoleIDs       []string
-	PracticeOptionID      string
-	MaxEffectiveTurns     int
 	Replayed              bool
+	Handoff               agenthandoff.Item
 	SourceRefs            []tool.SourceRef
 }
 
@@ -171,16 +164,24 @@ func previewToolResult(preview PreviewResult) tool.Result {
 		"catalog_candidates":      preview.Candidates,
 	}
 	if preview.Status == "preview_ready" {
-		content["practice_plan_id"] = preview.PracticePlanID
-		content["plan_revision"] = preview.PlanRevision
-		content["practice_plan_status"] = preview.PracticePlanStatus
-		content["scene_name"] = preview.SceneName
-		content["scene_family"] = preview.SceneFamily
-		content["scene_model"] = preview.SceneModel
-		content["selected_role_ids"] = preview.SelectedRoleIDs
-		content["practice_option_id"] = preview.PracticeOptionID
-		content["max_effective_turns"] = preview.MaxEffectiveTurns
+		content["target"] = preview.Handoff.Target
+		content["scene_name"] = preview.Handoff.SceneName
+		content["roles"] = preview.Handoff.Roles
+		content["practice_scope"] = preview.Handoff.PracticeScope
+		content["suggested_duration_seconds"] =
+			preview.Handoff.SuggestedDurationSeconds
+		content["min_effective_turns"] = preview.Handoff.MinEffectiveTurns
+		content["max_effective_turns"] = preview.Handoff.MaxEffectiveTurns
+		content["confirmation_required"] = true
 		content["replayed"] = preview.Replayed
 	}
-	return tool.Result{Content: content, SourceRefs: preview.SourceRefs}
+	handoffs := []agenthandoff.Item(nil)
+	if preview.Status == "preview_ready" {
+		handoffs = []agenthandoff.Item{preview.Handoff}
+	}
+	return tool.Result{
+		Content:    content,
+		SourceRefs: preview.SourceRefs,
+		Handoffs:   handoffs,
+	}
 }

@@ -3,10 +3,10 @@ package routing
 import (
 	"context"
 
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
-	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 )
 
@@ -16,7 +16,6 @@ func newEvaluationRegistry() (*tool.Registry, error) {
 	tools = append(
 		tools,
 		preparationcapability.NewPreviewTool(ports),
-		practicetool.NewStartTool(ports),
 		evaluationtool.NewLatestPracticeReportTool(ports),
 	)
 	return tool.NewRegistry(tools...)
@@ -30,31 +29,24 @@ func (evaluationPorts) PreviewPractice(
 	preparationcapability.PreviewInput,
 ) (preparationcapability.PreviewResult, error) {
 	return preparationcapability.PreviewResult{
-		Status:             "preview_ready",
-		PracticePlanID:     "eval-practice-plan-001",
-		PlanRevision:       1,
-		PracticePlanStatus: "ready",
-		SceneName:          "英文产品经理面试",
-		SceneFamily:        "interview",
-		SceneModel:         "structured_interview",
-		SelectedRoleIDs:    []string{"eval-role-001"},
-		PracticeOptionID:   "eval-option-001",
-		MaxEffectiveTurns:  3,
-	}, nil
-}
-
-func (evaluationPorts) StartPractice(
-	context.Context,
-	tool.CallContext,
-	practicetool.StartInput,
-) (practicetool.StartResult, error) {
-	return practicetool.StartResult{
-		Status:            "started",
-		PracticeSessionID: "eval-practice-session-001",
-		PracticePlanID:    "eval-practice-plan-001",
-		PlanRevision:      1,
-		SessionStatus:     "active",
-		StartTarget:       "immersive_roleplay",
+		Status: "preview_ready",
+		Handoff: agenthandoff.Item{
+			Type:                     agenthandoff.ConfirmPracticePlanType,
+			Label:                    "确认并开始练习",
+			PracticePlanID:           "00000000-0000-4000-8000-000000000001",
+			PlanRevision:             1,
+			Target:                   "准备英文产品经理面试",
+			SceneName:                "英文产品经理面试",
+			SceneFamily:              "interview",
+			SceneModel:               "structured_interview",
+			Roles:                    []string{"产品负责人"},
+			PracticeScope:            "完整模拟",
+			SuggestedDurationSeconds: 900,
+			MinEffectiveTurns:        1,
+			MaxEffectiveTurns:        3,
+			ExecutableStatus:         agenthandoff.PracticePlanReadyStatus,
+			ConfirmationPrompt:       "确认后将创建练习会话；确认前不会开始练习。",
+		},
 	}, nil
 }
 

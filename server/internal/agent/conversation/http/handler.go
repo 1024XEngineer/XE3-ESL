@@ -2,15 +2,14 @@ package conversationhttp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
@@ -21,9 +20,8 @@ import (
 )
 
 const (
-	defaultThreadPageSize    = 20
-	defaultMessagePageSize   = 50
-	goalCreateCapabilityName = "goal.create.v1"
+	defaultThreadPageSize  = 20
+	defaultMessagePageSize = 50
 )
 
 type ToolCallReader interface {
@@ -355,7 +353,7 @@ func (handler *Handler) listMessages(c *gin.Context) {
 	}
 	messages := make([]gin.H, 0, len(page.Messages))
 	for _, message := range page.Messages {
-		response, err := handler.messageResponseWithActions(
+		response, err := handler.messageResponseWithHandoffs(
 			c.Request.Context(), trusted, message,
 		)
 		if err != nil {
@@ -479,7 +477,7 @@ func durationMilliseconds(duration time.Duration) int64 {
 	return int64((duration + time.Millisecond - 1) / time.Millisecond)
 }
 
-func (handler *Handler) messageResponseWithActions(
+func (handler *Handler) messageResponseWithHandoffs(
 	ctx context.Context,
 	trusted requestcontext.Actor,
 	message agentconversation.Message,
@@ -525,9 +523,12 @@ func (handler *Handler) messageResponseWithActions(
 	if err != nil {
 		return nil, err
 	}
-	actions := interviewPreparationActions(records)
-	if len(actions) > 0 {
-		response["actions"] = actions
+	handoffs, err := messageHandoffs(records)
+	if err != nil {
+		return nil, err
+	}
+	if len(handoffs) > 0 {
+		response["handoffs"] = handoffs
 	}
 	return response, nil
 }
@@ -549,44 +550,24 @@ func ImageAssetResponse(asset agentimage.Asset) gin.H {
 	return response
 }
 
-func interviewPreparationActions(records []agentrun.ToolCall) []gin.H {
-	actions := make([]gin.H, 0, 1)
+func messageHandoffs(
+	records []agentrun.ToolCall,
+) ([]agenthandoff.Item, error) {
+	handoffs := make([]agenthandoff.Item, 0, 1)
 	for _, record := range records {
-		if record.Name != goalCreateCapabilityName ||
-			record.Status != agentrun.ToolCallSucceeded {
+		if record.Status != agentrun.ToolCallSucceeded ||
+			len(record.Handoffs) == 0 {
 			continue
 		}
-		var result struct {
-			Content struct {
-				Goal struct {
-					ID    string `json:"goal_id"`
-					Title string `json:"title"`
-				} `json:"goal"`
-			} `json:"content"`
+		if err := agenthandoff.ValidateItems(record.Handoffs); err != nil {
+			return nil, agentrun.ErrRepository
 		}
-		if json.Unmarshal(record.Result, &result) != nil ||
-			!agentconversation.ValidUUID(result.Content.Goal.ID) ||
-			strings.TrimSpace(result.Content.Goal.Title) == "" {
-			continue
-		}
-		hasGoalSource := false
-		for _, source := range record.SourceRefs {
-			if source.Type == "goal" && source.ID == result.Content.Goal.ID {
-				hasGoalSource = true
-				break
-			}
-		}
-		if !hasGoalSource {
-			continue
-		}
-		actions = append(actions, gin.H{
-			"type":    "open_interview_preparation",
-			"label":   "配置并开始面试",
-			"goal_id": result.Content.Goal.ID,
-			"title":   result.Content.Goal.Title,
-		})
+		handoffs = append(handoffs, agenthandoff.CloneItems(record.Handoffs)...)
 	}
-	return actions
+	if err := agenthandoff.ValidateItems(handoffs); err != nil {
+		return nil, agentrun.ErrRepository
+	}
+	return handoffs, nil
 }
 
 func actor(c *gin.Context) (requestcontext.Actor, bool) {

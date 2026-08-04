@@ -1,4 +1,4 @@
-package practice
+package api
 
 import (
 	"bytes"
@@ -15,69 +15,58 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 const maxPracticeContextHTTPRequestBody = 128 * 1024
 
-// ContextHTTPApplication is the transport-owned Practice boundary. Bearer
+// Application is the transport-owned Practice boundary. Bearer
 // authentication runs outside this handler and injects a trusted Actor.
-type ContextHTTPApplication interface {
+type Application interface {
 	CreateSession(
 		context.Context,
 		requestcontext.Actor,
 		string,
 		string,
-		CreateSessionRequest,
-	) (SessionBootstrap, bool, error)
-	ConfirmAndStartPractice(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		StartConfirmation,
-	) (ConfirmAndStartResult, error)
+		practice.CreateSessionRequest,
+	) (practice.SessionBootstrap, bool, error)
 	GetSession(
 		context.Context,
 		requestcontext.Actor,
 		string,
-	) (Session, error)
+	) (practice.Session, error)
 	GetSessionSnapshot(
 		context.Context,
 		requestcontext.Actor,
 		string,
-	) (SessionSnapshot, error)
+	) (practice.SessionSnapshot, error)
 	TransitionSession(
 		context.Context,
 		requestcontext.Actor,
 		string,
 		string,
 		int,
-		SessionTransition,
-	) (Session, bool, error)
+		practice.SessionTransition,
+	) (practice.Session, bool, error)
 }
 
-// ContextHTTPHandler exposes authenticated Practice Session routes.
-type ContextHTTPHandler struct {
-	application ContextHTTPApplication
+// Handler exposes authenticated Practice Session routes.
+type Handler struct {
+	application Application
 }
 
-func NewContextHTTPHandler(
-	application ContextHTTPApplication,
-) (*ContextHTTPHandler, error) {
+func NewHandler(application Application) (*Handler, error) {
 	if application == nil {
-		return nil, errors.New("practice: context HTTP application is required")
+		return nil, errors.New("practice: session HTTP application is required")
 	}
-	return &ContextHTTPHandler{application: application}, nil
+	return &Handler{application: application}, nil
 }
 
-func (h *ContextHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
+func (h *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST(
 		"/v1/practice-plans/:practice_plan_id/practice-sessions",
 		h.createSession,
-	)
-	routes.POST(
-		"/v1/agent-threads/:thread_id/practice-start-confirmations",
-		h.confirmAndStartPractice,
 	)
 	routes.GET(
 		"/v1/practice-sessions/:practice_session_id",
@@ -101,81 +90,7 @@ func (h *ContextHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
 	)
 }
 
-func (h *ContextHTTPHandler) confirmAndStartPractice(c *gin.Context) {
-	setPracticeContextPrivateResponseHeaders(c)
-	actor, ok := practiceContextActor(c)
-	if !ok {
-		writePracticeContextAuthenticationRequired(c)
-		return
-	}
-	idempotencyKey, ok := practiceContextIdempotencyKey(c)
-	if !ok {
-		writePracticeContextHTTPError(c, http.StatusBadRequest, "invalid_request")
-		return
-	}
-	threadID := c.Param("thread_id")
-	if !validContextResourceID(threadID) {
-		writePracticeContextHTTPError(c, http.StatusBadRequest, "invalid_request")
-		return
-	}
-	var request struct {
-		PracticePlanID       string `json:"practice_plan_id"`
-		ExpectedPlanRevision int    `json:"expected_plan_revision"`
-		UserConfirmed        bool   `json:"user_confirmed"`
-	}
-	if !decodePracticeContextJSONObject(c, &request) ||
-		!validContextResourceID(request.PracticePlanID) ||
-		request.ExpectedPlanRevision < 1 {
-		writePracticeContextHTTPError(c, http.StatusBadRequest, "invalid_request")
-		return
-	}
-	if !request.UserConfirmed {
-		writePracticeContextHTTPError(
-			c,
-			http.StatusConflict,
-			"confirmation_required",
-		)
-		return
-	}
-	result, err := h.application.ConfirmAndStartPractice(
-		c.Request.Context(),
-		actor,
-		idempotencyKey,
-		StartConfirmation{
-			AgentThreadID:        threadID,
-			PracticePlanID:       request.PracticePlanID,
-			ExpectedPlanRevision: request.ExpectedPlanRevision,
-		},
-	)
-	if err != nil {
-		if errors.Is(err, ErrConflict) {
-			writePracticeContextHTTPError(
-				c,
-				http.StatusConflict,
-				"version_conflict",
-			)
-			return
-		}
-		writePracticeContextServiceError(c, err, "practice_plan_not_found")
-		return
-	}
-	if result.ActiveConflict {
-		c.JSON(http.StatusConflict, gin.H{
-			"error": gin.H{
-				"code":           "active_session_conflict",
-				"message":        "An active Practice Session already exists.",
-				"retryable":      false,
-				"correlation_id": newPracticeContextCorrelationID(),
-			},
-			"practice_session": result.Bootstrap.Session,
-			"snapshot":         result.Bootstrap.Snapshot,
-		})
-		return
-	}
-	c.JSON(http.StatusCreated, result.Bootstrap)
-}
-
-func (h *ContextHTTPHandler) createSession(c *gin.Context) {
+func (h *Handler) createSession(c *gin.Context) {
 	setPracticeContextPrivateResponseHeaders(c)
 	actor, ok := practiceContextActor(c)
 	if !ok {
@@ -200,7 +115,7 @@ func (h *ContextHTTPHandler) createSession(c *gin.Context) {
 		)
 		return
 	}
-	var request CreateSessionRequest
+	var request practice.CreateSessionRequest
 	if !decodePracticeContextJSONObject(c, &request) ||
 		!validCreateSessionRequest(request) {
 		writePracticeContextHTTPError(
@@ -218,13 +133,29 @@ func (h *ContextHTTPHandler) createSession(c *gin.Context) {
 		request,
 	)
 	if err != nil {
+		if errors.Is(err, practice.ErrActiveSessionConflict) {
+			writePracticeContextHTTPError(
+				c,
+				http.StatusConflict,
+				"active_session_conflict",
+			)
+			return
+		}
+		if errors.Is(err, practice.ErrConflict) {
+			writePracticeContextHTTPError(
+				c,
+				http.StatusConflict,
+				"version_conflict",
+			)
+			return
+		}
 		writePracticeContextServiceError(c, err, "practice_plan_not_found")
 		return
 	}
 	c.JSON(http.StatusCreated, bootstrap)
 }
 
-func (h *ContextHTTPHandler) getSession(c *gin.Context) {
+func (h *Handler) getSession(c *gin.Context) {
 	setPracticeContextPrivateResponseHeaders(c)
 	actor, sessionID, ok := practiceSessionRequest(c)
 	if !ok {
@@ -246,7 +177,7 @@ func (h *ContextHTTPHandler) getSession(c *gin.Context) {
 	c.JSON(http.StatusOK, session)
 }
 
-func (h *ContextHTTPHandler) getSessionSnapshot(c *gin.Context) {
+func (h *Handler) getSessionSnapshot(c *gin.Context) {
 	setPracticeContextPrivateResponseHeaders(c)
 	actor, sessionID, ok := practiceSessionRequest(c)
 	if !ok {
@@ -268,25 +199,25 @@ func (h *ContextHTTPHandler) getSessionSnapshot(c *gin.Context) {
 	c.JSON(http.StatusOK, snapshot)
 }
 
-func (h *ContextHTTPHandler) pauseSession(c *gin.Context) {
-	h.transitionSession(c, SessionPause)
+func (h *Handler) pauseSession(c *gin.Context) {
+	h.transitionSession(c, practice.SessionPause)
 }
 
-func (h *ContextHTTPHandler) resumeSession(c *gin.Context) {
-	h.transitionSession(c, SessionResume)
+func (h *Handler) resumeSession(c *gin.Context) {
+	h.transitionSession(c, practice.SessionResume)
 }
 
-func (h *ContextHTTPHandler) endSessionEarly(c *gin.Context) {
-	h.transitionSession(c, SessionEndEarly)
+func (h *Handler) endSessionEarly(c *gin.Context) {
+	h.transitionSession(c, practice.SessionEndEarly)
 }
 
 type practiceContextLifecycleRequest struct {
 	ExpectedSessionVersion int `json:"expected_session_version"`
 }
 
-func (h *ContextHTTPHandler) transitionSession(
+func (h *Handler) transitionSession(
 	c *gin.Context,
-	transition SessionTransition,
+	transition practice.SessionTransition,
 ) {
 	setPracticeContextPrivateResponseHeaders(c)
 	actor, ok := practiceContextActor(c)
@@ -436,38 +367,38 @@ func writePracticeContextServiceError(
 	notFoundCode string,
 ) {
 	switch {
-	case errors.Is(err, ErrInvalidArgument):
+	case errors.Is(err, practice.ErrInvalidArgument):
 		writePracticeContextHTTPError(
 			c,
 			http.StatusBadRequest,
 			"invalid_request",
 		)
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, practice.ErrNotFound):
 		writePracticeContextHTTPError(
 			c,
 			http.StatusNotFound,
 			notFoundCode,
 		)
-	case errors.Is(err, ErrIdempotencyConflict):
+	case errors.Is(err, practice.ErrIdempotencyConflict):
 		writePracticeContextHTTPError(
 			c,
 			http.StatusConflict,
 			"idempotency_key_conflict",
 		)
-	case errors.Is(err, ErrConfirmationRequired):
+	case errors.Is(err, practice.ErrConfirmationRequired):
 		writePracticeContextHTTPError(
 			c,
 			http.StatusConflict,
 			"confirmation_required",
 		)
-	case errors.Is(err, ErrSessionCompleted):
+	case errors.Is(err, practice.ErrSessionCompleted):
 		writePracticeContextHTTPError(
 			c,
 			http.StatusConflict,
 			"practice_session_already_terminal",
 		)
-	case errors.Is(err, ErrConflict),
-		errors.Is(err, ErrDeletionGeneration):
+	case errors.Is(err, practice.ErrConflict),
+		errors.Is(err, practice.ErrDeletionGeneration):
 		writePracticeContextHTTPError(
 			c,
 			http.StatusConflict,
@@ -487,7 +418,7 @@ func writePracticeContextReadError(
 	err error,
 	notFoundCode string,
 ) {
-	if errors.Is(err, ErrInvalidArgument) {
+	if errors.Is(err, practice.ErrInvalidArgument) {
 		writePracticeContextHTTPError(
 			c,
 			http.StatusNotFound,
@@ -526,6 +457,20 @@ func writePracticeContextHTTPError(
 	})
 }
 
+func validCreateSessionRequest(request practice.CreateSessionRequest) bool {
+	return request.ExpectedPlanRevision > 0
+}
+
+func validContextResourceID(value string) bool {
+	return utf8.ValidString(value) && value != "" && len(value) <= 128 &&
+		!strings.ContainsRune(value, '\x00') && strings.TrimSpace(value) == value
+}
+
+func validContextIdempotencyKey(value string) bool {
+	return len(value) >= 8 && len(value) <= 128 &&
+		!strings.ContainsRune(value, '\x00') && strings.TrimSpace(value) == value
+}
+
 func newPracticeContextCorrelationID() string {
 	var value [12]byte
 	if _, err := rand.Read(value[:]); err != nil {
@@ -534,4 +479,4 @@ func newPracticeContextCorrelationID() string {
 	return "corr_" + hex.EncodeToString(value[:])
 }
 
-var _ ContextHTTPApplication = (*ContextApplication)(nil)
+var _ Application = (*practice.SessionApplication)(nil)

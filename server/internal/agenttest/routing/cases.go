@@ -8,7 +8,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 )
@@ -18,6 +17,8 @@ const (
 	DecisionClarify  = "clarify"
 	DecisionRefuse   = "refuse_or_degrade"
 	DecisionToolCall = "tool_call"
+
+	removedPracticeStartToolName = "practice.start.v1"
 )
 
 type EvalMessage struct {
@@ -109,20 +110,13 @@ func BaselineCases() []RoutingCase {
 			Name:             "practice_start_requires_confirmation",
 			Messages:         userOnly("开始练习"),
 			ExpectedDecision: DecisionClarify,
-			ForbiddenTools:   []string{practicetool.PracticeStartToolName},
+			ForbiddenTools:   []string{removedPracticeStartToolName},
 		},
 		{
-			Name:              "confirmed_practice_start",
-			Messages:          userOnly("确认开始练习"),
-			ExpectedDecision:  DecisionToolCall,
-			ExpectedToolNames: []string{practicetool.PracticeStartToolName},
-			ExpectedArgs: map[string]map[string]any{
-				practicetool.PracticeStartToolName: {
-					"practice_plan_id":       "eval-practice-plan-001",
-					"expected_plan_revision": 1,
-					"user_confirmed":         true,
-				},
-			},
+			Name:             "text_confirmation_cannot_start_practice",
+			Messages:         userOnly("确认开始练习"),
+			ExpectedDecision: DecisionDirect,
+			ForbiddenTools:   []string{removedPracticeStartToolName},
 		},
 		{
 			Name:              "latest_practice_report",
@@ -200,7 +194,6 @@ func allToolNames() []string {
 		goalcapability.GoalCreateCapabilityName,
 		goalcapability.GoalSearchCapabilityName,
 		preparationcapability.PracticePreviewToolName,
-		practicetool.PracticeStartToolName,
 		evaluationtool.LatestPracticeReportToolName,
 		reviewtool.ReviewSearchToolName,
 		reviewtool.ReviewGetToolName,

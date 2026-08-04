@@ -171,9 +171,7 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     required String idempotencyKey,
   }) async {
     _requireResourceId(plan.id);
-    final sourceThreadId = plan.sourceThreadId;
-    if (sourceThreadId == null ||
-        input.expectedPlanRevision != plan.revision ||
+    if (input.expectedPlanRevision != plan.revision ||
         !input.userConfirmed ||
         plan.status != PracticePlanStatus.ready) {
       throw const PreparationLaunchException(
@@ -183,11 +181,10 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     }
     final response = await _post(
       path:
-          '/v1/agent-threads/${Uri.encodeComponent(sourceThreadId)}'
-          '/practice-start-confirmations',
+          '/v1/practice-plans/${Uri.encodeComponent(plan.id)}'
+          '/practice-sessions',
       idempotencyKey: idempotencyKey,
       body: <String, Object?>{
-        'practice_plan_id': plan.id,
         'expected_plan_revision': input.expectedPlanRevision,
         'user_confirmed': input.userConfirmed,
       },
@@ -199,29 +196,79 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     );
   }
 
+  Future<PracticePlan> getPlan(String planId) async {
+    _requireResourceId(planId);
+    final response = await _get(
+      path: '/v1/practice-plans/${Uri.encodeComponent(planId)}',
+      stage: PreparationLaunchStage.plan,
+    );
+    return _decodeSucceeded(
+      stage: PreparationLaunchStage.plan,
+      statusCode: HttpStatus.ok,
+      decode: () {
+        final plan = decodePracticePlanBody(response.body);
+        if (plan.id != planId) {
+          throw _invalidResponse();
+        }
+        return plan;
+      },
+    );
+  }
+
   Future<IdentityHttpResponse> _post({
     required String path,
     required String idempotencyKey,
     required Map<String, Object?> body,
     required PreparationLaunchStage stage,
-  }) async {
+  }) {
     _requireIdempotencyKey(idempotencyKey);
+    return _request(
+      method: 'POST',
+      path: path,
+      stage: stage,
+      expectedStatus: HttpStatus.created,
+      idempotencyKey: idempotencyKey,
+      body: body,
+    );
+  }
+
+  Future<IdentityHttpResponse> _get({
+    required String path,
+    required PreparationLaunchStage stage,
+  }) => _request(
+    method: 'GET',
+    path: path,
+    stage: stage,
+    expectedStatus: HttpStatus.ok,
+  );
+
+  Future<IdentityHttpResponse> _request({
+    required String method,
+    required String path,
+    required PreparationLaunchStage stage,
+    required int expectedStatus,
+    String? idempotencyKey,
+    Map<String, Object?>? body,
+  }) async {
     final generation = _accountGeneration;
     final uri = _baseUri.resolve(path);
     _trustedOrigin.validateResourceUri(uri);
     validateNoSessionCredentialInUri(uri);
     late final IdentityHttpResponse response;
+    final headers = <String, String>{
+      HttpHeaders.acceptHeader: ContentType.json.mimeType,
+    };
+    if (body != null && idempotencyKey != null) {
+      headers[HttpHeaders.contentTypeHeader] = ContentType.json.mimeType;
+      headers['Idempotency-Key'] = idempotencyKey;
+    }
     try {
       response = await _transport
           .send(
-            method: 'POST',
+            method: method,
             uri: uri,
-            headers: <String, String>{
-              HttpHeaders.acceptHeader: ContentType.json.mimeType,
-              HttpHeaders.contentTypeHeader: ContentType.json.mimeType,
-              'Idempotency-Key': idempotencyKey,
-            },
-            body: jsonEncode(body),
+            headers: headers,
+            body: body == null ? null : jsonEncode(body),
           )
           .timeout(_requestTimeout);
     } on AuthSessionSupersededException {
@@ -266,12 +313,12 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
         stage: stage,
       );
     }
-    if (response.statusCode == HttpStatus.created) {
+    if (response.statusCode == expectedStatus) {
       if (utf8.encode(response.body).length > _maximumBodyBytes) {
         throw PreparationLaunchException(
           kind: PreparationLaunchFailureKind.invalidResponse,
           stage: stage,
-          statusCode: HttpStatus.created,
+          statusCode: expectedStatus,
           retryable: true,
         );
       }
@@ -330,6 +377,18 @@ T _decodeCreated<T>({
   required PreparationLaunchStage stage,
   required T Function() decode,
 }) {
+  return _decodeSucceeded(
+    stage: stage,
+    statusCode: HttpStatus.created,
+    decode: decode,
+  );
+}
+
+T _decodeSucceeded<T>({
+  required PreparationLaunchStage stage,
+  required int statusCode,
+  required T Function() decode,
+}) {
   try {
     return decode();
   } on PreparationLaunchException catch (error) {
@@ -339,14 +398,14 @@ T _decodeCreated<T>({
     throw PreparationLaunchException(
       kind: PreparationLaunchFailureKind.invalidResponse,
       stage: stage,
-      statusCode: HttpStatus.created,
+      statusCode: statusCode,
       retryable: true,
     );
   } on PreparationWireFormatException {
     throw PreparationLaunchException(
       kind: PreparationLaunchFailureKind.invalidResponse,
       stage: stage,
-      statusCode: HttpStatus.created,
+      statusCode: statusCode,
       retryable: true,
     );
   }

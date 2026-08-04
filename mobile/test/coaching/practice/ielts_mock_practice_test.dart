@@ -1115,7 +1115,6 @@ Future<void> _activatePractice(
   practice.activeScene = scene;
   await controller.activateCreatedPractice(
     threadId: controller.threadId!,
-    goalId: controller.activeGoal!.id,
     scene: scene,
     sessionId: _sessionId,
     planId: _planId,

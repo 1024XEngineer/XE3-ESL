@@ -1,4 +1,4 @@
-package practice
+package api
 
 import (
 	"bytes"
@@ -11,14 +11,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-func TestContextHTTPRegistersOnlyPracticeSessionRoutes(t *testing.T) {
+func TestSessionHTTPRegistersOnlyPracticeSessionRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler, err := NewContextHTTPHandler(contextHTTPApplicationStub{})
+	handler, err := NewHandler(contextHTTPApplicationStub{})
 	if err != nil {
-		t.Fatalf("NewContextHTTPHandler: %v", err)
+		t.Fatalf("NewHandler: %v", err)
 	}
 	router := gin.New()
 	handler.RegisterRoutes(router)
@@ -30,6 +31,7 @@ func TestContextHTTPRegistersOnlyPracticeSessionRoutes(t *testing.T) {
 		"POST /v1/practice-plans",
 		"GET /v1/practice-plans/:practice_plan_id",
 		"PUT /v1/practice-plans/:practice_plan_id",
+		"POST /v1/agent-threads/:thread_id/practice-start-confirmations",
 	} {
 		if _, exists := paths[forbidden]; exists {
 			t.Fatalf("Practice registered Preparation route %q", forbidden)
@@ -40,24 +42,24 @@ func TestContextHTTPRegistersOnlyPracticeSessionRoutes(t *testing.T) {
 	}
 }
 
-func TestContextHTTPCreateSessionForwardsOnlyExecutablePlanInputs(t *testing.T) {
+func TestSessionHTTPCreateSessionForwardsOnlyExecutablePlanInputs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	var got CreateSessionRequest
+	var got practice.CreateSessionRequest
 	application := contextHTTPApplicationStub{
 		createSession: func(
 			_ context.Context,
 			actor requestcontext.Actor,
 			planID string,
 			key string,
-			request CreateSessionRequest,
-		) (SessionBootstrap, bool, error) {
+			request practice.CreateSessionRequest,
+		) (practice.SessionBootstrap, bool, error) {
 			if actor.UserID != "user-1" || planID != "plan-1" ||
 				key != "session-create-0001" {
 				t.Fatal("CreateSession received altered trusted input")
 			}
 			got = request
-			return SessionBootstrap{
-				Session: Session{ID: "session-1"},
+			return practice.SessionBootstrap{
+				Session: practice.Session{ID: "session-1"},
 			}, false, nil
 		},
 	}
@@ -78,7 +80,7 @@ func TestContextHTTPCreateSessionForwardsOnlyExecutablePlanInputs(t *testing.T) 
 	}
 }
 
-func TestContextHTTPCreateSessionRejectsRemovedPlanSelectionFields(t *testing.T) {
+func TestSessionHTTPCreateSessionRejectsRemovedPlanSelectionFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := contextHTTPRouter(t, contextHTTPApplicationStub{})
 	response := serveContextHTTPRequest(
@@ -94,23 +96,7 @@ func TestContextHTTPCreateSessionRejectsRemovedPlanSelectionFields(t *testing.T)
 	}
 }
 
-func TestContextHTTPConfirmAndStartRequiresTrustedUserConfirmation(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := contextHTTPRouter(t, contextHTTPApplicationStub{})
-	response := serveContextHTTPRequest(
-		t,
-		router,
-		http.MethodPost,
-		"/v1/agent-threads/thread-1/practice-start-confirmations",
-		`{"practice_plan_id":"plan-1","expected_plan_revision":3,"user_confirmed":false}`,
-		"session-create-0003",
-	)
-	if response.Code != http.StatusConflict {
-		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
-	}
-}
-
-func TestContextHTTPMapsStaleExecutablePlanToVersionConflict(t *testing.T) {
+func TestSessionHTTPMapsStaleExecutablePlanToVersionConflict(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	application := contextHTTPApplicationStub{
 		createSession: func(
@@ -118,10 +104,10 @@ func TestContextHTTPMapsStaleExecutablePlanToVersionConflict(t *testing.T) {
 			requestcontext.Actor,
 			string,
 			string,
-			CreateSessionRequest,
-		) (SessionBootstrap, bool, error) {
-			return SessionBootstrap{}, false,
-				ErrConflict
+			practice.CreateSessionRequest,
+		) (practice.SessionBootstrap, bool, error) {
+			return practice.SessionBootstrap{}, false,
+				practice.ErrConflict
 		},
 	}
 	router := contextHTTPRouter(t, application)
@@ -136,6 +122,39 @@ func TestContextHTTPMapsStaleExecutablePlanToVersionConflict(t *testing.T) {
 	if response.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
+	if code := decodeContextHTTPBody(t, response)["error"].(map[string]any)["code"]; code != "version_conflict" {
+		t.Fatalf("error code = %v, want version_conflict", code)
+	}
+}
+
+func TestSessionHTTPMapsExistingActiveSessionToDedicatedConflict(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	application := contextHTTPApplicationStub{
+		createSession: func(
+			context.Context,
+			requestcontext.Actor,
+			string,
+			string,
+			practice.CreateSessionRequest,
+		) (practice.SessionBootstrap, bool, error) {
+			return practice.SessionBootstrap{}, false,
+				practice.ErrActiveSessionConflict
+		},
+	}
+	response := serveContextHTTPRequest(
+		t,
+		contextHTTPRouter(t, application),
+		http.MethodPost,
+		"/v1/practice-plans/plan-1/practice-sessions",
+		`{"expected_plan_revision":2,"user_confirmed":true}`,
+		"session-create-0005",
+	)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if code := decodeContextHTTPBody(t, response)["error"].(map[string]any)["code"]; code != "active_session_conflict" {
+		t.Fatalf("error code = %v, want active_session_conflict", code)
+	}
 }
 
 type contextHTTPApplicationStub struct {
@@ -144,8 +163,8 @@ type contextHTTPApplicationStub struct {
 		requestcontext.Actor,
 		string,
 		string,
-		CreateSessionRequest,
-	) (SessionBootstrap, bool, error)
+		practice.CreateSessionRequest,
+	) (practice.SessionBootstrap, bool, error)
 }
 
 func (s contextHTTPApplicationStub) CreateSession(
@@ -153,38 +172,29 @@ func (s contextHTTPApplicationStub) CreateSession(
 	actor requestcontext.Actor,
 	planID string,
 	key string,
-	request CreateSessionRequest,
-) (SessionBootstrap, bool, error) {
+	request practice.CreateSessionRequest,
+) (practice.SessionBootstrap, bool, error) {
 	if s.createSession == nil {
-		return SessionBootstrap{}, false,
+		return practice.SessionBootstrap{}, false,
 			errors.New("unexpected CreateSession")
 	}
 	return s.createSession(ctx, actor, planID, key, request)
-}
-
-func (contextHTTPApplicationStub) ConfirmAndStartPractice(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	StartConfirmation,
-) (ConfirmAndStartResult, error) {
-	return ConfirmAndStartResult{}, errors.New("unexpected ConfirmAndStartPractice")
 }
 
 func (contextHTTPApplicationStub) GetSession(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (Session, error) {
-	return Session{}, errors.New("unexpected GetSession")
+) (practice.Session, error) {
+	return practice.Session{}, errors.New("unexpected GetSession")
 }
 
 func (contextHTTPApplicationStub) GetSessionSnapshot(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (SessionSnapshot, error) {
-	return SessionSnapshot{}, errors.New("unexpected GetSessionSnapshot")
+) (practice.SessionSnapshot, error) {
+	return practice.SessionSnapshot{}, errors.New("unexpected GetSessionSnapshot")
 }
 
 func (contextHTTPApplicationStub) TransitionSession(
@@ -193,20 +203,20 @@ func (contextHTTPApplicationStub) TransitionSession(
 	string,
 	string,
 	int,
-	SessionTransition,
-) (Session, bool, error) {
-	return Session{}, false,
+	practice.SessionTransition,
+) (practice.Session, bool, error) {
+	return practice.Session{}, false,
 		errors.New("unexpected TransitionSession")
 }
 
 func contextHTTPRouter(
 	t *testing.T,
-	application ContextHTTPApplication,
+	application Application,
 ) *gin.Engine {
 	t.Helper()
-	handler, err := NewContextHTTPHandler(application)
+	handler, err := NewHandler(application)
 	if err != nil {
-		t.Fatalf("NewContextHTTPHandler: %v", err)
+		t.Fatalf("NewHandler: %v", err)
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

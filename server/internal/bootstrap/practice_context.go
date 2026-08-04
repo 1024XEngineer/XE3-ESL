@@ -12,7 +12,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
+	practiceapi "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/api"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
@@ -47,8 +47,8 @@ type IdentityAgentPracticeComposition struct {
 	jobTargetHTTP          *preparation.JobTargetHTTPHandler
 	planApplication        *preparation.PlanService
 	planHTTP               *preparation.PlanHTTPHandler
-	practiceApplication    *practice.ContextApplication
-	practiceHTTP           *practice.ContextHTTPHandler
+	practiceApplication    *practice.SessionApplication
+	practiceHTTP           *practiceapi.Handler
 	productionTools        *tool.Registry
 }
 
@@ -270,7 +270,7 @@ func newIdentityAgentAndPracticeComposition(
 	if err != nil {
 		return nil, err
 	}
-	practiceApplication, err := practice.NewContextApplication(
+	practiceApplication, err := practice.NewSessionApplication(
 		practiceRepository,
 		base.ids,
 		planApplication,
@@ -296,19 +296,8 @@ func newIdentityAgentAndPracticeComposition(
 		); err != nil {
 			return nil, err
 		}
-		startPort, err := practiceagenttool.NewStartServicePort(
-			practiceApplication,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if err := base.productionTools.Register(
-			practiceagenttool.NewStartTool(startPort),
-		); err != nil {
-			return nil, err
-		}
 	}
-	practiceHTTP, err := practice.NewContextHTTPHandler(practiceApplication)
+	practiceHTTP, err := practiceapi.NewHandler(practiceApplication)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +392,7 @@ func (c *IdentityAgentPracticeComposition) PlanApplication() *preparation.PlanSe
 	return c.planApplication
 }
 
-func (c *IdentityAgentPracticeComposition) PracticeApplication() *practice.ContextApplication {
+func (c *IdentityAgentPracticeComposition) PracticeApplication() *practice.SessionApplication {
 	if c == nil {
 		return nil
 	}

@@ -11,6 +11,8 @@ import 'dart:typed_data';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_image_client.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff_codec.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
@@ -1711,7 +1713,7 @@ final class _WireMessage {
     this.producedByRunId,
     this.audio,
     this.images = const <AgentImageAsset>[],
-    this.actions = const <AgentMessageAction>[],
+    this.handoffs = const <AgentHandoff>[],
     this.speechFeedbackStatusUrl,
   });
 
@@ -1725,7 +1727,7 @@ final class _WireMessage {
   final String? producedByRunId;
   final AgentMessageAudio? audio;
   final List<AgentImageAsset> images;
-  final List<AgentMessageAction> actions;
+  final List<AgentHandoff> handoffs;
   final String? speechFeedbackStatusUrl;
 
   AgentMessage get presentation => AgentMessage(
@@ -1737,7 +1739,7 @@ final class _WireMessage {
     modality: modality,
     audio: audio,
     images: images,
-    actions: actions,
+    handoffs: handoffs,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
@@ -2012,7 +2014,7 @@ _WireMessage _decodeMessageObject(
       'content',
       'audio',
       'images',
-      'actions',
+      'handoffs',
       'speech_feedback_status_url',
       'created_at',
     },
@@ -2073,9 +2075,9 @@ _WireMessage _decodeMessageObject(
     'produced_by_run_id',
     _strictUuid,
   );
-  final actions =
-      _absentOnlyOptional(object, 'actions', _decodeMessageActions) ??
-      const <AgentMessageAction>[];
+  final handoffs =
+      _absentOnlyOptional(object, 'handoffs', decodeAgentHandoffs) ??
+      const <AgentHandoff>[];
   final speechFeedbackStatusUrl = _absentOnlyOptional(
     object,
     'speech_feedback_status_url',
@@ -2090,7 +2092,7 @@ _WireMessage _decodeMessageObject(
   if ((role == AgentMessageRole.user &&
           (clientMessageId == null ||
               producedByRunId != null ||
-              actions.isNotEmpty)) ||
+              handoffs.isNotEmpty)) ||
       (role == AgentMessageRole.assistant &&
           (clientMessageId != null || producedByRunId == null)) ||
       (effectiveModality == AgentMessageModality.voice && audio == null) ||
@@ -2117,7 +2119,7 @@ _WireMessage _decodeMessageObject(
     producedByRunId: producedByRunId,
     audio: audio,
     images: images,
-    actions: actions,
+    handoffs: handoffs,
     speechFeedbackStatusUrl: speechFeedbackStatusUrl,
   );
 }
@@ -2196,34 +2198,6 @@ List<AgentImageAsset> _decodeMessageImages(
         status: status,
         createdAt: _strictDateTime(object['created_at']),
         attachedAt: _absentOnlyOptional(object, 'attached_at', _strictDateTime),
-      );
-    }),
-  );
-}
-
-List<AgentMessageAction> _decodeMessageActions(Object? value) {
-  final values = _strictList(value, maxLength: 4);
-  return List<AgentMessageAction>.unmodifiable(
-    values.map((item) {
-      final object = _strictObject(
-        item,
-        allowed: const <String>{'type', 'label', 'goal_id', 'title'},
-        required: const <String>{'type', 'label', 'goal_id', 'title'},
-      );
-      final type = switch (_strictString(
-        object['type'],
-        minLength: 1,
-        maxLength: 64,
-      )) {
-        'open_interview_preparation' =>
-          AgentMessageActionType.openInterviewPreparation,
-        _ => throw const _InvalidAgentResponse(),
-      };
-      return AgentMessageAction(
-        type: type,
-        label: _strictString(object['label'], minLength: 1, maxLength: 64),
-        goalId: _strictUuid(object['goal_id']),
-        title: _strictString(object['title'], minLength: 1, maxLength: 200),
       );
     }),
   );

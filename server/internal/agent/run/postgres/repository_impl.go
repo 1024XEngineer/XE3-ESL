@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/jackc/pgx/v5"
@@ -59,6 +60,7 @@ const toolCallSelectColumns = `
     COALESCE(error_category, ''),
     COALESCE(request_id, ''),
     source_refs,
+    handoffs,
     proposed_at,
     started_at,
     completed_at,
@@ -434,12 +436,21 @@ func (r *Repository) CompleteToolCall(
 	toolCallID string,
 	result json.RawMessage,
 	sourceRefs []agentrun.ToolSourceRef,
+	handoffs []agenthandoff.Item,
 ) (agentrun.ToolCall, error) {
+	if err := agenthandoff.ValidateItems(handoffs); err != nil {
+		return agentrun.ToolCall{}, agentrun.ErrInvalidRequest
+	}
+	handoffs = agenthandoff.CloneItems(handoffs)
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		return agentrun.ToolCall{}, agentrun.ErrInvalidRequest
 	}
 	refsJSON, err := json.Marshal(sourceRefs)
+	if err != nil {
+		return agentrun.ToolCall{}, agentrun.ErrInvalidRequest
+	}
+	handoffsJSON, err := json.Marshal(handoffs)
 	if err != nil {
 		return agentrun.ToolCall{}, agentrun.ErrInvalidRequest
 	}
@@ -449,6 +460,7 @@ SET
     status = 'succeeded',
     result = $4::jsonb,
     source_refs = $5::jsonb,
+    handoffs = $6::jsonb,
     completed_at = GREATEST(CURRENT_TIMESTAMP, started_at),
     updated_at = GREATEST(
         CURRENT_TIMESTAMP,
@@ -464,6 +476,7 @@ RETURNING `+toolCallSelectColumns,
 		toolCallID,
 		resultJSON,
 		refsJSON,
+		handoffsJSON,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return agentrun.ToolCall{}, agentrun.ErrConflict
@@ -952,6 +965,7 @@ func scanToolCall(row rowScanner) (agentrun.ToolCall, error) {
 	var inputJSON []byte
 	var resultJSON []byte
 	var sourceRefsJSON []byte
+	var handoffsJSON []byte
 	var startedAt pgtype.Timestamptz
 	var completedAt pgtype.Timestamptz
 	err := row.Scan(
@@ -967,6 +981,7 @@ func scanToolCall(row rowScanner) (agentrun.ToolCall, error) {
 		&result.ErrorCategory,
 		&result.RequestID,
 		&sourceRefsJSON,
+		&handoffsJSON,
 		&result.ProposedAt,
 		&startedAt,
 		&completedAt,
@@ -984,6 +999,13 @@ func scanToolCall(row rowScanner) (agentrun.ToolCall, error) {
 		if err := json.Unmarshal(sourceRefsJSON, &result.SourceRefs); err != nil {
 			return agentrun.ToolCall{}, agentrun.ErrRepository
 		}
+	}
+	if len(handoffsJSON) > 0 {
+		if err := json.Unmarshal(handoffsJSON, &result.Handoffs); err != nil ||
+			agenthandoff.ValidateItems(result.Handoffs) != nil {
+			return agentrun.ToolCall{}, agentrun.ErrRepository
+		}
+		result.Handoffs = agenthandoff.CloneItems(result.Handoffs)
 	}
 	if startedAt.Valid {
 		result.StartedAt = startedAt.Time

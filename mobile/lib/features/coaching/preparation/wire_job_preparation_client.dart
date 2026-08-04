@@ -415,9 +415,7 @@ final class WireJobPreparationClient implements JobPreparationClient {
     required String idempotencyKey,
   }) async {
     _requireResourceId(plan.id);
-    final sourceThreadId = plan.sourceThreadId;
-    if (sourceThreadId == null ||
-        input.expectedPlanRevision != plan.revision ||
+    if (input.expectedPlanRevision != plan.revision ||
         !input.userConfirmed ||
         plan.status != PracticePlanStatus.ready) {
       throw const JobPreparationException(
@@ -428,11 +426,10 @@ final class WireJobPreparationClient implements JobPreparationClient {
     final response = await _request(
       method: 'POST',
       path:
-          '/v1/agent-threads/${Uri.encodeComponent(sourceThreadId)}'
-          '/practice-start-confirmations',
+          '/v1/practice-plans/${Uri.encodeComponent(plan.id)}'
+          '/practice-sessions',
       idempotencyKey: idempotencyKey,
       body: <String, Object?>{
-        'practice_plan_id': plan.id,
         'expected_plan_revision': input.expectedPlanRevision,
         'user_confirmed': input.userConfirmed,
       },

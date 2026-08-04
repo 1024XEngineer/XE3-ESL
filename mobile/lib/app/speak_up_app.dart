@@ -8,6 +8,7 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/design/speak_up_theme.dart';
+import 'package:speakup/features/agent/handoff/practice_plan_handoff_controller.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay_session.dart';
 import 'package:speakup/features/coaching/practice/practice.dart';
@@ -33,6 +34,7 @@ class SpeakUpApp extends StatelessWidget {
     required this.preparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
+    this.practicePlanHandoffController,
     this.reviewHistoryController,
     this.avatarControllerFactory,
     this.interviewReportController,
@@ -47,6 +49,7 @@ class SpeakUpApp extends StatelessWidget {
     this.preparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
+    this.practicePlanHandoffController,
     this.reviewHistoryController,
     this.avatarControllerFactory,
     this.interviewReportController,
@@ -61,6 +64,7 @@ class SpeakUpApp extends StatelessWidget {
   final PreparationController? preparationController;
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
+  final PracticePlanHandoffController? practicePlanHandoffController;
   final ReviewHistoryController? reviewHistoryController;
   final AvatarControllerFactory? avatarControllerFactory;
   final InterviewReportController? interviewReportController;
@@ -81,6 +85,7 @@ class SpeakUpApp extends StatelessWidget {
               preparationController: preparationController,
               jobPreparationController: jobPreparationController,
               preparationLaunchController: preparationLaunchController,
+              practicePlanHandoffController: practicePlanHandoffController,
               reviewHistoryController: reviewHistoryController,
               avatarControllerFactory: avatarControllerFactory,
               interviewReportController: interviewReportController,
@@ -97,6 +102,7 @@ class SpeakUpApp extends StatelessWidget {
                 preparationController: preparationController,
                 jobPreparationController: jobPreparationController,
                 preparationLaunchController: preparationLaunchController,
+                practicePlanHandoffController: practicePlanHandoffController,
                 reviewHistoryController: reviewHistoryController,
                 avatarControllerFactory: avatarControllerFactory,
                 interviewReportController: interviewReportController,
@@ -117,6 +123,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.preparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
+    this.practicePlanHandoffController,
     this.reviewHistoryController,
     this.avatarControllerFactory,
     this.interviewReportController,
@@ -131,6 +138,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final PreparationController? preparationController;
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
+  final PracticePlanHandoffController? practicePlanHandoffController;
   final ReviewHistoryController? reviewHistoryController;
   final AvatarControllerFactory? avatarControllerFactory;
   final InterviewReportController? interviewReportController;
@@ -221,6 +229,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             preparationController: widget.preparationController,
             jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
+            practicePlanHandoffController: widget.practicePlanHandoffController,
             reviewHistoryController: widget.reviewHistoryController,
             interviewReportController: widget.interviewReportController,
             ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
@@ -258,6 +267,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             preparationController: widget.preparationController,
             jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
+            practicePlanHandoffController: widget.practicePlanHandoffController,
             reviewHistoryController: widget.reviewHistoryController,
             interviewReportController: widget.interviewReportController,
             ieltsSpeakingReportController: widget.ieltsSpeakingReportController,

@@ -14,7 +14,6 @@ import 'package:speakup/features/coaching/preparation/preparation_launch_models.
 
 const _jobInterviewSceneId = 'scn_programmer_interview';
 const _interviewFullSceneId = _jobInterviewSceneId;
-const _agentCreatedInterviewSceneId = 'scn_interview_custom';
 const _ieltsFullSceneId = 'scn_ielts_speaking_full';
 const _ieltsSceneIds = <String>{
   'scn_ielts_speaking_part_1',
@@ -22,7 +21,7 @@ const _ieltsSceneIds = <String>{
   'scn_ielts_speaking_part_3',
   _ieltsFullSceneId,
 };
-const _hiddenCatalogSceneIds = <String>{
+const _reservedCatalogSceneIds = <String>{
   'scn_interview_custom',
   'scn_speaking_exam_custom',
   'scn_workplace_custom',
@@ -43,7 +42,6 @@ class PreparationPage extends StatefulWidget {
     this.onOpenJobPreparation,
     this.onSceneSelected,
     this.onPracticeStarted,
-    this.openInterviewRequestGeneration = 0,
     super.key,
   });
 
@@ -55,7 +53,6 @@ class PreparationPage extends StatefulWidget {
   final VoidCallback? onOpenJobPreparation;
   final VoidCallback? onSceneSelected;
   final VoidCallback? onPracticeStarted;
-  final int openInterviewRequestGeneration;
 
   @override
   State<PreparationPage> createState() => _PreparationPageState();
@@ -67,7 +64,6 @@ class _PreparationPageState extends State<PreparationPage> {
   IeltsPracticeMode? _selectedIeltsSection;
   IeltsPracticeSelection? _launchingIeltsSelection;
   bool _handlingIeltsNavigation = false;
-  int _handledOpenInterviewRequestGeneration = 0;
 
   @override
   void initState() {
@@ -76,7 +72,6 @@ class _PreparationPageState extends State<PreparationPage> {
     widget.preparationController?.addListener(_rebuild);
     widget.launchController?.addListener(_rebuild);
     _backgroundController = _newBackgroundController(widget.launchController);
-    _scheduleOpenInterviewRequest();
     unawaited(widget.preparationController?.loadIfNeeded());
   }
 
@@ -98,55 +93,6 @@ class _PreparationPageState extends State<PreparationPage> {
       _backgroundController?.dispose();
       _backgroundController = _newBackgroundController(widget.launchController);
     }
-    if (oldWidget.openInterviewRequestGeneration !=
-        widget.openInterviewRequestGeneration) {
-      _scheduleOpenInterviewRequest();
-    }
-  }
-
-  void _scheduleOpenInterviewRequest() {
-    final generation = widget.openInterviewRequestGeneration;
-    if (generation <= 0 ||
-        generation == _handledOpenInterviewRequestGeneration) {
-      return;
-    }
-    _handledOpenInterviewRequestGeneration = generation;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && widget.openInterviewRequestGeneration == generation) {
-        unawaited(_openAgentCreatedInterview());
-      }
-    });
-  }
-
-  Future<void> _openAgentCreatedInterview() async {
-    final controller = widget.preparationController;
-    if (controller == null) {
-      return;
-    }
-    await controller.loadIfNeeded();
-    if (!mounted) {
-      return;
-    }
-    final scene = _sceneById(controller.scenes, _agentCreatedInterviewSceneId);
-    if (scene == null) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('专属面试场景暂时不可用，请稍后重试')));
-      return;
-    }
-    final goal = widget.agentController?.activeGoal;
-    final activeScene = widget.agentController?.scene;
-    final background = activeScene?.prompt.publicSceneBrief.trim();
-    if (background != null && background.isNotEmpty) {
-      widget.launchController?.updateBackgroundSummary(background);
-    }
-    await _startSceneDirectly(
-      controller,
-      scene,
-      forceReplaceCurrentPractice:
-          widget.launchController?.hasResumablePractice == true &&
-          widget.launchController?.resumableGoalId != goal?.id,
-    );
   }
 
   @override
@@ -1202,15 +1148,15 @@ class _InterviewHub extends StatelessWidget {
     final dedicatedScenes = scenes
         .where(
           (scene) =>
-              scene.id != 'scn_interview_custom' &&
-              scene.id != _interviewFullSceneId,
+              scene.id != _interviewFullSceneId &&
+              !_reservedCatalogSceneIds.contains(scene.id),
         )
         .toList(growable: false);
     final additionalScenes = scenes
         .where(
           (scene) =>
               !knownSceneIds.contains(scene.id) &&
-              !_hiddenCatalogSceneIds.contains(scene.id),
+              !_reservedCatalogSceneIds.contains(scene.id),
         )
         .toList(growable: false);
     final modes =
@@ -1649,7 +1595,7 @@ class _RoleplayHubState extends State<_RoleplayHub> {
 
   List<SceneDefinition> get _visibleScenes {
     final available = widget.scenes
-        .where((scene) => !_hiddenCatalogSceneIds.contains(scene.id))
+        .where((scene) => !_reservedCatalogSceneIds.contains(scene.id))
         .toList(growable: false);
     switch (_filter) {
       case _RoleplayFilter.recommended:
@@ -2547,12 +2493,12 @@ List<SceneDefinition> _scenesForHub(
         return switch (hub) {
           _PracticeHub.interview =>
             scene.family == SceneFamily.interview &&
-                !_hiddenCatalogSceneIds.contains(scene.id),
+                !_reservedCatalogSceneIds.contains(scene.id),
           _PracticeHub.ielts => _ieltsSceneIds.contains(scene.id),
           _PracticeHub.roleplay =>
             (scene.family == SceneFamily.workplace ||
                     scene.family == SceneFamily.daily) &&
-                !_hiddenCatalogSceneIds.contains(scene.id),
+                !_reservedCatalogSceneIds.contains(scene.id),
         };
       })
       .toList(growable: false);

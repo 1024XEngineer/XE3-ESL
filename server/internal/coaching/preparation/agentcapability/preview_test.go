@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 )
 
@@ -18,14 +19,31 @@ func (stub *previewPortStub) PreviewPractice(
 	input PreviewInput,
 ) (PreviewResult, error) {
 	stub.input = input
+	handoff, err := agenthandoff.NewConfirmPracticePlan(agenthandoff.Item{
+		Label:                    "确认并开始练习",
+		PracticePlanID:           "10000000-0000-4000-8000-000000000001",
+		PlanRevision:             1,
+		Target:                   "练习项目影响力表达",
+		SceneName:                "项目经历深挖",
+		SceneFamily:              "INTERVIEW",
+		SceneModel:               "PROJECT_EXPERIENCE_DEEP_DIVE",
+		Roles:                    []string{"面试官"},
+		PracticeScope:            "完整模拟",
+		SuggestedDurationSeconds: 600,
+		MinEffectiveTurns:        3,
+		MaxEffectiveTurns:        6,
+		ExecutableStatus:         agenthandoff.PracticePlanReadyStatus,
+		ConfirmationPrompt:       "确认后将创建练习会话；确认前不会开始练习。",
+	})
+	if err != nil {
+		return PreviewResult{}, err
+	}
 	return PreviewResult{
-		Status:             "preview_ready",
-		PracticePlanID:     "plan-1",
-		PlanRevision:       1,
-		PracticePlanStatus: "ready",
+		Status:  "preview_ready",
+		Handoff: handoff,
 		SourceRefs: []tool.SourceRef{{
 			Type: "practice_plan",
-			ID:   "plan-1",
+			ID:   handoff.PracticePlanID,
 		}},
 	}, nil
 }
@@ -42,8 +60,9 @@ func TestPreviewToolMapsReadyResult(t *testing.T) {
 	}
 	if port.input.SceneQuery != "IELTS" ||
 		result.Content["status"] != "preview_ready" ||
-		result.Content["practice_plan_id"] != "plan-1" ||
-		len(result.SourceRefs) != 1 {
+		result.Content["practice_plan_id"] != nil ||
+		len(result.SourceRefs) != 1 || len(result.Handoffs) != 1 ||
+		result.Handoffs[0].Type != agenthandoff.ConfirmPracticePlanType {
 		t.Fatalf("tool result = %#v, input = %#v", result, port.input)
 	}
 }

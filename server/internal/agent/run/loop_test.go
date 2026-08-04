@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	slashcommand "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/slashcommand"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
@@ -143,6 +144,10 @@ func TestRunLoopKeepsSourceRefsOutOfProviderMessagesAndInAudit(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"source_refs",
+		"handoffs",
+		"confirm_practice_plan",
+		"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		"Confirm this exact practice plan.",
 		"preparation_snapshot",
 		"snapshot-internal-1",
 		"preparation_profile",
@@ -161,6 +166,10 @@ func TestRunLoopKeepsSourceRefsOutOfProviderMessagesAndInAudit(t *testing.T) {
 	}
 	if !reflect.DeepEqual(audit.sourceRefs, wantRefs) {
 		t.Fatalf("persisted SourceRefs = %#v, want %#v", audit.sourceRefs, wantRefs)
+	}
+	wantHandoffs := []agenthandoff.Item{loopPracticeHandoff()}
+	if !reflect.DeepEqual(audit.handoffs, wantHandoffs) {
+		t.Fatalf("persisted Handoffs = %#v, want %#v", audit.handoffs, wantHandoffs)
 	}
 }
 
@@ -1087,7 +1096,28 @@ func (loopSensitiveSourceTool) Execute(
 			{Type: "preparation_profile", ID: "profile-internal-1"},
 			{Type: "voice_config", ID: "config-internal-1"},
 		},
+		Handoffs: []agenthandoff.Item{loopPracticeHandoff()},
 	}, nil
+}
+
+func loopPracticeHandoff() agenthandoff.Item {
+	return agenthandoff.Item{
+		Type:                     agenthandoff.ConfirmPracticePlanType,
+		Label:                    "Confirm practice",
+		PracticePlanID:           "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		PlanRevision:             2,
+		Target:                   "Backend interview",
+		SceneName:                "Project deep dive",
+		SceneFamily:              "INTERVIEW",
+		SceneModel:               "PROJECT_EXPERIENCE_DEEP_DIVE",
+		Roles:                    []string{"Technical interviewer"},
+		PracticeScope:            "Full simulation",
+		SuggestedDurationSeconds: 600,
+		MinEffectiveTurns:        3,
+		MaxEffectiveTurns:        5,
+		ExecutableStatus:         agenthandoff.PracticePlanReadyStatus,
+		ConfirmationPrompt:       "Confirm this exact practice plan.",
+	}
 }
 
 type loopConditionalInput struct {
@@ -1292,6 +1322,7 @@ type loopRepository struct{}
 type loopSourceRefRepository struct {
 	loopRepository
 	sourceRefs []ToolSourceRef
+	handoffs   []agenthandoff.Item
 }
 
 func (repository *loopSourceRefRepository) CompleteToolCall(
@@ -1301,9 +1332,14 @@ func (repository *loopSourceRefRepository) CompleteToolCall(
 	_ string,
 	_ json.RawMessage,
 	sourceRefs []ToolSourceRef,
+	handoffs []agenthandoff.Item,
 ) (ToolCall, error) {
 	repository.sourceRefs = append([]ToolSourceRef(nil), sourceRefs...)
-	return ToolCall{SourceRefs: repository.sourceRefs}, nil
+	repository.handoffs = agenthandoff.CloneItems(handoffs)
+	return ToolCall{
+		SourceRefs: repository.sourceRefs,
+		Handoffs:   repository.handoffs,
+	}, nil
 }
 
 func (loopRepository) CreateInitial(
@@ -1359,6 +1395,7 @@ func (loopRepository) CompleteToolCall(
 	string,
 	json.RawMessage,
 	[]ToolSourceRef,
+	[]agenthandoff.Item,
 ) (ToolCall, error) {
 	return ToolCall{}, nil
 }

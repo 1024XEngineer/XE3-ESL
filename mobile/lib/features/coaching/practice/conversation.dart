@@ -16,6 +16,7 @@ import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 
 typedef ConversationVoiceStarter = FutureOr<void> Function();
 typedef ConversationPendingImageAction = FutureOr<void> Function(String);
@@ -35,7 +36,7 @@ class ConversationPage extends StatefulWidget {
     this.onBrowseScenes,
     this.onContinuePractice,
     this.onOpenReview,
-    this.onMessageAction,
+    this.onMessageHandoff,
     ConversationVoiceStarter? onStartVoice,
     ConversationVoiceStarter? onVoicePlaceholder,
     this.onCreateConversation,
@@ -74,7 +75,7 @@ class ConversationPage extends StatefulWidget {
   final VoidCallback? onBrowseScenes;
   final VoidCallback? onContinuePractice;
   final VoidCallback? onOpenReview;
-  final ValueChanged<AgentMessageAction>? onMessageAction;
+  final ValueChanged<AgentHandoff>? onMessageHandoff;
   final ConversationVoiceStarter? onStartVoice;
   final VoidCallback? onCreateConversation;
   final int draftThreadRecoveryGeneration;
@@ -258,7 +259,7 @@ class ConversationPage extends StatefulWidget {
                               _MessageList(
                                 messages: messages,
                                 voiceController: voiceController,
-                                onAction: onMessageAction,
+                                onHandoff: onMessageHandoff,
                                 onRefreshImage: onRefreshMessageImage,
                                 speechFeedbackController:
                                     speechFeedbackController,
@@ -932,7 +933,7 @@ class _MessageList extends StatelessWidget {
   const _MessageList({
     required this.messages,
     this.voiceController,
-    this.onAction,
+    this.onHandoff,
     this.onRefreshImage,
     this.speechFeedbackController,
     this.feedbackSourceKey,
@@ -941,7 +942,7 @@ class _MessageList extends StatelessWidget {
 
   final List<AgentMessage> messages;
   final AgentVoiceController? voiceController;
-  final ValueChanged<AgentMessageAction>? onAction;
+  final ValueChanged<AgentHandoff>? onHandoff;
   final ConversationMessageImageAction? onRefreshImage;
   final SpeechFeedbackController? speechFeedbackController;
   final String Function(AgentMessage message)? feedbackSourceKey;
@@ -956,7 +957,7 @@ class _MessageList extends StatelessWidget {
           AgentMessageBubble(
             message: message,
             voiceController: voiceController,
-            onAction: onAction,
+            onHandoff: onHandoff,
             onRefreshImage: onRefreshImage,
             polishedText: _polishedText(_feedbackProjection(message)),
             polishLoading: _feedbackProjection(message)?.isPolling ?? false,

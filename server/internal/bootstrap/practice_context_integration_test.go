@@ -16,7 +16,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -39,7 +38,6 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		reviewagenttool.ReviewSearchToolName:               true,
 		reviewagenttool.ReviewGetToolName:                  true,
 		preparationagentcapability.PracticePreviewToolName: true,
-		practiceagenttool.PracticeStartToolName:            true,
 		evaluationagenttool.LatestPracticeReportToolName:   true,
 	}
 	if composition.productionTools == nil {
@@ -280,41 +278,18 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		t.Fatalf("Preview session count = %d, want 0", sessionCount)
 	}
 
-	startInput := json.RawMessage(fmt.Sprintf(`{
-		"practice_plan_id":%q,
-		"expected_plan_revision":1,
-		"user_confirmed":true
-	}`, previewPlanID))
-	untrustedStart, err := previewExecutor.Execute(
-		context.Background(),
-		tool.CallContext{
-			Actor:      actor,
-			ThreadID:   threadID,
-			RunID:      "start-run-untrusted-0001",
-			ToolCallID: "start-call-untrusted-0001",
-			RequestID:  "start-request-untrusted-0001",
-		},
-		tool.Invocation{
-			Name:  practiceagenttool.PracticeStartToolName,
-			Input: startInput,
-		},
-	)
-	if err != nil || untrustedStart.Content["status"] !=
-		"confirmation_required" {
-		t.Fatalf("untrusted Start = (%#v, %v)", untrustedStart, err)
-	}
 	planID := previewPlanID
-	startBody := fmt.Sprintf(`{
-		"practice_plan_id":%q,
+	startBody := `{
 		"expected_plan_revision":1,
 		"user_confirmed":true
-	}`, planID)
+	}`
+	startPath := "/v1/practice-plans/" + planID + "/practice-sessions"
 	sessionBootstrap := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
+		startPath,
 		startBody,
 		"session-create-0001",
 		http.StatusCreated,
@@ -326,7 +301,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
+		startPath,
 		startBody,
 		"session-create-0001",
 		http.StatusCreated,
@@ -340,15 +315,13 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
+		startPath,
 		startBody,
 		"session-create-active-conflict-0001",
 		http.StatusConflict,
 	)
 	if activeConflict["error"].(map[string]any)["code"] !=
-		"active_session_conflict" ||
-		activeConflict["practice_session"].(map[string]any)["practice_session_id"] !=
-			practiceSessionID {
+		"active_session_conflict" {
 		t.Fatalf("active Session conflict = %#v", activeConflict)
 	}
 	versionConflict := voiceJSONRequest(
@@ -356,12 +329,11 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
-		fmt.Sprintf(`{
-			"practice_plan_id":%q,
+		startPath,
+		`{
 			"expected_plan_revision":2,
 			"user_confirmed":true
-		}`, planID),
+		}`,
 		"session-create-version-conflict-0001",
 		http.StatusConflict,
 	)
@@ -404,7 +376,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		server.URL,
 		otherToken,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/practice-start-confirmations",
+		startPath,
 		startBody,
 		"session-create-cross-user-0001",
 		http.StatusNotFound,

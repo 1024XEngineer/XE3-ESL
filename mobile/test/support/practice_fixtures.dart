@@ -51,7 +51,6 @@ Future<void> activateTestPractice({
   }
   await controller.activateCreatedPractice(
     threadId: threadId,
-    goalId: goal.id,
     scene: scene,
     sessionId: sessionId,
     planId: testPracticePlanId(sessionId),
