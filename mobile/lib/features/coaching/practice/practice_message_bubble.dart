@@ -72,6 +72,7 @@ final class PracticeMessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final user = message.role == PracticeMessageRole.user;
     return Align(
+      key: Key('practice-message-${message.id}'),
       alignment: user ? Alignment.centerRight : Alignment.centerLeft,
       child: FractionallySizedBox(
         widthFactor: 0.82,

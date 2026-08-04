@@ -76,9 +76,10 @@ void main() {
     );
     addTearDown(controller.dispose);
     final question = controller.currentQuestion!.text;
+    final questionMessage = controller.practiceMessages.last;
 
     await tester.pumpWidget(
-      MaterialApp(home: ImmersiveRoleplayPage(agentController: controller)),
+      MaterialApp(home: ImmersiveRoleplayPage(practiceController: controller)),
     );
     await tester.pump();
 
@@ -86,12 +87,40 @@ void main() {
     expect(toggle, findsOneWidget);
     expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
     expect(find.text(question), findsWidgets);
+    final subtitleSize = tester.getSize(
+      find.byKey(const Key('immersive-live-subtitle')),
+    );
+    final messageBubble = find.byKey(
+      Key('practice-message-${questionMessage.id}'),
+    );
+    final messageBubbleSize = tester.getSize(messageBubble);
 
     await tester.tap(toggle);
     await tester.pump();
 
-    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
-    expect(find.text(question), findsNothing);
+    expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
+    expect(messageBubble, findsOneWidget);
+    expect(
+      tester
+          .widget<Visibility>(
+            find.byKey(const Key('immersive-live-subtitle-text')),
+          )
+          .visible,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<Visibility>(
+            find.byKey(Key('practice-message-text-${questionMessage.id}')),
+          )
+          .visible,
+      isFalse,
+    );
+    expect(
+      tester.getSize(find.byKey(const Key('immersive-live-subtitle'))),
+      subtitleSize,
+    );
+    expect(tester.getSize(messageBubble), messageBubbleSize);
     expect(find.byKey(const Key('immersive-record')).hitTestable(), findsOne);
 
     await tester.tap(toggle);
@@ -99,6 +128,14 @@ void main() {
 
     expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
     expect(find.text(question), findsWidgets);
+    expect(
+      tester
+          .widget<Visibility>(
+            find.byKey(const Key('immersive-live-subtitle-text')),
+          )
+          .visible,
+      isTrue,
+    );
     expect(tester.takeException(), isNull);
   });
 
