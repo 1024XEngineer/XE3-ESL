@@ -62,6 +62,44 @@ void main() {
     expect(created.id, 'created');
     await server.close(force: true);
   });
+
+  test('get accepts contract-valid empty target and summary', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestSeen = _serveOnce(server, (request, body) {
+      expect(request.method, 'GET');
+      expect(request.uri.path, '/v1/resumes/resume-empty-fields');
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'resume': _resumeJson('resume-empty-fields'),
+          'current_revision': <String, Object?>{
+            'revision_id': 'revision-1',
+            'revision_number': 1,
+            'source': 'PARSER',
+            'parser_version': 'llm-v1',
+            'content': <String, Object?>{
+              'target_position': '',
+              'professional_summary': '',
+              'work_experiences': <Object?>[],
+              'project_experiences': <Object?>[],
+              'education_experiences': <Object?>[],
+              'skills': <Object?>['Go', 'Flutter'],
+            },
+            'created_at': '2026-08-04T00:00:00Z',
+          },
+        }),
+      );
+    });
+    final client = _client(server);
+
+    final detail = await client.get('resume-empty-fields');
+    await requestSeen;
+
+    expect(detail.content?.targetPosition, isEmpty);
+    expect(detail.content?.professionalSummary, isEmpty);
+    expect(detail.content?.skills, <String>['Go', 'Flutter']);
+    await server.close(force: true);
+  });
 }
 
 WireResumeClient _client(HttpServer server) => WireResumeClient(

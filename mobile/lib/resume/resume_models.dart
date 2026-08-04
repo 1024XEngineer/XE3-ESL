@@ -63,8 +63,16 @@ final class ResumeContent {
   /// 从服务端结构化内容创建不可变模型。
   factory ResumeContent.fromJson(Map<String, Object?> json) {
     return ResumeContent(
-      targetPosition: _requiredString(json, 'target_position'),
-      professionalSummary: _requiredString(json, 'professional_summary'),
+      targetPosition: _requiredString(
+        json,
+        'target_position',
+        allowEmpty: true,
+      ),
+      professionalSummary: _requiredString(
+        json,
+        'professional_summary',
+        allowEmpty: true,
+      ),
       workExperiences: _objectList(json, 'work_experiences'),
       projectExperiences: _objectList(json, 'project_experiences'),
       educationExperiences: _objectList(json, 'education_experiences'),
@@ -127,9 +135,13 @@ final class ResumePdfFile {
   final List<int> bytes;
 }
 
-String _requiredString(Map<String, Object?> json, String key) {
+String _requiredString(
+  Map<String, Object?> json,
+  String key, {
+  bool allowEmpty = false,
+}) {
   final value = json[key];
-  if (value is! String || value.isEmpty) {
+  if (value is! String || (!allowEmpty && value.isEmpty)) {
     throw FormatException('Invalid $key.');
   }
   return value;
