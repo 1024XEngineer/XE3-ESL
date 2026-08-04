@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/xfyun"
 )
 
 func TestISELive(t *testing.T) {

@@ -11,7 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 )
@@ -150,15 +149,14 @@ func TestPostgresSpeechFeedbackPersistsTopicAcousticEvidence(t *testing.T) {
 				PronunciationScore: &pronunciation,
 				SpeakingSpeedWPM:   &speed,
 				SemanticScore:      &semantic,
-				Provider: evaluation.
-					SpeechFeedbackAcousticProviderName,
-				ProviderSession: "ise-topic-session-1",
-				Category:        "topic",
+				Provider:           "test-acoustic",
+				ProviderSession:    "ise-topic-session-1",
+				Category:           "topic",
 				Notice: evaluation.
 					SpeechFeedbackAcousticNotice,
 			},
 			RawResult:       "<xml_result/>",
-			AvailableFields: []xfyun.ResultField{},
+			AvailableFields: []evaluation.AcousticAssessmentField{},
 		},
 	)
 	if err != nil {

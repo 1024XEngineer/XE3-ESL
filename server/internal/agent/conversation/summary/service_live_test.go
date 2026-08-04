@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/qianwen"
 	platformconfig "github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
 )
 
 func TestLiveSummaryGeneration(t *testing.T) {

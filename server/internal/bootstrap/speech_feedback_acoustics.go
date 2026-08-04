@@ -1,36 +1,40 @@
 package bootstrap
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/xfyun"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-const maxSpeechFeedbackAudioBytes = 9_600_000
 
 func NewSpeechFeedbackAcousticProvider(
 	database *pgxpool.Pool,
 	store objectstore.Store,
-	evaluator *xfyun.Evaluator,
+	configuration config.ISEConfig,
 ) (evaluation.SpeechFeedbackAcousticProvider, error) {
-	if database == nil || store == nil || evaluator == nil {
+	if database == nil || store == nil {
 		return nil, errors.New(
 			"bootstrap: SpeechFeedback acoustic dependencies are required",
 		)
+	}
+	evaluator, err := xfyun.NewSpeechFeedbackEvaluator(
+		xfyun.ISEConfig{
+			Endpoint: configuration.Endpoint,
+			Timeout:  configuration.Timeout,
+		},
+		configuration.AppID.Reveal(),
+		configuration.APIKey.Reveal(),
+		configuration.APISecret.Reveal(),
+	)
+	if err != nil {
+		return nil, err
 	}
 	repository, err := conversationpostgres.NewAudioAssetRepository(database)
 	if err != nil {
@@ -47,97 +51,21 @@ func NewSpeechFeedbackAcousticProvider(
 	if err != nil {
 		return nil, err
 	}
-	return evaluation.NewXFYUNSpeechFeedbackAcousticProvider(
-		&speechFeedbackAudioReader{
-			service: service,
-			store:   store,
-			client: &http.Client{
-				Timeout: 30 * time.Second,
-				CheckRedirect: func(
-					_ *http.Request,
-					_ []*http.Request,
-				) error {
-					return http.ErrUseLastResponse
-				},
+	reader, err := evaluation.NewSpeechFeedbackAudioReader(
+		service,
+		store,
+		&http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(
+				_ *http.Request,
+				_ []*http.Request,
+			) error {
+				return http.ErrUseLastResponse
 			},
 		},
-		evaluator,
 	)
-}
-
-type speechFeedbackAudioReader struct {
-	service *practiceinput.AudioAssetService
-	store   objectstore.Store
-	client  *http.Client
-}
-
-func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
-	ctx context.Context,
-	ownerUserID string,
-	audioAssetID string,
-	audioObjectKey string,
-	expectedChecksum string,
-) ([]byte, error) {
-	if reader == nil || reader.service == nil ||
-		reader.store == nil || reader.client == nil {
-		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
-	}
-	var playback objectstore.SignedGetResult
-	var err error
-	if audioObjectKey == "" {
-		playback, err = reader.service.Playback(
-			ctx,
-			practiceinput.AudioAssetActor{UserID: ownerUserID},
-			audioAssetID,
-		)
-	} else {
-		playback, err = reader.store.SignedGet(ctx, audioObjectKey)
-	}
-	if err != nil || !playback.ExpiresAt.After(time.Now()) {
-		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
-	}
-	playbackURL, err := url.Parse(playback.URL)
-	if err != nil ||
-		!strings.EqualFold(playbackURL.Scheme, "https") ||
-		playbackURL.Host == "" ||
-		playback.ExpiresAt.After(
-			time.Now().Add(practiceinput.MaxPlaybackURLTTL),
-		) {
-		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
-	}
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		playback.URL,
-		nil,
-	)
-	if err != nil {
-		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
-	}
-	response, err := reader.client.Do(request)
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(
-			"read SpeechFeedback audio: HTTP %d",
-			response.StatusCode,
-		)
-	}
-	audio, err := io.ReadAll(io.LimitReader(
-		response.Body,
-		maxSpeechFeedbackAudioBytes+1,
-	))
-	if err != nil {
-		return nil, err
-	}
-	if len(audio) == 0 || len(audio) > maxSpeechFeedbackAudioBytes {
-		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
-	}
-	checksum := sha256.Sum256(audio)
-	if hex.EncodeToString(checksum[:]) != expectedChecksum {
-		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
-	}
-	return audio, nil
+	return evaluation.NewSpeechFeedbackAcousticProvider(reader, evaluator)
 }

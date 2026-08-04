@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	evaluationprofile "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/evaluationprofile"
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentaudiohttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/audio/http"
@@ -37,6 +38,7 @@ import (
 	practicevoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	evaluationhistory "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/evaluationhistory"
 	reviewhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
@@ -169,13 +171,13 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	evaluationRepository := evaluation.NewPostgresRepository(database)
-	learningProfileReader, err := newAgentLearningProfileReader(
+	learningProfileReader, err := evaluationprofile.New(
 		evaluationRepository,
 	)
 	if err != nil {
 		return nil, err
 	}
-	reviewReports, err := newEvaluationReportHistory(evaluationRepository)
+	reviewReports, err := evaluationhistory.New(evaluationRepository)
 	if err != nil {
 		return nil, err
 	}

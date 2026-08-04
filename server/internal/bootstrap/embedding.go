@@ -4,8 +4,8 @@ import (
 	"errors"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/qianwen"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
 )
 
 func NewEmbedder(configuration config.EmbeddingConfig) (ai.Embedder, error) {

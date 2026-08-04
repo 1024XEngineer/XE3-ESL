@@ -3,8 +3,6 @@ package config
 import (
 	"testing"
 	"time"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 )
 
 func TestLoadISE(t *testing.T) {
@@ -15,7 +13,7 @@ func TestLoadISE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load ISE: %v", err)
 	}
-	if configuration.Endpoint != xfyun.DefaultISEEndpoint ||
+	if configuration.Endpoint != defaultISEEndpoint ||
 		configuration.Timeout != 45*time.Second ||
 		configuration.AppID.Reveal() != "test-app-id" ||
 		configuration.APIKey.Reveal() != "test-api-key" ||

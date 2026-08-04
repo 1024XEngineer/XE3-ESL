@@ -3,8 +3,6 @@ package evaluation
 import (
 	"strings"
 	"unicode"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 )
 
 type speechFeedbackLanguage string
@@ -34,7 +32,7 @@ func classifySpeechFeedbackLanguage(text string) speechFeedbackLanguage {
 	return speechFeedbackLanguageUncertain
 }
 
-func speechFeedbackISECategory(text string) xfyun.EvaluationCategory {
+func speechFeedbackAcousticCategory(text string) AcousticAssessmentCategory {
 	words := 0
 	inWord := false
 	for _, character := range strings.TrimSpace(text) {
@@ -45,7 +43,7 @@ func speechFeedbackISECategory(text string) xfyun.EvaluationCategory {
 		inWord = isWord
 	}
 	if words == 1 {
-		return xfyun.CategoryReadWord
+		return AcousticCategoryReadWord
 	}
-	return xfyun.CategoryReadSentence
+	return AcousticCategoryReadSentence
 }
