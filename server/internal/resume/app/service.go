@@ -160,7 +160,14 @@ func (s *Service) Get(
 	if !validServiceCall(s, ctx, actor) || !validUUID(resumeID) {
 		return Detail{}, ResumeNotFoundError()
 	}
-	return s.repository.FindDetailByOwnerAndID(ctx, actor.UserID, resumeID)
+	detail, err := s.repository.FindDetailByOwnerAndID(ctx, actor.UserID, resumeID)
+	if err != nil {
+		return Detail{}, err
+	}
+	if detail.Revision != nil {
+		detail.Revision.Content = normalizeContent(detail.Revision.Content)
+	}
+	return detail, nil
 }
 
 // UpdateMetadata 修改指定简历的展示名称。

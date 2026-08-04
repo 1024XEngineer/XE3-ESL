@@ -100,6 +100,28 @@ void main() {
     expect(detail.content?.skills, <String>['Go', 'Flutter']);
     await server.close(force: true);
   });
+
+  test('resume content decodes GPA and awards while keeping legacy fields', () {
+    final content = ResumeContent.fromJson(<String, Object?>{
+      'target_position': '',
+      'professional_summary': '',
+      'work_experiences': <Object?>[],
+      'project_experiences': <Object?>[],
+      'education_experiences': <Object?>[
+        <String, Object?>{
+          'school': '杭州电子科技大学',
+          'major': '计算机科学与技术',
+          'degree': '本科',
+          'gpa': '4.588/5.0',
+        },
+      ],
+      'skills': <Object?>[],
+      'awards': <Object?>['浙江省政府奖学金', '数学建模国赛省三等奖'],
+    });
+
+    expect(content.educationExperiences.single['gpa'], '4.588/5.0');
+    expect(content.awards, <String>['浙江省政府奖学金', '数学建模国赛省三等奖']);
+  });
 }
 
 WireResumeClient _client(HttpServer server) => WireResumeClient(

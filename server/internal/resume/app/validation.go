@@ -50,7 +50,8 @@ func validContent(content resume.Content) bool {
 	if !validOptionalText(content.TargetPosition, 200) ||
 		!validOptionalText(content.ProfessionalSummary, 4000) ||
 		len(content.WorkExperiences) > 30 || len(content.ProjectExperiences) > 50 ||
-		len(content.EducationExperiences) > 20 || !validUniqueItems(content.Skills, 100, 100) {
+		len(content.EducationExperiences) > 20 || !validUniqueItems(content.Skills, 100, 100) ||
+		!validUniqueItems(content.Awards, 100, 300) {
 		return false
 	}
 	for _, item := range content.WorkExperiences {
@@ -70,7 +71,8 @@ func validContent(content resume.Content) bool {
 	}
 	for _, item := range content.EducationExperiences {
 		if !validOptionalText(item.School, 200) || !validOptionalText(item.Major, 200) ||
-			!validOptionalText(item.Degree, 100) || !validOptionalText(item.StartDate, 32) ||
+			!validOptionalText(item.Degree, 100) || !validOptionalText(item.GPA, 64) ||
+			!validOptionalText(item.StartDate, 32) ||
 			!validOptionalText(item.EndDate, 32) {
 			return false
 		}
@@ -91,6 +93,9 @@ func normalizeContent(content resume.Content) resume.Content {
 	}
 	if content.Skills == nil {
 		content.Skills = []string{}
+	}
+	if content.Awards == nil {
+		content.Awards = []string{}
 	}
 	for index := range content.WorkExperiences {
 		if content.WorkExperiences[index].Duties == nil {

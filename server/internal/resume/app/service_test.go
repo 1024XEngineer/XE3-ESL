@@ -69,6 +69,27 @@ func TestServiceListBuildsStableNextCursor(t *testing.T) {
 	}
 }
 
+// TestServiceGetNormalizesLegacyAwards 验证旧 Revision 缺少 awards 时公开响应仍返回空数组。
+func TestServiceGetNormalizesLegacyAwards(t *testing.T) {
+	item := resume.Resume{
+		ID: "50000000-0000-4000-8000-000000000004", OwnerUserID: serviceTestActor.UserID,
+	}
+	revision := &resume.Revision{Content: resume.Content{
+		WorkExperiences:      []resume.WorkExperience{},
+		ProjectExperiences:   []resume.ProjectExperience{},
+		EducationExperiences: []resume.EducationExperience{},
+		Skills:               []string{},
+	}}
+	repository := &repositoryFake{item: item, detailRevision: revision}
+	service := newTestService(t, repository, newFileStorageFake())
+
+	detail, err := service.Get(context.Background(), serviceTestActor, item.ID)
+	if err != nil || detail.Revision == nil || detail.Revision.Content.Awards == nil ||
+		len(detail.Revision.Content.Awards) != 0 {
+		t.Fatalf("detail = %#v, err = %v", detail, err)
+	}
+}
+
 // TestServiceReplaceAndDeleteLifecycle 验证替换切换对象并删除旧文件，删除完成后状态落库。
 func TestServiceReplaceAndDeleteLifecycle(t *testing.T) {
 	repository := &repositoryFake{item: resume.Resume{
@@ -251,6 +272,7 @@ type repositoryFake struct {
 	claimFound        bool
 	completedRevision resume.Revision
 	failedCode        string
+	detailRevision    *resume.Revision
 }
 
 // CreateWithinLimit 创建测试记录或返回幂等冲突。
@@ -290,7 +312,7 @@ func (repository *repositoryFake) FindByOwnerAndID(context.Context, string, stri
 
 // FindDetailByOwnerAndID 返回当前测试详情。
 func (repository *repositoryFake) FindDetailByOwnerAndID(context.Context, string, string) (Detail, error) {
-	return Detail{Resume: repository.item}, nil
+	return Detail{Resume: repository.item, Revision: repository.detailRevision}, nil
 }
 
 // UpdateMetadata 更新测试标题。

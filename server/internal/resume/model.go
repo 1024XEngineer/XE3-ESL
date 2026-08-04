@@ -31,6 +31,7 @@ type Content struct {
 	ProjectExperiences   []ProjectExperience   `json:"project_experiences"`
 	EducationExperiences []EducationExperience `json:"education_experiences"`
 	Skills               []string              `json:"skills"`
+	Awards               []string              `json:"awards"`
 }
 
 // WorkExperience 表示一段工作经历。
@@ -58,6 +59,7 @@ type EducationExperience struct {
 	School    string `json:"school"`
 	Major     string `json:"major"`
 	Degree    string `json:"degree"`
+	GPA       string `json:"gpa,omitempty"`
 	StartDate string `json:"start_date,omitempty"`
 	EndDate   string `json:"end_date,omitempty"`
 }

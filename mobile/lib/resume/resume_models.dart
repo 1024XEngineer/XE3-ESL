@@ -51,6 +51,7 @@ final class ResumeContent {
     this.projectExperiences = const <Map<String, Object?>>[],
     this.educationExperiences = const <Map<String, Object?>>[],
     this.skills = const <String>[],
+    this.awards = const <String>[],
   });
 
   final String targetPosition;
@@ -59,6 +60,7 @@ final class ResumeContent {
   final List<Map<String, Object?>> projectExperiences;
   final List<Map<String, Object?>> educationExperiences;
   final List<String> skills;
+  final List<String> awards;
 
   /// 从服务端结构化内容创建不可变模型。
   factory ResumeContent.fromJson(Map<String, Object?> json) {
@@ -77,6 +79,7 @@ final class ResumeContent {
       projectExperiences: _objectList(json, 'project_experiences'),
       educationExperiences: _objectList(json, 'education_experiences'),
       skills: _stringList(json, 'skills'),
+      awards: _optionalStringList(json, 'awards'),
     );
   }
 
@@ -88,6 +91,7 @@ final class ResumeContent {
     'project_experiences': projectExperiences,
     'education_experiences': educationExperiences,
     'skills': skills,
+    'awards': awards,
   };
 
   /// 复制内容并替换当前界面允许人工编辑的字段。
@@ -103,6 +107,7 @@ final class ResumeContent {
       projectExperiences: projectExperiences,
       educationExperiences: educationExperiences,
       skills: skills ?? this.skills,
+      awards: awards,
     );
   }
 }
@@ -184,4 +189,9 @@ List<String> _stringList(Map<String, Object?> json, String key) {
     throw FormatException('Invalid $key.');
   }
   return List<String>.unmodifiable(value.cast<String>());
+}
+
+List<String> _optionalStringList(Map<String, Object?> json, String key) {
+  if (!json.containsKey(key)) return const <String>[];
+  return _stringList(json, key);
 }

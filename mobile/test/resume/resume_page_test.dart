@@ -109,6 +109,66 @@ void main() {
     expect(find.text('设计混合检索与重排序链路。'), findsOneWidget);
     expect(find.text('Top-5 命中率提升至 91%。'), findsOneWidget);
   });
+
+  testWidgets('summary is hidden and awards open as a complete list', (
+    tester,
+  ) async {
+    final ready = _resume('awards', ResumeParseStatus.ready);
+    final controller = _controller(
+      <ResumeItem>[ready],
+      content: const ResumeContent(
+        professionalSummary: '不应展示的兼容字段',
+        awards: <String>['浙江省政府奖学金', '数学建模国赛省三等奖'],
+      ),
+    );
+    await tester.pumpWidget(
+      _app(ResumeDetailPage(controller: controller, resumeId: ready.id)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('个人简介'), findsNothing);
+    expect(find.text('不应展示的兼容字段'), findsNothing);
+    final awardsCard = find.byKey(const Key('resume-content-awards'));
+    await tester.ensureVisible(awardsCard);
+    await tester.tap(awardsCard);
+    await tester.pumpAndSettle();
+
+    expect(find.text('浙江省政府奖学金'), findsWidgets);
+    expect(find.text('数学建模国赛省三等奖'), findsWidgets);
+  });
+
+  testWidgets('education detail displays the original GPA scale', (
+    tester,
+  ) async {
+    final ready = _resume('education', ResumeParseStatus.ready);
+    final controller = _controller(
+      <ResumeItem>[ready],
+      content: const ResumeContent(
+        educationExperiences: <Map<String, Object?>>[
+          <String, Object?>{
+            'school': '杭州电子科技大学',
+            'major': '计算机科学与技术',
+            'degree': '本科',
+            'gpa': '4.588/5.0',
+          },
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      _app(ResumeDetailPage(controller: controller, resumeId: ready.id)),
+    );
+    await tester.pumpAndSettle();
+
+    final educationCard = find.byKey(const Key('resume-content-education'));
+    await tester.ensureVisible(educationCard);
+    await tester.drag(find.byType(ListView), const Offset(0, -100));
+    await tester.pumpAndSettle();
+    await tester.tap(educationCard);
+    await tester.pumpAndSettle();
+
+    expect(find.text('绩点'), findsOneWidget);
+    expect(find.text('4.588/5.0'), findsOneWidget);
+  });
 }
 
 Widget _app(Widget home) => MaterialApp(theme: SpeakUpTheme.light, home: home);

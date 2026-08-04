@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	extractorVersion          = "llm-fields/v1"
-	promptVersion             = "resume-fields/v1"
+	extractorVersion          = "llm-fields/v2"
+	promptVersion             = "resume-fields/v2"
 	maximumResponseBytes      = 512 * 1024
 	maximumProviderIdentifier = 32
 	maximumModelIdentifier    = 64
@@ -36,15 +36,18 @@ Return exactly one JSON object with all fields in this schema:
   "professional_summary": "",
   "work_experiences": [{"company":"","position":"","start_date":"","end_date":"","duties":[],"achievements":[]}],
   "project_experiences": [{"project_name":"","role":"","description":"","technologies":[],"duties":[],"achievements":[]}],
-  "education_experiences": [{"school":"","major":"","degree":"","start_date":"","end_date":""}],
-  "skills": []
+  "education_experiences": [{"school":"","major":"","degree":"","gpa":"","start_date":"","end_date":""}],
+  "skills": [],
+  "awards": []
 }
 
 Rules:
-- Extract only information explicitly supported by the resume. Never invent or infer a target position, skill, employer, school, date, responsibility, achievement, or summary.
+- Extract only information explicitly supported by the resume. Never invent or infer a target position, skill, employer, school, date, GPA, award, responsibility, achievement, or summary.
 - If information is absent, use an empty string or empty array. Never use null.
 - Extract every distinct work, project, and education experience, not only the first one.
 - Skills may be explicitly mentioned anywhere in the resume; a section named Skills is not required.
+- Preserve GPA exactly as written, including its scale. Never calculate, convert, or normalize it.
+- Awards may appear anywhere in the resume and include explicit competitions, honors, scholarships, and prizes. Keep each distinct award as a separate item and preserve its original wording.
 - Keep companies, positions, projects, schools, majors, degrees, duties, achievements, and dates in their correct records.
 - Preserve the source language. Do not translate, evaluate, rank, rewrite, or improve the resume.
 - Output JSON only. Do not add markdown fences, comments, explanations, or unknown fields.`
@@ -183,7 +186,8 @@ func decodeContent(value string) (resume.Content, error) {
 
 func completeArrayShape(content resume.Content) bool {
 	if content.WorkExperiences == nil || content.ProjectExperiences == nil ||
-		content.EducationExperiences == nil || content.Skills == nil {
+		content.EducationExperiences == nil || content.Skills == nil ||
+		content.Awards == nil {
 		return false
 	}
 	for _, item := range content.WorkExperiences {
@@ -204,6 +208,7 @@ func normalizeContent(content resume.Content) resume.Content {
 	content.TargetPosition = strings.TrimSpace(content.TargetPosition)
 	content.ProfessionalSummary = strings.TrimSpace(content.ProfessionalSummary)
 	content.Skills = cleanUnique(content.Skills)
+	content.Awards = cleanUnique(content.Awards)
 	for index := range content.WorkExperiences {
 		item := &content.WorkExperiences[index]
 		item.Company = strings.TrimSpace(item.Company)
@@ -227,6 +232,7 @@ func normalizeContent(content resume.Content) resume.Content {
 		item.School = strings.TrimSpace(item.School)
 		item.Major = strings.TrimSpace(item.Major)
 		item.Degree = strings.TrimSpace(item.Degree)
+		item.GPA = strings.TrimSpace(item.GPA)
 		item.StartDate = strings.TrimSpace(item.StartDate)
 		item.EndDate = strings.TrimSpace(item.EndDate)
 	}

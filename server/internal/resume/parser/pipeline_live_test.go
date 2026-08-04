@@ -11,6 +11,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/resume"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/parser"
@@ -77,9 +78,37 @@ func TestPipelineLiveQianwen(t *testing.T) {
 	if content.TargetPosition == "" && content.ProfessionalSummary == "" &&
 		len(content.WorkExperiences) == 0 &&
 		len(content.ProjectExperiences) == 0 &&
-		len(content.EducationExperiences) == 0 && len(content.Skills) == 0 {
+		len(content.EducationExperiences) == 0 && len(content.Skills) == 0 &&
+		len(content.Awards) == 0 {
 		t.Fatal("live extraction returned empty content")
 	}
+	if expected := os.Getenv("QIANWEN_RESUME_EXPECT_GPA"); expected != "" &&
+		!containsGPA(content, expected) {
+		t.Fatalf("live extraction did not preserve expected GPA %q", expected)
+	}
+	for _, expected := range strings.Split(os.Getenv("QIANWEN_RESUME_EXPECT_AWARDS"), "|") {
+		if expected != "" && !containsString(content.Awards, expected) {
+			t.Fatalf("live extraction did not preserve expected award %q", expected)
+		}
+	}
+}
+
+func containsGPA(content resume.Content, expected string) bool {
+	for _, education := range content.EducationExperiences {
+		if education.GPA == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 type liveGeneratorRecorder struct {

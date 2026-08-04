@@ -18,8 +18,12 @@ func TestLLMExtractorUsesConfiguredGeneratorAndUntrustedEnvelope(t *testing.T) {
 			`"work_experiences":[{"company":"甲公司","position":"工程师",` +
 			`"start_date":"2022.01","end_date":"2024.01",` +
 			`"duties":["开发 API"],"achievements":[]}],` +
-			`"project_experiences":[],"education_experiences":[],` +
-			`"skills":["Go","PostgreSQL","Go"]}`,
+			`"project_experiences":[],` +
+			`"education_experiences":[{"school":"杭州电子科技大学",` +
+			`"major":"计算机科学与技术","degree":"本科",` +
+			`"gpa":"4.588/5.0","start_date":"2024.09","end_date":"2028.07"}],` +
+			`"skills":["Go","PostgreSQL","Go"],` +
+			`"awards":["浙江省政府奖学金","浙江省政府奖学金"]}`,
 	}}
 	extractor := newTestExtractor(t, generator)
 	content, err := extractor.Extract(context.Background(), document.StructuredDocument{
@@ -29,7 +33,9 @@ func TestLLMExtractorUsesConfiguredGeneratorAndUntrustedEnvelope(t *testing.T) {
 		t.Fatalf("Extract: %v", err)
 	}
 	if content.TargetPosition != "后端工程师" ||
-		len(content.WorkExperiences) != 1 || len(content.Skills) != 2 {
+		len(content.WorkExperiences) != 1 || len(content.Skills) != 2 ||
+		len(content.Awards) != 1 ||
+		content.EducationExperiences[0].GPA != "4.588/5.0" {
 		t.Fatalf("content = %#v", content)
 	}
 	if len(generator.request.Messages) != 2 ||

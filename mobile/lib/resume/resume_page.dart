@@ -358,7 +358,7 @@ class _ResumeDetailPageState extends State<ResumeDetailPage> {
                     title: '结构化内容',
                     subtitle: detail.content == null
                         ? '解析完成后会显示在这里'
-                        : '可人工修正岗位、简介和技能',
+                        : '可人工修正岗位和技能',
                     action: detail.content == null
                         ? null
                         : TextButton.icon(
@@ -402,21 +402,18 @@ final class _ResumeContentEditorSheet extends StatefulWidget {
 final class _ResumeContentEditorSheetState
     extends State<_ResumeContentEditorSheet> {
   late final TextEditingController _position;
-  late final TextEditingController _summary;
   late final TextEditingController _skills;
 
   @override
   void initState() {
     super.initState();
     _position = TextEditingController(text: widget.content.targetPosition);
-    _summary = TextEditingController(text: widget.content.professionalSummary);
     _skills = TextEditingController(text: widget.content.skills.join('、'));
   }
 
   @override
   void dispose() {
     _position.dispose();
-    _summary.dispose();
     _skills.dispose();
     super.dispose();
   }
@@ -443,14 +440,6 @@ final class _ResumeContentEditorSheetState
             ),
             const SizedBox(height: SpeakUpDesign.space12),
             TextField(
-              controller: _summary,
-              maxLength: 4000,
-              minLines: 4,
-              maxLines: 8,
-              decoration: const InputDecoration(labelText: '个人简介'),
-            ),
-            const SizedBox(height: SpeakUpDesign.space12),
-            TextField(
               controller: _skills,
               decoration: const InputDecoration(
                 labelText: '技能',
@@ -464,7 +453,6 @@ final class _ResumeContentEditorSheetState
                 context,
                 widget.content.copyWith(
                   targetPosition: _position.text.trim(),
-                  professionalSummary: _summary.text.trim(),
                   skills: _skills.text
                       .split(RegExp(r'[,，、\n]'))
                       .map((value) => value.trim())
@@ -728,21 +716,6 @@ class _ResumeContentView extends StatelessWidget {
       ),
       const SizedBox(height: SpeakUpDesign.space12),
       _ContentSection(
-        key: const Key('resume-content-summary'),
-        icon: Icons.person_outline_rounded,
-        title: '个人简介',
-        body: content.professionalSummary.isEmpty
-            ? '暂未填写'
-            : content.professionalSummary,
-        onTap: () => _showResumeContentSheet(
-          context,
-          icon: Icons.person_outline_rounded,
-          title: '个人简介',
-          child: _TextDetail(value: content.professionalSummary),
-        ),
-      ),
-      const SizedBox(height: SpeakUpDesign.space12),
-      _ContentSection(
         key: const Key('resume-content-skills'),
         icon: Icons.auto_awesome_rounded,
         title: '技能',
@@ -754,6 +727,21 @@ class _ResumeContentView extends StatelessWidget {
           child: _SkillDetails(skills: content.skills),
         ),
       ),
+      if (content.awards.isNotEmpty) ...[
+        const SizedBox(height: SpeakUpDesign.space12),
+        _ContentSection(
+          key: const Key('resume-content-awards'),
+          icon: Icons.workspace_premium_outlined,
+          title: '奖项荣誉',
+          body: content.awards.take(3).join('\n'),
+          onTap: () => _showResumeContentSheet(
+            context,
+            icon: Icons.workspace_premium_outlined,
+            title: '奖项荣誉',
+            child: _AwardDetails(awards: content.awards),
+          ),
+        ),
+      ],
       if (content.workExperiences.isNotEmpty) ...[
         const SizedBox(height: SpeakUpDesign.space12),
         _ContentSection(
@@ -964,6 +952,56 @@ class _SkillDetails extends StatelessWidget {
         );
 }
 
+class _AwardDetails extends StatelessWidget {
+  const _AwardDetails({required this.awards});
+  final List<String> awards;
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      for (var index = 0; index < awards.length; index++) ...[
+        if (index > 0) const SizedBox(height: SpeakUpDesign.space12),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(SpeakUpDesign.space16),
+          decoration: BoxDecoration(
+            color: SpeakUpDesign.surface,
+            border: Border.all(color: SpeakUpDesign.border),
+            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: const BoxDecoration(
+                  color: SpeakUpDesign.primaryMuted,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.emoji_events_outlined,
+                  size: 18,
+                  color: SpeakUpDesign.primary,
+                ),
+              ),
+              const SizedBox(width: SpeakUpDesign.space12),
+              Expanded(
+                child: Text(
+                  awards[index],
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    height: 1.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ],
+  );
+}
+
 class _ProjectDetails extends StatelessWidget {
   const _ProjectDetails({required this.items});
   final List<Map<String, Object?>> items;
@@ -1041,6 +1079,8 @@ class _EducationDetails extends StatelessWidget {
               _stringValue(item, 'degree'),
             ]),
             children: [
+              if (_stringValue(item, 'gpa').isNotEmpty)
+                _DetailBlock(title: '绩点', text: _stringValue(item, 'gpa')),
               if (_dateRange(item).isNotEmpty)
                 _DetailBlock(title: '就读时间', text: _dateRange(item)),
             ],
