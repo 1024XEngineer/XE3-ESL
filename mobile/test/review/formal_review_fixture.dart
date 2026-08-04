@@ -1,5 +1,5 @@
 import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/review/formal_review.dart';
+import 'package:speakup/features/coaching/review/formal_review.dart';
 
 FormalReview legacyFormalReviewFixture({
   required AgentReview review,

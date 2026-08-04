@@ -5,9 +5,9 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
-import 'package:speakup/review/ielts_speaking_report.dart';
-import 'package:speakup/review/ielts_speaking_report_client.dart';
-import 'package:speakup/review/ielts_speaking_report_wire_client.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_wire_client.dart';
 
 import 'ielts_speaking_report_fixture.dart';
 

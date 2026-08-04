@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	evaluationtransport "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/transport"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
-	evaluationtransport "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/transport"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/jackc/pgx/v5/pgxpool"

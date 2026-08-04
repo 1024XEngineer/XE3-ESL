@@ -25,8 +25,8 @@ import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
-import 'package:speakup/review/wire_review_history_client.dart';
-import 'package:speakup/review/wire_interview_report_client.dart';
+import 'package:speakup/features/coaching/review/wire_review_history_client.dart';
+import 'package:speakup/features/coaching/review/wire_interview_report_client.dart';
 
 void main() {
   test('iOS allows local development traffic without a global ATS bypass', () {

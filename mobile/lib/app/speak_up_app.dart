@@ -16,16 +16,16 @@ import 'package:speakup/features/coaching/preparation/job_preparation_wizard.dar
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
-import 'package:speakup/features/review/review.dart';
+import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_gate.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
-import 'package:speakup/review/interview_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
-import 'package:speakup/review/review_history_controller.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_index_controller.dart';
+import 'package:speakup/features/coaching/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/review/turn_feedback_controller.dart';
 
 class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp({

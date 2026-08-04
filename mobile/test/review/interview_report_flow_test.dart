@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/features/review/review.dart';
-import 'package:speakup/review/formal_review.dart';
-import 'package:speakup/review/interview_report.dart';
-import 'package:speakup/review/interview_report_client.dart';
-import 'package:speakup/review/interview_report_controller.dart';
-import 'package:speakup/review/interview_report_decoder.dart';
-import 'package:speakup/review/review_history_client.dart';
-import 'package:speakup/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/review/review.dart';
+import 'package:speakup/features/coaching/review/formal_review.dart';
+import 'package:speakup/features/coaching/review/interview_report.dart';
+import 'package:speakup/features/coaching/review/interview_report_client.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/interview_report_decoder.dart';
+import 'package:speakup/features/coaching/review/review_history_client.dart';
+import 'package:speakup/features/coaching/review/review_history_controller.dart';
 
 import 'interview_report_fixture.dart';
 

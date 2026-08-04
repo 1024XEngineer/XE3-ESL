@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/review/ielts_speaking_report_index.dart';
-import 'package:speakup/review/ielts_speaking_report_index_client.dart';
-import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_index_decoder.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_index.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_index_client.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_index_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_index_decoder.dart';
 
 import 'ielts_speaking_report_fixture.dart';
 

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
 func TestInterviewShadowTextProviderUsesStrictJSONRequest(t *testing.T) {

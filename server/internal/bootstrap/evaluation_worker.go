@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
 type evaluationShadowProcessor interface {

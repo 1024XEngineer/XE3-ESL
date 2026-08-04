@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/transport_security.dart';
-import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/review/turn_feedback.dart';
 
 import 'agent_client.dart';
 import 'agent_models.dart';

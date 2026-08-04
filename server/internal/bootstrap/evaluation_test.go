@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
-	evaluationtransport "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/transport"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	evaluationtransport "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/transport"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )

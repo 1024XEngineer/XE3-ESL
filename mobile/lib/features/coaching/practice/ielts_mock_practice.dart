@@ -12,13 +12,13 @@ import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
-import 'package:speakup/features/review/ielts_speaking_report_view.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
-import 'package:speakup/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/review/turn_feedback.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
-import 'package:speakup/review/turn_feedback_disclosure.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/review/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/review/turn_feedback_disclosure.dart';
 
 const ieltsSpeakingFullMockSceneId = 'scn_ielts_speaking_full';
 const _part2IntroNarration =

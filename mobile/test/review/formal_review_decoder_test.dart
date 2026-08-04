@@ -1,8 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/review/formal_review.dart';
-import 'package:speakup/review/formal_review_decoder.dart';
+import 'package:speakup/features/coaching/review/formal_review.dart';
+import 'package:speakup/features/coaching/review/formal_review_decoder.dart';
 
 void main() {
   test('decodes the current legacy v1 wire result', () {

@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
+	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
-	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 )
 
 const (

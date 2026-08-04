@@ -9,8 +9,8 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
 func TestRegistryExposesInitialMockToolSet(t *testing.T) {

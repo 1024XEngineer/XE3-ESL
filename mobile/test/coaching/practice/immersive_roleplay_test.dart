@@ -12,13 +12,13 @@ import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/practice/immersive_roleplay.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
-import 'package:speakup/review/interview_report.dart';
-import 'package:speakup/review/interview_report_client.dart';
-import 'package:speakup/review/interview_report_controller.dart';
-import 'package:speakup/review/turn_feedback.dart';
-import 'package:speakup/review/turn_feedback_client.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
-import 'package:speakup/review/turn_feedback_disclosure.dart';
+import 'package:speakup/features/coaching/review/interview_report.dart';
+import 'package:speakup/features/coaching/review/interview_report_client.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/review/turn_feedback_client.dart';
+import 'package:speakup/features/coaching/review/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/review/turn_feedback_disclosure.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

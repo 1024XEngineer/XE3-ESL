@@ -11,8 +11,8 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
 const (

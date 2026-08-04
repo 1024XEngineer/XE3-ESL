@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
 func TestEvaluationShadowWorkerDrainsFullBatch(t *testing.T) {

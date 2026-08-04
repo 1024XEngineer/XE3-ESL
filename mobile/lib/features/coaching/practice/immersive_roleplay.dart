@@ -9,12 +9,12 @@ import 'package:speakup/agent/agent_voice_widgets.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
-import 'package:speakup/features/review/interview_report_view.dart';
+import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
-import 'package:speakup/review/interview_report_controller.dart';
-import 'package:speakup/review/turn_feedback.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
-import 'package:speakup/review/turn_feedback_disclosure.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/review/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/review/turn_feedback_disclosure.dart';
 
 /// A vendor-neutral surface used by the immersive roleplay shell.
 ///

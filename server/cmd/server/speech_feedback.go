@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 )
 
 const (
