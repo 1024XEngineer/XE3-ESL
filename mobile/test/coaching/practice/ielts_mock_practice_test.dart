@@ -5,9 +5,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
 import 'package:speakup/features/coaching/practice/practice.dart';
@@ -33,15 +32,13 @@ void main() {
     final media = _QuestionMediaClient();
     final player = _QuestionAudioPlayer();
     final practice = _IeltsPracticeClient(initialCompleted: 0);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       mediaClient: media,
       audioPlayer: player,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
@@ -66,13 +63,11 @@ void main() {
     (tester) async {
       final speaker = _ImmediateExaminerSpeaker();
       final practice = _IeltsPracticeClient(initialCompleted: 0);
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: _Recorder(),
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
       await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
@@ -129,15 +124,13 @@ void main() {
       turnLimit: 1,
       scenarioModel: 'IELTS_SPEAKING_PART_3',
     );
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       mediaClient: media,
       audioPlayer: player,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsPart3Scene);
 
     await tester.pumpWidget(
@@ -172,14 +165,12 @@ void main() {
       var now = DateTime.utc(2026, 8, 3, 4, 30);
       final speaker = _ControlledExaminerSpeaker();
       final practice = _IeltsPracticeClient(initialCompleted: 8);
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: _Recorder(),
       );
       final store = _MemoryProgressStore();
       addTearDown(controller.dispose);
-      await controller.initialize();
       await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
@@ -253,9 +244,8 @@ void main() {
         turnLimit: 6,
         scenarioModel: 'IELTS_SPEAKING_PART_2',
       );
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: _Recorder(),
       );
       final store = _MemoryProgressStore(
@@ -267,7 +257,6 @@ void main() {
         ),
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
       await _activatePractice(controller, practice, _ieltsPart2Scene);
 
       await tester.pumpWidget(
@@ -302,20 +291,18 @@ void main() {
     'Part 1 boundary enters prep, keeps notes, and submits the Part 2 long turn',
     (tester) async {
       final practice = _IeltsPracticeClient(initialCompleted: 8);
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: _Recorder(),
       );
       final store = _MemoryProgressStore();
       addTearDown(controller.dispose);
-      await controller.initialize();
       await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
         MaterialApp(
           home: PracticePage(
-            agentController: controller,
+            practiceController: controller,
             ieltsMockProgressStore: store,
             ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
           ),
@@ -401,20 +388,18 @@ void main() {
         initialCompleted: 8,
         transcriptionFailuresRemaining: 1,
       );
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: _Recorder(),
       );
       final store = _MemoryProgressStore();
       addTearDown(controller.dispose);
-      await controller.initialize();
       await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
         MaterialApp(
           home: PracticePage(
-            agentController: controller,
+            practiceController: controller,
             ieltsMockProgressStore: store,
             ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
           ),
@@ -453,19 +438,17 @@ void main() {
       final practice = _IeltsPracticeClient(initialCompleted: 8)
         ..transcriptionGate = transcriptionGate;
       final recorder = _Recorder();
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: recorder,
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
       await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
         MaterialApp(
           home: PracticePage(
-            agentController: controller,
+            practiceController: controller,
             ieltsMockProgressStore: _MemoryProgressStore(),
             ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
           ),
@@ -530,19 +513,17 @@ void main() {
       initialCompleted: 0,
       transcriptionText: '我今天没有什么想说的',
     );
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
         home: PracticePage(
-          agentController: controller,
+          practiceController: controller,
           ieltsMockProgressStore: _MemoryProgressStore(),
           ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
         ),
@@ -571,19 +552,17 @@ void main() {
       initialCompleted: 0,
       transcriptionText: '我 usually spend time reading books',
     );
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
         home: PracticePage(
-          agentController: controller,
+          practiceController: controller,
           ieltsMockProgressStore: _MemoryProgressStore(),
           ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
         ),
@@ -626,19 +605,14 @@ void main() {
       transcriptionFailuresRemaining: 4,
     );
     final recorder = _Recorder();
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
-      recorder: recorder,
-    );
+    final controller = PracticeController(client: practice, recorder: recorder);
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
         home: PracticePage(
-          agentController: controller,
+          practiceController: controller,
           ieltsMockProgressStore: _MemoryProgressStore(),
           ieltsExaminerSpeaker: _ImmediateExaminerSpeaker(),
         ),
@@ -682,13 +656,11 @@ void main() {
   ) async {
     final now = DateTime.utc(2026, 7, 29, 8);
     final practice = _IeltsPracticeClient(initialCompleted: 8);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
     final store = _MemoryProgressStore(
       IeltsMockProgress(
@@ -724,13 +696,11 @@ void main() {
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 8)
       ..transcribeFailure = StateError('transcription failed');
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
@@ -773,13 +743,11 @@ void main() {
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 0)
       ..transcribeFailure = StateError('transcription failed');
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
@@ -810,13 +778,8 @@ void main() {
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 8);
     final recorder = _Recorder();
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
-      recorder: recorder,
-    );
+    final controller = PracticeController(client: practice, recorder: recorder);
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
@@ -848,13 +811,11 @@ void main() {
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 0);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
@@ -887,19 +848,17 @@ void main() {
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 14);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
         home: PracticePage(
-          agentController: controller,
+          practiceController: controller,
           ieltsMockProgressStore: _MemoryProgressStore(),
         ),
       ),
@@ -917,13 +876,11 @@ void main() {
     'completed full mock exits before parked context can show the empty practice page',
     (tester) async {
       final practice = _IeltsPracticeClient(initialCompleted: 14);
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: _Recorder(),
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
       await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
@@ -935,12 +892,9 @@ void main() {
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder: (_) => PracticePage(
-                      agentController: controller,
+                      practiceController: controller,
                       ieltsMockProgressStore: _MemoryProgressStore(),
-                      onExitRequested: () async {
-                        await controller.selectScene(_nonIeltsScene);
-                        return true;
-                      },
+                      onExitRequested: () async => true,
                     ),
                   ),
                 ),
@@ -967,9 +921,8 @@ void main() {
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 14);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     final reportClient = _PendingReportClient();
@@ -978,7 +931,6 @@ void main() {
     );
     addTearDown(controller.dispose);
     addTearDown(reportController.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
@@ -1006,9 +958,8 @@ void main() {
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 7, turnLimit: 8);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     final preparation = PreparationController(client: _EmptySceneClient());
@@ -1019,7 +970,6 @@ void main() {
     addTearDown(controller.dispose);
     addTearDown(preparation.dispose);
     addTearDown(reportController.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsPart1Scene);
     expect(controller.errorMessage, isNull);
     expect(controller.practiceSessionId, _sessionId);
@@ -1063,19 +1013,17 @@ void main() {
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 8);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
         home: PracticePage(
-          agentController: controller,
+          practiceController: controller,
           ieltsMockProgressStore: _MemoryProgressStore(),
         ),
       ),
@@ -1096,19 +1044,17 @@ void main() {
         model: SceneModel.examBasicDialogue,
       );
       final practice = _IeltsPracticeClient(initialCompleted: 8);
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: _Recorder(),
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
       await _activatePractice(controller, practice, sameTitleScene);
 
       await tester.pumpWidget(
         MaterialApp(
           home: PracticePage(
-            agentController: controller,
+            practiceController: controller,
             ieltsMockProgressStore: _MemoryProgressStore(),
           ),
         ),
@@ -1125,13 +1071,11 @@ void main() {
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 0);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
     var parkCalls = 0;
 
@@ -1177,15 +1121,13 @@ void main() {
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 8);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     final preparation = PreparationController(client: _EmptySceneClient());
     addTearDown(controller.dispose);
     addTearDown(preparation.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsPart1Scene);
     await preparation.beginIeltsSession(
       _sessionId,
@@ -1234,19 +1176,17 @@ void main() {
     'restored Part 2 completion asks before entering its bound Part 3',
     (tester) async {
       final practice = _IeltsPracticeClient(initialCompleted: 1, turnLimit: 6);
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: _Recorder(),
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
       await _activatePractice(controller, practice, _ieltsPart2Scene);
 
       await tester.pumpWidget(
         MaterialApp(
           home: PracticePage(
-            agentController: controller,
+            practiceController: controller,
             ieltsMockProgressStore: _MemoryProgressStore(),
           ),
         ),
@@ -1269,19 +1209,17 @@ void main() {
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsPart3Scene);
 
     await tester.pumpWidget(
       MaterialApp(
         home: PracticePage(
-          agentController: controller,
+          practiceController: controller,
           ieltsMockProgressStore: _MemoryProgressStore(),
         ),
       ),
@@ -1310,19 +1248,17 @@ void main() {
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 9, turnLimit: 10);
-    final controller = AgentController(
-      client: FakeAgentClient(),
-      practiceClient: practice,
+    final controller = PracticeController(
+      client: practice,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
     await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
         home: PracticePage(
-          agentController: controller,
+          practiceController: controller,
           ieltsMockProgressStore: _MemoryProgressStore(),
         ),
       ),
@@ -1396,19 +1332,17 @@ void main() {
         initialCompleted: 0,
         turnLimit: testCase.turnLimit,
       );
-      final controller = AgentController(
-        client: FakeAgentClient(),
-        practiceClient: practice,
+      final controller = PracticeController(
+        client: practice,
         recorder: _Recorder(),
       );
-      await controller.initialize();
       await _activatePractice(controller, practice, testCase.selected);
 
       await tester.pumpWidget(
         MaterialApp(
           home: PracticePage(
             key: ValueKey(testCase.selected.id),
-            agentController: controller,
+            practiceController: controller,
             ieltsMockProgressStore: _MemoryProgressStore(),
           ),
         ),
@@ -1424,14 +1358,12 @@ void main() {
 }
 
 Future<void> _activatePractice(
-  AgentController controller,
+  PracticeController controller,
   _IeltsPracticeClient practice,
   SceneDefinition scene,
 ) async {
-  await controller.selectScene(scene);
   practice.activeScene = scene;
   await controller.activateCreatedPractice(
-    threadId: controller.threadId!,
     scene: scene,
     sessionId: _sessionId,
     planId: _planId,
@@ -1545,8 +1477,8 @@ final class _IeltsPracticeClient implements PracticeClient {
     }
     if (transcriptionFailuresRemaining > 0) {
       transcriptionFailuresRemaining--;
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.network,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.network,
         retryable: true,
       );
     }
@@ -1574,9 +1506,9 @@ final class _IeltsPracticeClient implements PracticeClient {
       sessionId: sessionId,
       questionId: questionId,
       candidateId: candidateId,
-      answer: AgentMessage(
+      answer: PracticeMessage(
         id: 'answer-$completed',
-        role: AgentMessageRole.user,
+        role: PracticeMessageRole.user,
         text: transcriptionText ?? 'Answer $completed',
       ),
       completedTurns: completed,
@@ -1769,13 +1701,6 @@ final _ieltsPart3Scene = _sceneFixture(
   name: 'IELTS Speaking Part 3',
   brief: 'Part 3 discussion',
   model: SceneModel.ieltsSpeakingPart3,
-);
-final _nonIeltsScene = _sceneFixture(
-  id: 'scn_general_practice',
-  name: 'General practice',
-  brief: 'Non-IELTS practice scene',
-  family: SceneFamily.interview,
-  model: SceneModel.interviewBasicDialogue,
 );
 SceneDefinition _sceneFixture({
   required String id,

@@ -5,8 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
@@ -16,7 +15,10 @@ import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+
+import 'preparation_test_fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -442,20 +444,20 @@ void main() {
     () async {
       final harness = await _createWorkspaceLaunchHarness();
       addTearDown(harness.dispose);
-      final originalThreadCount = harness.agentController.threads.length;
+      final originalThreadCount = harness.conversationController.threads.length;
 
       expect(await harness.launchController.start(_selection), isTrue);
 
-      final practiceThreadId = harness.agentController.threadId;
-      final goalId = harness.agentController.activeGoal?.id;
+      final practiceThreadId = harness.conversationController.threadId;
+      final goalId = harness.conversationController.activeGoalId;
       expect(practiceThreadId, isNotNull);
       expect(practiceThreadId, isNot(harness.homeThreadId));
       expect(
-        harness.agentController.threads,
+        harness.conversationController.threads,
         hasLength(originalThreadCount + 1),
       );
-      expect(harness.agentController.hasActivePractice, isTrue);
-      expect(harness.agentController.practiceSessionId, _sessionId);
+      expect(harness.practiceController.hasActivePractice, isTrue);
+      expect(harness.practiceController.practiceSessionId, _sessionId);
       expect(harness.launchController.hasResumablePractice, isTrue);
       expect(harness.launchController.resumableHasProgress, isFalse);
       expect(harness.launchController.resumableGoalId, goalId);
@@ -474,15 +476,15 @@ void main() {
       expect(persisted, containsPair('completed_turns', 0));
 
       expect(await harness.launchController.parkCurrentPractice(), isTrue);
-      expect(harness.agentController.threadId, harness.homeThreadId);
-      expect(harness.agentController.hasActivePractice, isFalse);
+      expect(harness.conversationController.threadId, harness.homeThreadId);
+      expect(harness.practiceController.hasActivePractice, isFalse);
       expect(harness.launchController.hasResumablePractice, isTrue);
 
       expect(await harness.launchController.resumeCurrentPractice(), isTrue);
-      expect(harness.agentController.threadId, practiceThreadId);
-      expect(harness.agentController.activeGoal?.id, goalId);
-      expect(harness.agentController.practiceSessionId, _sessionId);
-      expect(harness.agentController.hasActivePractice, isTrue);
+      expect(harness.conversationController.threadId, practiceThreadId);
+      expect(harness.conversationController.activeGoalId, goalId);
+      expect(harness.practiceController.practiceSessionId, _sessionId);
+      expect(harness.practiceController.hasActivePractice, isTrue);
     },
   );
 
@@ -491,7 +493,7 @@ void main() {
     () async {
       final harness = await _createWorkspaceLaunchHarness(failFirstVoice: true);
       addTearDown(harness.dispose);
-      final originalThreadCount = harness.agentController.threads.length;
+      final originalThreadCount = harness.conversationController.threads.length;
 
       expect(await harness.launchController.start(_selection), isFalse);
 
@@ -499,9 +501,9 @@ void main() {
           harness.workspaceController.currentPracticeThreadId;
       expect(practiceThreadId, isNotNull);
       expect(practiceThreadId, isNot(harness.homeThreadId));
-      expect(harness.agentController.threadId, harness.homeThreadId);
+      expect(harness.conversationController.threadId, harness.homeThreadId);
       expect(
-        harness.agentController.threads,
+        harness.conversationController.threads,
         hasLength(originalThreadCount + 1),
       );
       expect(harness.launchController.stage, PreparationLaunchStage.voice);
@@ -510,13 +512,13 @@ void main() {
 
       expect(await harness.launchController.retry(), isTrue);
 
-      expect(harness.agentController.threadId, practiceThreadId);
+      expect(harness.conversationController.threadId, practiceThreadId);
       expect(
-        harness.agentController.threads,
+        harness.conversationController.threads,
         hasLength(originalThreadCount + 1),
       );
-      expect(harness.agentController.practiceSessionId, _sessionId);
-      expect(harness.agentController.hasActivePractice, isTrue);
+      expect(harness.practiceController.practiceSessionId, _sessionId);
+      expect(harness.practiceController.hasActivePractice, isTrue);
       expect(harness.goalKeys, hasLength(2));
       expect(harness.goalKeys.toSet(), hasLength(1));
       expect(harness.voiceKeys, hasLength(2));
@@ -536,18 +538,22 @@ void main() {
 Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
   bool failFirstVoice = false,
 }) async {
-  final agentClient = FakeAgentClient();
+  final agentClient = GoalAwareAgentClient();
   final practiceClient = _WorkspacePracticeClient();
-  final agentController = AgentController(
+  final conversationController = ConversationController(
     client: agentClient,
-    practiceClient: practiceClient,
     clientIdFactory: (scope) => '$scope-workspace-agent-key',
   );
-  await agentController.initialize();
-  final homeThreadId = agentController.threadId!;
+  final practiceController = PracticeController(
+    client: practiceClient,
+    clientIdFactory: (scope) => '$scope-workspace-practice-key',
+  );
+  await conversationController.initialize();
+  final homeThreadId = conversationController.threadId!;
   final recordStore = MemoryPracticeLaunchRecordStore();
   final workspaceController = PracticeWorkspaceController(
-    agentController: agentController,
+    conversationController: conversationController,
+    practiceController: practiceController,
     recordStore: recordStore,
   );
   await workspaceController.activateAccount(_userId);
@@ -558,14 +564,14 @@ Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
   final launchController = PreparationLaunchController(
     client: launchClient,
     contextProvider: () {
-      final threadId = agentController.threadId;
-      final goalId = agentController.activeGoal?.id;
+      final threadId = conversationController.threadId;
+      final goalId = conversationController.activeGoalId;
       if (threadId == null || goalId == null) {
         return null;
       }
       return AgentPracticeContext(threadId: threadId, goalId: goalId);
     },
-    threadIdProvider: () => agentController.threadId,
+    threadIdProvider: () => conversationController.threadId,
     goalActivator:
         ({
           required threadId,
@@ -573,7 +579,9 @@ Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
           required clientOperationId,
         }) async {
           goalKeys.add(clientOperationId);
-          final goal = await agentController.activateGoalForScene(
+          final goal = await activateTestGoal(
+            goalClient: agentClient,
+            conversationController: conversationController,
             threadId: threadId,
             scene: selection.scene,
             clientOperationId: clientOperationId,
@@ -600,8 +608,7 @@ Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
             threadId: context.threadId,
             sessionId: bootstrap.session.id,
           );
-          await agentController.activateCreatedPractice(
-            threadId: context.threadId,
+          await practiceController.activateCreatedPractice(
             scene: scene,
             sessionId: bootstrap.session.id,
             planId: bootstrap.session.planId,
@@ -614,7 +621,8 @@ Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
   );
   launchController.updateBackgroundSummary(_background);
   return _WorkspaceLaunchHarness(
-    agentController: agentController,
+    conversationController: conversationController,
+    practiceController: practiceController,
     workspaceController: workspaceController,
     launchController: launchController,
     launchClient: launchClient,
@@ -627,7 +635,8 @@ Future<_WorkspaceLaunchHarness> _createWorkspaceLaunchHarness({
 
 final class _WorkspaceLaunchHarness {
   const _WorkspaceLaunchHarness({
-    required this.agentController,
+    required this.conversationController,
+    required this.practiceController,
     required this.workspaceController,
     required this.launchController,
     required this.launchClient,
@@ -637,7 +646,8 @@ final class _WorkspaceLaunchHarness {
     required this.voiceKeys,
   });
 
-  final AgentController agentController;
+  final ConversationController conversationController;
+  final PracticeController practiceController;
   final PracticeWorkspaceController workspaceController;
   final PreparationLaunchController launchController;
   final _WorkspaceLaunchClient launchClient;
@@ -649,7 +659,8 @@ final class _WorkspaceLaunchHarness {
   void dispose() {
     launchController.dispose();
     workspaceController.dispose();
-    agentController.dispose();
+    practiceController.dispose();
+    conversationController.dispose();
   }
 }
 

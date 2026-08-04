@@ -27,7 +27,10 @@ void main() {
     runApp(
       SpeakUpApp(
         authController: dependencies.authController,
-        agentController: dependencies.agentController,
+        conversationController: dependencies.conversationController,
+        composerController: dependencies.composerController,
+        messageAudioController: dependencies.messageAudioController,
+        practiceController: dependencies.practiceController,
         preparationController: dependencies.preparationController,
         jobPreparationController: dependencies.jobPreparationController,
         preparationLaunchController: dependencies.preparationLaunchController,

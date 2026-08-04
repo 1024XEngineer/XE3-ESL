@@ -3,8 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
@@ -13,6 +12,8 @@ import 'package:speakup/features/coaching/preparation/preparation_launch_client.
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
+
+import 'preparation_test_fakes.dart';
 
 Future<void> _openFamily(WidgetTester tester, String family) async {
   final hubKey = switch (family) {
@@ -233,32 +234,41 @@ void main() {
   testWidgets('starts the real typed chain and reports success to navigation', (
     tester,
   ) async {
-    final agentController = AgentController(client: FakeAgentClient());
+    final agentClient = GoalAwareAgentClient();
+    final conversationController = ConversationController(client: agentClient);
     final preparationController = PreparationController(
       client: _FixtureClient(),
     );
     final launchClient = _PageLaunchClient();
     var navigations = 0;
-    await agentController.initialize();
-    await agentController.activateGoalForScene(
-      threadId: agentController.threadId!,
+    await conversationController.initialize();
+    await activateTestGoal(
+      goalClient: agentClient,
+      conversationController: conversationController,
+      threadId: conversationController.threadId!,
       scene: _scene,
       clientOperationId: 'activate-page-scene',
     );
     final launchController = PreparationLaunchController(
       client: launchClient,
       contextProvider: () => AgentPracticeContext(
-        threadId: agentController.threadId!,
-        goalId: agentController.activeGoal!.id,
+        threadId: conversationController.threadId!,
+        goalId: conversationController.activeGoalId!,
       ),
-      threadIdProvider: () => agentController.threadId,
+      threadIdProvider: () => conversationController.threadId,
       goalActivator:
           ({
             required threadId,
             required selection,
             required clientOperationId,
           }) async {
-            final goal = agentController.activeGoal!;
+            final goal = await activateTestGoal(
+              goalClient: agentClient,
+              conversationController: conversationController,
+              threadId: threadId,
+              scene: selection.scene,
+              clientOperationId: clientOperationId,
+            );
             return AgentPracticeContext(threadId: threadId, goalId: goal.id);
           },
       voiceActivator:
@@ -270,14 +280,13 @@ void main() {
           }) async {},
       idFactory: (scope) => '$scope-widget-key',
     );
-    addTearDown(agentController.dispose);
+    addTearDown(conversationController.dispose);
     addTearDown(preparationController.dispose);
     addTearDown(launchController.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
         home: PreparationPage(
-          agentController: agentController,
           preparationController: preparationController,
           launchController: launchController,
           onPracticeStarted: () => navigations++,
@@ -292,8 +301,8 @@ void main() {
     expect(launchClient.calls, ['profile', 'snapshot', 'plan', 'session']);
     expect(navigations, 1);
     expect(find.byKey(const Key('preparation-scene-detail')), findsNothing);
-    expect(agentController.threadId, isNotNull);
-    expect(agentController.activeGoal, isNotNull);
+    expect(conversationController.threadId, isNotNull);
+    expect(conversationController.activeGoalId, isNotNull);
     expect(launchController.bootstrap?.maxEffectiveTurns, 6);
   });
 

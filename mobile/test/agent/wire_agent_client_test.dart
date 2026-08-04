@@ -4,25 +4,21 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/agent/wire_agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/providers/agent/wire_agent_client.dart';
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
-import '../support/scene_fixtures.dart';
-
 void main() {
-  group('WireAgentClient Thread restore', () {
-    test('restores the latest durable Thread and ordered Messages', () async {
+  group('WireAgentClient focused Thread', () {
+    test('loads the focused durable Thread and ordered Messages', () async {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads',
-          response: _jsonResponse(HttpStatus.ok, {
-            'threads': [_threadJson(title: '英文面试准备')],
-          }),
+          path: '/v1/agent-threads/focused',
+          response: _jsonResponse(HttpStatus.ok, _threadJson(title: '英文面试准备')),
         ),
         _Step(
           method: 'GET',
@@ -68,7 +64,7 @@ void main() {
       ]);
       final harness = _Harness(transport);
 
-      final snapshot = await harness.client.restoreThread();
+      final snapshot = (await harness.client.getFocusedThread())!;
 
       expect(snapshot.threadId, _threadId);
       expect(snapshot.title, '英文面试准备');
@@ -94,35 +90,42 @@ void main() {
       transport.expectDone();
     });
 
-    test('creates one Thread when the account has no history', () async {
-      final transport = _ScriptedTransport([
-        _Step(
-          method: 'GET',
-          path: '/v1/agent-threads',
-          response: _jsonResponse(HttpStatus.ok, {'threads': <Object?>[]}),
-        ),
-        _Step(
-          method: 'POST',
-          path: '/v1/agent-threads',
-          verify: (call) {
-            expect(jsonDecode(call.body!), <String, Object?>{});
-          },
-          response: _jsonResponse(HttpStatus.created, _threadJson()),
-        ),
-        _Step(
-          method: 'GET',
-          path: '/v1/agent-threads/$_threadId/messages',
-          response: _jsonResponse(HttpStatus.ok, {'messages': <Object?>[]}),
-        ),
-      ]);
-      final harness = _Harness(transport);
+    test(
+      'lists an empty account before explicitly creating one Thread',
+      () async {
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            response: _jsonResponse(HttpStatus.ok, {'threads': <Object?>[]}),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads',
+            verify: (call) {
+              expect(call.queryParameters, {'page_size': '100'});
+            },
+            response: _jsonResponse(HttpStatus.ok, {'threads': <Object?>[]}),
+          ),
+          _Step(
+            method: 'POST',
+            path: '/v1/agent-threads',
+            verify: (call) {
+              expect(jsonDecode(call.body!), <String, Object?>{});
+            },
+            response: _jsonResponse(HttpStatus.created, _threadJson()),
+          ),
+        ]);
+        final harness = _Harness(transport);
 
-      final snapshot = await harness.client.restoreThread();
+        final page = await harness.client.listThreads();
+        final thread = await harness.client.createThread();
 
-      expect(snapshot.threadId, _threadId);
-      expect(snapshot.messages, isEmpty);
-      transport.expectDone();
-    });
+        expect(page.threads, isEmpty);
+        expect(thread.id, _threadId);
+        transport.expectDone();
+      },
+    );
 
     test('restores a failed Run and its stable retry identity', () async {
       const text = 'Restore this failed request.';
@@ -130,10 +133,8 @@ void main() {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads',
-          response: _jsonResponse(HttpStatus.ok, {
-            'threads': [_threadJson()],
-          }),
+          path: '/v1/agent-threads/focused',
+          response: _jsonResponse(HttpStatus.ok, _threadJson()),
         ),
         _Step(
           method: 'GET',
@@ -189,7 +190,7 @@ void main() {
       ]);
       final harness = _Harness(transport);
 
-      final snapshot = await harness.client.restoreThread();
+      final snapshot = (await harness.client.getFocusedThread())!;
 
       expect(snapshot.messages, hasLength(1));
       expect(snapshot.textRecovery?.clientMessageId, clientMessageId);
@@ -218,10 +219,8 @@ void main() {
         final transport = _ScriptedTransport([
           _Step(
             method: 'GET',
-            path: '/v1/agent-threads',
-            response: _jsonResponse(HttpStatus.ok, {
-              'threads': [_threadJson()],
-            }),
+            path: '/v1/agent-threads/focused',
+            response: _jsonResponse(HttpStatus.ok, _threadJson()),
           ),
           _Step(
             method: 'GET',
@@ -261,7 +260,7 @@ void main() {
         ]);
         final harness = _Harness(transport, maxRunPollAttempts: 2);
 
-        final snapshot = await harness.client.restoreThread();
+        final snapshot = (await harness.client.getFocusedThread())!;
 
         expect(snapshot.textRecovery, isNull);
         expect(snapshot.messages, hasLength(2));
@@ -285,7 +284,7 @@ void main() {
       final harness = _Harness(transport);
 
       await expectLater(
-        harness.client.restoreThread(),
+        harness.client.listThreads(),
         throwsA(
           isA<AgentClientException>().having(
             (error) => error.kind,
@@ -313,7 +312,7 @@ void main() {
         final harness = _Harness(transport);
 
         await expectLater(
-          harness.client.restoreThread(),
+          harness.client.listThreads(),
           throwsA(
             isA<AgentClientException>().having(
               (error) => error.kind,
@@ -339,7 +338,7 @@ void main() {
       final harness = _Harness(transport);
 
       await expectLater(
-        harness.client.restoreThread(),
+        harness.client.listThreads(),
         throwsA(
           isA<AgentClientException>().having(
             (error) => error.kind,
@@ -798,7 +797,7 @@ void main() {
         ]);
         final harness = _Harness(transport);
 
-        final exchange = await harness.client.sendMultimodal(
+        final exchange = await harness.client.sendText(
           threadId: _threadId,
           text: text,
           clientMessageId: 'message_image_201',
@@ -1332,7 +1331,7 @@ void main() {
       final harness = _Harness(transport);
 
       await expectLater(
-        harness.client.restoreThread(),
+        harness.client.listThreads(),
         throwsA(
           isA<AgentClientException>().having(
             (error) => error.kind,
@@ -1354,7 +1353,7 @@ void main() {
       final pending = transport.enqueue();
       final harness = _Harness(transport);
 
-      final restore = harness.client.restoreThread();
+      final restore = harness.client.listThreads();
       await transport.waitForCalls(1);
       harness.credential = const AuthSessionCredential(
         sessionToken: 'sess_account-b',
@@ -1373,7 +1372,7 @@ void main() {
         final transport = _ControlledTransport();
         final accountAResponse = transport.enqueue();
         final harness = _Harness(transport);
-        final staleRestore = harness.client.restoreThread();
+        final staleRestore = harness.client.listThreads();
         await transport.waitForCalls(1);
 
         var cleanupFinished = false;
@@ -1403,14 +1402,11 @@ void main() {
               'threads': [_threadJson(id: _threadBId)],
             }),
           );
-        final accountBMessages = transport.enqueue()
-          ..complete(_jsonResponse(HttpStatus.ok, {'messages': <Object?>[]}));
         expect(accountBThreads.isCompleted, isTrue);
-        expect(accountBMessages.isCompleted, isTrue);
 
-        final accountB = await harness.client.restoreThread();
+        final accountB = await harness.client.listThreads();
 
-        expect(accountB.threadId, _threadBId);
+        expect(accountB.threads.single.id, _threadBId);
         expect(
           transport.calls.last.headers[HttpHeaders.authorizationHeader],
           'Bearer sess_account-b',
@@ -1438,7 +1434,7 @@ void main() {
 
         late AgentClientException captured;
         try {
-          await harness.client.restoreThread();
+          await harness.client.listThreads();
           fail('Expected a server failure.');
         } on AgentClientException catch (error) {
           captured = error;
@@ -1483,7 +1479,7 @@ void main() {
       addTearDown(client.clearAccountState);
 
       await expectLater(
-        client.restoreThread(),
+        client.listThreads(),
         throwsA(
           isA<AgentClientException>().having(
             (error) => error.kind,
@@ -1493,620 +1489,6 @@ void main() {
         ),
       );
     });
-  });
-
-  test(
-    'owned transport sends Unicode Goal titles as UTF-8 JSON bytes',
-    () async {
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      final received = <_LoopbackRequest>[];
-      final subscription = server.listen((request) async {
-        final bodyBytes = await request.fold<List<int>>(
-          <int>[],
-          (buffer, chunk) => buffer..addAll(chunk),
-        );
-        received.add(
-          _LoopbackRequest(
-            method: request.method,
-            path: request.uri.path,
-            headers: <String, String>{
-              HttpHeaders.authorizationHeader:
-                  request.headers.value(HttpHeaders.authorizationHeader) ?? '',
-              HttpHeaders.contentTypeHeader:
-                  request.headers.value(HttpHeaders.contentTypeHeader) ?? '',
-            },
-            bodyBytes: bodyBytes,
-          ),
-        );
-
-        late final int statusCode;
-        late final Object body;
-        switch ((request.method, request.uri.path)) {
-          case ('GET', '/v1/goals'):
-            statusCode = HttpStatus.ok;
-            body = <String, Object?>{'goals': <Object?>[]};
-          case ('POST', '/v1/goals'):
-            statusCode = HttpStatus.created;
-            body = <String, Object?>{
-              'goal_id': _goalId,
-              'title': testScenes.first.name,
-              'status': 'active',
-              'version': 1,
-              'created_at': _createdAt,
-              'updated_at': _updatedAt,
-            };
-          case ('PUT', '/v1/agent-threads/$_threadId/active-goal'):
-            statusCode = HttpStatus.ok;
-            body = <String, Object?>{
-              'thread_id': _threadId,
-              'goal_id': _goalId,
-              'active': true,
-              'linked_at': _createdAt,
-              'updated_at': _updatedAt,
-            };
-          default:
-            statusCode = HttpStatus.notFound;
-            body = _errorJson();
-        }
-
-        final responseBytes = utf8.encode(jsonEncode(body));
-        request.response
-          ..statusCode = statusCode
-          ..headers.contentType = ContentType.json
-          ..contentLength = responseBytes.length
-          ..add(responseBytes);
-        await request.response.close();
-      });
-      addTearDown(() async {
-        await subscription.cancel();
-        await server.close(force: true);
-      });
-      final client = WireAgentClient(
-        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
-        credentialProvider: () => const AuthSessionCredential(
-          sessionToken: 'sess_account-a',
-          generation: 1,
-        ),
-        invalidateSession:
-            ({
-              required expectedSessionToken,
-              required expectedGeneration,
-            }) async {},
-      );
-      addTearDown(client.clearAccountState);
-
-      final result = await client.startScene(
-        threadId: _threadId,
-        scene: testScenes.first,
-        clientOperationId: 'scene_unicode',
-      );
-
-      expect(
-        received.map((request) => '${request.method} ${request.path}'),
-        <String>[
-          'GET /v1/goals',
-          'POST /v1/goals',
-          'PUT /v1/agent-threads/$_threadId/active-goal',
-        ],
-      );
-      final createRequest = received[1];
-      expect(
-        createRequest.headers[HttpHeaders.contentTypeHeader],
-        startsWith(ContentType.json.mimeType),
-      );
-      expect(
-        createRequest.headers[HttpHeaders.authorizationHeader],
-        'Bearer sess_account-a',
-      );
-      expect(
-        createRequest.bodyBytes,
-        utf8.encode(
-          jsonEncode(<String, Object?>{'title': testScenes.first.name}),
-        ),
-      );
-      expect(
-        jsonDecode(utf8.decode(createRequest.bodyBytes)),
-        <String, Object?>{'title': '英文自我介绍'},
-      );
-      expect(result.title, '英文自我介绍');
-      expect(result.id, _goalId);
-    },
-  );
-
-  test(
-    'new catalog activation never reuses an existing same-title Goal',
-    () async {
-      final selectedScene = testScene(
-        id: 'catalog-scene-new',
-        name: 'Technical interview',
-      );
-      final transport = _ScriptedTransport([
-        _Step(
-          method: 'GET',
-          path: '/v1/goals',
-          response: _jsonResponse(HttpStatus.ok, {
-            'goals': [_goalJson(id: _goalId, title: selectedScene.name)],
-          }),
-        ),
-        _Step(
-          method: 'POST',
-          path: '/v1/goals',
-          response: _jsonResponse(
-            HttpStatus.created,
-            _goalJson(id: _goalBId, title: selectedScene.name),
-          ),
-        ),
-        _Step(
-          method: 'PUT',
-          path: '/v1/agent-threads/$_threadId/active-goal',
-          verify: (call) {
-            expect(jsonDecode(call.body!), {'goal_id': _goalBId});
-          },
-          response: _jsonResponse(
-            HttpStatus.ok,
-            _goalLinkJson(goalId: _goalBId),
-          ),
-        ),
-      ]);
-      final harness = _Harness(transport);
-
-      final result = await harness.client.startScene(
-        threadId: _threadId,
-        scene: selectedScene,
-        clientOperationId: 'scene_select',
-      );
-
-      expect(result.id, _goalBId);
-      expect(result.title, selectedScene.name);
-      transport.expectDone();
-    },
-  );
-
-  test('selects an existing Goal without creating a duplicate', () async {
-    final transport = _ScriptedTransport([
-      _Step(
-        method: 'GET',
-        path: '/v1/goals/$_goalId',
-        response: _jsonResponse(
-          HttpStatus.ok,
-          _goalJson(id: _goalId, title: 'Saved interview'),
-        ),
-      ),
-      _Step(
-        method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-goal',
-        verify: (call) {
-          expect(jsonDecode(call.body!), {'goal_id': _goalId});
-        },
-        response: _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalId)),
-      ),
-    ]);
-    final harness = _Harness(transport);
-
-    final goal = await harness.client.selectExistingGoal(
-      threadId: _threadId,
-      goalId: _goalId,
-    );
-
-    expect(goal.id, _goalId);
-    expect(goal.title, 'Saved interview');
-    transport.expectDone();
-  });
-
-  test('recovers exactly one Goal after an ambiguous create', () async {
-    final scene = testScenes.first;
-    final transport = _ScriptedTransport([
-      _Step(
-        method: 'GET',
-        path: '/v1/goals',
-        response: _jsonResponse(HttpStatus.ok, {
-          'goals': [_goalJson(id: _goalId, title: scene.name)],
-        }),
-      ),
-      _Step(
-        method: 'POST',
-        path: '/v1/goals',
-        error: const SocketException('response lost'),
-      ),
-      _Step(
-        method: 'GET',
-        path: '/v1/goals',
-        response: _jsonResponse(HttpStatus.ok, {
-          'goals': [
-            _goalJson(id: _goalId, title: scene.name),
-            _goalJson(id: _goalBId, title: scene.name),
-          ],
-        }),
-      ),
-      _Step(
-        method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-goal',
-        verify: (call) {
-          expect(jsonDecode(call.body!), {'goal_id': _goalBId});
-        },
-        response: _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalBId)),
-      ),
-    ]);
-    final harness = _Harness(transport);
-    const operationId = 'scene_ambiguous';
-
-    await expectLater(
-      harness.client.startScene(
-        threadId: _threadId,
-        scene: scene,
-        clientOperationId: operationId,
-      ),
-      throwsA(
-        isA<AgentClientException>().having(
-          (error) => error.kind,
-          'kind',
-          AgentClientFailureKind.network,
-        ),
-      ),
-    );
-    final result = await harness.client.startScene(
-      threadId: _threadId,
-      scene: scene,
-      clientOperationId: operationId,
-    );
-
-    expect(result.id, _goalBId);
-    expect(
-      transport.calls.where(
-        (call) => call.method == 'POST' && call.path == '/v1/goals',
-      ),
-      hasLength(1),
-    );
-    transport.expectDone();
-  });
-
-  test('recovers a committed Goal after a malformed 201 response', () async {
-    final scene = testScenes.first;
-    final transport = _ScriptedTransport([
-      _Step(
-        method: 'GET',
-        path: '/v1/goals',
-        response: _jsonResponse(HttpStatus.ok, {
-          'goals': [_goalJson(id: _goalId, title: scene.name)],
-        }),
-      ),
-      _Step(
-        method: 'POST',
-        path: '/v1/goals',
-        response: _jsonResponse(HttpStatus.created, <String, Object?>{}),
-      ),
-      _Step(
-        method: 'GET',
-        path: '/v1/goals',
-        response: _jsonResponse(HttpStatus.ok, {
-          'goals': [
-            _goalJson(id: _goalId, title: scene.name),
-            _goalJson(id: _goalBId, title: scene.name),
-          ],
-        }),
-      ),
-      _Step(
-        method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-goal',
-        verify: (call) {
-          expect(jsonDecode(call.body!), {'goal_id': _goalBId});
-        },
-        response: _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalBId)),
-      ),
-    ]);
-    final harness = _Harness(transport);
-    const operationId = 'scene_malformed_201';
-
-    await expectLater(
-      harness.client.startScene(
-        threadId: _threadId,
-        scene: scene,
-        clientOperationId: operationId,
-      ),
-      throwsA(
-        isA<AgentClientException>().having(
-          (error) => error.kind,
-          'kind',
-          AgentClientFailureKind.invalidResponse,
-        ),
-      ),
-    );
-    final result = await harness.client.startScene(
-      threadId: _threadId,
-      scene: scene,
-      clientOperationId: operationId,
-    );
-
-    expect(result.id, _goalBId);
-    expect(
-      transport.calls.where(
-        (call) => call.method == 'POST' && call.path == '/v1/goals',
-      ),
-      hasLength(1),
-    );
-    transport.expectDone();
-  });
-
-  test(
-    'after client restart creates fresh Goal instead of guessing a prior commit',
-    () async {
-      final scene = testScenes.first;
-      final transport = _ScriptedTransport([
-        _Step(
-          method: 'GET',
-          path: '/v1/goals',
-          response: _jsonResponse(HttpStatus.ok, {
-            'goals': [_goalJson(id: _goalId, title: scene.name)],
-          }),
-        ),
-        _Step(
-          method: 'POST',
-          path: '/v1/goals',
-          response: _jsonResponse(HttpStatus.created, <String, Object?>{}),
-        ),
-        _Step(
-          method: 'GET',
-          path: '/v1/goals',
-          response: _jsonResponse(HttpStatus.ok, {
-            'goals': [
-              _goalJson(id: _goalId, title: scene.name),
-              _goalJson(id: _goalBId, title: scene.name),
-            ],
-          }),
-        ),
-        _Step(
-          method: 'POST',
-          path: '/v1/goals',
-          response: _jsonResponse(
-            HttpStatus.created,
-            _goalJson(id: _goalCId, title: scene.name),
-          ),
-        ),
-        _Step(
-          method: 'PUT',
-          path: '/v1/agent-threads/$_threadId/active-goal',
-          verify: (call) {
-            expect(jsonDecode(call.body!), {'goal_id': _goalCId});
-          },
-          response: _jsonResponse(
-            HttpStatus.ok,
-            _goalLinkJson(goalId: _goalCId),
-          ),
-        ),
-      ]);
-      final firstClient = _Harness(transport);
-      const operationId = 'scene_restart_retry';
-
-      await expectLater(
-        firstClient.client.startScene(
-          threadId: _threadId,
-          scene: scene,
-          clientOperationId: operationId,
-        ),
-        throwsA(
-          isA<AgentClientException>().having(
-            (error) => error.kind,
-            'kind',
-            AgentClientFailureKind.invalidResponse,
-          ),
-        ),
-      );
-
-      final restartedClient = _Harness(transport);
-      final result = await restartedClient.client.startScene(
-        threadId: _threadId,
-        scene: scene,
-        clientOperationId: operationId,
-      );
-
-      expect(result.id, _goalCId);
-      expect(
-        transport.calls.where(
-          (call) => call.method == 'POST' && call.path == '/v1/goals',
-        ),
-        hasLength(2),
-      );
-      transport.expectDone();
-    },
-  );
-
-  test('rejects multiple new Goals after an ambiguous create', () async {
-    final scene = testScenes.first;
-    final transport = _ScriptedTransport([
-      _Step(
-        method: 'GET',
-        path: '/v1/goals',
-        response: _jsonResponse(HttpStatus.ok, {
-          'goals': [_goalJson(id: _goalId, title: scene.name)],
-        }),
-      ),
-      _Step(
-        method: 'POST',
-        path: '/v1/goals',
-        error: const SocketException('response lost'),
-      ),
-      _Step(
-        method: 'GET',
-        path: '/v1/goals',
-        response: _jsonResponse(HttpStatus.ok, {
-          'goals': [
-            _goalJson(id: _goalId, title: scene.name),
-            _goalJson(id: _goalBId, title: scene.name),
-            _goalJson(id: _goalCId, title: scene.name),
-          ],
-        }),
-      ),
-    ]);
-    final harness = _Harness(transport);
-    const operationId = 'scene_conflict';
-
-    await expectLater(
-      harness.client.startScene(
-        threadId: _threadId,
-        scene: scene,
-        clientOperationId: operationId,
-      ),
-      throwsA(
-        isA<AgentClientException>().having(
-          (error) => error.kind,
-          'kind',
-          AgentClientFailureKind.network,
-        ),
-      ),
-    );
-    await expectLater(
-      harness.client.startScene(
-        threadId: _threadId,
-        scene: scene,
-        clientOperationId: operationId,
-      ),
-      throwsA(
-        isA<AgentClientException>()
-            .having(
-              (error) => error.kind,
-              'kind',
-              AgentClientFailureKind.conflict,
-            )
-            .having(
-              (error) => error.errorCode,
-              'errorCode',
-              'resource_conflict',
-            ),
-      ),
-    );
-    transport.expectDone();
-  });
-
-  test('retries the Goal link with the same created Goal ID', () async {
-    final scene = testScenes.first;
-    final transport = _ScriptedTransport([
-      _Step(
-        method: 'GET',
-        path: '/v1/goals',
-        response: _jsonResponse(HttpStatus.ok, {'goals': <Object?>[]}),
-      ),
-      _Step(
-        method: 'POST',
-        path: '/v1/goals',
-        response: _jsonResponse(
-          HttpStatus.created,
-          _goalJson(id: _goalBId, title: scene.name),
-        ),
-      ),
-      _Step(
-        method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-goal',
-        error: const SocketException('link response lost'),
-      ),
-      _Step(
-        method: 'PUT',
-        path: '/v1/agent-threads/$_threadId/active-goal',
-        verify: (call) {
-          expect(jsonDecode(call.body!), {'goal_id': _goalBId});
-        },
-        response: _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalBId)),
-      ),
-    ]);
-    final harness = _Harness(transport);
-    const operationId = 'scene_link_retry';
-
-    await expectLater(
-      harness.client.startScene(
-        threadId: _threadId,
-        scene: scene,
-        clientOperationId: operationId,
-      ),
-      throwsA(
-        isA<AgentClientException>().having(
-          (error) => error.kind,
-          'kind',
-          AgentClientFailureKind.network,
-        ),
-      ),
-    );
-    final result = await harness.client.startScene(
-      threadId: _threadId,
-      scene: scene,
-      clientOperationId: operationId,
-    );
-
-    expect(result.id, _goalBId);
-    expect(
-      transport.calls.where(
-        (call) => call.method == 'POST' && call.path == '/v1/goals',
-      ),
-      hasLength(1),
-    );
-    transport.expectDone();
-  });
-
-  test('logout fences and clears an in-flight Goal activation', () async {
-    final transport = _ControlledTransport();
-    final initialList = transport.enqueue();
-    final staleCreate = transport.enqueue();
-    final harness = _Harness(transport);
-    final scene = testScenes.first;
-    const operationId = 'scene_logout_race';
-
-    final staleStart = harness.client.startScene(
-      threadId: _threadId,
-      scene: scene,
-      clientOperationId: operationId,
-    );
-    await transport.waitForCalls(1);
-    initialList.complete(_jsonResponse(HttpStatus.ok, {'goals': <Object?>[]}));
-    await transport.waitForCalls(2);
-
-    final cleanup = harness.client.clearAccountState();
-    staleCreate.complete(
-      _jsonResponse(
-        HttpStatus.created,
-        _goalJson(id: _goalId, title: scene.name),
-      ),
-    );
-    await expectLater(
-      staleStart,
-      throwsA(isA<AgentClientOperationCancelled>()),
-    );
-    await cleanup;
-
-    harness.credential = const AuthSessionCredential(
-      sessionToken: 'sess_account-b',
-      generation: 2,
-    );
-    final freshList = transport.enqueue();
-    final freshCreate = transport.enqueue();
-    final freshLink = transport.enqueue();
-    final freshStart = harness.client.startScene(
-      threadId: _threadId,
-      scene: scene,
-      clientOperationId: operationId,
-    );
-    await transport.waitForCalls(3);
-    freshList.complete(
-      _jsonResponse(HttpStatus.ok, {
-        'goals': [_goalJson(id: _goalId, title: scene.name)],
-      }),
-    );
-    await transport.waitForCalls(4);
-    freshCreate.complete(
-      _jsonResponse(
-        HttpStatus.created,
-        _goalJson(id: _goalBId, title: scene.name),
-      ),
-    );
-    await transport.waitForCalls(5);
-    freshLink.complete(
-      _jsonResponse(HttpStatus.ok, _goalLinkJson(goalId: _goalBId)),
-    );
-
-    final result = await freshStart;
-    expect(result.id, _goalBId);
-    expect(jsonDecode(transport.calls.last.body!), {'goal_id': _goalBId});
-    expect(
-      transport.calls.last.headers[HttpHeaders.authorizationHeader],
-      'Bearer sess_account-b',
-    );
   });
 }
 
@@ -2173,20 +1555,6 @@ final class _Call {
   final Map<String, String> queryParameters;
   final Map<String, String> headers;
   final String? body;
-}
-
-final class _LoopbackRequest {
-  const _LoopbackRequest({
-    required this.method,
-    required this.path,
-    required this.headers,
-    required this.bodyBytes,
-  });
-
-  final String method;
-  final String path;
-  final Map<String, String> headers;
-  final List<int> bodyBytes;
 }
 
 final class _ScriptedTransport implements IdentityHttpTransport {
@@ -2313,31 +1681,6 @@ Map<String, Object?> _threadJson({
   };
 }
 
-Map<String, Object?> _goalJson({
-  required String id,
-  required String title,
-  String status = 'active',
-}) {
-  return {
-    'goal_id': id,
-    'title': title,
-    'status': status,
-    'version': 1,
-    'created_at': _createdAt,
-    'updated_at': _updatedAt,
-  };
-}
-
-Map<String, Object?> _goalLinkJson({required String goalId}) {
-  return {
-    'thread_id': _threadId,
-    'goal_id': goalId,
-    'active': true,
-    'linked_at': _createdAt,
-    'updated_at': _updatedAt,
-  };
-}
-
 Map<String, Object?> _messageJson({
   required String id,
   required int sequence,
@@ -2421,9 +1764,6 @@ IdentityHttpResponse _jsonResponse(int statusCode, Object? body) {
 
 const _threadId = '10000000-0000-4000-8000-000000000001';
 const _practicePlanId = '50000000-0000-4000-8000-000000000001';
-const _goalId = '40000000-0000-4000-8000-000000000001';
-const _goalBId = '40000000-0000-4000-8000-000000000002';
-const _goalCId = '40000000-0000-4000-8000-000000000003';
 const _threadBId = '10000000-0000-4000-8000-000000000002';
 const _userMessageId = '20000000-0000-4000-8000-000000000001';
 const _assistantMessageId = '20000000-0000-4000-8000-000000000002';

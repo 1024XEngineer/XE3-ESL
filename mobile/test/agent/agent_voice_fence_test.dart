@@ -3,14 +3,18 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/agent/agent_voice_client.dart';
-import 'package:speakup/agent/agent_voice_controller.dart';
-import 'package:speakup/agent/agent_voice_models.dart';
-import 'package:speakup/agent/agent_voice_recording.dart';
-import 'package:speakup/agent/agent_voice_widgets.dart';
-import 'package:speakup/features/coaching/practice/conversation.dart';
+import 'package:speakup/features/agent/audio/agent_audio_player.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
+import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_controller.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart';
+import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
+import 'package:speakup/features/agent/conversation/conversation.dart';
 
 void main() {
   test('late upload result cannot cross the Thread fence', () async {
@@ -68,21 +72,31 @@ void main() {
 
   test('account epoch and Message fence discard late TTS bytes', () async {
     final client = _ControlledVoiceClient();
-    final committed = <AgentMessage>[];
-    final player = FakeAgentVoiceAudioPlayer();
-    final controller = _controller(client, committed, player: player);
-    addTearDown(controller.dispose);
+    final player = FakeAgentAudioPlayer();
+    final conversationController = ConversationController(
+      client: FakeAgentClient(),
+    );
     const message = AgentMessage(
       id: 'assistant-a',
       role: AgentMessageRole.assistant,
       text: 'Text remains visible while speech is loading.',
     );
-    await controller.bindThread('thread-a', messages: const [message]);
+    await conversationController.initialize();
+    conversationController.commitComposerMessages(const [message]);
+    final controller = AgentMessageAudioController(
+      conversationController: conversationController,
+      client: client,
+      audioPlayer: player,
+    );
+    addTearDown(() {
+      controller.dispose();
+      conversationController.dispose();
+    });
 
     client.speechCompleter = Completer<Uint8List>();
     final playback = controller.toggleMessagePlayback(message);
     await Future<void>.delayed(Duration.zero);
-    final cleanup = controller.clearPrivateState(clearClient: false);
+    final cleanup = controller.clearPrivateState();
     client.speechCompleter!.complete(Uint8List.fromList(_waveBytes));
     await Future.wait<void>([playback, cleanup]);
 
@@ -90,16 +104,16 @@ void main() {
     expect(controller.loadingMessageId, isNull);
     expect(controller.playingMessageId, isNull);
     expect(player.playing, isFalse);
-    expect(committed, isEmpty);
   });
 
   test(
     'Message audio projection fence stops deleted recording playback',
     () async {
       final client = _ControlledVoiceClient();
-      final player = FakeAgentVoiceAudioPlayer();
-      final controller = _controller(client, <AgentMessage>[], player: player);
-      addTearDown(controller.dispose);
+      final player = FakeAgentAudioPlayer();
+      final conversationController = ConversationController(
+        client: FakeAgentClient(),
+      );
       const readable = AgentMessage(
         id: 'message-a',
         role: AgentMessageRole.user,
@@ -114,20 +128,29 @@ void main() {
           playbackPath: '/v1/agent-message-audios/audio-a/playback',
         ),
       );
-      await controller.bindThread('thread-a', messages: const [readable]);
+      await conversationController.initialize();
+      conversationController.commitComposerMessages(const [readable]);
+      final controller = AgentMessageAudioController(
+        conversationController: conversationController,
+        client: client,
+        audioPlayer: player,
+      );
+      addTearDown(() {
+        controller.dispose();
+        conversationController.dispose();
+      });
       await controller.toggleMessagePlayback(readable);
       expect(controller.playingMessageId, readable.id);
       expect(player.playing, isTrue);
 
-      controller.syncMessages(<AgentMessage>[
-        readable.copyWith(
-          audio: readable.audio!.copyWith(
-            status: AgentMessageAudioStatus.deleted,
-            clearPlaybackPath: true,
-            deletedAt: DateTime.utc(2026, 7, 26, 12),
-          ),
+      conversationController.markMessageAudioDeleted(
+        readable.id,
+        readable.audio!.copyWith(
+          status: AgentMessageAudioStatus.deleted,
+          clearPlaybackPath: true,
+          deletedAt: DateTime.utc(2026, 7, 26, 12),
         ),
-      ]);
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(controller.playingMessageId, isNull);
@@ -615,9 +638,9 @@ void main() {
         ..messageAudioError = const AgentClientException(
           kind: AgentClientFailureKind.notFound,
         );
-      final committed = <AgentMessage>[];
-      final controller = _controller(client, committed);
-      addTearDown(controller.dispose);
+      final conversationController = ConversationController(
+        client: FakeAgentClient(),
+      );
       const assistant = AgentMessage(
         id: 'assistant-a',
         role: AgentMessageRole.assistant,
@@ -637,10 +660,17 @@ void main() {
           playbackPath: '/v1/agent-message-audios/audio-a/playback',
         ),
       );
-      await controller.bindThread(
-        'thread-a',
-        messages: const [user, assistant],
+      await conversationController.initialize();
+      conversationController.commitComposerMessages(const [user, assistant]);
+      final controller = AgentMessageAudioController(
+        conversationController: conversationController,
+        client: client,
+        audioPlayer: FakeAgentAudioPlayer(),
       );
+      addTearDown(() {
+        controller.dispose();
+        conversationController.dispose();
+      });
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -648,9 +678,12 @@ void main() {
               children: [
                 AgentMessageBubble(
                   message: assistant,
-                  voiceController: controller,
+                  messageAudioController: controller,
                 ),
-                AgentMessageBubble(message: user, voiceController: controller),
+                AgentMessageBubble(
+                  message: user,
+                  messageAudioController: controller,
+                ),
               ],
             ),
           ),
@@ -694,7 +727,7 @@ Future<void> _pumpVoiceOperation(WidgetTester tester) async {
 AgentVoiceController _controller(
   _ControlledVoiceClient client,
   List<AgentMessage> committed, {
-  FakeAgentVoiceAudioPlayer? player,
+  FakeAgentAudioPlayer? player,
   FakeAgentVoiceRecorder? recorder,
   AgentVoiceControllerClock? clock,
   Duration recordingLimit = const Duration(seconds: 58),
@@ -703,9 +736,8 @@ AgentVoiceController _controller(
   return AgentVoiceController(
     client: client,
     recorder: recorder ?? FakeAgentVoiceRecorder(),
-    audioPlayer: player ?? FakeAgentVoiceAudioPlayer(),
+    audioPlayer: player ?? FakeAgentAudioPlayer(),
     onMessagesCommitted: committed.addAll,
-    onMessageAudioDeleted: (_, _) {},
     idFactory: (scope) => '${scope}_${++sequence}'.replaceAll('-', '_'),
     clock: clock ?? DateTime.now,
     recordingLimit: recordingLimit,
@@ -844,7 +876,8 @@ typedef _ConfirmationCall = ({
 
 typedef _RetryRunCall = ({String runId, String clientRetryId});
 
-final class _ControlledVoiceClient implements AgentVoiceClient {
+final class _ControlledVoiceClient
+    implements AgentVoiceClient, AgentMessageAudioClient {
   Completer<AgentVoiceCandidate>? createCompleter;
   Completer<AgentVoiceConfirmation>? confirmCompleter;
   Completer<Uint8List>? speechCompleter;

@@ -5,7 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
@@ -453,13 +453,13 @@ void main() {
 
       await expectLater(
         client.restorePractice(sessionId: _sessionId),
-        throwsA(isA<AgentClientException>()),
+        throwsA(isA<PracticeClientException>()),
       );
       await client.clearAccountState();
       expect(first.closed, isTrue);
       await expectLater(
         client.restorePractice(sessionId: _sessionId),
-        throwsA(isA<AgentClientException>()),
+        throwsA(isA<PracticeClientException>()),
       );
       expect(second.closed, isFalse);
     },
@@ -507,10 +507,10 @@ void main() {
         idempotencyKey: 'confirm-operation',
       ),
       throwsA(
-        isA<AgentClientException>().having(
+        isA<PracticeClientException>().having(
           (error) => error.kind,
           'kind',
-          AgentClientFailureKind.invalidResponse,
+          PracticeClientFailureKind.invalidResponse,
         ),
       ),
     );
@@ -577,10 +577,10 @@ void main() {
         clientOperationId: 'scene-operation',
       ),
       throwsA(
-        isA<AgentClientException>().having(
+        isA<PracticeClientException>().having(
           (error) => error.kind,
           'kind',
-          AgentClientFailureKind.invalidResponse,
+          PracticeClientFailureKind.invalidResponse,
         ),
       ),
     );
@@ -623,10 +623,10 @@ void main() {
         ),
       ),
       throwsA(
-        isA<AgentClientException>().having(
+        isA<PracticeClientException>().having(
           (error) => error.kind,
           'kind',
-          AgentClientFailureKind.invalidResponse,
+          PracticeClientFailureKind.invalidResponse,
         ),
       ),
     );
@@ -651,11 +651,11 @@ void main() {
     await expectLater(
       _client(transport).restorePractice(sessionId: _sessionId),
       throwsA(
-        isA<AgentClientException>()
+        isA<PracticeClientException>()
             .having(
               (error) => error.kind,
               'kind',
-              AgentClientFailureKind.rateLimited,
+              PracticeClientFailureKind.rateLimited,
             )
             .having(
               (error) => error.errorCode,
@@ -691,7 +691,7 @@ void main() {
     await expectLater(
       _client(transport).restorePractice(sessionId: _sessionId),
       throwsA(
-        isA<AgentClientException>()
+        isA<PracticeClientException>()
             .having((error) => error.retryable, 'retryable', isFalse)
             .having(
               (error) => error.retryAfter,
@@ -720,10 +720,10 @@ void main() {
     await expectLater(
       _client(transport).restorePractice(sessionId: _sessionId),
       throwsA(
-        isA<AgentClientException>().having(
+        isA<PracticeClientException>().having(
           (error) => error.kind,
           'kind',
-          AgentClientFailureKind.invalidResponse,
+          PracticeClientFailureKind.invalidResponse,
         ),
       ),
     );

@@ -5,7 +5,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 
@@ -120,10 +120,10 @@ void main() {
         await expectLater(
           client.loadRecording('audio-asset-1'),
           throwsA(
-            isA<AgentClientException>().having(
+            isA<PracticeClientException>().having(
               (error) => error.kind,
               'kind',
-              AgentClientFailureKind.invalidResponse,
+              PracticeClientFailureKind.invalidResponse,
             ),
           ),
         );
@@ -183,10 +183,10 @@ void main() {
         await expectLater(
           client.loadRecording('audio-asset-1'),
           throwsA(
-            isA<AgentClientException>().having(
+            isA<PracticeClientException>().having(
               (error) => error.kind,
               'kind',
-              AgentClientFailureKind.invalidResponse,
+              PracticeClientFailureKind.invalidResponse,
             ),
           ),
         );
@@ -230,10 +230,10 @@ void main() {
         await expectLater(
           client.loadRecording('audio-1'),
           throwsA(
-            isA<AgentClientException>().having(
+            isA<PracticeClientException>().having(
               (error) => error.kind,
               'kind',
-              AgentClientFailureKind.invalidResponse,
+              PracticeClientFailureKind.invalidResponse,
             ),
           ),
         );
@@ -270,7 +270,7 @@ void main() {
 
       await expectLater(
         client.loadRecording('audio-asset-1'),
-        throwsA(isA<AgentClientException>()),
+        throwsA(isA<PracticeClientException>()),
       );
 
       expect(signed.requests, hasLength(1));
@@ -297,10 +297,10 @@ void main() {
     await expectLater(
       client.loadQuestionSpeech('/v1/voice-questions/question-1/speech'),
       throwsA(
-        isA<AgentClientException>().having(
+        isA<PracticeClientException>().having(
           (error) => error.kind,
           'kind',
-          AgentClientFailureKind.invalidResponse,
+          PracticeClientFailureKind.invalidResponse,
         ),
       ),
     );
@@ -338,10 +338,10 @@ void main() {
     await expectLater(
       client.loadQuestionSpeech('/v1/voice-questions/question-1/speech'),
       throwsA(
-        isA<AgentClientException>().having(
+        isA<PracticeClientException>().having(
           (error) => error.kind,
           'kind',
-          AgentClientFailureKind.authenticationRequired,
+          PracticeClientFailureKind.authenticationRequired,
         ),
       ),
     );
@@ -383,11 +383,11 @@ void main() {
       await expectLater(
         client.loadRecording('audio-1'),
         throwsA(
-          isA<AgentClientException>()
+          isA<PracticeClientException>()
               .having(
                 (error) => error.kind,
                 'kind',
-                isNot(AgentClientFailureKind.authenticationRequired),
+                isNot(PracticeClientFailureKind.authenticationRequired),
               )
               .having(
                 (error) => error.errorCode,
@@ -482,7 +482,7 @@ void main() {
         ),
       );
 
-      await expectLater(load, throwsA(isA<AgentClientOperationCancelled>()));
+      await expectLater(load, throwsA(isA<PracticeClientOperationCancelled>()));
       await cleanup;
       expect(source, everyElement(0));
     },
@@ -520,7 +520,7 @@ void main() {
         ),
       );
 
-      await expectLater(load, throwsA(isA<AgentClientOperationCancelled>()));
+      await expectLater(load, throwsA(isA<PracticeClientOperationCancelled>()));
       await cleanup;
       expect(source, everyElement(0));
     },
@@ -553,7 +553,7 @@ void main() {
     await expectLater(
       load,
       throwsA(
-        isA<AgentClientException>().having(
+        isA<PracticeClientException>().having(
           (error) => error.errorCode,
           'errorCode',
           'practice_media_request_timed_out',

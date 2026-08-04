@@ -4,8 +4,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/voice_capture_control.dart';
@@ -15,6 +14,7 @@ import 'package:speakup/features/coaching/preparation/preparation_controller.dar
 import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
@@ -34,13 +34,13 @@ bool _requiresEnglishRetry(String text) =>
     _ieltsChineseCharacter.hasMatch(text) &&
     !_ieltsEnglishLetter.hasMatch(text);
 
-bool isIeltsSpeakingFullMockSession(AgentController controller) =>
+bool isIeltsSpeakingFullMockSession(PracticeController controller) =>
     isIeltsSpeakingFullMockScene(
       controller.practiceSceneFamily,
       controller.practiceSceneModel,
     );
 
-bool isIeltsSpeakingSession(AgentController controller) =>
+bool isIeltsSpeakingSession(PracticeController controller) =>
     isIeltsSpeakingFullMockSession(controller) ||
     _ieltsPracticeModeForScene(controller.scene) != null;
 
@@ -81,7 +81,7 @@ class IeltsSpeakingMockPage extends StatefulWidget {
     super.key,
   });
 
-  final AgentController controller;
+  final PracticeController controller;
   final Future<bool> Function()? onExitRequested;
   final IeltsMockProgressStore? progressStore;
   final PreparationController? preparationController;
@@ -1662,7 +1662,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     required int completed,
     required int total,
     required int sectionStart,
-    List<AgentMessage>? messages,
+    List<PracticeMessage>? messages,
   }) {
     return Column(
       key: key,
@@ -1704,13 +1704,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     );
   }
 
-  List<AgentMessage> _sectionMessages(int sectionStart, int completed) {
+  List<PracticeMessage> _sectionMessages(int sectionStart, int completed) {
     final relevantCount = completed * 2 + 1;
     final all = widget.controller.practiceMessages
         .where(
           (message) =>
-              message.role == AgentMessageRole.assistant ||
-              message.role == AgentMessageRole.user,
+              message.role == PracticeMessageRole.assistant ||
+              message.role == PracticeMessageRole.user,
         )
         .toList(growable: false);
     if (all.length <= relevantCount) {
@@ -1719,7 +1719,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     return all.sublist(all.length - relevantCount);
   }
 
-  List<AgentMessage> get _part3ConversationMessages {
+  List<PracticeMessage> get _part3ConversationMessages {
     if (_part2TurnConfirmed) {
       return _sectionMessages(_part3Start, _part3CompletedTurns);
     }
@@ -1727,10 +1727,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final text = questions != null && questions.isNotEmpty
         ? questions.first
         : 'Do people often change their plans?';
-    return <AgentMessage>[
-      AgentMessage(
+    return <PracticeMessage>[
+      PracticeMessage(
         id: 'ielts-part3-preview-${_topicGroup?.id ?? 'question'}',
-        role: AgentMessageRole.assistant,
+        role: PracticeMessageRole.assistant,
         text: text,
       ),
     ];
@@ -1738,7 +1738,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   String _currentQuestionText() {
     for (final message in widget.controller.practiceMessages.reversed) {
-      if (message.role == AgentMessageRole.assistant) {
+      if (message.role == PracticeMessageRole.assistant) {
         return message.text;
       }
     }
@@ -1810,8 +1810,8 @@ class _ExamConversation extends StatelessWidget {
     this.speechFeedbackController,
   });
 
-  final List<AgentMessage> messages;
-  final AgentController controller;
+  final List<PracticeMessage> messages;
+  final PracticeController controller;
   final Set<String> revealedQuestionIds;
   final String? playingQuestionId;
   final String? narrationErrorQuestionId;
@@ -1828,7 +1828,7 @@ class _ExamConversation extends StatelessWidget {
       itemCount: messages.length,
       itemBuilder: (context, index) {
         final message = messages[index];
-        final assistant = message.role == AgentMessageRole.assistant;
+        final assistant = message.role == PracticeMessageRole.assistant;
         final candidateProjection =
             !assistant &&
                 message.speechFeedbackStatusUrl != null &&
@@ -1902,7 +1902,7 @@ class _ExaminerQuestionBubble extends StatelessWidget {
     required this.onToggleTranscript,
   });
 
-  final AgentMessage message;
+  final PracticeMessage message;
   final bool playing;
   final bool transcriptVisible;
   final bool playbackFailed;
@@ -1996,8 +1996,8 @@ class _ExaminerQuestionBubble extends StatelessWidget {
 }
 
 String _ieltsFeedbackSourceKey(
-  AgentController controller,
-  AgentMessage message,
+  PracticeController controller,
+  PracticeMessage message,
 ) => 'practice:${controller.practiceSessionId}:${message.id}';
 
 class _RecorderDock extends StatelessWidget {
@@ -2020,7 +2020,7 @@ class _RecorderDock extends StatelessWidget {
     required this.onOpenTextAnswer,
   });
 
-  final AgentController controller;
+  final PracticeController controller;
   final PracticeRecordingState? stateOverride;
   final bool? enabledOverride;
   final bool allowTextAnswer;

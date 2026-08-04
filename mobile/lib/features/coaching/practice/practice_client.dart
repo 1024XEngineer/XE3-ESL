@@ -1,4 +1,3 @@
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
@@ -217,9 +216,9 @@ final class FakePracticeClient
       sessionId: sessionId,
       questionId: questionId,
       candidateId: candidateId,
-      answer: AgentMessage(
+      answer: PracticeMessage(
         id: 'answer-${++_messageSequence}',
-        role: AgentMessageRole.user,
+        role: PracticeMessageRole.user,
         text: candidate.text,
       ),
       completedTurns: completedTurns,

@@ -2,9 +2,7 @@ import '../../support/scene_fixtures.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
@@ -16,7 +14,10 @@ import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+
+import 'preparation_test_fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -24,21 +25,26 @@ void main() {
   testWidgets(
     'training owns independent resumable practices without a home-thread precondition',
     (tester) async {
-      final agentClient = FakeAgentClient();
+      final agentClient = GoalAwareAgentClient();
       final practiceClient = _LifecyclePracticeClient();
       var agentOperationSequence = 0;
-      final agentController = AgentController(
+      final conversationController = ConversationController(
         client: agentClient,
-        practiceClient: practiceClient,
         clientIdFactory: (scope) =>
             '$scope-lifecycle-${++agentOperationSequence}',
       );
-      await agentController.initialize();
-      final homeThreadId = agentController.threadId!;
-      expect(agentController.threads, hasLength(1));
+      final practiceController = PracticeController(
+        client: practiceClient,
+        clientIdFactory: (scope) =>
+            '$scope-practice-${++agentOperationSequence}',
+      );
+      await conversationController.initialize();
+      final homeThreadId = conversationController.threadId!;
+      expect(conversationController.threads, hasLength(1));
 
       final workspaceController = PracticeWorkspaceController(
-        agentController: agentController,
+        conversationController: conversationController,
+        practiceController: practiceController,
         recordStore: MemoryPracticeLaunchRecordStore(),
       );
       await workspaceController.activateAccount('account-lifecycle-flow');
@@ -48,21 +54,23 @@ void main() {
       final launchController = PreparationLaunchController(
         client: launchClient,
         contextProvider: () {
-          final threadId = agentController.threadId;
-          final goalId = agentController.activeGoal?.id;
+          final threadId = conversationController.threadId;
+          final goalId = conversationController.activeGoalId;
           if (threadId == null || goalId == null) {
             return null;
           }
           return AgentPracticeContext(threadId: threadId, goalId: goalId);
         },
-        threadIdProvider: () => agentController.threadId,
+        threadIdProvider: () => conversationController.threadId,
         goalActivator:
             ({
               required threadId,
               required selection,
               required clientOperationId,
             }) async {
-              final goal = await agentController.activateGoalForScene(
+              final goal = await activateTestGoal(
+                goalClient: agentClient,
+                conversationController: conversationController,
                 threadId: threadId,
                 scene: selection.scene,
                 clientOperationId: clientOperationId,
@@ -81,8 +89,7 @@ void main() {
                 planId: bootstrap.session.planId,
                 scene: scene,
               );
-              await agentController.activateCreatedPractice(
-                threadId: context.threadId,
+              await practiceController.activateCreatedPractice(
                 scene: scene,
                 sessionId: bootstrap.session.id,
                 planId: bootstrap.session.planId,
@@ -100,12 +107,14 @@ void main() {
         launchController.dispose();
         workspaceController.dispose();
         preparationController.dispose();
-        agentController.dispose();
+        practiceController.dispose();
+        conversationController.dispose();
       });
 
       await tester.pumpWidget(
         SpeakUpApp.preview(
-          agentController: agentController,
+          conversationController: conversationController,
+          practiceController: practiceController,
           preparationController: preparationController,
           preparationLaunchController: launchController,
         ),
@@ -116,15 +125,15 @@ void main() {
       await _openScene(tester, _progressScene.id);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
-      final firstPracticeThreadId = agentController.threadId!;
-      final firstSessionId = agentController.practiceSessionId!;
+      final firstPracticeThreadId = conversationController.threadId!;
+      final firstSessionId = practiceController.practiceSessionId!;
       expect(firstPracticeThreadId, isNot(homeThreadId));
       expect(
         workspaceController.currentPracticeThreadId,
         firstPracticeThreadId,
       );
       expect(workspaceController.currentSessionId, firstSessionId);
-      expect(agentController.threads, hasLength(2));
+      expect(conversationController.threads, hasLength(2));
 
       await _tapVisible(
         tester,
@@ -136,16 +145,16 @@ void main() {
       );
       await _tapVisible(tester, find.byKey(const Key('immersive-submit-text')));
 
-      expect(agentController.completedTurns, 1);
-      expect(agentController.practiceSessionVersion, 2);
+      expect(practiceController.completedTurns, 1);
+      expect(practiceController.practiceSessionVersion, 2);
       expect(practiceClient.snapshotFor(firstSessionId)?.completedTurns, 1);
 
       await _leavePractice(tester);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsNothing);
       expect(find.byKey(const Key('practice-continuation')), findsNothing);
-      expect(agentController.threadId, homeThreadId);
-      expect(agentController.hasActivePractice, isFalse);
+      expect(conversationController.threadId, homeThreadId);
+      expect(practiceController.hasActivePractice, isFalse);
       expect(workspaceController.hasResumable, isTrue);
 
       await _tapVisible(tester, find.byKey(const Key('primary-tab-agent')));
@@ -155,14 +164,14 @@ void main() {
       );
       await _waitForPracticePage(tester);
 
-      expect(agentController.threadId, firstPracticeThreadId);
-      expect(agentController.hasActivePractice, isTrue);
+      expect(conversationController.threadId, firstPracticeThreadId);
+      expect(practiceController.hasActivePractice, isTrue);
       expect(workspaceController.errorMessage, isNull);
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
       expect(workspaceController.hasResumable, isTrue);
 
       await _leavePractice(tester);
-      expect(agentController.threadId, homeThreadId);
+      expect(conversationController.threadId, homeThreadId);
       await _tapVisible(
         tester,
         find.byKey(const Key('quick-action-continue-practice')),
@@ -170,16 +179,16 @@ void main() {
       await _waitForPracticePage(tester);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
-      expect(agentController.threadId, firstPracticeThreadId);
-      expect(agentController.practiceSessionId, firstSessionId);
-      expect(agentController.completedTurns, 1);
-      expect(agentController.practiceSessionVersion, 2);
+      expect(conversationController.threadId, firstPracticeThreadId);
+      expect(practiceController.practiceSessionId, firstSessionId);
+      expect(practiceController.completedTurns, 1);
+      expect(practiceController.practiceSessionVersion, 2);
 
       await _leavePractice(tester);
-      expect(agentController.threadId, homeThreadId);
+      expect(conversationController.threadId, homeThreadId);
 
-      expect(await agentController.createThread(), isTrue);
-      final unrelatedPracticeThreadId = agentController.threadId!;
+      expect(await conversationController.createThread(), isTrue);
+      final unrelatedPracticeThreadId = conversationController.threadId!;
       final unrelatedScene = testScene(
         id: 'unrelated-practice',
         name: '其他练习',
@@ -195,7 +204,9 @@ void main() {
           suggestedDurationSeconds: 600,
         ),
       );
-      await agentController.activateGoalForScene(
+      await activateTestGoal(
+        goalClient: agentClient,
+        conversationController: conversationController,
         threadId: unrelatedPracticeThreadId,
         scene: unrelatedScene,
         clientOperationId: 'unrelated-legacy-goal',
@@ -205,8 +216,7 @@ void main() {
         planId: 'unrelated-legacy-plan',
         scene: unrelatedScene,
       );
-      await agentController.activateCreatedPractice(
-        threadId: unrelatedPracticeThreadId,
+      await practiceController.activateCreatedPractice(
         scene: unrelatedScene,
         sessionId: 'unrelated-legacy-session',
         planId: 'unrelated-legacy-plan',
@@ -214,30 +224,30 @@ void main() {
         clientOperationId: 'unrelated-legacy-voice',
       );
       await tester.pump();
-      expect(agentController.hasActivePractice, isTrue);
+      expect(practiceController.hasActivePractice, isTrue);
       await _tapVisible(tester, find.byKey(const Key('primary-tab-scenes')));
       await _openScene(tester, _progressScene.id);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
-      expect(agentController.threadId, firstPracticeThreadId);
-      expect(agentController.threadId, isNot(unrelatedPracticeThreadId));
-      expect(agentController.practiceSessionId, firstSessionId);
-      expect(agentController.completedTurns, 1);
-      expect(agentController.practiceSessionVersion, 2);
+      expect(conversationController.threadId, firstPracticeThreadId);
+      expect(conversationController.threadId, isNot(unrelatedPracticeThreadId));
+      expect(practiceController.practiceSessionId, firstSessionId);
+      expect(practiceController.completedTurns, 1);
+      expect(practiceController.practiceSessionVersion, 2);
 
       await _leavePractice(tester);
-      expect(agentController.threadId, homeThreadId);
+      expect(conversationController.threadId, homeThreadId);
 
       expect(find.byKey(const Key('practice-continuation')), findsNothing);
       await _openScene(tester, _progressScene.id);
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
       expect(find.text('开始新的练习？'), findsNothing);
-      expect(agentController.practiceSessionId, firstSessionId);
-      expect(agentController.completedTurns, 1);
+      expect(practiceController.practiceSessionId, firstSessionId);
+      expect(practiceController.completedTurns, 1);
 
       await _leavePractice(tester);
-      expect(agentController.threadId, homeThreadId);
+      expect(conversationController.threadId, homeThreadId);
 
       await _openScene(tester, _hotelScene.id);
 
@@ -253,14 +263,17 @@ void main() {
 
       expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
       expect(practiceClient.endedSessionIds, [firstSessionId]);
-      expect(practiceClient.snapshotFor(firstPracticeThreadId), isNull);
-      expect(agentController.threadId, isNot(firstPracticeThreadId));
-      expect(agentController.threadId, isNot(homeThreadId));
-      expect(agentController.practiceSessionId, isNot(firstSessionId));
-      expect(agentController.practiceSessionId, launchClient.sessionIds.last);
-      expect(agentController.completedTurns, 0);
+      expect(practiceClient.snapshotFor(firstSessionId), isNull);
+      expect(conversationController.threadId, isNot(firstPracticeThreadId));
+      expect(conversationController.threadId, isNot(homeThreadId));
+      expect(practiceController.practiceSessionId, isNot(firstSessionId));
+      expect(
+        practiceController.practiceSessionId,
+        launchClient.sessionIds.last,
+      );
+      expect(practiceController.completedTurns, 0);
       expect(workspaceController.currentSceneId, _hotelScene.id);
-      expect(agentController.threads, hasLength(4));
+      expect(conversationController.threads, hasLength(4));
       expect(launchClient.sessionIds, hasLength(2));
     },
   );
@@ -599,9 +612,9 @@ final class _LifecyclePracticeClient
       candidateId: 'text-candidate-$sessionId-$completedTurns',
       sceneFamily: current.sceneFamily,
       sceneModel: current.sceneModel,
-      answer: AgentMessage(
+      answer: PracticeMessage(
         id: 'answer-$sessionId-$completedTurns',
-        role: AgentMessageRole.user,
+        role: PracticeMessageRole.user,
         text: answerText.trim(),
       ),
       completedTurns: completedTurns,

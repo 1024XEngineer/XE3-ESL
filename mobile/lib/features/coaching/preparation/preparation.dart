@@ -4,7 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
@@ -36,7 +36,7 @@ class PreparationPage extends StatefulWidget {
   const PreparationPage({
     this.showBackButton = false,
     this.previewMode = false,
-    this.agentController,
+    this.practiceController,
     this.preparationController,
     this.launchController,
     this.onOpenJobPreparation,
@@ -47,7 +47,7 @@ class PreparationPage extends StatefulWidget {
 
   final bool showBackButton;
   final bool previewMode;
-  final AgentController? agentController;
+  final PracticeController? practiceController;
   final PreparationController? preparationController;
   final PreparationLaunchController? launchController;
   final VoidCallback? onOpenJobPreparation;
@@ -68,7 +68,7 @@ class _PreparationPageState extends State<PreparationPage> {
   @override
   void initState() {
     super.initState();
-    widget.agentController?.addListener(_rebuild);
+    widget.practiceController?.addListener(_rebuild);
     widget.preparationController?.addListener(_rebuild);
     widget.launchController?.addListener(_rebuild);
     _backgroundController = _newBackgroundController(widget.launchController);
@@ -78,9 +78,9 @@ class _PreparationPageState extends State<PreparationPage> {
   @override
   void didUpdateWidget(covariant PreparationPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.agentController != widget.agentController) {
-      oldWidget.agentController?.removeListener(_rebuild);
-      widget.agentController?.addListener(_rebuild);
+    if (oldWidget.practiceController != widget.practiceController) {
+      oldWidget.practiceController?.removeListener(_rebuild);
+      widget.practiceController?.addListener(_rebuild);
     }
     if (oldWidget.preparationController != widget.preparationController) {
       oldWidget.preparationController?.removeListener(_rebuild);
@@ -97,7 +97,7 @@ class _PreparationPageState extends State<PreparationPage> {
 
   @override
   void dispose() {
-    widget.agentController?.removeListener(_rebuild);
+    widget.practiceController?.removeListener(_rebuild);
     widget.preparationController?.removeListener(_rebuild);
     widget.launchController?.removeListener(_rebuild);
     _backgroundController?.dispose();
@@ -374,24 +374,6 @@ class _PreparationPageState extends State<PreparationPage> {
     );
   }
 
-  Future<void> _retryPreviewOperation() async {
-    final controller = widget.agentController;
-    if (controller == null || !controller.canRetry) {
-      return;
-    }
-    await controller.retryLastOperation();
-    if (!mounted ||
-        controller.errorMessage != null ||
-        controller.activeGoal == null) {
-      return;
-    }
-    if (widget.onSceneSelected case final callback?) {
-      callback();
-    } else if (widget.showBackButton) {
-      Navigator.of(context).maybePop();
-    }
-  }
-
   Future<void> _continueCurrentPractice() async {
     final launch = widget.launchController;
     if (launch?.hasResumablePractice ?? false) {
@@ -403,11 +385,7 @@ class _PreparationPageState extends State<PreparationPage> {
       }
       return;
     }
-    final agent = widget.agentController;
-    if (agent?.activeGoal == null) {
-      return;
-    }
-    if (agent?.hasActivePractice ?? false) {
+    if (widget.practiceController?.hasActivePractice ?? false) {
       widget.onPracticeStarted?.call();
     } else if (widget.onSceneSelected case final callback?) {
       callback();
@@ -670,8 +648,6 @@ class _PreparationPageState extends State<PreparationPage> {
   }
 
   Widget _buildPreview() {
-    final controller = widget.agentController;
-    final practiceAvailable = controller?.supportsPracticeFlow ?? true;
     final selectedHub = _selectedHub;
     if (selectedHub != null) {
       return ListView(
@@ -706,22 +682,6 @@ class _PreparationPageState extends State<PreparationPage> {
             titleKey: Key('practice-hub-title-${selectedHub.name}'),
           ),
           const SizedBox(height: 24),
-          if (controller?.isBusy ?? false)
-            const LinearProgressIndicator(
-              key: Key('scene-selection-progress'),
-              minHeight: 2,
-            ),
-          if (controller?.errorMessage case final message?) ...[
-            _InlineFailure(
-              key: const Key('scene-operation-error'),
-              message: message,
-              retryKey: const Key('scene-retry-operation'),
-              onRetry: controller?.canRetry ?? false
-                  ? _retryPreviewOperation
-                  : null,
-            ),
-            const SizedBox(height: 14),
-          ],
           const _HubEmpty(message: '连接场景服务后即可查看练习。'),
         ],
       );
@@ -741,11 +701,7 @@ class _PreparationPageState extends State<PreparationPage> {
         ),
         const SizedBox(height: 8),
         Text(
-          practiceAvailable
-              ? widget.previewMode
-                    ? '今天想练什么？'
-                    : '练习内容暂时无法加载，请稍后重试。'
-              : '练习功能正在准备中，目前可以先使用文字陪练。',
+          widget.previewMode ? '今天想练什么？' : '练习内容暂时无法加载，请稍后重试。',
           key: const Key('practice-availability-message'),
           style: PreparationDesign.body,
         ),
@@ -783,10 +739,6 @@ class _PreparationPageState extends State<PreparationPage> {
           assetPath: 'assets/images/scenes/daily-tutor.jpg',
           onPressed: () => setState(() => _selectedHub = _PracticeHub.roleplay),
         ),
-        if (!practiceAvailable) ...[
-          const SizedBox(height: 16),
-          const _HubEmpty(message: '当前可以先使用文字陪练。'),
-        ],
       ],
     );
   }
@@ -2704,7 +2656,6 @@ class _InlineFailure extends StatelessWidget {
     required this.message,
     required this.retryKey,
     this.onRetry,
-    super.key,
   });
 
   final String message;

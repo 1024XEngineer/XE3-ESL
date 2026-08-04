@@ -5,18 +5,20 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/agent/composer/composer_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
 import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/review/evaluation_report_presentation.dart';
 import 'package:speakup/features/coaching/review/review_history_client.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/review/review_summary.dart';
 import 'package:speakup/features/coaching/review/wire_review_history_client.dart';
 
 import 'evaluation_report_fixture.dart';
@@ -316,14 +318,16 @@ void main() {
   ) async {
     final client = _SequencedControlledClient();
     final historyController = ReviewHistoryController(client: client);
-    final agentController = await _completedAgentController(_newerId);
+    final harness = await _completedShellHarness(_newerId);
     addTearDown(historyController.dispose);
-    addTearDown(agentController.dispose);
+    addTearDown(harness.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
         home: SpeakUpShell(
-          agentController: agentController,
+          conversationController: harness.conversation,
+          composerController: harness.composer,
+          practiceController: harness.practice,
           reviewHistoryController: historyController,
         ),
       ),
@@ -346,19 +350,21 @@ void main() {
     expect(client.requests, hasLength(1));
   });
 
-  testWidgets('Agent restore does not trigger Review history loading', (
+  testWidgets('Practice restore does not trigger Review history loading', (
     tester,
   ) async {
     final client = _SequencedControlledClient();
     final historyController = ReviewHistoryController(client: client);
-    final agentController = _configuredCompletedAgentController(_newerId);
+    final harness = _configuredCompletedShellHarness(_newerId);
     addTearDown(historyController.dispose);
-    addTearDown(agentController.dispose);
+    addTearDown(harness.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
         home: SpeakUpShell(
-          agentController: agentController,
+          conversationController: harness.conversation,
+          composerController: harness.composer,
+          practiceController: harness.practice,
           reviewHistoryController: historyController,
         ),
       ),
@@ -368,7 +374,7 @@ void main() {
     expect(client.requests, isEmpty);
     expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
 
-    await _restoreCompletedPractice(agentController, _newerId);
+    await _restoreCompletedPractice(harness, _newerId);
     await tester.pump();
 
     expect(client.requests, isEmpty);
@@ -392,13 +398,13 @@ void main() {
   ) async {
     final firstClient = _SequencedControlledClient();
     final firstHistoryController = ReviewHistoryController(client: firstClient);
-    final firstAgentController = await _completedAgentController(_newerId);
-    final secondAgentController = await _completedAgentController(_olderId);
+    final firstHarness = await _completedShellHarness(_newerId);
+    final secondHarness = await _completedShellHarness(_olderId);
     addTearDown(firstHistoryController.dispose);
-    addTearDown(firstAgentController.dispose);
-    addTearDown(secondAgentController.dispose);
+    addTearDown(firstHarness.dispose);
+    addTearDown(secondHarness.dispose);
 
-    var agentController = firstAgentController;
+    var harness = firstHarness;
     late StateSetter rebuild;
     await tester.pumpWidget(
       MaterialApp(
@@ -406,7 +412,9 @@ void main() {
           builder: (context, setState) {
             rebuild = setState;
             return SpeakUpShell(
-              agentController: agentController,
+              conversationController: harness.conversation,
+              composerController: harness.composer,
+              practiceController: harness.practice,
               reviewHistoryController: firstHistoryController,
             );
           },
@@ -427,7 +435,7 @@ void main() {
     await tester.pump();
     expect(firstClient.requests, hasLength(1));
 
-    rebuild(() => agentController = secondAgentController);
+    rebuild(() => harness = secondHarness);
     await tester.pump();
     for (var index = 0; index < 5; index++) {
       rebuild(() {});
@@ -1295,40 +1303,61 @@ final class _FixedItemsClient implements ReviewHistoryClient {
   Future<void> clearAccountState() async {}
 }
 
-Future<AgentController> _completedAgentController(String identity) async {
-  final controller = _configuredCompletedAgentController(identity);
-  await _restoreCompletedPractice(controller, identity);
-  return controller;
+Future<_ReviewShellHarness> _completedShellHarness(String identity) async {
+  final harness = _configuredCompletedShellHarness(identity);
+  await _restoreCompletedPractice(harness, identity);
+  return harness;
 }
 
-AgentController _configuredCompletedAgentController(String identity) {
+_ReviewShellHarness _configuredCompletedShellHarness(String identity) {
   final scene = testScenes.first;
   final sessionId = _reviewSessionId(identity);
-  return AgentController(
-    client: FakeAgentClient(),
-    practiceClient: FakePracticeClient(
-      sceneFamily: scene.family,
-      sceneModel: scene.model,
-      initialSnapshot: testPracticeSnapshot(
-        scene: scene,
-        sessionId: sessionId,
-        completedTurns: 3,
+  final conversation = ConversationController(client: FakeAgentClient());
+  return _ReviewShellHarness(
+    conversation: conversation,
+    composer: ComposerController(conversationController: conversation),
+    practice: PracticeController(
+      client: FakePracticeClient(
+        sceneFamily: scene.family,
+        sceneModel: scene.model,
+        initialSnapshot: testPracticeSnapshot(
+          scene: scene,
+          sessionId: sessionId,
+          completedTurns: 3,
+        ),
       ),
     ),
   );
 }
 
 Future<void> _restoreCompletedPractice(
-  AgentController controller,
+  _ReviewShellHarness harness,
   String identity,
 ) async {
   final scene = testScenes.first;
-  await controller.initialize();
-  await controller.selectScene(scene);
-  await controller.restoreCreatedPractice(
+  await harness.conversation.initialize();
+  await harness.practice.restoreCreatedPractice(
     sessionId: _reviewSessionId(identity),
     scene: scene,
   );
+}
+
+final class _ReviewShellHarness {
+  const _ReviewShellHarness({
+    required this.conversation,
+    required this.composer,
+    required this.practice,
+  });
+
+  final ConversationController conversation;
+  final ComposerController composer;
+  final PracticeController practice;
+
+  void dispose() {
+    composer.dispose();
+    conversation.dispose();
+    practice.dispose();
+  }
 }
 
 String _reviewSessionId(String reviewId) => 'session-$reviewId';
@@ -1336,7 +1365,7 @@ String _reviewSessionId(String reviewId) => 'session-$reviewId';
 ReviewHistoryItem _item(String id, {required int score}) {
   final createdAt = DateTime.utc(2026, 7, 26, 10, score % 60);
   final completedAt = createdAt.add(const Duration(minutes: 1));
-  final review = AgentReview(
+  final review = ReviewSummary(
     id: id,
     title: '本次练习 · $score 分',
     summary: 'summary-$score',
@@ -1404,7 +1433,7 @@ ReviewHistoryItem _fixtureItem({
 }) {
   final completed = completedAt ?? DateTime(2026, 7, 26, 12, index);
   final created = completed.subtract(const Duration(minutes: 16));
-  final review = AgentReview(
+  final review = ReviewSummary(
     id: 'review-fixture-$index',
     title: title ?? '英文面试练习 · ${90 - index} 分',
     summary: summary ?? 'fixture-summary-$index',

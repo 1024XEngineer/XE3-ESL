@@ -1,8 +1,8 @@
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
+import 'package:speakup/features/coaching/review/review_summary.dart';
 
 EvaluationReport evaluationReportFixture({
-  required AgentReview review,
+  required ReviewSummary review,
   required String practiceSessionId,
   required DateTime completedAt,
   double score = 80,

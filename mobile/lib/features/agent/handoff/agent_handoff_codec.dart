@@ -1,5 +1,4 @@
 import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'package:speakup/features/coaching/scene/scene.dart';
 
 const _confirmPracticePlanFields = <String>{
   'type',
@@ -17,6 +16,22 @@ const _confirmPracticePlanFields = <String>{
   'max_effective_turns',
   'executable_status',
   'confirmation_prompt',
+};
+
+const _sceneFamilies = <String>{'INTERVIEW', 'EXAM', 'WORKPLACE', 'DAILY'};
+
+const _sceneModels = <String>{
+  'PROJECT_EXPERIENCE_DEEP_DIVE',
+  'INTERVIEW_BASIC_DIALOGUE',
+  'IELTS_SPEAKING_PART_1',
+  'IELTS_SPEAKING_PART_2',
+  'IELTS_SPEAKING_PART_3',
+  'IELTS_SPEAKING_FULL_MOCK',
+  'EXAM_BASIC_DIALOGUE',
+  'PROGRESS_AND_RISK_UPDATE',
+  'WORKPLACE_BASIC_DIALOGUE',
+  'HOTEL_CHECKIN_AND_ISSUE_HANDLING',
+  'DAILY_BASIC_DIALOGUE',
 };
 
 final _uuidPattern = RegExp(
@@ -62,8 +77,8 @@ ConfirmPracticePlanHandoff _decodeConfirmPracticePlanHandoff(Object? value) {
   final minTurns = _integer(object['min_effective_turns'], 1, 100);
   final maxTurns = _integer(object['max_effective_turns'], 1, 100);
   if (_string(object['type'], 1, 64) != 'confirm_practice_plan' ||
-      SceneFamily.fromWireValue(sceneFamily) == null ||
-      SceneModel.fromWireValue(sceneModel) == null ||
+      !_sceneFamilies.contains(sceneFamily) ||
+      !_sceneModels.contains(sceneModel) ||
       roles.toSet().length != roles.length ||
       maxTurns < minTurns ||
       object['executable_status'] != 'ready') {

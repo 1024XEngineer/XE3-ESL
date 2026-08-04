@@ -3,14 +3,13 @@ import 'package:speakup/features/coaching/scene/scene.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/agent/agent_voice_widgets.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
 import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/review/interview_report_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
@@ -26,7 +25,7 @@ typedef ImmersiveAsyncAction = Future<void> Function();
 
 class ImmersiveRoleplayPage extends StatefulWidget {
   const ImmersiveRoleplayPage({
-    required this.agentController,
+    required this.practiceController,
     this.avatarSurfaceBuilder,
     this.avatarStatusLabel = '正在准备画面',
     this.onBeforeStartRecording,
@@ -42,7 +41,7 @@ class ImmersiveRoleplayPage extends StatefulWidget {
     super.key,
   });
 
-  final AgentController agentController;
+  final PracticeController practiceController;
   final ImmersiveAvatarSurfaceBuilder? avatarSurfaceBuilder;
   final String? avatarStatusLabel;
   final ImmersiveAsyncAction? onBeforeStartRecording;
@@ -80,8 +79,8 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   @override
   void initState() {
     super.initState();
-    _observedMessageCount = widget.agentController.messages.length;
-    widget.agentController.addListener(_handleControllerState);
+    _observedMessageCount = widget.practiceController.practiceMessages.length;
+    widget.practiceController.addListener(_handleControllerState);
     widget.speechFeedbackController?.addListener(_handleFeedbackState);
     _syncSpeechFeedbackSources();
     _syncRecordingTimer();
@@ -99,7 +98,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
   void didUpdateWidget(covariant ImmersiveRoleplayPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     final controllerChanged =
-        oldWidget.agentController != widget.agentController;
+        oldWidget.practiceController != widget.practiceController;
     final feedbackControllerChanged =
         oldWidget.speechFeedbackController != widget.speechFeedbackController;
     if (controllerChanged || feedbackControllerChanged) {
@@ -110,9 +109,9 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
       widget.speechFeedbackController?.addListener(_handleFeedbackState);
     }
     if (controllerChanged) {
-      oldWidget.agentController.removeListener(_handleControllerState);
-      _observedMessageCount = widget.agentController.messages.length;
-      widget.agentController.addListener(_handleControllerState);
+      oldWidget.practiceController.removeListener(_handleControllerState);
+      _observedMessageCount = widget.practiceController.practiceMessages.length;
+      widget.practiceController.addListener(_handleControllerState);
       _syncRecordingTimer();
     }
     _syncSpeechFeedbackSources();
@@ -121,14 +120,14 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
 
   @override
   void dispose() {
-    widget.agentController.removeListener(_handleControllerState);
+    widget.practiceController.removeListener(_handleControllerState);
     widget.speechFeedbackController?.removeListener(_handleFeedbackState);
     _removeSpeechFeedbackSources(widget.speechFeedbackController);
     _recordingTicker?.cancel();
     _conversationScrollController.dispose();
     _textController.dispose();
     _textFocusNode.dispose();
-    unawaited(widget.agentController.stopPracticeAudio(notify: false));
+    unawaited(widget.practiceController.stopPracticeAudio(notify: false));
     super.dispose();
   }
 
@@ -136,7 +135,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     if (!mounted) {
       return;
     }
-    final messageCount = widget.agentController.messages.length;
+    final messageCount = widget.practiceController.practiceMessages.length;
     final shouldFollowConversation = messageCount != _observedMessageCount;
     _observedMessageCount = messageCount;
     _syncRecordingTimer();
@@ -166,10 +165,13 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
       return;
     }
     final current = <String, String>{};
-    for (final message in widget.agentController.messages) {
+    for (final message in widget.practiceController.practiceMessages) {
       final statusUrl = message.speechFeedbackStatusUrl;
       if (statusUrl != null) {
-        current[_immersiveFeedbackSourceKey(widget.agentController, message)] =
+        current[_immersiveFeedbackSourceKey(
+              widget.practiceController,
+              message,
+            )] =
             statusUrl;
       }
     }
@@ -216,7 +218,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
 
   void _syncRecordingTimer() {
     final isRecording =
-        widget.agentController.recordingState ==
+        widget.practiceController.recordingState ==
         PracticeRecordingState.recording;
     if (isRecording) {
       if (_recordingTicker != null) {
@@ -239,13 +241,14 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     _recordingTicker = null;
     _recordingStartedAt = null;
     _recordingSeconds = 0;
-    if (widget.agentController.recordingState != PracticeRecordingState.idle) {
+    if (widget.practiceController.recordingState !=
+        PracticeRecordingState.idle) {
       _textMode = false;
     }
   }
 
   void _scheduleInterviewReportIfNeeded() {
-    final controller = widget.agentController;
+    final controller = widget.practiceController;
     final sessionId = controller.practiceSessionId;
     if (widget.interviewReportController == null ||
         sessionId == null ||
@@ -262,8 +265,8 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     _scheduledInterviewReportSessionId = sessionId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
-          widget.agentController.practiceSessionId != sessionId ||
-          widget.agentController.recordingState !=
+          widget.practiceController.practiceSessionId != sessionId ||
+          widget.practiceController.recordingState !=
               PracticeRecordingState.completed) {
         if (_scheduledInterviewReportSessionId == sessionId) {
           _scheduledInterviewReportSessionId = null;
@@ -278,15 +281,15 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
 
   Future<void> _openInterviewReport() async {
     final reportController = widget.interviewReportController;
-    final agentController = widget.agentController;
-    final sessionId = agentController.practiceSessionId;
+    final practiceController = widget.practiceController;
+    final sessionId = practiceController.practiceSessionId;
     if (reportController == null ||
         sessionId == null ||
-        agentController.recordingState != PracticeRecordingState.completed ||
+        practiceController.recordingState != PracticeRecordingState.completed ||
         _interviewReportRouteActive ||
         !isInterviewPracticeScene(
-          agentController.practiceSceneFamily,
-          agentController.practiceSceneModel,
+          practiceController.practiceSceneFamily,
+          practiceController.practiceSceneModel,
         )) {
       return;
     }
@@ -297,7 +300,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
           builder: (_) => InterviewReportPage(
             practiceSessionId: sessionId,
             controller: reportController,
-            title: '${widget.agentController.scene?.name ?? '面试'} · 复盘',
+            title: '${widget.practiceController.scene?.name ?? '面试'} · 复盘',
             speechFeedbackController: widget.speechFeedbackController,
             speechFeedbackSourceKeys: List<String>.unmodifiable(
               _feedbackSources.keys,
@@ -319,7 +322,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     if (!mounted) {
       return;
     }
-    final submitted = await widget.agentController.submitPracticeText(
+    final submitted = await widget.practiceController.submitPracticeText(
       _textController.text,
     );
     if (!mounted || !submitted) {
@@ -384,7 +387,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
 
   @override
   Widget build(BuildContext context) {
-    final scene = widget.agentController.scene;
+    final scene = widget.practiceController.scene;
     return PopScope<void>(
       canPop: widget.onExitRequested == null || _exitApproved,
       onPopInvokedWithResult: (didPop, _) {
@@ -409,13 +412,13 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
                           : widget.avatarSurfaceBuilder,
                       statusLabel: widget.avatarStatusLabel,
                       latestAssistantMessage: _latestAssistantMessage(
-                        widget.agentController.messages,
+                        widget.practiceController.practiceMessages,
                       ),
                       exitInFlight: _exitInFlight,
                       onExit: _requestExit,
                     );
                     final conversation = _ConversationPanel(
-                      controller: widget.agentController,
+                      controller: widget.practiceController,
                       scrollController: _conversationScrollController,
                       textController: _textController,
                       textFocusNode: _textFocusNode,
@@ -476,7 +479,7 @@ class _AvatarStage extends StatelessWidget {
   final SceneDefinition scene;
   final ImmersiveAvatarSurfaceBuilder? surfaceBuilder;
   final String? statusLabel;
-  final AgentMessage? latestAssistantMessage;
+  final PracticeMessage? latestAssistantMessage;
   final bool exitInFlight;
   final VoidCallback onExit;
 
@@ -649,7 +652,7 @@ class _ConversationPanel extends StatelessWidget {
     required this.onOpenReport,
   });
 
-  final AgentController controller;
+  final PracticeController controller;
   final ScrollController scrollController;
   final TextEditingController textController;
   final FocusNode textFocusNode;
@@ -667,7 +670,7 @@ class _ConversationPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final messages = controller.messages;
+    final messages = controller.practiceMessages;
     return ColoredBox(
       color: SpeakUpDesign.surface,
       child: Column(
@@ -698,9 +701,8 @@ class _ConversationPanel extends StatelessWidget {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            AgentMessageBubble(
+                            PracticeMessageBubble(
                               message: message,
-                              voiceController: controller.voiceController,
                               polishedText: _polishedText(projection),
                               polishLoading: projection?.isPolling ?? false,
                             ),
@@ -768,7 +770,7 @@ class _ConversationPanel extends StatelessWidget {
     );
   }
 
-  SpeechFeedbackProjection? _feedbackProjection(AgentMessage message) {
+  SpeechFeedbackProjection? _feedbackProjection(PracticeMessage message) {
     if (message.speechFeedbackStatusUrl == null ||
         speechFeedbackController == null) {
       return null;
@@ -811,7 +813,7 @@ class _ConversationHeader extends StatelessWidget {
     required this.replayPlaying,
   });
 
-  final AgentController controller;
+  final PracticeController controller;
   final ImmersiveAsyncAction? onReplayQuestion;
   final bool replayLoading;
   final bool replayPlaying;
@@ -927,7 +929,7 @@ class _ImmersiveComposer extends StatefulWidget {
     required this.onOpenReport,
   });
 
-  final AgentController controller;
+  final PracticeController controller;
   final TextEditingController textController;
   final FocusNode textFocusNode;
   final bool textMode;
@@ -1098,7 +1100,7 @@ class _RecordingComposer extends StatelessWidget {
 class _PendingImmersiveAudio extends StatelessWidget {
   const _PendingImmersiveAudio({required this.controller});
 
-  final AgentController controller;
+  final PracticeController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -1138,7 +1140,7 @@ class _PendingImmersiveAudio extends StatelessWidget {
 class _TranscriptComposer extends StatelessWidget {
   const _TranscriptComposer({required this.controller});
 
-  final AgentController controller;
+  final PracticeController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -1226,20 +1228,20 @@ class _ComposerAction extends StatelessWidget {
 }
 
 String _immersiveFeedbackSourceKey(
-  AgentController controller,
-  AgentMessage message,
+  PracticeController controller,
+  PracticeMessage message,
 ) => 'practice:${controller.practiceSessionId}:${message.id}';
 
-AgentMessage? _latestAssistantMessage(List<AgentMessage> messages) {
+PracticeMessage? _latestAssistantMessage(List<PracticeMessage> messages) {
   for (final message in messages.reversed) {
-    if (message.role == AgentMessageRole.assistant) {
+    if (message.role == PracticeMessageRole.assistant) {
       return message;
     }
   }
   return null;
 }
 
-bool _canTriggerImmersiveReplay(AgentController controller) {
+bool _canTriggerImmersiveReplay(PracticeController controller) {
   if (controller.isBusy) {
     return false;
   }

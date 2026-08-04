@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/transport_security.dart';
@@ -182,7 +183,7 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
       );
       _requireGeneration(generation);
       if (!isSameAuthSessionCredential(_credentialProvider(), credential)) {
-        throw const AgentClientOperationCancelled();
+        throw const PracticeClientOperationCancelled();
       }
 
       // Deliberately no Authorization header: the signed HTTPS URL is the
@@ -202,7 +203,7 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
       try {
         _requireGeneration(generation);
         if (!isSameAuthSessionCredential(_credentialProvider(), credential)) {
-          throw const AgentClientOperationCancelled();
+          throw const PracticeClientOperationCancelled();
         }
         _requireSignedAudioStatus(audio);
         _requireWave(audio);
@@ -325,7 +326,7 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
     try {
       _requireGeneration(generation);
       if (!isSameAuthSessionCredential(_credentialProvider(), credential)) {
-        throw const AgentClientOperationCancelled();
+        throw const PracticeClientOperationCancelled();
       }
       if (response.statusCode == HttpStatus.unauthorized) {
         unawaited(
@@ -360,26 +361,28 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
           ),
         );
       }
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.network,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.network,
         errorCode: 'practice_media_request_timed_out',
         retryable: true,
       );
-    } on AgentClientException {
+    } on PracticeClientException {
       rethrow;
     } on IOException {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.network,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.network,
         retryable: true,
       );
     } catch (_) {
-      throw const AgentClientException(kind: AgentClientFailureKind.unexpected);
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.unexpected,
+      );
     }
   }
 
   Future<T> _run<T>(Future<T> Function(int generation) operation) {
     if (_disposed) {
-      return Future<T>.error(const AgentClientOperationCancelled());
+      return Future<T>.error(const PracticeClientOperationCancelled());
     }
     final generation = _accountGeneration;
     final completion = Completer<void>();
@@ -393,8 +396,8 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
   AuthSessionCredential _requireCredential() {
     final credential = _credentialProvider();
     if (credential == null) {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.authenticationRequired,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.authenticationRequired,
         statusCode: HttpStatus.unauthorized,
       );
     }
@@ -403,7 +406,7 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
 
   void _requireGeneration(int generation) {
     if (_disposed || generation != _accountGeneration) {
-      throw const AgentClientOperationCancelled();
+      throw const PracticeClientOperationCancelled();
     }
   }
 
@@ -551,16 +554,16 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
     } catch (_) {
       throw _invalidResponse();
     }
-    throw AgentClientException(
+    throw PracticeClientException(
       kind: switch (response.statusCode) {
-        HttpStatus.badRequest => AgentClientFailureKind.invalidRequest,
+        HttpStatus.badRequest => PracticeClientFailureKind.invalidRequest,
         HttpStatus.unauthorized =>
-          AgentClientFailureKind.authenticationRequired,
-        HttpStatus.notFound => AgentClientFailureKind.notFound,
-        HttpStatus.conflict => AgentClientFailureKind.conflict,
-        HttpStatus.tooManyRequests => AgentClientFailureKind.rateLimited,
-        >= 500 => AgentClientFailureKind.server,
-        _ => AgentClientFailureKind.unexpected,
+          PracticeClientFailureKind.authenticationRequired,
+        HttpStatus.notFound => PracticeClientFailureKind.notFound,
+        HttpStatus.conflict => PracticeClientFailureKind.conflict,
+        HttpStatus.tooManyRequests => PracticeClientFailureKind.rateLimited,
+        >= 500 => PracticeClientFailureKind.server,
+        _ => PracticeClientFailureKind.unexpected,
       },
       statusCode: response.statusCode,
       errorCode: code,
@@ -578,10 +581,10 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
         response.statusCode == HttpStatus.requestTimeout ||
         response.statusCode == HttpStatus.tooManyRequests ||
         response.statusCode >= 500;
-    throw AgentClientException(
+    throw PracticeClientException(
       kind: retryable
-          ? AgentClientFailureKind.network
-          : AgentClientFailureKind.invalidResponse,
+          ? PracticeClientFailureKind.network
+          : PracticeClientFailureKind.invalidResponse,
       statusCode: response.statusCode,
       errorCode: 'recording_playback_capability_rejected',
       retryable: retryable,
@@ -692,9 +695,9 @@ String? _headerRaw(Map<String, String> headers, String name) {
       .firstOrNull;
 }
 
-AgentClientException _invalidResponse() {
-  return const AgentClientException(
-    kind: AgentClientFailureKind.invalidResponse,
+PracticeClientException _invalidResponse() {
+  return const PracticeClientException(
+    kind: PracticeClientFailureKind.invalidResponse,
     retryable: true,
   );
 }

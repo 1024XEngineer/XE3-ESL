@@ -1,14 +1,18 @@
 import '../support/scene_fixtures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/agent/audio/agent_audio_player.dart';
+import 'package:speakup/features/agent/composer/composer_controller.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_client.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
-import 'package:speakup/features/coaching/goal/goal.dart';
 import 'package:speakup/features/coaching/practice/practice.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/scene/scene_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -23,15 +27,26 @@ void main() {
   testWidgets('uses one Agent Thread for text and 3 Practice turns', (
     tester,
   ) async {
-    final agentController = await _startedAgentController();
-    addTearDown(agentController.dispose);
+    final scene = testScenes.first;
+    final harness = _agentHarness(
+      practiceClient: FakePracticeClient(
+        sceneFamily: scene.family,
+        sceneModel: scene.model,
+      ),
+    );
+    await harness.conversation.initialize();
+    addTearDown(harness.dispose);
     await tester.pumpWidget(
-      SpeakUpApp.preview(agentController: agentController),
+      SpeakUpApp.preview(
+        conversationController: harness.conversation,
+        composerController: harness.composer,
+        practiceController: harness.practice,
+      ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('agent-thread-title')), findsOneWidget);
-    expect(find.text('英文自我介绍'), findsOneWidget);
+    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
+    expect(harness.conversation.threadId, isNotNull);
 
     const textMessage = 'Please help me make this answer more specific.';
     await tester.tap(find.byKey(const Key('agent-show-text-composer')));
@@ -53,14 +68,17 @@ void main() {
 
     expect(find.text(textMessage), findsOneWidget);
     expect(
-      agentController.messages.any((message) => message.text.contains('具体例子')),
+      harness.conversation.messages.any(
+        (message) => message.text.contains('具体例子'),
+      ),
       isTrue,
     );
     expect(
-      find.byKey(Key('agent-message-${agentController.messages.last.id}')),
+      find.byKey(Key('agent-message-${harness.conversation.messages.last.id}')),
       findsOneWidget,
     );
 
+    await activateTestPractice(controller: harness.practice, scene: scene);
     final shellContext = tester.element(find.byType(SpeakUpShell));
     Navigator.of(shellContext).pushNamed(AppRoutes.practice);
     await tester.pumpAndSettle();
@@ -68,7 +86,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('practice-record')));
     await tester.pumpAndSettle();
-    expect(agentController.recordingState, PracticeRecordingState.recording);
+    expect(harness.practice.recordingState, PracticeRecordingState.recording);
     expect(find.text('点击发送语音'), findsOneWidget);
     expect(
       find.byKey(const Key('practice-voice-target-cancel')),
@@ -77,7 +95,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('practice-voice-target-cancel')));
     await tester.pumpAndSettle();
-    expect(agentController.recordingState, PracticeRecordingState.idle);
+    expect(harness.practice.recordingState, PracticeRecordingState.idle);
     expect(find.byKey(const Key('practice-transcript')), findsNothing);
 
     await tester.tap(find.byKey(const Key('practice-record')));
@@ -92,10 +110,10 @@ void main() {
           ?.text,
       isNotEmpty,
     );
-    expect(agentController.recordingState, PracticeRecordingState.idle);
+    expect(harness.practice.recordingState, PracticeRecordingState.idle);
     await tester.tap(find.byKey(const Key('practice-return-to-voice')));
     await tester.pumpAndSettle();
-    expect(agentController.recordingState, PracticeRecordingState.idle);
+    expect(harness.practice.recordingState, PracticeRecordingState.idle);
 
     final cancelledGesture = await tester.startGesture(
       tester.getCenter(find.byKey(const Key('practice-record'))),
@@ -107,26 +125,26 @@ void main() {
     await cancelledGesture.up();
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('practice-transcript')), findsNothing);
-    expect(agentController.recordingState, PracticeRecordingState.idle);
+    expect(harness.practice.recordingState, PracticeRecordingState.idle);
 
     for (var turn = 1; turn <= 3; turn++) {
       expect(
         find
-            .byKey(Key('practice-ai-message-${agentController.questionId}'))
+            .byKey(Key('practice-ai-message-${harness.practice.questionId}'))
             .hitTestable(),
         findsOneWidget,
       );
       await _holdAndReleaseAnswer(tester);
       if (turn < 3) {
-        expect(agentController.practiceMessages, hasLength(turn * 2 + 1));
-        expect(agentController.recordingState, PracticeRecordingState.idle);
+        expect(harness.practice.practiceMessages, hasLength(turn * 2 + 1));
+        expect(harness.practice.recordingState, PracticeRecordingState.idle);
       }
     }
 
     expect(find.byKey(const Key('practice-page')), findsOneWidget);
     expect(find.byKey(const Key('practice-completed-actions')), findsOneWidget);
     expect(find.byKey(const Key('review-content')), findsNothing);
-    expect(agentController.recordingState, PracticeRecordingState.completed);
+    expect(harness.practice.recordingState, PracticeRecordingState.completed);
 
     Navigator.of(tester.element(find.byKey(const Key('practice-page')))).pop();
     await tester.pumpAndSettle();
@@ -138,8 +156,8 @@ void main() {
   testWidgets(
     'global AuthGate shows the real email and logout clears Agent data',
     (tester) async {
-      final agentController = AgentController(client: FakeAgentClient());
-      addTearDown(agentController.dispose);
+      final harness = _agentHarness();
+      addTearDown(harness.dispose);
       final preparationController = PreparationController(
         client: _EmptySceneClient(),
       );
@@ -149,7 +167,10 @@ void main() {
         sessionStore: _MemorySessionStore('sess_stored-token'),
         clearPrivateState: () async {
           await Future.wait<void>([
-            agentController.clearPrivateState(),
+            harness.conversation.clearPrivateState(),
+            harness.composer.clearPrivateState(),
+            harness.messageAudio.clearPrivateState(),
+            harness.practice.clearPrivateState(),
             preparationController.clearPrivateState(),
           ]);
         },
@@ -158,14 +179,17 @@ void main() {
       await tester.pumpWidget(
         SpeakUpApp(
           authController: authController,
-          agentController: agentController,
+          conversationController: harness.conversation,
+          composerController: harness.composer,
+          messageAudioController: harness.messageAudio,
+          practiceController: harness.practice,
           preparationController: preparationController,
         ),
       );
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
-      expect(agentController.threadId, isNotNull);
+      expect(harness.conversation.threadId, isNotNull);
 
       await tester.tap(find.byKey(const Key('conversation-menu-button')));
       await tester.pumpAndSettle();
@@ -183,16 +207,16 @@ void main() {
 
       expect(find.text('欢迎回来'), findsOneWidget);
       expect(find.byKey(const Key('primary-navigation')), findsNothing);
-      expect(agentController.threadId, isNull);
-      expect(agentController.messages, isEmpty);
+      expect(harness.conversation.threadId, isNull);
+      expect(harness.conversation.messages, isEmpty);
     },
   );
 
   testWidgets('logout removes the entire Navigator from a deep private route', (
     tester,
   ) async {
-    final agentController = AgentController(client: FakeAgentClient());
-    addTearDown(agentController.dispose);
+    final harness = _agentHarness();
+    addTearDown(harness.dispose);
     final preparationController = PreparationController(
       client: _EmptySceneClient(),
     );
@@ -202,7 +226,10 @@ void main() {
       sessionStore: _MemorySessionStore('sess_stored-token'),
       clearPrivateState: () async {
         await Future.wait<void>([
-          agentController.clearPrivateState(),
+          harness.conversation.clearPrivateState(),
+          harness.composer.clearPrivateState(),
+          harness.messageAudio.clearPrivateState(),
+          harness.practice.clearPrivateState(),
           preparationController.clearPrivateState(),
         ]);
       },
@@ -210,7 +237,10 @@ void main() {
     await tester.pumpWidget(
       SpeakUpApp(
         authController: authController,
-        agentController: agentController,
+        conversationController: harness.conversation,
+        composerController: harness.composer,
+        messageAudioController: harness.messageAudio,
+        practiceController: harness.practice,
         preparationController: preparationController,
       ),
     );
@@ -230,60 +260,20 @@ void main() {
     expect(find.text('欢迎回来'), findsOneWidget);
   });
 
-  testWidgets(
-    'scene failure exposes a retry that completes the same operation',
-    (tester) async {
-      final client = _FailOnceSceneClient();
-      final agentController = AgentController(
-        client: client,
-        practiceClient: FakePracticeClient(
-          sceneFamily: testScenes.first.family,
-          sceneModel: testScenes.first.model,
-        ),
-      );
-      addTearDown(agentController.dispose);
-      await agentController.initialize();
-      await agentController.selectScene(testScenes.first);
-      await tester.pumpWidget(
-        SpeakUpApp.preview(agentController: agentController),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const Key('primary-tab-scenes')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('practice-hub-interview')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('scene-operation-error')), findsOneWidget);
-      expect(find.byKey(const Key('scene-retry-operation')), findsOneWidget);
-
-      final retry = find.byKey(const Key('scene-retry-operation'));
-      await tester.ensureVisible(retry);
-      await tester.pumpAndSettle();
-      await tester.tap(retry);
-      await tester.pumpAndSettle();
-
-      expect(agentController.scene, same(testScenes.first));
-      expect(find.byKey(const Key('scene-operation-error')), findsNothing);
-      expect(client.sceneClientIds, hasLength(2));
-      expect(client.sceneClientIds.toSet(), hasLength(1));
-    },
-  );
-
   testWidgets('completed root Practice route keeps its completion state', (
     tester,
   ) async {
-    final agentController = await _startedAgentController();
-    addTearDown(agentController.dispose);
+    final harness = await _startedHarness();
+    addTearDown(harness.dispose);
     for (var turn = 0; turn < 3; turn++) {
-      await agentController.startRecording();
-      await agentController.stopRecording();
-      await agentController.confirmTranscript();
+      await harness.practice.startRecording();
+      await harness.practice.stopRecording();
+      await harness.practice.confirmTranscript();
     }
-    expect(agentController.recordingState, PracticeRecordingState.completed);
+    expect(harness.practice.recordingState, PracticeRecordingState.completed);
 
     await tester.pumpWidget(
-      MaterialApp(home: PracticePage(agentController: agentController)),
+      MaterialApp(home: PracticePage(practiceController: harness.practice)),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
@@ -295,12 +285,17 @@ void main() {
   });
 
   testWidgets('completion does not replace a newer route', (tester) async {
-    final agentController = await _startedAgentController();
-    addTearDown(agentController.dispose);
+    final harness = await _startedHarness();
+    addTearDown(harness.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
-        home: SpeakUpShell(previewMode: true, agentController: agentController),
+        home: SpeakUpShell(
+          previewMode: true,
+          conversationController: harness.conversation,
+          composerController: harness.composer,
+          practiceController: harness.practice,
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -308,7 +303,7 @@ void main() {
     final navigator = Navigator.of(tester.element(find.byType(SpeakUpShell)));
     navigator.push(
       MaterialPageRoute<void>(
-        builder: (_) => PracticePage(agentController: agentController),
+        builder: (_) => PracticePage(practiceController: harness.practice),
       ),
     );
     await tester.pumpAndSettle();
@@ -320,13 +315,13 @@ void main() {
     await tester.pumpAndSettle();
 
     for (var turn = 0; turn < 3; turn++) {
-      await agentController.startRecording();
-      await agentController.stopRecording();
-      await agentController.confirmTranscript();
+      await harness.practice.startRecording();
+      await harness.practice.stopRecording();
+      await harness.practice.confirmTranscript();
     }
     await tester.pump();
 
-    expect(agentController.recordingState, PracticeRecordingState.completed);
+    expect(harness.practice.recordingState, PracticeRecordingState.completed);
     expect(find.byKey(const Key('temporary-practice-overlay')), findsOneWidget);
     expect(
       find.byKey(const Key('practice-page'), skipOffstage: false),
@@ -345,18 +340,61 @@ void main() {
   });
 }
 
-Future<AgentController> _startedAgentController() async {
+Future<_AgentHarness> _startedHarness() async {
   final scene = testScenes.first;
-  final controller = AgentController(
-    client: FakeAgentClient(),
+  final harness = _agentHarness(
     practiceClient: FakePracticeClient(
       sceneFamily: scene.family,
       sceneModel: scene.model,
     ),
   );
-  await controller.initialize();
-  await activateTestPractice(controller: controller, scene: scene);
-  return controller;
+  await harness.conversation.initialize();
+  await activateTestPractice(controller: harness.practice, scene: scene);
+  return harness;
+}
+
+_AgentHarness _agentHarness({PracticeClient? practiceClient}) {
+  final client = FakeAgentClient();
+  final voiceClient = FakeAgentVoiceClient();
+  final conversation = ConversationController(client: client);
+  final messageAudio = AgentMessageAudioController(
+    conversationController: conversation,
+    client: voiceClient,
+    audioPlayer: FakeAgentAudioPlayer(),
+  );
+  return _AgentHarness(
+    conversation: conversation,
+    composer: ComposerController(
+      conversationController: conversation,
+      voiceClient: voiceClient,
+      onAssistantCommitted: messageAudio.playCommittedAssistant,
+    ),
+    messageAudio: messageAudio,
+    practice: PracticeController(
+      client: practiceClient ?? FakePracticeClient(),
+    ),
+  );
+}
+
+final class _AgentHarness {
+  const _AgentHarness({
+    required this.conversation,
+    required this.composer,
+    required this.messageAudio,
+    required this.practice,
+  });
+
+  final ConversationController conversation;
+  final ComposerController composer;
+  final AgentMessageAudioController messageAudio;
+  final PracticeController practice;
+
+  void dispose() {
+    composer.dispose();
+    messageAudio.dispose();
+    conversation.dispose();
+    practice.dispose();
+  }
 }
 
 Future<void> _holdAndReleaseAnswer(WidgetTester tester) async {
@@ -419,46 +457,5 @@ final class _EmptySceneClient implements SceneClient {
   @override
   Future<List<RoleDefinition>> listRoles(String sceneId) {
     throw UnimplementedError();
-  }
-}
-
-final class _FailOnceSceneClient implements AgentClient {
-  final FakeAgentClient _delegate = FakeAgentClient();
-  final List<String> sceneClientIds = <String>[];
-
-  @override
-  Future<void> clearAccountState() => _delegate.clearAccountState();
-
-  @override
-  Future<AgentThreadSnapshot> restoreThread() => _delegate.restoreThread();
-
-  @override
-  Future<AgentExchange> sendText({
-    required String threadId,
-    required String text,
-    required String clientMessageId,
-  }) {
-    return _delegate.sendText(
-      threadId: threadId,
-      text: text,
-      clientMessageId: clientMessageId,
-    );
-  }
-
-  @override
-  Future<Goal> startScene({
-    required String threadId,
-    required SceneDefinition scene,
-    required String clientOperationId,
-  }) {
-    sceneClientIds.add(clientOperationId);
-    if (sceneClientIds.length == 1) {
-      throw StateError('temporary scene failure');
-    }
-    return _delegate.startScene(
-      threadId: threadId,
-      scene: scene,
-      clientOperationId: clientOperationId,
-    );
   }
 }

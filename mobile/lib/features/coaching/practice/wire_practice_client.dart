@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
@@ -411,8 +411,8 @@ final class WirePracticeClient
       _requireClientId(idempotencyKey);
       final text = answerText.trim();
       if (text.isEmpty || text.length > 8000) {
-        throw const AgentClientException(
-          kind: AgentClientFailureKind.invalidRequest,
+        throw const PracticeClientException(
+          kind: PracticeClientFailureKind.invalidRequest,
           errorCode: 'invalid_answer_text',
         );
       }
@@ -449,8 +449,8 @@ final class WirePracticeClient
       _requireOpaqueId(sessionId);
       _requireClientId(idempotencyKey);
       if (expectedSessionVersion < 1) {
-        throw const AgentClientException(
-          kind: AgentClientFailureKind.invalidRequest,
+        throw const PracticeClientException(
+          kind: PracticeClientFailureKind.invalidRequest,
         );
       }
       final response = await _sendJson(
@@ -496,8 +496,8 @@ final class WirePracticeClient
     if (audio.contentType != 'audio/wav' ||
         audio.sizeBytes < 45 ||
         audio.sizeBytes > _maximumAudioBytes) {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.invalidRequest,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.invalidRequest,
         errorCode: 'invalid_audio',
       );
     }
@@ -507,8 +507,8 @@ final class WirePracticeClient
     );
     if (audioType != FileSystemEntityType.file ||
         await File(audio.path).length() != audio.sizeBytes) {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.invalidRequest,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.invalidRequest,
         errorCode: 'invalid_audio',
       );
     }
@@ -526,8 +526,8 @@ final class WirePracticeClient
     _requireGeneration(generation);
     final credential = _credentialProvider();
     if (credential == null) {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.authenticationRequired,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.authenticationRequired,
         statusCode: HttpStatus.unauthorized,
       );
     }
@@ -559,7 +559,7 @@ final class WirePracticeClient
           .timeout(timeout);
       _requireGeneration(generation);
       if (!isSameAuthSessionCredential(_credentialProvider(), credential)) {
-        throw const AgentClientOperationCancelled();
+        throw const PracticeClientOperationCancelled();
       }
       if (response.statusCode == HttpStatus.unauthorized) {
         unawaited(
@@ -572,22 +572,24 @@ final class WirePracticeClient
       return response;
     } on TimeoutException {
       _requireGeneration(generation);
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.network,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.network,
         errorCode: 'practice_request_timed_out',
         retryable: true,
       );
-    } on AgentClientException {
+    } on PracticeClientException {
       rethrow;
     } on IOException {
       _requireGeneration(generation);
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.network,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.network,
         retryable: true,
       );
     } catch (_) {
       _requireGeneration(generation);
-      throw const AgentClientException(kind: AgentClientFailureKind.unexpected);
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.unexpected,
+      );
     }
   }
 
@@ -626,21 +628,21 @@ final class WirePracticeClient
         }
       }
     } catch (_) {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.invalidResponse,
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.invalidResponse,
       );
     }
     final retryAfter = _retryAfter(response.headers);
-    throw AgentClientException(
+    throw PracticeClientException(
       kind: switch (response.statusCode) {
-        HttpStatus.badRequest => AgentClientFailureKind.invalidRequest,
+        HttpStatus.badRequest => PracticeClientFailureKind.invalidRequest,
         HttpStatus.unauthorized =>
-          AgentClientFailureKind.authenticationRequired,
-        HttpStatus.notFound => AgentClientFailureKind.notFound,
-        HttpStatus.conflict => AgentClientFailureKind.conflict,
-        HttpStatus.tooManyRequests => AgentClientFailureKind.rateLimited,
-        >= 500 => AgentClientFailureKind.server,
-        _ => AgentClientFailureKind.unexpected,
+          PracticeClientFailureKind.authenticationRequired,
+        HttpStatus.notFound => PracticeClientFailureKind.notFound,
+        HttpStatus.conflict => PracticeClientFailureKind.conflict,
+        HttpStatus.tooManyRequests => PracticeClientFailureKind.rateLimited,
+        >= 500 => PracticeClientFailureKind.server,
+        _ => PracticeClientFailureKind.unexpected,
       },
       statusCode: response.statusCode,
       errorCode: errorCode,
@@ -662,7 +664,7 @@ final class WirePracticeClient
 
   void _requireGeneration(int generation) {
     if (generation != _accountGeneration) {
-      throw const AgentClientOperationCancelled();
+      throw const PracticeClientOperationCancelled();
     }
   }
 }
@@ -1199,9 +1201,9 @@ PracticeTurnConfirmation _confirmationFromState(
     sessionId: state.sessionId,
     questionId: turn.questionId,
     candidateId: turn.candidateId,
-    answer: AgentMessage(
+    answer: PracticeMessage(
       id: turn.id,
-      role: AgentMessageRole.user,
+      role: PracticeMessageRole.user,
       text: turn.answerText,
       speechFeedbackStatusUrl: turn.speechFeedbackStatusUrl,
     ),
@@ -1391,9 +1393,9 @@ List<String> _stringList(Map<String, Object?> value, String key) {
   ];
 }
 
-AgentClientException _invalidResponse() {
-  return const AgentClientException(
-    kind: AgentClientFailureKind.invalidResponse,
+PracticeClientException _invalidResponse() {
+  return const PracticeClientException(
+    kind: PracticeClientFailureKind.invalidResponse,
     retryable: true,
   );
 }

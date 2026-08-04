@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
@@ -400,13 +400,14 @@ final class _Transport implements PracticeWireTransport {
   void close({bool force = false}) {}
 }
 
-final _invalidResponse = isA<AgentClientException>().having(
+final _invalidResponse = isA<PracticeClientException>().having(
   _failureKind,
   'kind',
-  AgentClientFailureKind.invalidResponse,
+  PracticeClientFailureKind.invalidResponse,
 );
 
-AgentClientFailureKind _failureKind(AgentClientException error) => error.kind;
+PracticeClientFailureKind _failureKind(PracticeClientException error) =>
+    error.kind;
 
 const _credential = AuthSessionCredential(
   sessionToken: 'sess_retry-session',
