@@ -231,10 +231,16 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	if err != nil || ready.Content["status"] != "preview_ready" {
 		t.Fatalf("ready Preview input=%s result=(%#v, %v)", previewInput, ready, err)
 	}
-	previewPlanID, ok := ready.Content["practice_plan_id"].(string)
-	if !ok {
-		t.Fatalf("ready Preview plan id = %#v", ready.Content["practice_plan_id"])
+	if ready.Content["practice_plan_id"] != nil {
+		t.Fatalf(
+			"ready Preview leaked plan id to model content = %#v",
+			ready.Content["practice_plan_id"],
+		)
 	}
+	if len(ready.Handoffs) != 1 {
+		t.Fatalf("ready Preview Handoffs = %#v", ready.Handoffs)
+	}
+	previewPlanID := ready.Handoffs[0].PracticePlanID
 	storedPreviewPlan, err := composition.PlanApplication().ReadPlan(
 		context.Background(),
 		actor,
@@ -256,9 +262,8 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 			Input: previewInput,
 		},
 	)
-	if err != nil ||
-		replayedPreview.Content["practice_plan_id"] !=
-			ready.Content["practice_plan_id"] {
+	if err != nil || len(replayedPreview.Handoffs) != 1 ||
+		replayedPreview.Handoffs[0].PracticePlanID != previewPlanID {
 		t.Fatalf(
 			"replayed Preview = (%#v, %v), first %#v",
 			replayedPreview,
