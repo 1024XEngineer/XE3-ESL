@@ -157,6 +157,8 @@ paths:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1transcription-candidates~1{candidate_id}~1confirmations
   /v1/voice-questions/{question_id}/speech:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-questions~1{question_id}~1speech
+  /v1/voice-questions/{question_id}/translation:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-questions~1{question_id}~1translation
   /v1/evaluation-reports:
     $ref: ./modules/review.yaml#/paths/~1v1~1evaluation-reports
   /v1/evaluation-reports/{report_id}:

@@ -35,6 +35,7 @@ final class PracticeWireEndpoints {
     this.retryConfirmation =
         '/v1/retry-turns/{retry_turn_id}/transcription-candidates/'
         '{candidate_id}/confirmations',
+    this.questionTranslation = '/v1/voice-questions/{question_id}/translation',
   });
 
   final String voiceActivation;
@@ -46,6 +47,7 @@ final class PracticeWireEndpoints {
   final String retryRequest;
   final String retryRequestStatus;
   final String retryConfirmation;
+  final String questionTranslation;
 
   String voiceActivationPath(String sessionId) => voiceActivation.replaceAll(
     '{practice_session_id}',
@@ -65,6 +67,9 @@ final class PracticeWireEndpoints {
   String submitTextPath(String sessionId, String questionId) => submitText
       .replaceAll('{practice_session_id}', _pathSegment(sessionId))
       .replaceAll('{question_id}', _pathSegment(questionId));
+
+  String questionTranslationPath(String questionId) =>
+      questionTranslation.replaceAll('{question_id}', _pathSegment(questionId));
 
   String endEarlyPath(String sessionId) =>
       endEarly.replaceAll('{practice_session_id}', _pathSegment(sessionId));
@@ -130,7 +135,8 @@ final class WirePracticeClient
     implements
         PracticeClient,
         PracticeLifecycleClient,
-        PracticeSpeechFeedbackRetryClient {
+        PracticeSpeechFeedbackRetryClient,
+        PracticeQuestionTranslationClient {
   factory WirePracticeClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -436,6 +442,26 @@ final class WirePracticeClient
         throw _invalidResponse();
       }
       return confirmation;
+    });
+  }
+
+  @override
+  Future<PracticeQuestionTranslation> translateQuestion({
+    required String questionId,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(questionId);
+      final response = await _send(
+        generation: generation,
+        timeout: _jsonTimeout,
+        method: 'GET',
+        path: _endpoints.questionTranslationPath(questionId),
+      );
+      _requireStatus(response, const {HttpStatus.ok});
+      return _decodeQuestionTranslation(
+        response.body,
+        expectedQuestionId: questionId,
+      );
     });
   }
 
@@ -1044,6 +1070,27 @@ PracticeRetryRequest _decodeRetryRequest(
     stableFailure: stableFailure,
     completedAt: completedAt,
   );
+}
+
+PracticeQuestionTranslation _decodeQuestionTranslation(
+  String body, {
+  required String expectedQuestionId,
+}) {
+  final root = _exactObject(
+    jsonDecode(body),
+    required: const {'question_id', 'target_language', 'translation'},
+  );
+  final translation = PracticeQuestionTranslation(
+    questionId: _string(root, 'question_id', maxLength: 128),
+    targetLanguage: _string(root, 'target_language', maxLength: 16),
+    content: _string(root, 'translation', maxLength: 2000),
+  );
+  if (translation.questionId != expectedQuestionId ||
+      translation.targetLanguage != 'zh-CN' ||
+      translation.content.trim().isEmpty) {
+    throw _invalidResponse();
+  }
+  return translation;
 }
 
 PracticeRetryFailure _decodePracticeRetryFailure(Object? value) {

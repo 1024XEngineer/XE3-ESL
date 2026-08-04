@@ -2,12 +2,107 @@ package voice
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
+
+func TestSessionTranslatesOnlyInterviewQuestions(t *testing.T) {
+	translator := &questionTranslatorStub{content: "接下来发生了什么？"}
+	application := translationApplication(
+		t,
+		sessionPortStub{session: sessionFixture()},
+		translator,
+	)
+
+	translation, err := application.QuestionTranslation(
+		context.Background(), roundActor(), "question-1",
+	)
+	if err != nil {
+		t.Fatalf("QuestionTranslation: %v", err)
+	}
+	if translation.QuestionID != "question-1" ||
+		translation.TargetLanguage != "zh-CN" ||
+		translation.Content != translator.content ||
+		translator.calls != 1 ||
+		translator.question != "What happened next?" {
+		t.Fatalf("translation = %#v, translator = %#v", translation, translator)
+	}
+
+	daily := sessionFixture()
+	daily.SceneFamily = "DAILY"
+	dailyTranslator := &questionTranslatorStub{content: "不应调用"}
+	dailyApplication := translationApplication(
+		t,
+		sessionPortStub{session: daily},
+		dailyTranslator,
+	)
+	_, err = dailyApplication.QuestionTranslation(
+		context.Background(), roundActor(), "question-1",
+	)
+	if !errors.Is(err, ErrInvalidContext) || dailyTranslator.calls != 0 {
+		t.Fatalf("daily translation error = %v, calls = %d", err, dailyTranslator.calls)
+	}
+}
+
+func translationApplication(
+	t *testing.T,
+	sessions SessionPort,
+	translator QuestionTranslator,
+) *SessionApplication {
+	t.Helper()
+	candidate := roundCandidate()
+	orchestrator, err := NewRoundOrchestrator(
+		&roundVoice{candidate: candidate, turn: roundTurn(candidate)},
+		roundPractice{},
+	)
+	if err != nil {
+		t.Fatalf("NewRoundOrchestrator: %v", err)
+	}
+	application, err := NewSessionApplication(
+		sessions,
+		translationQuestionPortStub{},
+		checkpointPortStub{},
+		orchestrator,
+		translator,
+	)
+	if err != nil {
+		t.Fatalf("NewSessionApplication: %v", err)
+	}
+	return application
+}
+
+type translationQuestionPortStub struct{ questionPortStub }
+
+func (translationQuestionPortStub) GetQuestion(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (practice.Question, error) {
+	return practice.Question{
+		ID:        "question-1",
+		SessionID: "session-1",
+		Content:   "What happened next?",
+	}, nil
+}
+
+type questionTranslatorStub struct {
+	content  string
+	question string
+	calls    int
+}
+
+func (stub *questionTranslatorStub) TranslateQuestion(
+	_ context.Context,
+	request QuestionTranslationRequest,
+) (string, error) {
+	stub.calls++
+	stub.question = request.Question
+	return stub.content, nil
+}
 
 func TestSessionStartReturnsQuestionFromFrozenSession(t *testing.T) {
 	session := sessionFixture()

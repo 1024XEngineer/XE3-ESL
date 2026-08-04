@@ -37,9 +37,10 @@ func (kind ProviderErrorKind) Retryable() bool {
 type ProviderOperation string
 
 const (
-	ProviderOperationQuestionGeneration ProviderOperation = "question_generation"
-	ProviderOperationTranscription      ProviderOperation = "transcription"
-	ProviderOperationSynthesis          ProviderOperation = "synthesis"
+	ProviderOperationQuestionGeneration  ProviderOperation = "question_generation"
+	ProviderOperationQuestionTranslation ProviderOperation = "question_translation"
+	ProviderOperationTranscription       ProviderOperation = "transcription"
+	ProviderOperationSynthesis           ProviderOperation = "synthesis"
 )
 
 type ProviderError struct {
@@ -137,5 +138,16 @@ type QuestionGenerator interface {
 	GenerateQuestion(
 		context.Context,
 		QuestionGenerationRequest,
+	) (string, error)
+}
+
+type QuestionTranslationRequest struct {
+	Question string
+}
+
+type QuestionTranslator interface {
+	TranslateQuestion(
+		context.Context,
+		QuestionTranslationRequest,
 	) (string, error)
 }

@@ -59,6 +59,7 @@ void main() {
     );
     expect(find.byKey(const Key('immersive-conversation-history')), findsOne);
     expect(find.textContaining('评分'), findsNothing);
+    expect(find.text('翻译'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -138,6 +139,48 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'translates an interview question once and toggles the read aid',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final practice = _TranslationPracticeClient();
+      final controller = await _roleplayController(practiceClient: practice);
+      addTearDown(controller.dispose);
+      final question = controller.currentQuestion!;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ImmersiveRoleplayPage(practiceController: controller),
+        ),
+      );
+      await tester.pump();
+
+      final button = find.byKey(
+        Key('practice-assistant-translate-${question.id}'),
+      );
+      expect(button, findsOneWidget);
+
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+
+      expect(find.text(practice.translation), findsOneWidget);
+      expect(practice.translationCalls, 1);
+      expect(controller.completedTurns, 0);
+
+      await tester.tap(button);
+      await tester.pump();
+      expect(find.text(practice.translation), findsNothing);
+
+      await tester.tap(button);
+      await tester.pump();
+      expect(find.text(practice.translation), findsOneWidget);
+      expect(practice.translationCalls, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('removes the avatar surface before leaving practice', (
     tester,
@@ -581,10 +624,12 @@ Future<PracticeController> _roleplayController({
 }) async {
   final sceneFamily = switch (practiceClient) {
     final _AsyncReviewPracticeClient client => client.resolvedSceneFamily,
+    final _TranslationPracticeClient client => client.resolvedSceneFamily,
     _ => SceneFamily.daily,
   };
   final sceneModel = switch (practiceClient) {
     final _AsyncReviewPracticeClient client => client.resolvedSceneModel,
+    final _TranslationPracticeClient client => client.resolvedSceneModel,
     _ => SceneModel.hotelCheckinAndIssueHandling,
   };
   final scene = testScene(
@@ -689,6 +734,80 @@ final class _ScenePracticeClient implements PracticeClient {
     sceneFamily,
     sceneModel,
   );
+}
+
+final class _TranslationPracticeClient
+    implements PracticeClient, PracticeQuestionTranslationClient {
+  final _delegate = _AsyncReviewPracticeClient(
+    sceneFamily: SceneFamily.interview,
+    sceneModel: SceneModel.interviewBasicDialogue,
+  );
+
+  final String translation = '请介绍一次你解决团队分歧的经历。';
+  int translationCalls = 0;
+
+  SceneFamily get resolvedSceneFamily => _delegate.resolvedSceneFamily;
+  SceneModel get resolvedSceneModel => _delegate.resolvedSceneModel;
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
+
+  @override
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) => _delegate.restorePractice(sessionId: sessionId);
+
+  @override
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
+    required String clientOperationId,
+  }) => _delegate.activatePractice(
+    sessionId: sessionId,
+    clientOperationId: clientOperationId,
+  );
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) => _delegate.transcribe(request);
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) => _delegate.confirm(
+    sessionId: sessionId,
+    questionId: questionId,
+    candidateId: candidateId,
+    idempotencyKey: idempotencyKey,
+  );
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) => _delegate.submitText(
+    sessionId: sessionId,
+    questionId: questionId,
+    answerText: answerText,
+    idempotencyKey: idempotencyKey,
+  );
+
+  @override
+  Future<PracticeQuestionTranslation> translateQuestion({
+    required String questionId,
+  }) async {
+    translationCalls++;
+    return PracticeQuestionTranslation(
+      questionId: questionId,
+      targetLanguage: 'zh-CN',
+      content: translation,
+    );
+  }
 }
 
 final class _FailOncePracticeClient implements PracticeClient {

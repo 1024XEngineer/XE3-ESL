@@ -98,6 +98,14 @@ func TestPracticeVoiceAdaptersRejectMissingProvider(t *testing.T) {
 	); !isPracticeVoiceConfigurationError(err) {
 		t.Fatalf("generator error = %v", err)
 	}
+
+	var translator *PracticeVoiceQuestionTranslator
+	if _, err := translator.TranslateQuestion(
+		context.Background(),
+		practicevoice.QuestionTranslationRequest{},
+	); !isPracticeVoiceConfigurationError(err) {
+		t.Fatalf("translator error = %v", err)
+	}
 }
 
 func isPracticeVoiceConfigurationError(err error) bool {

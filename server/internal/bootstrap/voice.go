@@ -24,6 +24,7 @@ type VoiceConfiguration struct {
 	PracticeRecognizer        practicevoice.SpeechRecognizer
 	PracticeSynthesizer       practicevoice.SpeechSynthesizer
 	QuestionGenerator         practicevoice.QuestionGenerator
+	QuestionTranslator        practicevoice.QuestionTranslator
 	TemporaryAudio            practicevoice.TemporaryAudioVault
 	ObjectStore               objectstore.Store
 	AgentVoiceInputEnabled    bool
@@ -145,6 +146,26 @@ func NewPracticeQuestionGenerator(
 	)
 }
 
+// NewPracticeQuestionTranslator selects the Practice Voice translation adapter.
+func NewPracticeQuestionTranslator(
+	configuration config.TextGenerationConfig,
+) (practicevoice.QuestionTranslator, error) {
+	if configuration.Provider != config.TextProviderQianwen {
+		return nil, errors.New(
+			"bootstrap: Practice question translation provider is not registered",
+		)
+	}
+	return qianwen.NewPracticeVoiceQuestionTranslator(
+		qianwen.TextConfig{
+			BaseURL:         configuration.BaseURL,
+			Model:           configuration.Model,
+			Timeout:         configuration.Timeout,
+			MaxOutputTokens: configuration.MaxOutputTokens,
+		},
+		configuration.APIKey.Reveal(),
+	)
+}
+
 // buildProductionVoiceApplication constructs infrastructure and delegates all
 // Practice Voice business wiring to the owning package.
 func buildProductionVoiceApplication(
@@ -209,16 +230,17 @@ func buildProductionVoiceApplication(
 	application, retryApplication, err :=
 		practicevoice.NewRuntimeApplications(
 			practicevoice.RuntimeConfiguration{
-				Repository:        repository,
-				TemporaryAudio:    configuration.TemporaryAudio,
-				Recognizer:        configuration.PracticeRecognizer,
-				Synthesizer:       configuration.PracticeSynthesizer,
-				QuestionGenerator: configuration.QuestionGenerator,
-				Recordings:        recordings,
-				AudioAssets:       audioAssets,
-				ASRLease:          configuration.ASRLease,
-				Feedback:          feedback,
-				FeedbackReader:    feedbackReader,
+				Repository:         repository,
+				TemporaryAudio:     configuration.TemporaryAudio,
+				Recognizer:         configuration.PracticeRecognizer,
+				Synthesizer:        configuration.PracticeSynthesizer,
+				QuestionGenerator:  configuration.QuestionGenerator,
+				QuestionTranslator: configuration.QuestionTranslator,
+				Recordings:         recordings,
+				AudioAssets:        audioAssets,
+				ASRLease:           configuration.ASRLease,
+				Feedback:           feedback,
+				FeedbackReader:     feedbackReader,
 			},
 		)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -87,11 +88,18 @@ type SessionState struct {
 	TurnHistory []TurnExchange
 }
 
+type QuestionTranslation struct {
+	QuestionID     string
+	TargetLanguage string
+	Content        string
+}
+
 type SessionApplication struct {
 	sessions     SessionPort
 	questions    QuestionPort
 	checkpoints  CheckpointPort
 	orchestrator *RoundOrchestrator
+	translator   QuestionTranslator
 }
 
 func NewSessionApplication(
@@ -99,16 +107,68 @@ func NewSessionApplication(
 	questions QuestionPort,
 	checkpoints CheckpointPort,
 	orchestrator *RoundOrchestrator,
+	translators ...QuestionTranslator,
 ) (*SessionApplication, error) {
 	if sessions == nil || questions == nil || checkpoints == nil ||
-		orchestrator == nil {
+		orchestrator == nil || len(translators) > 1 ||
+		(len(translators) == 1 && translators[0] == nil) {
 		return nil, errors.New("practice voice: session dependency is required")
+	}
+	var translator QuestionTranslator
+	if len(translators) == 1 {
+		translator = translators[0]
 	}
 	return &SessionApplication{
 		sessions:     sessions,
 		questions:    questions,
 		checkpoints:  checkpoints,
 		orchestrator: orchestrator,
+		translator:   translator,
+	}, nil
+}
+
+func (application *SessionApplication) QuestionTranslation(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	questionID string,
+) (QuestionTranslation, error) {
+	if err := validateVoiceActor(ctx, actor); err != nil ||
+		strings.TrimSpace(questionID) == "" {
+		return QuestionTranslation{}, ErrInvalidRequest
+	}
+	if application.translator == nil {
+		return QuestionTranslation{}, ErrInvalidContext
+	}
+	question, err := application.questions.GetQuestion(ctx, actor, questionID)
+	if err != nil {
+		return QuestionTranslation{}, err
+	}
+	if question.ID != questionID || strings.TrimSpace(question.SessionID) == "" ||
+		strings.TrimSpace(question.Content) == "" {
+		return QuestionTranslation{}, ErrInvalidContext
+	}
+	session, err := application.sessions.GetByID(ctx, actor, question.SessionID)
+	if err != nil {
+		return QuestionTranslation{}, err
+	}
+	if session.ID != question.SessionID || session.SceneFamily != "INTERVIEW" {
+		return QuestionTranslation{}, ErrInvalidContext
+	}
+	content, err := application.translator.TranslateQuestion(
+		ctx,
+		QuestionTranslationRequest{Question: question.Content},
+	)
+	if err != nil {
+		return QuestionTranslation{}, err
+	}
+	content = strings.TrimSpace(content)
+	if content == "" || utf8.RuneCountInString(content) > 2000 {
+		return QuestionTranslation{}, ErrInvalidContext
+	}
+	return QuestionTranslation{
+		QuestionID:     question.ID,
+		TargetLanguage: "zh-CN",
+		Content:        content,
 	}, nil
 }
 

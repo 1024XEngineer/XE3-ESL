@@ -147,6 +147,51 @@ func (generator *PracticeVoiceQuestionGenerator) GenerateQuestion(
 	return result.Content, nil
 }
 
+type PracticeVoiceQuestionTranslator struct {
+	generator *textClient
+}
+
+func NewPracticeVoiceQuestionTranslator(
+	configuration TextConfig,
+	apiKey string,
+) (*PracticeVoiceQuestionTranslator, error) {
+	generator, err := newTextClient(configuration, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	return &PracticeVoiceQuestionTranslator{generator: generator}, nil
+}
+
+func (translator *PracticeVoiceQuestionTranslator) TranslateQuestion(
+	ctx context.Context,
+	request practicevoice.QuestionTranslationRequest,
+) (string, error) {
+	if translator == nil || translator.generator == nil {
+		return "", practicevoice.NewProviderError(
+			practicevoice.ProviderOperationQuestionTranslation,
+			practicevoice.ProviderErrorConfiguration,
+			"",
+			errors.New("Qianwen Practice Voice question translator is required"),
+		)
+	}
+	result, err := translator.generator.Generate(ctx, protocol.TextRequest{
+		Messages: []protocol.TextMessage{
+			{
+				Role:    protocol.TextRoleSystem,
+				Content: "Translate the interview question into natural Simplified Chinese. Preserve its meaning and tone. Return only the translation, with no quotation marks, markdown, answer, coaching, or explanation.",
+			},
+			{Role: protocol.TextRoleUser, Content: request.Question},
+		},
+	})
+	if err != nil {
+		return "", mapPracticeVoiceError(
+			err,
+			practicevoice.ProviderOperationQuestionTranslation,
+		)
+	}
+	return result.Content, nil
+}
+
 func mapPracticeVoiceUsage(usage protocol.SpeechUsage) practicevoice.SpeechUsage {
 	return practicevoice.SpeechUsage{
 		InputTokens:  usage.InputTokens,
@@ -215,7 +260,8 @@ func mapPracticeVoiceErrorKind(kind protocol.ErrorKind) practicevoice.ProviderEr
 }
 
 var (
-	_ practicevoice.SpeechRecognizer  = (*PracticeVoiceRecognizer)(nil)
-	_ practicevoice.SpeechSynthesizer = (*PracticeVoiceSynthesizer)(nil)
-	_ practicevoice.QuestionGenerator = (*PracticeVoiceQuestionGenerator)(nil)
+	_ practicevoice.SpeechRecognizer   = (*PracticeVoiceRecognizer)(nil)
+	_ practicevoice.SpeechSynthesizer  = (*PracticeVoiceSynthesizer)(nil)
+	_ practicevoice.QuestionGenerator  = (*PracticeVoiceQuestionGenerator)(nil)
+	_ practicevoice.QuestionTranslator = (*PracticeVoiceQuestionTranslator)(nil)
 )

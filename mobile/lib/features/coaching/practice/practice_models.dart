@@ -104,6 +104,18 @@ final class PracticeQuestion {
       PracticeMessage(id: id, role: PracticeMessageRole.assistant, text: text);
 }
 
+final class PracticeQuestionTranslation {
+  const PracticeQuestionTranslation({
+    required this.questionId,
+    required this.targetLanguage,
+    required this.content,
+  });
+
+  final String questionId;
+  final String targetLanguage;
+  final String content;
+}
+
 /// The server-authoritative practice projection consumed by Flutter.
 ///
 /// The projection is always loaded by the explicit opaque [sessionId].
