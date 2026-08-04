@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 )
 
 func TestEvaluationShadowWorkerDrainsFullBatch(t *testing.T) {
@@ -17,15 +18,15 @@ func TestEvaluationShadowWorkerDrainsFullBatch(t *testing.T) {
 	processor := evaluationShadowProcessorFunc(func(
 		context.Context,
 		int,
-	) (evaluation.InterviewShadowSweepResult, error) {
+	) (scoring.InterviewShadowSweepResult, error) {
 		calls++
 		if calls == 1 {
-			return evaluation.InterviewShadowSweepResult{
+			return scoring.InterviewShadowSweepResult{
 				Claimed: 1,
 			}, nil
 		}
 		close(secondSweep)
-		return evaluation.InterviewShadowSweepResult{}, nil
+		return scoring.InterviewShadowSweepResult{}, nil
 	})
 	worker, err := newEvaluationShadowWorker(
 		processor,
@@ -62,8 +63,8 @@ func TestEvaluationShadowWorkerRejectsInvalidDependencies(t *testing.T) {
 	processor := evaluationShadowProcessorFunc(func(
 		context.Context,
 		int,
-	) (evaluation.InterviewShadowSweepResult, error) {
-		return evaluation.InterviewShadowSweepResult{}, nil
+	) (scoring.InterviewShadowSweepResult, error) {
+		return scoring.InterviewShadowSweepResult{}, nil
 	})
 	tests := []struct {
 		name         string
@@ -135,11 +136,11 @@ func TestEvaluationShadowErrorKindIsStable(t *testing.T) {
 		{err: context.Canceled, want: "canceled"},
 		{err: context.DeadlineExceeded, want: "deadline_exceeded"},
 		{
-			err:  evaluation.ErrInterviewShadowLeaseLost,
+			err:  scoring.ErrRuntimeLeaseLost,
 			want: "lease_lost",
 		},
 		{
-			err:  evaluation.ErrInterviewShadowConfigurationConflict,
+			err:  scoring.ErrRuntimeConfigurationConflict,
 			want: "configuration_conflict",
 		},
 		{err: evaluation.ErrInvalidRequest, want: "invalid_state"},
@@ -159,11 +160,11 @@ func TestEvaluationShadowErrorKindIsStable(t *testing.T) {
 type evaluationShadowProcessorFunc func(
 	context.Context,
 	int,
-) (evaluation.InterviewShadowSweepResult, error)
+) (scoring.InterviewShadowSweepResult, error)
 
 func (processor evaluationShadowProcessorFunc) ProcessPending(
 	ctx context.Context,
 	limit int,
-) (evaluation.InterviewShadowSweepResult, error) {
+) (scoring.InterviewShadowSweepResult, error) {
 	return processor(ctx, limit)
 }

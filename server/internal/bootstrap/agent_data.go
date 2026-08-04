@@ -29,8 +29,8 @@ import (
 	agentrunhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	evaluationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
+	evaluationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	goalhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/http"
@@ -170,7 +170,7 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	evaluationRepository := evaluation.NewPostgresRepository(database)
+	evaluationRepository := evaluationpostgres.NewPostgresRepository(database)
 	learningProfileReader, err := evaluationprofile.New(
 		evaluationRepository,
 	)

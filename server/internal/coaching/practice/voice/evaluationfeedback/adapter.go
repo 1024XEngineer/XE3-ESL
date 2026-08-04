@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -12,10 +12,12 @@ import (
 // Adapter translates Evaluation's coordinator into the narrow Practice Voice
 // feedback port. Evaluation remains the authority for evidence and status.
 type Adapter struct {
-	coordinator *evaluation.SpeechFeedbackCoordinator
+	coordinator *speechfeedback.SpeechFeedbackCoordinator
 }
 
-func New(coordinator *evaluation.SpeechFeedbackCoordinator) (*Adapter, error) {
+func New(
+	coordinator *speechfeedback.SpeechFeedbackCoordinator,
+) (*Adapter, error) {
 	if coordinator == nil {
 		return nil, practicevoice.ErrInvalidContext
 	}
@@ -38,7 +40,7 @@ func (adapter *Adapter) EnsureTurn(
 		sessionID,
 		turnID,
 	)
-	if errors.Is(err, evaluation.ErrSpeechFeedbackNotApplicable) {
+	if errors.Is(err, speechfeedback.ErrSpeechFeedbackNotApplicable) {
 		return practicevoice.TurnFeedbackReference{}, nil
 	}
 	if err != nil {

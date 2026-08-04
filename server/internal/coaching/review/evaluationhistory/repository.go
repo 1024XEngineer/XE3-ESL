@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 )
 
@@ -13,12 +14,12 @@ type Source interface {
 		context.Context,
 		string,
 		string,
-	) (evaluation.StoredFormalReport, error)
+	) (report.StoredFormalReport, error)
 	ListFormalReports(
 		context.Context,
 		string,
-		evaluation.FormalReportHistoryQuery,
-	) (evaluation.FormalReportHistoryPage, error)
+		report.HistoryQuery,
+	) (report.HistoryPage, error)
 }
 
 type Repository struct {
@@ -55,9 +56,9 @@ func (history *Repository) ListReports(
 	actor review.Actor,
 	query review.HistoryQuery,
 ) (review.HistoryPage, error) {
-	var before *evaluation.FormalReportHistoryBoundary
+	var before *report.HistoryBoundary
 	if query.Before != nil {
-		before = &evaluation.FormalReportHistoryBoundary{
+		before = &report.HistoryBoundary{
 			CreatedAt: query.Before.CreatedAt,
 			ReportID:  query.Before.ReportID,
 		}
@@ -65,7 +66,7 @@ func (history *Repository) ListReports(
 	page, err := history.source.ListFormalReports(
 		ctx,
 		actor.UserID,
-		evaluation.FormalReportHistoryQuery{
+		report.HistoryQuery{
 			Limit:  query.Limit,
 			Before: before,
 		},
@@ -96,7 +97,7 @@ func (history *Repository) SearchReports(
 	page, err := history.source.ListFormalReports(
 		ctx,
 		actor.UserID,
-		evaluation.FormalReportHistoryQuery{
+		report.HistoryQuery{
 			Limit:             query.Limit,
 			Search:            query.Query,
 			PracticeSessionID: query.PracticeSessionID,
@@ -109,7 +110,7 @@ func (history *Repository) SearchReports(
 }
 
 func mapEvaluationReports(
-	items []evaluation.StoredFormalReport,
+	items []report.StoredFormalReport,
 ) ([]review.Report, error) {
 	result := make([]review.Report, len(items))
 	for index, item := range items {
@@ -123,7 +124,7 @@ func mapEvaluationReports(
 }
 
 func mapEvaluationReport(
-	item evaluation.StoredFormalReport,
+	item report.StoredFormalReport,
 ) (review.Report, error) {
 	dimensions := make([]review.ReportDimension, len(item.Report.Dimensions))
 	for index, dimension := range item.Report.Dimensions {
@@ -175,7 +176,7 @@ func mapEvaluationReport(
 }
 
 func mapEvaluationFindings(
-	items []evaluation.ReportFinding,
+	items []report.ReportFinding,
 ) []review.ReportFinding {
 	result := make([]review.ReportFinding, len(items))
 	for index, item := range items {

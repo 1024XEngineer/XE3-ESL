@@ -4,6 +4,8 @@ import (
 	"errors"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
 )
@@ -30,4 +32,16 @@ func NewTextGenerator(
 			"bootstrap: text generation provider is not registered",
 		)
 	}
+}
+
+func NewEvaluationScoringGenerator(
+	generator ai.TextGenerator,
+) (scoring.TextGenerator, error) {
+	return qianwen.NewEvaluationScoringGenerator(generator)
+}
+
+func NewEvaluationSpeechFeedbackGenerator(
+	generator ai.TextGenerator,
+) (speechfeedback.TextGenerator, error) {
+	return qianwen.NewEvaluationSpeechFeedbackGenerator(generator)
 }

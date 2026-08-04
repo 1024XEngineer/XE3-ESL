@@ -13,7 +13,7 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
@@ -57,6 +57,18 @@ func run() int {
 	textGenerator, err := bootstrap.NewTextGenerator(textConfig)
 	if err != nil {
 		logger.Error("text generation startup failed")
+		return 1
+	}
+	evaluationScoringGenerator, err :=
+		bootstrap.NewEvaluationScoringGenerator(textGenerator)
+	if err != nil {
+		logger.Error("evaluation scoring startup failed")
+		return 1
+	}
+	evaluationSpeechFeedbackGenerator, err :=
+		bootstrap.NewEvaluationSpeechFeedbackGenerator(textGenerator)
+	if err != nil {
+		logger.Error("evaluation speech feedback startup failed")
 		return 1
 	}
 	embeddingConfig, err := config.LoadEmbedding()
@@ -193,7 +205,7 @@ func run() int {
 
 	evaluationComposition, err := bootstrap.NewEvaluationComposition(
 		databasePool.Native(),
-		textGenerator,
+		evaluationScoringGenerator,
 		bootstrap.EvaluationConfiguration{
 			Provider:          textConfig.Provider,
 			Model:             textConfig.Model,
@@ -256,7 +268,7 @@ func run() int {
 			UploadLease: 2 * time.Minute,
 		}
 	}
-	var speechFeedbackAcoustics evaluation.SpeechFeedbackAcousticProvider
+	var speechFeedbackAcoustics speechfeedback.SpeechFeedbackAcousticProvider
 	speechFeedbackLease := 30 * time.Second
 	if recordingStore != nil && config.ISEConfigured() {
 		iseConfig, configurationErr := config.LoadISE()
@@ -290,7 +302,7 @@ func run() int {
 	speechFeedbackComposition, err :=
 		bootstrap.NewSpeechFeedbackComposition(
 			databasePool.Native(),
-			textGenerator,
+			evaluationSpeechFeedbackGenerator,
 			bootstrap.SpeechFeedbackConfiguration{
 				Provider:      textConfig.Provider,
 				Model:         textConfig.Model,

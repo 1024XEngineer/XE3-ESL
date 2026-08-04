@@ -5,15 +5,15 @@ import (
 	"errors"
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/learningprofile"
 )
 
 type Source interface {
 	ReadLearningProfile(
 		context.Context,
 		string,
-		evaluation.LearningProfileQuery,
-	) ([]evaluation.LearningProfileDimension, error)
+		learningprofile.Query,
+	) ([]learningprofile.Dimension, error)
 }
 
 type Reader struct {
@@ -40,7 +40,7 @@ func (reader *Reader) ReadLearningProfile(
 	dimensions, err := reader.source.ReadLearningProfile(
 		ctx,
 		request.Actor.UserID,
-		evaluation.LearningProfileQuery{
+		learningprofile.Query{
 			GoalID: request.GoalID,
 			Limit:  request.Limit,
 		},

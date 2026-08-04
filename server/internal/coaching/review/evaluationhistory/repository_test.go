@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 )
 
@@ -46,8 +47,8 @@ func TestRepositoryProjectsEvaluationReportForReview(t *testing.T) {
 func TestRepositoryMapsReviewHistoryQueryToEvaluationSource(t *testing.T) {
 	stored := storedFormalReport()
 	source := &formalReportSourceStub{
-		page: evaluation.FormalReportHistoryPage{
-			Items:   []evaluation.StoredFormalReport{stored},
+		page: report.HistoryPage{
+			Items:   []report.StoredFormalReport{stored},
 			HasMore: true,
 		},
 	}
@@ -77,18 +78,18 @@ func TestRepositoryMapsReviewHistoryQueryToEvaluationSource(t *testing.T) {
 }
 
 type formalReportSourceStub struct {
-	report      evaluation.StoredFormalReport
-	page        evaluation.FormalReportHistoryPage
+	report      report.StoredFormalReport
+	page        report.HistoryPage
 	ownerUserID string
 	reportID    string
-	query       evaluation.FormalReportHistoryQuery
+	query       report.HistoryQuery
 }
 
 func (source *formalReportSourceStub) GetFormalReport(
 	_ context.Context,
 	ownerUserID string,
 	reportID string,
-) (evaluation.StoredFormalReport, error) {
+) (report.StoredFormalReport, error) {
 	source.ownerUserID = ownerUserID
 	source.reportID = reportID
 	return source.report, nil
@@ -97,17 +98,17 @@ func (source *formalReportSourceStub) GetFormalReport(
 func (source *formalReportSourceStub) ListFormalReports(
 	_ context.Context,
 	ownerUserID string,
-	query evaluation.FormalReportHistoryQuery,
-) (evaluation.FormalReportHistoryPage, error) {
+	query report.HistoryQuery,
+) (report.HistoryPage, error) {
 	source.ownerUserID = ownerUserID
 	source.query = query
 	return source.page, nil
 }
 
-func storedFormalReport() evaluation.StoredFormalReport {
+func storedFormalReport() report.StoredFormalReport {
 	score := 82.0
 	createdAt := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
-	return evaluation.StoredFormalReport{
+	return report.StoredFormalReport{
 		ReportID:             "20000000-0000-4000-8000-000000000002",
 		EvaluationID:         "30000000-0000-4000-8000-000000000003",
 		EvaluationRevisionID: "40000000-0000-4000-8000-000000000004",
@@ -115,26 +116,26 @@ func storedFormalReport() evaluation.StoredFormalReport {
 		PracticeSessionID:    "session_demo_002",
 		Revision:             1,
 		CreatedAt:            createdAt,
-		Report: evaluation.FormalReport{
-			SchemaVersion:      evaluation.FormalReportSchemaVersion,
+		Report: report.FormalReport{
+			SchemaVersion:      report.FormalReportSchemaVersion,
 			SceneType:          evaluation.SceneInterview,
 			SceneModel:         "PROJECT_EXPERIENCE_DEEP_DIVE",
-			ScoreabilityStatus: evaluation.ReportScoreabilityProvisional,
+			ScoreabilityStatus: report.ReportScoreabilityProvisional,
 			Summary:            "本次练习已形成面试表达评估。",
-			Dimensions: []evaluation.ReportDimension{{
+			Dimensions: []report.ReportDimension{{
 				Key:          "interview.structure",
 				Score:        &score,
-				Scale:        evaluation.ReportScalePercentage100,
+				Scale:        report.ReportScalePercentage100,
 				Coverage:     1,
 				Confidence:   0.8,
 				ReasonCodes:  []string{},
 				EvidenceRefs: []string{"evidence_demo_001"},
-				Strengths:    []evaluation.ReportFinding{},
-				Improvements: []evaluation.ReportFinding{{
+				Strengths:    []report.ReportFinding{},
+				Improvements: []report.ReportFinding{{
 					ID:         "structure-action",
 					Message:    "回答结构可以更清楚。",
 					Suggestion: "使用 STAR 结构。",
-					Evidence: []evaluation.ReportEvidence{{
+					Evidence: []report.ReportEvidence{{
 						EvidenceRefID:   "evidence_demo_001",
 						TurnID:          "turn_demo_001",
 						StartUTF8Byte:   0,
@@ -142,9 +143,9 @@ func storedFormalReport() evaluation.StoredFormalReport {
 						OriginalExcerpt: "I made the product better.",
 					}},
 				}},
-				Examples: []evaluation.ReportFinding{},
+				Examples: []report.ReportFinding{},
 			}},
-			PriorityActions: []evaluation.ReportPriorityAction{{
+			PriorityActions: []report.ReportPriorityAction{{
 				DimensionKey: "interview.structure",
 				FindingID:    "structure-action",
 			}},

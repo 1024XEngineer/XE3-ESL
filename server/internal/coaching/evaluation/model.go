@@ -146,7 +146,7 @@ func (r Revision) Valid() bool {
 		!r.UpdatedAt.Before(r.CreatedAt)
 }
 
-type revisionConfig struct {
+type RevisionConfig struct {
 	Channels          []Channel `json:"channels"`
 	SceneStrategyRef  string    `json:"scene_strategy_ref,omitempty"`
 	Core4DStrategyRef string    `json:"core_4d_strategy_ref,omitempty"`
@@ -155,16 +155,37 @@ type revisionConfig struct {
 	ClientRequestID   string    `json:"-"`
 }
 
-type createInput struct {
+func (config RevisionConfig) Valid() bool {
+	return validChannels(config.Channels) &&
+		validStrategies(
+			config.Channels,
+			config.SceneStrategyRef,
+			config.Core4DStrategyRef,
+		) &&
+		validVersion(config.PipelineVersion) &&
+		config.SchemaVersion == SchemaVersion &&
+		validClientRequestID(config.ClientRequestID)
+}
+
+type CreateInput struct {
 	PracticeSessionID string         `json:"practice_session_id"`
 	InputSnapshotID   string         `json:"input_snapshot_id"`
 	InputRevision     int            `json:"input_revision"`
 	Scope             Scope          `json:"scope"`
 	SceneType         SceneType      `json:"scene_type"`
-	Config            revisionConfig `json:"config"`
+	Config            RevisionConfig `json:"config"`
 }
 
-func normalizeCreate(request CreateRequest) (createInput, error) {
+func (input CreateInput) Valid() bool {
+	return validIdentifier(input.PracticeSessionID) &&
+		validIdentifier(input.InputSnapshotID) &&
+		input.InputRevision > 0 &&
+		validScope(input.Scope) &&
+		validSceneType(input.SceneType) &&
+		input.Config.Valid()
+}
+
+func normalizeCreate(request CreateRequest) (CreateInput, error) {
 	config, err := normalizeConfig(
 		request.Channels,
 		request.SceneStrategyRef,
@@ -178,9 +199,9 @@ func normalizeCreate(request CreateRequest) (createInput, error) {
 		request.InputRevision < 1 ||
 		!validScope(request.Scope) ||
 		!validSceneType(request.SceneType) {
-		return createInput{}, ErrInvalidRequest
+		return CreateInput{}, ErrInvalidRequest
 	}
-	return createInput{
+	return CreateInput{
 		PracticeSessionID: strings.TrimSpace(request.PracticeSessionID),
 		InputSnapshotID:   strings.TrimSpace(request.InputSnapshotID),
 		InputRevision:     request.InputRevision,
@@ -192,7 +213,7 @@ func normalizeCreate(request CreateRequest) (createInput, error) {
 
 func normalizeReevaluation(
 	request ReevaluateRequest,
-) (revisionConfig, error) {
+) (RevisionConfig, error) {
 	return normalizeConfig(
 		request.Channels,
 		request.SceneStrategyRef,
@@ -208,7 +229,7 @@ func normalizeConfig(
 	core4DStrategyRef string,
 	pipelineVersion string,
 	clientRequestID string,
-) (revisionConfig, error) {
+) (RevisionConfig, error) {
 	normalizedChannels := slices.Clone(channels)
 	slices.Sort(normalizedChannels)
 	sceneStrategyRef = strings.TrimSpace(sceneStrategyRef)
@@ -223,9 +244,9 @@ func normalizeConfig(
 		) ||
 		!validVersion(pipelineVersion) ||
 		!validClientRequestID(clientRequestID) {
-		return revisionConfig{}, ErrInvalidRequest
+		return RevisionConfig{}, ErrInvalidRequest
 	}
-	return revisionConfig{
+	return RevisionConfig{
 		Channels:          normalizedChannels,
 		SceneStrategyRef:  sceneStrategyRef,
 		Core4DStrategyRef: core4DStrategyRef,

@@ -8,14 +8,15 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 )
 
 type LatestReportReader interface {
 	ListFormalReports(
 		context.Context,
 		string,
-		evaluation.FormalReportHistoryQuery,
-	) (evaluation.FormalReportHistoryPage, error)
+		report.HistoryQuery,
+	) (report.HistoryPage, error)
 }
 
 type ServicePort struct {
@@ -41,7 +42,7 @@ func (port *ServicePort) LatestPracticeReport(
 	page, err := port.reports.ListFormalReports(
 		ctx,
 		call.Actor.UserID,
-		evaluation.FormalReportHistoryQuery{Limit: 1},
+		report.HistoryQuery{Limit: 1},
 	)
 	if err != nil {
 		if errors.Is(err, evaluation.ErrNotFound) ||
@@ -57,7 +58,7 @@ func (port *ServicePort) LatestPracticeReport(
 }
 
 func mapLatestFormalReport(
-	stored evaluation.StoredFormalReport,
+	stored report.StoredFormalReport,
 ) LatestPracticeReport {
 	report := stored.Report
 	result := LatestPracticeReport{
@@ -104,7 +105,7 @@ func mapLatestFormalReport(
 }
 
 func mapReportFindings(
-	items []evaluation.ReportFinding,
+	items []report.ReportFinding,
 ) []ReportFinding {
 	result := make([]ReportFinding, len(items))
 	for index, item := range items {
@@ -153,8 +154,8 @@ func sceneName(sceneType evaluation.SceneType) string {
 	}
 }
 
-func assessmentMode(status evaluation.ReportScoreability) string {
-	if status == evaluation.ReportScoreabilityInsufficient {
+func assessmentMode(status report.ReportScoreability) string {
+	if status == report.ReportScoreabilityInsufficient {
 		return "证据不足"
 	}
 	return "暂定评分与反馈"

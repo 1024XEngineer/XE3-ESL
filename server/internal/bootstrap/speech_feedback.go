@@ -5,8 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
@@ -22,19 +21,19 @@ type SpeechFeedbackConfiguration struct {
 	MaxAttempts   int
 	LeaseDuration time.Duration
 	RetryDelay    time.Duration
-	Acoustics     evaluation.SpeechFeedbackAcousticProvider
+	Acoustics     speechfeedback.SpeechFeedbackAcousticProvider
 }
 
 type SpeechFeedbackComposition struct {
-	coordinator  *evaluation.SpeechFeedbackCoordinator
-	handler      *evaluation.SpeechFeedbackHTTPHandler
+	coordinator  *speechfeedback.SpeechFeedbackCoordinator
+	handler      *speechfeedback.SpeechFeedbackHTTPHandler
 	retryHandler *review.RetryRequestHTTPHandler
-	worker       *evaluation.SpeechFeedbackWorker
+	worker       *speechfeedback.SpeechFeedbackWorker
 }
 
 func NewSpeechFeedbackComposition(
 	database *pgxpool.Pool,
-	generator ai.TextGenerator,
+	generator speechfeedback.TextGenerator,
 	configuration SpeechFeedbackConfiguration,
 ) (*SpeechFeedbackComposition, error) {
 	if database == nil || generator == nil ||
@@ -44,36 +43,36 @@ func NewSpeechFeedbackComposition(
 			"bootstrap: SpeechFeedback dependencies are required",
 		)
 	}
-	evaluationRepository := evaluation.NewPostgresRepository(database)
-	coordinator, err := evaluation.NewSpeechFeedbackCoordinator(
+	evaluationRepository := speechfeedback.NewPostgresRepository(database)
+	coordinator, err := speechfeedback.NewSpeechFeedbackCoordinator(
 		evaluationRepository,
 	)
 	if err != nil {
 		return nil, err
 	}
-	provider, err := evaluation.NewSpeechFeedbackTextProvider(generator)
+	provider, err := speechfeedback.NewSpeechFeedbackTextProvider(generator)
 	if err != nil {
 		return nil, err
 	}
-	workerConfiguration := evaluation.SpeechFeedbackWorkerConfiguration{
+	workerConfiguration := speechfeedback.SpeechFeedbackWorkerConfiguration{
 		MaxAttempts:     configuration.MaxAttempts,
 		LeaseDuration:   configuration.LeaseDuration,
 		RetryDelay:      configuration.RetryDelay,
-		StrategyRef:     evaluation.SpeechFeedbackStrategyRef,
-		PipelineVersion: evaluation.SpeechFeedbackPipelineVersion,
-		PromptVersion:   evaluation.SpeechFeedbackPromptVersion,
+		StrategyRef:     speechfeedback.SpeechFeedbackStrategyRef,
+		PipelineVersion: speechfeedback.SpeechFeedbackPipelineVersion,
+		PromptVersion:   speechfeedback.SpeechFeedbackPromptVersion,
 		Provider:        configuration.Provider,
 		Model:           configuration.Model,
 	}
-	var worker *evaluation.SpeechFeedbackWorker
+	var worker *speechfeedback.SpeechFeedbackWorker
 	if configuration.Acoustics == nil {
-		worker, err = evaluation.NewSpeechFeedbackWorker(
+		worker, err = speechfeedback.NewSpeechFeedbackWorker(
 			evaluationRepository,
 			provider,
 			workerConfiguration,
 		)
 	} else {
-		worker, err = evaluation.NewSpeechFeedbackWorkerWithAcoustics(
+		worker, err = speechfeedback.NewSpeechFeedbackWorkerWithAcoustics(
 			evaluationRepository,
 			provider,
 			evaluationRepository,
@@ -84,7 +83,7 @@ func NewSpeechFeedbackComposition(
 	if err != nil {
 		return nil, err
 	}
-	handler, err := evaluation.NewSpeechFeedbackHTTPHandler(coordinator)
+	handler, err := speechfeedback.NewSpeechFeedbackHTTPHandler(coordinator)
 	if err != nil {
 		return nil, err
 	}
@@ -136,14 +135,14 @@ func NewSpeechFeedbackComposition(
 	}, nil
 }
 
-func (composition *SpeechFeedbackComposition) Coordinator() *evaluation.SpeechFeedbackCoordinator {
+func (composition *SpeechFeedbackComposition) Coordinator() *speechfeedback.SpeechFeedbackCoordinator {
 	if composition == nil {
 		return nil
 	}
 	return composition.coordinator
 }
 
-func (composition *SpeechFeedbackComposition) HTTPHandler() *evaluation.SpeechFeedbackHTTPHandler {
+func (composition *SpeechFeedbackComposition) HTTPHandler() *speechfeedback.SpeechFeedbackHTTPHandler {
 	if composition == nil {
 		return nil
 	}
@@ -157,7 +156,7 @@ func (composition *SpeechFeedbackComposition) RetryHTTPHandler() *review.RetryRe
 	return composition.retryHandler
 }
 
-func (composition *SpeechFeedbackComposition) Worker() *evaluation.SpeechFeedbackWorker {
+func (composition *SpeechFeedbackComposition) Worker() *speechfeedback.SpeechFeedbackWorker {
 	if composition == nil {
 		return nil
 	}
@@ -165,7 +164,7 @@ func (composition *SpeechFeedbackComposition) Worker() *evaluation.SpeechFeedbac
 }
 
 type speechFeedbackRepracticeSourceAdapter struct {
-	repository *evaluation.PostgresRepository
+	repository *speechfeedback.PostgresRepository
 }
 
 func (adapter *speechFeedbackRepracticeSourceAdapter) ReadSameQuestionRepracticeSource(
@@ -181,7 +180,7 @@ func (adapter *speechFeedbackRepracticeSourceAdapter) ReadSameQuestionRepractice
 		actor.UserID,
 		feedbackItemID,
 	)
-	if errors.Is(err, evaluation.ErrSpeechFeedbackNotFound) {
+	if errors.Is(err, speechfeedback.ErrSpeechFeedbackNotFound) {
 		return review.RepracticeSource{}, review.ErrRetryRequestNotFound
 	}
 	if err != nil {

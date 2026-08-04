@@ -7,7 +7,8 @@ import (
 	"time"
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/learningprofile"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -16,24 +17,24 @@ func TestReaderProjectsEvaluationLearningProfileForAgentContext(
 ) {
 	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
 	source := &learningProfileSourceStub{
-		dimensions: []evaluation.LearningProfileDimension{{
+		dimensions: []learningprofile.Dimension{{
 			Key:            "interview.structure",
-			Scale:          evaluation.ReportScalePercentage100,
+			Scale:          report.ReportScalePercentage100,
 			EstimatedValue: 82,
 			Confidence:     0.8,
-			Trend:          evaluation.LearningProfileTrendImproving,
-			RecurringIssues: []evaluation.LearningProfileIssue{{
+			Trend:          learningprofile.TrendImproving,
+			RecurringIssues: []learningprofile.Issue{{
 				Key:      "issue:structure",
 				Label:    "回答结构需要更清楚",
 				Count:    2,
 				LastSeen: now,
 			}},
-			SourceEvaluations: []evaluation.LearningProfileSourceRef{{
+			SourceEvaluations: []learningprofile.SourceRef{{
 				EvaluationID:         "10000000-0000-4000-8000-000000000001",
 				EvaluationRevisionID: "20000000-0000-4000-8000-000000000002",
 				CreatedAt:            now,
 			}},
-			StrategyVersion: evaluation.LearningProfileStrategyVersion,
+			StrategyVersion: learningprofile.StrategyVersion,
 			UpdatedAt:       now,
 		}},
 	}
@@ -71,7 +72,7 @@ func TestReaderProjectsEvaluationLearningProfileForAgentContext(
 			EvaluationRevisionID: "20000000-0000-4000-8000-000000000002",
 			CreatedAt:            now,
 		}},
-		StrategyVersion: evaluation.LearningProfileStrategyVersion,
+		StrategyVersion: learningprofile.StrategyVersion,
 		UpdatedAt:       now,
 	}}
 	if !reflect.DeepEqual(got, want) {
@@ -85,16 +86,16 @@ func TestReaderProjectsEvaluationLearningProfileForAgentContext(
 }
 
 type learningProfileSourceStub struct {
-	dimensions  []evaluation.LearningProfileDimension
+	dimensions  []learningprofile.Dimension
 	ownerUserID string
-	query       evaluation.LearningProfileQuery
+	query       learningprofile.Query
 }
 
 func (source *learningProfileSourceStub) ReadLearningProfile(
 	_ context.Context,
 	ownerUserID string,
-	query evaluation.LearningProfileQuery,
-) ([]evaluation.LearningProfileDimension, error) {
+	query learningprofile.Query,
+) ([]learningprofile.Dimension, error) {
 	source.ownerUserID = ownerUserID
 	source.query = query
 	return source.dimensions, nil

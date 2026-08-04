@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 )
 
 const (
@@ -24,7 +25,7 @@ type evaluationShadowProcessor interface {
 	ProcessPending(
 		context.Context,
 		int,
-	) (evaluation.InterviewShadowSweepResult, error)
+	) (scoring.InterviewShadowSweepResult, error)
 }
 
 type evaluationShadowWorker struct {
@@ -155,11 +156,11 @@ func evaluationShadowErrorKind(err error) string {
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "deadline_exceeded"
-	case errors.Is(err, evaluation.ErrInterviewShadowLeaseLost):
+	case errors.Is(err, scoring.ErrRuntimeLeaseLost):
 		return "lease_lost"
 	case errors.Is(
 		err,
-		evaluation.ErrInterviewShadowConfigurationConflict,
+		scoring.ErrRuntimeConfigurationConflict,
 	):
 		return "configuration_conflict"
 	case errors.Is(err, evaluation.ErrInvalidRequest):
