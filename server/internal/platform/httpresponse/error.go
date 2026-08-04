@@ -210,7 +210,6 @@ var canonicalHTTPStatusByCode = map[string]int{
 	"unsupported_resume_format":               http.StatusBadRequest,
 	"resume_file_too_large":                   http.StatusBadRequest,
 	"resume_parse_failed":                     http.StatusServiceUnavailable,
-	"resume_not_implemented":                  http.StatusNotImplemented,
 	"idempotency_key_conflict":                http.StatusConflict,
 	"resource_conflict":                       http.StatusConflict,
 	"resource_processing":                     http.StatusConflict,

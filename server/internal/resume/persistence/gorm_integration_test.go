@@ -78,6 +78,17 @@ func TestGormRepositoryCRUDAndIsolation(t *testing.T) {
 	if err != nil || detail.Revision == nil || detail.Revision.Content.TargetPosition != "Backend Engineer" {
 		t.Fatalf("detail = %#v, err = %v", detail, err)
 	}
+
+	aborted := resumeCandidate("30000000-0000-4000-8000-000000000002", resumeOwnerA)
+	if err := repository.CreateWithinLimit(ctx, aborted, app.MaxResumesPerUser); err != nil {
+		t.Fatalf("create aborted Resume: %v", err)
+	}
+	if err := repository.AbortCreate(ctx, resumeOwnerA, aborted.ID); err != nil {
+		t.Fatalf("abort create: %v", err)
+	}
+	if _, err := repository.FindByOwnerAndID(ctx, resumeOwnerA, aborted.ID); errorCode(err) != "resume_not_found" {
+		t.Fatalf("aborted Resume remains visible: %v", err)
+	}
 }
 
 // TestGormRepositoryConcurrentLimitAndCapacityRecovery 验证并发创建不突破三份上限且删除后释放容量。

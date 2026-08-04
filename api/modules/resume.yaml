@@ -507,6 +507,15 @@ components:
             type: string
             minLength: 1
             maxLength: 100
+        awards:
+          type: array
+          description: Explicit awards, honors, scholarships, and prizes preserved from the resume.
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 300
     WorkExperience:
       type: object
       additionalProperties: false
@@ -581,6 +590,10 @@ components:
         degree:
           type: string
           maxLength: 100
+        gpa:
+          type: string
+          description: GPA exactly as written in the resume, including its original scale.
+          maxLength: 64
         start_date:
           type: string
           maxLength: 32

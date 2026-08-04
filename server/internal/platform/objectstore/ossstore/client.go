@@ -92,8 +92,7 @@ func New(
 }
 
 // NewForPrefix creates an isolated client for one configured object namespace.
-// Audio and image services share the bucket and credentials but cannot access
-// each other's keys through their Store capability.
+// Audio、image 与 Resume 服务共享 Bucket 和凭据，但通过独立前缀能力相互隔离。
 func NewForPrefix(
 	ctx context.Context,
 	storageConfig config.ObjectStorageConfig,
@@ -102,7 +101,8 @@ func NewForPrefix(
 ) (*Client, error) {
 	if prefix == "" ||
 		(prefix != storageConfig.AudioPrefix &&
-			prefix != storageConfig.ImagePrefix) {
+			prefix != storageConfig.ImagePrefix &&
+			prefix != storageConfig.ResumePrefix) {
 		return nil, objectstore.ErrInvalidKey
 	}
 	return newClient(
@@ -300,6 +300,27 @@ func (c *Client) SignedGet(
 		URL:       result.URL,
 		ExpiresAt: result.Expiration,
 	}, nil
+}
+
+// Open 通过私有 OSS 客户端打开对象流，供服务端受控解析使用。
+func (c *Client) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	if err := objectstore.ValidateKey(c.prefix, key); err != nil {
+		return nil, err
+	}
+	result, err := c.sdk.GetObject(ctx, &aliyunoss.GetObjectRequest{
+		Bucket: aliyunoss.Ptr(c.bucket),
+		Key:    aliyunoss.Ptr(key),
+	})
+	if err != nil {
+		return nil, safeError("get", err)
+	}
+	if result.Body == nil || aliyunoss.ToString(result.ContentType) != "application/pdf" {
+		if result.Body != nil {
+			_ = result.Body.Close()
+		}
+		return nil, objectstore.ErrInvalidObject
+	}
+	return result.Body, nil
 }
 
 func (c *Client) Delete(ctx context.Context, key string) error {

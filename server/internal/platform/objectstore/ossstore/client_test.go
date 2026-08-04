@@ -498,6 +498,32 @@ func TestImageClientIsolatedFromAudioPrefix(t *testing.T) {
 	}
 }
 
+// TestResumeClientOpensPrivatePDF 验证 Resume OSS 前缀可通过服务端受控流读取 PDF。
+func TestResumeClientOpensPrivatePDF(t *testing.T) {
+	body := "%PDF-1.4 private resume"
+	client := newTestClientForPrefix(t, &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Method != http.MethodGet {
+				t.Fatalf("unexpected method: %s", request.Method)
+			}
+			return response(http.StatusOK, http.Header{
+				"Content-Type":   []string{"application/pdf"},
+				"Content-Length": []string{fmt.Sprint(len(body))},
+			}, body), nil
+		}),
+	}, "resume/v1")
+
+	reader, err := client.Open(context.Background(), "resume/v1/user/resume.pdf")
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer reader.Close()
+	read, err := io.ReadAll(reader)
+	if err != nil || string(read) != body {
+		t.Fatalf("Open() body = %q, error = %v", read, err)
+	}
+}
+
 func TestClientSanitizesProviderErrors(t *testing.T) {
 	client := newTestClient(t, &http.Client{
 		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -540,6 +566,7 @@ func newTestClientForPrefix(
 		Bucket:       "speakup-test",
 		AudioPrefix:  "audio/v1",
 		ImagePrefix:  "image/v1",
+		ResumePrefix: "resume/v1",
 		SignedURLTTL: 2 * time.Minute,
 	}, prefix, credentials.NewEnvironmentVariableCredentialsProvider(), httpClient, false)
 	if err != nil {

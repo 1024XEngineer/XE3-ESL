@@ -162,6 +162,20 @@ func run() int {
 		return 1
 	}
 
+	resumeComposition, err := buildResumeComposition(
+		ctx,
+		databasePool.Native(),
+		storageConfig,
+		textConfig,
+	)
+	if err != nil {
+		logger.Error(
+			"Resume composition failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+
 	evaluationComposition, err := bootstrap.NewEvaluationComposition(
 		databasePool.Native(),
 		textGenerator,
@@ -371,12 +385,19 @@ func run() int {
 		)
 		return 1
 	}
-	contextRoutes, err := applicationComposition.ProtectedRoutes(
+	protectedRegistrars := []bootstrap.ProtectedRouteRegistrar{
 		avatarHTTP,
 		evaluationComposition.HTTPHandler(),
 		speechFeedbackComposition.HTTPHandler(),
 		speechFeedbackComposition.RetryHTTPHandler(),
-	)
+	}
+	if resumeComposition != nil {
+		protectedRegistrars = append(
+			protectedRegistrars,
+			resumeComposition.HTTPHandler(),
+		)
+	}
+	contextRoutes, err := applicationComposition.ProtectedRoutes(protectedRegistrars...)
 	if err != nil {
 		logger.Error("context route startup failed", slog.Any("error", err))
 		return 1
@@ -516,6 +537,14 @@ func run() int {
 		defer close(speechFeedbackDone)
 		speechFeedback.Run(ctx)
 	}()
+	var resumeWorkerDone chan struct{}
+	if resumeComposition != nil {
+		resumeWorkerDone = make(chan struct{})
+		go func() {
+			defer close(resumeWorkerDone)
+			resumeComposition.Worker().Run(ctx)
+		}()
+	}
 
 	router := bootstrap.NewRouterWithReadinessAndRoutes(
 		logger,
@@ -590,6 +619,17 @@ func run() int {
 		case <-shutdownCtx.Done():
 			logger.Error(
 				"agent image cleanup shutdown failed",
+				slog.String("error_kind", "timeout"),
+			)
+			exitCode = 1
+		}
+	}
+	if resumeWorkerDone != nil {
+		select {
+		case <-resumeWorkerDone:
+		case <-shutdownCtx.Done():
+			logger.Error(
+				"Resume worker shutdown failed",
 				slog.String("error_kind", "timeout"),
 			)
 			exitCode = 1

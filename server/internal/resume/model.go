@@ -25,41 +25,43 @@ type Resume struct {
 
 // Content 表示可由解析器生成、也可由用户手动修改的结构化简历内容。
 type Content struct {
-	TargetPosition       string
-	ProfessionalSummary  string
-	WorkExperiences      []WorkExperience
-	ProjectExperiences   []ProjectExperience
-	EducationExperiences []EducationExperience
-	Skills               []string
+	TargetPosition       string                `json:"target_position"`
+	ProfessionalSummary  string                `json:"professional_summary"`
+	WorkExperiences      []WorkExperience      `json:"work_experiences"`
+	ProjectExperiences   []ProjectExperience   `json:"project_experiences"`
+	EducationExperiences []EducationExperience `json:"education_experiences"`
+	Skills               []string              `json:"skills"`
+	Awards               []string              `json:"awards"`
 }
 
 // WorkExperience 表示一段工作经历。
 type WorkExperience struct {
-	Company      string
-	Position     string
-	StartDate    string
-	EndDate      string
-	Duties       []string
-	Achievements []string
+	Company      string   `json:"company"`
+	Position     string   `json:"position"`
+	StartDate    string   `json:"start_date,omitempty"`
+	EndDate      string   `json:"end_date,omitempty"`
+	Duties       []string `json:"duties"`
+	Achievements []string `json:"achievements"`
 }
 
 // ProjectExperience 表示一段项目经历。
 type ProjectExperience struct {
-	ProjectName  string
-	Role         string
-	Description  string
-	Technologies []string
-	Duties       []string
-	Achievements []string
+	ProjectName  string   `json:"project_name"`
+	Role         string   `json:"role"`
+	Description  string   `json:"description"`
+	Technologies []string `json:"technologies"`
+	Duties       []string `json:"duties"`
+	Achievements []string `json:"achievements"`
 }
 
 // EducationExperience 表示一段教育经历。
 type EducationExperience struct {
-	School    string
-	Major     string
-	Degree    string
-	StartDate string
-	EndDate   string
+	School    string `json:"school"`
+	Major     string `json:"major"`
+	Degree    string `json:"degree"`
+	GPA       string `json:"gpa,omitempty"`
+	StartDate string `json:"start_date,omitempty"`
+	EndDate   string `json:"end_date,omitempty"`
 }
 
 // Revision 表示一次不可变的结构化简历内容修订。

@@ -39,6 +39,7 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.da
 import 'package:speakup/features/coaching/review/wire_interview_report_client.dart';
 import 'package:speakup/features/coaching/review/wire_review_history_client.dart';
 import 'package:speakup/features/coaching/evaluation/wire_turn_feedback_client.dart';
+import 'package:speakup/resume/resume.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -62,6 +63,7 @@ void main() {
       interviewReportController: dependencies.interviewReportController,
       ieltsSpeakingReportController: dependencies.ieltsSpeakingReportController,
       speechFeedbackController: dependencies.speechFeedbackController,
+      resumeController: dependencies.resumeController,
     ),
   );
 }
@@ -79,6 +81,7 @@ final class ProductionAppDependencies {
     required this.interviewReportController,
     required this.ieltsSpeakingReportController,
     required this.speechFeedbackController,
+    required this.resumeController,
   });
 
   final AuthController authController;
@@ -92,6 +95,7 @@ final class ProductionAppDependencies {
   final InterviewReportController interviewReportController;
   final IeltsSpeakingReportController ieltsSpeakingReportController;
   final SpeechFeedbackController speechFeedbackController;
+  final ResumeController resumeController;
 }
 
 ProductionAppDependencies createProductionAppDependencies({
@@ -430,6 +434,21 @@ ProductionAppDependencies createProductionAppDependencies({
     baseUri: baseUri,
     transport: identityTransport,
   );
+  final resumeController = ResumeController(
+    client: WireResumeClient(
+      baseUri: baseUri,
+      credentialProvider: () => authController.currentCredential,
+      invalidateSession:
+          ({required expectedSessionToken, required expectedGeneration}) {
+            return authController.invalidateSession(
+              expectedSessionToken: expectedSessionToken,
+              expectedGeneration: expectedGeneration,
+            );
+          },
+    ),
+    filePicker: const SystemResumeFilePicker(),
+    urlOpener: const SystemResumeUrlOpener(),
+  );
   Future<void> clearAvatarPrivateState() async {
     final controllers = accountAvatarControllers.toList(growable: false);
     activeAvatarControllers.clear();
@@ -452,6 +471,7 @@ ProductionAppDependencies createProductionAppDependencies({
           .clearPrivateState();
       final speechFeedbackCleanup = speechFeedbackController
           .clearPrivateState();
+      final resumeCleanup = resumeController.clearPrivateState();
       try {
         await preparationLaunchController.clearPrivateState();
         await practicePlanHandoffController.clearAccountState();
@@ -467,6 +487,7 @@ ProductionAppDependencies createProductionAppDependencies({
           interviewReportCleanup,
           ieltsSpeakingReportCleanup,
           speechFeedbackCleanup,
+          resumeCleanup,
         ]);
       }
     },
@@ -483,5 +504,6 @@ ProductionAppDependencies createProductionAppDependencies({
     interviewReportController: interviewReportController,
     ieltsSpeakingReportController: ieltsSpeakingReportController,
     speechFeedbackController: speechFeedbackController,
+    resumeController: resumeController,
   );
 }
