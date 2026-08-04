@@ -380,75 +380,106 @@ class _ResumeDetailPageState extends State<ResumeDetailPage> {
   }
 
   Future<void> _editContent(ResumeDetail detail) async {
-    final content = detail.content!;
-    final position = TextEditingController(text: content.targetPosition);
-    final summary = TextEditingController(text: content.professionalSummary);
-    final skills = TextEditingController(text: content.skills.join('、'));
     final updated = await showModalBottomSheet<ResumeContent>(
       context: context,
       isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          SpeakUpDesign.space20,
-          SpeakUpDesign.space8,
-          SpeakUpDesign.space20,
-          MediaQuery.viewInsetsOf(context).bottom + SpeakUpDesign.space24,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('完善简历内容', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: SpeakUpDesign.space16),
-              TextField(
-                controller: position,
-                maxLength: 200,
-                decoration: const InputDecoration(labelText: '目标岗位'),
+      builder: (context) => _ResumeContentEditorSheet(content: detail.content!),
+    );
+    if (updated != null) await widget.controller.saveContent(detail, updated);
+  }
+}
+
+final class _ResumeContentEditorSheet extends StatefulWidget {
+  const _ResumeContentEditorSheet({required this.content});
+
+  final ResumeContent content;
+
+  @override
+  State<_ResumeContentEditorSheet> createState() =>
+      _ResumeContentEditorSheetState();
+}
+
+final class _ResumeContentEditorSheetState
+    extends State<_ResumeContentEditorSheet> {
+  late final TextEditingController _position;
+  late final TextEditingController _summary;
+  late final TextEditingController _skills;
+
+  @override
+  void initState() {
+    super.initState();
+    _position = TextEditingController(text: widget.content.targetPosition);
+    _summary = TextEditingController(text: widget.content.professionalSummary);
+    _skills = TextEditingController(text: widget.content.skills.join('、'));
+  }
+
+  @override
+  void dispose() {
+    _position.dispose();
+    _summary.dispose();
+    _skills.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        SpeakUpDesign.space20,
+        SpeakUpDesign.space8,
+        SpeakUpDesign.space20,
+        MediaQuery.viewInsetsOf(context).bottom + SpeakUpDesign.space24,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('完善简历内容', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: SpeakUpDesign.space16),
+            TextField(
+              controller: _position,
+              maxLength: 200,
+              decoration: const InputDecoration(labelText: '目标岗位'),
+            ),
+            const SizedBox(height: SpeakUpDesign.space12),
+            TextField(
+              controller: _summary,
+              maxLength: 4000,
+              minLines: 4,
+              maxLines: 8,
+              decoration: const InputDecoration(labelText: '个人简介'),
+            ),
+            const SizedBox(height: SpeakUpDesign.space12),
+            TextField(
+              controller: _skills,
+              decoration: const InputDecoration(
+                labelText: '技能',
+                hintText: '使用逗号、顿号或换行分隔',
               ),
-              const SizedBox(height: SpeakUpDesign.space12),
-              TextField(
-                controller: summary,
-                maxLength: 4000,
-                minLines: 4,
-                maxLines: 8,
-                decoration: const InputDecoration(labelText: '个人简介'),
-              ),
-              const SizedBox(height: SpeakUpDesign.space12),
-              TextField(
-                controller: skills,
-                decoration: const InputDecoration(
-                  labelText: '技能',
-                  hintText: '使用逗号、顿号或换行分隔',
+            ),
+            const SizedBox(height: SpeakUpDesign.space16),
+            FilledButton(
+              key: const Key('resume-content-save'),
+              onPressed: () => Navigator.pop(
+                context,
+                widget.content.copyWith(
+                  targetPosition: _position.text.trim(),
+                  professionalSummary: _summary.text.trim(),
+                  skills: _skills.text
+                      .split(RegExp(r'[,，、\n]'))
+                      .map((value) => value.trim())
+                      .where((value) => value.isNotEmpty)
+                      .toSet()
+                      .take(100)
+                      .toList(growable: false),
                 ),
               ),
-              const SizedBox(height: SpeakUpDesign.space16),
-              FilledButton(
-                key: const Key('resume-content-save'),
-                onPressed: () => Navigator.pop(
-                  context,
-                  content.copyWith(
-                    targetPosition: position.text.trim(),
-                    professionalSummary: summary.text.trim(),
-                    skills: skills.text
-                        .split(RegExp(r'[,，、\n]'))
-                        .map((value) => value.trim())
-                        .where((value) => value.isNotEmpty)
-                        .toSet()
-                        .take(100)
-                        .toList(growable: false),
-                  ),
-                ),
-                child: const Text('保存修改'),
-              ),
-            ],
-          ),
+              child: const Text('保存修改'),
+            ),
+          ],
         ),
       ),
     );
-    position.dispose();
-    summary.dispose();
-    skills.dispose();
-    if (updated != null) await widget.controller.saveContent(detail, updated);
   }
 }
 
