@@ -5,11 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	evaluationprofile "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/evaluationprofile"
+	contextmemorysource "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/memorysource"
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentaudiohttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/audio/http"
@@ -25,6 +25,7 @@ import (
 	agentvoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/http"
 	voicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
+	memoryagentsource "github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory/agentsource"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	agentrunhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
@@ -209,7 +210,7 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	contextMemorySearcher, err := newAgentMemoryContextSearcher(memorySearcher)
+	contextMemorySearcher, err := contextmemorysource.NewSearcher(memorySearcher)
 	if err != nil {
 		return nil, err
 	}
@@ -217,22 +218,19 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	memoryBarrier, err := memory.NewExtractionBarrierCoordinator(
-		memoryRepository,
-		memory.SystemExtractionBarrierScheduler{},
-		memory.ExtractionBarrierWaitPolicy{
-			MaximumWait:  5 * time.Second,
-			PollInterval: 50 * time.Millisecond,
-		},
+	memoryBarrier, err := memory.NewExtractionBarrier(memoryRepository)
+	if err != nil {
+		return nil, err
+	}
+	contextMemoryBarrier, err := contextmemorysource.NewExtractionBarrier(
+		memoryBarrier,
 	)
 	if err != nil {
 		return nil, err
 	}
-	contextMemoryBarrier, err := newAgentMemoryExtractionBarrier(memoryBarrier)
-	if err != nil {
-		return nil, err
-	}
-	stableProfileReader, err := newAgentStableProfileReader(memoryRepository)
+	stableProfileReader, err := contextmemorysource.NewStableProfileReader(
+		memoryRepository,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -305,14 +303,20 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	memoryExtraction, err := buildMemoryExtractionProcessor(
-		database,
-		ids,
+	memorySources, err := memoryagentsource.NewCompletedRunReader(
 		runRepository,
 		conversationRepository,
 		contextRepository,
+	)
+	if err != nil {
+		return nil, err
+	}
+	memoryExtraction, err := memory.NewExtractionProcessor(
+		memoryRepository,
+		memorySources,
 		modelProviders.Memory,
-		runConfiguration,
+		runConfiguration.Provider,
+		runConfiguration.Model,
 	)
 	if err != nil {
 		return nil, err
@@ -321,36 +325,11 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	summaryService, err := agentsummary.NewService(
+	summaryProcessor, err := agentsummary.NewProcessor(
 		summaryRepository,
 		modelProviders.Summary,
-		agentsummary.Configuration{
-			PolicyVersion: "summary-policy-v1",
-			PromptVersion: "summary-prompt-v1",
-			Provider:      runConfiguration.Provider,
-			Model:         runConfiguration.Model,
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	summaryProcessor, err := agentsummary.NewWorker(
-		summaryRepository,
-		summaryRepository,
-		summaryService,
-		agentsummary.WorkerConfiguration{
-			TriggerPolicyVersion: agentsummary.TriggerPolicyV2,
-			TriggerMessages:      agentsummary.DefaultTriggerMessages,
-			RetainRecentMessages: agentsummary.DefaultRetainedMessages,
-			LeaseDuration:        2 * time.Minute,
-			MaxAttempts:          agentsummary.DefaultWorkerMaxAttempts,
-			Summary: agentsummary.Configuration{
-				PolicyVersion: "summary-policy-v1",
-				PromptVersion: "summary-prompt-v1",
-				Provider:      runConfiguration.Provider,
-				Model:         runConfiguration.Model,
-			},
-		},
+		runConfiguration.Provider,
+		runConfiguration.Model,
 	)
 	if err != nil {
 		return nil, err

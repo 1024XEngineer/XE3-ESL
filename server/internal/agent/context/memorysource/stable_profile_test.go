@@ -1,4 +1,4 @@
-package bootstrap
+package memorysource
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func TestAgentStableProfileReaderPreservesFields(t *testing.T) {
 			UpdatedAt:     now,
 		}},
 	}
-	adapter, err := newAgentStableProfileReader(delegate)
+	adapter, err := NewStableProfileReader(delegate)
 	if err != nil {
 		t.Fatalf("newAgentStableProfileReader: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestAgentStableProfileReaderPreservesFields(t *testing.T) {
 
 func TestAgentStableProfileReaderAcceptsEmptyProfile(t *testing.T) {
 	t.Parallel()
-	adapter, err := newAgentStableProfileReader(
+	adapter, err := NewStableProfileReader(
 		&recordingStableProfileReader{items: []memory.Memory{}},
 	)
 	if err != nil {
@@ -78,7 +78,7 @@ func TestAgentStableProfileReaderRejectsInvalidDomainResult(t *testing.T) {
 	t.Parallel()
 	actor := stableProfileActor()
 	now := time.Now().UTC()
-	adapter, err := newAgentStableProfileReader(
+	adapter, err := NewStableProfileReader(
 		&recordingStableProfileReader{items: []memory.Memory{{
 			ID:            "10000000-0000-4000-8000-000000000001",
 			OwnerID:       actor.UserID,
@@ -108,12 +108,12 @@ func TestAgentStableProfileReaderRequiresDependencyAndPropagatesFailure(
 	t *testing.T,
 ) {
 	t.Parallel()
-	if adapter, err := newAgentStableProfileReader(nil); err == nil ||
+	if adapter, err := NewStableProfileReader(nil); err == nil ||
 		adapter != nil {
 		t.Fatalf("nil adapter = %#v, %v", adapter, err)
 	}
 	dependencyError := errors.New("profile database unavailable")
-	adapter, err := newAgentStableProfileReader(
+	adapter, err := NewStableProfileReader(
 		&recordingStableProfileReader{err: dependencyError},
 	)
 	if err != nil {

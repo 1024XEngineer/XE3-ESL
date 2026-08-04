@@ -13,6 +13,7 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
@@ -209,18 +210,22 @@ func run() int {
 		return 1
 	}
 
+	evaluationConfiguration, err := scoring.NewConfiguration(
+		textConfig.Provider,
+		textConfig.Model,
+		textConfig.MaxOutputTokens,
+	)
+	if err != nil {
+		logger.Error(
+			"evaluation configuration failed",
+			slog.String("error_kind", "configuration"),
+		)
+		return 1
+	}
 	evaluationComposition, err := bootstrap.NewEvaluationComposition(
 		databasePool.Native(),
 		evaluationScoringGenerator,
-		bootstrap.EvaluationConfiguration{
-			Provider:          textConfig.Provider,
-			Model:             textConfig.Model,
-			MaxOutputTokens:   textConfig.MaxOutputTokens,
-			GenerationTimeout: 45 * time.Second,
-			LeaseDuration:     60 * time.Second,
-			RetryDelay:        5 * time.Second,
-			MaxAttempts:       3,
-		},
+		evaluationConfiguration,
 	)
 	if err != nil {
 		logger.Error(
@@ -312,9 +317,7 @@ func run() int {
 			bootstrap.SpeechFeedbackConfiguration{
 				Provider:      textConfig.Provider,
 				Model:         textConfig.Model,
-				MaxAttempts:   3,
 				LeaseDuration: speechFeedbackLease,
-				RetryDelay:    2 * time.Second,
 				Acoustics:     speechFeedbackAcoustics,
 			},
 		)

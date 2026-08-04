@@ -2,21 +2,11 @@ package bootstrap
 
 import (
 	"errors"
-	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/jackc/pgx/v5/pgxpool"
-)
-
-const (
-	memoryEmbeddingPolicyVersion = "memory-embedding-v1"
-	memoryRetrievalPolicyVersion = "memory-retrieval-v1"
-	memoryIndexLease             = 2 * time.Minute
-	memoryIndexRetries           = 3
-	memorySearchCandidateLimit   = 20
-	memoryMinimumSimilarity      = 0.25
 )
 
 type MemoryIndexComposition struct {
@@ -41,35 +31,22 @@ func NewMemoryIndexComposition(
 	if err != nil {
 		return nil, err
 	}
-	indexConfiguration := memory.IndexConfig{
-		Provider:      configuration.Provider,
-		Model:         configuration.Model,
-		Dimensions:    configuration.Dimensions,
-		PolicyVersion: memoryEmbeddingPolicyVersion,
-		LeaseDuration: memoryIndexLease,
-		MaxAttempts:   memoryIndexRetries,
-	}
-	processor, err := memory.NewIndexWorker(
+	processor, err := memory.NewIndexProcessor(
 		repository,
 		embedder,
-		indexConfiguration,
+		configuration.Provider,
+		configuration.Model,
+		configuration.Dimensions,
 	)
 	if err != nil {
 		return nil, err
 	}
-	searcher, err := memory.NewSearchService(
+	searcher, err := memory.NewSearcher(
 		repository,
 		embedder,
-		memory.SearchConfig{
-			Provider:               configuration.Provider,
-			Model:                  configuration.Model,
-			Dimensions:             configuration.Dimensions,
-			EmbeddingPolicyVersion: memoryEmbeddingPolicyVersion,
-			RetrievalPolicyVersion: memoryRetrievalPolicyVersion,
-			CandidateLimit:         memorySearchCandidateLimit,
-			MinimumSimilarity:      memoryMinimumSimilarity,
-		},
-		time.Now,
+		configuration.Provider,
+		configuration.Model,
+		configuration.Dimensions,
 	)
 	if err != nil {
 		return nil, err
