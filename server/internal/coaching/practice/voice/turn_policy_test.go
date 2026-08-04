@@ -152,18 +152,63 @@ func TestQuestionAdapterRejectsUnknownPolicyBeforeDependencies(t *testing.T) {
 	}
 }
 
+func TestSessionAdapterRejectsUnknownPolicyBeforeActivation(t *testing.T) {
+	bootstrap := turnPolicySessionBootstrap(
+		"unknown.practice.turn.v1",
+	)
+	repository := &turnPolicySessionRepository{bootstrap: bootstrap}
+
+	_, err := (&sessionAdapter{repository: repository}).Start(
+		context.Background(),
+		persistenceRequestActor(),
+		bootstrap.Session.ID,
+		"voice-start-key",
+	)
+	if !errors.Is(err, ErrInvalidContext) {
+		t.Fatalf("Start error = %v", err)
+	}
+	if repository.activateCalls != 0 {
+		t.Fatalf("ActivateSession calls = %d", repository.activateCalls)
+	}
+}
+
 func TestMapPracticeSessionFreezesTurnPolicyReference(t *testing.T) {
+	bootstrap := turnPolicySessionBootstrap(
+		interviewProjectDeepDiveTurnPolicy,
+	)
+
+	mapped, err := mapPracticeSession(bootstrap, "user-1")
+	if err != nil {
+		t.Fatalf("mapPracticeSession: %v", err)
+	}
+	if mapped.TurnPolicyRef != interviewProjectDeepDiveTurnPolicy {
+		t.Fatalf("TurnPolicyRef = %q", mapped.TurnPolicyRef)
+	}
+
+	bootstrap.Snapshot.SceneSelection.Scene.TurnPolicyRef =
+		"unknown.practice.turn.v1"
+	if _, err := mapPracticeSession(
+		bootstrap,
+		"user-1",
+	); !errors.Is(err, ErrInvalidContext) {
+		t.Fatalf("unknown TurnPolicyRef error = %v", err)
+	}
+}
+
+func turnPolicySessionBootstrap(
+	turnPolicyRef string,
+) practice.SessionBootstrap {
 	role := scene.RoleDefinition{ID: "role-1", SceneID: "scene-1"}
 	definition := scene.SceneDefinition{
 		ID:            "scene-1",
 		Family:        scene.SceneFamilyInterview,
 		Model:         scene.SceneModelProjectExperienceDeepDive,
 		Version:       1,
-		TurnPolicyRef: interviewProjectDeepDiveTurnPolicy,
+		TurnPolicyRef: turnPolicyRef,
 		Prompt:        sessionFixture().Prompt,
 		Roles:         []scene.RoleDefinition{role},
 	}
-	bootstrap := practice.SessionBootstrap{
+	return practice.SessionBootstrap{
 		Session: practice.Session{
 			ID:             "session-1",
 			PlanID:         "plan-1",
@@ -212,19 +257,46 @@ func TestMapPracticeSessionFreezesTurnPolicyReference(t *testing.T) {
 			},
 		},
 	}
+}
 
-	mapped, err := mapPracticeSession(bootstrap, "user-1")
-	if err != nil {
-		t.Fatalf("mapPracticeSession: %v", err)
-	}
-	if mapped.TurnPolicyRef != definition.TurnPolicyRef {
-		t.Fatalf("TurnPolicyRef = %q", mapped.TurnPolicyRef)
-	}
+type turnPolicySessionRepository struct {
+	bootstrap     practice.SessionBootstrap
+	activateCalls int
+}
 
-	bootstrap.Snapshot.SceneSelection.Scene.TurnPolicyRef = "unknown.practice.turn.v1"
-	if _, err := mapPracticeSession(bootstrap, "user-1"); !errors.Is(err, ErrInvalidContext) {
-		t.Fatalf("unknown TurnPolicyRef error = %v", err)
-	}
+func (repository *turnPolicySessionRepository) GetSession(
+	context.Context,
+	practice.Actor,
+	string,
+) (practice.Session, error) {
+	return repository.bootstrap.Session, nil
+}
+
+func (repository *turnPolicySessionRepository) GetSessionSnapshot(
+	context.Context,
+	practice.Actor,
+	string,
+) (practice.SessionSnapshot, error) {
+	return repository.bootstrap.Snapshot, nil
+}
+
+func (*turnPolicySessionRepository) ReplayVoiceStart(
+	context.Context,
+	practice.Actor,
+	practice.IdempotencyIntent,
+) (practice.SessionBootstrap, bool, error) {
+	return practice.SessionBootstrap{}, false, nil
+}
+
+func (repository *turnPolicySessionRepository) ActivateSession(
+	context.Context,
+	practice.Actor,
+	string,
+	string,
+	practice.IdempotencyIntent,
+) (practice.SessionBootstrap, error) {
+	repository.activateCalls++
+	return repository.bootstrap, nil
 }
 
 type turnPolicyQuestionRepository struct {

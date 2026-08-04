@@ -86,6 +86,23 @@ func (adapter *sessionAdapter) Start(
 	if session.ID != sessionID || strings.TrimSpace(session.PlanID) == "" {
 		return Session{}, ErrInvalidContext
 	}
+	snapshot, err := adapter.repository.GetSessionSnapshot(
+		ctx,
+		practiceActor,
+		sessionID,
+	)
+	if err != nil {
+		return Session{}, mapPracticeError(err)
+	}
+	if _, err := mapPracticeSession(
+		practice.SessionBootstrap{
+			Session:  session,
+			Snapshot: snapshot,
+		},
+		actor.UserID,
+	); err != nil {
+		return Session{}, err
+	}
 	activated, err := adapter.repository.ActivateSession(
 		ctx,
 		practiceActor,
