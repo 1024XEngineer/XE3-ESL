@@ -8,7 +8,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -38,7 +38,7 @@ func TestAssemblerAddsSignedImagesToMultimodalUserMessage(
 	}
 	assembler, err := NewAssembler(
 		repository,
-		multimodalContextMatters{},
+		multimodalContextGoals{},
 		multimodalContextStableProfile{},
 		multimodalContextMemories{},
 		WithImageReader(multimodalContextImages{}),
@@ -115,7 +115,7 @@ func TestAssemblerImageBudgetKeepsNewestImages(t *testing.T) {
 	}
 	assembler, err := NewAssembler(
 		repository,
-		multimodalContextMatters{},
+		multimodalContextGoals{},
 		multimodalContextStableProfile{},
 		multimodalContextMemories{},
 		WithImageReader(multimodalBudgetImages{}),
@@ -211,14 +211,14 @@ func (repository multimodalRepository) FindMessage(
 	return repository.message, nil
 }
 
-type multimodalContextMatters struct{}
+type multimodalContextGoals struct{}
 
-func (multimodalContextMatters) ReadOwned(
+func (multimodalContextGoals) ReadOwned(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (matter.Matter, error) {
-	return matter.Matter{}, matter.ErrNotFound
+) (goal.Goal, error) {
+	return goal.Goal{}, goal.ErrNotFound
 }
 
 type multimodalContextStableProfile struct{}

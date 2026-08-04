@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	domainconversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	conversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -20,8 +22,8 @@ import (
 )
 
 const (
-	evidenceSnapshotSchemaVersion = "evidence-snapshot/v2"
-	evidenceSourceManifestVersion = "evidence-source-manifest/v2"
+	evidenceSnapshotSchemaVersion = "evidence-snapshot/v3"
+	evidenceSourceManifestVersion = "evidence-source-manifest/v3"
 	evidenceUnavailable           = "UNAVAILABLE"
 	evidenceNotAssessed           = "NOT_ASSESSED"
 )
@@ -521,9 +523,8 @@ type evidencePracticeContext struct {
 	SessionVersion     int                        `json:"session_version"`
 	PlanRevision       int                        `json:"plan_revision"`
 	SceneFamily        string                     `json:"scene_family"`
-	ScenarioModel      string                     `json:"scenario_model"`
-	ScenarioDefinition evidenceVersionedRef       `json:"scenario_definition"`
-	ScenarioConfig     evidenceVersionedRef       `json:"scenario_config"`
+	SceneModel         string                     `json:"scene_model"`
+	Scene              evidenceVersionedRef       `json:"scene"`
 	PracticeOption     evidencePracticeOption     `json:"practice_option"`
 	UserRole           string                     `json:"user_role"`
 	FacilitatorRole    string                     `json:"facilitator_role"`
@@ -532,16 +533,13 @@ type evidencePracticeContext struct {
 	TaskContext        evidenceTaskContext        `json:"task_context"`
 	TaskBlueprints     []string                   `json:"task_blueprints"`
 	Participants       []evidenceParticipant      `json:"participants"`
-	Objectives         evidenceObjectiveSet       `json:"objectives"`
+	PracticeObjectives []evidenceObjective        `json:"practice_objectives"`
 }
 
 type evidenceTaskContext struct {
-	JobTitle                 string   `json:"job_title,omitempty"`
-	JobDescription           string   `json:"job_description,omitempty"`
 	PublicSceneBrief         string   `json:"public_scene_brief"`
 	PersonaSummary           string   `json:"persona_summary"`
-	ConfigFocusAreas         []string `json:"config_focus_areas"`
-	PromptFocusAreas         []string `json:"prompt_focus_areas"`
+	FocusAreas               []string `json:"focus_areas"`
 	SuggestedDurationSeconds int      `json:"suggested_duration_seconds"`
 }
 
@@ -582,11 +580,10 @@ type evidenceJobTargetCandidate struct {
 }
 
 type evidenceCatalogRecommendation struct {
-	ScenarioDefinitionID      string   `json:"scenario_definition_id"`
-	ScenarioDefinitionVersion int      `json:"scenario_definition_version"`
-	SelectedRoleIDs           []string `json:"selected_role_ids"`
-	PracticeOptionID          string   `json:"practice_option_id"`
-	PracticeOptionVersion     int      `json:"practice_option_version"`
+	SceneID          string   `json:"scene_id"`
+	SceneVersion     int      `json:"scene_version"`
+	SelectedRoleIDs  []string `json:"selected_role_ids"`
+	PracticeOptionID string   `json:"practice_option_id"`
 }
 
 type evidenceVersionedRef struct {
@@ -595,26 +592,18 @@ type evidenceVersionedRef struct {
 }
 
 type evidencePracticeOption struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Version int    `json:"version"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
 }
 
 type evidenceParticipant struct {
-	ID                    string   `json:"participant_id"`
-	Role                  string   `json:"role"`
-	RoleDefinitionID      string   `json:"role_definition_id,omitempty"`
-	RoleDefinitionVersion int      `json:"role_definition_version,omitempty"`
-	DisplayName           string   `json:"display_name,omitempty"`
-	Responsibilities      string   `json:"responsibilities,omitempty"`
-	Style                 string   `json:"style,omitempty"`
-	FocusAreas            []string `json:"focus_areas,omitempty"`
-	Order                 int      `json:"order"`
-}
-
-type evidenceObjectiveSet struct {
-	SessionPolicy []evidenceObjective `json:"session_policy"`
-	PracticeFocus []evidenceObjective `json:"practice_focus"`
+	ID               string `json:"participant_id"`
+	Role             string `json:"role"`
+	RoleDefinitionID string `json:"role_definition_id,omitempty"`
+	DisplayName      string `json:"display_name,omitempty"`
+	Responsibilities string `json:"responsibilities,omitempty"`
+	Style            string `json:"style,omitempty"`
+	Order            int    `json:"order"`
 }
 
 type evidenceObjective struct {
@@ -798,6 +787,7 @@ func validCompletedEvidenceSession(
 	session practice.ContextSession,
 	snapshot practice.ContextSessionSnapshot,
 ) bool {
+	option, optionErr := snapshot.SceneSelection.PracticeOption()
 	if session.ID != practiceSessionID ||
 		session.Status != practice.ContextSessionCompleted ||
 		session.Version < 1 ||
@@ -809,19 +799,13 @@ func validCompletedEvidenceSession(
 		snapshot.ID != session.SnapshotID ||
 		snapshot.SessionID != practiceSessionID ||
 		snapshot.PlanRevision < 1 ||
-		snapshot.ScenarioType != session.ScenarioType ||
-		snapshot.ScenarioModel != session.ScenarioModel ||
-		snapshot.ScenarioDefinition.Type != snapshot.ScenarioType ||
-		snapshot.ScenarioDefinition.Model != snapshot.ScenarioModel ||
-		snapshot.ScenarioDefinition.Version < 1 ||
-		snapshot.ScenarioConfig.ScenarioDefinitionID !=
-			snapshot.ScenarioDefinition.ID ||
-		snapshot.ScenarioConfig.Type != snapshot.ScenarioType ||
-		snapshot.ScenarioConfig.Model != snapshot.ScenarioModel ||
-		snapshot.ScenarioConfig.Version < 1 ||
-		snapshot.PracticeOption.ScenarioDefinitionID !=
-			snapshot.ScenarioDefinition.ID ||
-		snapshot.PracticeOption.Version < 1 ||
+		snapshot.SceneFamily != session.SceneFamily ||
+		snapshot.SceneModel != session.SceneModel ||
+		snapshot.SceneSelection.Scene.Family != snapshot.SceneFamily ||
+		snapshot.SceneSelection.Scene.Model != snapshot.SceneModel ||
+		snapshot.SceneSelection.Scene.Version < 1 ||
+		optionErr != nil ||
+		option.SceneID != snapshot.SceneSelection.Scene.ID ||
 		!validIdentifier(snapshot.Preparation.ID) ||
 		!validIdentifier(snapshot.Preparation.SourceProfileID) ||
 		snapshot.Preparation.SourceVersion < 1 ||
@@ -830,15 +814,14 @@ func validCompletedEvidenceSession(
 		snapshot.SessionPolicy.MinEffectiveTurns >
 			snapshot.SessionPolicy.MaxEffectiveTurns ||
 		!evidenceSceneMatches(
-			snapshot.ScenarioType,
-			snapshot.ScenarioModel,
+			snapshot.SceneFamily,
+			snapshot.SceneModel,
 			sceneType,
 		) {
 		return false
 	}
 	for _, participant := range snapshot.Participants {
-		if (participant.Role == "CANDIDATE" ||
-			participant.Role == "LEARNER") &&
+		if participant.Role == "LEARNER" &&
 			participant.SubjectRef.Namespace == "speakup.user" &&
 			participant.SubjectRef.SubjectID == ownerUserID {
 			return true
@@ -848,21 +831,21 @@ func validCompletedEvidenceSession(
 }
 
 func evidenceSceneMatches(
-	family practice.ScenarioFamily,
-	model practice.ScenarioModel,
+	family scene.SceneFamily,
+	model scene.SceneModel,
 	sceneType SceneType,
 ) bool {
 	switch family {
-	case practice.ScenarioFamilyExam:
+	case scene.SceneFamilyExam:
 		return sceneType == SceneIELTSSpeaking &&
-			(model == practice.ScenarioModelIELTSSpeakingPart2 ||
-				model == practice.ScenarioModelIELTSSpeakingFullMock ||
-				model == practice.ScenarioModelExamBasicDialogue)
-	case practice.ScenarioFamilyInterview:
+			(model == scene.SceneModelIELTSSpeakingPart2 ||
+				model == scene.SceneModelIELTSSpeakingFullMock ||
+				model == scene.SceneModelExamBasicDialogue)
+	case scene.SceneFamilyInterview:
 		return sceneType == SceneInterview
-	case practice.ScenarioFamilyDaily:
+	case scene.SceneFamilyDaily:
 		return sceneType == SceneOverseasDaily
-	case practice.ScenarioFamilyWorkplace:
+	case scene.SceneFamilyWorkplace:
 		return sceneType == SceneOverseasWorkplace
 	default:
 		return false
@@ -872,7 +855,7 @@ func evidenceSceneMatches(
 func evidenceParticipants(
 	ownerUserID string,
 	practiceSessionID string,
-	scenarioDefinitionID string,
+	sceneID string,
 	source []practice.ContextParticipant,
 ) (
 	[]evidenceParticipant,
@@ -883,11 +866,13 @@ func evidenceParticipants(
 	result := make([]evidenceParticipant, 0, len(source))
 	allParticipants := make(map[string]struct{}, len(source))
 	candidates := make(map[string]struct{})
+	facilitators := make(map[string]struct{})
 	seen := make(map[string]struct{}, len(source))
 	for _, participant := range source {
 		if strings.TrimSpace(participant.ID) == "" ||
 			participant.SessionID != practiceSessionID ||
-			strings.TrimSpace(participant.Role) == "" ||
+			(participant.Role != "FACILITATOR" &&
+				participant.Role != "LEARNER") ||
 			participant.Order < 1 {
 			return nil, nil, nil, false
 		}
@@ -896,46 +881,40 @@ func evidenceParticipants(
 		}
 		seen[participant.ID] = struct{}{}
 		allParticipants[participant.ID] = struct{}{}
-		version := 0
 		displayName := ""
 		responsibilities := ""
 		style := ""
-		var focusAreas []string
 		if participant.RoleDefinitionID != "" {
 			if participant.RoleSnapshot == nil ||
 				participant.RoleSnapshot.ID != participant.RoleDefinitionID ||
-				participant.RoleSnapshot.ScenarioDefinitionID !=
-					scenarioDefinitionID ||
-				participant.RoleSnapshot.Version < 1 {
+				participant.RoleSnapshot.SceneID !=
+					sceneID {
 				return nil, nil, nil, false
 			}
-			version = participant.RoleSnapshot.Version
 			displayName = participant.RoleSnapshot.DisplayName
 			responsibilities = participant.RoleSnapshot.Responsibilities
 			style = participant.RoleSnapshot.Style
-			focusAreas = cloneSortedStrings(participant.RoleSnapshot.FocusAreas)
 		}
-		if participant.Role == "CANDIDATE" ||
-			participant.Role == "LEARNER" {
+		if participant.Role == "LEARNER" {
 			if participant.SubjectRef.Namespace != "speakup.user" ||
 				participant.SubjectRef.SubjectID != ownerUserID {
 				return nil, nil, nil, false
 			}
 			candidates[participant.ID] = struct{}{}
+		} else {
+			facilitators[participant.ID] = struct{}{}
 		}
 		result = append(result, evidenceParticipant{
-			ID:                    participant.ID,
-			Role:                  participant.Role,
-			RoleDefinitionID:      participant.RoleDefinitionID,
-			RoleDefinitionVersion: version,
-			DisplayName:           displayName,
-			Responsibilities:      responsibilities,
-			Style:                 style,
-			FocusAreas:            focusAreas,
-			Order:                 participant.Order,
+			ID:               participant.ID,
+			Role:             participant.Role,
+			RoleDefinitionID: participant.RoleDefinitionID,
+			DisplayName:      displayName,
+			Responsibilities: responsibilities,
+			Style:            style,
+			Order:            participant.Order,
 		})
 	}
-	if len(result) < 2 || len(candidates) != 1 {
+	if len(result) < 2 || len(candidates) != 1 || len(facilitators) < 1 {
 		return nil, nil, nil, false
 	}
 	slices.SortFunc(result, func(left, right evidenceParticipant) int {
@@ -965,90 +944,68 @@ func evidencePracticeContextFromSnapshot(
 	participants, allParticipants, candidates, ok := evidenceParticipants(
 		ownerUserID,
 		session.ID,
-		snapshot.ScenarioDefinition.ID,
+		snapshot.SceneSelection.Scene.ID,
 		snapshot.Participants,
 	)
 	if !ok {
 		return evidencePracticeContext{}, nil, nil, false
 	}
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil {
+		return evidencePracticeContext{}, nil, nil, false
+	}
+	prompt := snapshot.SceneSelection.Scene.Prompt
 	return evidencePracticeContext{
 		PracticeSessionID: session.ID,
 		SessionSnapshotID: snapshot.ID,
 		SessionVersion:    session.Version,
 		PlanRevision:      snapshot.PlanRevision,
-		SceneFamily:       string(snapshot.ScenarioType),
-		ScenarioModel:     string(snapshot.ScenarioModel),
-		ScenarioDefinition: evidenceVersionedRef{
-			ID:      snapshot.ScenarioDefinition.ID,
-			Version: snapshot.ScenarioDefinition.Version,
-		},
-		ScenarioConfig: evidenceVersionedRef{
-			ID:      snapshot.ScenarioConfig.ID,
-			Version: snapshot.ScenarioConfig.Version,
+		SceneFamily:       string(snapshot.SceneFamily),
+		SceneModel:        string(snapshot.SceneModel),
+		Scene: evidenceVersionedRef{
+			ID:      snapshot.SceneSelection.Scene.ID,
+			Version: snapshot.SceneSelection.Scene.Version,
 		},
 		PracticeOption: evidencePracticeOption{
-			ID:      snapshot.PracticeOption.ID,
-			Type:    snapshot.PracticeOption.Type,
-			Version: snapshot.PracticeOption.Version,
+			ID:   option.ID,
+			Type: string(option.Type),
 		},
-		UserRole:        snapshot.ScenarioConfig.PromptModel.UserRole,
-		FacilitatorRole: snapshot.ScenarioConfig.PromptModel.AIRole,
-		PracticeGoal:    snapshot.ScenarioConfig.PromptModel.PracticeGoal,
+		UserRole:        prompt.UserRole,
+		FacilitatorRole: prompt.AIRole,
+		PracticeGoal:    prompt.PracticeGoal,
 		Preparation: evidencePreparationContextFromSnapshot(
 			snapshot.Preparation,
 		),
 		TaskContext: evidenceTaskContext{
-			JobTitle:       snapshot.ScenarioConfig.JobTitle,
-			JobDescription: snapshot.ScenarioConfig.JobDescription,
-			PublicSceneBrief: snapshot.ScenarioConfig.PromptModel.
-				PublicSceneBrief,
-			PersonaSummary: snapshot.ScenarioConfig.PromptModel.
-				PersonaSummary,
-			ConfigFocusAreas: cloneSortedStrings(
-				snapshot.ScenarioConfig.FocusAreas,
-			),
-			PromptFocusAreas: cloneSortedStrings(
-				snapshot.ScenarioConfig.PromptModel.FocusAreas,
-			),
-			SuggestedDurationSeconds: snapshot.ScenarioConfig.PromptModel.
-				SuggestedDurationSeconds,
+			PublicSceneBrief:         prompt.PublicSceneBrief,
+			PersonaSummary:           prompt.PersonaSummary,
+			FocusAreas:               cloneSortedStrings(prompt.FocusAreas),
+			SuggestedDurationSeconds: prompt.SuggestedDurationSeconds,
 		},
-		TaskBlueprints: slices.Clone(
-			snapshot.ScenarioConfig.PromptModel.TurnBlueprints,
-		),
-		Participants: participants,
-		Objectives: evidenceObjectives(
-			snapshot.SessionPolicy.TargetObjectives,
-			snapshot.PracticeFocuses,
-		),
+		TaskBlueprints:     slices.Clone(prompt.TurnBlueprints),
+		Participants:       participants,
+		PracticeObjectives: evidenceObjectives(snapshot.PracticeObjectives),
 	}, allParticipants, candidates, true
 }
 
 func evidenceObjectives(
-	sessionPolicy []practice.PracticeObjective,
-	practiceFocus []practice.PracticeObjective,
-) evidenceObjectiveSet {
-	mapObjectives := func(source []practice.PracticeObjective) []evidenceObjective {
-		result := make([]evidenceObjective, len(source))
-		for index, item := range source {
-			result[index] = evidenceObjective{
-				ID:          item.ID,
-				Description: item.Description,
-			}
+	source []preparation.PracticeObjective,
+) []evidenceObjective {
+	result := make([]evidenceObjective, len(source))
+	for index, item := range source {
+		result[index] = evidenceObjective{
+			ID:          item.ID,
+			Description: item.Description,
 		}
-		slices.SortFunc(result, func(left, right evidenceObjective) int {
-			return strings.Compare(left.ID, right.ID)
-		})
-		return result
 	}
-	return evidenceObjectiveSet{
-		SessionPolicy: mapObjectives(sessionPolicy),
-		PracticeFocus: mapObjectives(practiceFocus),
-	}
+	slices.SortFunc(result, func(left, right evidenceObjective) int {
+		return strings.Compare(left.ID, right.ID)
+	})
+	return result
 }
 
 func evidencePreparationContextFromSnapshot(
-	source practice.PreparationSnapshot,
+	source preparation.Snapshot,
 ) evidencePreparationContext {
 	result := evidencePreparationContext{
 		SnapshotID:                         source.ID,
@@ -1068,7 +1025,7 @@ func evidencePreparationContextFromSnapshot(
 	}
 	if input := source.JobTargetInputSnapshot; input != nil {
 		result.JobTargetInput = &evidenceJobTargetInput{
-			Source:              input.Source,
+			Source:              string(input.Source),
 			JobTitle:            input.JobTitle,
 			JobDescription:      input.JobDescription,
 			Company:             input.Company,
@@ -1079,7 +1036,7 @@ func evidencePreparationContextFromSnapshot(
 	}
 	if candidate := source.JobTargetCandidateSnapshot; candidate != nil {
 		result.JobTargetCandidate = &evidenceJobTargetCandidate{
-			Source:             candidate.Source,
+			Source:             string(candidate.Source),
 			GeneralAdviceOnly:  candidate.GeneralAdviceOnly,
 			JobTitle:           candidate.JobTitle,
 			Seniority:          candidate.Seniority,
@@ -1089,17 +1046,15 @@ func evidencePreparationContextFromSnapshot(
 			PracticeGoals:      slices.Clone(candidate.PracticeGoals),
 			ScopeNotice:        candidate.ScopeNotice,
 			CatalogRecommendation: evidenceCatalogRecommendation{
-				ScenarioDefinitionID: candidate.CatalogRecommendation.
-					ScenarioDefinitionID,
-				ScenarioDefinitionVersion: candidate.CatalogRecommendation.
-					ScenarioDefinitionVersion,
+				SceneID: candidate.CatalogRecommendation.
+					SceneID,
+				SceneVersion: candidate.CatalogRecommendation.
+					SceneVersion,
 				SelectedRoleIDs: cloneSortedStrings(
 					candidate.CatalogRecommendation.SelectedRoleIDs,
 				),
 				PracticeOptionID: candidate.CatalogRecommendation.
 					PracticeOptionID,
-				PracticeOptionVersion: candidate.CatalogRecommendation.
-					PracticeOptionVersion,
 			},
 		}
 	}

@@ -14,9 +14,9 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/gin-gonic/gin"
 )

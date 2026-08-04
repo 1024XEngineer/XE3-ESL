@@ -36,16 +36,16 @@ func TestPostgresScenarioReviewPersistsContextScoresAndPreciseEvidence(
 	command.ImplementationVersion = "qianwen-scenario-review-v2"
 	command.SourceTurnVersion = "conversation-turn:evidence-v1"
 	command.EvaluationContext = review.EvaluationContext{
-		SchemaVersion:             review.EvaluationContextSchemaVersion,
-		ContextType:               review.ContextInterviewProjectDeepDive,
-		SceneKey:                  "interview",
-		ScenarioDefinitionID:      "programmer-interview",
-		ScenarioDefinitionVersion: 1,
-		PracticeOptionType:        "project_deep_dive",
-		DifficultyRef:             "difficulty.intermediate.v1",
-		AssistanceRef:             "assistance.standard.v1",
-		TurnPolicyRef:             "interview.project_deep_dive.turn.v1",
-		SessionPolicyRef:          "interview.project_deep_dive.session.v1",
+		SchemaVersion:      review.EvaluationContextSchemaVersion,
+		ContextType:        review.ContextInterviewProjectDeepDive,
+		SceneKey:           "interview",
+		SceneID:            "programmer-interview",
+		SceneVersion:       1,
+		PracticeOptionType: "project_deep_dive",
+		DifficultyRef:      "difficulty.intermediate.v1",
+		AssistanceRef:      "assistance.standard.v1",
+		TurnPolicyRef:      "interview.project_deep_dive.turn.v1",
+		SessionPolicyRef:   "interview.project_deep_dive.session.v1",
 		SceneSpecificContext: review.SceneSpecificContext{
 			Type: review.ContextInterviewProjectDeepDive,
 			Interview: &review.InterviewProjectDeepDiveV1{
@@ -2616,6 +2616,35 @@ func reviewDatabase(t *testing.T) *pgxpool.Pool {
 	}
 	if _, err := pool.Exec(ctx, string(scenarioUp)); err != nil {
 		t.Fatalf("apply scenario Review migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE reviews
+		    DROP CONSTRAINT reviews_evaluation_context_check,
+		    ADD CONSTRAINT reviews_evaluation_context_check
+		        CHECK (
+		            evaluation_context IS NULL
+		            OR (
+		                jsonb_typeof(evaluation_context) = 'object'
+		                AND evaluation_context ?& ARRAY[
+		                    'schema_version',
+		                    'context_type',
+		                    'scene_key',
+		                    'scene_id',
+		                    'scene_version',
+		                    'practice_option_type',
+		                    'difficulty_ref',
+		                    'assistance_ref',
+		                    'turn_policy_ref',
+		                    'session_policy_ref',
+		                    'scene_specific_context'
+		                ]
+		                AND evaluation_context->>'schema_version' =
+		                    'evaluation-context.v1'
+		                AND octet_length(evaluation_context::text) <= 16384
+		            )
+		        )
+	`); err != nil {
+		t.Fatalf("apply current Review Scene context constraint: %v", err)
 	}
 	if _, err := pool.Exec(
 		ctx,

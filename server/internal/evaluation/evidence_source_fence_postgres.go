@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/jackc/pgx/v5"
 )
@@ -50,8 +51,8 @@ func lockCurrentEvidenceSources(
 			version,
 			effective_turns,
 			coalesce(snapshot_id, ''),
-			coalesce(scenario_type, ''),
-			coalesce(scenario_model, ''),
+			coalesce(scene_family, ''),
+			coalesce(scene_model, ''),
 			status,
 			started_at,
 			completed_at,
@@ -82,7 +83,7 @@ func lockCurrentEvidenceSources(
 		effectiveTurns != len(payload.ConfirmedTurns) ||
 		snapshotID != context.SessionSnapshotID ||
 		scenarioType != context.SceneFamily ||
-		scenarioModel != context.ScenarioModel {
+		scenarioModel != context.SceneModel {
 		return ErrInvalidRequest
 	}
 	var persistedSnapshotID string
@@ -114,8 +115,8 @@ func lockCurrentEvidenceSources(
 	}
 	sourceSession := practice.ContextSession{
 		ID:             command.PracticeSessionID,
-		ScenarioType:   practice.ScenarioFamily(scenarioType),
-		ScenarioModel:  practice.ScenarioModel(scenarioModel),
+		SceneFamily:    scene.SceneFamily(scenarioType),
+		SceneModel:     scene.SceneModel(scenarioModel),
 		SnapshotID:     snapshotID,
 		Status:         practice.ContextSessionStatus(status),
 		Version:        sessionVersion,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 )
@@ -66,14 +67,14 @@ func (a *Application) RequiresSessionReview(
 	if err != nil {
 		return false, mapRepositoryError(err)
 	}
-	if session.ScenarioType == persistence.ScenarioFamilyInterview {
+	if session.SceneFamily == scene.SceneFamilyInterview {
 		return false, nil
 	}
-	switch session.ScenarioModel {
-	case persistence.ScenarioModelIELTSSpeakingFullMock,
-		persistence.ScenarioModelIELTSSpeakingPart1,
-		persistence.ScenarioModelIELTSSpeakingPart2,
-		persistence.ScenarioModelIELTSSpeakingPart3:
+	switch session.SceneModel {
+	case scene.SceneModelIELTSSpeakingFullMock,
+		scene.SceneModelIELTSSpeakingPart1,
+		scene.SceneModelIELTSSpeakingPart2,
+		scene.SceneModelIELTSSpeakingPart3:
 		return false, nil
 	default:
 		return true, nil
@@ -162,7 +163,7 @@ func (a *Application) ResolveActorParticipant(
 		participantIDs[participant.ID] = struct{}{}
 		participantOrders[participant.Order] = struct{}{}
 		switch participant.Role {
-		case "FACILITATOR", "INTERVIEWER":
+		case "FACILITATOR":
 			if participant.SubjectRef.Namespace != "speakup.role" ||
 				participant.SubjectRef.SubjectID !=
 					participant.RoleDefinitionID ||
@@ -173,7 +174,7 @@ func (a *Application) ResolveActorParticipant(
 				return "", ErrConflict
 			}
 			facilitators++
-		case "LEARNER", "CANDIDATE":
+		case "LEARNER":
 			if participantID != "" {
 				return "", ErrConflict
 			}

@@ -14,8 +14,8 @@ import (
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -29,13 +29,13 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 		SessionID: integrationSessionA,
 	}
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(database, ids)
+	goalRepository, err := goal.NewPostgresRepository(database, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	conversationRepository, err := conversationpostgres.New(database, ids)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	}
 	agentService, err := conversation.NewService(
 		conversationRepository,
-		matterService,
+		goalService,
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -59,14 +59,14 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	thread, err := agentService.CreateThread(
 		ctx,
 		actor,
-		integrationMatterA,
+		integrationGoalA,
 	)
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
 	assembler, err := agentcontext.NewAssembler(
 		contextRepository,
-		matterService,
+		goalService,
 		emptyAgentStableProfileReader{},
 		emptyAgentMemorySearcher{},
 	)
@@ -152,8 +152,8 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 				Type:         TypeGoal,
 				CanonicalKey: "goal.current",
 				Content:      "Prepare for backend interview",
-				Scope:        ScopeMatter,
-				MatterID:     integrationMatterA,
+				Scope:        ScopeGoal,
+				GoalID:       integrationGoalA,
 			},
 		},
 		Source: SourceInput{
@@ -180,22 +180,22 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	if err != nil {
 		t.Fatalf("ListActive user: %v", err)
 	}
-	matterMemories, err := repository.ListActive(ctx, actor, ScopeFilter{
-		Scope:    ScopeMatter,
-		MatterID: integrationMatterA,
-		Limit:    10,
+	goalMemories, err := repository.ListActive(ctx, actor, ScopeFilter{
+		Scope:  ScopeGoal,
+		GoalID: integrationGoalA,
+		Limit:  10,
 	})
 	if err != nil {
-		t.Fatalf("ListActive matter: %v", err)
+		t.Fatalf("ListActive goal: %v", err)
 	}
 	if len(userMemories) != 1 ||
 		userMemories[0].CanonicalKey != "career.role" ||
-		len(matterMemories) != 1 ||
-		matterMemories[0].CanonicalKey != "goal.current" {
+		len(goalMemories) != 1 ||
+		goalMemories[0].CanonicalKey != "goal.current" {
 		t.Fatalf(
-			"user=%#v matter=%#v",
+			"user=%#v goal=%#v",
 			userMemories,
-			matterMemories,
+			goalMemories,
 		)
 	}
 	sources, err := repository.ListSources(

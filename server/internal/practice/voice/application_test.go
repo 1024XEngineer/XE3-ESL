@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 )
@@ -28,7 +29,7 @@ func TestVoiceApplicationResolvesActorFromFrozenSnapshot(t *testing.T) {
 					SessionID:        "practice-session",
 					Role:             "FACILITATOR",
 					RoleDefinitionID: "role-interviewer",
-					RoleSnapshot: &persistence.RoleSnapshot{
+					RoleSnapshot: &scene.RoleDefinition{
 						ID: "role-interviewer",
 					},
 					Order: 1,
@@ -87,7 +88,7 @@ func TestVoiceApplicationHidesMissingActorParticipant(t *testing.T) {
 				Participants: []persistence.ContextParticipant{{
 					ID:        "another-user",
 					SessionID: "practice-session",
-					Role:      "CANDIDATE",
+					Role:      "LEARNER",
 					Order:     1,
 					SubjectRef: persistence.SubjectRef{
 						Namespace: "speakup.user",
@@ -319,17 +320,17 @@ func TestVoiceApplicationDoesNotRequireSynchronousIELTSReview(t *testing.T) {
 		UserID:    "10000000-0000-4000-8000-000000000006",
 		SessionID: "20000000-0000-4000-8000-000000000006",
 	}
-	for _, model := range []persistence.ScenarioModel{
-		persistence.ScenarioModelIELTSSpeakingFullMock,
-		persistence.ScenarioModelIELTSSpeakingPart1,
-		persistence.ScenarioModelIELTSSpeakingPart2,
-		persistence.ScenarioModelIELTSSpeakingPart3,
+	for _, model := range []scene.SceneModel{
+		scene.SceneModelIELTSSpeakingFullMock,
+		scene.SceneModelIELTSSpeakingPart1,
+		scene.SceneModelIELTSSpeakingPart2,
+		scene.SceneModelIELTSSpeakingPart3,
 	} {
 		t.Run(string(model), func(t *testing.T) {
 			application, err := NewApplication(
 				&voiceRepositoryStub{session: persistence.ContextSession{
-					ID:            "practice-session",
-					ScenarioModel: model,
+					ID:         "practice-session",
+					SceneModel: model,
 				}},
 				"speakup.user",
 			)
@@ -361,9 +362,9 @@ func TestVoiceApplicationRequiresReviewForSynchronousNonInterviewModels(
 	}
 	application, err := NewApplication(
 		&voiceRepositoryStub{session: persistence.ContextSession{
-			ID:            "practice-session",
-			ScenarioType:  persistence.ScenarioFamilyWorkplace,
-			ScenarioModel: persistence.ScenarioModelProjectExperienceDeepDive,
+			ID:          "practice-session",
+			SceneFamily: scene.SceneFamilyWorkplace,
+			SceneModel:  scene.SceneModelProjectExperienceDeepDive,
 		}},
 		"speakup.user",
 	)
@@ -393,9 +394,9 @@ func TestVoiceApplicationDoesNotRequireSynchronousInterviewReview(
 	}
 	application, err := NewApplication(
 		&voiceRepositoryStub{session: persistence.ContextSession{
-			ID:            "practice-session",
-			ScenarioType:  persistence.ScenarioFamilyInterview,
-			ScenarioModel: persistence.ScenarioModelProjectExperienceDeepDive,
+			ID:          "practice-session",
+			SceneFamily: scene.SceneFamilyInterview,
+			SceneModel:  scene.SceneModelProjectExperienceDeepDive,
 		}},
 		"speakup.user",
 	)

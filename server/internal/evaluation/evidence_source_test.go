@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	domainconversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	conversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -141,10 +143,10 @@ func TestEvidenceSourceComposeIsStableAcrossRepositoryOrdering(t *testing.T) {
 		second.practice.snapshot.Participants[1] =
 		second.practice.snapshot.Participants[1],
 		second.practice.snapshot.Participants[0]
-	second.practice.snapshot.PracticeFocuses[0],
-		second.practice.snapshot.PracticeFocuses[1] =
-		second.practice.snapshot.PracticeFocuses[1],
-		second.practice.snapshot.PracticeFocuses[0]
+	second.practice.snapshot.PracticeObjectives[0],
+		second.practice.snapshot.PracticeObjectives[1] =
+		second.practice.snapshot.PracticeObjectives[1],
+		second.practice.snapshot.PracticeObjectives[0]
 	second.conversation.turns[0], second.conversation.turns[1] =
 		second.conversation.turns[1], second.conversation.turns[0]
 	secondCommand, err := second.reader.Compose(
@@ -182,7 +184,7 @@ func TestEvidenceSourceComposePreservesSemanticTaskOrder(t *testing.T) {
 		t.Fatalf("first Compose() error = %v", err)
 	}
 	second := newEvidenceSourceFixture(t)
-	second.practice.snapshot.ScenarioConfig.PromptModel.TurnBlueprints =
+	second.practice.snapshot.SceneSelection.Scene.Prompt.TurnBlueprints =
 		[]string{"handle the issue", "open the conversation"}
 	secondCommand, err := second.reader.Compose(
 		second.ctx,
@@ -211,7 +213,7 @@ func TestEvidenceSourceComposePreservesUnansweredOfferedOpportunity(
 			SessionID:               "session-1",
 			SpeakerParticipantID:    "participant-facilitator",
 			AddresseeParticipantIDs: []string{"participant-candidate"},
-			ObjectiveID:             "objective-1",
+			ObjectiveID:             "complete_check_in",
 			Type:                    "FOLLOW_UP",
 			ParentQuestionID:        "question-2",
 			Content:                 "Would you like me to check availability?",
@@ -403,6 +405,18 @@ func TestEvidenceSourceComposeRejectsInconsistentAuthorities(t *testing.T) {
 				f.audio.assets["turn-1"] = asset
 			},
 		},
+		{
+			name: "legacy candidate participant role",
+			mutate: func(f *evidenceSourceFixture) {
+				f.practice.snapshot.Participants[1].Role = "CANDIDATE"
+			},
+		},
+		{
+			name: "legacy interviewer participant role",
+			mutate: func(f *evidenceSourceFixture) {
+				f.practice.snapshot.Participants[0].Role = "INTERVIEWER"
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -461,13 +475,13 @@ func TestEvidenceSourceComposeMapsCrossOwnerAndDeletionToNotFound(
 }
 
 func TestEvidenceSceneMatchesAllSupportedIELTSPracticeModels(t *testing.T) {
-	for _, model := range []practice.ScenarioModel{
-		practice.ScenarioModelExamBasicDialogue,
-		practice.ScenarioModelIELTSSpeakingPart2,
-		practice.ScenarioModelIELTSSpeakingFullMock,
+	for _, model := range []scene.SceneModel{
+		scene.SceneModelExamBasicDialogue,
+		scene.SceneModelIELTSSpeakingPart2,
+		scene.SceneModelIELTSSpeakingFullMock,
 	} {
 		if !evidenceSceneMatches(
-			practice.ScenarioFamilyExam,
+			scene.SceneFamilyExam,
 			model,
 			SceneIELTSSpeaking,
 		) {
@@ -490,6 +504,14 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	started := now.Add(-5 * time.Minute)
 	ended := now
+	roleObjectives := []scene.PracticeObjectiveDefinition{
+		{ID: "complete_check_in", Description: "Complete check-in accurately."},
+		{ID: "clear_request", Description: "Make a clear request."},
+		{
+			ID:          "polite_register",
+			Description: "Use a polite and context-appropriate register.",
+		},
+	}
 	actor := requestcontext.Actor{
 		UserID:    evidenceTestOwner,
 		SessionID: "auth-session",
@@ -498,8 +520,8 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 		session: practice.ContextSession{
 			ID:             "session-1",
 			PlanID:         "plan-1",
-			ScenarioType:   practice.ScenarioFamilyDaily,
-			ScenarioModel:  practice.ScenarioModelHotelCheckinAndIssueHandling,
+			SceneFamily:    scene.SceneFamilyDaily,
+			SceneModel:     scene.SceneModelHotelCheckinAndIssueHandling,
 			SnapshotID:     "snapshot-1",
 			Status:         practice.ContextSessionCompleted,
 			Version:        3,
@@ -510,56 +532,75 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 			CreatedAt:      started,
 		},
 		snapshot: practice.ContextSessionSnapshot{
-			ID:            "snapshot-1",
-			SessionID:     "session-1",
-			PlanRevision:  2,
-			ScenarioType:  practice.ScenarioFamilyDaily,
-			ScenarioModel: practice.ScenarioModelHotelCheckinAndIssueHandling,
-			ScenarioDefinition: practice.ScenarioDefinitionSnapshot{
-				ID:      "scenario-daily-1",
-				Type:    practice.ScenarioFamilyDaily,
-				Model:   practice.ScenarioModelHotelCheckinAndIssueHandling,
-				Name:    "Hotel check-in",
-				Version: 4,
-				Status:  "active",
-			},
-			ScenarioConfig: practice.ScenarioConfigSnapshot{
-				ID:                   "config-daily-1",
-				ScenarioDefinitionID: "scenario-daily-1",
-				Type:                 practice.ScenarioFamilyDaily,
-				Model: practice.
-					ScenarioModelHotelCheckinAndIssueHandling,
-				Version: 5,
-				FocusAreas: []string{
-					"polite register",
-					"clear request",
-				},
-				PromptModel: practice.ScenarioPromptModel{
-					PublicSceneBrief: "You are checking in at a hotel.",
-					PracticeGoal:     "check in and resolve a room issue",
-					UserRole:         "guest",
-					AIRole:           "hotel receptionist",
-					PersonaSummary: "A professional receptionist who helps " +
-						"with room issues.",
-					FocusAreas: []string{
-						"clear request",
-						"polite register",
+			ID:           "snapshot-1",
+			SessionID:    "session-1",
+			PlanRevision: 2,
+			SceneFamily:  scene.SceneFamilyDaily,
+			SceneModel:   scene.SceneModelHotelCheckinAndIssueHandling,
+			SceneSelection: scene.SelectionSnapshot{
+				Scene: scene.SceneDefinition{
+					ID:               "scene-daily-1",
+					Family:           scene.SceneFamilyDaily,
+					Model:            scene.SceneModelHotelCheckinAndIssueHandling,
+					Name:             "Hotel check-in",
+					Version:          4,
+					Status:           scene.SceneStatusActive,
+					TurnPolicyRef:    "daily.hotel_checkin_issue.turn.v1",
+					SessionPolicyRef: "daily.hotel_checkin_issue.session.v1",
+					Prompt: scene.ScenePrompt{
+						PublicSceneBrief: "You are checking in at a hotel.",
+						PracticeGoal:     "check in and resolve a room issue",
+						UserRole:         "guest",
+						AIRole:           "hotel receptionist",
+						PersonaSummary: "A professional receptionist who helps " +
+							"with room issues.",
+						FocusAreas: []string{
+							"clear request",
+							"polite register",
+						},
+						TurnBlueprints: []string{
+							"open the conversation",
+							"handle the issue",
+						},
+						SuggestedDurationSeconds: 300,
 					},
-					TurnBlueprints: []string{
-						"open the conversation",
-						"handle the issue",
+					Roles: []scene.RoleDefinition{
+						{
+							ID:               "role-receptionist",
+							SceneID:          "scene-daily-1",
+							Type:             "HOTEL_RECEPTIONIST",
+							DisplayName:      "Receptionist",
+							Responsibilities: "Help the guest check in.",
+							Style:            "professional",
+							PracticeObjectives: append(
+								[]scene.PracticeObjectiveDefinition(nil),
+								roleObjectives...,
+							),
+							DisplayOrder: 1,
+						},
 					},
-					SuggestedDurationSeconds: 300,
+					PracticeOptions: []scene.PracticeOption{
+						{
+							ID:           "option-full",
+							SceneID:      "scene-daily-1",
+							Type:         scene.PracticeOptionFullSimulation,
+							DisplayName:  "Full simulation",
+							DisplayOrder: 1,
+						},
+					},
+					DisplayOrder: 1,
 				},
+				SelectedRoleIDs:  []string{"role-receptionist"},
+				PracticeOptionID: "option-full",
 			},
-			Preparation: practice.PreparationSnapshot{
+			Preparation: preparation.Snapshot{
 				ID:                                 "preparation-snapshot-1",
 				SourceProfileID:                    "profile-1",
 				SourceVersion:                      4,
 				SourceJobTargetID:                  "job-target-1",
 				SourceJobTargetConfirmationVersion: 2,
-				JobTargetInputSnapshot: &practice.JobTargetInputSnapshot{
-					Source:              "confirmed",
+				JobTargetInputSnapshot: &preparation.JobTargetInput{
+					Source:              preparation.JobTargetSourceJobDescription,
 					JobTitle:            "Guest",
 					JobDescription:      "Resolve a hotel room issue.",
 					CandidateBackground: "Needs a quiet room.",
@@ -579,14 +620,18 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 						SubjectID: "receptionist",
 					},
 					RoleDefinitionID: "role-receptionist",
-					RoleSnapshot: &practice.RoleSnapshot{
-						ID:                   "role-receptionist",
-						ScenarioDefinitionID: "scenario-daily-1",
-						DisplayName:          "Receptionist",
-						Responsibilities:     "Help the guest check in.",
-						Style:                "professional",
-						FocusAreas:           []string{"service recovery"},
-						Version:              2,
+					RoleSnapshot: &scene.RoleDefinition{
+						ID:               "role-receptionist",
+						SceneID:          "scene-daily-1",
+						Type:             "HOTEL_RECEPTIONIST",
+						DisplayName:      "Receptionist",
+						Responsibilities: "Help the guest check in.",
+						Style:            "professional",
+						PracticeObjectives: append(
+							[]scene.PracticeObjectiveDefinition(nil),
+							roleObjectives...,
+						),
+						DisplayOrder: 1,
 					},
 					Order: 1,
 				},
@@ -601,22 +646,22 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 					Order: 2,
 				},
 			},
-			PracticeOption: practice.PracticeOptionSnapshot{
-				ID:                   "option-full",
-				ScenarioDefinitionID: "scenario-daily-1",
-				Type:                 "FULL_SIMULATION",
-				Version:              3,
+			SessionPolicy: preparation.SessionPolicy{
+				SuggestedDurationSeconds: 300,
+				MinEffectiveTurns:        1,
+				MaxEffectiveTurns:        3,
+				CoverageCheckpointTurn:   1,
+				MaxFollowUpsPerQuestion:  1,
+				EarlyCompletionRule: preparation.
+					EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 			},
-			SessionPolicy: practice.ContextSessionPolicy{
-				MinEffectiveTurns: 1,
-				MaxEffectiveTurns: 3,
-				TargetObjectives: []practice.PracticeObjective{
-					{ID: "objective-1", Description: "complete check-in"},
+			PracticeObjectives: []preparation.PracticeObjective{
+				{ID: "complete_check_in", Description: "Complete check-in accurately."},
+				{ID: "clear_request", Description: "Make a clear request."},
+				{
+					ID:          "polite_register",
+					Description: "Use a polite and context-appropriate register.",
 				},
-			},
-			PracticeFocuses: []practice.PracticeObjective{
-				{ID: "focus-1", Description: "clear request"},
-				{ID: "focus-2", Description: "polite register"},
 			},
 			CreatedAt: started,
 		},
@@ -663,7 +708,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 				SessionID:               "session-1",
 				SpeakerParticipantID:    "participant-facilitator",
 				AddresseeParticipantIDs: []string{"participant-candidate"},
-				ObjectiveID:             "objective-1",
+				ObjectiveID:             "complete_check_in",
 				Type:                    "PRIMARY",
 				Content:                 "How may I help you?",
 				Sequence:                1,
@@ -674,7 +719,7 @@ func newEvidenceSourceFixture(t *testing.T) *evidenceSourceFixture {
 				SessionID:               "session-1",
 				SpeakerParticipantID:    "participant-facilitator",
 				AddresseeParticipantIDs: []string{"participant-candidate"},
-				ObjectiveID:             "objective-1",
+				ObjectiveID:             "complete_check_in",
 				Type:                    "FOLLOW_UP",
 				ParentQuestionID:        "question-1",
 				Content:                 "Would another room work?",

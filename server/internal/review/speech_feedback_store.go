@@ -489,8 +489,8 @@ func ensureSpeechFeedbackTurnSnapshot(
 			turn.evidence_version,
 			candidate.candidate_id,
 			candidate.transcript_id,
-			session.scenario_type,
-			session.scenario_model,
+			session.scene_family,
+			session.scene_model,
 			audio.audio_asset_id,
 			audio.version,
 			audio.checksum_sha256

@@ -24,12 +24,12 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,7 +42,7 @@ var testReviewHistoryCursorKey = []byte(
 func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 	pool := voiceIntegrationDatabase(t)
 	text := &followUpVoiceTextGenerator{}
-	catalog, err := preparation.NewBuiltinCatalog()
+	catalog, err := scene.NewPostgresCatalog(pool)
 	if err != nil {
 		t.Fatalf("build Preparation catalog: %v", err)
 	}
@@ -81,11 +81,11 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+formalContext.ThreadID+
-			"/voice-practice-sessions",
+		"/v1/practice-sessions/"+formalContext.SessionID+
+			"/voice-activation",
 		"",
 		"start-follow-up-session",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	primary := state["current_question"].(map[string]any)
 	if primary["question_type"] != "PRIMARY" {
@@ -165,7 +165,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	)
 	objects := newVoiceObjectStore()
 	vault := newVoiceTestVault(t)
-	catalog, err := preparation.NewBuiltinCatalog()
+	catalog, err := scene.NewPostgresCatalog(pool)
 	if err != nil {
 		t.Fatalf("build Preparation catalog: %v", err)
 	}
@@ -187,23 +187,23 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	)
 
 	token := registerAndLoginVoiceUser(t, server.URL, "voice-a@example.com")
-	matterID := voiceJSONRequest(
+	goalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Customer renewal"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	threadID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, goalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -212,29 +212,29 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		threadID,
-		matterID,
+		goalID,
 		"primary",
 	)
 
-	startPath := "/v1/agent-threads/" + threadID +
-		"/voice-practice-sessions"
-	archivedMatterID := voiceJSONRequest(
+	startPath := "/v1/practice-sessions/" + formalContext.SessionID +
+		"/voice-activation"
+	archivedGoalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Archived scenario"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	archivedThreadID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, archivedMatterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, archivedGoalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -243,7 +243,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		archivedThreadID,
-		archivedMatterID,
+		archivedGoalID,
 		"archived",
 	)
 	voiceJSONRequest(
@@ -251,7 +251,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodPatch,
-		"/v1/matters/"+archivedMatterID,
+		"/v1/goals/"+archivedGoalID,
 		`{"status":"archived","expected_version":1}`,
 		"",
 		http.StatusOK,
@@ -260,8 +260,8 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+archivedThreadID+
-			"/voice-practice-sessions",
+		"/v1/practice-sessions/"+archivedContext.SessionID+
+			"/voice-activation",
 		nil,
 		"start-archived-session",
 		"",
@@ -270,32 +270,26 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatal(err)
 	}
 	_ = archivedStart.Body.Close()
-	if archivedStart.StatusCode != http.StatusNotFound {
-		t.Fatalf("archived Matter Start status = %d", archivedStart.StatusCode)
+	if archivedStart.StatusCode != http.StatusOK {
+		t.Fatalf("frozen Session Start status = %d", archivedStart.StatusCode)
 	}
-	assertNoLegacyVoiceSession(
-		t,
-		pool,
-		archivedContext.SessionID,
-		archivedThreadID,
-	)
-	replayMatterID := voiceJSONRequest(
+	replayGoalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Replay after archive"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	replayThreadID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, replayMatterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, replayGoalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -304,11 +298,11 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		replayThreadID,
-		replayMatterID,
+		replayGoalID,
 		"archive-replay",
 	)
-	replayPath := "/v1/agent-threads/" + replayThreadID +
-		"/voice-practice-sessions"
+	replayPath := "/v1/practice-sessions/" + replayContext.SessionID +
+		"/voice-activation"
 	firstReplay := voiceJSONRequest(
 		t,
 		server.URL,
@@ -317,7 +311,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		replayPath,
 		"",
 		"start-replay-after-archive",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if firstReplay["practice_session_id"] != replayContext.SessionID {
 		t.Fatalf(
@@ -330,7 +324,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodPatch,
-		"/v1/matters/"+replayMatterID,
+		"/v1/goals/"+replayGoalID,
 		`{"status":"archived","expected_version":1}`,
 		"",
 		http.StatusOK,
@@ -343,11 +337,11 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		replayPath,
 		"",
 		"start-replay-after-archive",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if replayedAfterArchive["practice_session_id"] != replayContext.SessionID {
 		t.Fatalf(
-			"archived Matter replay lost original Session: %#v",
+			"archived Goal replay lost original Session: %#v",
 			replayedAfterArchive,
 		)
 	}
@@ -359,16 +353,19 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		startPath,
 		"",
 		"start-voice-session-0001",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	sessionID := state["practice_session_id"].(string)
 	if sessionID != formalContext.SessionID ||
-		state["practice_plan_id"] != formalContext.PlanID ||
-		state["matter"].(map[string]any)["matter_id"] != matterID ||
-		state["thread_id"] != threadID {
+		state["practice_plan_id"] != formalContext.PlanID {
 		t.Fatalf("voice Session lost formal Context binding: %#v", state)
 	}
-	assertNoLegacyVoiceSession(t, pool, sessionID, threadID)
+	if _, found := state["goal"]; found {
+		t.Fatalf("voice state exposed Goal: %#v", state)
+	}
+	if _, found := state["thread_id"]; found {
+		t.Fatalf("voice state exposed Thread: %#v", state)
+	}
 	replayedStart := voiceJSONRequest(
 		t,
 		server.URL,
@@ -377,32 +374,32 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		startPath,
 		"",
 		"start-voice-session-0001",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if replayedStart["practice_session_id"] != sessionID {
 		t.Fatal("same Start idempotency key created a different Session")
 	}
-	nextMatterID := voiceJSONRequest(
+	nextGoalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Leadership transition"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPut,
-		"/v1/agent-threads/"+threadID+"/active-matter",
-		fmt.Sprintf(`{"matter_id":%q}`, nextMatterID),
+		"/v1/agent-threads/"+threadID+"/active-goal",
+		fmt.Sprintf(`{"goal_id":%q}`, nextGoalID),
 		"",
 		http.StatusOK,
 	)
-	replayedAfterMatterSwitch := voiceJSONRequest(
+	replayedAfterGoalSwitch := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
@@ -410,32 +407,28 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		startPath,
 		"",
 		"start-voice-session-0001",
-		http.StatusCreated,
+		http.StatusOK,
 	)
-	if replayedAfterMatterSwitch["practice_session_id"] != sessionID ||
-		replayedAfterMatterSwitch["matter"].(map[string]any)["matter_id"] !=
-			matterID {
+	if replayedAfterGoalSwitch["practice_session_id"] != sessionID {
 		t.Fatalf(
-			"Start replay after active Matter switch = %#v",
-			replayedAfterMatterSwitch,
+			"Start replay after active Goal switch = %#v",
+			replayedAfterGoalSwitch,
 		)
 	}
-	resumedAfterMatterSwitch := voiceJSONRequest(
+	resumedAfterGoalSwitch := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
 		"",
 		"",
 		http.StatusOK,
 	)
-	if resumedAfterMatterSwitch["practice_session_id"] != sessionID ||
-		resumedAfterMatterSwitch["matter"].(map[string]any)["matter_id"] !=
-			matterID {
+	if resumedAfterGoalSwitch["practice_session_id"] != sessionID {
 		t.Fatalf(
-			"GET recovery reinterpreted active Matter: %#v",
-			resumedAfterMatterSwitch,
+			"GET recovery reinterpreted active Goal: %#v",
+			resumedAfterGoalSwitch,
 		)
 	}
 	conflictingStart, err := voiceRawRequest(
@@ -451,7 +444,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatal(err)
 	}
 	_ = conflictingStart.Body.Close()
-	if conflictingStart.StatusCode != http.StatusNotFound {
+	if conflictingStart.StatusCode != http.StatusOK {
 		t.Fatalf(
 			"new key without exact Context status = %d",
 			conflictingStart.StatusCode,
@@ -462,8 +455,8 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodPut,
-		"/v1/agent-threads/"+threadID+"/active-matter",
-		fmt.Sprintf(`{"matter_id":%q}`, matterID),
+		"/v1/agent-threads/"+threadID+"/active-goal",
+		fmt.Sprintf(`{"goal_id":%q}`, goalID),
 		"",
 		http.StatusOK,
 	)
@@ -490,7 +483,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
 		"",
 		"",
 		http.StatusOK,
@@ -575,7 +568,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		server.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
 		"",
 		"",
 		http.StatusOK,
@@ -685,7 +678,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t,
 		server.URL,
 		token,
-		threadID,
+		sessionID,
 		func(state map[string]any) bool {
 			sessionReview, ok := state["review"].(map[string]any)
 			return ok && sessionReview["status"] == "completed"
@@ -711,7 +704,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		startPath,
 		"",
 		"start-voice-session-0001",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if replayedAfterCompletion["practice_session_id"] != sessionID ||
 		replayedAfterCompletion["session_completed"] != true {
@@ -920,7 +913,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		t.Fatalf("foreign user history = %#v, want empty", otherHistory)
 	}
 	for _, path := range []string{
-		"/v1/agent-threads/" + threadID + "/voice-practice-session",
+		"/v1/practice-sessions/" + sessionID + "/voice-state",
 		"/v1/formal-reviews/" + reviewID,
 		"/v1/audio-assets/" + completedAudioAssetID + "/playback",
 	} {
@@ -968,7 +961,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		restartedServer.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
 		"",
 		"",
 		http.StatusOK,
@@ -1171,7 +1164,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		restartedServer.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+sessionID+"/voice-state",
 		"",
 		"",
 		http.StatusOK,
@@ -1186,8 +1179,8 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		"Review retry",
 		"retry-review",
 	)
-	retryStartPath := "/v1/agent-threads/" + retryContext.ThreadID +
-		"/voice-practice-sessions"
+	retryStartPath := "/v1/practice-sessions/" + retryContext.SessionID +
+		"/voice-activation"
 	nextSession := voiceJSONRequest(
 		t,
 		restartedServer.URL,
@@ -1196,7 +1189,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 		retryStartPath,
 		"",
 		"start-voice-session-0002",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if nextSession["practice_session_id"] != retryContext.SessionID {
 		t.Fatalf(
@@ -1269,7 +1262,7 @@ GROUP BY r.id, r.status`,
 		t,
 		restartedServer.URL,
 		token,
-		retryContext.ThreadID,
+		retryContext.SessionID,
 		func(state map[string]any) bool {
 			sessionReview, ok := state["review"].(map[string]any)
 			return ok && sessionReview["status"] == "completed"
@@ -1303,8 +1296,8 @@ WHERE review_id = $1`,
 		"Quota terminal review",
 		"quota-review",
 	)
-	quotaStartPath := "/v1/agent-threads/" + quotaContext.ThreadID +
-		"/voice-practice-sessions"
+	quotaStartPath := "/v1/practice-sessions/" + quotaContext.SessionID +
+		"/voice-activation"
 	quotaSession := voiceJSONRequest(
 		t,
 		restartedServer.URL,
@@ -1313,7 +1306,7 @@ WHERE review_id = $1`,
 		quotaStartPath,
 		"",
 		"start-voice-session-quota",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if quotaSession["practice_session_id"] != quotaContext.SessionID {
 		t.Fatalf(
@@ -1398,8 +1391,8 @@ WHERE practice_session_id = $1`,
 			terminalServer.URL,
 			token,
 			http.MethodGet,
-			"/v1/agent-threads/"+quotaContext.ThreadID+
-				"/voice-practice-session",
+			"/v1/practice-sessions/"+quotaContext.SessionID+
+				"/voice-state",
 			"",
 			"",
 			http.StatusOK,
@@ -1467,7 +1460,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		fmt.Errorf("tts unavailable"),
 	)
 	objects := newVoiceObjectStore()
-	catalog, err := preparation.NewBuiltinCatalog()
+	catalog, err := scene.NewPostgresCatalog(pool)
 	if err != nil {
 		t.Fatalf("build cleanup-race Preparation catalog: %v", err)
 	}
@@ -1498,23 +1491,23 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		server.URL,
 		"voice-cleanup-race@example.com",
 	)
-	matterID := voiceJSONRequest(
+	goalID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Cleanup race"}`,
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	threadID := voiceJSONRequest(
 		t,
 		server.URL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, goalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -1523,7 +1516,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		server.URL,
 		token,
 		threadID,
-		matterID,
+		goalID,
 		"cleanup-race",
 	)
 	state := voiceJSONRequest(
@@ -1531,10 +1524,11 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		server.URL,
 		token,
 		http.MethodPost,
-		"/v1/agent-threads/"+threadID+"/voice-practice-sessions",
+		"/v1/practice-sessions/"+formalContext.SessionID+
+			"/voice-activation",
 		"",
 		"start-cleanup-race",
-		http.StatusCreated,
+		http.StatusOK,
 	)
 	if state["practice_session_id"] != formalContext.SessionID ||
 		state["practice_plan_id"] != formalContext.PlanID {
@@ -1543,7 +1537,6 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 			state,
 		)
 	}
-	assertNoLegacyVoiceSession(t, pool, formalContext.SessionID, threadID)
 	candidate := createVoiceCandidate(
 		t,
 		server.URL,
@@ -1706,7 +1699,8 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		restartedServer.URL,
 		token,
 		http.MethodGet,
-		"/v1/agent-threads/"+threadID+"/voice-practice-session",
+		"/v1/practice-sessions/"+formalContext.SessionID+
+			"/voice-state",
 		"",
 		"",
 		http.StatusOK,
@@ -1725,13 +1719,13 @@ type voiceFormalContext struct {
 	PreparationSnapshotID string
 	SessionID             string
 	ThreadID              string
-	MatterID              string
+	GoalID                string
 }
 
 func newVoiceProductionIntegrationServer(
 	t *testing.T,
 	pool *pgxpool.Pool,
-	catalog preparation.CatalogReader,
+	catalog scene.CatalogReader,
 	generator ai.TextGenerator,
 	configuration VoiceConfiguration,
 ) *httptest.Server {
@@ -1768,7 +1762,7 @@ func newVoiceProductionIntegrationServer(
 			protectedRoutes,
 		},
 	)
-	RegisterPreparationCatalog(router, catalog)
+	RegisterSceneCatalog(router, catalog)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 	return server
@@ -1782,23 +1776,23 @@ func createVoiceFormalThreadContext(
 	key string,
 ) voiceFormalContext {
 	t.Helper()
-	matterID := voiceJSONRequest(
+	goalID := voiceJSONRequest(
 		t,
 		baseURL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		fmt.Sprintf(`{"title":%q}`, title),
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	threadID := voiceJSONRequest(
 		t,
 		baseURL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, goalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -1807,7 +1801,7 @@ func createVoiceFormalThreadContext(
 		baseURL,
 		token,
 		threadID,
-		matterID,
+		goalID,
 		key,
 	)
 }
@@ -1819,23 +1813,23 @@ func createVoiceInterviewFormalContext(
 	key string,
 ) voiceFormalContext {
 	t.Helper()
-	matterID := voiceJSONRequest(
+	goalID := voiceJSONRequest(
 		t,
 		baseURL,
 		token,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		fmt.Sprintf(`{"title":"Interview %s"}`, key),
 		"",
 		http.StatusCreated,
-	)["matter_id"].(string)
+	)["goal_id"].(string)
 	threadID := voiceJSONRequest(
 		t,
 		baseURL,
 		token,
 		http.MethodPost,
 		"/v1/agent-threads",
-		fmt.Sprintf(`{"active_matter_id":%q}`, matterID),
+		fmt.Sprintf(`{"active_goal_id":%q}`, goalID),
 		"",
 		http.StatusCreated,
 	)["thread_id"].(string)
@@ -1867,7 +1861,7 @@ func createVoiceInterviewFormalContext(
 	formalContext := voiceFormalContext{
 		PreparationSnapshotID: snapshot["preparation_snapshot_id"].(string),
 		ThreadID:              threadID,
-		MatterID:              matterID,
+		GoalID:                goalID,
 	}
 	plan := voiceJSONRequest(
 		t,
@@ -1876,21 +1870,20 @@ func createVoiceInterviewFormalContext(
 		http.MethodPost,
 		"/v1/practice-plans",
 		fmt.Sprintf(`{
-			"agent_thread_id":%q,
-			"matter_id":%q,
-			"scenario_definition_id":%q,
-			"scenario_definition_version":1,
-			"scenario_config_id":%q,
-			"scenario_config_version":1,
-			"preparation_profile_id":%q,
-			"selected_role_ids":[%q]
+			"source_thread_id":%q,
+			"goal_id":%q,
+			"preparation_snapshot_id":%q,
+			"scene_id":%q,
+			"scene_version":1,
+			"selected_role_ids":[%q],
+			"practice_option_id":%q
 		}`,
 			threadID,
-			matterID,
-			preparation.ProgrammerInterviewScenarioID,
-			preparation.BackendEngineerConfigID,
-			profileID,
-			preparation.TechnicalInterviewerRoleID,
+			goalID,
+			formalContext.PreparationSnapshotID,
+			testProgrammerInterviewSceneID,
+			testTechnicalInterviewerRoleID,
+			testTechnicalFocusOptionID,
 		),
 		"voice-"+key+"-plan",
 		http.StatusCreated,
@@ -1902,17 +1895,10 @@ func createVoiceInterviewFormalContext(
 		token,
 		http.MethodPost,
 		"/v1/practice-plans/"+formalContext.PlanID+"/practice-sessions",
-		fmt.Sprintf(`{
+		`{
 			"expected_plan_revision":1,
-			"user_confirmed":true,
-			"preparation_snapshot_id":%q,
-			"practice_option_id":%q,
-			"role_definition_ids":[%q]
+			"user_confirmed":true
 		}`,
-			formalContext.PreparationSnapshotID,
-			preparation.TechnicalFocusOptionID,
-			preparation.TechnicalInterviewerRoleID,
-		),
 		"voice-"+key+"-context-session",
 		http.StatusCreated,
 	)
@@ -1926,7 +1912,7 @@ func createVoiceFormalContext(
 	baseURL string,
 	token string,
 	threadID string,
-	matterID string,
+	goalID string,
 	key string,
 ) voiceFormalContext {
 	t.Helper()
@@ -1958,7 +1944,7 @@ func createVoiceFormalContext(
 	context := voiceFormalContext{
 		PreparationSnapshotID: snapshot["preparation_snapshot_id"].(string),
 		ThreadID:              threadID,
-		MatterID:              matterID,
+		GoalID:                goalID,
 	}
 	plan := voiceJSONRequest(
 		t,
@@ -1967,21 +1953,20 @@ func createVoiceFormalContext(
 		http.MethodPost,
 		"/v1/practice-plans",
 		fmt.Sprintf(`{
-			"agent_thread_id":%q,
-			"matter_id":%q,
-			"scenario_definition_id":%q,
-			"scenario_definition_version":1,
-			"scenario_config_id":%q,
-			"scenario_config_version":1,
-			"preparation_profile_id":%q,
-			"selected_role_ids":[%q]
+			"source_thread_id":%q,
+			"goal_id":%q,
+			"preparation_snapshot_id":%q,
+			"scene_id":%q,
+			"scene_version":1,
+			"selected_role_ids":[%q],
+			"practice_option_id":%q
 		}`,
 			threadID,
-			matterID,
-			preparation.WorkplaceProgressRiskScenarioID,
-			preparation.WorkplaceProgressRiskConfigID,
-			profileID,
-			preparation.DirectManagerRoleID,
+			goalID,
+			context.PreparationSnapshotID,
+			testWorkplaceProgressSceneID,
+			testDirectManagerRoleID,
+			testDirectManagerFocusOptionID,
 		),
 		"voice-"+key+"-plan",
 		http.StatusCreated,
@@ -2011,17 +1996,10 @@ func createVoiceFormalContextSession(
 		token,
 		http.MethodPost,
 		"/v1/practice-plans/"+formalContext.PlanID+"/practice-sessions",
-		fmt.Sprintf(`{
+		`{
 			"expected_plan_revision":1,
-			"user_confirmed":true,
-			"preparation_snapshot_id":%q,
-			"practice_option_id":%q,
-			"role_definition_ids":[%q]
+			"user_confirmed":true
 		}`,
-			formalContext.PreparationSnapshotID,
-			preparation.DirectManagerFocusOptionID,
-			preparation.DirectManagerRoleID,
-		),
 		"voice-"+key+"-context-session",
 		http.StatusCreated,
 	)
@@ -2034,40 +2012,6 @@ func createVoiceFormalContextSession(
 		t.Fatalf("formal Context bootstrap has no Session ID: %#v", bootstrap)
 	}
 	return sessionID
-}
-
-func assertNoLegacyVoiceSession(
-	t *testing.T,
-	pool *pgxpool.Pool,
-	formalSessionID string,
-	threadID string,
-) {
-	t.Helper()
-	var formalCount, legacyCount int
-	if err := pool.QueryRow(
-		context.Background(),
-		`SELECT
-		    count(*) FILTER (
-		        WHERE session_id = $1
-		          AND context_plan_id IS NOT NULL
-		    )::int,
-		    count(*) FILTER (
-		        WHERE plan_id = $2
-		          AND context_plan_id IS NULL
-		    )::int
-		 FROM practice_sessions`,
-		formalSessionID,
-		"agent-thread:"+threadID,
-	).Scan(&formalCount, &legacyCount); err != nil {
-		t.Fatalf("read formal/legacy voice Sessions: %v", err)
-	}
-	if formalCount != 1 || legacyCount != 0 {
-		t.Fatalf(
-			"formal/legacy voice Sessions = %d/%d, want 1/0",
-			formalCount,
-			legacyCount,
-		)
-	}
 }
 
 func completeBootstrapHistoryReview(
@@ -2264,7 +2208,7 @@ func waitForVoicePracticeState(
 	t *testing.T,
 	baseURL string,
 	token string,
-	threadID string,
+	sessionID string,
 	ready func(map[string]any) bool,
 ) map[string]any {
 	t.Helper()
@@ -2275,7 +2219,7 @@ func waitForVoicePracticeState(
 			baseURL,
 			token,
 			http.MethodGet,
-			"/v1/agent-threads/"+threadID+"/voice-practice-session",
+			"/v1/practice-sessions/"+sessionID+"/voice-state",
 			"",
 			"",
 			http.StatusOK,

@@ -219,7 +219,7 @@ func (r *PostgresRepository) ListCurrentIELTSSpeakingReportIndex(
 			state.is_final,
 			ledger.created_at,
 			state.updated_at,
-			COALESCE(matter.title, '') AS title
+			COALESCE(goal.title, '') AS title
 		FROM evaluation_ledgers AS ledger
 		JOIN evaluation_revisions AS revision
 		  ON revision.evaluation_id = ledger.id
@@ -231,7 +231,13 @@ func (r *PostgresRepository) ListCurrentIELTSSpeakingReportIndex(
 		LEFT JOIN practice_sessions AS practice_session
 		  ON practice_session.session_id = ledger.practice_session_id
 		 AND practice_session.owner_user_id = ledger.owner_user_id
-		LEFT JOIN matters AS matter ON matter.id = practice_session.matter_id
+		LEFT JOIN preparation_practice_plan_revisions AS plan_revision
+		  ON plan_revision.owner_user_id = practice_session.owner_user_id
+		 AND plan_revision.plan_id = practice_session.plan_id
+		 AND plan_revision.revision = practice_session.plan_revision
+		LEFT JOIN coaching_goals AS goal
+		  ON goal.goal_id = plan_revision.goal_id
+		 AND goal.owner_user_id = plan_revision.owner_user_id
 		WHERE ledger.owner_user_id = $1
 		  AND ledger.scope = 'SESSION'
 		  AND ledger.scene_type IN ('IELTS_SPEAKING', 'INTERVIEW')

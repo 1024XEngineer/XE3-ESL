@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
@@ -123,9 +124,9 @@ func (service *Service) IssueSessionToken(
 		)
 	}
 	if session.ID != practiceSessionID ||
-		(session.ScenarioType != persistence.ScenarioFamilyWorkplace &&
-			session.ScenarioType != persistence.ScenarioFamilyDaily &&
-			session.ScenarioType != persistence.ScenarioFamilyInterview) ||
+		(session.SceneFamily != scene.SceneFamilyWorkplace &&
+			session.SceneFamily != scene.SceneFamilyDaily &&
+			session.SceneFamily != scene.SceneFamilyInterview) ||
 		(session.Status != persistence.ContextSessionStarting &&
 			session.Status != persistence.ContextSessionProgress) {
 		return SessionToken{}, apperror.New(

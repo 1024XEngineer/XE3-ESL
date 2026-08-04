@@ -186,6 +186,95 @@ func TestPracticeFollowUpMigrationsAreEmbedded(t *testing.T) {
 	}
 }
 
+func TestGoalAuthorityMigrationIsEmbeddedAndUsesExplicitDrops(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000049_goal_authority_models.up.sql",
+		"000049_goal_authority_models.down.sql",
+	} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sql := readMigration(t, name)
+			for _, line := range strings.Split(sql, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "DROP TABLE") &&
+					strings.Contains(line, "CASCADE") {
+					t.Fatalf(
+						"Goal authority migration contains cascading table drop %q",
+						line,
+					)
+				}
+			}
+			if !strings.Contains(sql, "RECREATE THE DEVELOPMENT OR TEST DATABASE") {
+				t.Error("Goal authority migration must explain its empty-data requirement")
+			}
+		})
+	}
+}
+
+func TestSceneAuthorityMigrationIsEmbeddedAndHasOneVersionAuthority(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000050_scene_authority_catalog.up.sql",
+		"000050_scene_authority_catalog.down.sql",
+	} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sql := readMigration(t, name)
+			if strings.Contains(sql, "SCENARIO_CONFIG") {
+				t.Error("Scene authority migration must not create ScenarioConfig identity")
+			}
+			for _, line := range strings.Split(sql, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "DROP TABLE") &&
+					strings.Contains(line, "CASCADE") {
+					t.Fatalf(
+						"Scene authority migration contains cascading table drop %q",
+						line,
+					)
+				}
+			}
+		})
+	}
+}
+
+func TestPreparationPlanAuthorityMigrationIsEmbeddedAndHasNoLegacyPlanTable(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000051_preparation_plan_authority.up.sql",
+		"000051_preparation_plan_authority.down.sql",
+	} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sql := readMigration(t, name)
+			for _, line := range strings.Split(sql, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "DROP TABLE") &&
+					strings.Contains(line, "CASCADE") {
+					t.Fatalf(
+						"Preparation Plan migration contains cascading table drop %q",
+						line,
+					)
+				}
+			}
+			if !strings.Contains(sql, "RECREATE THE DEVELOPMENT OR TEST DATABASE") {
+				t.Error("Preparation Plan migration must explain its empty-data requirement")
+			}
+		})
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 

@@ -1,3 +1,4 @@
+import '../support/scene_fixtures.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
@@ -5,7 +6,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/practice/practice_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
@@ -18,14 +18,12 @@ void main() {
       final transport = _Transport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/$_threadId/voice-practice-session',
+          path: '/v1/practice-sessions/$_sessionId/voice-state',
           response: _json(HttpStatus.ok, {
             'practice_session_id': _sessionId,
             'practice_plan_id': 'plan-1',
-            'thread_id': _threadId,
-            'scenario_type': 'INTERVIEW',
-            'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
-            'matter': _matterJson(),
+            'scene_family': 'INTERVIEW',
+            'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
             'session_version': 5,
             'effective_turns': 4,
             'turn_limit': 6,
@@ -47,13 +45,13 @@ void main() {
 
       final snapshot = await _client(
         transport,
-      ).restorePractice(threadId: _threadId);
+      ).restorePractice(sessionId: _sessionId);
 
-      expect(snapshot?.completedTurns, 4);
-      expect(snapshot?.turnLimit, 6);
-      expect(snapshot?.sessionCompleted, isTrue);
-      expect(snapshot?.scenarioType, 'INTERVIEW');
-      expect(snapshot?.scenarioModel, 'PROJECT_EXPERIENCE_DEEP_DIVE');
+      expect(snapshot.completedTurns, 4);
+      expect(snapshot.turnLimit, 6);
+      expect(snapshot.sessionCompleted, isTrue);
+      expect(snapshot.sceneFamily, _scene.family);
+      expect(snapshot.sceneModel, _scene.model);
       transport.expectDone();
     },
   );
@@ -64,12 +62,12 @@ void main() {
     const encoded = 'resource%2Fpart%3Fquery%23fragment%25value';
 
     expect(
-      endpoints.restorePath(opaque),
-      '/v1/agent-threads/$encoded/voice-practice-session',
+      endpoints.voiceStatePath(opaque),
+      '/v1/practice-sessions/$encoded/voice-state',
     );
     expect(
-      endpoints.startPath(opaque),
-      '/v1/agent-threads/$encoded/voice-practice-sessions',
+      endpoints.voiceActivationPath(opaque),
+      '/v1/practice-sessions/$encoded/voice-activation',
     );
     expect(
       endpoints.transcribePath(opaque, opaque),
@@ -97,7 +95,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'POST',
-        path: '/v1/agent-threads/$_threadId/voice-practice-sessions',
+        path: '/v1/practice-sessions/$_sessionId/voice-activation',
         verify: (request) {
           expect(request.jsonBody, isNull);
           expect(request.rawFilePath, isNull);
@@ -142,10 +140,8 @@ void main() {
         response: _json(HttpStatus.ok, {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
-          'thread_id': _threadId,
-          'scenario_type': 'INTERVIEW',
-          'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
-          'matter': _matterJson(),
+          'scene_family': 'INTERVIEW',
+          'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
           'session_version': 2,
           'effective_turns': 1,
           'turn_limit': 3,
@@ -173,16 +169,12 @@ void main() {
       ),
     ]);
     final client = _client(transport);
-    final matter = AgentMatter(id: _matterId, scene: agentScenes.first);
-
-    final start = await client.startPractice(
-      threadId: _threadId,
-      activeMatter: matter,
+    final start = await client.activatePractice(
+      sessionId: _sessionId,
       clientOperationId: 'scene-operation',
     );
-    expect(start.snapshot.sessionId, _sessionId);
-    expect(start.snapshot.sessionId, isNot(_threadId));
-    expect(start.snapshot.currentQuestion?.id, _questionId);
+    expect(start.sessionId, _sessionId);
+    expect(start.currentQuestion?.id, _questionId);
 
     final candidate = await client.transcribe(
       PracticeTranscriptionRequest(
@@ -225,10 +217,8 @@ void main() {
         response: _json(HttpStatus.ok, {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
-          'thread_id': _threadId,
-          'scenario_type': 'INTERVIEW',
-          'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
-          'matter': _matterJson(),
+          'scene_family': 'INTERVIEW',
+          'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
           'session_version': 2,
           'effective_turns': 1,
           'turn_limit': 3,
@@ -284,8 +274,8 @@ void main() {
         response: _json(HttpStatus.ok, {
           'practice_session_id': _sessionId,
           'practice_plan_id': 'plan-1',
-          'scenario_type': 'INTERVIEW',
-          'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+          'scene_family': 'INTERVIEW',
+          'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
           'snapshot_id': 'snapshot-1',
           'practice_session_status': 'ended_early',
           'session_version': 4,
@@ -313,7 +303,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/agent-threads/$_threadId/voice-practice-session',
+        path: '/v1/practice-sessions/$_sessionId/voice-state',
         response: const PracticeWireResponse(
           statusCode: HttpStatus.unauthorized,
           body: '{}',
@@ -337,7 +327,7 @@ void main() {
     );
 
     await expectLater(
-      client.restorePractice(threadId: _threadId),
+      client.restorePractice(sessionId: _sessionId),
       throwsA(isA<Exception>()),
     );
     await Future<void>.delayed(Duration.zero);
@@ -387,7 +377,7 @@ void main() {
       final first = _Transport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/$_threadId/voice-practice-session',
+          path: '/v1/practice-sessions/$_sessionId/voice-state',
           response: const PracticeWireResponse(
             statusCode: HttpStatus.notFound,
             body: '{}',
@@ -397,7 +387,7 @@ void main() {
       final second = _Transport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/$_threadId/voice-practice-session',
+          path: '/v1/practice-sessions/$_sessionId/voice-state',
           response: const PracticeWireResponse(
             statusCode: HttpStatus.notFound,
             body: '{}',
@@ -416,10 +406,16 @@ void main() {
         transportFactory: () => transports.removeFirst(),
       );
 
-      expect(await client.restorePractice(threadId: _threadId), isNull);
+      await expectLater(
+        client.restorePractice(sessionId: _sessionId),
+        throwsA(isA<AgentClientException>()),
+      );
       await client.clearAccountState();
       expect(first.closed, isTrue);
-      expect(await client.restorePractice(threadId: _threadId), isNull);
+      await expectLater(
+        client.restorePractice(sessionId: _sessionId),
+        throwsA(isA<AgentClientException>()),
+      );
       expect(second.closed, isFalse);
     },
   );
@@ -434,10 +430,8 @@ void main() {
           response: _json(HttpStatus.ok, {
             'practice_session_id': _sessionId,
             'practice_plan_id': 'plan-1',
-            'thread_id': _threadId,
-            'scenario_type': 'INTERVIEW',
-            'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
-            'matter': _matterJson(),
+            'scene_family': 'INTERVIEW',
+            'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
             'session_version': 4,
             'effective_turns': 3,
             'turn_limit': 3,
@@ -604,15 +598,14 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'POST',
-        path: '/v1/agent-threads/$_threadId/voice-practice-sessions',
+        path: '/v1/practice-sessions/$_sessionId/voice-activation',
         response: _json(HttpStatus.ok, _sessionJson()),
       ),
     ]);
 
     await expectLater(
-      _client(transport).startPractice(
-        threadId: _threadId,
-        activeMatter: AgentMatter(id: _matterId, scene: agentScenes.first),
+      _client(transport).activatePractice(
+        sessionId: _sessionId,
         clientOperationId: 'scene-operation',
       ),
       throwsA(
@@ -704,13 +697,13 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/agent-threads/$_threadId/voice-practice-session',
+        path: '/v1/practice-sessions/$_sessionId/voice-state',
         response: _json(HttpStatus.ok, completed),
       ),
     ]);
 
     await expectLater(
-      _client(transport).restorePractice(threadId: _threadId),
+      _client(transport).restorePractice(sessionId: _sessionId),
       throwsA(
         isA<AgentClientException>().having(
           (error) => error.kind,
@@ -754,13 +747,13 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/agent-threads/$_threadId/voice-practice-session',
+        path: '/v1/practice-sessions/$_sessionId/voice-state',
         response: _json(HttpStatus.ok, completed),
       ),
     ]);
 
     await expectLater(
-      _client(transport).restorePractice(threadId: _threadId),
+      _client(transport).restorePractice(sessionId: _sessionId),
       throwsA(
         isA<AgentClientException>().having(
           (error) => error.kind,
@@ -775,7 +768,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/agent-threads/$_threadId/voice-practice-session',
+        path: '/v1/practice-sessions/$_sessionId/voice-state',
         response: _json(HttpStatus.tooManyRequests, {
           'error': {
             'code': 'voice_rate_limited',
@@ -788,7 +781,7 @@ void main() {
     ]);
 
     await expectLater(
-      _client(transport).restorePractice(threadId: _threadId),
+      _client(transport).restorePractice(sessionId: _sessionId),
       throwsA(
         isA<AgentClientException>()
             .having(
@@ -815,7 +808,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/agent-threads/$_threadId/voice-practice-session',
+        path: '/v1/practice-sessions/$_sessionId/voice-state',
         response: _json(HttpStatus.tooManyRequests, {
           'error': {
             'code': 'quota_exhausted',
@@ -828,7 +821,7 @@ void main() {
     ]);
 
     await expectLater(
-      _client(transport).restorePractice(threadId: _threadId),
+      _client(transport).restorePractice(sessionId: _sessionId),
       throwsA(
         isA<AgentClientException>()
             .having((error) => error.retryable, 'retryable', isFalse)
@@ -845,7 +838,7 @@ void main() {
     final transport = _Transport([
       _Step(
         method: 'GET',
-        path: '/v1/agent-threads/$_threadId/voice-practice-session',
+        path: '/v1/practice-sessions/$_sessionId/voice-state',
         response: _json(HttpStatus.tooManyRequests, {
           'error': {
             'code': 'voice_rate_limited',
@@ -857,7 +850,7 @@ void main() {
     ]);
 
     await expectLater(
-      _client(transport).restorePractice(threadId: _threadId),
+      _client(transport).restorePractice(sessionId: _sessionId),
       throwsA(
         isA<AgentClientException>().having(
           (error) => error.kind,
@@ -892,10 +885,8 @@ Map<String, Object?> _sessionJson() {
   return {
     'practice_session_id': _sessionId,
     'practice_plan_id': 'plan-1',
-    'thread_id': _threadId,
-    'scenario_type': 'INTERVIEW',
-    'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
-    'matter': _matterJson(),
+    'scene_family': 'INTERVIEW',
+    'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
     'session_version': 1,
     'effective_turns': 0,
     'turn_limit': 3,
@@ -908,17 +899,6 @@ Map<String, Object?> _sessionJson() {
       'addressee_participant_ids': ['participant-user'],
       'speech_path': '/v1/questions/$_questionId/speech',
     },
-  };
-}
-
-Map<String, Object?> _matterJson() {
-  return {
-    'matter_id': _matterId,
-    'title': agentScenes.first.title,
-    'status': 'active',
-    'version': 1,
-    'created_at': _timestamp,
-    'updated_at': _timestamp,
   };
 }
 
@@ -987,12 +967,12 @@ final class _NeverCompletesTransport implements PracticeWireTransport {
   void close({bool force = false}) {}
 }
 
+final _scene = testScenes[2];
+
 const _credential = AuthSessionCredential(
   sessionToken: 'sess_practice',
   generation: 7,
 );
-const _threadId = '10000000-0000-4000-8000-000000000088';
-const _matterId = '20000000-0000-4000-8000-000000000088';
 const _sessionId = '30000000-0000-4000-8000-000000000088';
 const _questionId = '40000000-0000-4000-8000-000000000088';
 const _nextQuestionId = '40000000-0000-4000-8000-000000000089';

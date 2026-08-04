@@ -1558,8 +1558,15 @@ func lastUserContent(request ai.TextRequest) string {
 	return ""
 }
 
+// providerToolResult is the only Tool result projection sent back to the
+// model. SourceRefs remain separate persistence metadata and must never enter
+// the Provider conversation.
+type providerToolResult struct {
+	Content map[string]any `json:"content"`
+}
+
 func marshalToolResult(result tool.Result, maxBytes int) (string, error) {
-	raw, err := json.Marshal(result)
+	raw, err := json.Marshal(providerToolResult{Content: result.Content})
 	if err != nil {
 		return "", err
 	}

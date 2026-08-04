@@ -170,7 +170,7 @@ func TestDecodeExtractionOutputMapsOnlyFixedFields(t *testing.T) {
 				`"evidence":"准备产品面试","interaction_use":false}],` +
 				`"memory_additions":[]}`,
 			wantType: TypeGoal, wantKey: "goal.current",
-			wantContent: "准备产品面试", wantScope: ScopeMatter,
+			wantContent: "准备产品面试", wantScope: ScopeGoal,
 		},
 		{
 			name: "interest",
@@ -298,7 +298,7 @@ func TestFixedExtractionPreferredNamePassesPolicy(t *testing.T) {
 	t.Parallel()
 
 	source := validCompletedRunSource()
-	source.MatterID = ""
+	source.GoalID = ""
 	source.UserText = "我叫小花"
 	generator := &capturingGenerator{
 		result: ai.TextResult{

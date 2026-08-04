@@ -1,3 +1,8 @@
+import '../support/scene_fixtures.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
+
+import 'package:speakup/features/coaching/goal/goal.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -17,7 +22,7 @@ void main() {
   test('account switch fences an old scene before startScene', () async {
     final account = _AccountMarker();
     final agent = _AccountAgentClient(account);
-    final practice = _AccountPracticeClient(account, restoreActive: false);
+    final practice = _AccountPracticeClient(account);
     final player = _GatedAudioPlayer();
     final controller = _controller(
       agent: agent,
@@ -28,7 +33,7 @@ void main() {
     await controller.initialize();
 
     final stop = player.blockNextStop();
-    final selection = controller.selectScene(agentScenes.first);
+    final selection = controller.selectScene(testScenes.first);
     await stop.entered.future;
 
     await controller.clearPrivateState();
@@ -38,14 +43,14 @@ void main() {
     await selection;
 
     expect(agent.sceneCalls, isEmpty);
-    expect(practice.startCalls, isEmpty);
+    expect(practice.activationCalls, isEmpty);
     expect(controller.threadId, 'thread-B');
   });
 
   test('account switch fences old Thread before Practice restore', () async {
     final account = _AccountMarker();
     final agent = _AccountAgentClient(account, blockFirstRestore: true);
-    final practice = _AccountPracticeClient(account, restoreActive: false);
+    final practice = _AccountPracticeClient(account);
     final controller = AgentController(
       client: agent,
       practiceClient: practice,
@@ -58,11 +63,12 @@ void main() {
     await controller.clearPrivateState();
     account.value = 'B';
     await controller.initialize();
+    await _restorePractice(controller, 'B');
 
     agent.firstRestoreResult.complete(_threadSnapshot('A'));
     await oldInitialization;
 
-    expect(practice.restoreCalls, ['B:thread-B']);
+    expect(practice.restoreCalls, ['B:session-B']);
     expect(controller.threadId, 'thread-B');
   });
 
@@ -78,6 +84,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
+    await _restorePractice(controller, 'A');
 
     final stop = player.blockNextStop();
     final playback = controller.toggleRecordingAudio('audio-A');
@@ -86,6 +93,7 @@ void main() {
     await controller.clearPrivateState();
     account.value = 'B';
     await controller.initialize();
+    await _restorePractice(controller, 'B');
     stop.release.complete();
     await playback;
 
@@ -105,6 +113,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
+    await _restorePractice(controller, 'A');
     await controller.toggleRecordingAudio('audio-A');
 
     final stop = player.blockNextStop();
@@ -114,6 +123,7 @@ void main() {
     await controller.clearPrivateState();
     account.value = 'B';
     await controller.initialize();
+    await _restorePractice(controller, 'B');
     stop.release.complete();
     await deletion;
 
@@ -133,6 +143,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
+    await _restorePractice(controller, 'A');
 
     final stop = player.blockNextStop();
     final recording = controller.startRecording();
@@ -144,6 +155,7 @@ void main() {
     await recording;
     await cleanup;
     await controller.initialize();
+    await _restorePractice(controller, 'B');
 
     expect(recorder.startAccounts, isEmpty);
     expect(controller.threadId, 'thread-B');
@@ -160,6 +172,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
+    await _restorePractice(controller, 'A');
     await controller.startRecording();
     await controller.stopRecording();
     expect(controller.candidateId, 'candidate-A');
@@ -171,6 +184,7 @@ void main() {
     await controller.clearPrivateState();
     account.value = 'B';
     await controller.initialize();
+    await _restorePractice(controller, 'B');
     stop.release.complete();
     await confirmation;
 
@@ -178,6 +192,12 @@ void main() {
     expect(controller.practiceSessionId, 'session-B');
   });
 }
+
+Future<void> _restorePractice(AgentController controller, String account) =>
+    controller.restoreCreatedPractice(
+      sessionId: 'session-$account',
+      scene: testScenes.first,
+    );
 
 AgentController _controller({
   required _AccountAgentClient agent,
@@ -225,20 +245,13 @@ final class _AccountAgentClient implements AgentClient {
   }
 
   @override
-  Future<AgentSceneStart> startScene({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   }) async {
     sceneCalls.add('${account.value}:$threadId');
-    return AgentSceneStart(
-      activeMatter: AgentMatter(id: 'matter-${account.value}', scene: scene),
-      assistantMessage: AgentMessage(
-        id: 'scene-message-${account.value}',
-        role: AgentMessageRole.assistant,
-        text: scene.title,
-      ),
-    );
+    return testGoal(id: 'goal-${account.value}', title: scene.name);
   }
 
   @override
@@ -249,66 +262,34 @@ final class _AccountAgentClient implements AgentClient {
   }) {
     throw UnimplementedError();
   }
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  }) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) {
-    throw UnimplementedError();
-  }
 }
 
 final class _AccountPracticeClient implements PracticeClient {
-  _AccountPracticeClient(this.account, {this.restoreActive = true});
+  _AccountPracticeClient(this.account);
 
   final _AccountMarker account;
-  final bool restoreActive;
   final List<String> restoreCalls = <String>[];
-  final List<String> startCalls = <String>[];
+  final List<String> activationCalls = <String>[];
   final List<String> confirmCalls = <String>[];
 
   @override
   Future<void> clearAccountState() async {}
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
   }) async {
-    restoreCalls.add('${account.value}:$threadId');
-    return restoreActive ? _practiceSnapshot(account.value) : null;
+    restoreCalls.add('${account.value}:$sessionId');
+    return _practiceSnapshot(account.value);
   }
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
   }) async {
-    startCalls.add('${account.value}:$threadId');
-    return PracticeStartResult(snapshot: _practiceSnapshot(account.value));
+    activationCalls.add('${account.value}:$sessionId');
+    return _practiceSnapshot(account.value);
   }
 
   @override
@@ -460,15 +441,20 @@ final class _AccountRecorder implements PracticeRecorder {
 }
 
 AgentThreadSnapshot _threadSnapshot(String account) {
-  return AgentThreadSnapshot(threadId: 'thread-$account');
+  return AgentThreadSnapshot(
+    threadId: 'thread-$account',
+    activeGoal: testGoal(id: 'goal-$account', title: testScenes.first.name),
+  );
 }
 
 PracticeSessionSnapshot _practiceSnapshot(String account) {
   final sessionId = 'session-$account';
   return PracticeSessionSnapshot(
     sessionId: sessionId,
-    threadId: 'thread-$account',
-    matter: AgentMatter(id: 'matter-$account', scene: agentScenes.first),
+    planId: 'plan-$account',
+    sceneFamily: testScenes.first.family,
+    sceneModel: testScenes.first.model,
+    sessionVersion: 1,
     completedTurns: 1,
     turnLimit: 2,
     sessionCompleted: false,

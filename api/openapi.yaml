@@ -27,14 +27,16 @@ x-json-null-policy: omit
 tags:
   - name: Identity
     description: Minimal account registration, opaque Session, and current-user operations.
-  - name: Matter
+  - name: Goal
     description: User-owned real-world activities and their lifecycle.
   - name: Agent
-    description: Durable Agent Threads, Matter links, and committed Messages.
+    description: Durable Agent Threads, Goal links, and committed Messages.
+  - name: Scene
+    description: Versioned training Scenes, roles, options, and question banks.
   - name: Preparation
-    description: Scenario, role, profile, and immutable preparation snapshot resources.
+    description: User materials, immutable snapshots, and versioned practice plans.
   - name: Practice
-    description: Practice plan, session lifecycle, participant, and policy snapshots.
+    description: Practice session lifecycle, participants, and immutable session snapshots.
   - name: Conversation
     description: Questions, effective Turns, and ordered session events.
   - name: Review
@@ -91,22 +93,22 @@ paths:
     $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1content-url
   /v1/resumes/{resume_id}/parse-retries:
     $ref: ./modules/resume.yaml#/paths/~1v1~1resumes~1{resume_id}~1parse-retries
-  /v1/scenario-definitions:
-    $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions
-  /v1/ielts-speaking/question-bank:
-    $ref: ./modules/preparation.yaml#/paths/~1v1~1ielts-speaking~1question-bank
-  /v1/matters:
-    $ref: ./modules/agent.yaml#/paths/~1v1~1matters
-  /v1/matters/{matter_id}:
-    $ref: ./modules/agent.yaml#/paths/~1v1~1matters~1{matter_id}
+  /v1/scenes:
+    $ref: ./modules/scene.yaml#/paths/~1v1~1scenes
+  /v1/scenes/ielts-speaking/question-bank:
+    $ref: ./modules/scene.yaml#/paths/~1v1~1scenes~1ielts-speaking~1question-bank
+  /v1/goals:
+    $ref: ./modules/goal.yaml#/paths/~1v1~1goals
+  /v1/goals/{goal_id}:
+    $ref: ./modules/goal.yaml#/paths/~1v1~1goals~1{goal_id}
   /v1/agent-threads:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads
   /v1/agent-threads/focused:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1focused
   /v1/agent-threads/{thread_id}:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}
-  /v1/agent-threads/{thread_id}/active-matter:
-    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1active-matter
+  /v1/agent-threads/{thread_id}/active-goal:
+    $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1active-goal
   /v1/agent-threads/{thread_id}/messages:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1messages
   /v1/agent-threads/{thread_id}/image-assets:
@@ -141,10 +143,10 @@ paths:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1retries~1stream
   /v1/agent-runs/{run_id}/context-manifest:
     $ref: ./modules/agent.yaml#/paths/~1v1~1agent-runs~1{run_id}~1context-manifest
-  /v1/agent-threads/{thread_id}/voice-practice-sessions:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1voice-practice-sessions
-  /v1/agent-threads/{thread_id}/voice-practice-session:
-    $ref: ./modules/conversation.yaml#/paths/~1v1~1agent-threads~1{thread_id}~1voice-practice-session
+  /v1/practice-sessions/{practice_session_id}/voice-activation:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1voice-activation
+  /v1/practice-sessions/{practice_session_id}/voice-state:
+    $ref: ./modules/conversation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1voice-state
   /v1/voice-practice-sessions/{practice_session_id}/questions/{question_id}/transcription-candidates:
     $ref: ./modules/conversation.yaml#/paths/~1v1~1voice-practice-sessions~1{practice_session_id}~1questions~1{question_id}~1transcription-candidates
   /v1/retry-turns/{retry_turn_id}/transcription-candidates:
@@ -173,10 +175,10 @@ paths:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1ielts-speaking-report
   /v1/ielts-speaking-reports:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1ielts-speaking-reports
-  /v1/scenario-definitions/{scenario_definition_id}:
-    $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions~1{scenario_definition_id}
-  /v1/scenario-definitions/{scenario_definition_id}/role-definitions:
-    $ref: ./modules/preparation.yaml#/paths/~1v1~1scenario-definitions~1{scenario_definition_id}~1role-definitions
+  /v1/scenes/{scene_id}:
+    $ref: ./modules/scene.yaml#/paths/~1v1~1scenes~1{scene_id}
+  /v1/scenes/{scene_id}/roles:
+    $ref: ./modules/scene.yaml#/paths/~1v1~1scenes~1{scene_id}~1roles
   /v1/preparation-profiles:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1preparation-profiles
   /v1/preparation-profiles/{preparation_profile_id}/snapshots:
@@ -192,9 +194,9 @@ paths:
   /v1/job-targets/{job_target_id}/discard:
     $ref: ./modules/preparation.yaml#/paths/~1v1~1job-targets~1{job_target_id}~1discard
   /v1/practice-plans:
-    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1practice-plans
   /v1/practice-plans/{practice_plan_id}:
-    $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans~1{practice_plan_id}
+    $ref: ./modules/preparation.yaml#/paths/~1v1~1practice-plans~1{practice_plan_id}
   /v1/practice-plans/{practice_plan_id}/practice-sessions:
     $ref: ./modules/practice.yaml#/paths/~1v1~1practice-plans~1{practice_plan_id}~1practice-sessions
   /v1/agent-threads/{thread_id}/practice-start-confirmations:
@@ -286,12 +288,12 @@ components:
       $ref: ./modules/identity.yaml#/components/schemas/LoginRequest
     LoginResponse:
       $ref: ./modules/identity.yaml#/components/schemas/LoginResponse
-    Matter:
-      $ref: ./modules/agent.yaml#/components/schemas/Matter
+    Goal:
+      $ref: ./modules/goal.yaml#/components/schemas/Goal
     AgentThread:
       $ref: ./modules/agent.yaml#/components/schemas/AgentThread
-    ThreadMatterLink:
-      $ref: ./modules/agent.yaml#/components/schemas/ThreadMatterLink
+    ThreadGoalLink:
+      $ref: ./modules/agent.yaml#/components/schemas/ThreadGoalLink
     AgentMessage:
       $ref: ./modules/agent.yaml#/components/schemas/AgentMessage
     AgentMessageAudio:
@@ -306,22 +308,22 @@ components:
       $ref: ./modules/agent.yaml#/components/schemas/AgentRun
     ContextManifest:
       $ref: ./modules/agent.yaml#/components/schemas/ContextManifest
-    ScenarioDefinition:
-      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioDefinition
-    ScenarioDefinitionList:
-      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioDefinitionList
-    ScenarioModel:
-      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioModel
-    ScenarioConfig:
-      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioConfig
-    ScenarioPromptModel:
-      $ref: ./modules/preparation.yaml#/components/schemas/ScenarioPromptModel
-    InterviewScenarioConfig:
-      $ref: ./modules/preparation.yaml#/components/schemas/InterviewScenarioConfig
+    SceneDefinition:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneDefinition
+    SceneDefinitionList:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneDefinitionList
+    SceneFamily:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneFamily
+    SceneModel:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneModel
+    SceneStatus:
+      $ref: ./modules/scene.yaml#/components/schemas/SceneStatus
+    ScenePrompt:
+      $ref: ./modules/scene.yaml#/components/schemas/ScenePrompt
     RoleDefinition:
-      $ref: ./modules/preparation.yaml#/components/schemas/RoleDefinition
-    PracticeOptionDefinition:
-      $ref: ./modules/preparation.yaml#/components/schemas/PracticeOptionDefinition
+      $ref: ./modules/scene.yaml#/components/schemas/RoleDefinition
+    PracticeOption:
+      $ref: ./modules/scene.yaml#/components/schemas/PracticeOption
     PreparationProfile:
       $ref: ./modules/preparation.yaml#/components/schemas/PreparationProfile
     PreparationSnapshot:
@@ -331,7 +333,7 @@ components:
     JobTargetCandidate:
       $ref: ./modules/preparation.yaml#/components/schemas/JobTargetCandidate
     PracticePlan:
-      $ref: ./modules/practice.yaml#/components/schemas/PracticePlan
+      $ref: ./modules/preparation.yaml#/components/schemas/PracticePlan
     PracticeSession:
       $ref: ./modules/practice.yaml#/components/schemas/PracticeSession
     PracticeParticipant:
@@ -339,7 +341,7 @@ components:
     PracticeSessionSnapshot:
       $ref: ./modules/practice.yaml#/components/schemas/PracticeSessionSnapshot
     PracticeSessionPolicy:
-      $ref: ./modules/practice.yaml#/components/schemas/PracticeSessionPolicy
+      $ref: ./modules/preparation.yaml#/components/schemas/PracticeSessionPolicy
     Question:
       $ref: ./modules/conversation.yaml#/components/schemas/Question
     Turn:

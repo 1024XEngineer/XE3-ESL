@@ -49,20 +49,20 @@ func TestNewUsesSafeDefaultsAndQueries(t *testing.T) {
 
 	appError := apperror.New(
 		apperror.NotFound,
-		"matter_not_found",
-		"Matter was not found.",
+		"goal_not_found",
+		"Goal was not found.",
 	)
 
 	if appError.Category() != apperror.NotFound {
 		t.Fatalf("unexpected category: %q", appError.Category())
 	}
-	if appError.Code() != "matter_not_found" {
+	if appError.Code() != "goal_not_found" {
 		t.Fatalf("unexpected code: %q", appError.Code())
 	}
-	if appError.Message() != "Matter was not found." {
+	if appError.Message() != "Goal was not found." {
 		t.Fatalf("unexpected message: %q", appError.Message())
 	}
-	if appError.Error() != "Matter was not found." {
+	if appError.Error() != "Goal was not found." {
 		t.Fatalf("unexpected Error result: %q", appError.Error())
 	}
 	if appError.Retryable() {
@@ -88,13 +88,13 @@ func TestOptionsPreserveErrorChain(t *testing.T) {
 	cause := errors.New("database DSN must stay internal")
 	appError := apperror.New(
 		apperror.Unavailable,
-		"matter_temporarily_unavailable",
-		"Matter is temporarily unavailable.",
+		"goal_temporarily_unavailable",
+		"Goal is temporarily unavailable.",
 		apperror.WithRetryable(true),
 		apperror.WithCause(cause),
 		apperror.WithDetails(apperror.Detail{
-			Field:  "matter_id",
-			Reason: "Matter is not currently available.",
+			Field:  "goal_id",
+			Reason: "Goal is not currently available.",
 		}),
 		nil,
 	)

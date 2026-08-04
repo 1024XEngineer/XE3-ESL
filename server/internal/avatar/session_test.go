@@ -3,6 +3,7 @@ package avatar
 import (
 	"context"
 	"errors"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"testing"
 	"time"
 
@@ -61,7 +62,7 @@ func TestServiceIssuesFrozenClientContractForOwnedInteractiveSession(
 func TestServiceIssuesSessionTokenForInterview(t *testing.T) {
 	now := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
 	session := interactiveSession()
-	session.ScenarioType = persistence.ScenarioFamilyInterview
+	session.SceneFamily = scene.SceneFamilyInterview
 	provider := &tokenProviderStub{
 		token: ProviderSessionToken{
 			Value:     "provider-session-token",
@@ -133,8 +134,8 @@ func TestServiceRejectsUnownedAndNonInteractiveSessionsBeforeProvider(
 			reader: contextSessionReaderStub{
 				session: func() persistence.ContextSession {
 					session := interactiveSession()
-					session.ScenarioType =
-						persistence.ScenarioFamilyExam
+					session.SceneFamily =
+						scene.SceneFamilyExam
 					return session
 				}(),
 			},
@@ -284,9 +285,9 @@ func newTestService(
 
 func interactiveSession() persistence.ContextSession {
 	return persistence.ContextSession{
-		ID:           "practice-session-1",
-		ScenarioType: persistence.ScenarioFamilyWorkplace,
-		Status:       persistence.ContextSessionProgress,
+		ID:          "practice-session-1",
+		SceneFamily: scene.SceneFamilyWorkplace,
+		Status:      persistence.ContextSessionProgress,
 	}
 }
 

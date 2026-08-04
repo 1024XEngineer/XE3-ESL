@@ -1,3 +1,7 @@
+import 'package:speakup/features/coaching/scene/scene.dart';
+
+import 'package:speakup/features/coaching/goal/goal.dart';
+
 import 'dart:async';
 import 'dart:math';
 
@@ -26,7 +30,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
   AgentController({
     required this.client,
-    PracticeClient? practiceClient,
+    this.practiceClient,
     PracticeRecorder? recorder,
     this.mediaClient,
     this.audioPlayer,
@@ -37,8 +41,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     this.imagePicker,
     AgentClientIdFactory? clientIdFactory,
     Duration recordingLimit = const Duration(seconds: 58),
-  }) : practiceClient = practiceClient ?? LegacyAgentPracticeClient(client),
-       recorder = recorder ?? FakePracticeRecorder(),
+  }) : recorder = recorder ?? FakePracticeRecorder(),
        _clientIdFactory = clientIdFactory ?? _createSecureClientId,
        _recordingLimit = recordingLimit {
     final supportedImageClient = switch (client) {
@@ -116,8 +119,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool _threadTransitionInFlight = false;
   int _threadTransitionGeneration = 0;
   String? _practiceSessionId;
-  String? _practiceScenarioType;
-  String? _practiceScenarioModel;
+  SceneFamily? _practiceSceneFamily;
+  SceneModel? _practiceSceneModel;
   int? _practiceSessionVersion;
   String? _endPracticeClientId;
   PracticeQuestion? _currentQuestion;
@@ -128,7 +131,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   _SpeechFeedbackRetryContext? _speechFeedbackRetry;
   RetryTranscriptionCandidate? _speechFeedbackRetryCandidate;
   int _speechFeedbackRetryCompletionCount = 0;
-  AgentMatter? _activeMatter;
+  Goal? _activeGoal;
+  SceneDefinition? _activeScene;
   List<AgentMessage> _messages = const <AgentMessage>[];
   List<AgentMessage> _practiceMessages = const <AgentMessage>[];
   PracticeRecordingState _recordingState = PracticeRecordingState.idle;
@@ -181,15 +185,15 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool get hasEarlierMessages => _nextMessageCursor != null;
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get practiceSessionId => _practiceSessionId;
-  String? get practiceScenarioType => _practiceScenarioType;
-  String? get practiceScenarioModel => _practiceScenarioModel;
+  SceneFamily? get practiceSceneFamily => _practiceSceneFamily;
+  SceneModel? get practiceSceneModel => _practiceSceneModel;
   int? get practiceSessionVersion => _practiceSessionVersion;
   PracticeQuestion? get currentQuestion => _currentQuestion;
   String? get questionId => _currentQuestion?.id;
   String? get candidateId => _candidate?.id;
   bool get hasPendingPracticeAudio => _pendingPracticeAudio != null;
-  AgentMatter? get activeMatter => _activeMatter;
-  AgentScene? get scene => _activeMatter?.scene;
+  Goal? get activeGoal => _activeGoal;
+  SceneDefinition? get scene => _activeScene;
   List<AgentMessage> get messages => List.unmodifiable(_messages);
   List<AgentMessage> get practiceMessages =>
       List.unmodifiable(_practiceMessages);
@@ -222,10 +226,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       !_sessionCompleted &&
       _turnLimit > 0 &&
       _completedTurns + 1 == _turnLimit &&
-      isInterviewPracticeScenario(
-        _practiceScenarioType,
-        _practiceScenarioModel,
-      );
+      isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
   bool get isBusy =>
       _busy ||
       _practiceRequestInFlight ||
@@ -240,9 +241,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool get canStartSpeechFeedbackRetry =>
       practiceClient is PracticeSpeechFeedbackRetryClient &&
       _practiceSessionId != null &&
-      isTurnFeedbackEligiblePracticeScenario(
-        _practiceScenarioType,
-        _practiceScenarioModel,
+      isTurnFeedbackEligiblePracticeScene(
+        _practiceSceneFamily,
+        _practiceSceneModel,
       ) &&
       !_disposed &&
       !isBusy &&
@@ -306,7 +307,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
   bool get hasActivePractice {
     return _practiceSessionId != null &&
-        _activeMatter != null &&
+        _activeGoal != null &&
         !_isSessionCompleted;
   }
 
@@ -422,30 +423,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (!_isOperationCurrent(fence)) {
       return;
     }
-    if (practiceClient case final LegacyAgentPracticeClient legacy) {
-      legacy.seedRestoredThread(thread);
-    }
-    PracticeSessionSnapshot? practice;
-    try {
-      practice = await practiceClient?.restorePractice(
-        threadId: thread.threadId,
-        activeMatter: thread.activeMatter,
-      );
-    } catch (error) {
-      if (!_isPracticeRestoreAmbiguity(error)) {
-        rethrow;
-      }
-      // Multiple completed Sessions are durable history, but no single one
-      // is the current Practice. Keep the independently restored Agent
-      // context and let Review history present those completed Sessions.
-      practice = null;
-    }
-    if (!_isOperationCurrent(fence)) {
-      return;
-    }
-    if (practice != null) {
-      _validatePracticeSnapshot(practice);
-    }
     final messages = List<AgentMessage>.from(thread.messages);
     final resolvedSummary =
         summary ?? _threadSummaryFromSnapshot(thread) ?? _currentThreadSummary;
@@ -457,10 +434,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _currentThreadSummary = resolvedSummary;
     _nextMessageCursor = thread.nextMessageCursor;
     _messages = messages;
-    _applyPracticeSnapshot(practice);
-    if (practice == null) {
-      _activeMatter = thread.activeMatter;
-    }
+    _applyPracticeSnapshot(null);
+    _activeGoal = thread.activeGoal;
+    _activeScene = null;
     _initialized = true;
     _applyRestoredTextState(thread);
     unawaited(_hydrateMessageImageContents(fence));
@@ -482,8 +458,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     } else if (_isSessionCompleted &&
         _review == null &&
         !usesAsynchronousPracticeReport(
-          _practiceScenarioType,
-          _practiceScenarioModel,
+          _practiceSceneFamily,
+          _practiceSceneModel,
         )) {
       _errorMessage = '练习已完成，正在等待服务端恢复同一次复盘。';
     }
@@ -988,7 +964,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         identical(_voiceController, voice);
   }
 
-  Future<void> selectScene(AgentScene scene) async {
+  Future<void> selectScene(SceneDefinition scene) async {
     final accountFence = _captureOperationFence();
     await _ensureInitialized();
     if (!_isOperationCurrent(accountFence) || !canSelectScene) {
@@ -999,11 +975,11 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// Creates or activates the catalog-backed Matter without starting the
+  /// Creates or activates the catalog-backed Goal without starting the
   /// legacy voice-practice route.
-  Future<AgentMatter> activateMatterForScenario({
+  Future<Goal> activateGoalForScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   }) async {
     final accountFence = _captureOperationFence();
@@ -1011,39 +987,29 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     if (!_isOperationCurrent(accountFence) ||
         _threadId != threadId ||
         scene.id.trim().isEmpty ||
-        scene.title.trim().isEmpty ||
+        scene.name.trim().isEmpty ||
         clientOperationId.trim().isEmpty ||
         isBusy ||
         hasActivePractice ||
         _disposed) {
-      throw StateError('The Agent context cannot activate this Matter.');
+      throw StateError('The Agent context cannot activate this Goal.');
     }
-    final current = _activeMatter;
+    final current = _activeGoal;
     if (current != null &&
-        current.scene.id == 'matter-${current.id}' &&
-        current.status == 'active') {
-      final adopted = AgentMatter(
-        id: current.id,
-        scene: scene,
-        status: current.status,
-        version: current.version,
-        createdAt: current.createdAt,
-        updatedAt: current.updatedAt,
-      );
-      _activeMatter = adopted;
+        current.title == scene.name &&
+        current.status == GoalStatus.active) {
+      _activeScene = scene;
       notifyListeners();
-      return adopted;
+      return current;
     }
-    if (current != null &&
-        current.scene.id == scene.id &&
-        current.scene.title == scene.title) {
+    if (current != null && _activeScene?.id == scene.id) {
       return current;
     }
     final fence = _captureOperationFence(threadId: threadId);
     final epoch = fence.epoch;
     _setBusy(true);
     try {
-      final selection = await client.startScene(
+      final goal = await client.startScene(
         threadId: threadId,
         scene: scene,
         clientOperationId: clientOperationId,
@@ -1051,15 +1017,13 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       if (!_isOperationCurrent(fence)) {
         throw const AgentClientOperationCancelled();
       }
-      final matter = selection.activeMatter;
-      if (matter.id.trim().isEmpty ||
-          matter.scene.id != scene.id ||
-          matter.scene.title != scene.title) {
-        throw StateError('Matter activation returned a different scenario.');
+      if (goal.id.trim().isEmpty || goal.title != scene.name) {
+        throw StateError('Goal activation returned a different scene.');
       }
-      _activeMatter = matter;
+      _activeGoal = goal;
+      _activeScene = scene;
       notifyListeners();
-      return matter;
+      return goal;
     } finally {
       if (_isCurrent(epoch)) {
         _setBusy(false);
@@ -1067,12 +1031,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<bool> prepareActiveMatterForScenario(String matterId) async {
+  Future<bool> prepareActiveGoalForScene(String goalId) async {
     final fence = _captureOperationFence(threadId: _threadId);
-    var current = _activeMatter;
-    if (current?.id != matterId) {
+    var current = _activeGoal;
+    if (current?.id != goalId) {
       final selector = switch (client) {
-        final AgentMatterSelectionClient supported => supported,
+        final GoalSelectionClient supported => supported,
         _ => null,
       };
       final threadId = _threadId;
@@ -1080,9 +1044,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         return false;
       }
       try {
-        current = await selector.selectExistingMatter(
+        current = await selector.selectExistingGoal(
           threadId: threadId,
-          matterId: matterId,
+          goalId: goalId,
         );
       } on Object {
         return false;
@@ -1092,23 +1056,13 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     if (current == null ||
-        current.id != matterId ||
-        current.status != 'active' ||
+        current.id != goalId ||
+        current.status != GoalStatus.active ||
         _disposed) {
       return false;
     }
-    _activeMatter = AgentMatter(
-      id: current.id,
-      scene: AgentScene(
-        id: 'matter-${current.id}',
-        title: current.scene.title,
-        description: current.scene.description,
-      ),
-      status: current.status,
-      version: current.version,
-      createdAt: current.createdAt,
-      updatedAt: current.updatedAt,
-    );
+    _activeGoal = current;
+    _activeScene = null;
     notifyListeners();
     return true;
   }
@@ -1116,23 +1070,29 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   /// Adopts the exact Session created by the Preparation launch chain.
   ///
   /// The voice client activates the formal Session already created for the
-  /// trusted Thread and Matter. This method requires the returned identities
+  /// trusted Thread and Goal. This method requires the returned identities
   /// and frozen Turn budget to match; it never guesses a recent Session.
   Future<void> activateCreatedPractice({
     required String threadId,
-    required String matterId,
+    required String goalId,
+    required SceneDefinition scene,
     required String sessionId,
+    required String planId,
     required int turnLimit,
     required String clientOperationId,
   }) async {
     final accountFence = _captureOperationFence();
     await _ensureInitialized();
     final practice = practiceClient;
-    final matter = _activeMatter;
+    final goal = _activeGoal;
     if (!_isOperationCurrent(accountFence) ||
         practice == null ||
         _threadId != threadId ||
-        matter?.id != matterId ||
+        goal?.id != goalId ||
+        goal?.title != scene.name ||
+        planId.trim().isEmpty ||
+        scene.id.trim().isEmpty ||
+        scene.name.trim().isEmpty ||
         turnLimit < 1 ||
         turnLimit > 14 ||
         clientOperationId.trim().isEmpty ||
@@ -1152,23 +1112,63 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final epoch = fence.epoch;
     _setBusy(true);
     try {
-      final result = await practice.startPractice(
-        threadId: threadId,
-        activeMatter: matter!,
+      final snapshot = await practice.activatePractice(
+        sessionId: sessionId,
         clientOperationId: clientOperationId,
       );
       if (!_isOperationCurrent(fence)) {
         throw const AgentClientOperationCancelled();
       }
-      final snapshot = result.snapshot;
       if (snapshot.sessionId != sessionId ||
-          snapshot.threadId != threadId ||
-          snapshot.matter.id != matterId ||
+          snapshot.planId != planId ||
+          snapshot.sceneFamily != scene.family ||
+          snapshot.sceneModel != scene.model ||
           snapshot.turnLimit != turnLimit) {
         throw StateError(
           'Voice activation did not return the created Practice Session.',
         );
       }
+      _activeScene = scene;
+      _applyPracticeSnapshot(snapshot);
+    } finally {
+      if (_isCurrent(epoch)) {
+        _setBusy(false);
+      }
+    }
+  }
+
+  /// Restores the exact voice state for a previously created Session.
+  Future<void> restoreCreatedPractice({
+    required String sessionId,
+    required SceneDefinition scene,
+  }) async {
+    final accountFence = _captureOperationFence();
+    await _ensureInitialized();
+    final practice = practiceClient;
+    if (!_isOperationCurrent(accountFence) ||
+        practice == null ||
+        sessionId.trim().isEmpty ||
+        scene.id.trim().isEmpty ||
+        isBusy ||
+        _disposed) {
+      throw StateError('The Agent context changed before voice restore.');
+    }
+    final fence = _captureOperationFence(threadId: _threadId);
+    final epoch = fence.epoch;
+    _setBusy(true);
+    try {
+      final snapshot = await practice.restorePractice(sessionId: sessionId);
+      if (!_isOperationCurrent(fence)) {
+        throw const AgentClientOperationCancelled();
+      }
+      if (snapshot.sessionId != sessionId ||
+          snapshot.sceneFamily != scene.family ||
+          snapshot.sceneModel != scene.model) {
+        throw StateError(
+          'Voice restore returned a different Practice Session.',
+        );
+      }
+      _activeScene = scene;
       _applyPracticeSnapshot(snapshot);
     } finally {
       if (_isCurrent(epoch)) {
@@ -1179,8 +1179,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _selectScene(_SceneRetry operation) async {
     final threadId = _threadId;
-    final practice = practiceClient;
-    if (threadId == null || practice == null || !canSelectScene) {
+    if (threadId == null || !canSelectScene) {
       return;
     }
     final fence = _captureOperationFence(threadId: threadId);
@@ -1193,7 +1192,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _errorMessage = null;
     _setBusy(true);
     try {
-      final selection = await client.startScene(
+      final goal = await client.startScene(
         threadId: threadId,
         scene: operation.scene,
         clientOperationId: operation.clientOperationId,
@@ -1201,19 +1200,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       if (!_isOperationCurrent(fence)) {
         return;
       }
-      if (practice case final LegacyAgentPracticeClient legacy) {
-        legacy.seedSceneSelection(selection);
-      }
-      final result = await practice.startPractice(
-        threadId: threadId,
-        activeMatter: selection.activeMatter,
-        clientOperationId: operation.clientOperationId,
-      );
-      if (!_isOperationCurrent(fence)) {
-        return;
-      }
-      _practiceGeneration++;
-      _applyPracticeSnapshot(result.snapshot);
+      _activeGoal = goal;
+      _activeScene = operation.scene;
       _retry = null;
       _errorMessage = null;
     } catch (error) {
@@ -2866,10 +2854,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final isFinalInterviewTurn =
         _turnLimit > 0 &&
         _completedTurns + 1 == _turnLimit &&
-        isInterviewPracticeScenario(
-          _practiceScenarioType,
-          _practiceScenarioModel,
-        );
+        isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
     final completedTurns = _completedTurns;
     final turnLimit = _turnLimit;
     final fence = _captureOperationFence(
@@ -3006,10 +2991,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final isFinalInterviewTurn =
         _turnLimit > 0 &&
         _completedTurns + 1 == _turnLimit &&
-        isInterviewPracticeScenario(
-          _practiceScenarioType,
-          _practiceScenarioModel,
-        );
+        isInterviewPracticeScene(_practiceSceneFamily, _practiceSceneModel);
     final completedTurns = _completedTurns;
     final turnLimit = _turnLimit;
     final fence = _captureOperationFence(
@@ -3074,8 +3056,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _applyPracticeConfirmation(PracticeTurnConfirmation confirmation) {
-    _practiceScenarioType = confirmation.scenarioType;
-    _practiceScenarioModel = confirmation.scenarioModel;
+    _practiceSceneFamily = confirmation.sceneFamily;
+    _practiceSceneModel = confirmation.sceneModel;
     _completedTurns = confirmation.completedTurns;
     _turnLimit = confirmation.turnLimit;
     _sessionCompleted = confirmation.sessionCompleted;
@@ -3111,8 +3093,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     ]);
     if (confirmation.sessionCompleted) {
       final usesAsynchronousReport = usesAsynchronousPracticeReport(
-        _practiceScenarioType,
-        _practiceScenarioModel,
+        _practiceSceneFamily,
+        _practiceSceneModel,
       );
       _recordingState = confirmation.review != null || usesAsynchronousReport
           ? PracticeRecordingState.completed
@@ -3135,23 +3117,17 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     required int expectedTurnLimit,
     String? expectedCandidateId,
   }) async {
-    final threadId = _threadId;
-    if (threadId == null) {
-      return false;
-    }
     try {
       final snapshot = await practice.restorePractice(
-        threadId: threadId,
-        activeMatter: _activeMatter,
+        sessionId: expectedSessionId,
       );
       if (!_isOperationCurrent(fence)) {
         return false;
       }
-      final currentTurn = snapshot?.currentTurn;
-      if (snapshot == null ||
-          snapshot.sessionId != expectedSessionId ||
-          snapshot.scenarioType != _practiceScenarioType ||
-          snapshot.scenarioModel != _practiceScenarioModel ||
+      final currentTurn = snapshot.currentTurn;
+      if (snapshot.sessionId != expectedSessionId ||
+          snapshot.sceneFamily != _practiceSceneFamily ||
+          snapshot.sceneModel != _practiceSceneModel ||
           !snapshot.sessionCompleted ||
           snapshot.completedTurns != previousCompletedTurns + 1 ||
           snapshot.completedTurns != expectedTurnLimit ||
@@ -3177,10 +3153,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   /// Refetches the server-owned result. Flutter never creates a Review.
   Future<void> retryReview() async {
     final practice = practiceClient;
-    final threadId = _threadId;
     final expectedSessionId = _practiceSessionId;
     if (practice == null ||
-        threadId == null ||
         expectedSessionId == null ||
         !_isSessionCompleted ||
         _review != null ||
@@ -3196,14 +3170,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     try {
       final snapshot = await practice.restorePractice(
-        threadId: threadId,
-        activeMatter: _activeMatter,
+        sessionId: expectedSessionId,
       );
       if (!_isOperationCurrent(fence)) {
         return;
-      }
-      if (snapshot == null) {
-        throw StateError('Practice Session is not restorable.');
       }
       if (snapshot.sessionId != expectedSessionId) {
         throw StateError('Practice Session identity changed during Review.');
@@ -3245,8 +3215,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _threadTransitionGeneration++;
     _threadTransitionInFlight = false;
     _practiceSessionId = null;
-    _practiceScenarioType = null;
-    _practiceScenarioModel = null;
+    _practiceSceneFamily = null;
+    _practiceSceneModel = null;
     _practiceSessionVersion = null;
     _endPracticeClientId = null;
     _currentQuestion = null;
@@ -3256,7 +3226,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _speechFeedbackRetry = null;
     _speechFeedbackRetryCandidate = null;
     _speechFeedbackRetryCompletionCount = 0;
-    _activeMatter = null;
+    _activeGoal = null;
     _messages = const <AgentMessage>[];
     _practiceMessages = const <AgentMessage>[];
     _recordingState = PracticeRecordingState.idle;
@@ -3411,7 +3381,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     return AgentThreadSummary(
       id: snapshot.threadId,
       title: snapshot.title,
-      activeMatterId: snapshot.activeMatter?.id,
+      activeGoalId: snapshot.activeGoal?.id,
       createdAt: createdAt,
       updatedAt: updatedAt,
     );
@@ -3459,12 +3429,13 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(audioPlayer?.stop());
     if (snapshot == null) {
       _practiceSessionId = null;
-      _practiceScenarioType = null;
-      _practiceScenarioModel = null;
+      _practiceSceneFamily = null;
+      _practiceSceneModel = null;
       _practiceSessionVersion = null;
       _endPracticeClientId = null;
       _currentQuestion = null;
-      _activeMatter = null;
+      _activeGoal = null;
+      _activeScene = null;
       _completedTurns = 0;
       _turnLimit = 0;
       _sessionCompleted = false;
@@ -3482,12 +3453,11 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final mayPreserveKnownRecordings =
         preserveKnownRecordings && snapshot.sessionId == _practiceSessionId;
     _practiceSessionId = snapshot.sessionId;
-    _practiceScenarioType = snapshot.scenarioType;
-    _practiceScenarioModel = snapshot.scenarioModel;
+    _practiceSceneFamily = snapshot.sceneFamily;
+    _practiceSceneModel = snapshot.sceneModel;
     _practiceSessionVersion = snapshot.sessionVersion;
     _endPracticeClientId = null;
     _currentQuestion = snapshot.currentQuestion;
-    _activeMatter = snapshot.matter;
     _completedTurns = snapshot.completedTurns;
     _turnLimit = snapshot.turnLimit;
     _sessionCompleted = snapshot.sessionCompleted;
@@ -3529,8 +3499,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _appendPracticeMessages([?currentQuestion]);
     }
     final usesAsynchronousReport = usesAsynchronousPracticeReport(
-      snapshot.scenarioType,
-      snapshot.scenarioModel,
+      snapshot.sceneFamily,
+      snapshot.sceneModel,
     );
     _recordingState = snapshot.sessionCompleted
         ? snapshot.review != null || usesAsynchronousReport
@@ -3573,7 +3543,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       final updated = AgentThreadSummary(
         id: current.id,
         title: current.title,
-        activeMatterId: current.activeMatterId,
+        activeGoalId: current.activeGoalId,
         createdAt: current.createdAt,
         updatedAt: now.isBefore(current.updatedAt) ? current.updatedAt : now,
       );
@@ -3869,14 +3839,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     return error.errorCode == 'quota_exhausted';
   }
 
-  bool _isPracticeRestoreAmbiguity(Object error) {
-    return error is AgentClientException &&
-        error.kind == AgentClientFailureKind.conflict &&
-        error.statusCode == 409 &&
-        error.errorCode == 'resource_conflict' &&
-        !error.retryable;
-  }
-
   void _setBusy(bool value) {
     if (_disposed) {
       return;
@@ -3934,10 +3896,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         (snapshot.nextMessageCursor != null &&
             (snapshot.nextMessageCursor!.isEmpty ||
                 snapshot.nextMessageCursor!.runes.length > 1024)) ||
-        (snapshot.activeMatter != null &&
-            (snapshot.activeMatter!.id.trim().isEmpty ||
-                snapshot.activeMatter!.scene.id.trim().isEmpty ||
-                snapshot.activeMatter!.scene.title.trim().isEmpty)) ||
+        (snapshot.activeGoal != null && !_validGoal(snapshot.activeGoal!)) ||
         invalidMessages ||
         (recovery != null &&
             (recovery.text.trim().isEmpty ||
@@ -3950,8 +3909,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   void _validateThreadSummary(AgentThreadSummary summary) {
     if (summary.id.trim().isEmpty ||
         summary.updatedAt.isBefore(summary.createdAt) ||
-        (summary.activeMatterId != null &&
-            summary.activeMatterId!.trim().isEmpty)) {
+        (summary.activeGoalId != null &&
+            summary.activeGoalId!.trim().isEmpty)) {
       throw StateError('Invalid Agent Thread summary.');
     }
   }
@@ -4014,18 +3973,16 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
 
   void _validatePracticeSnapshot(PracticeSessionSnapshot snapshot) {
     if (snapshot.sessionId.trim().isEmpty ||
-        !validPracticeScenarioIdentity(
-          snapshot.scenarioType,
-          snapshot.scenarioModel,
-          allowMissing: true,
+        snapshot.planId.trim().isEmpty ||
+        !validPracticeSceneIdentity(
+          snapshot.sceneFamily,
+          snapshot.sceneModel,
         ) ||
-        snapshot.matter.id.trim().isEmpty ||
-        snapshot.matter.scene.id.trim().isEmpty ||
         snapshot.completedTurns < 0 ||
         snapshot.turnLimit < 1 ||
         snapshot.turnLimit > 14 ||
         snapshot.completedTurns > snapshot.turnLimit ||
-        (snapshot.sessionVersion != null && snapshot.sessionVersion! < 1) ||
+        snapshot.sessionVersion < 1 ||
         (!snapshot.sessionCompleted && snapshot.currentQuestion == null) ||
         (snapshot.currentQuestion != null &&
             snapshot.currentQuestion!.sessionId != snapshot.sessionId) ||
@@ -4037,6 +3994,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       throw StateError('Invalid Practice Session snapshot.');
     }
   }
+
+  bool _validGoal(Goal goal) =>
+      goal.id.trim().isNotEmpty &&
+      goal.title.trim().isNotEmpty &&
+      goal.version > 0 &&
+      !goal.updatedAt.isBefore(goal.createdAt);
 
   void _validateCandidate(
     TranscriptionCandidate candidate,
@@ -4166,8 +4129,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     required String expectedAnswer,
   }) {
     if (confirmation.turnId.trim().isEmpty ||
-        confirmation.scenarioType != _practiceScenarioType ||
-        confirmation.scenarioModel != _practiceScenarioModel ||
+        confirmation.sceneFamily != _practiceSceneFamily ||
+        confirmation.sceneModel != _practiceSceneModel ||
         confirmation.candidateId.trim().isEmpty ||
         confirmation.sessionId != expectedSessionId ||
         confirmation.questionId != expectedQuestionId ||
@@ -4254,7 +4217,7 @@ final class _RestoreRetry extends _AgentRetry {
 final class _SceneRetry extends _AgentRetry {
   const _SceneRetry({required this.scene, required this.clientOperationId});
 
-  final AgentScene scene;
+  final SceneDefinition scene;
   final String clientOperationId;
 }
 

@@ -1,121 +1,4 @@
 paths:
-  /v1/practice-plans:
-    post:
-      tags:
-        - Practice
-      summary: Create or return a practice plan for one intent
-      description: |
-        The client supplies an Agent Thread and may supply a Matter identifier
-        as resource references, never as trusted ownership. The service resolves
-        the Actor from the Bearer Session and verifies the owned Thread plus the
-        optional owned, active Matter before anchoring the Plan.
-        Supplying `preparation_snapshot_id` freezes that immutable Preparation
-        context in the Plan. A JobTarget-backed Snapshot derives its accepted
-        recommendation server-side; an ordinary Snapshot requires the exact
-        catalog selection and policy inputs in the same request. Neither path
-        creates a PracticeSession.
-      operationId: createPracticePlan
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreatePracticePlanRequest'
-            example:
-              agent_thread_id: 20000000-0000-4000-8000-000000000001
-              matter_id: 10000000-0000-4000-8000-000000000001
-              preparation_snapshot_id: psnap_demo_backend_v1
-      responses:
-        '201':
-          description: A ready practice plan for the current actor.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PracticePlan'
-              example:
-                practice_plan_id: plan_demo_backend
-                user_id: user_demo
-                agent_thread_id: 20000000-0000-4000-8000-000000000001
-                matter_id: 10000000-0000-4000-8000-000000000001
-                scenario_definition_id: scn_programmer_interview
-                scenario_definition_version: 1
-                scenario_type: INTERVIEW
-                scenario_model: PROJECT_EXPERIENCE_DEEP_DIVE
-                scenario_config_id: scfg_backend_engineer
-                scenario_config_version: 1
-                preparation_profile_id: prep_demo_backend
-                selected_role_ids:
-                  - role_technical_interviewer
-                plan_revision: 1
-                practice_plan_status: ready
-                created_at: '2026-07-23T10:02:00Z'
-                updated_at: '2026-07-23T10:02:00Z'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/practice-plans/{practice_plan_id}:
-    get:
-      tags:
-        - Practice
-      summary: Get a practice plan
-      operationId: getPracticePlan
-      parameters:
-        - $ref: '#/components/parameters/PracticePlanId'
-      responses:
-        '200':
-          description: The requested practice plan.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PracticePlan'
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-    put:
-      tags:
-        - Practice
-      summary: Create a new revision of a JobTarget-backed plan preview
-      description: |
-        Replaces the adjustable role, option, and effective-Turn selection on
-        the expected revision. The immutable Preparation Snapshot is unchanged,
-        and this operation never creates a PracticeSession.
-      operationId: updatePracticePlan
-      parameters:
-        - $ref: '#/components/parameters/PracticePlanId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdatePracticePlanRequest'
-      responses:
-        '200':
-          description: Revised ready plan preview or its idempotent result.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PracticePlan'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/practice-plans/{practice_plan_id}/practice-sessions:
     post:
       tags:
@@ -123,15 +6,14 @@ paths:
       summary: Create a session and its immutable snapshot
       description: |
         `user_confirmed: true` records the user's explicit confirmation of the
-        frozen scenario preview. Requests without confirmation are rejected.
-        For a JobTarget-backed plan, `expected_plan_revision` is the only
-        catalog selection: the server constructs the immutable Session Snapshot
-        exclusively from the frozen Plan revision. Legacy selection fields
-        remain optional for compatibility and, when supplied, must equal the
-        Plan. Repeating the same idempotency key returns the same Session.
+        frozen scene preview. Requests without confirmation are rejected.
+        `expected_plan_revision` is the only Plan selection. Practice reads the
+        exact executable revision from Preparation and constructs the immutable
+        Session Snapshot exclusively from that frozen input. Repeating the same
+        idempotency key returns the same Session.
       operationId: createPracticeSession
       parameters:
-        - $ref: '#/components/parameters/PracticePlanId'
+        - $ref: ./preparation.yaml#/components/parameters/PracticePlanId
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
@@ -149,117 +31,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PracticeSessionBootstrap'
-              example:
-                practice_session:
-                  practice_session_id: session_demo_001
-                  practice_plan_id: plan_demo_backend
-                  scenario_type: INTERVIEW
-                  scenario_model: PROJECT_EXPERIENCE_DEEP_DIVE
-                  snapshot_id: snapshot_session_demo_001
-                  practice_session_status: starting
-                  session_version: 1
-                  created_at: '2026-07-23T10:03:00Z'
-                snapshot:
-                  snapshot_id: snapshot_session_demo_001
-                  practice_session_id: session_demo_001
-                  plan_revision: 1
-                  scenario_type: INTERVIEW
-                  scenario_model: PROJECT_EXPERIENCE_DEEP_DIVE
-                  scenario_definition_snapshot:
-                    scenario_definition_id: scn_programmer_interview
-                    scenario_type: INTERVIEW
-                    scenario_model: PROJECT_EXPERIENCE_DEEP_DIVE
-                    name: Programmer English interview
-                    version: 1
-                    status: active
-                    turn_policy_ref: interview.project_deep_dive.turn.v1
-                    session_policy_ref: interview.project_deep_dive.session.v1
-                  scenario_config_snapshot:
-                    scenario_config_id: scfg_backend_engineer
-                    scenario_definition_id: scn_programmer_interview
-                    config_type: INTERVIEW
-                    scenario_model: PROJECT_EXPERIENCE_DEEP_DIVE
-                    version: 1
-                    job_title: Backend engineer
-                    job_description: Build reliable APIs and explain engineering trade-offs.
-                    prompt_model:
-                      public_scene_brief: A technical interviewer asks you to explain one real project in depth.
-                      practice_goal: Explain the context, decisions, trade-offs, and measurable outcome clearly.
-                      user_role: Candidate
-                      ai_role: Technical interviewer
-                      persona_summary: Precise, professional, and evidence seeking.
-                      focus_areas:
-                        - structure
-                        - engineering_tradeoffs
-                        - measurable_impact
-                      turn_blueprints:
-                        - Ask for a concise project overview.
-                        - Probe one important technical decision and its trade-off.
-                        - Ask about a challenge, collaboration, and the result.
-                      suggested_duration_seconds: 900
-                  preparation_snapshot:
-                    preparation_snapshot_id: psnap_demo_backend_v1
-                    source_profile_id: prep_demo_backend
-                    source_version: 1
-                    resume_snapshot: Go backend engineer; API reliability project.
-                    job_description_snapshot: Build reliable APIs and explain engineering trade-offs.
-                    background_snapshot: |
-                      Backend engineer with three years of Go experience,
-                      responsible for an API reliability project.
-                    created_at: '2026-07-23T10:01:00Z'
-                  participants:
-                    - practice_participant_id: participant_interviewer_001
-                      practice_session_id: session_demo_001
-                      participant_role: FACILITATOR
-                      subject_ref:
-                        namespace: mock.actor
-                        subject_id: interviewer_technical
-                      role_definition_id: role_technical_interviewer
-                      role_snapshot:
-                        role_definition_id: role_technical_interviewer
-                        scenario_definition_id: scn_programmer_interview
-                        role_type: TECHNICAL_INTERVIEWER
-                        display_name: Technical interviewer
-                        responsibilities: Probe technical depth and decision making.
-                        style: Precise and evidence seeking.
-                        focus_areas:
-                          - system_design
-                          - project_depth
-                        version: 1
-                      participant_order: 1
-                    - practice_participant_id: participant_candidate_001
-                      practice_session_id: session_demo_001
-                      participant_role: LEARNER
-                      subject_ref:
-                        namespace: speakup.user
-                        subject_id: user_demo
-                      participant_order: 2
-                  practice_option:
-                    practice_option_id: option_full_simulation
-                    scenario_definition_id: scn_programmer_interview
-                    practice_option_type: FULL_SIMULATION
-                    display_name: Full simulation
-                    version: 1
-                  session_policy:
-                    suggested_duration_seconds: 900
-                    min_effective_turns: 4
-                    max_effective_turns: 6
-                    coverage_checkpoint_turn: 4
-                    max_follow_ups_per_question: 1
-                    target_objectives:
-                      - objective_id: introduction
-                        description: Explain current experience clearly.
-                      - objective_id: system_design
-                        description: Explain a technical design and its trade-offs.
-                      - objective_id: project_depth
-                        description: Provide evidence of individual contribution.
-                      - objective_id: collaboration
-                        description: Explain cross-team communication and outcomes.
-                    early_completion_rule: COVERAGE_SATISFIED_AFTER_CHECKPOINT
-                  practice_focuses:
-                    - objective_id: system_design
-                      description: Explain trade-offs with concrete evidence.
-                  created_at: '2026-07-23T10:03:00Z'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
@@ -338,8 +109,9 @@ paths:
               example:
                 practice_session_id: session_demo_001
                 practice_plan_id: plan_demo_backend
-                scenario_type: INTERVIEW
-                scenario_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                plan_revision: 1
+                scene_family: INTERVIEW
+                scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: in_progress
                 session_version: 2
@@ -378,8 +150,9 @@ paths:
               example:
                 practice_session_id: session_demo_001
                 practice_plan_id: plan_demo_backend
-                scenario_type: INTERVIEW
-                scenario_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                plan_revision: 1
+                scene_family: INTERVIEW
+                scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: paused
                 session_version: 3
@@ -422,8 +195,9 @@ paths:
               example:
                 practice_session_id: session_demo_001
                 practice_plan_id: plan_demo_backend
-                scenario_type: INTERVIEW
-                scenario_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                plan_revision: 1
+                scene_family: INTERVIEW
+                scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: in_progress
                 session_version: 4
@@ -466,8 +240,9 @@ paths:
               example:
                 practice_session_id: session_demo_001
                 practice_plan_id: plan_demo_backend
-                scenario_type: INTERVIEW
-                scenario_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                plan_revision: 1
+                scene_family: INTERVIEW
+                scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
                 snapshot_id: snapshot_session_demo_001
                 practice_session_status: ended_early
                 session_version: 5
@@ -508,12 +283,6 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
   parameters:
-    PracticePlanId:
-      name: practice_plan_id
-      in: path
-      required: true
-      schema:
-        $ref: '#/components/schemas/ResourceId'
     PracticeSessionId:
       name: practice_session_id
       in: path
@@ -530,196 +299,10 @@ components:
     Version:
       type: integer
       minimum: 1
-    ScenarioType:
-      $ref: ./preparation.yaml#/components/schemas/ScenarioType
-    ScenarioModel:
-      $ref: ./preparation.yaml#/components/schemas/ScenarioModel
-    CreatePracticePlanRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - agent_thread_id
-      properties:
-        agent_thread_id:
-          $ref: '#/components/schemas/ResourceId'
-        matter_id:
-          $ref: '#/components/schemas/ResourceId'
-        preparation_snapshot_id:
-          $ref: '#/components/schemas/ResourceId'
-        scenario_definition_id:
-          $ref: '#/components/schemas/ResourceId'
-        scenario_definition_version:
-          $ref: '#/components/schemas/Version'
-        scenario_config_id:
-          $ref: '#/components/schemas/ResourceId'
-        scenario_config_version:
-          $ref: '#/components/schemas/Version'
-        preparation_profile_id:
-          $ref: '#/components/schemas/ResourceId'
-        selected_role_ids:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          description: |
-            The current four scenario models select exactly one AI role.
-          items:
-            $ref: '#/components/schemas/ResourceId'
-      oneOf:
-        - required:
-            - preparation_snapshot_id
-        - required:
-            - scenario_definition_id
-            - scenario_definition_version
-            - scenario_config_id
-            - scenario_config_version
-            - preparation_profile_id
-            - selected_role_ids
-          not:
-            required:
-              - preparation_snapshot_id
-    PracticePlan:
-      type: object
-      additionalProperties: false
-      required:
-        - practice_plan_id
-        - user_id
-        - agent_thread_id
-        - scenario_definition_id
-        - scenario_definition_version
-        - scenario_type
-        - scenario_model
-        - scenario_config_id
-        - scenario_config_version
-        - preparation_profile_id
-        - selected_role_ids
-        - plan_revision
-        - practice_plan_status
-        - created_at
-        - updated_at
-      properties:
-        practice_plan_id:
-          $ref: '#/components/schemas/ResourceId'
-        user_id:
-          $ref: '#/components/schemas/ResourceId'
-        agent_thread_id:
-          $ref: '#/components/schemas/ResourceId'
-        matter_id:
-          $ref: '#/components/schemas/ResourceId'
-        scenario_definition_id:
-          $ref: '#/components/schemas/ResourceId'
-        scenario_definition_version:
-          $ref: '#/components/schemas/Version'
-        scenario_type:
-          $ref: '#/components/schemas/ScenarioType'
-        scenario_model:
-          $ref: '#/components/schemas/ScenarioModel'
-        scenario_config_id:
-          $ref: '#/components/schemas/ResourceId'
-        scenario_config_version:
-          $ref: '#/components/schemas/Version'
-        preparation_profile_id:
-          $ref: '#/components/schemas/ResourceId'
-        selected_role_ids:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          description: |
-            The current four scenario models contain exactly one AI role.
-          items:
-            $ref: '#/components/schemas/ResourceId'
-        preparation_snapshot:
-          $ref: ./preparation.yaml#/components/schemas/PreparationSnapshot
-        catalog_snapshot:
-          $ref: '#/components/schemas/PlanCatalogSnapshot'
-        session_policy:
-          $ref: '#/components/schemas/PracticeSessionPolicy'
-        practice_focuses:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/PracticeObjective'
-        plan_revision:
-          type: integer
-          minimum: 1
-        practice_plan_status:
-          type: string
-          enum:
-            - configuring
-            - configuration_failed
-            - ready
-            - archived
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-      dependentRequired:
-        preparation_snapshot:
-          - catalog_snapshot
-          - session_policy
-          - practice_focuses
-        catalog_snapshot:
-          - preparation_snapshot
-          - session_policy
-          - practice_focuses
-        session_policy:
-          - preparation_snapshot
-          - catalog_snapshot
-          - practice_focuses
-        practice_focuses:
-          - preparation_snapshot
-          - catalog_snapshot
-          - session_policy
-    UpdatePracticePlanRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - expected_plan_revision
-        - selected_role_ids
-        - practice_option_id
-        - practice_option_version
-        - max_effective_turns
-      properties:
-        expected_plan_revision:
-          $ref: '#/components/schemas/Version'
-        selected_role_ids:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          description: |
-            Current scenario revisions select exactly one AI role.
-          items:
-            $ref: '#/components/schemas/ResourceId'
-        practice_option_id:
-          $ref: '#/components/schemas/ResourceId'
-        practice_option_version:
-          $ref: '#/components/schemas/Version'
-        max_effective_turns:
-          type: integer
-          minimum: 1
-    PlanCatalogSnapshot:
-      type: object
-      additionalProperties: false
-      required:
-        - scenario_definition
-        - scenario_config
-        - selected_roles
-        - practice_option
-      properties:
-        scenario_definition:
-          $ref: ./preparation.yaml#/components/schemas/ScenarioDefinition
-        scenario_config:
-          $ref: ./preparation.yaml#/components/schemas/ScenarioConfig
-        selected_roles:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            $ref: ./preparation.yaml#/components/schemas/RoleDefinition
-        practice_option:
-          $ref: ./preparation.yaml#/components/schemas/PracticeOptionDefinition
+    SceneFamily:
+      $ref: ./scene.yaml#/components/schemas/SceneFamily
+    SceneModel:
+      $ref: ./scene.yaml#/components/schemas/SceneModel
     CreatePracticeSessionRequest:
       type: object
       additionalProperties: false
@@ -733,64 +316,7 @@ components:
         user_confirmed:
           type: boolean
           const: true
-          description: Explicit confirmation of the frozen scenario preview.
-        preparation_snapshot_id:
-          $ref: '#/components/schemas/ResourceId'
-        practice_option_id:
-          $ref: '#/components/schemas/ResourceId'
-        role_definition_ids:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          description: |
-            Role selections remain collection-shaped. The current four scenario
-            models validate exactly one role.
-          items:
-            $ref: '#/components/schemas/ResourceId'
-        ielts_selection:
-          $ref: '#/components/schemas/IELTSPracticeSelection'
-    IELTSPracticeSelection:
-      type: object
-      additionalProperties: false
-      required:
-        - mode
-      properties:
-        mode:
-          type: string
-          enum:
-            - FULL_MOCK
-            - PART_1
-            - PART_2
-            - PART_3
-        part_1_set_id:
-          $ref: '#/components/schemas/ResourceId'
-        topic_group_id:
-          $ref: '#/components/schemas/ResourceId'
-      oneOf:
-        - properties:
-            mode:
-              const: FULL_MOCK
-          required:
-            - part_1_set_id
-            - topic_group_id
-        - properties:
-            mode:
-              const: PART_1
-          required:
-            - part_1_set_id
-          not:
-            required:
-              - topic_group_id
-        - properties:
-            mode:
-              enum:
-                - PART_2
-                - PART_3
-          required:
-            - topic_group_id
-          not:
-            required:
-              - part_1_set_id
+          description: Explicit confirmation of the frozen scene preview.
     PracticeStartConfirmationRequest:
       type: object
       additionalProperties: false
@@ -808,8 +334,6 @@ components:
           type: boolean
           const: true
           description: Explicit confirmation of this exact frozen Plan revision.
-        ielts_selection:
-          $ref: '#/components/schemas/IELTSPracticeSelection'
     PracticeStartConflictResponse:
       type: object
       additionalProperties: false
@@ -828,8 +352,9 @@ components:
       required:
         - practice_session_id
         - practice_plan_id
-        - scenario_type
-        - scenario_model
+        - plan_revision
+        - scene_family
+        - scene_model
         - snapshot_id
         - practice_session_status
         - session_version
@@ -839,10 +364,13 @@ components:
           $ref: '#/components/schemas/ResourceId'
         practice_plan_id:
           $ref: '#/components/schemas/ResourceId'
-        scenario_type:
-          $ref: '#/components/schemas/ScenarioType'
-        scenario_model:
-          $ref: '#/components/schemas/ScenarioModel'
+        plan_revision:
+          type: integer
+          minimum: 1
+        scene_family:
+          $ref: '#/components/schemas/SceneFamily'
+        scene_model:
+          $ref: '#/components/schemas/SceneModel'
         snapshot_id:
           $ref: '#/components/schemas/ResourceId'
         practice_session_status:
@@ -943,17 +471,12 @@ components:
           enum:
             - FACILITATOR
             - LEARNER
-            - INTERVIEWER
-            - CANDIDATE
-          description: |
-            New snapshots use FACILITATOR and LEARNER. INTERVIEWER and
-            CANDIDATE remain readable for immutable legacy snapshots.
         subject_ref:
           $ref: '#/components/schemas/SubjectRef'
         role_definition_id:
           $ref: '#/components/schemas/ResourceId'
         role_snapshot:
-          $ref: ./preparation.yaml#/components/schemas/RoleDefinition
+          $ref: ./scene.yaml#/components/schemas/RoleDefinition
         participant_order:
           type: integer
           minimum: 1
@@ -962,65 +485,6 @@ components:
           - role_snapshot
         role_snapshot:
           - role_definition_id
-    PracticeObjective:
-      type: object
-      additionalProperties: false
-      required:
-        - objective_id
-        - description
-      properties:
-        objective_id:
-          type: string
-          pattern: '^[a-z][a-z0-9_]*$'
-        description:
-          type: string
-          minLength: 1
-    PracticeSessionPolicy:
-      type: object
-      additionalProperties: false
-      description: |
-        Scenario-owned effective-Turn budget. Services enforce
-        min_effective_turns <= coverage_checkpoint_turn <= max_effective_turns;
-        invalid input and technical failures do not advance this budget. After
-        a completed same-question retry, Practice alone evaluates this frozen
-        policy and returns NextAction; Review and the client cannot decide or
-        submit the retry's progress effect. The accepted MS1 INTERVIEW policy
-        keeps same-question retries outside the original Session budget, while
-        the shared DTO does not turn that scenario rule into a platform shape.
-      required:
-        - suggested_duration_seconds
-        - min_effective_turns
-        - max_effective_turns
-        - coverage_checkpoint_turn
-        - max_follow_ups_per_question
-        - target_objectives
-        - early_completion_rule
-      properties:
-        suggested_duration_seconds:
-          type: integer
-          minimum: 1
-        min_effective_turns:
-          type: integer
-          minimum: 1
-        max_effective_turns:
-          type: integer
-          minimum: 1
-        coverage_checkpoint_turn:
-          type: integer
-          minimum: 1
-        max_follow_ups_per_question:
-          type: integer
-          minimum: 0
-          maximum: 3
-        target_objectives:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/PracticeObjective'
-        early_completion_rule:
-          type: string
-          pattern: '^[A-Z][A-Z0-9_]*$'
     PracticeSessionSnapshot:
       type: object
       additionalProperties: false
@@ -1028,15 +492,13 @@ components:
         - snapshot_id
         - practice_session_id
         - plan_revision
-        - scenario_type
-        - scenario_model
-        - scenario_definition_snapshot
-        - scenario_config_snapshot
+        - scene_family
+        - scene_model
+        - scene_selection
         - preparation_snapshot
         - participants
-        - practice_option
         - session_policy
-        - practice_focuses
+        - practice_objectives
         - created_at
       properties:
         snapshot_id:
@@ -1046,14 +508,12 @@ components:
         plan_revision:
           type: integer
           minimum: 1
-        scenario_type:
-          $ref: '#/components/schemas/ScenarioType'
-        scenario_model:
-          $ref: '#/components/schemas/ScenarioModel'
-        scenario_definition_snapshot:
-          $ref: ./preparation.yaml#/components/schemas/ScenarioDefinition
-        scenario_config_snapshot:
-          $ref: ./preparation.yaml#/components/schemas/ScenarioConfig
+        scene_family:
+          $ref: '#/components/schemas/SceneFamily'
+        scene_model:
+          $ref: '#/components/schemas/SceneModel'
+        scene_selection:
+          $ref: ./preparation.yaml#/components/schemas/SceneSelectionSnapshot
         preparation_snapshot:
           $ref: ./preparation.yaml#/components/schemas/PreparationSnapshot
         participants:
@@ -1061,77 +521,22 @@ components:
           minItems: 2
           description: |
             Stable immutable participant relations. Subject references and
-            participant IDs are unique within the Snapshot. New sessions contain
-            exactly one FACILITATOR and one LEARNER for all four scenario
-            families; legacy snapshots may retain the former role names.
+            participant IDs are unique within the Snapshot. Sessions contain
+            exactly one LEARNER and one or more selected FACILITATOR roles.
           items:
             $ref: '#/components/schemas/PracticeParticipant'
-        practice_option:
-          $ref: ./preparation.yaml#/components/schemas/PracticeOptionDefinition
         session_policy:
-          $ref: '#/components/schemas/PracticeSessionPolicy'
-        practice_focuses:
+          $ref: ./preparation.yaml#/components/schemas/PracticeSessionPolicy
+        practice_objectives:
           type: array
+          minItems: 1
           items:
-            $ref: '#/components/schemas/PracticeObjective'
+            $ref: ./preparation.yaml#/components/schemas/PracticeObjective
         ielts_assignment:
-          $ref: '#/components/schemas/IELTSPracticeAssignment'
+          $ref: ./preparation.yaml#/components/schemas/IELTSPracticeAssignment
         created_at:
           type: string
           format: date-time
-    IELTSPracticeAssignment:
-      type: object
-      additionalProperties: false
-      required:
-        - bank_id
-        - season
-        - mode
-        - part_1_questions
-        - part_2_questions
-        - part_3_questions
-        - turn_blueprints
-      properties:
-        bank_id:
-          $ref: '#/components/schemas/ResourceId'
-        season:
-          type: string
-          minLength: 1
-        mode:
-          type: string
-          enum:
-            - FULL_MOCK
-            - PART_1
-            - PART_2
-            - PART_3
-        part_1_set_id:
-          $ref: '#/components/schemas/ResourceId'
-        topic_group_id:
-          $ref: '#/components/schemas/ResourceId'
-        topic_title:
-          type: string
-          minLength: 1
-        part_2_cue_card:
-          type: string
-          minLength: 1
-        part_1_questions:
-          type: integer
-          minimum: 0
-          maximum: 8
-        part_2_questions:
-          type: integer
-          minimum: 0
-          maximum: 1
-        part_3_questions:
-          type: integer
-          minimum: 0
-          maximum: 5
-        turn_blueprints:
-          type: array
-          minItems: 1
-          maxItems: 14
-          items:
-            type: string
-            minLength: 1
     PracticeSessionBootstrap:
       type: object
       additionalProperties: false

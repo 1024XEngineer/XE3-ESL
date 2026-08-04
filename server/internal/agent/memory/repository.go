@@ -27,7 +27,7 @@ type CreateCommand struct {
 	CanonicalKey  string
 	Content       string
 	Scope         ScopeType
-	MatterID      string
+	GoalID        string
 	PolicyVersion string
 	ExpiresAt     *time.Time
 	Source        SourceInput
@@ -37,20 +37,20 @@ func (command CreateCommand) Valid() bool {
 	return command.Type.Valid() &&
 		validCanonicalKey(command.CanonicalKey) &&
 		validContent(command.Content) &&
-		validScope(command.Scope, command.MatterID) &&
+		validScope(command.Scope, command.GoalID) &&
 		validPolicyVersion(command.PolicyVersion) &&
 		validOptionalTime(command.ExpiresAt) &&
 		command.Source.Valid()
 }
 
 type ScopeFilter struct {
-	Scope    ScopeType
-	MatterID string
-	Limit    int
+	Scope  ScopeType
+	GoalID string
+	Limit  int
 }
 
 func (filter ScopeFilter) Valid() bool {
-	return validScope(filter.Scope, filter.MatterID) &&
+	return validScope(filter.Scope, filter.GoalID) &&
 		filter.Limit >= 1 &&
 		filter.Limit <= 100
 }

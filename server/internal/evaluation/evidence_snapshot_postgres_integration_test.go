@@ -7,18 +7,19 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	conversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
 	practice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-const evidenceAuthorityBackground = "Evaluation evidence fixture background."
 
 func TestPostgresEvidenceSnapshotIdempotencyAndIsolation(
 	t *testing.T,
@@ -655,7 +656,7 @@ func TestPostgresEvidenceSnapshotFencesConcurrentQuestionInsert(
 				SessionID:               command.PracticeSessionID,
 				SpeakerParticipantID:    "participant-interviewer",
 				AddresseeParticipantIDs: []string{"participant-candidate"},
-				ObjectiveID:             "objective-1",
+				ObjectiveID:             "clear_answer",
 				Type:                    "PRIMARY",
 				Content:                 "What did you learn from that migration?",
 				Sequence:                2,
@@ -781,9 +782,9 @@ func evidenceAuthorityPayloadForID(snapshotID string) json.RawMessage {
 	}
 	preparation := decoded["practice_context"].(map[string]any)["preparation"].(map[string]any)
 	preparation["background_snapshot_hash"] = evidenceTextHash(
-		evidenceAuthorityBackground,
+		evidenceTestPreparationBackground,
 	)
-	decoded["practice_context"].(map[string]any)["task_context"].(map[string]any)["config_focus_areas"] = []any{"clarity"}
+	decoded["practice_context"].(map[string]any)["task_context"].(map[string]any)["focus_areas"] = []any{"clarity"}
 	encoded, err := json.Marshal(decoded)
 	if err != nil {
 		panic(err)
@@ -802,17 +803,15 @@ func installEvidenceAuthorities(
 		t.Fatalf("decode Evidence authority payload: %v", err)
 	}
 	practiceContext := payload.PracticeContext
-	snapshotBackground := ""
 	switch practiceContext.Preparation.BackgroundSnapshotHash {
-	case evidenceTextHash(evidenceAuthorityBackground):
-		snapshotBackground = evidenceAuthorityBackground
-	case "":
+	case evidenceTextHash(evidenceTestPreparationBackground):
 	default:
 		t.Fatalf(
 			"unsupported Evidence background hash %q",
 			practiceContext.Preparation.BackgroundSnapshotHash,
 		)
 	}
+	snapshotBackground := evidenceTestPreparationBackground
 	if practiceContext.PracticeSessionID != command.PracticeSessionID ||
 		len(payload.OpportunityManifest) == 0 ||
 		len(payload.ConfirmedTurns) == 0 ||
@@ -824,44 +823,34 @@ func installEvidenceAuthorities(
 	minEffectiveTurns := 1
 	coverageCheckpointTurn := 1
 	maxEffectiveTurns := len(payload.ConfirmedTurns)
-	if practiceContext.ScenarioModel ==
-		string(practice.ScenarioModelIELTSSpeakingFullMock) {
+	if practiceContext.SceneModel ==
+		string(scene.SceneModelIELTSSpeakingFullMock) {
 		minEffectiveTurns = 14
 		coverageCheckpointTurn = 14
 		maxEffectiveTurns = 14
 	}
-	sessionSnapshot := practice.ContextSessionSnapshot{
-		ID:            practiceContext.SessionSnapshotID,
-		SessionID:     command.PracticeSessionID,
-		PlanRevision:  practiceContext.PlanRevision,
-		ScenarioType:  practice.ScenarioFamily(practiceContext.SceneFamily),
-		ScenarioModel: practice.ScenarioModel(practiceContext.ScenarioModel),
-		ScenarioDefinition: practice.ScenarioDefinitionSnapshot{
-			ID:      practiceContext.ScenarioDefinition.ID,
-			Type:    practice.ScenarioFamily(practiceContext.SceneFamily),
-			Model:   practice.ScenarioModel(practiceContext.ScenarioModel),
-			Name:    "Evidence fixture scenario",
-			Version: practiceContext.ScenarioDefinition.Version,
-			Status:  "active",
-		},
-		ScenarioConfig: practice.ScenarioConfigSnapshot{
-			ID: practiceContext.ScenarioConfig.ID,
-			ScenarioDefinitionID: practiceContext.
-				ScenarioDefinition.ID,
-			Type:    practice.ScenarioFamily(practiceContext.SceneFamily),
-			Model:   practice.ScenarioModel(practiceContext.ScenarioModel),
-			Version: practiceContext.ScenarioConfig.Version,
-			PromptModel: practice.ScenarioPromptModel{
-				PublicSceneBrief: practiceContext.TaskContext.
-					PublicSceneBrief,
-				PracticeGoal: practiceContext.PracticeGoal,
-				UserRole:     practiceContext.UserRole,
-				AIRole:       practiceContext.FacilitatorRole,
-				PersonaSummary: practiceContext.TaskContext.
-					PersonaSummary,
+	fixtureRoleObjectives := evidenceAuthorityRoleObjectives(
+		practiceContext.PracticeObjectives,
+	)
+	sceneSelection := scene.SelectionSnapshot{
+		Scene: scene.SceneDefinition{
+			ID:               practiceContext.Scene.ID,
+			Family:           scene.SceneFamily(practiceContext.SceneFamily),
+			Model:            scene.SceneModel(practiceContext.SceneModel),
+			Name:             "Evidence fixture scene",
+			Version:          practiceContext.Scene.Version,
+			Status:           scene.SceneStatusActive,
+			TurnPolicyRef:    "evidence.fixture.turn.v1",
+			SessionPolicyRef: "evidence.fixture.session.v1",
+			Prompt: scene.ScenePrompt{
+				PublicSceneBrief: practiceContext.TaskContext.PublicSceneBrief,
+				PracticeGoal:     practiceContext.PracticeGoal,
+				UserRole:         practiceContext.UserRole,
+				AIRole:           practiceContext.FacilitatorRole,
+				PersonaSummary:   practiceContext.TaskContext.PersonaSummary,
 				FocusAreas: append(
 					[]string{},
-					practiceContext.TaskContext.PromptFocusAreas...,
+					practiceContext.TaskContext.FocusAreas...,
 				),
 				TurnBlueprints: append(
 					[]string{},
@@ -870,12 +859,75 @@ func installEvidenceAuthorities(
 				SuggestedDurationSeconds: practiceContext.TaskContext.
 					SuggestedDurationSeconds,
 			},
-			FocusAreas: append(
-				[]string{},
-				practiceContext.TaskContext.ConfigFocusAreas...,
-			),
+			Roles: []scene.RoleDefinition{
+				{
+					ID:                 "fixture-role",
+					SceneID:            practiceContext.Scene.ID,
+					Type:               "FIXTURE_FACILITATOR",
+					DisplayName:        "Fixture facilitator",
+					Responsibilities:   "Deliver the frozen fixture tasks.",
+					Style:              "Structured",
+					PracticeObjectives: fixtureRoleObjectives,
+					DisplayOrder:       1,
+				},
+			},
+			PracticeOptions: []scene.PracticeOption{
+				{
+					ID:      practiceContext.PracticeOption.ID,
+					SceneID: practiceContext.Scene.ID,
+					Type: scene.PracticeOptionType(
+						practiceContext.PracticeOption.Type,
+					),
+					DisplayName:  "Fixture option",
+					DisplayOrder: 1,
+				},
+				{
+					ID:               "fixture-role-focus",
+					SceneID:          practiceContext.Scene.ID,
+					RoleDefinitionID: "fixture-role",
+					Type:             scene.PracticeOptionFocus,
+					DisplayName:      "Fixture role focus",
+					DisplayOrder:     2,
+				},
+			},
+			DisplayOrder: 1,
 		},
-		Preparation: practice.PreparationSnapshot{
+		SelectedRoleIDs:  []string{"fixture-role"},
+		PracticeOptionID: practiceContext.PracticeOption.ID,
+	}
+	usesPublishedIELTSScene := practiceContext.Scene.ID ==
+		ieltsFullMockSceneID &&
+		practiceContext.Scene.Version == ieltsFullMockSceneVersion
+	var ieltsAssignment *preparation.IELTSAssignmentSnapshot
+	if usesPublishedIELTSScene {
+		catalog, err := scene.NewPostgresCatalog(pool)
+		if err != nil {
+			t.Fatalf("open published Scene catalog: %v", err)
+		}
+		resolved, err := catalog.ResolveSelection(
+			context.Background(),
+			ieltsFullMockSceneID,
+			ieltsFullMockSceneVersion,
+			[]string{"role_ielts_speaking_full_counterpart"},
+			"option_ielts_speaking_full_full",
+		)
+		if err != nil {
+			t.Fatalf("resolve published IELTS Scene: %v", err)
+		}
+		sceneSelection = resolved
+		ieltsAssignment = evidenceIELTSFullMockAssignment(
+			t,
+			sceneSelection.Scene.Prompt.TurnBlueprints,
+		)
+	}
+	sessionSnapshot := practice.ContextSessionSnapshot{
+		ID:             practiceContext.SessionSnapshotID,
+		SessionID:      command.PracticeSessionID,
+		PlanRevision:   practiceContext.PlanRevision,
+		SceneFamily:    scene.SceneFamily(practiceContext.SceneFamily),
+		SceneModel:     scene.SceneModel(practiceContext.SceneModel),
+		SceneSelection: sceneSelection,
+		Preparation: preparation.Snapshot{
 			ID:                 practiceContext.Preparation.SnapshotID,
 			SourceProfileID:    practiceContext.Preparation.SourceProfileID,
 			SourceVersion:      practiceContext.Preparation.SourceVersion,
@@ -886,37 +938,28 @@ func installEvidenceAuthorities(
 			[]practice.ContextParticipant,
 			len(practiceContext.Participants),
 		),
-		PracticeOption: practice.PracticeOptionSnapshot{
-			ID: practiceContext.PracticeOption.ID,
-			ScenarioDefinitionID: practiceContext.
-				ScenarioDefinition.ID,
-			Type:    practiceContext.PracticeOption.Type,
-			Version: practiceContext.PracticeOption.Version,
-		},
-		SessionPolicy: practice.ContextSessionPolicy{
+		SessionPolicy: preparation.SessionPolicy{
 			SuggestedDurationSeconds: practiceContext.TaskContext.
 				SuggestedDurationSeconds,
 			MinEffectiveTurns:       minEffectiveTurns,
 			MaxEffectiveTurns:       maxEffectiveTurns,
 			CoverageCheckpointTurn:  coverageCheckpointTurn,
 			MaxFollowUpsPerQuestion: 1,
-			TargetObjectives: evidenceAuthorityObjectives(
-				practiceContext.Objectives.SessionPolicy,
-			),
-			EarlyCompletionRule: "FIXTURE_COMPLETED",
+			EarlyCompletionRule: preparation.
+				EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 		},
-		PracticeFocuses: evidenceAuthorityObjectives(
-			practiceContext.Objectives.PracticeFocus,
+		PracticeObjectives: evidenceAuthorityObjectives(
+			practiceContext.PracticeObjectives,
 		),
-		CreatedAt: authorityAt,
+		IELTSAssignment: ieltsAssignment,
+		CreatedAt:       authorityAt,
 	}
 	for index, participant := range practiceContext.Participants {
 		subject := practice.SubjectRef{
 			Namespace: "speakup.fixture",
 			SubjectID: participant.ID,
 		}
-		if participant.Role == "CANDIDATE" ||
-			participant.Role == "LEARNER" {
+		if participant.Role == "LEARNER" {
 			subject = practice.SubjectRef{
 				Namespace: "speakup.user",
 				SubjectID: command.OwnerUserID,
@@ -935,8 +978,8 @@ func installEvidenceAuthorities(
 		command.OwnerUserID,
 		practice.ContextSession{
 			ID:             command.PracticeSessionID,
-			ScenarioType:   sessionSnapshot.ScenarioType,
-			ScenarioModel:  sessionSnapshot.ScenarioModel,
+			SceneFamily:    sessionSnapshot.SceneFamily,
+			SceneModel:     sessionSnapshot.SceneModel,
 			SnapshotID:     sessionSnapshot.ID,
 			Status:         practice.ContextSessionCompleted,
 			Version:        practiceContext.SessionVersion,
@@ -960,15 +1003,86 @@ func installEvidenceAuthorities(
 	if err != nil {
 		t.Fatalf("encode Practice Session Snapshot fixture: %v", err)
 	}
-	var snapshotJSON map[string]any
-	if err := json.Unmarshal(snapshotDocument, &snapshotJSON); err != nil {
-		t.Fatalf("decode Practice Session Snapshot fixture: %v", err)
-	}
-	snapshotJSON["scenario_config_snapshot"].(map[string]any)["focus_areas"] =
-		append([]string{}, practiceContext.TaskContext.ConfigFocusAreas...)
-	snapshotDocument, err = json.Marshal(snapshotJSON)
+	sceneSelectionDocument, err := json.Marshal(sessionSnapshot.SceneSelection)
 	if err != nil {
-		t.Fatalf("re-encode Practice Session Snapshot fixture: %v", err)
+		t.Fatalf("encode Practice Scene selection fixture: %v", err)
+	}
+	sessionPolicyDocument, err := json.Marshal(sessionSnapshot.SessionPolicy)
+	if err != nil {
+		t.Fatalf("encode Practice Session policy fixture: %v", err)
+	}
+	practiceObjectivesDocument, err := json.Marshal(
+		sessionSnapshot.PracticeObjectives,
+	)
+	if err != nil {
+		t.Fatalf("encode Practice focuses fixture: %v", err)
+	}
+	var ieltsAssignmentDocument any
+	if sessionSnapshot.IELTSAssignment != nil {
+		encoded, encodeErr := json.Marshal(sessionSnapshot.IELTSAssignment)
+		if encodeErr != nil {
+			t.Fatalf("encode IELTS assignment fixture: %v", encodeErr)
+		}
+		ieltsAssignmentDocument = encoded
+	}
+	preparationSnapshotDocument, err := json.Marshal(
+		sessionSnapshot.Preparation,
+	)
+	if err != nil {
+		t.Fatalf("encode Preparation Snapshot fixture: %v", err)
+	}
+	scenePromptDocument, err := json.Marshal(
+		sessionSnapshot.SceneSelection.Scene.Prompt,
+	)
+	if err != nil {
+		t.Fatalf("encode Scene prompt fixture: %v", err)
+	}
+	databaseRoles := make(
+		[]map[string]any,
+		len(sessionSnapshot.SceneSelection.Scene.Roles),
+	)
+	for index, role := range sessionSnapshot.SceneSelection.Scene.Roles {
+		databaseRole := map[string]any{
+			"role_definition_id": role.ID,
+			"scene_id":           role.SceneID,
+			"role_type":          role.Type,
+			"display_name":       role.DisplayName,
+			"responsibilities":   role.Responsibilities,
+			"style":              role.Style,
+			"practice_objectives": append(
+				[]scene.PracticeObjectiveDefinition(nil),
+				role.PracticeObjectives...,
+			),
+			"display_order": role.DisplayOrder,
+		}
+		if role.VoiceConfigRef != "" {
+			databaseRole["voice_config_ref"] = role.VoiceConfigRef
+		}
+		databaseRoles[index] = databaseRole
+	}
+	rolesDocument, err := json.Marshal(databaseRoles)
+	if err != nil {
+		t.Fatalf("encode Scene roles fixture: %v", err)
+	}
+	optionsDocument, err := json.Marshal([]map[string]any{
+		{
+			"practice_option_id":   practiceContext.PracticeOption.ID,
+			"scene_id":             practiceContext.Scene.ID,
+			"practice_option_type": practiceContext.PracticeOption.Type,
+			"display_name":         "Fixture option",
+			"display_order":        1,
+		},
+		{
+			"practice_option_id":   "fixture-role-focus",
+			"scene_id":             practiceContext.Scene.ID,
+			"role_definition_id":   "fixture-role",
+			"practice_option_type": string(scene.PracticeOptionFocus),
+			"display_name":         "Fixture role focus",
+			"display_order":        2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("encode Scene options fixture: %v", err)
 	}
 	participantsDocument, err := json.Marshal(sessionSnapshot.Participants)
 	if err != nil {
@@ -1003,7 +1117,7 @@ func installEvidenceAuthorities(
 		)
 		VALUES ($1, $2, $3, $4, $5, $5)
 	`, command.OwnerUserID, practiceContext.Preparation.SourceProfileID,
-		evidenceAuthorityBackground, practiceContext.Preparation.SourceVersion,
+		snapshotBackground, practiceContext.Preparation.SourceVersion,
 		authorityAt); err != nil {
 		t.Fatalf("insert Evidence Preparation Profile: %v", err)
 	}
@@ -1020,41 +1134,86 @@ func installEvidenceAuthorities(
 	`, command.OwnerUserID, practiceContext.Preparation.SnapshotID,
 		practiceContext.Preparation.SourceProfileID,
 		practiceContext.Preparation.SourceVersion,
-		evidenceAuthorityBackground, authorityAt); err != nil {
+		snapshotBackground, authorityAt); err != nil {
 		t.Fatalf("insert Evidence Preparation Snapshot: %v", err)
 	}
+	if !usesPublishedIELTSScene {
+		if _, err := tx.Exec(ctx, `
+		INSERT INTO coaching_scenes (scene_id, created_at)
+		VALUES ($1, $2)
+		`, practiceContext.Scene.ID, authorityAt); err != nil {
+			t.Fatalf("insert Evidence Scene identity: %v", err)
+		}
+		if _, err := tx.Exec(ctx, `
+		INSERT INTO coaching_scene_versions (
+			scene_id,
+			scene_version,
+			scene_family,
+			scene_model,
+			name,
+			status,
+			turn_policy_ref,
+			session_policy_ref,
+			prompt,
+			roles,
+			practice_options,
+			display_order,
+			created_at
+		)
+		VALUES (
+			$1, $2, $3, $4, 'Evidence fixture scene', 'active',
+			'evidence.fixture.turn.v1', 'evidence.fixture.session.v1',
+			$5, $6, $7, 1, $8
+		)
+		`, practiceContext.Scene.ID, practiceContext.Scene.Version,
+			practiceContext.SceneFamily, practiceContext.SceneModel,
+			scenePromptDocument, rolesDocument, optionsDocument,
+			authorityAt); err != nil {
+			t.Fatalf("insert Evidence Scene version: %v", err)
+		}
+	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO practice_plans (
+		INSERT INTO preparation_practice_plans (
 			owner_user_id,
 			plan_id,
-			agent_thread_id,
-			matter_id,
-			scenario_definition_id,
-			scenario_definition_version,
-			scenario_type,
-			scenario_model,
-			scenario_config_id,
-			scenario_config_version,
-			preparation_profile_id,
-			selected_role_ids,
-			plan_revision,
+			current_revision,
 			status,
+			source_thread_id,
 			created_at,
 			updated_at
 		)
-		VALUES (
-			$1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, $10,
-			'["fixture-role"]'::jsonb, $11, 'ready', $12, $12
+		VALUES ($1, $2, $3, 'ready', $4, $5, $5)
+	`, command.OwnerUserID, planID, practiceContext.PlanRevision,
+		threadID, authorityAt); err != nil {
+		t.Fatalf("insert Evidence Preparation Plan: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO preparation_practice_plan_revisions (
+			owner_user_id,
+			plan_id,
+			revision,
+			preparation_snapshot_id,
+			preparation_snapshot,
+			scene_id,
+			scene_version,
+			scene_selection,
+			session_policy,
+			practice_objectives,
+			ielts_assignment,
+			created_at
 		)
-	`, command.OwnerUserID, planID, threadID,
-		practiceContext.ScenarioDefinition.ID,
-		practiceContext.ScenarioDefinition.Version,
-		practiceContext.SceneFamily, practiceContext.ScenarioModel,
-		practiceContext.ScenarioConfig.ID,
-		practiceContext.ScenarioConfig.Version,
-		practiceContext.Preparation.SourceProfileID,
-		practiceContext.PlanRevision, authorityAt); err != nil {
-		t.Fatalf("insert Evidence Practice Plan: %v", err)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, command.OwnerUserID, planID, practiceContext.PlanRevision,
+		practiceContext.Preparation.SnapshotID,
+		preparationSnapshotDocument,
+		practiceContext.Scene.ID,
+		practiceContext.Scene.Version,
+		sceneSelectionDocument,
+		sessionPolicyDocument,
+		practiceObjectivesDocument,
+		ieltsAssignmentDocument,
+		authorityAt); err != nil {
+		t.Fatalf("insert Evidence Preparation Plan revision: %v", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO practice_sessions (
@@ -1068,23 +1227,21 @@ func installEvidenceAuthorities(
 			updated_at,
 			started_at,
 			completed_at,
-			context_plan_id,
-			agent_thread_id,
-			matter_id,
 			snapshot_id,
-			scenario_type,
-			scenario_model,
-			end_reason
+			scene_family,
+			scene_model,
+			end_reason,
+			plan_revision
 		)
 		VALUES (
 			$1, $2, $3, 'completed', $4, $5, $6, $6, $6, $7,
-			$3, $8, NULL, $9, $10, $11, 'COMPLETED'
+			$8, $9, $10, 'COMPLETED', $11
 		)
 	`, command.OwnerUserID, command.PracticeSessionID, planID,
 		practiceContext.SessionVersion, len(payload.ConfirmedTurns),
-		authorityAt, completedAt, threadID,
+		authorityAt, completedAt,
 		practiceContext.SessionSnapshotID, practiceContext.SceneFamily,
-		practiceContext.ScenarioModel); err != nil {
+		practiceContext.SceneModel, practiceContext.PlanRevision); err != nil {
 		t.Fatalf("insert Evidence Practice Session: %v", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -1097,19 +1254,15 @@ func installEvidenceAuthorities(
 			turn_limit,
 			created_at,
 			snapshot_id,
-			context_plan_id,
-			preparation_snapshot_id,
 			snapshot_document
 		)
 		VALUES (
-			$1, $2, $3, '[]'::jsonb, $4, $5, $6, $7, $8, $9, $10
+			$1, $2, $3, '[]'::jsonb, $4, $5, $6, $7, $8
 		)
 	`, command.OwnerUserID, command.PracticeSessionID,
 		practiceContext.SceneFamily, participantsDocument,
 		len(payload.OpportunityManifest), authorityAt,
-		practiceContext.SessionSnapshotID, planID,
-		practiceContext.Preparation.SnapshotID,
-		snapshotDocument); err != nil {
+		practiceContext.SessionSnapshotID, snapshotDocument); err != nil {
 		t.Fatalf("insert Evidence Practice Session Snapshot: %v", err)
 	}
 
@@ -1338,10 +1491,75 @@ func installEvidenceAuthorities(
 
 func evidenceAuthorityObjectives(
 	source []evidenceObjective,
-) []practice.PracticeObjective {
-	result := make([]practice.PracticeObjective, len(source))
+) []preparation.PracticeObjective {
+	result := make([]preparation.PracticeObjective, len(source))
 	for index, objective := range source {
-		result[index] = practice.PracticeObjective{
+		result[index] = preparation.PracticeObjective{
+			ID:          objective.ID,
+			Description: objective.Description,
+		}
+	}
+	return result
+}
+
+func evidenceIELTSFullMockAssignment(
+	t *testing.T,
+	turnBlueprints []string,
+) *preparation.IELTSAssignmentSnapshot {
+	t.Helper()
+	const (
+		part1Questions = 8
+		part2Questions = 1
+		part1Prefix    = "Part 1 question: "
+		part2Prefix    = "Part 2 cue card: "
+		part3Prefix    = "Part 3 question: "
+	)
+	part3Questions := len(turnBlueprints) - part1Questions - part2Questions
+	if part3Questions < 1 || part3Questions > 5 {
+		t.Fatalf(
+			"IELTS Evidence fixture has %d Part 3 questions",
+			part3Questions,
+		)
+	}
+	for index := range part1Questions {
+		if !strings.HasPrefix(turnBlueprints[index], part1Prefix) {
+			t.Fatalf("IELTS Evidence fixture task %d is not Part 1", index+1)
+		}
+	}
+	part2CueCard, found := strings.CutPrefix(
+		turnBlueprints[part1Questions],
+		part2Prefix,
+	)
+	if !found || strings.TrimSpace(part2CueCard) != part2CueCard ||
+		part2CueCard == "" {
+		t.Fatal("IELTS Evidence fixture has no valid Part 2 cue card")
+	}
+	for index := part1Questions + part2Questions; index < len(turnBlueprints); index++ {
+		if !strings.HasPrefix(turnBlueprints[index], part3Prefix) {
+			t.Fatalf("IELTS Evidence fixture task %d is not Part 3", index+1)
+		}
+	}
+	return &preparation.IELTSAssignmentSnapshot{
+		BankID:         "evidence-ielts-bank-v1",
+		Season:         "Evaluation fixture 2026",
+		Mode:           scene.IELTSPracticeModeFullMock,
+		Part1SetID:     "evidence-part1-hometown-ai-free-time",
+		TopicGroupID:   "evidence-topic-learning-skill",
+		TopicTitle:     "Learning a skill",
+		Part2CueCard:   part2CueCard,
+		Part1Questions: part1Questions,
+		Part2Questions: part2Questions,
+		Part3Questions: part3Questions,
+		TurnBlueprints: append([]string(nil), turnBlueprints...),
+	}
+}
+
+func evidenceAuthorityRoleObjectives(
+	source []evidenceObjective,
+) []scene.PracticeObjectiveDefinition {
+	result := make([]scene.PracticeObjectiveDefinition, len(source))
+	for index, objective := range source {
+		result[index] = scene.PracticeObjectiveDefinition{
 			ID:          objective.ID,
 			Description: objective.Description,
 		}

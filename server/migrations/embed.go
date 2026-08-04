@@ -34,4 +34,7 @@ import "embed"
 //go:embed 000046_agent_thread_sidebar_deletion.*.sql
 //go:embed 000047_practice_follow_up_turns.*.sql
 //go:embed 000048_follow_up_confirmed_turn_shape.*.sql
+//go:embed 000049_goal_authority_models.*.sql
+//go:embed 000050_scene_authority_catalog.*.sql
+//go:embed 000051_preparation_plan_authority.*.sql
 var Files embed.FS

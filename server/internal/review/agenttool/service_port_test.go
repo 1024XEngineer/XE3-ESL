@@ -105,8 +105,8 @@ func TestServicePortSearchesCompletedFormalReviews(t *testing.T) {
 	if len(result) != 1 ||
 		result[0].ID != item.ID ||
 		result[0].Summary != item.Result.Summary ||
-		result[0].ScenarioDefinitionID !=
-			item.EvaluationContext.ScenarioDefinitionID ||
+		result[0].SceneID !=
+			item.EvaluationContext.SceneID ||
 		len(result[0].SourceRefs) != 1 ||
 		result[0].SourceRefs[0].Type != "formal_review" {
 		t.Fatalf("SearchReviews() = %+v", result)
@@ -210,7 +210,7 @@ func completedFormalReview() domainreview.FormalReview {
 		PracticeSessionID: "practice-session-1",
 		Status:            domainreview.FormalReviewCompleted,
 		EvaluationContext: domainreview.EvaluationContext{
-			ScenarioDefinitionID: "scn_programmer_interview",
+			SceneID: "scn_programmer_interview",
 		},
 		Result: &domainreview.ReviewResult{
 			SummaryEligibility:  domainreview.SummaryEligible,

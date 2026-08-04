@@ -34,12 +34,12 @@ SELECT
     threads.id::text,
     threads.owner_user_id::text,
     COALESCE(first_user.content, ''),
-    COALESCE(active_link.matter_id::text, ''),
+    COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
     threads.updated_at
 FROM agent_threads AS threads
-LEFT JOIN agent_thread_matter_links AS active_link
+LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
@@ -59,7 +59,7 @@ WHERE threads.id = $1 AND threads.owner_user_id = $2`,
 		&result.ID,
 		&result.OwnerID,
 		&result.Title,
-		&result.ActiveMatterID,
+		&result.ActiveGoalID,
 		&result.NextMessageSeq,
 		&result.CreatedAt,
 		&result.UpdatedAt,

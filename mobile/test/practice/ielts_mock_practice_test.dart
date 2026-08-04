@@ -1,3 +1,5 @@
+import '../support/scene_fixtures.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -9,10 +11,10 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/practice/ielts_examiner_speaker.dart';
 import 'package:speakup/features/practice/practice.dart';
-import 'package:speakup/features/preparation/ielts_question_bank.dart';
-import 'package:speakup/features/preparation/preparation_client.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
-import 'package:speakup/features/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/scene/scene_client.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_audio_player.dart';
 import 'package:speakup/practice/practice_client.dart';
@@ -30,16 +32,17 @@ void main() {
     final speaker = _ImmediateExaminerSpeaker();
     final media = _QuestionMediaClient();
     final player = _QuestionAudioPlayer();
+    final practice = _IeltsPracticeClient(initialCompleted: 0);
     final controller = AgentController(
       client: FakeAgentClient(),
-      practiceClient: _IeltsPracticeClient(initialCompleted: 0),
+      practiceClient: practice,
       mediaClient: media,
       audioPlayer: player,
       recorder: _Recorder(),
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -70,7 +73,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(_ieltsScene);
+      await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -119,11 +122,7 @@ void main() {
     tester,
   ) async {
     final speaker = _ImmediateExaminerSpeaker();
-    final practice = _IeltsPracticeClient(
-      initialCompleted: 0,
-      turnLimit: 1,
-      scenarioModel: 'IELTS_SPEAKING_PART_3',
-    );
+    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
     final controller = AgentController(
       client: FakeAgentClient(),
       practiceClient: practice,
@@ -131,7 +130,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsPart3Scene);
+    await _activatePractice(controller, practice, _ieltsPart3Scene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -171,7 +170,7 @@ void main() {
       final store = _MemoryProgressStore();
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(_ieltsScene);
+      await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -236,7 +235,7 @@ void main() {
       final store = _MemoryProgressStore();
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(_ieltsScene);
+      await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -336,7 +335,7 @@ void main() {
       final store = _MemoryProgressStore();
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(_ieltsScene);
+      await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -402,7 +401,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
     final store = _MemoryProgressStore(
       IeltsMockProgress(
         sessionId: _sessionId,
@@ -444,7 +443,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -486,7 +485,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -523,7 +522,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -561,7 +560,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -600,7 +599,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -630,7 +629,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(_ieltsScene);
+      await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -685,7 +684,7 @@ void main() {
     addTearDown(controller.dispose);
     addTearDown(reportController.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -711,19 +710,13 @@ void main() {
   testWidgets('section completion never requests the full-mock report', (
     tester,
   ) async {
-    final practice = _IeltsPracticeClient(
-      initialCompleted: 7,
-      turnLimit: 8,
-      scenarioModel: 'IELTS_SPEAKING_PART_1',
-    );
+    final practice = _IeltsPracticeClient(initialCompleted: 7, turnLimit: 8);
     final controller = AgentController(
       client: FakeAgentClient(),
       practiceClient: practice,
       recorder: _Recorder(),
     );
-    final preparation = PreparationController(
-      client: _EmptyPreparationCatalogClient(),
-    );
+    final preparation = PreparationController(client: _EmptySceneClient());
     final reportClient = _PendingReportClient();
     final reportController = IeltsSpeakingReportController(
       client: reportClient,
@@ -732,7 +725,7 @@ void main() {
     addTearDown(preparation.dispose);
     addTearDown(reportController.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsPart1Scene);
+    await _activatePractice(controller, practice, _ieltsPart1Scene);
     expect(controller.errorMessage, isNull);
     expect(controller.practiceSessionId, _sessionId);
     await preparation.beginIeltsSession(
@@ -771,17 +764,10 @@ void main() {
     expect(reportController.practiceSessionId, isNull);
   });
 
-  testWidgets('restored matter identity still opens the three-part mock flow', (
+  testWidgets('the full-mock Scene model opens the three-part flow', (
     tester,
   ) async {
-    final practice = _IeltsPracticeClient(
-      initialCompleted: 8,
-      snapshotScene: const AgentScene(
-        id: 'unrelated-restored-scene-id',
-        title: 'Renamed server-owned practice',
-        description: '恢复的练习场景',
-      ),
-    );
+    final practice = _IeltsPracticeClient(initialCompleted: 8);
     final controller = AgentController(
       client: FakeAgentClient(),
       practiceClient: practice,
@@ -789,7 +775,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -808,16 +794,13 @@ void main() {
   testWidgets(
     'same title and fourteen-turn limit do not impersonate the full mock',
     (tester) async {
-      final practice = _IeltsPracticeClient(
-        initialCompleted: 8,
-        scenarioType: 'EXAM',
-        scenarioModel: 'EXAM_BASIC_DIALOGUE',
-        snapshotScene: const AgentScene(
-          id: ieltsSpeakingFullMockScenarioId,
-          title: 'IELTS 口语完整模拟',
-          description: '同名但不是完整模考',
-        ),
+      final sameTitleScene = _sceneFixture(
+        id: 'scn_same_title_general_exam',
+        name: 'IELTS 口语完整模拟',
+        brief: '同名但不是完整模考',
+        model: SceneModel.examBasicDialogue,
       );
+      final practice = _IeltsPracticeClient(initialCompleted: 8);
       final controller = AgentController(
         client: FakeAgentClient(),
         practiceClient: practice,
@@ -825,7 +808,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(_ieltsScene);
+      await _activatePractice(controller, practice, sameTitleScene);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -854,7 +837,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
     var parkCalls = 0;
 
     await tester.pumpWidget(
@@ -904,13 +887,11 @@ void main() {
       practiceClient: practice,
       recorder: _Recorder(),
     );
-    final preparation = PreparationController(
-      client: _EmptyPreparationCatalogClient(),
-    );
+    final preparation = PreparationController(client: _EmptySceneClient());
     addTearDown(controller.dispose);
     addTearDown(preparation.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsPart1Scene);
+    await _activatePractice(controller, practice, _ieltsPart1Scene);
     await preparation.beginIeltsSession(
       _sessionId,
       const IeltsPracticeSelection(
@@ -965,7 +946,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(_ieltsPart2Scene);
+      await _activatePractice(controller, practice, _ieltsPart2Scene);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -996,11 +977,7 @@ void main() {
   testWidgets('one-question Part 3 section completes after its original item', (
     tester,
   ) async {
-    final practice = _IeltsPracticeClient(
-      initialCompleted: 0,
-      turnLimit: 1,
-      scenarioModel: 'IELTS_SPEAKING_PART_3',
-    );
+    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
     final controller = AgentController(
       client: FakeAgentClient(),
       practiceClient: practice,
@@ -1008,7 +985,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsPart3Scene);
+    await _activatePractice(controller, practice, _ieltsPart3Scene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -1049,7 +1026,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -1077,66 +1054,73 @@ void main() {
     expect(find.text('1 answers'), findsOneWidget);
   });
 
-  testWidgets(
-    'restored section matter titles still use the matching IELTS flow',
-    (tester) async {
-      for (final testCase
-          in <
-            ({
-              AgentScene selected,
-              AgentScene restored,
-              int turnLimit,
-              Key expected,
-            })
-          >[
-            (
-              selected: _ieltsPart1Scene,
-              restored: _restoredPart1Scene,
-              turnLimit: 8,
-              expected: const Key('ielts-mock-part-1'),
-            ),
-            (
-              selected: _ieltsPart2Scene,
-              restored: _restoredPart2Scene,
-              turnLimit: 6,
-              expected: const Key('ielts-mock-part-2-intro'),
-            ),
-            (
-              selected: _ieltsPart3Scene,
-              restored: _restoredPart3Scene,
-              turnLimit: 5,
-              expected: const Key('ielts-part3-topic-intro'),
-            ),
-          ]) {
-        final controller = AgentController(
-          client: FakeAgentClient(),
-          practiceClient: _IeltsPracticeClient(
-            initialCompleted: 0,
-            snapshotScene: testCase.restored,
-            turnLimit: testCase.turnLimit,
+  testWidgets('section Scene models open the matching IELTS flow', (
+    tester,
+  ) async {
+    for (final testCase
+        in <({SceneDefinition selected, int turnLimit, Key expected})>[
+          (
+            selected: _ieltsPart1Scene,
+            turnLimit: 8,
+            expected: const Key('ielts-mock-part-1'),
           ),
-          recorder: _Recorder(),
-        );
-        await controller.initialize();
-        await controller.selectScene(testCase.selected);
-
-        await tester.pumpWidget(
-          MaterialApp(
-            home: PracticePage(
-              key: ValueKey(testCase.selected.id),
-              agentController: controller,
-              ieltsMockProgressStore: _MemoryProgressStore(),
-            ),
+          (
+            selected: _ieltsPart2Scene,
+            turnLimit: 6,
+            expected: const Key('ielts-mock-part-2-intro'),
           ),
-        );
-        await tester.pumpAndSettle();
+          (
+            selected: _ieltsPart3Scene,
+            turnLimit: 5,
+            expected: const Key('ielts-part3-topic-intro'),
+          ),
+        ]) {
+      final practice = _IeltsPracticeClient(
+        initialCompleted: 0,
+        turnLimit: testCase.turnLimit,
+      );
+      final controller = AgentController(
+        client: FakeAgentClient(),
+        practiceClient: practice,
+        recorder: _Recorder(),
+      );
+      await controller.initialize();
+      await _activatePractice(controller, practice, testCase.selected);
 
-        expect(find.byKey(testCase.expected), findsOneWidget);
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump();
-        controller.dispose();
-      }
-    },
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PracticePage(
+            key: ValueKey(testCase.selected.id),
+            agentController: controller,
+            ieltsMockProgressStore: _MemoryProgressStore(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(testCase.expected), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      controller.dispose();
+    }
+  });
+}
+
+Future<void> _activatePractice(
+  AgentController controller,
+  _IeltsPracticeClient practice,
+  SceneDefinition scene,
+) async {
+  await controller.selectScene(scene);
+  practice.activeScene = scene;
+  await controller.activateCreatedPractice(
+    threadId: controller.threadId!,
+    goalId: controller.activeGoal!.id,
+    scene: scene,
+    sessionId: _sessionId,
+    planId: _planId,
+    turnLimit: practice.turnLimit,
+    clientOperationId: 'activate-${scene.id}',
   );
 }
 
@@ -1163,22 +1147,19 @@ final class _MemoryProgressStore implements IeltsMockProgressStore {
   }
 }
 
-final class _EmptyPreparationCatalogClient implements PreparationCatalogClient {
+final class _EmptySceneClient implements SceneClient {
   @override
-  Future<void> clearAccountState() async {}
-
-  @override
-  Future<PreparationScenarioDetail> getScenario(String scenarioId) {
+  Future<SceneDefinition> getScene(String sceneId) {
     throw UnimplementedError();
   }
 
   @override
-  Future<List<PreparationRole>> listRoles(String scenarioId) {
+  Future<List<RoleDefinition>> listRoles(String sceneId) {
     throw UnimplementedError();
   }
 
   @override
-  Future<List<PreparationScenario>> listScenarios() {
+  Future<List<SceneDefinition>> listScenes() {
     throw UnimplementedError();
   }
 }
@@ -1186,53 +1167,48 @@ final class _EmptyPreparationCatalogClient implements PreparationCatalogClient {
 final class _IeltsPracticeClient implements PracticeClient {
   _IeltsPracticeClient({
     required this.initialCompleted,
-    this.snapshotScene,
     this.turnLimit = 14,
     this.transcriptionFailuresRemaining = 0,
-    this.scenarioType = 'EXAM',
-    this.scenarioModel = 'IELTS_SPEAKING_FULL_MOCK',
   }) : completed = initialCompleted;
 
   final int initialCompleted;
-  final AgentScene? snapshotScene;
   Object? transcribeFailure;
   final int turnLimit;
   int transcriptionFailuresRemaining;
-  final String scenarioType;
-  final String scenarioModel;
   int completed;
+  SceneDefinition? activeScene;
   final List<String> confirmedQuestionIds = [];
 
   @override
-  Future<void> clearAccountState() async {}
+  Future<void> clearAccountState() async {
+    activeScene = null;
+  }
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
-  }) async => null;
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) async => _snapshot();
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
-  }) async {
+  }) async => _snapshot();
+
+  PracticeSessionSnapshot _snapshot() {
+    final scene = activeScene ?? (throw StateError('No active IELTS Scene.'));
     final done = completed == turnLimit;
-    return PracticeStartResult(
-      snapshot: PracticeSessionSnapshot(
-        sessionId: _sessionId,
-        scenarioType: scenarioType,
-        scenarioModel: scenarioModel,
-        matter: snapshotScene == null
-            ? activeMatter
-            : AgentMatter(id: activeMatter.id, scene: snapshotScene!),
-        completedTurns: completed,
-        turnLimit: turnLimit,
-        sessionCompleted: done,
-        currentQuestion: done ? null : _question(completed + 1),
-        review: done && turnLimit == 14 ? _review : null,
-      ),
+    return PracticeSessionSnapshot(
+      sessionId: _sessionId,
+      planId: _planId,
+      sceneFamily: scene.family,
+      sceneModel: scene.model,
+      sessionVersion: completed + 1,
+      completedTurns: completed,
+      turnLimit: turnLimit,
+      sessionCompleted: done,
+      currentQuestion: done ? null : _question(completed + 1),
+      review: done && turnLimit == 14 ? _review : null,
     );
   }
 
@@ -1266,6 +1242,7 @@ final class _IeltsPracticeClient implements PracticeClient {
     required String candidateId,
     required String idempotencyKey,
   }) async {
+    final scene = activeScene ?? (throw StateError('No active IELTS Scene.'));
     confirmedQuestionIds.add(questionId);
     completed++;
     final done = completed == turnLimit;
@@ -1282,8 +1259,9 @@ final class _IeltsPracticeClient implements PracticeClient {
       completedTurns: completed,
       turnLimit: turnLimit,
       sessionCompleted: done,
-      scenarioType: scenarioType,
-      scenarioModel: scenarioModel,
+      sceneFamily: scene.family,
+      sceneModel: scene.model,
+      sessionVersion: completed + 1,
       nextQuestion: done ? null : _question(completed + 1),
       review: done && turnLimit == 14 ? _review : null,
     );
@@ -1443,45 +1421,59 @@ final class _QuestionAudioPlayer implements PracticeAudioPlayer {
 }
 
 const _sessionId = 'session-ielts-full';
-const _ieltsScene = AgentScene(
-  id: ieltsSpeakingFullMockScenarioId,
-  title: 'IELTS 口语完整模拟',
-  description: 'Part 1, Part 2, Part 3',
+const _planId = 'plan-ielts-full';
+final _ieltsScene = _sceneFixture(
+  id: ieltsSpeakingFullMockSceneId,
+  name: 'IELTS 口语完整模拟',
+  brief: 'Part 1, Part 2, Part 3',
+  model: SceneModel.ieltsSpeakingFullMock,
 );
-const _ieltsPart2Scene = AgentScene(
+final _ieltsPart2Scene = _sceneFixture(
   id: 'scn_ielts_speaking_part_2',
-  title: 'IELTS Speaking Part 2',
-  description: 'Part 2 cue card with bound Part 3',
+  name: 'IELTS Speaking Part 2',
+  brief: 'Part 2 cue card with bound Part 3',
+  model: SceneModel.ieltsSpeakingPart2,
 );
-const _ieltsPart1Scene = AgentScene(
+final _ieltsPart1Scene = _sceneFixture(
   id: 'scn_ielts_speaking_part_1',
-  title: 'IELTS Speaking Part 1',
-  description: 'Part 1 familiar-topic questions',
+  name: 'IELTS Speaking Part 1',
+  brief: 'Part 1 familiar-topic questions',
+  model: SceneModel.ieltsSpeakingPart1,
 );
-const _ieltsPart3Scene = AgentScene(
+final _ieltsPart3Scene = _sceneFixture(
   id: 'scn_ielts_speaking_part_3',
-  title: 'IELTS Speaking Part 3',
-  description: 'Part 3 discussion',
+  name: 'IELTS Speaking Part 3',
+  brief: 'Part 3 discussion',
+  model: SceneModel.ieltsSpeakingPart3,
 );
-const _nonIeltsScene = AgentScene(
+final _nonIeltsScene = _sceneFixture(
   id: 'scn_general_practice',
-  title: 'General practice',
-  description: 'Non-IELTS practice scene',
+  name: 'General practice',
+  brief: 'Non-IELTS practice scene',
+  family: SceneFamily.interview,
+  model: SceneModel.interviewBasicDialogue,
 );
-const _restoredPart1Scene = AgentScene(
-  id: 'matter-restored-part-1',
-  title: 'IELTS Speaking Part 1',
-  description: 'Restored practice scene',
-);
-const _restoredPart2Scene = AgentScene(
-  id: 'matter-restored-part-2',
-  title: 'IELTS Speaking Part 2',
-  description: 'Restored practice scene',
-);
-const _restoredPart3Scene = AgentScene(
-  id: 'matter-restored-part-3',
-  title: 'IELTS Speaking Part 3',
-  description: 'Restored practice scene',
+SceneDefinition _sceneFixture({
+  required String id,
+  required String name,
+  required String brief,
+  SceneFamily family = SceneFamily.exam,
+  SceneModel model = SceneModel.examBasicDialogue,
+}) => testScene(
+  id: id,
+  family: family,
+  model: model,
+  name: name,
+  prompt: ScenePrompt(
+    publicSceneBrief: brief,
+    practiceGoal: 'Complete the IELTS speaking practice.',
+    userRole: 'Candidate',
+    aiRole: 'IELTS examiner',
+    personaSummary: 'Neutral and concise.',
+    focusAreas: const <String>['fluency'],
+    turnBlueprints: const <String>['Ask the next speaking question.'],
+    suggestedDurationSeconds: 600,
+  ),
 );
 const _review = AgentReview(
   id: 'review-ielts',

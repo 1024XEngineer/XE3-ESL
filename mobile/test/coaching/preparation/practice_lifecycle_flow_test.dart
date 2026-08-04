@@ -1,0 +1,747 @@
+import '../../support/scene_fixtures.dart';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/agent/agent_client.dart';
+import 'package:speakup/agent/agent_controller.dart';
+import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/app/speak_up_app.dart';
+import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
+import 'package:speakup/features/coaching/scene/scene_client.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_client.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
+import 'package:speakup/practice/practice_client.dart';
+import 'package:speakup/practice/practice_models.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets(
+    'training owns independent resumable practices without a home-thread precondition',
+    (tester) async {
+      final agentClient = FakeAgentClient();
+      final practiceClient = _LifecyclePracticeClient();
+      var agentOperationSequence = 0;
+      final agentController = AgentController(
+        client: agentClient,
+        practiceClient: practiceClient,
+        clientIdFactory: (scope) =>
+            '$scope-lifecycle-${++agentOperationSequence}',
+      );
+      await agentController.initialize();
+      final homeThreadId = agentController.threadId!;
+      expect(agentController.threads, hasLength(1));
+
+      final workspaceController = PracticeWorkspaceController(
+        agentController: agentController,
+        recordStore: MemoryPracticeLaunchRecordStore(),
+      );
+      await workspaceController.activateAccount('account-lifecycle-flow');
+
+      final launchClient = _LifecycleLaunchClient();
+      var launchOperationSequence = 0;
+      final launchController = PreparationLaunchController(
+        client: launchClient,
+        contextProvider: () {
+          final threadId = agentController.threadId;
+          final goalId = agentController.activeGoal?.id;
+          if (threadId == null || goalId == null) {
+            return null;
+          }
+          return AgentPracticeContext(threadId: threadId, goalId: goalId);
+        },
+        threadIdProvider: () => agentController.threadId,
+        goalActivator:
+            ({
+              required threadId,
+              required selection,
+              required clientOperationId,
+            }) async {
+              final goal = await agentController.activateGoalForScene(
+                threadId: threadId,
+                scene: selection.scene,
+                clientOperationId: clientOperationId,
+              );
+              return AgentPracticeContext(threadId: threadId, goalId: goal.id);
+            },
+        voiceActivator:
+            ({
+              required context,
+              required scene,
+              required bootstrap,
+              required clientOperationId,
+            }) async {
+              practiceClient.armStart(
+                sessionId: bootstrap.session.id,
+                planId: bootstrap.session.planId,
+                scene: scene,
+              );
+              await agentController.activateCreatedPractice(
+                threadId: context.threadId,
+                goalId: context.goalId,
+                scene: scene,
+                sessionId: bootstrap.session.id,
+                planId: bootstrap.session.planId,
+                turnLimit: bootstrap.maxEffectiveTurns,
+                clientOperationId: clientOperationId,
+              );
+            },
+        workspaceController: workspaceController,
+        idFactory: (scope) => '$scope-lifecycle-${++launchOperationSequence}',
+      );
+      final preparationController = PreparationController(
+        client: _LifecycleCatalogClient(),
+      );
+      addTearDown(() {
+        launchController.dispose();
+        workspaceController.dispose();
+        preparationController.dispose();
+        agentController.dispose();
+      });
+
+      await tester.pumpWidget(
+        SpeakUpApp.preview(
+          agentController: agentController,
+          preparationController: preparationController,
+          preparationLaunchController: launchController,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _tapVisible(tester, find.byKey(const Key('primary-tab-scenes')));
+      await _openScene(tester, _progressScene.id);
+
+      expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
+      final firstPracticeThreadId = agentController.threadId!;
+      final firstSessionId = agentController.practiceSessionId!;
+      expect(firstPracticeThreadId, isNot(homeThreadId));
+      expect(
+        workspaceController.currentPracticeThreadId,
+        firstPracticeThreadId,
+      );
+      expect(workspaceController.currentSessionId, firstSessionId);
+      expect(agentController.threads, hasLength(2));
+
+      await _tapVisible(
+        tester,
+        find.byKey(const Key('immersive-open-keyboard')),
+      );
+      await tester.enterText(
+        find.byKey(const Key('immersive-text-answer')),
+        'The migration is on schedule, and I have isolated the main risk.',
+      );
+      await _tapVisible(tester, find.byKey(const Key('immersive-submit-text')));
+
+      expect(agentController.completedTurns, 1);
+      expect(agentController.practiceSessionVersion, 2);
+      expect(practiceClient.snapshotFor(firstSessionId)?.completedTurns, 1);
+
+      await _leavePractice(tester);
+
+      expect(find.byKey(const Key('immersive-roleplay-page')), findsNothing);
+      expect(find.byKey(const Key('practice-continuation')), findsNothing);
+      expect(agentController.threadId, homeThreadId);
+      expect(agentController.hasActivePractice, isFalse);
+      expect(workspaceController.hasResumable, isTrue);
+
+      await _tapVisible(tester, find.byKey(const Key('primary-tab-agent')));
+      await _tapVisible(
+        tester,
+        find.byKey(const Key('quick-action-continue-practice')),
+      );
+      await _waitForPracticePage(tester);
+
+      expect(agentController.threadId, firstPracticeThreadId);
+      expect(agentController.hasActivePractice, isTrue);
+      expect(workspaceController.errorMessage, isNull);
+      expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
+      expect(workspaceController.hasResumable, isTrue);
+
+      await _leavePractice(tester);
+      expect(agentController.threadId, homeThreadId);
+      await _tapVisible(
+        tester,
+        find.byKey(const Key('quick-action-continue-practice')),
+      );
+      await _waitForPracticePage(tester);
+
+      expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
+      expect(agentController.threadId, firstPracticeThreadId);
+      expect(agentController.practiceSessionId, firstSessionId);
+      expect(agentController.completedTurns, 1);
+      expect(agentController.practiceSessionVersion, 2);
+
+      await _leavePractice(tester);
+      expect(agentController.threadId, homeThreadId);
+
+      expect(await agentController.createThread(), isTrue);
+      final unrelatedPracticeThreadId = agentController.threadId!;
+      final unrelatedScene = testScene(
+        id: 'unrelated-practice',
+        name: '其他练习',
+        prompt: const ScenePrompt(
+          publicSceneBrief:
+              'A different active practice selected from history.',
+          practiceGoal: 'Complete a different practice.',
+          userRole: 'Learner',
+          aiRole: 'Coach',
+          personaSummary: 'Structured and focused.',
+          focusAreas: <String>['clarity'],
+          turnBlueprints: <String>['Ask one relevant question.'],
+          suggestedDurationSeconds: 600,
+        ),
+      );
+      final unrelatedGoal = await agentController.activateGoalForScene(
+        threadId: unrelatedPracticeThreadId,
+        scene: unrelatedScene,
+        clientOperationId: 'unrelated-legacy-goal',
+      );
+      practiceClient.armStart(
+        sessionId: 'unrelated-legacy-session',
+        planId: 'unrelated-legacy-plan',
+        scene: unrelatedScene,
+      );
+      await agentController.activateCreatedPractice(
+        threadId: unrelatedPracticeThreadId,
+        goalId: unrelatedGoal.id,
+        scene: unrelatedScene,
+        sessionId: 'unrelated-legacy-session',
+        planId: 'unrelated-legacy-plan',
+        turnLimit: 3,
+        clientOperationId: 'unrelated-legacy-voice',
+      );
+      await tester.pump();
+      expect(agentController.hasActivePractice, isTrue);
+      await _tapVisible(tester, find.byKey(const Key('primary-tab-scenes')));
+      await _openScene(tester, _progressScene.id);
+
+      expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
+      expect(agentController.threadId, firstPracticeThreadId);
+      expect(agentController.threadId, isNot(unrelatedPracticeThreadId));
+      expect(agentController.practiceSessionId, firstSessionId);
+      expect(agentController.completedTurns, 1);
+      expect(agentController.practiceSessionVersion, 2);
+
+      await _leavePractice(tester);
+      expect(agentController.threadId, homeThreadId);
+
+      expect(find.byKey(const Key('practice-continuation')), findsNothing);
+      await _openScene(tester, _progressScene.id);
+
+      expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
+      expect(find.text('开始新的练习？'), findsNothing);
+      expect(agentController.practiceSessionId, firstSessionId);
+      expect(agentController.completedTurns, 1);
+
+      await _leavePractice(tester);
+      expect(agentController.threadId, homeThreadId);
+
+      await _openScene(tester, _hotelScene.id);
+
+      expect(find.text('开始新的练习？'), findsOneWidget);
+      expect(find.text('开始“${_hotelScene.name}”'), findsOneWidget);
+      expect(practiceClient.endedSessionIds, isEmpty);
+
+      final replace = find.byKey(const Key('replace-existing-practice'));
+      expect(replace, findsOneWidget);
+      await tester.tap(replace);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.byKey(const Key('immersive-roleplay-page')), findsOneWidget);
+      expect(practiceClient.endedSessionIds, [firstSessionId]);
+      expect(practiceClient.snapshotFor(firstPracticeThreadId), isNull);
+      expect(agentController.threadId, isNot(firstPracticeThreadId));
+      expect(agentController.threadId, isNot(homeThreadId));
+      expect(agentController.practiceSessionId, isNot(firstSessionId));
+      expect(agentController.practiceSessionId, launchClient.sessionIds.last);
+      expect(agentController.completedTurns, 0);
+      expect(workspaceController.currentSceneId, _hotelScene.id);
+      expect(agentController.threads, hasLength(4));
+      expect(launchClient.sessionIds, hasLength(2));
+    },
+  );
+}
+
+Future<void> _openScene(WidgetTester tester, String sceneId) async {
+  await _tapVisible(tester, find.byKey(const Key('practice-hub-roleplay')));
+  final scene = find.byKey(Key('catalog-scene-$sceneId'));
+  expect(scene, findsOneWidget);
+  await tester.ensureVisible(scene);
+  await tester.pumpAndSettle();
+  await tester.tap(scene);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
+Future<void> _leavePractice(WidgetTester tester) async {
+  final backButton = find.descendant(
+    of: find.byKey(const Key('immersive-roleplay-page')),
+    matching: find.byKey(const Key('immersive-exit')),
+  );
+  expect(backButton, findsOneWidget);
+  await tester.tap(backButton);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _waitForPracticePage(WidgetTester tester) async {
+  final exit = find.descendant(
+    of: find.byKey(const Key('immersive-roleplay-page')),
+    matching: find.byKey(const Key('immersive-exit')),
+  );
+  for (var attempt = 0; attempt < 100 && exit.evaluate().isEmpty; attempt++) {
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+  expect(exit, findsOneWidget);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  expect(finder, findsOneWidget);
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+final class _LifecycleCatalogClient implements SceneClient {
+  @override
+  Future<SceneDefinition> getScene(String sceneId) async {
+    return switch (sceneId) {
+      _progressSceneId => _progressDetail,
+      _hotelSceneId => _hotelDetail,
+      _ => throw StateError('Unknown lifecycle scene: $sceneId'),
+    };
+  }
+
+  @override
+  Future<List<SceneDefinition>> listScenes() async {
+    return <SceneDefinition>[_progressScene, _hotelScene];
+  }
+
+  @override
+  Future<List<RoleDefinition>> listRoles(String sceneId) async {
+    return switch (sceneId) {
+      _progressSceneId => <RoleDefinition>[_progressRole],
+      _hotelSceneId => <RoleDefinition>[_hotelRole],
+      _ => throw StateError('Unknown lifecycle scene: $sceneId'),
+    };
+  }
+}
+
+final class _LifecycleLaunchClient implements PreparationLaunchClient {
+  final List<String> sessionIds = <String>[];
+  final Map<String, PreparationSnapshot> _snapshots =
+      <String, PreparationSnapshot>{};
+  int _profileSequence = 0;
+  int _snapshotSequence = 0;
+  int _planSequence = 0;
+  int _sessionSequence = 0;
+
+  @override
+  Future<void> clearAccountState() async {
+    sessionIds.clear();
+    _snapshots.clear();
+  }
+
+  @override
+  Future<PreparationProfile> createProfile({
+    required CreatePreparationProfileInput input,
+    required String idempotencyKey,
+  }) async {
+    final sequence = ++_profileSequence;
+    return PreparationProfile(
+      id: 'lifecycle-profile-$sequence',
+      userId: 'account-lifecycle-flow',
+      backgroundSummary: input.backgroundSummary,
+      version: 1,
+      updatedAt: DateTime.utc(2026, 7, 29, 8, sequence),
+    );
+  }
+
+  @override
+  Future<PreparationSnapshot> createSnapshot({
+    required String profileId,
+    required int sourceVersion,
+    required String idempotencyKey,
+  }) async {
+    final sequence = ++_snapshotSequence;
+    final snapshot = PreparationSnapshot(
+      id: 'lifecycle-snapshot-$sequence',
+      sourceProfileId: profileId,
+      sourceVersion: sourceVersion,
+      backgroundSnapshot: 'Lifecycle flow background $sequence',
+      createdAt: DateTime.utc(2026, 7, 29, 8, sequence),
+    );
+    _snapshots[snapshot.id] = snapshot;
+    return snapshot;
+  }
+
+  @override
+  Future<PracticePlan> createPlan({
+    required CreatePreparationPlanInput input,
+    required String idempotencyKey,
+  }) async {
+    final planId = 'lifecycle-plan-${++_planSequence}';
+    final snapshot = _snapshots[input.preparationSnapshotId];
+    final scene = switch (input.sceneId) {
+      _progressSceneId => _progressDetail,
+      _hotelSceneId => _hotelDetail,
+      _ => throw StateError('Unknown lifecycle Scene.'),
+    };
+    if (snapshot == null || scene.version != input.sceneVersion) {
+      throw StateError('Plan did not use its exact Preparation inputs.');
+    }
+    return PracticePlan(
+      id: planId,
+      userId: 'account-lifecycle-flow',
+      sourceThreadId: input.sourceThreadId,
+      goalSnapshot: PreparationGoalSnapshot(
+        id: input.goalId!,
+        title: scene.name,
+        version: 1,
+      ),
+      preparationSnapshot: snapshot,
+      sceneSelection: SceneSelectionSnapshot(
+        scene: scene,
+        selectedRoleIds: input.selectedRoleIds,
+        practiceOptionId: input.practiceOptionId,
+      ),
+      sessionPolicy: const PreparationSessionPolicy(
+        suggestedDurationSeconds: 600,
+        minEffectiveTurns: 1,
+        maxEffectiveTurns: 3,
+        coverageCheckpointTurn: 1,
+        maxFollowUpsPerQuestion: 1,
+        earlyCompletionRule: 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
+      ),
+      practiceObjectives: const <PracticeObjective>[
+        PracticeObjective(
+          id: 'clear_response',
+          description: 'Give a clear response.',
+        ),
+      ],
+      revision: 1,
+      status: PracticePlanStatus.ready,
+      createdAt: DateTime.utc(2026, 7, 29, 8, _planSequence),
+      updatedAt: DateTime.utc(2026, 7, 29, 8, _planSequence),
+    );
+  }
+
+  @override
+  Future<PreparationPracticeBootstrap> createSession({
+    required PracticePlan plan,
+    required CreatePreparationSessionInput input,
+    required String idempotencyKey,
+  }) async {
+    if (input.expectedPlanRevision != plan.revision || !input.userConfirmed) {
+      throw StateError('Session did not use its exact prepared plan.');
+    }
+    final sequence = ++_sessionSequence;
+    final sessionId = 'lifecycle-session-$sequence';
+    sessionIds.add(sessionId);
+    return PreparationPracticeBootstrap(
+      session: PreparationPracticeSession(
+        id: sessionId,
+        planId: plan.id,
+        sceneFamily: plan.sceneSelection.scene.family,
+        sceneModel: plan.sceneSelection.scene.model,
+        snapshotId: plan.preparationSnapshot.id,
+        status: 'starting',
+        version: 1,
+        createdAt: DateTime.utc(2026, 7, 29, 9, sequence),
+      ),
+      preparationSnapshotId: plan.preparationSnapshot.id,
+      maxEffectiveTurns: plan.sessionPolicy.maxEffectiveTurns,
+    );
+  }
+}
+
+final class _LifecyclePracticeClient
+    implements PracticeClient, PracticeLifecycleClient {
+  final Map<String, PracticeSessionSnapshot> _sessions =
+      <String, PracticeSessionSnapshot>{};
+  final List<String> endedSessionIds = <String>[];
+  _StartSeed? _nextStart;
+
+  PracticeSessionSnapshot? snapshotFor(String sessionId) =>
+      _sessions[sessionId];
+
+  void armStart({
+    required String sessionId,
+    required String planId,
+    required SceneDefinition scene,
+  }) {
+    _nextStart = _StartSeed(sessionId: sessionId, planId: planId, scene: scene);
+  }
+
+  @override
+  Future<void> clearAccountState() async {
+    _sessions.clear();
+    endedSessionIds.clear();
+    _nextStart = null;
+  }
+
+  @override
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) async {
+    return _sessions[sessionId] ??
+        (throw StateError('No exact lifecycle session was prepared.'));
+  }
+
+  @override
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
+    required String clientOperationId,
+  }) async {
+    final seed = _nextStart;
+    if (seed == null || seed.sessionId != sessionId) {
+      throw StateError('No exact lifecycle session was prepared.');
+    }
+    _nextStart = null;
+    final snapshot = PracticeSessionSnapshot(
+      sessionId: seed.sessionId,
+      planId: seed.planId,
+      sessionVersion: 1,
+      sceneFamily: seed.scene.family,
+      sceneModel: seed.scene.model,
+      completedTurns: 0,
+      turnLimit: 3,
+      sessionCompleted: false,
+      currentQuestion: PracticeQuestion(
+        id: 'question-${seed.sessionId}-1',
+        sessionId: seed.sessionId,
+        text: 'Please begin this practice in English.',
+      ),
+    );
+    _sessions[sessionId] = snapshot;
+    return snapshot;
+  }
+
+  @override
+  Future<PracticeSessionLifecycle> endEarly({
+    required String sessionId,
+    required int expectedSessionVersion,
+    required String idempotencyKey,
+  }) async {
+    final snapshot = _sessions[sessionId];
+    if (snapshot == null || snapshot.sessionVersion != expectedSessionVersion) {
+      throw StateError('The exact lifecycle session could not be ended.');
+    }
+    _sessions.remove(sessionId);
+    endedSessionIds.add(sessionId);
+    return PracticeSessionLifecycle(
+      sessionId: sessionId,
+      status: PracticeSessionLifecycleStatus.endedEarly,
+      version: expectedSessionVersion + 1,
+    );
+  }
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) async {
+    final current = _sessions[sessionId];
+    if (current == null) {
+      throw StateError('The exact lifecycle session was not active.');
+    }
+    if (current.currentQuestion?.id != questionId ||
+        current.sessionCompleted ||
+        answerText.trim().isEmpty) {
+      throw StateError('The submitted lifecycle turn was stale.');
+    }
+    final completedTurns = current.completedTurns + 1;
+    final sessionVersion = current.sessionVersion + 1;
+    final nextQuestion = PracticeQuestion(
+      id: 'question-$sessionId-${completedTurns + 1}',
+      sessionId: sessionId,
+      text: 'Please add one concrete example.',
+    );
+    _sessions[sessionId] = PracticeSessionSnapshot(
+      sessionId: current.sessionId,
+      planId: current.planId,
+      sessionVersion: sessionVersion,
+      sceneFamily: current.sceneFamily,
+      sceneModel: current.sceneModel,
+      completedTurns: completedTurns,
+      turnLimit: current.turnLimit,
+      sessionCompleted: false,
+      currentQuestion: nextQuestion,
+    );
+    return PracticeTurnConfirmation(
+      turnId: 'turn-$sessionId-$completedTurns',
+      sessionId: sessionId,
+      questionId: questionId,
+      candidateId: 'text-candidate-$sessionId-$completedTurns',
+      sceneFamily: current.sceneFamily,
+      sceneModel: current.sceneModel,
+      answer: AgentMessage(
+        id: 'answer-$sessionId-$completedTurns',
+        role: AgentMessageRole.user,
+        text: answerText.trim(),
+      ),
+      completedTurns: completedTurns,
+      turnLimit: current.turnLimit,
+      sessionCompleted: false,
+      sessionVersion: sessionVersion,
+      nextQuestion: nextQuestion,
+    );
+  }
+}
+
+final class _StartSeed {
+  const _StartSeed({
+    required this.sessionId,
+    required this.planId,
+    required this.scene,
+  });
+
+  final String sessionId;
+  final String planId;
+  final SceneDefinition scene;
+}
+
+const _progressSceneId = 'scn_workplace_progress_risk_update';
+const _hotelSceneId = 'scn_daily_hotel_checkin_issue';
+
+final _progressScene = testScene(
+  id: _progressSceneId,
+  family: SceneFamily.workplace,
+  model: SceneModel.progressAndRiskUpdate,
+  name: '项目进度同步',
+  version: 1,
+  prompt: _progressPrompt,
+);
+
+final _hotelScene = testScene(
+  id: _hotelSceneId,
+  family: SceneFamily.daily,
+  model: SceneModel.hotelCheckinAndIssueHandling,
+  name: '酒店入住与问题处理',
+  version: 1,
+  prompt: _hotelPrompt,
+);
+
+final _progressRole = testRole(
+  id: 'role-project-stakeholder',
+  sceneId: _progressSceneId,
+  type: 'STAKEHOLDER',
+  displayName: '项目协作方',
+  responsibilities: '追问当前进展、主要风险和行动计划。',
+  style: '直接、清晰。',
+  practiceObjectiveIds: <String>['progress', 'risk', 'next_steps'],
+);
+
+final _hotelRole = testRole(
+  id: 'role-hotel-receptionist',
+  sceneId: _hotelSceneId,
+  type: 'RECEPTIONIST',
+  displayName: '酒店前台',
+  responsibilities: '核对预订并帮助处理房间问题。',
+  style: '礼貌、专业。',
+  practiceObjectiveIds: <String>['check_in', 'issue_resolution'],
+);
+
+final _progressDetail = testScene(
+  id: _progressScene.id,
+  family: _progressScene.family,
+  model: _progressScene.model,
+  name: _progressScene.name,
+  version: _progressScene.version,
+  status: _progressScene.status,
+  turnPolicyRef: _progressScene.turnPolicyRef,
+  sessionPolicyRef: _progressScene.sessionPolicyRef,
+  prompt: _progressPrompt,
+  roles: <RoleDefinition>[_progressRole],
+  practiceOptions: <PracticeOption>[
+    testPracticeOption(
+      id: 'option-workplace-progress-full',
+      sceneId: _progressSceneId,
+      type: PracticeOptionType.fullSimulation,
+      displayName: '完整情景练习',
+    ),
+    testPracticeOption(
+      id: 'option-workplace-progress-focus',
+      sceneId: _progressSceneId,
+      roleId: 'role-project-stakeholder',
+      type: PracticeOptionType.focus,
+      displayName: '风险表达专项',
+    ),
+  ],
+);
+
+final _hotelDetail = testScene(
+  id: _hotelScene.id,
+  family: _hotelScene.family,
+  model: _hotelScene.model,
+  name: _hotelScene.name,
+  version: _hotelScene.version,
+  status: _hotelScene.status,
+  turnPolicyRef: _hotelScene.turnPolicyRef,
+  sessionPolicyRef: _hotelScene.sessionPolicyRef,
+  prompt: _hotelPrompt,
+  roles: <RoleDefinition>[_hotelRole],
+  practiceOptions: <PracticeOption>[
+    testPracticeOption(
+      id: 'option-hotel-checkin-full',
+      sceneId: _hotelSceneId,
+      type: PracticeOptionType.fullSimulation,
+      displayName: '完整情景练习',
+    ),
+    testPracticeOption(
+      id: 'option-hotel-checkin-focus',
+      sceneId: _hotelSceneId,
+      roleId: 'role-hotel-receptionist',
+      type: PracticeOptionType.focus,
+      displayName: '问题处理专项',
+    ),
+  ],
+);
+
+const _progressPrompt = ScenePrompt(
+  publicSceneBrief: '向协作方同步项目进度、风险和下一步。',
+  practiceGoal: '在一轮双向确认中表达清楚。',
+  userRole: '项目负责人',
+  aiRole: '项目协作方',
+  personaSummary: '关注事实、风险和行动。',
+  focusAreas: <String>['progress', 'risk'],
+  turnBlueprints: <String>['询问进度。', '追问风险与下一步。'],
+  suggestedDurationSeconds: 600,
+);
+
+const _hotelPrompt = ScenePrompt(
+  publicSceneBrief: '办理酒店入住并沟通一个房间问题。',
+  practiceGoal: '礼貌提出需求并确认解决方案。',
+  userRole: '住客',
+  aiRole: '酒店前台',
+  personaSummary: '专业并愿意协助。',
+  focusAreas: <String>['check_in', 'issue_resolution'],
+  turnBlueprints: <String>['核对预订。', '协商房间问题。'],
+  suggestedDurationSeconds: 480,
+);

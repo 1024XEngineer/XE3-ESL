@@ -1,17 +1,14 @@
 package voicehttp
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	practiceconversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpinput"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
@@ -23,14 +20,6 @@ import (
 
 const defaultReadTimeout = 15 * time.Second
 
-type ThreadReader interface {
-	GetThread(
-		context.Context,
-		requestcontext.Actor,
-		string,
-	) (agentconversation.Thread, error)
-}
-
 type Options struct {
 	AudioReadTimeout  time.Duration
 	SameQuestionRetry *practicevoice.SameQuestionRetryApplication
@@ -40,8 +29,6 @@ type Options struct {
 type Handler struct {
 	application *practicevoice.SessionApplication
 	retry       *practicevoice.SameQuestionRetryApplication
-	threads     ThreadReader
-	matters     matter.Reader
 	audioAssets practiceconversation.AudioAssetHTTPService
 	readTimeout time.Duration
 	errors      *httpresponse.Renderer
@@ -49,13 +36,10 @@ type Handler struct {
 
 func NewHandler(
 	application *practicevoice.SessionApplication,
-	threads ThreadReader,
-	matters matter.Reader,
 	options Options,
 	errorRenderer *httpresponse.Renderer,
 ) (*Handler, error) {
-	if application == nil || threads == nil || matters == nil ||
-		options.AudioReadTimeout < 0 {
+	if application == nil || options.AudioReadTimeout < 0 {
 		return nil, errors.New("practice voice: HTTP dependencies are required")
 	}
 	if options.AudioReadTimeout == 0 {
@@ -67,8 +51,6 @@ func NewHandler(
 	return &Handler{
 		application: application,
 		retry:       options.SameQuestionRetry,
-		threads:     threads,
-		matters:     matters,
 		audioAssets: options.AudioAssets,
 		readTimeout: options.AudioReadTimeout,
 		errors:      errorRenderer,
@@ -77,11 +59,11 @@ func NewHandler(
 
 func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST(
-		"/v1/agent-threads/:thread_id/voice-practice-sessions",
+		"/v1/practice-sessions/:practice_session_id/voice-activation",
 		handler.startSession,
 	)
 	routes.GET(
-		"/v1/agent-threads/:thread_id/voice-practice-session",
+		"/v1/practice-sessions/:practice_session_id/voice-state",
 		handler.resumeSession,
 	)
 	routes.POST(
@@ -140,21 +122,14 @@ func (handler *Handler) startSession(c *gin.Context) {
 		handler.write(c, authenticationRequired())
 		return
 	}
-	thread, err := handler.threads.GetThread(
-		c.Request.Context(), actor, c.Param("thread_id"),
-	)
-	if err != nil {
-		handler.write(c, mapThreadError(err))
-		return
-	}
 	state, err := handler.application.Start(
-		c.Request.Context(), actor, thread.ID, thread.ActiveMatterID, key,
+		c.Request.Context(), actor, c.Param("practice_session_id"), key,
 	)
 	if err != nil {
 		handler.write(c, mapError(err))
 		return
 	}
-	c.JSON(http.StatusCreated, SessionStateResponse(state))
+	c.JSON(http.StatusOK, SessionStateResponse(state))
 }
 
 func (handler *Handler) resumeSession(c *gin.Context) {
@@ -163,25 +138,11 @@ func (handler *Handler) resumeSession(c *gin.Context) {
 		handler.write(c, authenticationRequired())
 		return
 	}
-	thread, err := handler.threads.GetThread(
-		c.Request.Context(), actor, c.Param("thread_id"),
-	)
-	if err != nil {
-		handler.write(c, mapThreadError(err))
-		return
-	}
 	state, err := handler.application.Resume(
-		c.Request.Context(), actor, thread.ID, "",
+		c.Request.Context(), actor, c.Param("practice_session_id"),
 	)
 	if err != nil {
 		handler.write(c, mapError(err))
-		return
-	}
-	ownedMatter, err := handler.matters.ReadOwned(
-		c.Request.Context(), actor, state.Matter.ID,
-	)
-	if err != nil || ownedMatter.ID != state.Matter.ID {
-		handler.write(c, resourceNotFound(err))
 		return
 	}
 	c.JSON(http.StatusOK, SessionStateResponse(state))
@@ -355,10 +316,10 @@ func SessionStateResponse(state practicevoice.SessionState) gin.H {
 	result := gin.H{
 		"practice_session_id": state.Session.ID,
 		"practice_plan_id":    state.Session.PlanID,
-		"thread_id":           state.Session.ThreadID,
-		"scenario_type":       state.Session.ScenarioType,
-		"scenario_model":      state.Session.ScenarioModel,
-		"matter":              MatterResponse(state.Matter),
+		"scene_id":            state.Session.SceneID,
+		"scene_version":       state.Session.SceneVersion,
+		"scene_family":        state.Session.SceneFamily,
+		"scene_model":         state.Session.SceneModel,
 		"session_version":     state.Session.SessionVersion,
 		"effective_turns":     state.Session.EffectiveTurns,
 		"turn_limit":          state.Session.TurnLimit,
@@ -384,15 +345,6 @@ func SessionStateResponse(state practicevoice.SessionState) gin.H {
 		result["review"] = SessionReviewResponse(*state.Review)
 	}
 	return result
-}
-
-func MatterResponse(item matter.Matter) gin.H {
-	return gin.H{
-		"matter_id": item.ID, "title": item.Title, "status": item.Status,
-		"version":    item.Version,
-		"created_at": item.CreatedAt.UTC().Format(time.RFC3339Nano),
-		"updated_at": item.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	}
 }
 
 func QuestionResponse(question practiceconversation.VoiceQuestion) gin.H {
@@ -471,13 +423,6 @@ func SessionReviewResponse(item practicevoice.SessionReview) gin.H {
 		result["completed_at"] = item.CompletedAt.UTC().Format(time.RFC3339Nano)
 	}
 	return result
-}
-
-func mapThreadError(err error) error {
-	if errors.Is(err, agentconversation.ErrNotFound) {
-		return resourceNotFound(err)
-	}
-	return internalError(err)
 }
 
 func mapError(err error) error {

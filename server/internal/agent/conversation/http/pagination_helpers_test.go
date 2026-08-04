@@ -13,8 +13,8 @@ import (
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentconversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
@@ -145,26 +145,26 @@ func (database agentTestDatabase) reopen(t *testing.T) *pgxpool.Pool {
 func newAgentDataServices(
 	t *testing.T,
 	pool *pgxpool.Pool,
-) (*matter.Service, *agentconversation.Service) {
+) (*goal.Service, *agentconversation.Service) {
 	t.Helper()
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	repository, err := agentconversationpostgres.New(pool, ids)
 	if err != nil {
 		t.Fatalf("new Agent repository: %v", err)
 	}
-	service, err := agentconversation.NewService(repository, matterService)
+	service, err := agentconversation.NewService(repository, goalService)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
-	return matterService, service
+	return goalService, service
 }
 
 type authenticatorFunc func(

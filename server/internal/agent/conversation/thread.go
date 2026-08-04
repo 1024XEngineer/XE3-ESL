@@ -6,16 +6,16 @@ type Thread struct {
 	ID             string
 	OwnerID        string
 	Title          string
-	ActiveMatterID string
+	ActiveGoalID   string
 	NextMessageSeq int64
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
 
-type ThreadMatterLink struct {
+type ThreadGoalLink struct {
 	OwnerID   string
 	ThreadID  string
-	MatterID  string
+	GoalID    string
 	Active    bool
 	LinkedAt  time.Time
 	UpdatedAt time.Time

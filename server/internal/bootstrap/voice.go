@@ -16,11 +16,11 @@ import (
 	inputvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/qianwen"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	conversationpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -139,12 +139,10 @@ func NewSpeechSynthesizer(
 }
 
 func buildVoiceApplication(
-	matters matter.Reader,
 	configuration VoiceConfiguration,
 ) (*practicevoice.SessionApplication, error) {
 	ports := configuration.Ports
-	if matters == nil ||
-		configuration.Recognizer == nil ||
+	if configuration.Recognizer == nil ||
 		configuration.Synthesizer == nil ||
 		configuration.TemporaryAudio == nil ||
 		ports.ConversationStore == nil ||
@@ -186,14 +184,12 @@ func buildVoiceApplication(
 		ports.Checkpoints,
 		orchestrator,
 		ports.Reviews,
-		matters,
 	)
 }
 
 func buildProductionVoiceApplication(
 	database *pgxpool.Pool,
 	textGenerator ai.TextGenerator,
-	matters matter.Reader,
 	reviewRepository *review.PostgresRepository,
 	reviewHistory *review.HistoryService,
 	configuration VoiceConfiguration,
@@ -203,7 +199,7 @@ func buildProductionVoiceApplication(
 	*conversation.AudioAssetService,
 	error,
 ) {
-	if database == nil || textGenerator == nil || matters == nil ||
+	if database == nil || textGenerator == nil ||
 		reviewRepository == nil || reviewHistory == nil ||
 		configuration.Recognizer == nil ||
 		configuration.Synthesizer == nil ||
@@ -357,7 +353,6 @@ func buildProductionVoiceApplication(
 		checkpointAdapter,
 		orchestrator,
 		reviewAdapter,
-		matters,
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -366,27 +361,51 @@ func buildProductionVoiceApplication(
 }
 
 type voicePracticeAdapter struct {
-	repository practicepersistence.ContextVoiceRepository
+	repository voiceContextRepository
+}
+
+type voiceContextRepository interface {
+	GetContextSession(
+		context.Context,
+		practicepersistence.Actor,
+		string,
+	) (practicepersistence.ContextSession, error)
+	GetContextSessionSnapshot(
+		context.Context,
+		practicepersistence.Actor,
+		string,
+	) (practicepersistence.ContextSessionSnapshot, error)
+	ReplayContextVoiceStart(
+		context.Context,
+		practicepersistence.Actor,
+		practicepersistence.ContextIdempotencyIntent,
+	) (practicepersistence.ContextSessionBootstrap, bool, error)
+	ActivateContextSession(
+		context.Context,
+		practicepersistence.Actor,
+		string,
+		string,
+		practicepersistence.ContextIdempotencyIntent,
+	) (practicepersistence.ContextSessionBootstrap, error)
 }
 
 func (adapter *voicePracticeAdapter) Start(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	threadID string,
-	matterID string,
+	sessionID string,
 	idempotencyKey string,
 ) (practicevoice.Session, error) {
 	if adapter == nil || adapter.repository == nil ||
 		!actor.Valid() ||
-		strings.TrimSpace(threadID) == "" ||
+		strings.TrimSpace(sessionID) == "" ||
 		strings.TrimSpace(idempotencyKey) == "" {
 		return practicevoice.Session{}, practicevoice.ErrInvalidRequest
 	}
 	practiceActor := practiceActor(actor)
 	intent := practicepersistence.ContextIdempotencyIntent{
 		Method: "POST",
-		CanonicalPath: "/v1/agent-threads/" + threadID +
-			"/voice-practice-sessions",
+		CanonicalPath: "/v1/practice-sessions/" + sessionID +
+			"/voice-activation",
 		Key:                idempotencyKey,
 		PayloadFingerprint: sha256.Sum256(nil),
 	}
@@ -399,81 +418,37 @@ func (adapter *voicePracticeAdapter) Start(
 		return practicevoice.Session{}, mapPracticeError(err)
 	}
 	if found {
-		return adapter.mapContextPracticeSession(
-			ctx,
-			practiceActor,
-			replayed,
-			actor.UserID,
-			threadID,
-			"",
-		)
+		if replayed.Session.ID != sessionID {
+			return practicevoice.Session{}, practicevoice.ErrIdempotencyConflict
+		}
+		return mapContextPracticeSession(replayed, actor.UserID)
 	}
-	var resolved practicepersistence.ContextSessionBootstrap
-	if strings.TrimSpace(matterID) == "" {
-		resolved, err = adapter.repository.ResolveContextSessionByThread(
-			ctx,
-			practiceActor,
-			threadID,
-		)
-	} else {
-		resolved, err = adapter.repository.ResolveContextSession(
-			ctx,
-			practiceActor,
-			threadID,
-			matterID,
-		)
-	}
+	session, err := adapter.repository.GetContextSession(
+		ctx,
+		practiceActor,
+		sessionID,
+	)
 	if err != nil {
 		return practicevoice.Session{}, mapPracticeError(err)
+	}
+	if session.ID != sessionID || strings.TrimSpace(session.PlanID) == "" {
+		return practicevoice.Session{}, practicevoice.ErrInvalidContext
 	}
 	activated, err := adapter.repository.ActivateContextSession(
 		ctx,
 		practiceActor,
-		resolved.Session.ID,
-		threadID,
-		matterID,
+		sessionID,
+		session.PlanID,
 		intent,
 	)
 	if err != nil {
 		return practicevoice.Session{}, mapPracticeError(err)
 	}
-	return adapter.mapContextPracticeSession(
-		ctx,
-		practiceActor,
-		activated,
-		actor.UserID,
-		threadID,
-		matterID,
-	)
-}
-
-func (adapter *voicePracticeAdapter) GetByThread(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	threadID string,
-	matterID string,
-) (practicevoice.Session, error) {
-	if adapter == nil || adapter.repository == nil || !actor.Valid() ||
-		strings.TrimSpace(threadID) == "" {
-		return practicevoice.Session{}, practicevoice.ErrInvalidRequest
+	if activated.Session.ID != sessionID ||
+		activated.Session.PlanID != session.PlanID {
+		return practicevoice.Session{}, practicevoice.ErrInvalidContext
 	}
-	practiceActor := practiceActor(actor)
-	resolved, err := adapter.repository.ResolveContextSessionByThread(
-		ctx,
-		practiceActor,
-		threadID,
-	)
-	if err != nil {
-		return practicevoice.Session{}, mapPracticeError(err)
-	}
-	return adapter.mapContextPracticeSession(
-		ctx,
-		practiceActor,
-		resolved,
-		actor.UserID,
-		threadID,
-		"",
-	)
+	return mapContextPracticeSession(activated, actor.UserID)
 }
 
 func (adapter *voicePracticeAdapter) GetByID(
@@ -502,44 +477,12 @@ func (adapter *voicePracticeAdapter) GetByID(
 	if err != nil {
 		return practicevoice.Session{}, mapPracticeError(err)
 	}
-	plan, err := adapter.repository.GetPlan(ctx, practiceActor, session.PlanID)
-	if err != nil {
-		return practicevoice.Session{}, mapPracticeError(err)
-	}
 	return mapContextPracticeSession(
 		practicepersistence.ContextSessionBootstrap{
 			Session:  session,
 			Snapshot: snapshot,
 		},
-		plan,
 		actor.UserID,
-		"",
-		"",
-	)
-}
-
-func (adapter *voicePracticeAdapter) mapContextPracticeSession(
-	ctx context.Context,
-	actor practicepersistence.Actor,
-	bootstrap practicepersistence.ContextSessionBootstrap,
-	actorUserID string,
-	threadID string,
-	matterID string,
-) (practicevoice.Session, error) {
-	plan, err := adapter.repository.GetPlan(
-		ctx,
-		actor,
-		bootstrap.Session.PlanID,
-	)
-	if err != nil {
-		return practicevoice.Session{}, mapPracticeError(err)
-	}
-	return mapContextPracticeSession(
-		bootstrap,
-		plan,
-		actorUserID,
-		threadID,
-		matterID,
 	)
 }
 
@@ -552,53 +495,34 @@ func practiceActor(actor requestcontext.Actor) practicepersistence.Actor {
 
 func mapContextPracticeSession(
 	bootstrap practicepersistence.ContextSessionBootstrap,
-	plan practicepersistence.Plan,
 	actorUserID string,
-	threadID string,
-	matterID string,
 ) (practicevoice.Session, error) {
 	session := bootstrap.Session
 	snapshot := bootstrap.Snapshot
-	if plan.ID == "" ||
-		plan.UserID != actorUserID ||
-		plan.ID != session.PlanID ||
-		!validMappedContextVoicePlanStatus(plan.Status, session.Status) ||
+	selection := snapshot.SceneSelection
+	if session.ID == "" ||
+		session.PlanID == "" ||
+		session.PlanRevision < 1 ||
 		snapshot.ID != session.SnapshotID ||
 		snapshot.SessionID != session.ID ||
-		snapshot.ScenarioType != session.ScenarioType ||
-		snapshot.ScenarioModel != session.ScenarioModel ||
-		snapshot.PlanRevision != plan.Revision ||
-		snapshot.ScenarioDefinition.ID != plan.ScenarioDefinitionID ||
-		snapshot.ScenarioDefinition.Version !=
-			plan.ScenarioDefinitionVersion ||
-		snapshot.ScenarioConfig.ID != plan.ScenarioConfigID ||
-		snapshot.ScenarioConfig.Version != plan.ScenarioConfigVersion ||
-		snapshot.Preparation.SourceProfileID !=
-			plan.PreparationProfileID ||
-		(threadID != "" && plan.AgentThreadID != threadID) ||
-		(matterID != "" && plan.MatterID != matterID) {
+		snapshot.PlanRevision != session.PlanRevision ||
+		snapshot.SceneFamily != session.SceneFamily ||
+		snapshot.SceneModel != session.SceneModel ||
+		selection.Scene.ID == "" ||
+		selection.Scene.Version < 1 ||
+		selection.Scene.Family != session.SceneFamily ||
+		selection.Scene.Model != session.SceneModel ||
+		len(selection.SelectedRoleIDs) == 0 {
 		return practicevoice.Session{}, practicevoice.ErrInvalidContext
 	}
 	result := practicevoice.Session{
-		ID:            session.ID,
-		PlanID:        session.PlanID,
-		ThreadID:      plan.AgentThreadID,
-		MatterID:      plan.MatterID,
-		ScenarioType:  string(snapshot.ScenarioType),
-		ScenarioModel: string(snapshot.ScenarioModel),
-		PromptModel: practicevoice.ScenarioPrompt{
-			PublicSceneBrief: snapshot.ScenarioConfig.PromptModel.PublicSceneBrief,
-			PracticeGoal:     snapshot.ScenarioConfig.PromptModel.PracticeGoal,
-			UserRole:         snapshot.ScenarioConfig.PromptModel.UserRole,
-			AIRole:           snapshot.ScenarioConfig.PromptModel.AIRole,
-			PersonaSummary:   snapshot.ScenarioConfig.PromptModel.PersonaSummary,
-			FocusAreas: slices.Clone(
-				snapshot.ScenarioConfig.PromptModel.FocusAreas,
-			),
-			TurnBlueprints: slices.Clone(
-				snapshot.ScenarioConfig.PromptModel.TurnBlueprints,
-			),
-		},
+		ID:                      session.ID,
+		PlanID:                  session.PlanID,
+		SceneID:                 selection.Scene.ID,
+		SceneVersion:            selection.Scene.Version,
+		SceneFamily:             string(snapshot.SceneFamily),
+		SceneModel:              string(snapshot.SceneModel),
+		Prompt:                  cloneVoiceScenePrompt(selection.Scene.Prompt),
 		SessionVersion:          session.Version,
 		EffectiveTurns:          session.EffectiveTurns,
 		TurnLimit:               snapshot.SessionPolicy.MaxEffectiveTurns,
@@ -609,12 +533,18 @@ func mapContextPracticeSession(
 	}
 	participantIDs := make(map[string]struct{}, len(snapshot.Participants))
 	participantOrders := make(map[int]struct{}, len(snapshot.Participants))
-	interviewerRoles := make(map[string]struct{})
-	selectedRoles := make(map[string]struct{}, len(plan.SelectedRoleIDs))
-	for _, roleID := range plan.SelectedRoleIDs {
+	facilitatorRoles := make(map[string]struct{})
+	selectedRoles := make(map[string]struct{}, len(selection.SelectedRoleIDs))
+	for _, roleID := range selection.SelectedRoleIDs {
+		if strings.TrimSpace(roleID) == "" {
+			return practicevoice.Session{}, practicevoice.ErrInvalidContext
+		}
+		if _, duplicate := selectedRoles[roleID]; duplicate {
+			return practicevoice.Session{}, practicevoice.ErrInvalidContext
+		}
 		selectedRoles[roleID] = struct{}{}
 	}
-	interviewerOrder := 0
+	facilitatorOrder := 0
 	for _, participant := range snapshot.Participants {
 		if participant.ID == "" ||
 			participant.SessionID != session.ID ||
@@ -630,7 +560,7 @@ func mapContextPracticeSession(
 		participantIDs[participant.ID] = struct{}{}
 		participantOrders[participant.Order] = struct{}{}
 		switch participant.Role {
-		case "FACILITATOR", "INTERVIEWER":
+		case "FACILITATOR":
 			if participant.SubjectRef.Namespace != "speakup.role" ||
 				participant.SubjectRef.SubjectID !=
 					participant.RoleDefinitionID ||
@@ -643,31 +573,31 @@ func mapContextPracticeSession(
 			if _, selected := selectedRoles[participant.RoleDefinitionID]; !selected {
 				return practicevoice.Session{}, practicevoice.ErrInvalidContext
 			}
-			if _, duplicate := interviewerRoles[participant.RoleDefinitionID]; duplicate {
+			if _, duplicate := facilitatorRoles[participant.RoleDefinitionID]; duplicate {
 				return practicevoice.Session{}, practicevoice.ErrInvalidContext
 			}
-			interviewerRoles[participant.RoleDefinitionID] = struct{}{}
-			if result.InterviewerParticipantID == "" ||
-				participant.Order < interviewerOrder {
-				result.InterviewerParticipantID = participant.ID
-				interviewerOrder = participant.Order
+			facilitatorRoles[participant.RoleDefinitionID] = struct{}{}
+			if result.FacilitatorParticipantID == "" ||
+				participant.Order < facilitatorOrder {
+				result.FacilitatorParticipantID = participant.ID
+				facilitatorOrder = participant.Order
 			}
-		case "LEARNER", "CANDIDATE":
-			if result.CandidateParticipantID != "" ||
+		case "LEARNER":
+			if result.LearnerParticipantID != "" ||
 				participant.SubjectRef.Namespace != "speakup.user" ||
 				participant.SubjectRef.SubjectID != actorUserID ||
 				participant.RoleDefinitionID != "" ||
 				participant.RoleSnapshot != nil {
 				return practicevoice.Session{}, practicevoice.ErrNotFound
 			}
-			result.CandidateParticipantID = participant.ID
+			result.LearnerParticipantID = participant.ID
 		default:
 			return practicevoice.Session{}, practicevoice.ErrInvalidContext
 		}
 	}
-	if result.InterviewerParticipantID == "" ||
-		result.CandidateParticipantID == "" ||
-		len(interviewerRoles) != len(selectedRoles) ||
+	if result.FacilitatorParticipantID == "" ||
+		result.LearnerParticipantID == "" ||
+		len(facilitatorRoles) != len(selectedRoles) ||
 		result.TurnLimit < 1 ||
 		result.TurnLimit > 14 ||
 		result.EffectiveTurns < 0 ||
@@ -681,16 +611,11 @@ func mapContextPracticeSession(
 	return result, nil
 }
 
-func validMappedContextVoicePlanStatus(
-	planStatus practicepersistence.PlanStatus,
-	sessionStatus practicepersistence.ContextSessionStatus,
-) bool {
-	if planStatus == practicepersistence.PlanStatusReady {
-		return true
-	}
-	return planStatus == practicepersistence.PlanStatusArchived &&
-		(sessionStatus == practicepersistence.ContextSessionCompleted ||
-			sessionStatus == practicepersistence.ContextSessionEndedEarly)
+func cloneVoiceScenePrompt(source scene.ScenePrompt) scene.ScenePrompt {
+	result := source
+	result.FocusAreas = slices.Clone(source.FocusAreas)
+	result.TurnBlueprints = slices.Clone(source.TurnBlueprints)
+	return result
 }
 
 func validMappedContextVoiceLifecycle(
@@ -1304,7 +1229,7 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 	var request ai.TextRequest
 	parentQuestionID := ""
 	followUpAllowed := false
-	if session.ScenarioType == "INTERVIEW" &&
+	if session.SceneFamily == "INTERVIEW" &&
 		session.MaxFollowUpsPerQuestion > 0 && sequence > 1 {
 		lister, ok := adapter.repository.(voiceSessionQuestionLister)
 		if !ok {
@@ -1335,13 +1260,13 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 	}
 	content := ""
 	questionType := "PRIMARY"
-	if isFrozenIELTSSpeakingModel(session.ScenarioModel) {
+	if isFrozenIELTSSpeakingModel(session.SceneModel) {
 		content, err = frozenIELTSFullMockQuestion(session, sequence)
 	} else {
 		var generated ai.TextResult
 		generated, err = adapter.generator.Generate(ctx, request)
 		content = strings.TrimSpace(generated.Content)
-		if err == nil && session.ScenarioType == "INTERVIEW" &&
+		if err == nil && session.SceneFamily == "INTERVIEW" &&
 			session.MaxFollowUpsPerQuestion > 0 && sequence > 1 {
 			var decision generatedInterviewQuestion
 			if decodeErr := json.Unmarshal([]byte(content), &decision); decodeErr != nil {
@@ -1373,8 +1298,8 @@ func (adapter *voiceQuestionAdapter) EnsureQuestion(
 		conversationpersistence.PersistentQuestion{
 			ID:                      questionID,
 			SessionID:               session.ID,
-			SpeakerParticipantID:    session.InterviewerParticipantID,
-			AddresseeParticipantIDs: []string{session.CandidateParticipantID},
+			SpeakerParticipantID:    session.FacilitatorParticipantID,
+			AddresseeParticipantIDs: []string{session.LearnerParticipantID},
 			ObjectiveID:             voiceQuestionObjective,
 			Type:                    questionType,
 			ParentQuestionID:        parentQuestionID,
@@ -1437,7 +1362,7 @@ func frozenIELTSFullMockQuestion(
 	session practicevoice.Session,
 	sequence int,
 ) (string, error) {
-	blueprints := session.PromptModel.TurnBlueprints
+	blueprints := session.Prompt.TurnBlueprints
 	if sequence < 1 || sequence > len(blueprints) {
 		return "", practicevoice.ErrInvalidContext
 	}
@@ -1453,10 +1378,10 @@ func voiceQuestionRequest(
 	session practicevoice.Session,
 	sequence int,
 ) (ai.TextRequest, error) {
-	prompt := session.PromptModel
+	prompt := session.Prompt
 	if sequence < 1 || sequence > session.TurnLimit ||
-		strings.TrimSpace(session.ScenarioType) == "" ||
-		strings.TrimSpace(session.ScenarioModel) == "" ||
+		strings.TrimSpace(session.SceneFamily) == "" ||
+		strings.TrimSpace(session.SceneModel) == "" ||
 		strings.TrimSpace(prompt.PublicSceneBrief) == "" ||
 		strings.TrimSpace(prompt.PracticeGoal) == "" ||
 		strings.TrimSpace(prompt.UserRole) == "" ||
@@ -1471,8 +1396,8 @@ func voiceQuestionRequest(
 		blueprintIndex = len(prompt.TurnBlueprints) - 1
 	}
 	contextParts := []string{
-		fmt.Sprintf("Scenario family: %s.", session.ScenarioType),
-		fmt.Sprintf("Scenario model: %s.", session.ScenarioModel),
+		fmt.Sprintf("Scenario family: %s.", session.SceneFamily),
+		fmt.Sprintf("Scenario model: %s.", session.SceneModel),
 		fmt.Sprintf("Scene: %s", prompt.PublicSceneBrief),
 		fmt.Sprintf("Practice goal: %s", prompt.PracticeGoal),
 		fmt.Sprintf("Learner role: %s", prompt.UserRole),
@@ -1483,12 +1408,6 @@ func voiceQuestionRequest(
 			"Current turn blueprint: %s",
 			prompt.TurnBlueprints[blueprintIndex],
 		),
-	}
-	if title := strings.TrimSpace(session.MatterTitle); title != "" {
-		contextParts = append(
-			contextParts,
-			fmt.Sprintf("Optional learner context: %s", title),
-		)
 	}
 	if answer := strings.TrimSpace(session.PreviousUserResponse); answer != "" {
 		contextParts = append(
@@ -1523,7 +1442,7 @@ func voiceInterviewQuestionRequest(
 	sequence int,
 	followUpAllowed bool,
 ) (ai.TextRequest, error) {
-	prompt := session.PromptModel
+	prompt := session.Prompt
 	maxQuestions := session.TurnLimit * (session.MaxFollowUpsPerQuestion + 1)
 	if sequence < 2 || sequence > maxQuestions ||
 		session.EffectiveTurns < 1 ||
@@ -1856,8 +1775,8 @@ func (adapter *voiceCompletionEvaluationAdapter) EnsureCompletedSessionEvaluatio
 		session.EffectiveTurns > session.TurnLimit {
 		return practicevoice.ErrInvalidContext
 	}
-	if session.ScenarioType == string(
-		practicepersistence.ScenarioFamilyInterview,
+	if session.SceneFamily == string(
+		scene.SceneFamilyInterview,
 	) {
 		if adapter.interviewShadow == nil {
 			return errors.New(
@@ -1871,10 +1790,10 @@ func (adapter *voiceCompletionEvaluationAdapter) EnsureCompletedSessionEvaluatio
 		)
 		return err
 	}
-	if session.ScenarioType != string(
-		practicepersistence.ScenarioFamilyExam,
-	) || session.ScenarioModel != string(
-		practicepersistence.ScenarioModelIELTSSpeakingFullMock,
+	if session.SceneFamily != string(
+		scene.SceneFamilyExam,
+	) || session.SceneModel != string(
+		scene.SceneModelIELTSSpeakingFullMock,
 	) {
 		return nil
 	}
@@ -2281,10 +2200,10 @@ func reviewEvaluationContextForSnapshot(
 	snapshot practicepersistence.ContextSessionSnapshot,
 ) (review.EvaluationContext, error) {
 	hasTurnPolicy := strings.TrimSpace(
-		snapshot.ScenarioDefinition.TurnPolicyRef,
+		snapshot.SceneSelection.Scene.TurnPolicyRef,
 	) != ""
 	hasSessionPolicy := strings.TrimSpace(
-		snapshot.ScenarioDefinition.SessionPolicyRef,
+		snapshot.SceneSelection.Scene.SessionPolicyRef,
 	) != ""
 	if hasTurnPolicy != hasSessionPolicy {
 		return review.EvaluationContext{}, review.ErrInvalidReview
@@ -2302,22 +2221,26 @@ func reviewEvaluationContext(
 	if err != nil {
 		return review.EvaluationContext{}, err
 	}
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil {
+		return review.EvaluationContext{}, review.ErrInvalidReview
+	}
 	assistanceRef := "assistance.focused.v1"
-	if snapshot.PracticeOption.Type == "FULL_SIMULATION" {
+	if option.Type == scene.PracticeOptionFullSimulation {
 		assistanceRef = "assistance.none.v1"
 	}
 	value := review.EvaluationContext{
-		SchemaVersion:             review.EvaluationContextSchemaVersion,
-		ContextType:               contextType,
-		SceneKey:                  snapshot.ScenarioDefinition.ID,
-		ScenarioDefinitionID:      snapshot.ScenarioDefinition.ID,
-		ScenarioDefinitionVersion: snapshot.ScenarioDefinition.Version,
-		PracticeOptionType:        snapshot.PracticeOption.Type,
-		DifficultyRef:             "difficulty.standard.v1",
-		AssistanceRef:             assistanceRef,
-		TurnPolicyRef:             snapshot.ScenarioDefinition.TurnPolicyRef,
-		SessionPolicyRef:          snapshot.ScenarioDefinition.SessionPolicyRef,
-		SceneSpecificContext:      sceneSpecific,
+		SchemaVersion:        review.EvaluationContextSchemaVersion,
+		ContextType:          contextType,
+		SceneKey:             snapshot.SceneSelection.Scene.ID,
+		SceneID:              snapshot.SceneSelection.Scene.ID,
+		SceneVersion:         snapshot.SceneSelection.Scene.Version,
+		PracticeOptionType:   string(option.Type),
+		DifficultyRef:        "difficulty.standard.v1",
+		AssistanceRef:        assistanceRef,
+		TurnPolicyRef:        snapshot.SceneSelection.Scene.TurnPolicyRef,
+		SessionPolicyRef:     snapshot.SceneSelection.Scene.SessionPolicyRef,
+		SceneSpecificContext: sceneSpecific,
 	}
 	if err := value.Validate(review.DefaultPolicyRegistry()); err != nil {
 		return review.EvaluationContext{}, review.ErrInvalidReview
@@ -2332,9 +2255,13 @@ func reviewSceneSpecificContext(
 	review.SceneSpecificContext,
 	error,
 ) {
-	prompt := snapshot.ScenarioConfig.PromptModel
-	switch snapshot.ScenarioModel {
-	case practicepersistence.ScenarioModelProjectExperienceDeepDive:
+	option, err := snapshot.SceneSelection.PracticeOption()
+	if err != nil {
+		return "", review.SceneSpecificContext{}, review.ErrInvalidReview
+	}
+	prompt := snapshot.SceneSelection.Scene.Prompt
+	switch snapshot.SceneModel {
+	case scene.SceneModelProjectExperienceDeepDive:
 		projectBrief := strings.TrimSpace(snapshot.Preparation.BackgroundSnapshot)
 		if projectBrief == "" {
 			projectBrief = prompt.PublicSceneBrief
@@ -2352,7 +2279,7 @@ func reviewSceneSpecificContext(
 				),
 			},
 		}, nil
-	case practicepersistence.ScenarioModelIELTSSpeakingPart2:
+	case scene.SceneModelIELTSSpeakingPart2:
 		contextType := review.ContextIELTSSpeakingPart2
 		return contextType, review.SceneSpecificContext{
 			Type: contextType,
@@ -2363,11 +2290,11 @@ func reviewSceneSpecificContext(
 					[]string(nil),
 					prompt.FocusAreas...,
 				),
-				StrictSimulation: snapshot.PracticeOption.Type ==
-					"FULL_SIMULATION",
+				StrictSimulation: option.Type ==
+					scene.PracticeOptionFullSimulation,
 			},
 		}, nil
-	case practicepersistence.ScenarioModelProgressAndRiskUpdate:
+	case scene.SceneModelProgressAndRiskUpdate:
 		contextType := review.ContextWorkplaceProgressRisk
 		return contextType, review.SceneSpecificContext{
 			Type: contextType,
@@ -2381,7 +2308,7 @@ func reviewSceneSpecificContext(
 				),
 			},
 		}, nil
-	case practicepersistence.ScenarioModelHotelCheckinAndIssueHandling:
+	case scene.SceneModelHotelCheckinAndIssueHandling:
 		if len(prompt.TurnBlueprints) == 0 {
 			return "", review.SceneSpecificContext{},
 				review.ErrInvalidReview

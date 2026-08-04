@@ -42,7 +42,7 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 	}
 	manifests := &fakeCompletedAgentManifestReader{
 		manifest: agentcontext.Manifest{
-			ActiveMatterID: "60000000-0000-4000-8000-000000000001",
+			ActiveGoalID: "60000000-0000-4000-8000-000000000001",
 		},
 	}
 	reader, err := newAgentCompletedRunReader(
@@ -64,7 +64,7 @@ func TestAgentCompletedRunReaderProjectsOwnedSource(t *testing.T) {
 	if !source.Valid() ||
 		source.UserText != "I am a Java backend engineer." ||
 		source.AssistantText != "I will tailor the practice." ||
-		source.MatterID != manifests.manifest.ActiveMatterID {
+		source.GoalID != manifests.manifest.ActiveGoalID {
 		t.Fatalf("source = %#v", source)
 	}
 }

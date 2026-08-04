@@ -1,3 +1,5 @@
+import '../support/scene_fixtures.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -33,7 +35,7 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      await controller.initialize();
+      await _initialize(controller);
 
       expect(controller.recordings.map((recording) => recording.audioAssetId), [
         'audio-latest',
@@ -60,7 +62,7 @@ void main() {
       player: player,
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initialize(controller);
 
     await controller.toggleRecordingAudio('audio-1');
     await controller.toggleRecordingAudio('audio-1');
@@ -82,7 +84,7 @@ void main() {
         player: player,
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
+      await _initialize(controller);
       await controller.startRecording();
 
       expect(controller.recordingState, PracticeRecordingState.recording);
@@ -113,7 +115,7 @@ void main() {
         audioPlayer: player,
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
+      await _initialize(controller);
       await controller.toggleQuestionAudio();
       final stopGate = player.nextStopGate = Completer<void>();
 
@@ -139,7 +141,7 @@ void main() {
       player: player,
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initialize(controller);
     await controller.toggleQuestionAudio();
     expect(controller.isQuestionAudioPlaying, isTrue);
 
@@ -167,7 +169,7 @@ void main() {
       addTearDown(
         () => binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed),
       );
-      await controller.initialize();
+      await _initialize(controller);
 
       final playback = controller.toggleQuestionAudio();
       await media.questionStarted.future;
@@ -202,7 +204,7 @@ void main() {
         player: _AudioPlayer(),
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
+      await _initialize(controller);
 
       await controller.deleteRecording('audio-1');
 
@@ -221,7 +223,7 @@ void main() {
       player: player,
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initialize(controller);
 
     final playback = controller.toggleRecordingAudio('audio-1');
     await media.recordingStarted.future;
@@ -249,7 +251,7 @@ void main() {
         player: _AudioPlayer(),
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
+      await _initialize(controller);
 
       final deletion = controller.deleteRecording('audio-1');
       await media.deleteStarted.future;
@@ -275,7 +277,7 @@ void main() {
         player: player,
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
+      await _initialize(controller);
 
       await expectLater(
         controller.clearPrivateState(),
@@ -300,7 +302,7 @@ void main() {
         player: player,
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
+      await _initialize(controller);
 
       final playback = controller.toggleRecordingAudio('audio-1');
       await media.recordingStarted.future;
@@ -331,7 +333,7 @@ void main() {
       player: player,
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initialize(controller);
 
     await controller.toggleRecordingAudio('audio-1');
 
@@ -353,7 +355,7 @@ void main() {
       player: _AudioPlayer(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initialize(controller);
 
     await tester.pumpWidget(
       MediaQuery(
@@ -403,7 +405,7 @@ void main() {
       player: _AudioPlayer(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initialize(controller);
 
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: controller)),
@@ -424,7 +426,7 @@ void main() {
       player: _AudioPlayer(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initialize(controller);
     await controller.startRecording();
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: controller)),
@@ -458,7 +460,7 @@ void main() {
       player: _AudioPlayer(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initialize(controller);
 
     await tester.pumpWidget(
       MaterialApp(home: ReviewPage(agentController: controller)),
@@ -497,7 +499,7 @@ void main() {
       player: _AudioPlayer(),
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initialize(controller);
 
     await tester.pumpWidget(
       MaterialApp(home: ReviewPage(agentController: controller)),
@@ -572,7 +574,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     addTearDown(historyController.dispose);
-    await controller.initialize();
+    await _initialize(controller);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -596,7 +598,7 @@ void main() {
       reviewId: 'review-2',
       sessionId: 'session-2',
     );
-    await controller.initialize();
+    await _initialize(controller);
     await tester.pumpAndSettle();
 
     expect(controller.review?.id, 'review-2');
@@ -612,6 +614,20 @@ void main() {
     );
     expect(find.byKey(const Key('practice-recordings-card')), findsNothing);
   });
+}
+
+Future<void> _initialize(AgentController controller) async {
+  await controller.initialize();
+  final practice = controller.practiceClient! as _SnapshotPracticeClient;
+  await controller.activateGoalForScene(
+    threadId: controller.threadId!,
+    scene: testScenes.first,
+    clientOperationId: 'bind-media-practice-scene',
+  );
+  await controller.restoreCreatedPractice(
+    sessionId: practice.snapshot.sessionId,
+    scene: testScenes.first,
+  );
 }
 
 AgentController _controller({
@@ -630,7 +646,10 @@ AgentController _controller({
 PracticeSessionSnapshot _activeSnapshot({required String audioAssetId}) {
   return PracticeSessionSnapshot(
     sessionId: 'session-1',
-    matter: AgentMatter(id: 'matter-1', scene: agentScenes.first),
+    planId: 'plan-1',
+    sceneFamily: testScenes.first.family,
+    sceneModel: testScenes.first.model,
+    sessionVersion: 1,
     completedTurns: 1,
     turnLimit: 2,
     sessionCompleted: false,
@@ -662,7 +681,10 @@ PracticeSessionSnapshot _completedSnapshot({
 }) {
   return PracticeSessionSnapshot(
     sessionId: sessionId,
-    matter: AgentMatter(id: 'matter-1', scene: agentScenes.first),
+    planId: 'plan-$sessionId',
+    sceneFamily: testScenes.first.family,
+    sceneModel: testScenes.first.model,
+    sessionVersion: 1,
     completedTurns: 2,
     turnLimit: 2,
     sessionCompleted: true,
@@ -698,17 +720,15 @@ final class _SnapshotPracticeClient implements PracticeClient {
   Future<void> clearAccountState() async {}
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
   }) async => snapshot;
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
-  }) async => PracticeStartResult(snapshot: snapshot);
+  }) async => snapshot;
 
   @override
   Future<TranscriptionCandidate> transcribe(

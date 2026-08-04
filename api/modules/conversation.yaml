@@ -1,18 +1,17 @@
 paths:
-  /v1/agent-threads/{thread_id}/voice-practice-sessions:
+  /v1/practice-sessions/{practice_session_id}/voice-activation:
     post:
       tags:
         - Conversation
-      summary: Start or return the Thread's targeted voice Practice Session
+      summary: Activate an existing Practice Session for voice interaction
       description: |
-        Requires an authenticated Actor and a Thread with an owned active
-        Matter. The server freezes that Thread/Matter association, one
-        INTERVIEWER and the Actor's `speakup.user` CANDIDATE participant in the
-        Practice Snapshot. The empty request is idempotent and never accepts a
-        user, participant, Matter, question, or transcript from the client.
-      operationId: startThreadVoicePracticeSession
+        Activates the exact Actor-owned Practice Session created from a
+        confirmed Practice Plan. The empty request is idempotent and never
+        infers a Plan from Agent Thread state or accepts a participant,
+        question, transcript, Scene, or policy from the client.
+      operationId: activatePracticeVoiceSession
       parameters:
-        - $ref: '#/components/parameters/ThreadId'
+        - $ref: '#/components/parameters/PracticeSessionId'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
@@ -31,19 +30,17 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/agent-threads/{thread_id}/voice-practice-session:
+  /v1/practice-sessions/{practice_session_id}/voice-state:
     get:
       tags:
         - Conversation
-      summary: Resume the Thread's current targeted voice Practice Session
+      summary: Restore one exact Practice Session's voice state
       description: |
-        Resolves the exact stable Session from the authenticated Actor and
-        Thread. It never selects a recent Session. Once Start succeeds, later
-        Thread selection changes do not rewrite the immutable Matter and
-        participant Snapshot restored here.
-      operationId: getThreadVoicePracticeSession
+        Restores the Actor-owned Session by its explicit identifier. It never
+        selects a recent Session or infers one from Agent Thread state.
+      operationId: getPracticeVoiceState
       parameters:
-        - $ref: '#/components/parameters/ThreadId'
+        - $ref: '#/components/parameters/PracticeSessionId'
       responses:
         '200':
           description: Recovered Session, latest Turn, current Question, and Review reference.
@@ -696,12 +693,6 @@ paths:
           is_credential: false
 components:
   parameters:
-    ThreadId:
-      name: thread_id
-      in: path
-      required: true
-      schema:
-        $ref: '#/components/schemas/ResourceId'
     PracticeSessionId:
       name: practice_session_id
       in: path
@@ -848,10 +839,8 @@ components:
       required:
         - practice_session_id
         - practice_plan_id
-        - thread_id
-        - scenario_type
-        - scenario_model
-        - matter
+        - scene_family
+        - scene_model
         - session_version
         - effective_turns
         - turn_limit
@@ -861,14 +850,10 @@ components:
           $ref: '#/components/schemas/ResourceId'
         practice_plan_id:
           $ref: '#/components/schemas/ResourceId'
-        thread_id:
-          $ref: '#/components/schemas/ResourceId'
-        scenario_type:
-          $ref: ./preparation.yaml#/components/schemas/ScenarioType
-        scenario_model:
-          $ref: ./preparation.yaml#/components/schemas/ScenarioModel
-        matter:
-          $ref: ./agent.yaml#/components/schemas/Matter
+        scene_family:
+          $ref: ./scene.yaml#/components/schemas/SceneFamily
+        scene_model:
+          $ref: ./scene.yaml#/components/schemas/SceneModel
         session_version:
           type: integer
           minimum: 1
@@ -1259,8 +1244,8 @@ components:
         - schema_version
         - context_type
         - scene_key
-        - scenario_definition_id
-        - scenario_definition_version
+        - scene_id
+        - scene_version
         - practice_option_type
         - difficulty_ref
         - assistance_ref
@@ -1275,9 +1260,9 @@ components:
           $ref: '#/components/schemas/EvaluationContextType'
         scene_key:
           $ref: '#/components/schemas/ResourceId'
-        scenario_definition_id:
+        scene_id:
           $ref: '#/components/schemas/ResourceId'
-        scenario_definition_version:
+        scene_version:
           type: integer
           minimum: 1
         practice_option_type:

@@ -259,7 +259,7 @@ void main() {
     await tester.tap(find.byKey(const Key('roleplay-filter-travel')));
     await tester.pumpAndSettle();
     expect(
-      find.byKey(const Key('catalog-scenario-scn_daily_hotel_checkin_issue')),
+      find.byKey(const Key('catalog-scene-scn_daily_hotel_checkin_issue')),
       findsOneWidget,
     );
     await tester.tap(find.byKey(const Key('preparation-back-to-families')));
@@ -390,10 +390,8 @@ Future<void> _completeRealVoicePractice(
   await _scrollPreparationIntoView(tester, interviewHub);
   await tester.tap(interviewHub);
   await tester.pump();
-  final scenario = find.byKey(
-    const Key('catalog-scenario-scn_programmer_interview'),
-  );
-  if (scenario.evaluate().isEmpty) {
+  final scene = find.byKey(const Key('catalog-scene-scn_programmer_interview'));
+  if (scene.evaluate().isEmpty) {
     final professionalMode = find.byKey(
       const Key('interview-mode-professional'),
     );
@@ -409,12 +407,12 @@ Future<void> _completeRealVoicePractice(
   }
   await _waitForPreparationTarget(
     tester,
-    target: scenario,
+    target: scene,
     operation: 'load the formal preparation catalog',
     timeout: const Duration(seconds: 30),
   );
-  await _scrollPreparationIntoView(tester, scenario);
-  await tester.tap(scenario);
+  await _scrollPreparationIntoView(tester, scene);
+  await tester.tap(scene);
   await tester.pump();
 
   final role = find.byKey(
@@ -609,7 +607,7 @@ Future<void> _scrollPreparationIntoView(
 String? _preparationFailure(WidgetTester tester) {
   const failures = <(String, String)>[
     ('preparation-catalog-error', 'catalog request failed'),
-    ('preparation-detail-error', 'scenario detail request failed'),
+    ('preparation-detail-error', 'scene detail request failed'),
     ('preparation-launch-error', 'practice launch failed'),
   ];
   for (final (key, fallback) in failures) {
@@ -637,7 +635,7 @@ String _preparationPendingState(WidgetTester tester) {
       .byKey(const Key('preparation-detail-loading'))
       .evaluate()
       .isNotEmpty) {
-    return 'scenario detail is still loading';
+    return 'scene detail is still loading';
   }
   if (find
       .byKey(const Key('preparation-catalog-loading'))

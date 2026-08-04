@@ -51,11 +51,9 @@ func (r *Repository) AdvanceContextVoiceTurn(
 		JOIN practice_session_snapshots AS snapshot
 		  ON snapshot.owner_user_id = session.owner_user_id
 		 AND snapshot.session_id = session.session_id
-		 AND snapshot.context_plan_id = session.context_plan_id
 		 AND snapshot.snapshot_id = session.snapshot_id
 		WHERE session.owner_user_id = $1
 		  AND session.session_id = $2
-		  AND session.context_plan_id IS NOT NULL
 		FOR UPDATE OF session
 	`, actor.UserID, command.SessionID).Scan(
 		&status,
@@ -189,7 +187,6 @@ func (r *Repository) AdvanceContextVoiceTurn(
 		    updated_at = transaction_timestamp()
 		WHERE owner_user_id = $1
 		  AND session_id = $2
-		  AND context_plan_id IS NOT NULL
 		  AND version = $7
 		  AND effective_turns = $8
 		  AND status = $9

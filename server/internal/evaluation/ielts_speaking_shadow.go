@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	practice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 const (
@@ -22,10 +22,8 @@ const (
 	IELTSSpeakingShadowPromptVersion         = "ielts-speaking-full-mock-shadow-prompt/v1"
 	IELTSSpeakingShadowRubricVersion         = "ielts-speaking-transcript-rubric/v1"
 
-	ieltsFullMockDefinitionID      = "scn_ielts_speaking_full"
-	ieltsFullMockDefinitionVersion = 2
-	ieltsFullMockConfigID          = "scfg_ielts_speaking_full"
-	ieltsFullMockConfigVersion     = 2
+	ieltsFullMockSceneID      = "scn_ielts_speaking_full"
+	ieltsFullMockSceneVersion = 2
 
 	ieltsMaximumProviderPayload = 64 * 1024
 	ieltsMaximumFindingText     = 2048
@@ -141,7 +139,7 @@ type IELTSSpeakingShadowProviderInput struct {
 	PromptVersion      string                          `json:"prompt_version"`
 	RubricVersion      string                          `json:"rubric_version"`
 	SceneType          SceneType                       `json:"scene_type"`
-	ScenarioModel      string                          `json:"scenario_model"`
+	SceneModel         string                          `json:"scene_model"`
 	RubricDescriptors  []IELTSRubricDescriptorSet      `json:"rubric_descriptors"`
 	AssessableCriteria []IELTSCriterion                `json:"assessable_criteria"`
 	Questions          []IELTSSpeakingProviderQuestion `json:"questions"`
@@ -400,7 +398,7 @@ func prepareIELTSSpeakingShadow(
 		PromptVersion:     IELTSSpeakingShadowPromptVersion,
 		RubricVersion:     IELTSSpeakingShadowRubricVersion,
 		SceneType:         SceneIELTSSpeaking,
-		ScenarioModel:     string(practice.ScenarioModelIELTSSpeakingFullMock),
+		SceneModel:        string(scene.SceneModelIELTSSpeakingFullMock),
 		RubricDescriptors: ieltsRubricDescriptorSets(),
 		AssessableCriteria: []IELTSCriterion{
 			IELTSCriterionFC,
@@ -417,14 +415,11 @@ func prepareIELTSSpeakingShadow(
 
 func isFrozenIELTSFullMock(context evidencePracticeContext) bool {
 	return context.SceneFamily ==
-		string(practice.ScenarioFamilyExam) &&
-		context.ScenarioModel ==
-			string(practice.ScenarioModelIELTSSpeakingFullMock) &&
-		context.ScenarioDefinition.ID == ieltsFullMockDefinitionID &&
-		context.ScenarioDefinition.Version ==
-			ieltsFullMockDefinitionVersion &&
-		context.ScenarioConfig.ID == ieltsFullMockConfigID &&
-		context.ScenarioConfig.Version == ieltsFullMockConfigVersion &&
+		string(scene.SceneFamilyExam) &&
+		context.SceneModel ==
+			string(scene.SceneModelIELTSSpeakingFullMock) &&
+		context.Scene.ID == ieltsFullMockSceneID &&
+		context.Scene.Version == ieltsFullMockSceneVersion &&
 		len(context.TaskBlueprints) == ieltsQuestionCount
 }
 
@@ -1015,8 +1010,8 @@ func validIELTSSpeakingProviderInput(
 		input.PromptVersion != IELTSSpeakingShadowPromptVersion ||
 		input.RubricVersion != IELTSSpeakingShadowRubricVersion ||
 		input.SceneType != SceneIELTSSpeaking ||
-		input.ScenarioModel !=
-			string(practice.ScenarioModelIELTSSpeakingFullMock) ||
+		input.SceneModel !=
+			string(scene.SceneModelIELTSSpeakingFullMock) ||
 		!slices.Equal(
 			input.AssessableCriteria,
 			[]IELTSCriterion{

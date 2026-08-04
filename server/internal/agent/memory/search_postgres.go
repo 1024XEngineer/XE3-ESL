@@ -11,13 +11,13 @@ func (repository *PostgresRepository) SearchCandidates(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	queryVector []float32,
-	matterID string,
+	goalID string,
 	excludedCanonicalKeys []string,
 	configuration SearchConfig,
 ) ([]SearchCandidate, error) {
 	if ctx == nil ||
 		!validActor(actor) ||
-		(matterID != "" && !validUUID(matterID)) ||
+		(goalID != "" && !validUUID(goalID)) ||
 		!ValidStableProfileCanonicalKeys(excludedCanonicalKeys) ||
 		!configuration.Valid() {
 		return nil, ErrInvalidArgument
@@ -29,17 +29,17 @@ func (repository *PostgresRepository) SearchCandidates(
 	if len(excludedCanonicalKeys) == 0 {
 		excludedCanonicalKeys = []string{}
 	}
-	if matterID != "" {
+	if goalID != "" {
 		var owned bool
 		if err := repository.database.QueryRow(ctx, `
 SELECT EXISTS (
     SELECT 1
-    FROM matters
-    WHERE id = $1
+    FROM coaching_goals
+    WHERE goal_id = $1
       AND owner_user_id = $2
       AND status = 'active'
 )`,
-			matterID,
+			goalID,
 			actor.UserID,
 		).Scan(&owned); err != nil {
 			return nil, ErrRepository
@@ -57,7 +57,7 @@ WITH eligible AS MATERIALIZED (
         memories.canonical_key,
         memories.content,
         memories.scope_type,
-        memories.matter_id,
+        memories.goal_id,
         memories.status,
         memories.version,
         memories.policy_version,
@@ -88,12 +88,12 @@ WITH eligible AS MATERIALIZED (
       AND (
           (
               memories.scope_type = 'user'
-              AND memories.matter_id IS NULL
+              AND memories.goal_id IS NULL
           )
           OR (
               $7::uuid IS NOT NULL
-              AND memories.scope_type = 'matter'
-              AND memories.matter_id = $7::uuid
+              AND memories.scope_type = 'goal'
+              AND memories.goal_id = $7::uuid
           )
       )
 )
@@ -104,7 +104,7 @@ SELECT
     eligible.canonical_key,
     eligible.content,
     eligible.scope_type,
-    coalesce(eligible.matter_id::text, ''),
+    coalesce(eligible.goal_id::text, ''),
     eligible.status,
     eligible.version,
     eligible.policy_version,
@@ -126,7 +126,7 @@ LIMIT $9`,
 		configuration.Model,
 		configuration.Dimensions,
 		configuration.EmbeddingPolicyVersion,
-		nullableUUID(matterID),
+		nullableUUID(goalID),
 		excludedCanonicalKeys,
 		configuration.CandidateLimit,
 	)
@@ -164,7 +164,7 @@ func scanMemoryWithSimilarity(
 		&item.CanonicalKey,
 		&item.Content,
 		&item.Scope,
-		&item.MatterID,
+		&item.GoalID,
 		&item.Status,
 		&item.Version,
 		&item.PolicyVersion,

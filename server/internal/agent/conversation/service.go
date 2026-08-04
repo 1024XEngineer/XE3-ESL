@@ -4,39 +4,39 @@ import (
 	"context"
 	"errors"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
 type Service struct {
 	repository Repository
-	matters    matter.Reader
+	goals      goal.Reader
 }
 
 func NewService(
 	repository Repository,
-	matters matter.Reader,
+	goals goal.Reader,
 ) (*Service, error) {
-	if repository == nil || matters == nil {
+	if repository == nil || goals == nil {
 		return nil, errors.New("agent: service dependency is required")
 	}
-	return &Service{repository: repository, matters: matters}, nil
+	return &Service{repository: repository, goals: goals}, nil
 }
 
 func (s *Service) CreateThread(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	activeMatterID string,
+	activeGoalID string,
 ) (Thread, error) {
 	if !actor.Valid() {
 		return Thread{}, ErrInvalidRequest
 	}
-	if activeMatterID != "" {
-		if err := s.requireActiveMatter(ctx, actor, activeMatterID); err != nil {
+	if activeGoalID != "" {
+		if err := s.requireActiveGoal(ctx, actor, activeGoalID); err != nil {
 			return Thread{}, err
 		}
 	}
-	return s.repository.CreateThread(ctx, actor.UserID, activeMatterID)
+	return s.repository.CreateThread(ctx, actor.UserID, activeGoalID)
 }
 
 func (s *Service) ListThreads(
@@ -150,23 +150,23 @@ func (s *Service) ClearFocusedThread(
 	return s.repository.ClearFocusedThread(ctx, actor.UserID)
 }
 
-func (s *Service) SetActiveMatter(
+func (s *Service) SetActiveGoal(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	threadID string,
-	matterID string,
-) (ThreadMatterLink, error) {
+	goalID string,
+) (ThreadGoalLink, error) {
 	if !actor.Valid() || !ValidUUID(threadID) {
-		return ThreadMatterLink{}, ErrNotFound
+		return ThreadGoalLink{}, ErrNotFound
 	}
-	if err := s.requireActiveMatter(ctx, actor, matterID); err != nil {
-		return ThreadMatterLink{}, err
+	if err := s.requireActiveGoal(ctx, actor, goalID); err != nil {
+		return ThreadGoalLink{}, err
 	}
-	return s.repository.SetActiveMatter(
+	return s.repository.SetActiveGoal(
 		ctx,
 		actor.UserID,
 		threadID,
-		matterID,
+		goalID,
 	)
 }
 
@@ -265,22 +265,22 @@ func (s *Service) PageMessages(
 	return result, nil
 }
 
-func (s *Service) requireActiveMatter(
+func (s *Service) requireActiveGoal(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	matterID string,
+	goalID string,
 ) error {
-	if !ValidUUID(matterID) {
+	if !ValidUUID(goalID) {
 		return ErrNotFound
 	}
-	item, err := s.matters.ReadOwned(ctx, actor, matterID)
-	if errors.Is(err, matter.ErrNotFound) {
+	item, err := s.goals.ReadOwned(ctx, actor, goalID)
+	if errors.Is(err, goal.ErrNotFound) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return ErrRepository
 	}
-	if item.Status != matter.StatusActive {
+	if item.Status != goal.StatusActive {
 		return ErrConflict
 	}
 	return nil

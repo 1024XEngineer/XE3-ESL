@@ -188,7 +188,7 @@ var canonicalHTTPStatusByCode = map[string]int{
 	"active_session_conflict":                 http.StatusConflict,
 	"invalid_credentials":                     http.StatusUnauthorized,
 	"practice_participant_not_authorized":     http.StatusForbidden,
-	"scenario_definition_not_found":           http.StatusNotFound,
+	"scene_not_found":                         http.StatusNotFound,
 	"role_definition_not_found":               http.StatusNotFound,
 	"preparation_profile_not_found":           http.StatusNotFound,
 	"job_target_not_found":                    http.StatusNotFound,

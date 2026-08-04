@@ -16,8 +16,8 @@ FormalReview decodeFormalReview(Object? value) {
     'implementation_version',
     maxBytes: _maxMetadataBytes,
   );
-  final schema = implementationVersion == _scenarioImplementation
-      ? FormalReviewSchema.scenarioV2
+  final schema = implementationVersion == _sceneImplementation
+      ? FormalReviewSchema.sceneV2
       : FormalReviewSchema.legacyVoiceV1;
   final root = _exactObject(
     initial,
@@ -30,7 +30,7 @@ FormalReview decodeFormalReview(Object? value) {
       'source_turn_version',
       'created_at',
       'updated_at',
-      if (schema == FormalReviewSchema.scenarioV2) ...{
+      if (schema == FormalReviewSchema.sceneV2) ...{
         'evaluation_context_type',
         'evaluation_context',
       },
@@ -64,7 +64,7 @@ FormalReview decodeFormalReview(Object? value) {
   }
 
   FormalReviewContextType? contextType;
-  if (schema == FormalReviewSchema.scenarioV2) {
+  if (schema == FormalReviewSchema.sceneV2) {
     contextType = _contextType(root['evaluation_context_type']);
     _decodeEvaluationContext(root['evaluation_context'], contextType);
   }
@@ -85,8 +85,8 @@ FormalReview decodeFormalReview(Object? value) {
     if (completedAt.isBefore(createdAt)) {
       throw const FormalReviewDecodeException();
     }
-    result = schema == FormalReviewSchema.scenarioV2
-        ? _decodeScenarioResult(root['result'], contextType!)
+    result = schema == FormalReviewSchema.sceneV2
+        ? _decodeSceneResult(root['result'], contextType!)
         : _decodeLegacyResult(root['result']);
   } else if (hasResult || hasCompletedAt) {
     throw const FormalReviewDecodeException();
@@ -137,7 +137,7 @@ FormalReviewResult _decodeLegacyResult(Object? value) {
   );
 }
 
-FormalReviewResult _decodeScenarioResult(
+FormalReviewResult _decodeSceneResult(
   Object? value,
   FormalReviewContextType contextType,
 ) {
@@ -297,8 +297,8 @@ void _decodeEvaluationContext(
       'schema_version',
       'context_type',
       'scene_key',
-      'scenario_definition_id',
-      'scenario_definition_version',
+      'scene_id',
+      'scene_version',
       'practice_option_type',
       'difficulty_ref',
       'assistance_ref',
@@ -312,9 +312,9 @@ void _decodeEvaluationContext(
     throw const FormalReviewDecodeException();
   }
   _string(root, 'scene_key', maxBytes: _maxMetadataBytes);
-  _string(root, 'scenario_definition_id', maxBytes: _maxMetadataBytes);
-  final definitionVersion = root['scenario_definition_version'];
-  if (definitionVersion is! int || definitionVersion < 1) {
+  _string(root, 'scene_id', maxBytes: _maxMetadataBytes);
+  final sceneVersion = root['scene_version'];
+  if (sceneVersion is! int || sceneVersion < 1) {
     throw const FormalReviewDecodeException();
   }
   _string(root, 'practice_option_type', maxBytes: 64);
@@ -586,7 +586,7 @@ void _validateResultSize(Map<String, Object?> value) {
   }
 }
 
-const _scenarioImplementation = 'qianwen-scenario-review-v2';
+const _sceneImplementation = 'qianwen-scene-review-v2';
 const _maxResultBytes = 12 * 1024;
 const _maxMetadataBytes = 128;
 const _maxLabelBytes = 64;

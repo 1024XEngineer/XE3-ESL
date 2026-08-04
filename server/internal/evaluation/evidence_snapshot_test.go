@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const evidenceTestPreparationBackground = "Evaluation evidence fixture background."
+
 func TestCanonicalEvidencePayloadIsStableAndRejectsStorageLocators(
 	t *testing.T,
 ) {
@@ -220,6 +222,18 @@ func TestNormalizeEvidenceSnapshotCommandRejectsTamperedEvidenceBindings(
 				payload["opportunity_manifest"].([]any)[0].(map[string]any)["addressee_participant_ids"] = []any{"participant-other"}
 			},
 		},
+		{
+			name: "legacy candidate participant role",
+			mutate: func(payload map[string]any) {
+				payload["practice_context"].(map[string]any)["participants"].([]any)[1].(map[string]any)["role"] = "CANDIDATE"
+			},
+		},
+		{
+			name: "legacy interviewer participant role",
+			mutate: func(payload map[string]any) {
+				payload["practice_context"].(map[string]any)["participants"].([]any)[0].(map[string]any)["role"] = "INTERVIEWER"
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -255,13 +269,11 @@ func validEvidenceSnapshotPayload() json.RawMessage {
 			"session_version":2,
 			"plan_revision":1,
 			"scene_family":"INTERVIEW",
-			"scenario_model":"INTERVIEW_BASIC_DIALOGUE",
-			"scenario_definition":{"id":"scenario-1","version":1},
-			"scenario_config":{"id":"scenario-config-1","version":1},
+			"scene_model":"INTERVIEW_BASIC_DIALOGUE",
+			"scene":{"id":"scene-1","version":1},
 			"practice_option":{
 				"id":"practice-option-1",
-				"type":"FULL_SIMULATION",
-				"version":1
+				"type":"FULL_SIMULATION"
 			},
 			"user_role":"candidate",
 			"facilitator_role":"interviewer",
@@ -274,8 +286,7 @@ func validEvidenceSnapshotPayload() json.RawMessage {
 			"task_context":{
 				"public_scene_brief":"A structured interview.",
 				"persona_summary":"A professional interviewer.",
-				"config_focus_areas":[],
-				"prompt_focus_areas":[],
+				"focus_areas":["clarity"],
 				"suggested_duration_seconds":300
 			},
 			"task_blueprints":["answer one question"],
@@ -287,17 +298,20 @@ func validEvidenceSnapshotPayload() json.RawMessage {
 				},
 				{
 					"participant_id":"participant-candidate",
-					"role":"CANDIDATE",
+					"role":"LEARNER",
 					"order":2
 				}
 			],
-			"objectives":{"session_policy":[],"practice_focus":[]}
+			"practice_objectives":[{
+				"id":"clear_answer",
+				"description":"Answer the interview question clearly."
+			}]
 		},
 		"opportunity_manifest":[{
 			"sequence":1,
 			"question_id":"question-1",
 			"question_type":"PRIMARY",
-			"objective_id":"objective-1",
+			"objective_id":"clear_answer",
 			"question_text":"Tell me about a migration you led.",
 			"speaker_participant_id":"participant-interviewer",
 			"addressee_participant_ids":["participant-candidate"],
@@ -362,8 +376,8 @@ func validEvidenceSnapshotPayload() json.RawMessage {
 			}
 		},
 		"version_manifest":{
-			"schema_version":"evidence-snapshot/v2",
-			"source_manifest_version":"evidence-source-manifest/v2",
+			"schema_version":"evidence-snapshot/v3",
+			"source_manifest_version":"evidence-source-manifest/v3",
 			"practice_session":2,
 			"practice_snapshot":"practice-snapshot-1",
 			"plan_revision":1,
@@ -400,6 +414,9 @@ func evidenceSnapshotPayloadForMetadata(
 		panic(err)
 	}
 	decoded["practice_context"].(map[string]any)["practice_session_id"] = practiceSessionID
+	decoded["practice_context"].(map[string]any)["preparation"].(map[string]any)["background_snapshot_hash"] = evidenceTextHash(
+		evidenceTestPreparationBackground,
+	)
 	refs, ok := decoded["evidence_refs"].([]any)
 	if !ok {
 		panic("invalid EvidenceSnapshot test fixture")

@@ -548,7 +548,7 @@ class _InterviewPreparationAction extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        key: Key('agent-action-interview-${action.matterId}'),
+        key: Key('agent-action-interview-${action.goalId}'),
         onTap: onPressed,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),

@@ -16,7 +16,7 @@ void main() {
   testWidgets('Interview detail loads its session report and clears on leave', (
     tester,
   ) async {
-    final item = _scenarioItem(
+    final item = _sceneItem(
       contextType: FormalReviewContextType.interviewProjectDeepDive,
       practiceSessionId: 'session_interview_report_001',
     );
@@ -58,7 +58,7 @@ void main() {
   testWidgets('a report 404 preserves the existing FormalReview detail', (
     tester,
   ) async {
-    final item = _scenarioItem(
+    final item = _sceneItem(
       contextType: FormalReviewContextType.interviewProjectDeepDive,
       practiceSessionId: 'session_interview_report_404',
     );
@@ -97,7 +97,7 @@ void main() {
   testWidgets('non-Interview FormalReview never requests an Interview report', (
     tester,
   ) async {
-    final item = _scenarioItem(
+    final item = _sceneItem(
       contextType: FormalReviewContextType.dailyHotelCheckinIssue,
       practiceSessionId: 'session_daily_001',
     );
@@ -132,7 +132,7 @@ void main() {
   });
 }
 
-ReviewHistoryItem _scenarioItem({
+ReviewHistoryItem _sceneItem({
   required FormalReviewContextType contextType,
   required String practiceSessionId,
 }) {
@@ -149,8 +149,8 @@ ReviewHistoryItem _scenarioItem({
     id: review.id,
     practiceSessionId: practiceSessionId,
     status: FormalReviewStatus.completed,
-    schema: FormalReviewSchema.scenarioV2,
-    implementationVersion: 'qianwen-scenario-review-v2',
+    schema: FormalReviewSchema.sceneV2,
+    implementationVersion: 'qianwen-scene-review-v2',
     sourceTurnId: 'turn_review_001',
     sourceTurnVersion: 'conversation-turn:evidence-v1',
     contextType: contextType,

@@ -40,7 +40,7 @@ func (configuration SearchConfig) Valid() bool {
 type SearchRequest struct {
 	Actor                 requestcontext.Actor
 	Query                 string
-	MatterID              string
+	GoalID                string
 	ExcludedCanonicalKeys []string
 	Limit                 int
 }
@@ -50,7 +50,7 @@ func (request SearchRequest) Valid() bool {
 		request.Query != "" &&
 		request.Query == strings.TrimSpace(request.Query) &&
 		len(request.Query) <= ai.MaxEmbeddingInputBytes &&
-		(request.MatterID == "" || validUUID(request.MatterID)) &&
+		(request.GoalID == "" || validUUID(request.GoalID)) &&
 		ValidStableProfileCanonicalKeys(request.ExcludedCanonicalKeys) &&
 		request.Limit >= 1 &&
 		request.Limit <= maxSearchResults
@@ -68,7 +68,7 @@ type SearchHit struct {
 	Type                   Type
 	Content                string
 	Scope                  ScopeType
-	MatterID               string
+	GoalID                 string
 	Similarity             float64
 	Score                  float64
 	EmbeddingProvider      string
@@ -151,7 +151,7 @@ func (service *SearchService) Search(
 		ctx,
 		request.Actor,
 		result.Vectors[0],
-		request.MatterID,
+		request.GoalID,
 		request.ExcludedCanonicalKeys,
 		service.config,
 	)
@@ -168,8 +168,8 @@ func (service *SearchService) Search(
 			candidate.Similarity > 1 {
 			continue
 		}
-		if candidate.Memory.Scope == ScopeMatter &&
-			candidate.Memory.MatterID != request.MatterID {
+		if candidate.Memory.Scope == ScopeGoal &&
+			candidate.Memory.GoalID != request.GoalID {
 			return nil, ErrRepository
 		}
 		if containsString(
@@ -185,9 +185,9 @@ func (service *SearchService) Search(
 			Type:                   candidate.Memory.Type,
 			Content:                candidate.Memory.Content,
 			Scope:                  candidate.Memory.Scope,
-			MatterID:               candidate.Memory.MatterID,
+			GoalID:                 candidate.Memory.GoalID,
 			Similarity:             candidate.Similarity,
-			Score:                  rerankScore(candidate, request.MatterID, now),
+			Score:                  rerankScore(candidate, request.GoalID, now),
 			EmbeddingProvider:      service.config.Provider,
 			EmbeddingModel:         service.config.Model,
 			EmbeddingDimensions:    service.config.Dimensions,
@@ -221,12 +221,12 @@ func containsString(values []string, target string) bool {
 
 func rerankScore(
 	candidate SearchCandidate,
-	matterID string,
+	goalID string,
 	now time.Time,
 ) float64 {
 	score := candidate.Similarity * 0.75
-	if candidate.Memory.Scope == ScopeMatter &&
-		candidate.Memory.MatterID == matterID {
+	if candidate.Memory.Scope == ScopeGoal &&
+		candidate.Memory.GoalID == goalID {
 		score += 0.10
 	}
 	score += memoryTypeWeight(candidate.Memory.Type)

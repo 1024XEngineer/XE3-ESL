@@ -1,3 +1,4 @@
+import '../support/scene_fixtures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
@@ -6,35 +7,31 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
+import 'package:speakup/features/coaching/goal/goal.dart';
 import 'package:speakup/features/practice/practice.dart';
-import 'package:speakup/features/preparation/preparation_client.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
-import 'package:speakup/features/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/scene/scene_client.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/identity/session_store.dart';
+import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/review/review_history_client.dart';
 import 'package:speakup/review/review_history_controller.dart';
 
 import '../review/formal_review_fixture.dart';
+import '../support/practice_fixtures.dart';
 
 void main() {
   testWidgets('uses one Agent Thread for text, 3 Practice turns, and Review', (
     tester,
   ) async {
-    final agentController = AgentController(client: FakeAgentClient());
+    final agentController = await _startedAgentController();
     addTearDown(agentController.dispose);
     await tester.pumpWidget(
       SpeakUpApp.preview(agentController: agentController),
     );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('primary-tab-scenes')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('practice-hub-interview')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('scene-self-introduction')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('agent-thread-title')), findsOneWidget);
@@ -148,7 +145,7 @@ void main() {
       final agentController = AgentController(client: FakeAgentClient());
       addTearDown(agentController.dispose);
       final preparationController = PreparationController(
-        client: _EmptyPreparationCatalogClient(),
+        client: _EmptySceneClient(),
       );
       addTearDown(preparationController.dispose);
       final authController = AuthController(
@@ -201,7 +198,7 @@ void main() {
     final agentController = AgentController(client: FakeAgentClient());
     addTearDown(agentController.dispose);
     final preparationController = PreparationController(
-      client: _EmptyPreparationCatalogClient(),
+      client: _EmptySceneClient(),
     );
     addTearDown(preparationController.dispose);
     final authController = AuthController(
@@ -241,8 +238,16 @@ void main() {
     'scene failure exposes a retry that completes the same operation',
     (tester) async {
       final client = _FailOnceSceneClient();
-      final agentController = AgentController(client: client);
+      final agentController = AgentController(
+        client: client,
+        practiceClient: FakePracticeClient(
+          sceneFamily: testScenes.first.family,
+          sceneModel: testScenes.first.model,
+        ),
+      );
       addTearDown(agentController.dispose);
+      await agentController.initialize();
+      await agentController.selectScene(testScenes.first);
       await tester.pumpWidget(
         SpeakUpApp.preview(agentController: agentController),
       );
@@ -251,8 +256,6 @@ void main() {
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('practice-hub-interview')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('scene-self-introduction')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('scene-operation-error')), findsOneWidget);
@@ -264,8 +267,8 @@ void main() {
       await tester.tap(retry);
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('agent-thread-title')), findsOneWidget);
-      expect(find.text('英文自我介绍'), findsOneWidget);
+      expect(agentController.scene, same(testScenes.first));
+      expect(find.byKey(const Key('scene-operation-error')), findsNothing);
       expect(client.sceneClientIds, hasLength(2));
       expect(client.sceneClientIds.toSet(), hasLength(1));
     },
@@ -274,10 +277,8 @@ void main() {
   testWidgets('restored Review opens directly and an existing practice exits', (
     tester,
   ) async {
-    final agentController = AgentController(client: FakeAgentClient());
+    final agentController = await _startedAgentController();
     addTearDown(agentController.dispose);
-    await agentController.initialize();
-    await agentController.selectScene(agentScenes.first);
     for (var turn = 0; turn < 3; turn++) {
       await agentController.startRecording();
       await agentController.stopRecording();
@@ -305,10 +306,8 @@ void main() {
   testWidgets(
     'late Review retries a blocked Practice exit before exposing the shell',
     (tester) async {
-      final agentController = AgentController(client: FakeAgentClient());
+      final agentController = await _startedAgentController();
       addTearDown(agentController.dispose);
-      await agentController.initialize();
-      await agentController.selectScene(agentScenes.first);
       final rejectedPops = ValueNotifier<int>(0);
       addTearDown(rejectedPops.dispose);
 
@@ -359,9 +358,7 @@ void main() {
   testWidgets(
     'completed Practice refreshes persisted Review history before route exit',
     (tester) async {
-      final agentController = AgentController(client: FakeAgentClient());
-      await agentController.initialize();
-      await agentController.selectScene(agentScenes.first);
+      final agentController = await _startedAgentController();
       final historyClient = _CurrentReviewHistoryClient(agentController);
       final historyController = ReviewHistoryController(client: historyClient);
       addTearDown(agentController.dispose);
@@ -411,10 +408,8 @@ void main() {
   testWidgets('completed root Practice route keeps a safe destination', (
     tester,
   ) async {
-    final agentController = AgentController(client: FakeAgentClient());
+    final agentController = await _startedAgentController();
     addTearDown(agentController.dispose);
-    await agentController.initialize();
-    await agentController.selectScene(agentScenes.first);
     for (var turn = 0; turn < 3; turn++) {
       await agentController.startRecording();
       await agentController.stopRecording();
@@ -436,10 +431,8 @@ void main() {
   testWidgets('late Review waits until Practice is the current route', (
     tester,
   ) async {
-    final agentController = AgentController(client: FakeAgentClient());
+    final agentController = await _startedAgentController();
     addTearDown(agentController.dispose);
-    await agentController.initialize();
-    await agentController.selectScene(agentScenes.first);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -489,6 +482,20 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+Future<AgentController> _startedAgentController() async {
+  final scene = testScenes.first;
+  final controller = AgentController(
+    client: FakeAgentClient(),
+    practiceClient: FakePracticeClient(
+      sceneFamily: scene.family,
+      sceneModel: scene.model,
+    ),
+  );
+  await controller.initialize();
+  await activateTestPractice(controller: controller, scene: scene);
+  return controller;
 }
 
 Future<void> _holdAndReleaseAnswer(WidgetTester tester) async {
@@ -611,21 +618,17 @@ final class _MemorySessionStore implements SessionStore {
   }
 }
 
-final class _EmptyPreparationCatalogClient implements PreparationCatalogClient {
+final class _EmptySceneClient implements SceneClient {
   @override
-  Future<void> clearAccountState() async {}
-
-  @override
-  Future<PreparationScenarioDetail> getScenario(String scenarioId) {
+  Future<SceneDefinition> getScene(String sceneId) {
     throw UnimplementedError();
   }
 
   @override
-  Future<List<PreparationScenario>> listScenarios() async =>
-      const <PreparationScenario>[];
+  Future<List<SceneDefinition>> listScenes() async => const <SceneDefinition>[];
 
   @override
-  Future<List<PreparationRole>> listRoles(String scenarioId) {
+  Future<List<RoleDefinition>> listRoles(String sceneId) {
     throw UnimplementedError();
   }
 }
@@ -636,19 +639,6 @@ final class _FailOnceSceneClient implements AgentClient {
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
-
-  @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) {
-    return _delegate.createReview(
-      threadId: threadId,
-      scene: scene,
-      clientReviewId: clientReviewId,
-    );
-  }
 
   @override
   Future<AgentThreadSnapshot> restoreThread() => _delegate.restoreThread();
@@ -667,9 +657,9 @@ final class _FailOnceSceneClient implements AgentClient {
   }
 
   @override
-  Future<AgentSceneStart> startScene({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   }) {
     sceneClientIds.add(clientOperationId);
@@ -680,36 +670,6 @@ final class _FailOnceSceneClient implements AgentClient {
       threadId: threadId,
       scene: scene,
       clientOperationId: clientOperationId,
-    );
-  }
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) {
-    return _delegate.submitPracticeTurn(
-      threadId: threadId,
-      scene: scene,
-      turnNumber: turnNumber,
-      transcript: transcript,
-      clientTurnId: clientTurnId,
-    );
-  }
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  }) {
-    return _delegate.transcribeTurn(
-      threadId: threadId,
-      turnNumber: turnNumber,
-      clientTurnId: clientTurnId,
     );
   }
 }

@@ -9,9 +9,10 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_capture_control.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/practice/ielts_examiner_speaker.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/review/interview_report_view.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_models.dart';
@@ -198,9 +199,9 @@ class _PracticePageState extends State<PracticePage>
         widget.interviewReportController == null ||
         sessionId == null ||
         controller.recordingState != PracticeRecordingState.completed ||
-        !isInterviewPracticeScenario(
-          controller.practiceScenarioType,
-          controller.practiceScenarioModel,
+        !isInterviewPracticeScene(
+          controller.practiceSceneFamily,
+          controller.practiceSceneModel,
         ) ||
         _interviewReportRouteActive ||
         _scheduledInterviewReportSessionId == sessionId ||
@@ -233,9 +234,9 @@ class _PracticePageState extends State<PracticePage>
         sessionId == null ||
         agentController.recordingState != PracticeRecordingState.completed ||
         _interviewReportRouteActive ||
-        !isInterviewPracticeScenario(
-          agentController.practiceScenarioType,
-          agentController.practiceScenarioModel,
+        !isInterviewPracticeScene(
+          agentController.practiceSceneFamily,
+          agentController.practiceSceneModel,
         )) {
       return;
     }
@@ -246,7 +247,7 @@ class _PracticePageState extends State<PracticePage>
           builder: (_) => InterviewReportPage(
             practiceSessionId: sessionId,
             controller: reportController,
-            title: '${agentController.scene?.title ?? '面试'} · 复盘',
+            title: '${agentController.scene?.name ?? '面试'} · 复盘',
             speechFeedbackController: widget.speechFeedbackController,
             speechFeedbackSourceKeys: List<String>.unmodifiable(
               _feedbackSources.keys,
@@ -641,7 +642,7 @@ class _PracticePageState extends State<PracticePage>
         appBar: AppBar(
           title: scene == null || controller == null
               ? const Text('练习')
-              : Text(scene.title),
+              : Text(scene.name),
           actions: controller == null || controller.recordings.isEmpty
               ? null
               : [
@@ -702,7 +703,7 @@ class _PracticePageState extends State<PracticePage>
   bool get _isIeltsSpeaking => _ieltsRouteActive || _controllerIsIeltsSpeaking;
 
   bool _isInterview(AgentController controller) =>
-      controller.practiceScenarioType == 'INTERVIEW';
+      controller.practiceSceneFamily == SceneFamily.interview;
 }
 
 String _practiceFeedbackSourceKey(

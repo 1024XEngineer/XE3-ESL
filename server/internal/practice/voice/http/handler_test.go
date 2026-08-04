@@ -13,10 +13,9 @@ import (
 	"testing"
 	"time"
 
-	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
@@ -45,40 +44,40 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 		orchestrator,
 	)
 	router := newVoiceHTTPTestRouter(
-		t, voice, voiceHTTPApplication{}, testVoiceHTTPOptions(),
+		t, voice, testVoiceHTTPOptions(),
 	)
 
 	start := voiceHTTPRequest(
 		t,
 		router,
 		http.MethodPost,
-		"/v1/agent-threads/thread-1/voice-practice-sessions",
+		"/v1/practice-sessions/session-1/voice-activation",
 		nil,
 		map[string]string{"Idempotency-Key": "session-start-1"},
 	)
-	if start.Code != http.StatusCreated {
+	if start.Code != http.StatusOK {
 		t.Fatalf("start status = %d, body = %s", start.Code, start.Body)
 	}
 	started := decodeVoiceJSONObject(t, start)
-	if started["scenario_type"] != "INTERVIEW" ||
-		started["scenario_model"] != "PROJECT_EXPERIENCE_DEEP_DIVE" {
+	if started["scene_family"] != "INTERVIEW" ||
+		started["scene_model"] != "PROJECT_EXPERIENCE_DEEP_DIVE" {
 		t.Fatalf(
 			"frozen scenario identity = %q/%q",
-			started["scenario_type"],
-			started["scenario_model"],
+			started["scene_family"],
+			started["scene_model"],
 		)
 	}
 	requireVoiceKeys(t, started,
 		"current_question",
 		"effective_turns",
-		"matter",
 		"practice_plan_id",
 		"practice_session_id",
-		"scenario_model",
-		"scenario_type",
+		"scene_id",
+		"scene_version",
+		"scene_model",
+		"scene_family",
 		"session_completed",
 		"session_version",
-		"thread_id",
 		"turn_limit",
 	)
 	requireVoiceKeys(
@@ -159,14 +158,14 @@ func TestVoiceHTTPUsesFrozenResponseDTOs(t *testing.T) {
 		requireVoiceKeys(t, state,
 			"current_turn",
 			"effective_turns",
-			"matter",
 			"practice_plan_id",
 			"practice_session_id",
-			"scenario_model",
-			"scenario_type",
+			"scene_id",
+			"scene_version",
+			"scene_model",
+			"scene_family",
 			"session_completed",
 			"session_version",
-			"thread_id",
 			"turn_history",
 			"turn_limit",
 		)
@@ -195,12 +194,12 @@ func TestVoiceSessionStateResponseProjectsFullMockScenarioIdentity(
 ) {
 	response := SessionStateResponse(practicevoice.SessionState{
 		Session: practicevoice.Session{
-			ScenarioType:  "EXAM",
-			ScenarioModel: "IELTS_SPEAKING_FULL_MOCK",
+			SceneFamily: "EXAM",
+			SceneModel:  "IELTS_SPEAKING_FULL_MOCK",
 		},
 	})
-	if response["scenario_type"] != "EXAM" ||
-		response["scenario_model"] != "IELTS_SPEAKING_FULL_MOCK" {
+	if response["scene_family"] != "EXAM" ||
+		response["scene_model"] != "IELTS_SPEAKING_FULL_MOCK" {
 		t.Fatalf("full mock identity = %#v", response)
 	}
 }
@@ -223,18 +222,18 @@ func TestVoiceHTTPTextAnswerAdvancesWithoutAudioCandidateEndpoint(t *testing.T) 
 		orchestrator,
 	)
 	router := newVoiceHTTPTestRouter(
-		t, voice, voiceHTTPApplication{}, testVoiceHTTPOptions(),
+		t, voice, testVoiceHTTPOptions(),
 	)
 
 	start := voiceHTTPRequest(
 		t,
 		router,
 		http.MethodPost,
-		"/v1/agent-threads/thread-1/voice-practice-sessions",
+		"/v1/practice-sessions/session-1/voice-activation",
 		nil,
 		map[string]string{"Idempotency-Key": "session-start-text"},
 	)
-	if start.Code != http.StatusCreated {
+	if start.Code != http.StatusOK {
 		t.Fatalf("start status = %d, body = %s", start.Code, start.Body)
 	}
 	answer := voiceHTTPRequest(
@@ -344,7 +343,6 @@ func TestVoiceHTTPReadDeadlineInterruptsStalledUpload(t *testing.T) {
 	router := newVoiceHTTPTestRouter(
 		t,
 		voice,
-		voiceHTTPApplication{},
 		Options{AudioReadTimeout: 100 * time.Millisecond},
 	)
 	server := httptest.NewServer(router)
@@ -419,7 +417,7 @@ func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 		orchestrator,
 	)
 	router := newVoiceHTTPTestRouter(
-		t, voice, voiceHTTPApplication{}, testVoiceHTTPOptions(),
+		t, voice, testVoiceHTTPOptions(),
 	)
 
 	speech := voiceHTTPRequest(
@@ -444,7 +442,7 @@ func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 		t,
 		router,
 		http.MethodPost,
-		"/v1/agent-threads/thread-1/voice-practice-sessions",
+		"/v1/practice-sessions/session-1/voice-activation",
 		nil,
 		map[string]string{"Idempotency-Key": "session-start-1"},
 	)
@@ -455,152 +453,76 @@ func TestVoiceHTTPTTSFailureKeepsTextQuestionAvailable(t *testing.T) {
 	}
 }
 
-func TestVoiceHTTPResumeUsesFrozenSessionMatter(t *testing.T) {
-	for _, test := range []struct {
-		name             string
-		activeMatterID   string
-		wantStatus       int
-		wantResumeCalls  int
-		wantResumeMatter string
-	}{
-		{
-			name:            "current active Matter matches",
-			activeMatterID:  "matter-1",
-			wantStatus:      http.StatusOK,
-			wantResumeCalls: 1,
+func TestVoiceHTTPResumeUsesExplicitSession(t *testing.T) {
+	conversations := newAgentVoiceConversation(3)
+	practice := newAgentVoicePractice(0)
+	reviews := newAgentVoiceReview()
+	orchestrator := newAgentVoiceOrchestrator(
+		t,
+		conversations,
+		practice,
+		reviews,
+	)
+	sessions := &voiceHTTPRecordingSessionPort{
+		session: practicevoice.Session{
+			ID:           "session-1",
+			PlanID:       "plan-1",
+			SceneID:      "scene-1",
+			SceneVersion: 1,
+			SceneFamily:  "INTERVIEW",
+			SceneModel:   "PROJECT_EXPERIENCE_DEEP_DIVE",
+			Prompt: scene.ScenePrompt{
+				PublicSceneBrief: "Discuss one project.",
+				PracticeGoal:     "Explain decisions clearly.",
+				UserRole:         "Candidate",
+				AIRole:           "Technical interviewer",
+				PersonaSummary:   "Professional and concise",
+				FocusAreas:       []string{"clarity"},
+				TurnBlueprints:   []string{"Ask about the project"},
+			},
+			SessionVersion:           1,
+			TurnLimit:                3,
+			Status:                   "in_progress",
+			FacilitatorParticipantID: "participant-facilitator",
+			LearnerParticipantID:     "participant-a",
 		},
-		{
-			name:            "active Matter was cleared",
-			wantStatus:      http.StatusOK,
-			wantResumeCalls: 1,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			conversations := newAgentVoiceConversation(3)
-			practice := newAgentVoicePractice(0)
-			reviews := newAgentVoiceReview()
-			orchestrator := newAgentVoiceOrchestrator(
-				t,
-				conversations,
-				practice,
-				reviews,
-			)
-			sessions := &voiceHTTPRecordingSessionPort{
-				session: practicevoice.Session{
-					ID:            "session-1",
-					PlanID:        "plan-1",
-					ThreadID:      "thread-1",
-					MatterID:      "matter-1",
-					ScenarioType:  "INTERVIEW",
-					ScenarioModel: "PROJECT_EXPERIENCE_DEEP_DIVE",
-					PromptModel: practicevoice.ScenarioPrompt{
-						PublicSceneBrief: "Discuss one project.",
-						PracticeGoal:     "Explain decisions clearly.",
-						UserRole:         "Candidate",
-						AIRole:           "Technical interviewer",
-						PersonaSummary:   "Professional and concise",
-						FocusAreas:       []string{"clarity"},
-						TurnBlueprints:   []string{"Ask about the project"},
-					},
-					SessionVersion:           1,
-					TurnLimit:                3,
-					Status:                   "in_progress",
-					InterviewerParticipantID: "participant-interviewer",
-					CandidateParticipantID:   "participant-a",
-				},
-			}
-			voice, err := practicevoice.NewSessionApplication(
-				sessions,
-				voiceSessionTestQuestions{},
-				voiceSessionTestCheckpoints{conversations: conversations},
-				orchestrator,
-				voiceSessionTestReviews{reviews: reviews},
-				voiceSessionTestMatters{},
-			)
-			if err != nil {
-				t.Fatalf("new Voice Session application: %v", err)
-			}
-			router := newVoiceHTTPTestRouter(
-				t,
-				voice,
-				voiceHTTPThreadApplication{
-					activeMatterID: test.activeMatterID,
-				},
-				testVoiceHTTPOptions(),
-			)
-
-			response := voiceHTTPRequest(
-				t,
-				router,
-				http.MethodGet,
-				"/v1/agent-threads/thread-1/voice-practice-session",
-				nil,
-				nil,
-			)
-			if response.Code != test.wantStatus {
-				t.Fatalf(
-					"resume status = %d, body = %s",
-					response.Code,
-					response.Body,
-				)
-			}
-			if sessions.resumeCalls != test.wantResumeCalls ||
-				sessions.resumeMatterID != test.wantResumeMatter {
-				t.Fatalf(
-					"Resume calls/Matter = %d/%q, want %d/%q",
-					sessions.resumeCalls,
-					sessions.resumeMatterID,
-					test.wantResumeCalls,
-					test.wantResumeMatter,
-				)
-			}
-		})
 	}
-}
-
-type voiceHTTPApplication struct {
-	agentconversation.Application
-}
-
-func (voiceHTTPApplication) GetThread(
-	_ context.Context,
-	actor requestcontext.Actor,
-	threadID string,
-) (agentconversation.Thread, error) {
-	if actor.UserID != "user-a" || threadID != "thread-1" {
-		return agentconversation.Thread{}, agentconversation.ErrNotFound
+	voice, err := practicevoice.NewSessionApplication(
+		sessions,
+		voiceSessionTestQuestions{},
+		voiceSessionTestCheckpoints{conversations: conversations},
+		orchestrator,
+		voiceSessionTestReviews{reviews: reviews},
+	)
+	if err != nil {
+		t.Fatalf("new Voice Session application: %v", err)
 	}
-	return agentconversation.Thread{
-		ID:             threadID,
-		OwnerID:        actor.UserID,
-		ActiveMatterID: "matter-1",
-	}, nil
-}
+	router := newVoiceHTTPTestRouter(t, voice, testVoiceHTTPOptions())
 
-type voiceHTTPThreadApplication struct {
-	agentconversation.Application
-	activeMatterID string
-}
-
-func (application voiceHTTPThreadApplication) GetThread(
-	_ context.Context,
-	actor requestcontext.Actor,
-	threadID string,
-) (agentconversation.Thread, error) {
-	if actor.UserID != "user-a" || threadID != "thread-1" {
-		return agentconversation.Thread{}, agentconversation.ErrNotFound
+	response := voiceHTTPRequest(
+		t,
+		router,
+		http.MethodGet,
+		"/v1/practice-sessions/session-1/voice-state",
+		nil,
+		nil,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("resume status = %d, body = %s", response.Code, response.Body)
 	}
-	return agentconversation.Thread{
-		ID:             threadID,
-		OwnerID:        actor.UserID,
-		ActiveMatterID: application.activeMatterID,
-	}, nil
+	if sessions.resumeCalls != 1 || sessions.resumeSessionID != "session-1" {
+		t.Fatalf(
+			"Resume calls/Session = %d/%q",
+			sessions.resumeCalls,
+			sessions.resumeSessionID,
+		)
+	}
 }
 
 type voiceHTTPRecordingSessionPort struct {
-	session        practicevoice.Session
-	resumeCalls    int
-	resumeMatterID string
+	session         practicevoice.Session
+	resumeCalls     int
+	resumeSessionID string
 }
 
 func (port *voiceHTTPRecordingSessionPort) Start(
@@ -608,53 +530,28 @@ func (port *voiceHTTPRecordingSessionPort) Start(
 	requestcontext.Actor,
 	string,
 	string,
-	string,
 ) (practicevoice.Session, error) {
-	return port.session, nil
-}
-
-func (port *voiceHTTPRecordingSessionPort) GetByThread(
-	_ context.Context,
-	_ requestcontext.Actor,
-	_ string,
-	matterID string,
-) (practicevoice.Session, error) {
-	port.resumeCalls++
-	port.resumeMatterID = matterID
 	return port.session, nil
 }
 
 func (port *voiceHTTPRecordingSessionPort) GetByID(
-	context.Context,
-	requestcontext.Actor,
-	string,
+	_ context.Context,
+	_ requestcontext.Actor,
+	sessionID string,
 ) (practicevoice.Session, error) {
+	port.resumeCalls++
+	port.resumeSessionID = sessionID
 	return port.session, nil
-}
-
-type voiceHTTPMatters struct {
-	matter.Application
-}
-
-func (voiceHTTPMatters) ReadOwned(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	matterID string,
-) (matter.Matter, error) {
-	return voiceSessionTestMatters{}.ReadOwned(ctx, actor, matterID)
 }
 
 func newVoiceHTTPTestRouter(
 	t *testing.T,
 	application *practicevoice.SessionApplication,
-	threads ThreadReader,
 	options Options,
 ) *gin.Engine {
 	t.Helper()
 	handler, err := NewHandler(
 		application,
-		threads,
-		voiceHTTPMatters{},
 		options,
 		httpresponse.NewRenderer(func() string { return "corr_voice" }),
 	)

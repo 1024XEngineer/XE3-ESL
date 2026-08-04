@@ -45,7 +45,7 @@ func New(
 func (r *Repository) CreateThread(
 	ctx context.Context,
 	ownerID string,
-	activeMatterID string,
+	activeGoalID string,
 ) (conversation.Thread, error) {
 	threadID, err := r.ids.NewID()
 	if err != nil {
@@ -57,12 +57,12 @@ func (r *Repository) CreateThread(
 	}
 	defer rollback(tx)
 
-	if activeMatterID != "" {
-		if err := lockActiveMatter(
+	if activeGoalID != "" {
+		if err := lockActiveGoal(
 			ctx,
 			tx,
 			ownerID,
-			activeMatterID,
+			activeGoalID,
 		); err != nil {
 			return conversation.Thread{}, err
 		}
@@ -94,23 +94,23 @@ RETURNING
 		return conversation.Thread{}, mapConversationPostgresError(err)
 	}
 
-	if activeMatterID != "" {
+	if activeGoalID != "" {
 		if _, err := tx.Exec(ctx, `
-INSERT INTO agent_thread_matter_links (
+INSERT INTO agent_thread_goal_links (
     owner_user_id,
     thread_id,
-    matter_id,
+    goal_id,
     is_active,
     linked_at,
     updated_at
 ) VALUES ($1, $2, $3, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 			ownerID,
 			threadID,
-			activeMatterID,
+			activeGoalID,
 		); err != nil {
 			return conversation.Thread{}, mapConversationPostgresError(err)
 		}
-		result.ActiveMatterID = activeMatterID
+		result.ActiveGoalID = activeGoalID
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return conversation.Thread{}, conversation.ErrRepository
@@ -127,12 +127,12 @@ SELECT
     threads.id::text,
     threads.owner_user_id::text,
     COALESCE(first_user.content, ''),
-    COALESCE(active_link.matter_id::text, ''),
+    COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
     threads.updated_at
 FROM agent_threads AS threads
-LEFT JOIN agent_thread_matter_links AS active_link
+LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
@@ -162,7 +162,7 @@ ORDER BY threads.updated_at DESC, threads.id DESC`,
 			&item.ID,
 			&item.OwnerID,
 			&item.Title,
-			&item.ActiveMatterID,
+			&item.ActiveGoalID,
 			&item.NextMessageSeq,
 			&item.CreatedAt,
 			&item.UpdatedAt,
@@ -189,12 +189,12 @@ SELECT
     threads.id::text,
     threads.owner_user_id::text,
     COALESCE(first_user.content, ''),
-    COALESCE(active_link.matter_id::text, ''),
+    COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
     threads.updated_at
 FROM agent_threads AS threads
-LEFT JOIN agent_thread_matter_links AS active_link
+LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
@@ -218,12 +218,12 @@ SELECT
     threads.id::text,
     threads.owner_user_id::text,
     COALESCE(first_user.content, ''),
-    COALESCE(active_link.matter_id::text, ''),
+    COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
     threads.updated_at
 FROM agent_threads AS threads
-LEFT JOIN agent_thread_matter_links AS active_link
+LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
@@ -261,7 +261,7 @@ LIMIT $4`
 			&item.ID,
 			&item.OwnerID,
 			&item.Title,
-			&item.ActiveMatterID,
+			&item.ActiveGoalID,
 			&item.NextMessageSeq,
 			&item.CreatedAt,
 			&item.UpdatedAt,
@@ -288,12 +288,12 @@ SELECT
     threads.id::text,
     threads.owner_user_id::text,
     COALESCE(first_user.content, ''),
-    COALESCE(active_link.matter_id::text, ''),
+    COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
     threads.updated_at
 FROM agent_threads AS threads
-LEFT JOIN agent_thread_matter_links AS active_link
+LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
@@ -313,7 +313,7 @@ WHERE threads.id = $1 AND threads.owner_user_id = $2`,
 		&result.ID,
 		&result.OwnerID,
 		&result.Title,
-		&result.ActiveMatterID,
+		&result.ActiveGoalID,
 		&result.NextMessageSeq,
 		&result.CreatedAt,
 		&result.UpdatedAt,
@@ -335,7 +335,7 @@ SELECT
     threads.id::text,
     threads.owner_user_id::text,
     COALESCE(first_user.content, ''),
-    COALESCE(active_link.matter_id::text, ''),
+    COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
     threads.updated_at
@@ -343,7 +343,7 @@ FROM agent_thread_focuses AS focus
 JOIN agent_threads AS threads
   ON threads.id = focus.thread_id
  AND threads.owner_user_id = focus.owner_user_id
-LEFT JOIN agent_thread_matter_links AS active_link
+LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
@@ -362,7 +362,7 @@ WHERE focus.owner_user_id = $1`,
 		&result.ID,
 		&result.OwnerID,
 		&result.Title,
-		&result.ActiveMatterID,
+		&result.ActiveGoalID,
 		&result.NextMessageSeq,
 		&result.CreatedAt,
 		&result.UpdatedAt,
@@ -414,7 +414,7 @@ SELECT
     threads.id::text,
     threads.owner_user_id::text,
     COALESCE(first_user.content, ''),
-    COALESCE(active_link.matter_id::text, ''),
+    COALESCE(active_link.goal_id::text, ''),
     threads.next_message_sequence,
     threads.created_at,
     threads.updated_at
@@ -422,7 +422,7 @@ FROM selected
 JOIN agent_threads AS threads
   ON threads.id = selected.thread_id
  AND threads.owner_user_id = selected.owner_user_id
-LEFT JOIN agent_thread_matter_links AS active_link
+LEFT JOIN agent_thread_goal_links AS active_link
   ON active_link.thread_id = threads.id
  AND active_link.owner_user_id = threads.owner_user_id
  AND active_link.is_active
@@ -441,7 +441,7 @@ LEFT JOIN LATERAL (
 		&result.ID,
 		&result.OwnerID,
 		&result.Title,
-		&result.ActiveMatterID,
+		&result.ActiveGoalID,
 		&result.NextMessageSeq,
 		&result.CreatedAt,
 		&result.UpdatedAt,
@@ -528,15 +528,15 @@ WHERE owner_user_id = $1 AND thread_id = $2`,
 	return nil
 }
 
-func (r *Repository) SetActiveMatter(
+func (r *Repository) SetActiveGoal(
 	ctx context.Context,
 	ownerID string,
 	threadID string,
-	matterID string,
-) (conversation.ThreadMatterLink, error) {
+	goalID string,
+) (conversation.ThreadGoalLink, error) {
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
-		return conversation.ThreadMatterLink{}, conversation.ErrRepository
+		return conversation.ThreadGoalLink{}, conversation.ErrRepository
 	}
 	defer rollback(tx)
 
@@ -549,22 +549,22 @@ FOR UPDATE`,
 		threadID,
 		ownerID,
 	).Scan(&lockedThreadID); err != nil {
-		return conversation.ThreadMatterLink{}, mapConversationPostgresError(err)
+		return conversation.ThreadGoalLink{}, mapConversationPostgresError(err)
 	}
-	if err := lockActiveMatter(ctx, tx, ownerID, matterID); err != nil {
-		return conversation.ThreadMatterLink{}, err
+	if err := lockActiveGoal(ctx, tx, ownerID, goalID); err != nil {
+		return conversation.ThreadGoalLink{}, err
 	}
 
-	var current conversation.ThreadMatterLink
+	var current conversation.ThreadGoalLink
 	err = tx.QueryRow(ctx, `
 SELECT
     owner_user_id::text,
     thread_id::text,
-    matter_id::text,
+    goal_id::text,
     is_active,
     linked_at,
     updated_at
-FROM agent_thread_matter_links
+FROM agent_thread_goal_links
 WHERE thread_id = $1
   AND owner_user_id = $2
   AND is_active`,
@@ -573,22 +573,22 @@ WHERE thread_id = $1
 	).Scan(
 		&current.OwnerID,
 		&current.ThreadID,
-		&current.MatterID,
+		&current.GoalID,
 		&current.Active,
 		&current.LinkedAt,
 		&current.UpdatedAt,
 	)
-	if err == nil && current.MatterID == matterID {
+	if err == nil && current.GoalID == goalID {
 		if err := tx.Commit(ctx); err != nil {
-			return conversation.ThreadMatterLink{}, conversation.ErrRepository
+			return conversation.ThreadGoalLink{}, conversation.ErrRepository
 		}
 		return current, nil
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return conversation.ThreadMatterLink{}, mapConversationPostgresError(err)
+		return conversation.ThreadGoalLink{}, mapConversationPostgresError(err)
 	}
 	if _, err := tx.Exec(ctx, `
-UPDATE agent_thread_matter_links
+UPDATE agent_thread_goal_links
 SET
     is_active = false,
     updated_at = GREATEST(
@@ -601,46 +601,46 @@ WHERE thread_id = $1
 		threadID,
 		ownerID,
 	); err != nil {
-		return conversation.ThreadMatterLink{}, mapConversationPostgresError(err)
+		return conversation.ThreadGoalLink{}, mapConversationPostgresError(err)
 	}
 
-	var result conversation.ThreadMatterLink
+	var result conversation.ThreadGoalLink
 	if err := tx.QueryRow(ctx, `
-INSERT INTO agent_thread_matter_links (
+INSERT INTO agent_thread_goal_links (
     owner_user_id,
     thread_id,
-    matter_id,
+    goal_id,
     is_active,
     linked_at,
     updated_at
 ) VALUES ($1, $2, $3, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT (thread_id, matter_id) DO UPDATE
+ON CONFLICT (thread_id, goal_id) DO UPDATE
 SET
     is_active = true,
     updated_at = GREATEST(
         CURRENT_TIMESTAMP,
-        agent_thread_matter_links.updated_at + INTERVAL '1 microsecond'
+        agent_thread_goal_links.updated_at + INTERVAL '1 microsecond'
     )
-WHERE agent_thread_matter_links.owner_user_id = EXCLUDED.owner_user_id
+WHERE agent_thread_goal_links.owner_user_id = EXCLUDED.owner_user_id
 RETURNING
     owner_user_id::text,
     thread_id::text,
-    matter_id::text,
+    goal_id::text,
     is_active,
     linked_at,
     updated_at`,
 		ownerID,
 		threadID,
-		matterID,
+		goalID,
 	).Scan(
 		&result.OwnerID,
 		&result.ThreadID,
-		&result.MatterID,
+		&result.GoalID,
 		&result.Active,
 		&result.LinkedAt,
 		&result.UpdatedAt,
 	); err != nil {
-		return conversation.ThreadMatterLink{}, mapConversationPostgresError(err)
+		return conversation.ThreadGoalLink{}, mapConversationPostgresError(err)
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE agent_threads
@@ -652,10 +652,10 @@ WHERE id = $1 AND owner_user_id = $2`,
 		threadID,
 		ownerID,
 	); err != nil {
-		return conversation.ThreadMatterLink{}, mapConversationPostgresError(err)
+		return conversation.ThreadGoalLink{}, mapConversationPostgresError(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return conversation.ThreadMatterLink{}, conversation.ErrRepository
+		return conversation.ThreadGoalLink{}, conversation.ErrRepository
 	}
 	return result, nil
 }
@@ -871,19 +871,19 @@ LIMIT $4`
 	return result, nil
 }
 
-func lockActiveMatter(
+func lockActiveGoal(
 	ctx context.Context,
 	tx pgx.Tx,
 	ownerID string,
-	matterID string,
+	goalID string,
 ) error {
 	var active bool
 	if err := tx.QueryRow(ctx, `
 SELECT status = 'active'
-FROM matters
-WHERE id = $1 AND owner_user_id = $2
+FROM coaching_goals
+WHERE goal_id = $1 AND owner_user_id = $2
 FOR UPDATE`,
-		matterID,
+		goalID,
 		ownerID,
 	).Scan(&active); err != nil {
 		return mapConversationPostgresError(err)

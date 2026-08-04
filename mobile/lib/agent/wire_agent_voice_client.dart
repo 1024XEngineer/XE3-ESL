@@ -1762,8 +1762,8 @@ List<AgentMessageAction> _decodeMessageActions(Object? value) {
     values.map((item) {
       final object = _strictObject(
         item,
-        allowed: const <String>{'type', 'label', 'matter_id', 'title'},
-        required: const <String>{'type', 'label', 'matter_id', 'title'},
+        allowed: const <String>{'type', 'label', 'goal_id', 'title'},
+        required: const <String>{'type', 'label', 'goal_id', 'title'},
       );
       final type = switch (_strictString(object['type'], min: 1, max: 64)) {
         'open_interview_preparation' =>
@@ -1773,7 +1773,7 @@ List<AgentMessageAction> _decodeMessageActions(Object? value) {
       return AgentMessageAction(
         type: type,
         label: _strictString(object['label'], min: 1, max: 64),
-        matterId: _strictUuid(object['matter_id']),
+        goalId: _strictUuid(object['goal_id']),
         title: _strictString(object['title'], min: 1, max: 200),
       );
     }),

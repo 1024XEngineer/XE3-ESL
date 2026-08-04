@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -30,12 +30,11 @@ const (
 type Session struct {
 	ID                       string
 	PlanID                   string
-	ThreadID                 string
-	MatterID                 string
-	MatterTitle              string
-	ScenarioType             string
-	ScenarioModel            string
-	PromptModel              ScenarioPrompt
+	SceneID                  string
+	SceneVersion             int
+	SceneFamily              string
+	SceneModel               string
+	Prompt                   scene.ScenePrompt
 	PreviousUserResponse     string
 	PreviousQuestion         string
 	SessionVersion           int
@@ -44,31 +43,12 @@ type Session struct {
 	MaxFollowUpsPerQuestion  int
 	Completed                bool
 	Status                   string
-	InterviewerParticipantID string
-	CandidateParticipantID   string
-}
-
-// ScenarioPrompt is copied from the immutable Practice Session snapshot.
-// Voice uses this contract instead of inferring a dialogue from a Matter title.
-type ScenarioPrompt struct {
-	PublicSceneBrief string
-	PracticeGoal     string
-	UserRole         string
-	AIRole           string
-	PersonaSummary   string
-	FocusAreas       []string
-	TurnBlueprints   []string
+	FacilitatorParticipantID string
+	LearnerParticipantID     string
 }
 
 type SessionPort interface {
 	Start(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		string,
-		string,
-	) (Session, error)
-	GetByThread(
 		context.Context,
 		requestcontext.Actor,
 		string,
@@ -235,7 +215,6 @@ type ReviewHistoryPage struct {
 
 type SessionState struct {
 	Session     Session
-	Matter      matter.Matter
 	Question    *conversation.VoiceQuestion
 	Turn        *conversation.ConfirmedVoiceTurn
 	TurnHistory []TurnExchange
@@ -248,7 +227,6 @@ type SessionApplication struct {
 	checkpoints  CheckpointPort
 	orchestrator *RoundOrchestrator
 	reviews      ReviewReader
-	matters      matter.Reader
 }
 
 func NewSessionApplication(
@@ -257,10 +235,9 @@ func NewSessionApplication(
 	checkpoints CheckpointPort,
 	orchestrator *RoundOrchestrator,
 	reviews ReviewReader,
-	matters matter.Reader,
 ) (*SessionApplication, error) {
 	if sessions == nil || questions == nil || checkpoints == nil ||
-		orchestrator == nil || reviews == nil || matters == nil {
+		orchestrator == nil || reviews == nil {
 		return nil, errors.New("practice voice: session dependency is required")
 	}
 	return &SessionApplication{
@@ -269,35 +246,30 @@ func NewSessionApplication(
 		checkpoints:  checkpoints,
 		orchestrator: orchestrator,
 		reviews:      reviews,
-		matters:      matters,
 	}, nil
 }
 
 func (application *SessionApplication) Start(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	threadID string,
-	matterID string,
+	sessionID string,
 	idempotencyKey string,
 ) (SessionState, error) {
 	if err := validateVoiceActor(ctx, actor); err != nil ||
-		strings.TrimSpace(threadID) == "" ||
+		strings.TrimSpace(sessionID) == "" ||
 		strings.TrimSpace(idempotencyKey) == "" {
 		return SessionState{}, ErrInvalidRequest
 	}
 	session, err := application.sessions.Start(
 		ctx,
 		actor,
-		threadID,
-		matterID,
+		sessionID,
 		idempotencyKey,
 	)
 	if err != nil {
 		return SessionState{}, err
 	}
-	// Start is idempotent: an existing Session keeps its immutable optional
-	// Matter binding even if the Thread selection changes after creation.
-	if session.ThreadID != threadID {
+	if session.ID != sessionID {
 		return SessionState{}, ErrInvalidContext
 	}
 	return application.state(ctx, actor, session, true)
@@ -306,24 +278,17 @@ func (application *SessionApplication) Start(
 func (application *SessionApplication) Resume(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	threadID string,
-	matterID string,
+	sessionID string,
 ) (SessionState, error) {
 	if err := validateVoiceActor(ctx, actor); err != nil ||
-		strings.TrimSpace(threadID) == "" {
+		strings.TrimSpace(sessionID) == "" {
 		return SessionState{}, ErrInvalidRequest
 	}
-	session, err := application.sessions.GetByThread(
-		ctx,
-		actor,
-		threadID,
-		matterID,
-	)
+	session, err := application.sessions.GetByID(ctx, actor, sessionID)
 	if err != nil {
 		return SessionState{}, err
 	}
-	if session.ThreadID != threadID ||
-		(matterID != "" && session.MatterID != matterID) {
+	if session.ID != sessionID {
 		return SessionState{}, ErrInvalidContext
 	}
 	return application.state(ctx, actor, session, true)
@@ -496,32 +461,21 @@ func (application *SessionApplication) state(
 ) (SessionState, error) {
 	if session.ID == "" ||
 		session.PlanID == "" ||
-		session.ThreadID == "" ||
-		!validVoiceScenarioPrompt(session) ||
+		session.SceneID == "" ||
+		session.SceneVersion < 1 ||
+		!validVoiceScenePrompt(session) ||
 		session.SessionVersion < 1 ||
 		session.TurnLimit < 1 ||
 		session.TurnLimit > 14 ||
 		session.EffectiveTurns < 0 ||
 		session.EffectiveTurns > session.TurnLimit ||
 		!validVoiceSessionLifecycle(session) ||
-		session.InterviewerParticipantID == "" ||
-		session.CandidateParticipantID == "" ||
-		session.InterviewerParticipantID == session.CandidateParticipantID {
+		session.FacilitatorParticipantID == "" ||
+		session.LearnerParticipantID == "" ||
+		session.FacilitatorParticipantID == session.LearnerParticipantID {
 		return SessionState{}, ErrInvalidContext
 	}
 	state := SessionState{Session: session}
-	if session.MatterID != "" {
-		currentMatter, err := application.matters.ReadOwned(
-			ctx,
-			actor,
-			session.MatterID,
-		)
-		if err != nil || currentMatter.ID != session.MatterID {
-			return SessionState{}, ErrNotFound
-		}
-		state.Matter = currentMatter
-		state.Session.MatterTitle = currentMatter.Title
-	}
 	if session.Status == "paused" || session.Status == "ended_early" {
 		history, err := application.restoreTurnHistory(
 			ctx,
@@ -565,7 +519,6 @@ func (application *SessionApplication) state(
 			return SessionState{}, err
 		}
 		state.Session = session
-		state.Session.MatterTitle = state.Matter.Title
 		latest, found, err = application.checkpoints.LatestTurn(
 			ctx,
 			actor,
@@ -669,10 +622,10 @@ func (application *SessionApplication) state(
 		question.SessionID != session.ID ||
 		strings.TrimSpace(question.Text) == "" ||
 		question.SpeakerParticipantID !=
-			session.InterviewerParticipantID ||
+			session.FacilitatorParticipantID ||
 		len(question.AddresseeParticipantIDs) != 1 ||
 		question.AddresseeParticipantIDs[0] !=
-			session.CandidateParticipantID {
+			session.LearnerParticipantID {
 		return SessionState{}, ErrInvalidContext
 	}
 	return state, nil
@@ -729,10 +682,10 @@ func (application *SessionApplication) restoreTurnHistory(
 	return history, nil
 }
 
-func validVoiceScenarioPrompt(session Session) bool {
-	prompt := session.PromptModel
-	return strings.TrimSpace(session.ScenarioType) != "" &&
-		strings.TrimSpace(session.ScenarioModel) != "" &&
+func validVoiceScenePrompt(session Session) bool {
+	prompt := session.Prompt
+	return strings.TrimSpace(session.SceneFamily) != "" &&
+		strings.TrimSpace(session.SceneModel) != "" &&
 		strings.TrimSpace(prompt.PublicSceneBrief) != "" &&
 		strings.TrimSpace(prompt.PracticeGoal) != "" &&
 		strings.TrimSpace(prompt.UserRole) != "" &&
