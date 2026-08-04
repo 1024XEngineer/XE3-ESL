@@ -13,7 +13,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -38,7 +37,7 @@ type Service struct {
 	imageSubmissions ImageSubmissionRepository
 	manifests        agentcontext.ManifestRepository
 	assembler        *agentcontext.Assembler
-	generator        ai.TextGenerator
+	generator        TextGenerator
 	configuration    Configuration
 	registry         *capability.Registry
 	executor         *capability.Executor
@@ -69,7 +68,7 @@ func NewService(
 	messages MessageReader,
 	manifests agentcontext.ManifestRepository,
 	assembler *agentcontext.Assembler,
-	generator ai.TextGenerator,
+	generator TextGenerator,
 	configuration Configuration,
 	options ...Option,
 ) (*Service, error) {
@@ -526,7 +525,7 @@ func (service *Service) process(
 		return failed, failErr
 	}
 
-	manifest, request, err := service.assembler.Assemble(
+	manifest, modelInput, err := service.assembler.Assemble(
 		ctx,
 		actor,
 		agentcontext.AssembleCommand{
@@ -565,6 +564,24 @@ func (service *Service) process(
 		service.logRunFailed(claimed, kind, retryable, claimed.StartedAt)
 		return failed, failErr
 	}
+	request, err := textRequestFromContext(modelInput)
+	if err != nil {
+		failed, failErr := service.persistFailure(
+			ctx,
+			actor.UserID,
+			claimed.ID,
+			claimed.WorkerLeaseToken,
+			FailureInvalidContext,
+			false,
+		)
+		service.logRunFailed(
+			claimed,
+			FailureInvalidContext,
+			false,
+			claimed.StartedAt,
+		)
+		return failed, failErr
+	}
 	if _, err := service.manifests.SaveManifest(
 		ctx,
 		manifest,
@@ -583,7 +600,7 @@ func (service *Service) process(
 		return failed, nil
 	}
 
-	var result ai.TextResult
+	var result TextResult
 	if observer == nil {
 		result, err = service.generate(
 			ctx,
@@ -624,13 +641,13 @@ func (service *Service) process(
 			actor.UserID,
 			claimed.ID,
 			claimed.WorkerLeaseToken,
-			string(ai.ErrorInvalidResponse),
-			ai.ErrorInvalidResponse.Retryable(),
+			string(ErrorInvalidResponse),
+			ErrorInvalidResponse.Retryable(),
 		)
 		service.logRunFailed(
 			claimed,
-			string(ai.ErrorInvalidResponse),
-			ai.ErrorInvalidResponse.Retryable(),
+			string(ErrorInvalidResponse),
+			ErrorInvalidResponse.Retryable(),
 			claimed.StartedAt,
 		)
 		return failed, failErr
@@ -642,7 +659,7 @@ func (service *Service) process(
 				actor.UserID,
 				claimed.ID,
 				claimed.WorkerLeaseToken,
-				string(ai.ErrorCancelled),
+				string(ErrorCancelled),
 				true,
 			)
 			return failed, failErr
@@ -666,8 +683,8 @@ func (service *Service) generate(
 	actor requestcontext.Actor,
 	run Run,
 	manifest agentcontext.Manifest,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
+	request TextRequest,
+) (TextResult, error) {
 	return service.generateObserved(ctx, actor, run, manifest, request, nil)
 }
 
@@ -676,10 +693,10 @@ func (service *Service) generateObserved(
 	actor requestcontext.Actor,
 	run Run,
 	manifest agentcontext.Manifest,
-	request ai.TextRequest,
+	request TextRequest,
 	observer *countingDeltaObserver,
-) (ai.TextResult, error) {
-	var deltaObserver ai.TextDeltaObserver
+) (TextResult, error) {
+	var deltaObserver TextDeltaObserver
 	if observer != nil {
 		deltaObserver = observer
 	}
@@ -697,7 +714,7 @@ func (service *Service) generateObserved(
 	request.ToolChoice = routing.ToolChoice
 	applyModelToolSnapshot(&manifest, routing)
 	if err := service.saveContextToolSnapshot(loopCtx, manifest); err != nil {
-		return ai.TextResult{}, err
+		return TextResult{}, err
 	}
 	exposed := exposedToolNames(request.Tools)
 	toolCalls := 0
@@ -710,7 +727,7 @@ func (service *Service) generateObserved(
 		service.logLoopIteration(run, modelIterations, toolCalls)
 		result, err := service.generateModel(loopCtx, request, deltaObserver)
 		if err != nil {
-			return ai.TextResult{}, err
+			return TextResult{}, err
 		}
 		modelIterations++
 		if !validLoopTextResult(result) ||
@@ -820,9 +837,9 @@ func (service *Service) generateObserved(
 			return result, nil
 		}
 		writeCalls += pendingWriteCalls
-		request.Messages = append(request.Messages, ai.TextMessage{
+		request.Messages = append(request.Messages, TextMessage{
 			Content:   result.Content,
-			Role:      ai.TextRoleAssistant,
+			Role:      TextRoleAssistant,
 			ToolCalls: result.ToolCalls,
 		})
 		toolIterations++
@@ -834,7 +851,7 @@ func (service *Service) generateObserved(
 				run,
 				call,
 			); err != nil {
-				return ai.TextResult{}, err
+				return TextResult{}, err
 			}
 			if !toolExposed(exposed, call.Name) {
 				if err := service.markToolCallRejected(
@@ -843,7 +860,7 @@ func (service *Service) generateObserved(
 					call.ID,
 					"unknown_tool",
 				); err != nil {
-					return ai.TextResult{}, err
+					return TextResult{}, err
 				}
 				request.Messages = append(
 					request.Messages,
@@ -859,7 +876,7 @@ func (service *Service) generateObserved(
 					call.ID,
 					"unknown_tool",
 				); err != nil {
-					return ai.TextResult{}, err
+					return TextResult{}, err
 				}
 				request.Messages = append(
 					request.Messages,
@@ -874,27 +891,36 @@ func (service *Service) generateObserved(
 				call,
 			)
 			if err != nil {
-				return ai.TextResult{}, err
+				return TextResult{}, err
 			}
 			request.Messages = append(request.Messages, toolMessage)
 		}
-		request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
+		request.ToolChoice = ToolChoice{Mode: ToolChoiceAuto}
 		finalDecision = "tool_call_then_response"
 	}
 }
 
 func (service *Service) generateModel(
 	ctx context.Context,
-	request ai.TextRequest,
-	observer ai.TextDeltaObserver,
-) (ai.TextResult, error) {
+	request TextRequest,
+	observer TextDeltaObserver,
+) (TextResult, error) {
+	if err := ValidateTextRequest(request); err != nil {
+		return TextResult{}, NewGenerationError(
+			ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			err,
+		)
+	}
 	if observer == nil {
 		return service.generator.Generate(ctx, request)
 	}
-	streaming, ok := service.generator.(ai.StreamingTextGenerator)
+	streaming, ok := service.generator.(StreamingTextGenerator)
 	if !ok {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorConfiguration,
+		return TextResult{}, NewGenerationError(
+			ErrorConfiguration,
 			0,
 			"",
 			"",
@@ -927,8 +953,8 @@ func (service *Service) executeToolCall(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	run Run,
-	call ai.ToolCall,
-) (ai.TextMessage, error) {
+	call ModelToolCall,
+) (TextMessage, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
 	requestID := toolCallRequestID(run.ID, call.ID)
@@ -939,7 +965,7 @@ func (service *Service) executeToolCall(
 		call.ID,
 		requestID,
 	); err != nil {
-		return ai.TextMessage{}, err
+		return TextMessage{}, err
 	}
 	result, err := service.executor.Execute(
 		toolCtx,
@@ -963,7 +989,7 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			capability.ErrorCategory(err),
 		); persistErr != nil {
-			return ai.TextMessage{}, persistErr
+			return TextMessage{}, persistErr
 		}
 		// 工具自身失败属于模型可处理结果，回填稳定分类后让模型决定重试、换工具或解释。
 		return toolFailureMessage(call.ID, err), nil
@@ -980,7 +1006,7 @@ func (service *Service) executeToolCall(
 			ToolCallFailed,
 			"internal",
 		); persistErr != nil {
-			return ai.TextMessage{}, persistErr
+			return TextMessage{}, persistErr
 		}
 		return toolFailureMessage(call.ID, err), nil
 	}
@@ -995,10 +1021,10 @@ func (service *Service) executeToolCall(
 		toolSourceRefs(result.SourceRefs),
 		result.Handoffs,
 	); err != nil {
-		return ai.TextMessage{}, err
+		return TextMessage{}, err
 	}
-	return ai.TextMessage{
-		Role:       ai.TextRoleTool,
+	return TextMessage{
+		Role:       TextRoleTool,
 		Content:    content,
 		ToolCallID: call.ID,
 	}, nil
@@ -1007,7 +1033,7 @@ func (service *Service) executeToolCall(
 func (service *Service) saveToolCallProposed(
 	ctx context.Context,
 	run Run,
-	call ai.ToolCall,
+	call ModelToolCall,
 ) error {
 	_, err := service.repository.ProposeToolCall(
 		ctx,
@@ -1061,7 +1087,7 @@ func toolSourceRefs(refs []capability.SourceRef) []ToolSourceRef {
 	return result
 }
 
-func exposedToolNameList(definitions []ai.ToolDefinition) []string {
+func exposedToolNameList(definitions []ToolDefinition) []string {
 	if len(definitions) == 0 {
 		return nil
 	}
@@ -1072,7 +1098,7 @@ func exposedToolNameList(definitions []ai.ToolDefinition) []string {
 	return names
 }
 
-func toolSchemaHashes(definitions []ai.ToolDefinition) map[string]string {
+func toolSchemaHashes(definitions []ToolDefinition) map[string]string {
 	if len(definitions) == 0 {
 		return nil
 	}
@@ -1095,7 +1121,7 @@ func toolSchemaHashes(definitions []ai.ToolDefinition) map[string]string {
 func (service *Service) logRunReceived(
 	run Run,
 	input string,
-	request ai.TextRequest,
+	request TextRequest,
 ) {
 	if service.logger == nil {
 		return
@@ -1119,11 +1145,11 @@ func (service *Service) logRunReceived(
 	service.logger.Info("agent.run.received", attrs...)
 }
 
-func textRequestImageCount(request ai.TextRequest) int {
+func textRequestImageCount(request TextRequest) int {
 	count := 0
 	for _, message := range request.Messages {
 		for _, part := range message.ContentParts {
-			if part.Kind == ai.ContentPartImageURL {
+			if part.Kind == ContentPartImageURL {
 				count++
 			}
 		}
@@ -1216,14 +1242,14 @@ func (service *Service) logRunFailed(
 
 func (service *Service) logInvalidModelResult(
 	run Run,
-	result ai.TextResult,
+	result TextResult,
 ) {
 	if service.logger == nil {
 		return
 	}
 	toolCallsValid := true
 	for _, call := range result.ToolCalls {
-		if ai.ValidateToolCall(call) != nil {
+		if ValidateToolCall(call) != nil {
 			toolCallsValid = false
 			break
 		}
@@ -1276,14 +1302,14 @@ func runPersistenceContext(ctx context.Context) (context.Context, context.Cancel
 }
 
 func generationFailure(err error) (string, bool) {
-	var generationError *ai.GenerationError
+	var generationError *GenerationError
 	if errors.As(err, &generationError) {
 		return string(generationError.Kind), generationError.Retryable()
 	}
-	return string(ai.ErrorProviderUnavailable), true
+	return string(ErrorProviderUnavailable), true
 }
 
-func validFinalTextResult(result ai.TextResult) bool {
+func validFinalTextResult(result TextResult) bool {
 	return ValidModelID(result.ID) &&
 		ValidProviderID(result.Provider) &&
 		ValidModelID(result.Model) &&
@@ -1293,7 +1319,7 @@ func validFinalTextResult(result ai.TextResult) bool {
 		len(result.ToolCalls) == 0
 }
 
-func validLoopTextResult(result ai.TextResult) bool {
+func validLoopTextResult(result TextResult) bool {
 	if !ValidModelID(result.ID) ||
 		!ValidProviderID(result.Provider) ||
 		!ValidModelID(result.Model) ||
@@ -1309,7 +1335,7 @@ func validLoopTextResult(result ai.TextResult) bool {
 			return false
 		}
 		for _, call := range result.ToolCalls {
-			if err := ai.ValidateToolCall(call); err != nil {
+			if err := ValidateToolCall(call); err != nil {
 				return false
 			}
 		}
@@ -1319,7 +1345,7 @@ func validLoopTextResult(result ai.TextResult) bool {
 	}
 }
 
-func validTokenUsage(usage ai.TokenUsage) bool {
+func validTokenUsage(usage TokenUsage) bool {
 	return usage.InputTokens >= 0 &&
 		usage.InputTokens <= maxPersistedTokenCount &&
 		usage.OutputTokens >= 0 &&
@@ -1390,7 +1416,7 @@ func toolCallRequestID(runID string, toolCallID string) string {
 }
 
 func (service *Service) writeToolCallCount(
-	calls []ai.ToolCall,
+	calls []ModelToolCall,
 ) int {
 	count := 0
 	for _, call := range calls {
@@ -1411,7 +1437,7 @@ func (service *Service) loopBudgetFallback(
 	modelIterations int,
 	toolCalls int,
 	startedAt time.Time,
-) ai.TextResult {
+) TextResult {
 	service.logRoutingDecision(
 		run,
 		"budget_exhausted",
@@ -1434,7 +1460,7 @@ func (service *Service) loopBudgetFallback(
 
 // repeatedToolCallID 同时检查本批和前序批次，防止模型复用 ID 导致重复执行。
 func repeatedToolCallID(
-	calls []ai.ToolCall,
+	calls []ModelToolCall,
 	seen map[string]struct{},
 ) string {
 	current := make(map[string]struct{}, len(calls))
@@ -1451,7 +1477,7 @@ func repeatedToolCallID(
 }
 
 // toolFailureMessage 只向模型暴露稳定错误语义，不泄漏数据库或业务内部错误文本。
-func toolFailureMessage(toolCallID string, err error) ai.TextMessage {
+func toolFailureMessage(toolCallID string, err error) TextMessage {
 	category := capability.ErrorCategory(err)
 	message := "tool execution failed"
 	switch category {
@@ -1469,16 +1495,16 @@ func toolFailureMessage(toolCallID string, err error) ai.TextMessage {
 			"retryable": capability.RetryableError(err),
 		},
 	})
-	return ai.TextMessage{
-		Role:       ai.TextRoleTool,
+	return TextMessage{
+		Role:       TextRoleTool,
 		Content:    string(raw),
 		ToolCallID: toolCallID,
 	}
 }
 
-func lastUserContent(request ai.TextRequest) string {
+func lastUserContent(request TextRequest) string {
 	for index := len(request.Messages) - 1; index >= 0; index-- {
-		if request.Messages[index].Role == ai.TextRoleUser {
+		if request.Messages[index].Role == TextRoleUser {
 			return request.Messages[index].Content
 		}
 	}
@@ -1503,7 +1529,7 @@ func marshalToolResult(result capability.Result, maxBytes int) (string, error) {
 	return `{"error":{"category":"internal","message":"tool result too large"}}`, nil
 }
 
-func exposedToolNames(definitions []ai.ToolDefinition) map[string]struct{} {
+func exposedToolNames(definitions []ToolDefinition) map[string]struct{} {
 	names := make(map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
 		names[definition.Name] = struct{}{}
@@ -1519,13 +1545,13 @@ func toolExposed(exposed map[string]struct{}, name string) bool {
 func fallbackResult(
 	configuration Configuration,
 	content string,
-) ai.TextResult {
-	return ai.TextResult{
+) TextResult {
+	return TextResult{
 		ID:           loopFallbackID,
 		Provider:     configuration.Provider,
 		Model:        configuration.Model,
 		Content:      content,
 		FinishReason: "stop",
-		Usage:        ai.TokenUsage{},
+		Usage:        TokenUsage{},
 	}
 }

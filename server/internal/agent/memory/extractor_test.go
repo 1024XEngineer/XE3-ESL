@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 func TestDecodeExtractionOutputIsStrict(t *testing.T) {
@@ -260,12 +258,10 @@ func TestLLMExtractorUsesUntrustedDataEnvelope(t *testing.T) {
 	t.Parallel()
 
 	generator := &capturingGenerator{
-		result: ai.TextResult{
-			ID:           "completion-1",
-			Provider:     "qianwen",
-			Model:        "qwen-plus",
-			Content:      `{"profile_updates":[],"memory_additions":[]}`,
-			FinishReason: "stop",
+		result: GenerationResult{
+			Provider: "qianwen",
+			Model:    "qwen-plus",
+			Content:  `{"profile_updates":[],"memory_additions":[]}`,
 		},
 	}
 	configuration := testExtractionConfig()
@@ -278,18 +274,16 @@ func TestLLMExtractorUsesUntrustedDataEnvelope(t *testing.T) {
 	if _, err := extractor.Extract(context.Background(), source); err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
-	if len(generator.request.Messages) != 2 ||
-		generator.request.Messages[0].Role != ai.TextRoleSystem ||
-		generator.request.Messages[1].Role != ai.TextRoleUser ||
+	if generator.request.SystemPrompt == "" ||
+		generator.request.UserPrompt == "" ||
 		!strings.Contains(
-			generator.request.Messages[0].Content,
+			generator.request.SystemPrompt,
 			"untrusted data",
 		) ||
 		!strings.Contains(
-			generator.request.Messages[1].Content,
+			generator.request.UserPrompt,
 			`"user_text"`,
-		) ||
-		generator.request.ResponseFormat != ai.TextResponseFormatJSON {
+		) {
 		t.Fatalf("extraction request = %#v", generator.request)
 	}
 }
@@ -301,15 +295,13 @@ func TestFixedExtractionPreferredNamePassesPolicy(t *testing.T) {
 	source.GoalID = ""
 	source.UserText = "我叫小花"
 	generator := &capturingGenerator{
-		result: ai.TextResult{
-			ID:       "completion-name",
+		result: GenerationResult{
 			Provider: "qianwen",
 			Model:    "qwen-plus",
 			Content: `{"profile_updates":[{"action":"upsert",` +
 				`"field":"preferred_name","value":"小花",` +
 				`"evidence":"我叫小花","interaction_use":true}],` +
 				`"memory_additions":[]}`,
-			FinishReason: "stop",
 		},
 	}
 	extractor, err := NewLLMExtractor(generator, testExtractionConfig())
@@ -341,15 +333,15 @@ func TestFixedExtractionPreferredNamePassesPolicy(t *testing.T) {
 }
 
 type capturingGenerator struct {
-	request ai.TextRequest
-	result  ai.TextResult
+	request GenerationRequest
+	result  GenerationResult
 	err     error
 }
 
-func (generator *capturingGenerator) Generate(
+func (generator *capturingGenerator) GenerateJSON(
 	_ context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
+	request GenerationRequest,
+) (GenerationResult, error) {
 	generator.request = request
 	return generator.result, generator.err
 }

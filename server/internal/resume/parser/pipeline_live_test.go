@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume"
@@ -35,11 +34,7 @@ func TestPipelineLiveQianwen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load text generation configuration: %v", err)
 	}
-	resumeTextConfiguration := textConfiguration
-	if resumeTextConfiguration.MaxOutputTokens < 4096 {
-		resumeTextConfiguration.MaxOutputTokens = 4096
-	}
-	generator, err := bootstrap.NewTextGenerator(resumeTextConfiguration)
+	generator, err := bootstrap.NewResumeFieldGenerator(textConfiguration)
 	if err != nil {
 		t.Fatalf("new text generator: %v", err)
 	}
@@ -62,10 +57,9 @@ func TestPipelineLiveQianwen(t *testing.T) {
 	content, err := pipeline.Parse(context.Background(), file)
 	if err != nil {
 		t.Logf(
-			"provider_match=%v model_match=%v finish=%q response_bytes=%d trimmed=%v starts_object=%v code_fence=%v ends_object=%v json_keys=%v",
+			"provider_match=%v model_match=%v response_bytes=%d trimmed=%v starts_object=%v code_fence=%v ends_object=%v json_keys=%v",
 			recorder.result.Provider == textConfiguration.Provider,
 			recorder.result.Model == textConfiguration.Model,
-			recorder.result.FinishReason,
 			len(recorder.result.Content),
 			recorder.result.Content == strings.TrimSpace(recorder.result.Content),
 			strings.HasPrefix(strings.TrimSpace(recorder.result.Content), "{"),
@@ -112,15 +106,15 @@ func containsString(values []string, expected string) bool {
 }
 
 type liveGeneratorRecorder struct {
-	delegate ai.TextGenerator
-	result   ai.TextResult
+	delegate fieldextractor.Generator
+	result   fieldextractor.GenerationResult
 }
 
-func (recorder *liveGeneratorRecorder) Generate(
+func (recorder *liveGeneratorRecorder) GenerateJSON(
 	ctx context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
-	result, err := recorder.delegate.Generate(ctx, request)
+	request fieldextractor.GenerationRequest,
+) (fieldextractor.GenerationResult, error) {
+	result, err := recorder.delegate.GenerateJSON(ctx, request)
 	recorder.result = result
 	return result, err
 }

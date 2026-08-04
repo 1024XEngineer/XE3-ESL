@@ -16,8 +16,6 @@ import (
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
@@ -54,7 +52,7 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 	if !reflect.DeepEqual(gotTools, wantTools) {
 		t.Fatalf("Tools = %#v, want %#v", gotTools, wantTools)
 	}
-	if requests[0].ToolChoice.Mode != ai.ToolChoiceAuto {
+	if requests[0].ToolChoice.Mode != ToolChoiceAuto {
 		t.Fatalf("ToolChoice = %#v, want auto", requests[0].ToolChoice)
 	}
 }
@@ -86,18 +84,18 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 	if got := len(requests[0].Tools); got == 0 {
 		t.Fatal("first request exposed no tools")
 	}
-	if requests[0].ToolChoice.Mode != ai.ToolChoiceAuto {
+	if requests[0].ToolChoice.Mode != ToolChoiceAuto {
 		t.Fatalf("first ToolChoice = %#v, want auto", requests[0].ToolChoice)
 	}
 	second := requests[1]
-	if second.ToolChoice.Mode != ai.ToolChoiceAuto {
+	if second.ToolChoice.Mode != ToolChoiceAuto {
 		t.Fatalf("second ToolChoice = %#v, want auto", second.ToolChoice)
 	}
 	if got, want := len(second.Messages), 4; got != want {
 		t.Fatalf("second request messages = %d, want %d", got, want)
 	}
 	toolMessage := second.Messages[len(second.Messages)-1]
-	if toolMessage.Role != ai.TextRoleTool ||
+	if toolMessage.Role != TextRoleTool ||
 		toolMessage.ToolCallID != "call-review-1" ||
 		!strings.Contains(toolMessage.Content, `"reports"`) {
 		t.Fatalf("tool message = %#v", toolMessage)
@@ -138,7 +136,7 @@ func TestRunLoopKeepsSourceRefsOutOfProviderMessagesAndInAudit(t *testing.T) {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	toolMessage := requests[1].Messages[len(requests[1].Messages)-1]
-	if toolMessage.Role != ai.TextRoleTool ||
+	if toolMessage.Role != TextRoleTool ||
 		toolMessage.ToolCallID != "call-sensitive-source-1" ||
 		!strings.Contains(toolMessage.Content, `"status":"ready"`) {
 		t.Fatalf("tool message = %#v", toolMessage)
@@ -214,7 +212,7 @@ func TestRunLoopLetsModelSelectLatestReportCapability(t *testing.T) {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	initial := requests[0]
-	if initial.ToolChoice.Mode != ai.ToolChoiceAuto ||
+	if initial.ToolChoice.Mode != ToolChoiceAuto ||
 		!toolExposed(
 			exposedToolNames(initial.Tools),
 			evaluationcapability.LatestPracticeReportToolName,
@@ -226,7 +224,7 @@ func TestRunLoopLetsModelSelectLatestReportCapability(t *testing.T) {
 		)
 	}
 	if got, want := len(initial.Messages), 2; got != want ||
-		initial.Messages[1].Role != ai.TextRoleUser ||
+		initial.Messages[1].Role != TextRoleUser ||
 		initial.Messages[1].Content != input {
 		t.Fatalf("initial messages = %#v, want original input", initial.Messages)
 	}
@@ -239,7 +237,7 @@ func TestRunLoopLetsModelSelectLatestReportCapability(t *testing.T) {
 	if len(assistant.ToolCalls) != 1 ||
 		assistant.ToolCalls[0].ID != "call-latest-report-1" ||
 		assistant.ToolCalls[0].Name != evaluationcapability.LatestPracticeReportToolName ||
-		toolResult.Role != ai.TextRoleTool ||
+		toolResult.Role != TextRoleTool ||
 		toolResult.ToolCallID != "call-latest-report-1" ||
 		!strings.Contains(toolResult.Content, `"practice_report"`) {
 		t.Fatalf(
@@ -264,12 +262,12 @@ func (loopLatestReportPort) LatestPracticeReport(
 
 func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 	generator := newScriptedGenerator(
-		ai.TextResult{
+		TextResult{
 			ID:           "fake-completion-tools",
 			Provider:     "fake",
 			Model:        "configured-model",
 			FinishReason: "tool_calls",
-			ToolCalls: []ai.ToolCall{
+			ToolCalls: []ModelToolCall{
 				{
 					ID:        "call-review-1",
 					Name:      reviewcapability.ReviewSearchToolName,
@@ -281,7 +279,7 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 					Arguments: json.RawMessage(`{"query":"second","limit":1}`),
 				},
 			},
-			Usage: ai.TokenUsage{
+			Usage: TokenUsage{
 				InputTokens:  1,
 				OutputTokens: 1,
 				TotalTokens:  2,
@@ -314,13 +312,13 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 		t.Fatalf("second request messages = %d, want %d", got, want)
 	}
 	assistant := messages[2]
-	if assistant.Role != ai.TextRoleAssistant ||
+	if assistant.Role != TextRoleAssistant ||
 		len(assistant.ToolCalls) != 2 {
 		t.Fatalf("assistant tool calls = %#v", assistant)
 	}
 	for index, callID := range []string{"call-review-1", "call-review-2"} {
 		message := messages[index+3]
-		if message.Role != ai.TextRoleTool ||
+		if message.Role != TextRoleTool ||
 			message.ToolCallID != callID ||
 			!strings.Contains(message.Content, `"reports"`) {
 			t.Fatalf("tool message %d = %#v", index, message)
@@ -420,7 +418,7 @@ func TestRunLoopTreatsSlashPrefixedTextAsNaturalLanguage(t *testing.T) {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	initial := requests[0]
-	if initial.ToolChoice.Mode != ai.ToolChoiceAuto || len(initial.Tools) != 6 {
+	if initial.ToolChoice.Mode != ToolChoiceAuto || len(initial.Tools) != 6 {
 		t.Fatalf(
 			"initial routing = choice %#v, tools %d",
 			initial.ToolChoice,
@@ -428,7 +426,7 @@ func TestRunLoopTreatsSlashPrefixedTextAsNaturalLanguage(t *testing.T) {
 		)
 	}
 	if got, want := len(initial.Messages), 2; got != want ||
-		initial.Messages[1].Role != ai.TextRoleUser ||
+		initial.Messages[1].Role != TextRoleUser ||
 		initial.Messages[1].Content != input {
 		t.Fatalf("initial messages = %#v, want original input", initial.Messages)
 	}
@@ -465,7 +463,7 @@ func TestRunLoopFeedsExplicitCapabilityFailureBackToModel(t *testing.T) {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
 	toolResult := generator.Requests()[1].Messages[3]
-	if toolResult.Role != ai.TextRoleTool ||
+	if toolResult.Role != TextRoleTool ||
 		toolResult.ToolCallID != "call-material-1" ||
 		!strings.Contains(toolResult.Content, `"category":"internal"`) ||
 		!strings.Contains(toolResult.Content, `"retryable":true`) {
@@ -474,8 +472,8 @@ func TestRunLoopFeedsExplicitCapabilityFailureBackToModel(t *testing.T) {
 }
 
 func TestRunLoopReturnsExplicitModelFailure(t *testing.T) {
-	want := ai.NewGenerationError(
-		ai.ErrorProviderUnavailable,
+	want := NewGenerationError(
+		ErrorProviderUnavailable,
 		0,
 		"",
 		"",
@@ -483,7 +481,7 @@ func TestRunLoopReturnsExplicitModelFailure(t *testing.T) {
 	)
 	service := newLoopTestService(
 		t,
-		aifake.NewFailingTextGenerator(want),
+		&failingTextGenerator{err: want},
 	)
 
 	_, err := service.generate(
@@ -493,9 +491,9 @@ func TestRunLoopReturnsExplicitModelFailure(t *testing.T) {
 		agentcontext.Manifest{},
 		loopRequest("请帮我继续准备面试"),
 	)
-	var generationError *ai.GenerationError
+	var generationError *GenerationError
 	if !errors.As(err, &generationError) ||
-		generationError.Kind != ai.ErrorProviderUnavailable {
+		generationError.Kind != ErrorProviderUnavailable {
 		t.Fatalf("generate() error = %#v, want provider unavailable", err)
 	}
 }
@@ -684,12 +682,12 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 	store := capabilityfixture.NewStore()
 	firstTitle := "write-budget-first-unique"
 	secondTitle := "write-budget-second-unique"
-	generator := newScriptedGenerator(ai.TextResult{
+	generator := newScriptedGenerator(TextResult{
 		ID:           "fake-completion-tools",
 		Provider:     "fake",
 		Model:        "configured-model",
 		FinishReason: "tool_calls",
-		ToolCalls: []ai.ToolCall{
+		ToolCalls: []ModelToolCall{
 			{
 				ID:        "call-create-1",
 				Name:      goalcapability.GoalCreateCapabilityName,
@@ -701,7 +699,7 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 				Arguments: json.RawMessage(`{"title":"` + secondTitle + `"}`),
 			},
 		},
-		Usage: ai.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		Usage: TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 	})
 	service := newLoopTestServiceWithStore(t, generator, store)
 
@@ -769,7 +767,7 @@ func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
 func TestRunLoopReservesWriteBudgetForRejectedInvocations(t *testing.T) {
 	tests := []struct {
 		name string
-		call ai.TextResult
+		call TextResult
 	}{
 		{
 			name: "unknown tool",
@@ -945,7 +943,7 @@ func TestToolSourceRefsKeepsEmptySliceForPersistence(t *testing.T) {
 }
 
 func TestValidLoopTextResultRejectsInvalidToolCalls(t *testing.T) {
-	tests := map[string]ai.ToolCall{
+	tests := map[string]ModelToolCall{
 		"invalid name": {
 			ID:        "call-1",
 			Name:      "review search",
@@ -959,13 +957,13 @@ func TestValidLoopTextResultRejectsInvalidToolCalls(t *testing.T) {
 	}
 	for name, call := range tests {
 		t.Run(name, func(t *testing.T) {
-			result := ai.TextResult{
+			result := TextResult{
 				ID:           "fake-completion-tools",
 				Provider:     "fake",
 				Model:        "configured-model",
 				FinishReason: "tool_calls",
-				ToolCalls:    []ai.ToolCall{call},
-				Usage: ai.TokenUsage{
+				ToolCalls:    []ModelToolCall{call},
+				Usage: TokenUsage{
 					InputTokens:  1,
 					OutputTokens: 1,
 					TotalTokens:  2,
@@ -1123,23 +1121,34 @@ func assertGoalNotCreated(
 
 type scriptedGenerator struct {
 	mu       sync.Mutex
-	results  []ai.TextResult
-	requests []ai.TextRequest
+	results  []TextResult
+	requests []TextRequest
 }
 
-func newScriptedGenerator(results ...ai.TextResult) *scriptedGenerator {
+type failingTextGenerator struct {
+	err error
+}
+
+func (generator *failingTextGenerator) Generate(
+	context.Context,
+	TextRequest,
+) (TextResult, error) {
+	return TextResult{}, generator.err
+}
+
+func newScriptedGenerator(results ...TextResult) *scriptedGenerator {
 	return &scriptedGenerator{results: results}
 }
 
 func (generator *scriptedGenerator) Generate(
 	ctx context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
-	if err := ai.ValidateTextRequest(request); err != nil {
-		return ai.TextResult{}, err
+	request TextRequest,
+) (TextResult, error) {
+	if err := ValidateTextRequest(request); err != nil {
+		return TextResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return ai.TextResult{}, err
+		return TextResult{}, err
 	}
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
@@ -1154,16 +1163,16 @@ func (generator *scriptedGenerator) Generate(
 
 func (generator *scriptedGenerator) GenerateStream(
 	context.Context,
-	ai.TextRequest,
-	ai.TextDeltaObserver,
-) (ai.TextResult, error) {
+	TextRequest,
+	TextDeltaObserver,
+) (TextResult, error) {
 	panic("non-streaming run unexpectedly selected GenerateStream")
 }
 
-func (generator *scriptedGenerator) Requests() []ai.TextRequest {
+func (generator *scriptedGenerator) Requests() []TextRequest {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
-	requests := make([]ai.TextRequest, len(generator.requests))
+	requests := make([]TextRequest, len(generator.requests))
 	copy(requests, generator.requests)
 	return requests
 }
@@ -1176,7 +1185,7 @@ func (generator *scriptedGenerator) CallCount() int {
 
 func newLoopTestService(
 	t *testing.T,
-	generator ai.TextGenerator,
+	generator TextGenerator,
 ) *Service {
 	t.Helper()
 	return newLoopTestServiceWithStore(t, generator, capabilityfixture.NewStore())
@@ -1184,7 +1193,7 @@ func newLoopTestService(
 
 func newLoopTestServiceWithStore(
 	t *testing.T,
-	generator ai.TextGenerator,
+	generator TextGenerator,
 	store *capabilityfixture.Store,
 ) *Service {
 	t.Helper()
@@ -1312,7 +1321,7 @@ func (loopRepository) Complete(
 	string,
 	string,
 	string,
-	ai.TextResult,
+	TextResult,
 ) (Run, error) {
 	panic("unexpected Complete")
 }
@@ -1364,37 +1373,37 @@ func loopRun() Run {
 	return Run{ID: "run-1", OwnerID: "user-1", ThreadID: "thread-1"}
 }
 
-func loopRequest(input string) ai.TextRequest {
-	return ai.TextRequest{Messages: []ai.TextMessage{
-		{Role: ai.TextRoleSystem, Content: "You are SpeakUp."},
-		{Role: ai.TextRoleUser, Content: input},
+func loopRequest(input string) TextRequest {
+	return TextRequest{Messages: []TextMessage{
+		{Role: TextRoleSystem, Content: "You are SpeakUp."},
+		{Role: TextRoleUser, Content: input},
 	}}
 }
 
-func finalLoopResult(content string) ai.TextResult {
-	return ai.TextResult{
+func finalLoopResult(content string) TextResult {
+	return TextResult{
 		ID:           "fake-completion-1",
 		Provider:     "fake",
 		Model:        "configured-model",
 		Content:      content,
 		FinishReason: "stop",
-		Usage:        ai.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		Usage:        TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 	}
 }
 
-func toolLoopResult(id string, name string, arguments string) ai.TextResult {
+func toolLoopResult(id string, name string, arguments string) TextResult {
 	var raw json.RawMessage = []byte(arguments)
-	return ai.TextResult{
+	return TextResult{
 		ID:           "fake-completion-tools",
 		Provider:     "fake",
 		Model:        "configured-model",
 		FinishReason: "tool_calls",
-		ToolCalls: []ai.ToolCall{{
+		ToolCalls: []ModelToolCall{{
 			ID:        id,
 			Name:      name,
 			Arguments: raw,
 		}},
-		Usage: ai.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		Usage: TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 	}
 }
 

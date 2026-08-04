@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const validSummaryJSON = `{"goals":["Prepare for an English interview"],"background":[],"progress":[],"decisions":[],"open_questions":[],"next_steps":["Practice a STAR answer"]}`
@@ -54,26 +53,23 @@ func TestServiceGeneratesFirstCheckpointFromDeterministicPayload(t *testing.T) {
 		t.Fatalf("generator requests = %d, want 1", len(generator.requests))
 	}
 	request := generator.requests[0]
-	if request.ResponseFormat != ai.TextResponseFormatJSON ||
-		len(request.Messages) != 2 ||
-		request.Messages[0].Role != ai.TextRoleSystem ||
-		request.Messages[1].Role != ai.TextRoleUser {
+	if request.SystemPrompt == "" || request.UserPrompt == "" {
 		t.Fatalf("unexpected generation request: %#v", request)
 	}
-	if strings.Contains(request.Messages[0].Content, "Help me prepare.") {
+	if strings.Contains(request.SystemPrompt, "Help me prepare.") {
 		t.Fatal("source content leaked into trusted system prompt")
 	}
 	expectedChecksum := sha256.Sum256(
-		[]byte(request.Messages[1].Content),
+		[]byte(request.UserPrompt),
 	)
 	if repository.created.SourceChecksum != expectedChecksum {
 		t.Fatal("source checksum does not cover the exact user payload")
 	}
 	expectedPayload := `{"previous_summary":null,"messages":[{"sequence":1,"role":"user","modality":"text","content":"Help me prepare."},{"sequence":2,"role":"assistant","modality":"text","content":"Which interview?"}]}`
-	if request.Messages[1].Content != expectedPayload {
+	if request.UserPrompt != expectedPayload {
 		t.Fatalf(
 			"payload = %s, want %s",
-			request.Messages[1].Content,
+			request.UserPrompt,
 			expectedPayload,
 		)
 	}
@@ -110,7 +106,7 @@ func TestServiceRollsForwardFromLatestCheckpoint(t *testing.T) {
 			previous.ID,
 		)
 	}
-	payload := generator.requests[0].Messages[1].Content
+	payload := generator.requests[0].UserPrompt
 	if !strings.Contains(
 		payload,
 		`"covered_through_sequence":2`,
@@ -163,14 +159,14 @@ func TestServiceDoesNotPersistFailedGeneration(t *testing.T) {
 			err: providerFailure,
 		},
 		"provider mismatch": {
-			result: ai.TextResult{
+			result: GenerationResult{
 				Provider: "other",
 				Model:    "qwen-plus",
 				Content:  validSummaryJSON,
 			},
 		},
 		"model mismatch": {
-			result: ai.TextResult{
+			result: GenerationResult{
 				Provider: "qianwen",
 				Model:    "other-model",
 				Content:  validSummaryJSON,
@@ -391,15 +387,15 @@ func (repository *repositoryStub) CreateCheckpoint(
 }
 
 type recordingGenerator struct {
-	result   ai.TextResult
+	result   GenerationResult
 	err      error
-	requests []ai.TextRequest
+	requests []GenerationRequest
 }
 
-func (generator *recordingGenerator) Generate(
+func (generator *recordingGenerator) GenerateJSON(
 	_ context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
+	request GenerationRequest,
+) (GenerationResult, error) {
 	generator.requests = append(generator.requests, request)
 	return generator.result, generator.err
 }
@@ -407,7 +403,7 @@ func (generator *recordingGenerator) Generate(
 func newTestService(
 	t *testing.T,
 	repository Repository,
-	generator ai.TextGenerator,
+	generator Generator,
 ) *Service {
 	t.Helper()
 	service, err := NewService(
@@ -475,12 +471,10 @@ func checkpointFixture(coveredThrough int64) Checkpoint {
 	}
 }
 
-func summaryResult(content string) ai.TextResult {
-	return ai.TextResult{
-		ID:           "completion-1",
-		Provider:     "qianwen",
-		Model:        "qwen-plus",
-		Content:      content,
-		FinishReason: "stop",
+func summaryResult(content string) GenerationResult {
+	return GenerationResult{
+		Provider: "qianwen",
+		Model:    "qwen-plus",
+		Content:  content,
 	}
 }

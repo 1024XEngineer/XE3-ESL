@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 type Status string
@@ -52,7 +51,7 @@ type Run struct {
 	ProviderCompletionID string
 	ProviderModel        string
 	FinishReason         string
-	Usage                ai.TokenUsage
+	Usage                TokenUsage
 	FailureKind          string
 	FailureRetryable     bool
 	CreatedAt            time.Time

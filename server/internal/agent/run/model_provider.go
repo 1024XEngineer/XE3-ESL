@@ -1,4 +1,4 @@
-package ai
+package run
 
 import (
 	"context"
@@ -9,16 +9,15 @@ import (
 	"strings"
 )
 
-// TextGenerator is the application-facing boundary for one text completion.
-// Implementations own provider-specific transport details and must not retry
-// calls implicitly.
+// TextGenerator is the Run-owned boundary for one model completion.
+// Implementations translate this contract to one configured provider and do
+// not retry implicitly.
 type TextGenerator interface {
 	Generate(context.Context, TextRequest) (TextResult, error)
 }
 
-// StreamingTextGenerator emits only user-visible assistant text. Provider
-// reasoning and fragmented tool-call arguments are never exposed through the
-// observer; they are returned only in the validated final TextResult.
+// StreamingTextGenerator emits only user-visible assistant text. Hidden
+// reasoning and fragmented tool arguments remain inside the provider adapter.
 type StreamingTextGenerator interface {
 	GenerateStream(context.Context, TextRequest, TextDeltaObserver) (TextResult, error)
 }
@@ -51,7 +50,7 @@ type ToolDefinition struct {
 	InputSchema map[string]any
 }
 
-type ToolCall struct {
+type ModelToolCall struct {
 	ID        string
 	Name      string
 	Arguments json.RawMessage
@@ -81,9 +80,8 @@ const (
 	maxImageURLBytes     = 16 * 1024
 )
 
-// ContentPart is the provider-neutral representation of one multimodal user
-// input. ImageURL is an ephemeral server-minted HTTPS capability and must never
-// be persisted or included in logs and errors.
+// ContentPart contains one provider-neutral multimodal input. ImageURL is an
+// ephemeral HTTPS capability and must never be persisted or logged.
 type ContentPart struct {
 	Kind     ContentPartKind
 	Text     string
@@ -95,7 +93,7 @@ type TextMessage struct {
 	Content      string
 	ContentParts []ContentPart
 	ToolCallID   string
-	ToolCalls    []ToolCall
+	ToolCalls    []ModelToolCall
 }
 
 type TextResponseFormat string
@@ -106,8 +104,7 @@ const (
 )
 
 func (format TextResponseFormat) Valid() bool {
-	return format == TextResponseFormatDefault ||
-		format == TextResponseFormatJSON
+	return format == TextResponseFormatDefault || format == TextResponseFormatJSON
 }
 
 type TextRequest struct {
@@ -123,14 +120,13 @@ type TokenUsage struct {
 	TotalTokens  int
 }
 
-// TextResult contains only provider-neutral completion metadata needed for
-// later run auditing. Hidden reasoning is intentionally not represented.
+// TextResult contains only completion metadata needed for Run auditing.
 type TextResult struct {
 	ID           string
 	Provider     string
 	Model        string
 	Content      string
-	ToolCalls    []ToolCall
+	ToolCalls    []ModelToolCall
 	FinishReason string
 	Usage        TokenUsage
 }
@@ -161,8 +157,7 @@ func ValidateTextRequest(request TextRequest) error {
 	for index, message := range request.Messages {
 		switch message.Role {
 		case TextRoleSystem:
-			if strings.TrimSpace(message.Content) == "" ||
-				len(message.ContentParts) != 0 {
+			if strings.TrimSpace(message.Content) == "" || len(message.ContentParts) != 0 {
 				return fmt.Errorf("text generation message %d has empty content", index)
 			}
 			if message.ToolCallID != "" || len(message.ToolCalls) != 0 {
@@ -170,11 +165,7 @@ func ValidateTextRequest(request TextRequest) error {
 			}
 		case TextRoleUser:
 			if err := validateUserContent(message); err != nil {
-				return fmt.Errorf(
-					"text generation message %d has invalid user content: %w",
-					index,
-					err,
-				)
+				return fmt.Errorf("text generation message %d has invalid user content: %w", index, err)
 			}
 			if message.ToolCallID != "" || len(message.ToolCalls) != 0 {
 				return fmt.Errorf("text generation message %d has invalid tool metadata", index)
@@ -189,40 +180,23 @@ func ValidateTextRequest(request TextRequest) error {
 			}
 			for callIndex, call := range message.ToolCalls {
 				if err := ValidateToolCall(call); err != nil {
-					return fmt.Errorf(
-						"text generation message %d tool call %d is invalid: %w",
-						index,
-						callIndex,
-						err,
-					)
+					return fmt.Errorf("text generation message %d tool call %d is invalid: %w", index, callIndex, err)
 				}
 				if _, exists := knownCalls[call.ID]; exists {
-					return fmt.Errorf(
-						"text generation message %d duplicates tool call ID %q",
-						index,
-						call.ID,
-					)
+					return fmt.Errorf("text generation message %d duplicates tool call ID %q", index, call.ID)
 				}
 				knownCalls[call.ID] = struct{}{}
 			}
 		case TextRoleTool:
-			if strings.TrimSpace(message.Content) == "" ||
-				len(message.ContentParts) != 0 ||
-				!validIdentifier(message.ToolCallID) ||
-				len(message.ToolCalls) != 0 {
+			if strings.TrimSpace(message.Content) == "" || len(message.ContentParts) != 0 ||
+				!validIdentifier(message.ToolCallID) || len(message.ToolCalls) != 0 {
 				return fmt.Errorf("text generation message %d has an invalid tool result", index)
 			}
 			if _, exists := knownCalls[message.ToolCallID]; !exists {
-				return fmt.Errorf(
-					"text generation message %d references an unknown tool call",
-					index,
-				)
+				return fmt.Errorf("text generation message %d references an unknown tool call", index)
 			}
 			if _, exists := resolvedCalls[message.ToolCallID]; exists {
-				return fmt.Errorf(
-					"text generation message %d duplicates a tool result",
-					index,
-				)
+				return fmt.Errorf("text generation message %d duplicates a tool result", index)
 			}
 			resolvedCalls[message.ToolCallID] = struct{}{}
 		default:
@@ -250,7 +224,6 @@ func validateUserContent(message TextMessage) error {
 	if hasText {
 		return errors.New("content and content parts are mutually exclusive")
 	}
-
 	textParts := 0
 	imageParts := 0
 	for _, part := range message.ContentParts {
@@ -279,24 +252,16 @@ func validateUserContent(message TextMessage) error {
 }
 
 func validImageURL(raw string) bool {
-	if raw == "" ||
-		len(raw) > maxImageURLBytes ||
-		strings.TrimSpace(raw) != raw ||
+	if raw == "" || len(raw) > maxImageURLBytes || strings.TrimSpace(raw) != raw ||
 		strings.ContainsAny(raw, "\r\n\t") {
 		return false
 	}
 	parsed, err := url.ParseRequestURI(raw)
-	return err == nil &&
-		parsed.Scheme == "https" &&
-		parsed.Host != "" &&
-		parsed.User == nil &&
-		parsed.Fragment == ""
+	return err == nil && parsed.Scheme == "https" && parsed.Host != "" &&
+		parsed.User == nil && parsed.Fragment == ""
 }
 
-func validateToolChoice(
-	choice ToolChoice,
-	toolNames map[string]struct{},
-) error {
+func validateToolChoice(choice ToolChoice, toolNames map[string]struct{}) error {
 	switch choice.Mode {
 	case "":
 		if choice.Name != "" {
@@ -323,22 +288,19 @@ func validateToolChoice(
 	return nil
 }
 
-func ValidateToolCall(call ToolCall) error {
+func ValidateToolCall(call ModelToolCall) error {
 	if !validIdentifier(call.ID) || !validToolName(call.Name) {
 		return errors.New("tool call requires a valid ID and name")
 	}
 	var arguments map[string]any
-	if len(call.Arguments) == 0 ||
-		json.Unmarshal(call.Arguments, &arguments) != nil ||
-		arguments == nil {
+	if len(call.Arguments) == 0 || json.Unmarshal(call.Arguments, &arguments) != nil || arguments == nil {
 		return errors.New("tool call arguments must be a JSON object")
 	}
 	return nil
 }
 
 func validateToolDefinition(definition ToolDefinition) error {
-	if !validToolName(definition.Name) ||
-		strings.TrimSpace(definition.Description) == "" ||
+	if !validToolName(definition.Name) || strings.TrimSpace(definition.Description) == "" ||
 		definition.InputSchema == nil {
 		return errors.New("tool definition requires a name, description, and input schema")
 	}
@@ -354,9 +316,7 @@ func validToolName(name string) bool {
 	}
 	first := name[0]
 	last := name[len(name)-1]
-	return isASCIIAlphaNumeric(first) &&
-		isASCIIAlphaNumeric(last) &&
-		!strings.Contains(name, "..")
+	return isASCIIAlphaNumeric(first) && isASCIIAlphaNumeric(last) && !strings.Contains(name, "..")
 }
 
 func validIdentifier(value string) bool {
@@ -365,11 +325,8 @@ func validIdentifier(value string) bool {
 	}
 	for index := range len(value) {
 		character := value[index]
-		if !isASCIIAlphaNumeric(character) &&
-			character != '.' &&
-			character != '_' &&
-			character != '-' &&
-			character != ':' {
+		if !isASCIIAlphaNumeric(character) && character != '.' && character != '_' &&
+			character != '-' && character != ':' {
 			return false
 		}
 	}
@@ -377,9 +334,8 @@ func validIdentifier(value string) bool {
 }
 
 func isASCIIAlphaNumeric(value byte) bool {
-	return (value >= 'a' && value <= 'z') ||
-		(value >= 'A' && value <= 'Z') ||
-		(value >= '0' && value <= '9')
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' ||
+		value >= '0' && value <= '9'
 }
 
 type ErrorKind string
@@ -399,21 +355,16 @@ const (
 
 func (kind ErrorKind) Retryable() bool {
 	switch kind {
-	case ErrorRateLimited,
-		ErrorTimeout,
-		ErrorProviderUnavailable,
-		ErrorInvalidResponse,
-		// ErrorCancelled currently means caller/transport cancellation. There
-		// is no accepted business-level Run cancellation command.
-		ErrorCancelled:
+	case ErrorRateLimited, ErrorTimeout, ErrorProviderUnavailable,
+		ErrorInvalidResponse, ErrorCancelled:
 		return true
 	default:
 		return false
 	}
 }
 
-// GenerationError exposes stable application semantics without carrying the
-// provider's free-form message, request body, prompt, or credentials.
+// GenerationError carries stable failure metadata without provider payloads,
+// prompts, generated content, or credentials.
 type GenerationError struct {
 	Kind         ErrorKind
 	StatusCode   int
@@ -430,11 +381,8 @@ func NewGenerationError(
 	cause error,
 ) *GenerationError {
 	return &GenerationError{
-		Kind:         kind,
-		StatusCode:   statusCode,
-		ProviderCode: providerCode,
-		RequestID:    requestID,
-		cause:        cause,
+		Kind: kind, StatusCode: statusCode, ProviderCode: providerCode,
+		RequestID: requestID, cause: cause,
 	}
 }
 
@@ -456,9 +404,6 @@ func (e *GenerationError) Retryable() bool {
 	return e != nil && e.Kind.Retryable()
 }
 
-// StableCategory lets owning application modules persist provider-neutral
-// failure classification through a structural error port. It deliberately
-// exposes only the bounded machine category, not provider payloads.
 func (e *GenerationError) StableCategory() string {
 	if e == nil {
 		return ""

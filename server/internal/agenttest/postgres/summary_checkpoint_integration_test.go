@@ -12,8 +12,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	summarypostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -23,7 +21,7 @@ func TestPostgresSummaryCheckpointChainVisibilityAndOwnership(t *testing.T) {
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	ctx := context.Background()
@@ -115,7 +113,7 @@ func TestPostgresSummaryCheckpointRejectsInvalidChainAndFutureCoverage(
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	ctx := context.Background()
@@ -170,7 +168,7 @@ func TestPostgresSummaryCheckpointConcurrentCreateDoesNotFork(t *testing.T) {
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	ctx := context.Background()
@@ -237,7 +235,7 @@ func TestPostgresSummaryCheckpointCascadesWithThread(t *testing.T) {
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	ctx := context.Background()
@@ -317,7 +315,7 @@ func TestPostgresSummarySourceAndGenerationService(t *testing.T) {
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	ctx := context.Background()
@@ -368,7 +366,7 @@ func TestPostgresSummarySourceAndGenerationService(t *testing.T) {
 		t.Fatalf("future source error = %v, want not found", err)
 	}
 
-	generator := fake.NewTextGenerator(summaryGenerationResult())
+	generator := newFixedSummaryGenerator(summaryGenerationResult())
 	service, err := agentsummary.NewService(
 		repository.summary,
 		generator,
@@ -515,15 +513,13 @@ func summaryCommand(
 	}
 }
 
-func summaryGenerationResult() ai.TextResult {
-	return ai.TextResult{
-		ID:       "summary-completion-1",
+func summaryGenerationResult() agentsummary.GenerationResult {
+	return agentsummary.GenerationResult{
 		Provider: "qianwen",
 		Model:    "qwen-plus",
 		Content: `{"goals":["Prepare for an English product interview"],` +
 			`"background":[],"progress":[],"decisions":[],` +
 			`"open_questions":[],"next_steps":["Practice a STAR answer"]}`,
-		FinishReason: "stop",
 	}
 }
 

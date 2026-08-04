@@ -11,9 +11,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformconfig "github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 const defaultASRLiveFixture = "testdata/asr-live-fixture.wav"
@@ -53,7 +53,7 @@ func TestLiveSpeechRecognition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load speech recognition config: %v", err)
 	}
-	recognizer, err := NewRecognizer(ASRConfig{
+	recognizer, err := newSpeechRecognizer(ASRConfig{
 		BaseURL: cfg.BaseURL,
 		Model:   cfg.Model,
 		Timeout: cfg.Timeout,
@@ -63,7 +63,7 @@ func TestLiveSpeechRecognition(t *testing.T) {
 	}
 	result, err := recognizer.Transcribe(
 		context.Background(),
-		ai.TranscriptionRequest{Audio: audio},
+		protocol.TranscriptionRequest{Audio: audio},
 	)
 	if err != nil {
 		t.Fatalf("live Qianwen ASR failed: %s", safeLiveSpeechError(err))
@@ -100,7 +100,7 @@ func TestLiveSpeechSynthesis(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load speech synthesis config: %v", err)
 	}
-	synthesizer, err := NewSynthesizer(TTSConfig{
+	synthesizer, err := newSpeechSynthesizer(TTSConfig{
 		BaseURL:       cfg.BaseURL,
 		Model:         cfg.Model,
 		Voice:         cfg.Voice,
@@ -113,7 +113,7 @@ func TestLiveSpeechSynthesis(t *testing.T) {
 	}
 	result, err := synthesizer.Synthesize(
 		context.Background(),
-		ai.SynthesisRequest{Text: "Please repeat after me."},
+		protocol.SynthesisRequest{Text: "Please repeat after me."},
 	)
 	if err != nil {
 		t.Fatalf("live Qianwen TTS failed: %s", safeLiveSpeechError(err))
@@ -151,7 +151,7 @@ func TestLiveSpeechSynthesis(t *testing.T) {
 }
 
 func safeLiveSpeechError(err error) string {
-	var speechError *ai.SpeechError
+	var speechError *protocol.SpeechError
 	if !errors.As(err, &speechError) {
 		return "unexpected_error"
 	}

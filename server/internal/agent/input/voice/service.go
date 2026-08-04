@@ -12,7 +12,6 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -84,7 +83,7 @@ type Application interface {
 		context.Context,
 		requestcontext.Actor,
 		UploadRequest,
-		ai.TranscriptionObserver,
+		TranscriptionObserver,
 	) (Candidate, error)
 	GetCandidate(
 		context.Context,
@@ -121,15 +120,15 @@ type Application interface {
 		requestcontext.Actor,
 		string,
 		string,
-	) (ai.SynthesisResult, error)
+	) (SynthesisResult, error)
 }
 
 type Service struct {
 	repository  Repository
 	store       objectstore.Store
 	sources     AudioSourceLoader
-	recognizer  ai.StreamingSpeechRecognizer
-	synthesizer ai.SpeechSynthesizer
+	recognizer  StreamingSpeechRecognizer
+	synthesizer SpeechSynthesizer
 	runs        PendingRunProcessor
 	feedback    FeedbackPort
 	ids         IDGenerator
@@ -141,8 +140,8 @@ func NewService(
 	repository Repository,
 	store objectstore.Store,
 	sources AudioSourceLoader,
-	recognizer ai.StreamingSpeechRecognizer,
-	synthesizer ai.SpeechSynthesizer,
+	recognizer StreamingSpeechRecognizer,
+	synthesizer SpeechSynthesizer,
 	runs PendingRunProcessor,
 	ids IDGenerator,
 	config Config,
@@ -211,7 +210,7 @@ func (service *Service) UploadStream(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	request UploadRequest,
-	observer ai.TranscriptionObserver,
+	observer TranscriptionObserver,
 ) (Candidate, error) {
 	if observer == nil {
 		return Candidate{}, ErrInvalidRequest
@@ -223,7 +222,7 @@ func (service *Service) upload(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	request UploadRequest,
-	observer ai.TranscriptionObserver,
+	observer TranscriptionObserver,
 ) (Candidate, error) {
 	if ctx == nil || !actor.Valid() || !ValidUUID(request.ThreadID) ||
 		!validIdempotencyKey(request.IdempotencyKey) ||
@@ -407,7 +406,7 @@ func (service *Service) transcribe(
 	actor requestcontext.Actor,
 	candidateID string,
 	source platformmedia.ManagedAudioSource,
-	observer ai.TranscriptionObserver,
+	observer TranscriptionObserver,
 ) (Candidate, error) {
 	claim, acquired, err := service.repository.ClaimTranscription(
 		ctx,
@@ -427,14 +426,14 @@ func (service *Service) transcribe(
 			return service.failTranscription(
 				ctx,
 				claim,
-				string(ai.ErrorProviderUnavailable),
+				string(ErrorProviderUnavailable),
 				true,
 			)
 		}
 		defer source.Close()
 	}
-	request := ai.TranscriptionRequest{Audio: source}
-	var result ai.TranscriptionResult
+	request := TranscriptionRequest{Audio: source}
+	var result TranscriptionResult
 	var providerErr error
 	if observer == nil {
 		result, providerErr = service.recognizer.Transcribe(ctx, request)
@@ -453,7 +452,7 @@ func (service *Service) transcribe(
 		return service.failTranscription(
 			ctx,
 			claim,
-			string(ai.ErrorInvalidResponse),
+			string(ErrorInvalidResponse),
 			true,
 		)
 	}
@@ -637,9 +636,9 @@ func (service *Service) SynthesizeMessage(
 	actor requestcontext.Actor,
 	messageID string,
 	previewText string,
-) (ai.SynthesisResult, error) {
+) (SynthesisResult, error) {
 	if ctx == nil || !actor.Valid() || !ValidUUID(messageID) {
-		return ai.SynthesisResult{}, ErrNotFound
+		return SynthesisResult{}, ErrNotFound
 	}
 	message, err := findOwnedMessageForSpeech(
 		ctx,
@@ -648,17 +647,17 @@ func (service *Service) SynthesizeMessage(
 		messageID,
 	)
 	if err != nil {
-		return ai.SynthesisResult{}, err
+		return SynthesisResult{}, err
 	}
 	text := message.Content
 	if previewText != "" {
 		text = previewText
 	} else if message.Role != conversation.MessageRoleAssistant {
-		return ai.SynthesisResult{}, ErrNotFound
+		return SynthesisResult{}, ErrNotFound
 	}
 	return service.synthesizer.Synthesize(
 		ctx,
-		ai.SynthesisRequest{Text: text},
+		SynthesisRequest{Text: text},
 	)
 }
 
@@ -735,11 +734,11 @@ func sameVoiceUpload(
 }
 
 func speechFailure(err error) (string, bool) {
-	var speechError *ai.SpeechError
+	var speechError *SpeechError
 	if errors.As(err, &speechError) {
 		return string(speechError.Kind), speechError.Retryable()
 	}
-	return string(ai.ErrorProviderUnavailable), true
+	return string(ErrorProviderUnavailable), true
 }
 
 var _ Application = (*Service)(nil)

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 const maxASRDataURLBytes = 10_000_000
@@ -25,7 +25,7 @@ type ASRConfig struct {
 	Timeout time.Duration
 }
 
-type Recognizer struct {
+type speechRecognizer struct {
 	endpoint   string
 	wsEndpoint string
 	model      string
@@ -34,7 +34,7 @@ type Recognizer struct {
 	client     httpDoer
 }
 
-func (recognizer *Recognizer) String() string {
+func (recognizer *speechRecognizer) String() string {
 	if recognizer == nil {
 		return "FunASRRecognizer(<nil>)"
 	}
@@ -45,11 +45,11 @@ func (recognizer *Recognizer) String() string {
 	)
 }
 
-func (recognizer *Recognizer) GoString() string {
+func (recognizer *speechRecognizer) GoString() string {
 	return recognizer.String()
 }
 
-func NewRecognizer(config ASRConfig, apiKey string) (*Recognizer, error) {
+func newSpeechRecognizer(config ASRConfig, apiKey string) (*speechRecognizer, error) {
 	client := &http.Client{
 		Timeout: config.Timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -63,7 +63,7 @@ func newRecognizerWithClient(
 	config ASRConfig,
 	apiKey string,
 	client httpDoer,
-) (*Recognizer, error) {
+) (*speechRecognizer, error) {
 	baseURL, err := normalizeDashScopeAPIBaseURL(config.BaseURL)
 	if err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ func newRecognizerWithClient(
 	if client == nil {
 		return nil, errors.New("Fun-ASR HTTP client is required")
 	}
-	return &Recognizer{
+	return &speechRecognizer{
 		endpoint:   baseURL + multimodalGenerationPath,
 		wsEndpoint: realtimeASREndpoint(baseURL),
 		model:      model,
@@ -92,27 +92,27 @@ func newRecognizerWithClient(
 	}, nil
 }
 
-func (recognizer *Recognizer) Transcribe(
+func (recognizer *speechRecognizer) Transcribe(
 	ctx context.Context,
-	request ai.TranscriptionRequest,
-) (ai.TranscriptionResult, error) {
+	request protocol.TranscriptionRequest,
+) (protocol.TranscriptionResult, error) {
 	if recognizer.model == "fun-asr-realtime" {
 		return recognizer.transcribeRealtime(ctx, request, nil)
 	}
 	if ctx == nil {
-		return ai.TranscriptionResult{}, ai.NewSpeechError(
-			ai.SpeechOperationTranscription,
-			ai.ErrorInvalidRequest,
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
 			errors.New("speech transcription context is required"),
 		)
 	}
-	if err := ai.ValidateTranscriptionRequest(request); err != nil {
-		return ai.TranscriptionResult{}, ai.NewSpeechError(
-			ai.SpeechOperationTranscription,
-			ai.ErrorInvalidRequest,
+	if err := protocol.ValidateTranscriptionRequest(request); err != nil {
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -121,9 +121,9 @@ func (recognizer *Recognizer) Transcribe(
 	}
 	audioBytes, err := readAudioSource(request.Audio)
 	if err != nil {
-		return ai.TranscriptionResult{}, ai.NewSpeechError(
-			ai.SpeechOperationTranscription,
-			ai.ErrorInvalidRequest,
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -133,9 +133,9 @@ func (recognizer *Recognizer) Transcribe(
 	dataURL := "data:" + request.Audio.MediaType() + ";base64," +
 		base64.StdEncoding.EncodeToString(audioBytes)
 	if len(dataURL) > maxASRDataURLBytes {
-		return ai.TranscriptionResult{}, ai.NewSpeechError(
-			ai.SpeechOperationTranscription,
-			ai.ErrorInvalidRequest,
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -163,9 +163,9 @@ func (recognizer *Recognizer) Transcribe(
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return ai.TranscriptionResult{}, ai.NewSpeechError(
-			ai.SpeechOperationTranscription,
-			ai.ErrorInvalidRequest,
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -182,9 +182,9 @@ func (recognizer *Recognizer) Transcribe(
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return ai.TranscriptionResult{}, ai.NewSpeechError(
-			ai.SpeechOperationTranscription,
-			ai.ErrorConfiguration,
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorConfiguration,
 			0,
 			"",
 			"",
@@ -201,23 +201,23 @@ func (recognizer *Recognizer) Transcribe(
 
 	response, err := recognizer.client.Do(httpRequest)
 	if err != nil {
-		return ai.TranscriptionResult{}, speechTransportError(
-			ai.SpeechOperationTranscription,
+		return protocol.TranscriptionResult{}, speechTransportError(
+			protocol.SpeechOperationTranscription,
 			callContext,
 			err,
 		)
 	}
 	if response == nil {
-		return ai.TranscriptionResult{}, invalidSpeechResponse(
-			ai.SpeechOperationTranscription,
+		return protocol.TranscriptionResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationTranscription,
 			0,
 			"",
 			"Fun-ASR returned a nil HTTP response",
 		)
 	}
 	if response.Body == nil {
-		return ai.TranscriptionResult{}, invalidSpeechResponse(
-			ai.SpeechOperationTranscription,
+		return protocol.TranscriptionResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationTranscription,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
 			"Fun-ASR returned an HTTP response without a body",
@@ -225,15 +225,15 @@ func (recognizer *Recognizer) Transcribe(
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return ai.TranscriptionResult{}, decodeSpeechStatusError(
-			ai.SpeechOperationTranscription,
+		return protocol.TranscriptionResult{}, decodeSpeechStatusError(
+			protocol.SpeechOperationTranscription,
 			response,
 		)
 	}
 	responseBody, err := readBounded(response.Body, maxResponseBytes)
 	if err != nil {
-		return ai.TranscriptionResult{}, invalidSpeechResponse(
-			ai.SpeechOperationTranscription,
+		return protocol.TranscriptionResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationTranscription,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
 			"Fun-ASR response exceeds the accepted limit",
@@ -241,8 +241,8 @@ func (recognizer *Recognizer) Transcribe(
 	}
 	var completion asrResponse
 	if err := json.Unmarshal(responseBody, &completion); err != nil {
-		return ai.TranscriptionResult{}, invalidSpeechResponse(
-			ai.SpeechOperationTranscription,
+		return protocol.TranscriptionResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationTranscription,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
 			"decode Fun-ASR response",
@@ -250,8 +250,8 @@ func (recognizer *Recognizer) Transcribe(
 	}
 	result, err := completion.result(recognizer.model)
 	if err != nil {
-		return ai.TranscriptionResult{}, invalidSpeechResponse(
-			ai.SpeechOperationTranscription,
+		return protocol.TranscriptionResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationTranscription,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
 			err.Error(),
@@ -260,11 +260,11 @@ func (recognizer *Recognizer) Transcribe(
 	return result, nil
 }
 
-func (recognizer *Recognizer) TranscribeStream(
+func (recognizer *speechRecognizer) TranscribeStream(
 	ctx context.Context,
-	request ai.TranscriptionRequest,
-	observer ai.TranscriptionObserver,
-) (ai.TranscriptionResult, error) {
+	request protocol.TranscriptionRequest,
+	observer protocol.TranscriptionObserver,
+) (protocol.TranscriptionResult, error) {
 	if recognizer.model != "fun-asr-realtime" || observer == nil {
 		return recognizer.Transcribe(ctx, request)
 	}
@@ -307,46 +307,36 @@ type asrResponse struct {
 		Sentence struct {
 			Text string `json:"text"`
 		} `json:"sentence"`
-		Output struct {
-			Sentence struct {
-				Text string `json:"text"`
-			} `json:"sentence"`
-		} `json:"output"`
 	} `json:"output"`
 	Usage struct {
 		Duration int `json:"duration"`
 	} `json:"usage"`
 }
 
-func (response asrResponse) result(model string) (ai.TranscriptionResult, error) {
+func (response asrResponse) result(model string) (protocol.TranscriptionResult, error) {
 	requestID := sanitizeIdentifier(response.RequestID)
 	if requestID == "" {
-		return ai.TranscriptionResult{}, errors.New("Fun-ASR response has no valid request ID")
+		return protocol.TranscriptionResult{}, errors.New("Fun-ASR response has no valid request ID")
 	}
 	if response.Usage.Duration < 0 {
-		return ai.TranscriptionResult{}, errors.New("Fun-ASR response has invalid audio usage")
+		return protocol.TranscriptionResult{}, errors.New("Fun-ASR response has invalid audio usage")
 	}
 	text := strings.TrimSpace(response.Output.Text)
 	sentenceText := strings.TrimSpace(response.Output.Sentence.Text)
-	if sentenceText == "" {
-		// Retain compatibility with the previously observed nested response
-		// while preferring the shape in the current official API reference.
-		sentenceText = strings.TrimSpace(response.Output.Output.Sentence.Text)
-	}
 	// output.text is the cumulative full transcript. sentence.text is only
 	// the current sentence, so differing non-empty values are expected.
 	if text == "" {
 		text = sentenceText
 	}
 	if text == "" {
-		return ai.TranscriptionResult{}, errors.New("Fun-ASR response has no transcript")
+		return protocol.TranscriptionResult{}, errors.New("Fun-ASR response has no transcript")
 	}
-	return ai.TranscriptionResult{
+	return protocol.TranscriptionResult{
 		ID:         requestID,
 		Provider:   providerName,
 		Model:      model,
 		Transcript: text,
-		Usage: ai.SpeechUsage{
+		Usage: protocol.SpeechUsage{
 			AudioSeconds: response.Usage.Duration,
 		},
 	}, nil
@@ -385,14 +375,14 @@ func normalizeASRModel(raw string) (string, error) {
 }
 
 func invalidSpeechResponse(
-	operation ai.SpeechOperation,
+	operation protocol.SpeechOperation,
 	statusCode int,
 	requestID string,
 	cause string,
 ) error {
-	return ai.NewSpeechError(
+	return protocol.NewSpeechError(
 		operation,
-		ai.ErrorInvalidResponse,
+		protocol.ErrorInvalidResponse,
 		statusCode,
 		"",
 		sanitizeIdentifier(requestID),
@@ -400,5 +390,5 @@ func invalidSpeechResponse(
 	)
 }
 
-var _ ai.SpeechRecognizer = (*Recognizer)(nil)
-var _ ai.StreamingSpeechRecognizer = (*Recognizer)(nil)
+var _ protocol.SpeechRecognizer = (*speechRecognizer)(nil)
+var _ protocol.StreamingSpeechRecognizer = (*speechRecognizer)(nil)

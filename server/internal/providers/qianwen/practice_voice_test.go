@@ -5,32 +5,32 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 func TestMapPracticeVoiceErrorPreservesStableProviderMetadata(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		kind ai.ErrorKind
+		kind protocol.ErrorKind
 		want practicevoice.ProviderErrorKind
 	}{
-		{"invalid request", ai.ErrorInvalidRequest, practicevoice.ProviderErrorInvalidRequest},
-		{"configuration", ai.ErrorConfiguration, practicevoice.ProviderErrorConfiguration},
-		{"authentication", ai.ErrorAuthentication, practicevoice.ProviderErrorAuthentication},
-		{"authorization", ai.ErrorAuthorization, practicevoice.ProviderErrorAuthorization},
-		{"quota", ai.ErrorQuotaExhausted, practicevoice.ProviderErrorQuotaExhausted},
-		{"rate limited", ai.ErrorRateLimited, practicevoice.ProviderErrorRateLimited},
-		{"timeout", ai.ErrorTimeout, practicevoice.ProviderErrorTimeout},
-		{"unavailable", ai.ErrorProviderUnavailable, practicevoice.ProviderErrorUnavailable},
-		{"invalid response", ai.ErrorInvalidResponse, practicevoice.ProviderErrorInvalidResponse},
-		{"cancelled", ai.ErrorCancelled, practicevoice.ProviderErrorCancelled},
+		{"invalid request", protocol.ErrorInvalidRequest, practicevoice.ProviderErrorInvalidRequest},
+		{"configuration", protocol.ErrorConfiguration, practicevoice.ProviderErrorConfiguration},
+		{"authentication", protocol.ErrorAuthentication, practicevoice.ProviderErrorAuthentication},
+		{"authorization", protocol.ErrorAuthorization, practicevoice.ProviderErrorAuthorization},
+		{"quota", protocol.ErrorQuotaExhausted, practicevoice.ProviderErrorQuotaExhausted},
+		{"rate limited", protocol.ErrorRateLimited, practicevoice.ProviderErrorRateLimited},
+		{"timeout", protocol.ErrorTimeout, practicevoice.ProviderErrorTimeout},
+		{"unavailable", protocol.ErrorProviderUnavailable, practicevoice.ProviderErrorUnavailable},
+		{"invalid response", protocol.ErrorInvalidResponse, practicevoice.ProviderErrorInvalidResponse},
+		{"cancelled", protocol.ErrorCancelled, practicevoice.ProviderErrorCancelled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cause := errors.New("provider detail")
 			mapped := mapPracticeVoiceError(
-				ai.NewSpeechError(
-					ai.SpeechOperationTranscription,
+				protocol.NewSpeechError(
+					protocol.SpeechOperationTranscription,
 					test.kind,
 					503,
 					"ProviderCode",
@@ -55,8 +55,8 @@ func TestMapPracticeVoiceErrorPreservesStableProviderMetadata(t *testing.T) {
 
 func TestMapPracticeVoiceGenerationErrorUsesQuestionOperation(t *testing.T) {
 	mapped := mapPracticeVoiceError(
-		ai.NewGenerationError(
-			ai.ErrorRateLimited,
+		protocol.NewGenerationError(
+			protocol.ErrorRateLimited,
 			429,
 			"Throttled",
 			"question-request",

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 type runCompletionNotifyingRepository struct {
@@ -18,7 +17,7 @@ func (repository *runCompletionNotifyingRepository) Complete(
 	runID string,
 	workerLeaseToken string,
 	content string,
-	result ai.TextResult,
+	result agentrun.TextResult,
 ) (agentrun.Run, error) {
 	run, err := repository.Repository.Complete(
 		ctx,

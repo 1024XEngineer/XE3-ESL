@@ -4,19 +4,19 @@ import (
 	"context"
 	"errors"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 type PracticeVoiceRecognizer struct {
-	recognizer *Recognizer
+	recognizer *speechRecognizer
 }
 
 func NewPracticeVoiceRecognizer(
 	configuration ASRConfig,
 	apiKey string,
 ) (*PracticeVoiceRecognizer, error) {
-	recognizer, err := NewRecognizer(configuration, apiKey)
+	recognizer, err := newSpeechRecognizer(configuration, apiKey)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +38,7 @@ func (recognizer *PracticeVoiceRecognizer) Transcribe(
 	}
 	result, err := recognizer.recognizer.Transcribe(
 		ctx,
-		ai.TranscriptionRequest{Audio: request.Audio},
+		protocol.TranscriptionRequest{Audio: request.Audio},
 	)
 	if err != nil {
 		return practicevoice.TranscriptionResult{},
@@ -57,14 +57,14 @@ func (recognizer *PracticeVoiceRecognizer) Transcribe(
 }
 
 type PracticeVoiceSynthesizer struct {
-	synthesizer *Synthesizer
+	synthesizer *speechSynthesizer
 }
 
 func NewPracticeVoiceSynthesizer(
 	configuration TTSConfig,
 	apiKey string,
 ) (*PracticeVoiceSynthesizer, error) {
-	synthesizer, err := NewSynthesizer(configuration, apiKey)
+	synthesizer, err := newSpeechSynthesizer(configuration, apiKey)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (synthesizer *PracticeVoiceSynthesizer) Synthesize(
 	}
 	result, err := synthesizer.synthesizer.Synthesize(
 		ctx,
-		ai.SynthesisRequest{Text: request.Text},
+		protocol.SynthesisRequest{Text: request.Text},
 	)
 	if err != nil {
 		return practicevoice.SynthesisResult{},
@@ -106,14 +106,14 @@ func (synthesizer *PracticeVoiceSynthesizer) Synthesize(
 }
 
 type PracticeVoiceQuestionGenerator struct {
-	generator *Generator
+	generator *textClient
 }
 
 func NewPracticeVoiceQuestionGenerator(
-	configuration Config,
+	configuration TextConfig,
 	apiKey string,
 ) (*PracticeVoiceQuestionGenerator, error) {
-	generator, err := New(configuration, apiKey)
+	generator, err := newTextClient(configuration, apiKey)
 	if err != nil {
 		return nil, err
 	}
@@ -132,10 +132,10 @@ func (generator *PracticeVoiceQuestionGenerator) GenerateQuestion(
 			errors.New("Qianwen Practice Voice question generator is required"),
 		)
 	}
-	result, err := generator.generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{Role: ai.TextRoleSystem, Content: request.SystemPrompt},
-			{Role: ai.TextRoleUser, Content: request.UserPrompt},
+	result, err := generator.generator.Generate(ctx, protocol.TextRequest{
+		Messages: []protocol.TextMessage{
+			{Role: protocol.TextRoleSystem, Content: request.SystemPrompt},
+			{Role: protocol.TextRoleUser, Content: request.UserPrompt},
 		},
 	})
 	if err != nil {
@@ -147,7 +147,7 @@ func (generator *PracticeVoiceQuestionGenerator) GenerateQuestion(
 	return result.Content, nil
 }
 
-func mapPracticeVoiceUsage(usage ai.SpeechUsage) practicevoice.SpeechUsage {
+func mapPracticeVoiceUsage(usage protocol.SpeechUsage) practicevoice.SpeechUsage {
 	return practicevoice.SpeechUsage{
 		InputTokens:  usage.InputTokens,
 		OutputTokens: usage.OutputTokens,
@@ -161,7 +161,7 @@ func mapPracticeVoiceError(
 	err error,
 	operation practicevoice.ProviderOperation,
 ) error {
-	var speechError *ai.SpeechError
+	var speechError *protocol.SpeechError
 	if errors.As(err, &speechError) {
 		return practicevoice.NewProviderError(
 			operation,
@@ -170,7 +170,7 @@ func mapPracticeVoiceError(
 			err,
 		)
 	}
-	var generationError *ai.GenerationError
+	var generationError *protocol.GenerationError
 	if errors.As(err, &generationError) {
 		return practicevoice.NewProviderError(
 			operation,
@@ -187,27 +187,27 @@ func mapPracticeVoiceError(
 	)
 }
 
-func mapPracticeVoiceErrorKind(kind ai.ErrorKind) practicevoice.ProviderErrorKind {
+func mapPracticeVoiceErrorKind(kind protocol.ErrorKind) practicevoice.ProviderErrorKind {
 	switch kind {
-	case ai.ErrorInvalidRequest:
+	case protocol.ErrorInvalidRequest:
 		return practicevoice.ProviderErrorInvalidRequest
-	case ai.ErrorConfiguration:
+	case protocol.ErrorConfiguration:
 		return practicevoice.ProviderErrorConfiguration
-	case ai.ErrorAuthentication:
+	case protocol.ErrorAuthentication:
 		return practicevoice.ProviderErrorAuthentication
-	case ai.ErrorAuthorization:
+	case protocol.ErrorAuthorization:
 		return practicevoice.ProviderErrorAuthorization
-	case ai.ErrorQuotaExhausted:
+	case protocol.ErrorQuotaExhausted:
 		return practicevoice.ProviderErrorQuotaExhausted
-	case ai.ErrorRateLimited:
+	case protocol.ErrorRateLimited:
 		return practicevoice.ProviderErrorRateLimited
-	case ai.ErrorTimeout:
+	case protocol.ErrorTimeout:
 		return practicevoice.ProviderErrorTimeout
-	case ai.ErrorProviderUnavailable:
+	case protocol.ErrorProviderUnavailable:
 		return practicevoice.ProviderErrorUnavailable
-	case ai.ErrorInvalidResponse:
+	case protocol.ErrorInvalidResponse:
 		return practicevoice.ProviderErrorInvalidResponse
-	case ai.ErrorCancelled:
+	case protocol.ErrorCancelled:
 		return practicevoice.ProviderErrorCancelled
 	default:
 		return practicevoice.ProviderErrorUnavailable

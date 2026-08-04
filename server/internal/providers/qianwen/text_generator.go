@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 const (
@@ -33,14 +33,14 @@ const (
 	authorizationHeaderName = "Authorization"
 )
 
-type Config struct {
+type TextConfig struct {
 	BaseURL         string
 	Model           string
 	Timeout         time.Duration
 	MaxOutputTokens int
 }
 
-type Generator struct {
+type textClient struct {
 	endpoint        string
 	model           string
 	timeout         time.Duration
@@ -49,7 +49,7 @@ type Generator struct {
 	client          httpDoer
 }
 
-func (generator *Generator) String() string {
+func (generator *textClient) String() string {
 	if generator == nil {
 		return "QianwenGenerator(<nil>)"
 	}
@@ -61,7 +61,7 @@ func (generator *Generator) String() string {
 	)
 }
 
-func (generator *Generator) GoString() string {
+func (generator *textClient) GoString() string {
 	return generator.String()
 }
 
@@ -69,7 +69,7 @@ type httpDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-func New(config Config, apiKey string) (*Generator, error) {
+func newTextClient(config TextConfig, apiKey string) (*textClient, error) {
 	client := &http.Client{
 		Timeout: config.Timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -79,7 +79,7 @@ func New(config Config, apiKey string) (*Generator, error) {
 	return newWithClient(config, apiKey, client)
 }
 
-func newWithClient(config Config, apiKey string, client httpDoer) (*Generator, error) {
+func newWithClient(config TextConfig, apiKey string, client httpDoer) (*textClient, error) {
 	baseURL, err := normalizeBaseURL(config.BaseURL)
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func newWithClient(config Config, apiKey string, client httpDoer) (*Generator, e
 		return nil, errors.New("Qianwen HTTP client is required")
 	}
 
-	return &Generator{
+	return &textClient{
 		endpoint:        baseURL + chatCompletionsPath,
 		model:           model,
 		timeout:         config.Timeout,
@@ -115,22 +115,22 @@ func newWithClient(config Config, apiKey string, client httpDoer) (*Generator, e
 	}, nil
 }
 
-func (generator *Generator) Generate(
+func (generator *textClient) Generate(
 	ctx context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
+	request protocol.TextRequest,
+) (protocol.TextResult, error) {
 	if ctx == nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
 			errors.New("text generation context is required"),
 		)
 	}
-	if err := ai.ValidateTextRequest(request); err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest,
+	if err := protocol.ValidateTextRequest(request); err != nil {
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -139,8 +139,8 @@ func (generator *Generator) Generate(
 	}
 	internalToProvider, providerToInternal, err := toolNameMappings(request)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -156,15 +156,15 @@ func (generator *Generator) Generate(
 		EnableThinking: false,
 		MaxTokens:      generator.maxOutputTokens,
 	}
-	if request.ResponseFormat == ai.TextResponseFormatJSON {
+	if request.ResponseFormat == protocol.TextResponseFormatJSON {
 		payload.ResponseFormat = &chatResponseFormat{
-			Type: string(ai.TextResponseFormatJSON),
+			Type: string(protocol.TextResponseFormatJSON),
 		}
 	}
 	toolChoice, err := providerToolChoice(request.ToolChoice, internalToProvider)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -208,8 +208,8 @@ func (generator *Generator) Generate(
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -226,8 +226,8 @@ func (generator *Generator) Generate(
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorConfiguration,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorConfiguration,
 			0,
 			"",
 			"",
@@ -243,11 +243,11 @@ func (generator *Generator) Generate(
 
 	response, err := generator.client.Do(httpRequest)
 	if err != nil {
-		return ai.TextResult{}, transportError(callContext, err)
+		return protocol.TextResult{}, transportError(callContext, err)
 	}
 	if response == nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse,
 			0,
 			"",
 			"",
@@ -255,8 +255,8 @@ func (generator *Generator) Generate(
 		)
 	}
 	if response.Body == nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
@@ -266,13 +266,13 @@ func (generator *Generator) Generate(
 	defer response.Body.Close()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return ai.TextResult{}, decodeStatusError(response)
+		return protocol.TextResult{}, decodeStatusError(response)
 	}
 
 	responseBody, err := readBounded(response.Body, maxResponseBytes)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
@@ -281,8 +281,8 @@ func (generator *Generator) Generate(
 	}
 	var completion chatCompletionResponse
 	if err := json.Unmarshal(responseBody, &completion); err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
@@ -291,8 +291,8 @@ func (generator *Generator) Generate(
 	}
 	result, err := completion.result(providerToInternal)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
@@ -300,8 +300,8 @@ func (generator *Generator) Generate(
 		)
 	}
 	if result.Model != generator.model {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
@@ -309,8 +309,8 @@ func (generator *Generator) Generate(
 		)
 	}
 	if result.Usage.OutputTokens > generator.maxOutputTokens {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
@@ -323,40 +323,40 @@ func (generator *Generator) Generate(
 // GenerateStream implements the provider-neutral streaming boundary. It
 // validates the complete Qwen stream before returning the canonical result and
 // emits only visible assistant content. Tool-call fragments remain internal.
-func (generator *Generator) GenerateStream(
+func (generator *textClient) GenerateStream(
 	ctx context.Context,
-	request ai.TextRequest,
-	observer ai.TextDeltaObserver,
-) (ai.TextResult, error) {
+	request protocol.TextRequest,
+	observer protocol.TextDeltaObserver,
+) (protocol.TextResult, error) {
 	if ctx == nil || observer == nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest, 0, "", "",
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest, 0, "", "",
 			errors.New("streaming text generation context and observer are required"),
 		)
 	}
-	if err := ai.ValidateTextRequest(request); err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest, 0, "", "", err,
+	if err := protocol.ValidateTextRequest(request); err != nil {
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest, 0, "", "", err,
 		)
 	}
 	internalToProvider, providerToInternal, err := toolNameMappings(request)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest, 0, "", "", err,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest, 0, "", "", err,
 		)
 	}
 	payload, err := generator.providerRequest(request, internalToProvider)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest, 0, "", "", err,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest, 0, "", "", err,
 		)
 	}
 	payload.Stream = true
 	payload.StreamOptions = &chatStreamOptions{IncludeUsage: true}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidRequest, 0, "", "", err,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidRequest, 0, "", "", err,
 		)
 	}
 	callContext, cancel := context.WithTimeout(ctx, generator.timeout)
@@ -365,8 +365,8 @@ func (generator *Generator) GenerateStream(
 		callContext, http.MethodPost, generator.endpoint, bytes.NewReader(body),
 	)
 	if err != nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorConfiguration, 0, "", "", err,
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorConfiguration, 0, "", "", err,
 		)
 	}
 	httpRequest.Header.Set(authorizationHeaderName, "Bearer "+generator.apiKey.reveal())
@@ -374,23 +374,23 @@ func (generator *Generator) GenerateStream(
 	httpRequest.Header.Set("Accept", "text/event-stream")
 	response, err := generator.client.Do(httpRequest)
 	if err != nil {
-		return ai.TextResult{}, transportError(callContext, err)
+		return protocol.TextResult{}, transportError(callContext, err)
 	}
 	if response == nil || response.Body == nil {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse, 0, "", "",
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse, 0, "", "",
 			errors.New("Qianwen returned an invalid streaming HTTP response"),
 		)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return ai.TextResult{}, decodeStatusError(response)
+		return protocol.TextResult{}, decodeStatusError(response)
 	}
 	if mediaType := strings.ToLower(strings.TrimSpace(
 		strings.Split(response.Header.Get("Content-Type"), ";")[0],
 	)); mediaType != "text/event-stream" {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse, response.StatusCode, "",
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse, response.StatusCode, "",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
 			errors.New("Qianwen streaming response has an invalid content type"),
 		)
@@ -402,32 +402,32 @@ func (generator *Generator) GenerateStream(
 		observer,
 	)
 	if err != nil {
-		var generationError *ai.GenerationError
+		var generationError *protocol.GenerationError
 		if errors.As(err, &generationError) {
-			return ai.TextResult{}, err
+			return protocol.TextResult{}, err
 		}
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse, response.StatusCode, "",
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse, response.StatusCode, "",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")), err,
 		)
 	}
 	if result.Model != generator.model {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse, response.StatusCode, "", "",
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse, response.StatusCode, "", "",
 			errors.New("Qianwen response model does not match the requested model"),
 		)
 	}
 	if result.Usage.OutputTokens > generator.maxOutputTokens {
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorInvalidResponse, response.StatusCode, "", "",
+		return protocol.TextResult{}, protocol.NewGenerationError(
+			protocol.ErrorInvalidResponse, response.StatusCode, "", "",
 			errors.New("Qianwen response exceeded the configured output budget"),
 		)
 	}
 	return result, nil
 }
 
-func (generator *Generator) providerRequest(
-	request ai.TextRequest,
+func (generator *textClient) providerRequest(
+	request protocol.TextRequest,
 	internalToProvider map[string]string,
 ) (chatCompletionRequest, error) {
 	payload := chatCompletionRequest{
@@ -438,9 +438,9 @@ func (generator *Generator) providerRequest(
 		EnableThinking: false,
 		MaxTokens:      generator.maxOutputTokens,
 	}
-	if request.ResponseFormat == ai.TextResponseFormatJSON {
+	if request.ResponseFormat == protocol.TextResponseFormatJSON {
 		payload.ResponseFormat = &chatResponseFormat{
-			Type: string(ai.TextResponseFormatJSON),
+			Type: string(protocol.TextResponseFormatJSON),
 		}
 	}
 	toolChoice, err := providerToolChoice(request.ToolChoice, internalToProvider)
@@ -549,14 +549,14 @@ type chatFunctionCall struct {
 	Arguments string `json:"arguments"`
 }
 
-func providerContentParts(parts []ai.ContentPart) []chatContentPart {
+func providerContentParts(parts []protocol.ContentPart) []chatContentPart {
 	result := make([]chatContentPart, 0, len(parts))
 	for _, part := range parts {
 		providerPart := chatContentPart{Type: string(part.Kind)}
 		switch part.Kind {
-		case ai.ContentPartText:
+		case protocol.ContentPartText:
 			providerPart.Text = part.Text
-		case ai.ContentPartImageURL:
+		case protocol.ContentPartImageURL:
 			providerPart.ImageURL = &chatImageURL{URL: part.ImageURL}
 		}
 		result = append(result, providerPart)
@@ -619,8 +619,8 @@ func decodeCompletionStream(
 	ctx context.Context,
 	body io.Reader,
 	providerToInternal map[string]string,
-	observer ai.TextDeltaObserver,
-) (ai.TextResult, error) {
+	observer protocol.TextDeltaObserver,
+) (protocol.TextResult, error) {
 	scanner := bufio.NewScanner(io.LimitReader(body, maxStreamBytes+1))
 	scanner.Buffer(make([]byte, 16<<10), maxStreamEventBytes)
 	mode := streamModeUnknown
@@ -640,13 +640,13 @@ func decodeCompletionStream(
 		line := scanner.Text()
 		totalBytes += len(line) + 1
 		if totalBytes > maxStreamBytes {
-			return ai.TextResult{}, errors.New("Qianwen stream exceeds the response limit")
+			return protocol.TextResult{}, errors.New("Qianwen stream exceeds the response limit")
 		}
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue
 		}
 		if !strings.HasPrefix(line, "data:") {
-			return ai.TextResult{}, errors.New("Qianwen stream contains an unsupported SSE field")
+			return protocol.TextResult{}, errors.New("Qianwen stream contains an unsupported SSE field")
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
@@ -654,27 +654,27 @@ func decodeCompletionStream(
 			break
 		}
 		if data == "" {
-			return ai.TextResult{}, errors.New("Qianwen stream contains empty event data")
+			return protocol.TextResult{}, errors.New("Qianwen stream contains empty event data")
 		}
 		var chunk chatCompletionChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return ai.TextResult{}, errors.New("decode Qianwen stream event")
+			return protocol.TextResult{}, errors.New("decode Qianwen stream event")
 		}
 		if completionID == "" {
 			completionID = sanitizeIdentifier(chunk.ID)
 			model, _ = normalizeModel(chunk.Model)
 		} else if chunk.ID != completionID || chunk.Model != model {
-			return ai.TextResult{}, errors.New("Qianwen stream changed completion identity")
+			return protocol.TextResult{}, errors.New("Qianwen stream changed completion identity")
 		}
 		if completionID == "" || model == "" {
-			return ai.TextResult{}, errors.New("Qianwen stream has invalid completion identity")
+			return protocol.TextResult{}, errors.New("Qianwen stream has invalid completion identity")
 		}
 		if chunk.Usage != nil {
 			if sawUsage || len(chunk.Choices) != 0 ||
 				chunk.Usage.PromptTokens == nil ||
 				chunk.Usage.CompletionTokens == nil ||
 				chunk.Usage.TotalTokens == nil {
-				return ai.TextResult{}, errors.New("Qianwen stream has invalid final usage")
+				return protocol.TextResult{}, errors.New("Qianwen stream has invalid final usage")
 			}
 			usage = &struct {
 				prompt     int
@@ -687,18 +687,18 @@ func decodeCompletionStream(
 			}
 			if usage.prompt < 0 || usage.completion < 0 || usage.total < 0 ||
 				usage.total-usage.prompt != usage.completion {
-				return ai.TextResult{}, errors.New("Qianwen stream has invalid token usage")
+				return protocol.TextResult{}, errors.New("Qianwen stream has invalid token usage")
 			}
 			sawUsage = true
 			continue
 		}
 		if sawUsage || len(chunk.Choices) != 1 {
-			return ai.TextResult{}, errors.New("Qianwen stream must contain exactly one choice")
+			return protocol.TextResult{}, errors.New("Qianwen stream must contain exactly one choice")
 		}
 		choice := chunk.Choices[0]
 		if choice.Delta.Role != "" &&
-			choice.Delta.Role != string(ai.TextRoleAssistant) {
-			return ai.TextResult{}, errors.New("Qianwen stream has an invalid delta role")
+			choice.Delta.Role != string(protocol.TextRoleAssistant) {
+			return protocol.TextResult{}, errors.New("Qianwen stream has an invalid delta role")
 		}
 		hasText := choice.Delta.Content != nil && *choice.Delta.Content != ""
 		hasTools := len(choice.Delta.ToolCalls) != 0
@@ -716,8 +716,8 @@ func decodeCompletionStream(
 			if visible != "" {
 				content.WriteString(visible)
 				if err := observer.OnTextDelta(ctx, visible); err != nil {
-					return ai.TextResult{}, ai.NewGenerationError(
-						ai.ErrorCancelled, 0, "", "", err,
+					return protocol.TextResult{}, protocol.NewGenerationError(
+						protocol.ErrorCancelled, 0, "", "", err,
 					)
 				}
 			}
@@ -730,7 +730,7 @@ func decodeCompletionStream(
 			}
 			for _, fragment := range choice.Delta.ToolCalls {
 				if fragment.Index < 0 || fragment.Index > len(tools) {
-					return ai.TextResult{}, errors.New("Qianwen stream has a non-contiguous tool index")
+					return protocol.TextResult{}, errors.New("Qianwen stream has a non-contiguous tool index")
 				}
 				if fragment.Index == len(tools) {
 					tools = append(tools, streamToolCall{})
@@ -738,43 +738,43 @@ func decodeCompletionStream(
 				call := &tools[fragment.Index]
 				if fragment.ID != "" {
 					if call.id != "" && call.id != fragment.ID {
-						return ai.TextResult{}, errors.New("Qianwen stream changed tool call ID")
+						return protocol.TextResult{}, errors.New("Qianwen stream changed tool call ID")
 					}
 					call.id = fragment.ID
 				}
 				if fragment.Type != "" && fragment.Type != "function" {
-					return ai.TextResult{}, errors.New("Qianwen stream has an invalid tool type")
+					return protocol.TextResult{}, errors.New("Qianwen stream has an invalid tool type")
 				}
 				if fragment.Function.Name != "" {
 					if call.name != "" && call.name != fragment.Function.Name {
-						return ai.TextResult{}, errors.New("Qianwen stream changed tool name")
+						return protocol.TextResult{}, errors.New("Qianwen stream changed tool name")
 					}
 					call.name = fragment.Function.Name
 				}
 				if call.arguments.Len()+len(fragment.Function.Arguments) >
 					maxStreamToolArgsBytes {
-					return ai.TextResult{}, errors.New("Qianwen tool arguments exceed the stream limit")
+					return protocol.TextResult{}, errors.New("Qianwen tool arguments exceed the stream limit")
 				}
 				call.arguments.WriteString(fragment.Function.Arguments)
 			}
 		}
 		if choice.FinishReason != nil {
 			if finishReason != "" {
-				return ai.TextResult{}, errors.New("Qianwen stream duplicated finish reason")
+				return protocol.TextResult{}, errors.New("Qianwen stream duplicated finish reason")
 			}
 			finishReason = *choice.FinishReason
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return ai.TextResult{}, err
+		return protocol.TextResult{}, err
 	}
 	if !sawDone || !sawUsage || finishReason == "" {
-		return ai.TextResult{}, errors.New("Qianwen stream ended before completion")
+		return protocol.TextResult{}, errors.New("Qianwen stream ended before completion")
 	}
-	result := ai.TextResult{
+	result := protocol.TextResult{
 		ID: completionID, Provider: providerName, Model: model,
 		Content: content.String(), FinishReason: finishReason,
-		Usage: ai.TokenUsage{
+		Usage: protocol.TokenUsage{
 			InputTokens: usage.prompt, OutputTokens: usage.completion,
 			TotalTokens: usage.total,
 		},
@@ -782,29 +782,29 @@ func decodeCompletionStream(
 	switch mode {
 	case streamModeText:
 		if result.Content == "" || (finishReason != "stop" && finishReason != "length") {
-			return ai.TextResult{}, errors.New("Qianwen text stream has an invalid completion")
+			return protocol.TextResult{}, errors.New("Qianwen text stream has an invalid completion")
 		}
 	case streamModeTools, streamModeMixed:
 		if finishReason != "tool_calls" || len(tools) == 0 {
-			return ai.TextResult{}, errors.New("Qianwen tool stream has an invalid completion")
+			return protocol.TextResult{}, errors.New("Qianwen tool stream has an invalid completion")
 		}
-		result.ToolCalls = make([]ai.ToolCall, 0, len(tools))
+		result.ToolCalls = make([]protocol.ToolCall, 0, len(tools))
 		for _, streamed := range tools {
 			internalName, exists := providerToInternal[streamed.name]
 			if !exists {
-				return ai.TextResult{}, errors.New("Qianwen stream selected an unknown tool")
+				return protocol.TextResult{}, errors.New("Qianwen stream selected an unknown tool")
 			}
-			call := ai.ToolCall{
+			call := protocol.ToolCall{
 				ID: streamed.id, Name: internalName,
 				Arguments: json.RawMessage(streamed.arguments.String()),
 			}
-			if err := ai.ValidateToolCall(call); err != nil {
-				return ai.TextResult{}, errors.New("Qianwen stream contains an invalid tool call")
+			if err := protocol.ValidateToolCall(call); err != nil {
+				return protocol.TextResult{}, errors.New("Qianwen stream contains an invalid tool call")
 			}
 			result.ToolCalls = append(result.ToolCalls, call)
 		}
 	default:
-		return ai.TextResult{}, errors.New("Qianwen stream has no substantive delta")
+		return protocol.TextResult{}, errors.New("Qianwen stream has no substantive delta")
 	}
 	return result, nil
 }
@@ -819,21 +819,21 @@ func normalizedVisibleDelta(started bool, value string) (string, string) {
 
 func (response chatCompletionResponse) result(
 	providerToInternal map[string]string,
-) (ai.TextResult, error) {
+) (protocol.TextResult, error) {
 	id := sanitizeIdentifier(response.ID)
 	if id == "" {
-		return ai.TextResult{}, errors.New("Qianwen response has no valid completion ID")
+		return protocol.TextResult{}, errors.New("Qianwen response has no valid completion ID")
 	}
 	model, err := normalizeModel(response.Model)
 	if err != nil {
-		return ai.TextResult{}, errors.New("Qianwen response has no valid model")
+		return protocol.TextResult{}, errors.New("Qianwen response has no valid model")
 	}
 	if len(response.Choices) != 1 {
-		return ai.TextResult{}, errors.New("Qianwen response must contain exactly one choice")
+		return protocol.TextResult{}, errors.New("Qianwen response must contain exactly one choice")
 	}
 	choice := response.Choices[0]
-	if choice.Message.Role != string(ai.TextRoleAssistant) {
-		return ai.TextResult{}, errors.New("Qianwen response choice has an invalid role")
+	if choice.Message.Role != string(protocol.TextRoleAssistant) {
+		return protocol.TextResult{}, errors.New("Qianwen response choice has an invalid role")
 	}
 	content := strings.TrimSpace(choice.Message.Content)
 	finishReason := choice.FinishReason
@@ -843,42 +843,42 @@ func (response chatCompletionResponse) result(
 	switch finishReason {
 	case "stop", "length":
 		if content == "" {
-			return ai.TextResult{}, errors.New("Qianwen response choice has no visible content")
+			return protocol.TextResult{}, errors.New("Qianwen response choice has no visible content")
 		}
 		if len(choice.Message.ToolCalls) != 0 {
-			return ai.TextResult{}, errors.New("Qianwen text response contains unexpected tool calls")
+			return protocol.TextResult{}, errors.New("Qianwen text response contains unexpected tool calls")
 		}
 	case "tool_calls":
 		if len(choice.Message.ToolCalls) == 0 {
-			return ai.TextResult{}, errors.New("Qianwen tool response contains no tool calls")
+			return protocol.TextResult{}, errors.New("Qianwen tool response contains no tool calls")
 		}
 	default:
-		return ai.TextResult{}, errors.New("Qianwen response has an unsupported finish reason")
+		return protocol.TextResult{}, errors.New("Qianwen response has an unsupported finish reason")
 	}
-	var toolCalls []ai.ToolCall
+	var toolCalls []protocol.ToolCall
 	if len(choice.Message.ToolCalls) > 0 {
-		toolCalls = make([]ai.ToolCall, 0, len(choice.Message.ToolCalls))
+		toolCalls = make([]protocol.ToolCall, 0, len(choice.Message.ToolCalls))
 	}
 	seenCallIDs := make(map[string]struct{}, len(choice.Message.ToolCalls))
 	for _, providerCall := range choice.Message.ToolCalls {
 		if providerCall.Type != "function" ||
 			sanitizeIdentifier(providerCall.ID) != providerCall.ID {
-			return ai.TextResult{}, errors.New("Qianwen response contains an invalid tool call")
+			return protocol.TextResult{}, errors.New("Qianwen response contains an invalid tool call")
 		}
 		if _, exists := seenCallIDs[providerCall.ID]; exists {
-			return ai.TextResult{}, errors.New("Qianwen response contains duplicate tool call IDs")
+			return protocol.TextResult{}, errors.New("Qianwen response contains duplicate tool call IDs")
 		}
 		internalName, exists := providerToInternal[providerCall.Function.Name]
 		if !exists {
-			return ai.TextResult{}, errors.New("Qianwen response selected an unknown tool")
+			return protocol.TextResult{}, errors.New("Qianwen response selected an unknown tool")
 		}
-		call := ai.ToolCall{
+		call := protocol.ToolCall{
 			ID:        providerCall.ID,
 			Name:      internalName,
 			Arguments: json.RawMessage(providerCall.Function.Arguments),
 		}
-		if err := ai.ValidateToolCall(call); err != nil {
-			return ai.TextResult{}, errors.New("Qianwen response contains invalid tool arguments")
+		if err := protocol.ValidateToolCall(call); err != nil {
+			return protocol.TextResult{}, errors.New("Qianwen response contains invalid tool arguments")
 		}
 		seenCallIDs[providerCall.ID] = struct{}{}
 		toolCalls = append(toolCalls, call)
@@ -893,17 +893,17 @@ func (response chatCompletionResponse) result(
 		*response.Usage.TotalTokens < *response.Usage.PromptTokens ||
 		*response.Usage.TotalTokens-*response.Usage.PromptTokens !=
 			*response.Usage.CompletionTokens {
-		return ai.TextResult{}, errors.New("Qianwen response has invalid token usage")
+		return protocol.TextResult{}, errors.New("Qianwen response has invalid token usage")
 	}
 
-	return ai.TextResult{
+	return protocol.TextResult{
 		ID:           id,
 		Provider:     providerName,
 		Model:        model,
 		Content:      content,
 		ToolCalls:    toolCalls,
 		FinishReason: finishReason,
-		Usage: ai.TokenUsage{
+		Usage: protocol.TokenUsage{
 			InputTokens:  *response.Usage.PromptTokens,
 			OutputTokens: *response.Usage.CompletionTokens,
 			TotalTokens:  *response.Usage.TotalTokens,
@@ -911,7 +911,7 @@ func (response chatCompletionResponse) result(
 	}, nil
 }
 
-func toolNameMappings(request ai.TextRequest) (map[string]string, map[string]string, error) {
+func toolNameMappings(request protocol.TextRequest) (map[string]string, map[string]string, error) {
 	internalToProvider := make(map[string]string)
 	providerToInternal := make(map[string]string)
 	providerOwners := make(map[string]string)
@@ -953,19 +953,19 @@ func toolNameMappings(request ai.TextRequest) (map[string]string, map[string]str
 }
 
 func providerToolChoice(
-	choice ai.ToolChoice,
+	choice protocol.ToolChoice,
 	internalToProvider map[string]string,
 ) (any, error) {
 	switch choice.Mode {
 	case "":
 		return nil, nil
-	case ai.ToolChoiceAuto:
+	case protocol.ToolChoiceAuto:
 		return "auto", nil
-	case ai.ToolChoiceNone:
+	case protocol.ToolChoiceNone:
 		return "none", nil
-	case ai.ToolChoiceRequired:
+	case protocol.ToolChoiceRequired:
 		return "required", nil
-	case ai.ToolChoiceSpecific:
+	case protocol.ToolChoiceSpecific:
 		providerName, exists := internalToProvider[choice.Name]
 		if !exists {
 			return nil, errors.New("Qianwen specific tool choice is unavailable")
@@ -1011,7 +1011,7 @@ func decodeStatusError(response *http.Response) error {
 		}
 	}
 
-	return ai.NewGenerationError(
+	return protocol.NewGenerationError(
 		classifyStatus(response.StatusCode, code),
 		response.StatusCode,
 		code,
@@ -1020,58 +1020,58 @@ func decodeStatusError(response *http.Response) error {
 	)
 }
 
-func classifyStatus(statusCode int, providerCode string) ai.ErrorKind {
+func classifyStatus(statusCode int, providerCode string) protocol.ErrorKind {
 	normalizedCode := strings.ToLower(providerCode)
 	if strings.Contains(normalizedCode, "allocationquota.freetieronly") {
-		return ai.ErrorQuotaExhausted
+		return protocol.ErrorQuotaExhausted
 	}
 	if strings.Contains(normalizedCode, "arrearage") ||
 		strings.Contains(normalizedCode, "billoverdue") ||
 		strings.Contains(normalizedCode, "commoditynotpurchased") {
-		return ai.ErrorAuthorization
+		return protocol.ErrorAuthorization
 	}
 	if statusCode == http.StatusTooManyRequests {
-		return ai.ErrorRateLimited
+		return protocol.ErrorRateLimited
 	}
 	if statusCode == http.StatusRequestTimeout ||
 		strings.Contains(normalizedCode, "timeout") {
-		return ai.ErrorTimeout
+		return protocol.ErrorTimeout
 	}
 	switch statusCode {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		return ai.ErrorInvalidRequest
+		return protocol.ErrorInvalidRequest
 	case http.StatusUnauthorized:
-		return ai.ErrorAuthentication
+		return protocol.ErrorAuthentication
 	case http.StatusForbidden:
-		return ai.ErrorAuthorization
+		return protocol.ErrorAuthorization
 	case http.StatusNotFound:
-		return ai.ErrorConfiguration
+		return protocol.ErrorConfiguration
 	}
 	if statusCode >= http.StatusInternalServerError {
-		return ai.ErrorProviderUnavailable
+		return protocol.ErrorProviderUnavailable
 	}
 	if statusCode >= http.StatusMultipleChoices && statusCode < http.StatusBadRequest {
-		return ai.ErrorConfiguration
+		return protocol.ErrorConfiguration
 	}
 	if statusCode >= http.StatusBadRequest {
-		return ai.ErrorInvalidRequest
+		return protocol.ErrorInvalidRequest
 	}
-	return ai.ErrorInvalidResponse
+	return protocol.ErrorInvalidResponse
 }
 
 func transportError(ctx context.Context, cause error) error {
-	kind := ai.ErrorProviderUnavailable
+	kind := protocol.ErrorProviderUnavailable
 	var safeCause error
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):
-		kind = ai.ErrorCancelled
+		kind = protocol.ErrorCancelled
 		safeCause = context.Canceled
 	case errors.Is(ctx.Err(), context.DeadlineExceeded),
 		errors.Is(cause, context.DeadlineExceeded):
-		kind = ai.ErrorTimeout
+		kind = protocol.ErrorTimeout
 		safeCause = context.DeadlineExceeded
 	}
-	return ai.NewGenerationError(kind, 0, "", "", safeCause)
+	return protocol.NewGenerationError(kind, 0, "", "", safeCause)
 }
 
 func readBounded(reader io.Reader, limit int64) ([]byte, error) {
@@ -1185,4 +1185,4 @@ func sanitizeIdentifier(raw string) string {
 	return value
 }
 
-var _ ai.TextGenerator = (*Generator)(nil)
+var _ protocol.TextGenerator = (*textClient)(nil)

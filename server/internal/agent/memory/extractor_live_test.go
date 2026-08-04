@@ -1,4 +1,4 @@
-package memory
+package memory_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	platformconfig "github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
 )
@@ -23,7 +24,7 @@ func TestLiveFixedExtractionContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load text generation config: %v", err)
 	}
-	generator, err := qianwen.New(qianwen.Config{
+	generator, err := qianwen.NewMemoryGenerator(qianwen.TextConfig{
 		BaseURL:         providerConfig.BaseURL,
 		Model:           providerConfig.Model,
 		Timeout:         providerConfig.Timeout,
@@ -32,13 +33,20 @@ func TestLiveFixedExtractionContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Qianwen generator: %v", err)
 	}
-	extractionConfig := testExtractionConfig()
-	extractionConfig.Model = providerConfig.Model
-	extractor, err := NewLLMExtractor(generator, extractionConfig)
+	extractionConfig := memory.ExtractionConfig{
+		Provider:      providerConfig.Provider,
+		Model:         providerConfig.Model,
+		PolicyVersion: "memory-policy-v2",
+		PromptVersion: "memory-extraction-v3",
+		LeaseDuration: time.Minute,
+		TopicTTL:      30 * 24 * time.Hour,
+		MaxAttempts:   3,
+	}
+	extractor, err := memory.NewLLMExtractor(generator, extractionConfig)
 	if err != nil {
 		t.Fatalf("NewLLMExtractor: %v", err)
 	}
-	policy, err := NewExtractionPolicy(
+	policy, err := memory.NewExtractionPolicy(
 		extractionConfig.PolicyVersion,
 		extractionConfig.TopicTTL,
 		time.Now,
@@ -93,7 +101,7 @@ func TestLiveFixedExtractionContract(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			source := validCompletedRunSource()
+			source := liveCompletedRunSource()
 			source.UserText = test.userText
 			source.AssistantText = "Acknowledged."
 			output, err := extractor.Extract(context.Background(), source)
@@ -110,11 +118,11 @@ func TestLiveFixedExtractionContract(t *testing.T) {
 			got := make([]string, 0, len(batch.Decisions))
 			for _, decision := range batch.Decisions {
 				key := decision.CanonicalKey
-				if decision.Type == TypeInterest &&
+				if decision.Type == memory.TypeInterest &&
 					strings.HasPrefix(key, "interest.") {
 					key = "interest."
 				}
-				if decision.Type == TypeTopic &&
+				if decision.Type == memory.TypeTopic &&
 					strings.HasPrefix(key, "topic.") {
 					key = "topic."
 				}
@@ -126,5 +134,20 @@ func TestLiveFixedExtractionContract(t *testing.T) {
 				t.Fatalf("decisions = %#v, want %#v", got, test.want)
 			}
 		})
+	}
+}
+
+func liveCompletedRunSource() memory.CompletedRunSource {
+	return memory.CompletedRunSource{
+		OwnerID:            "10000000-0000-4000-8000-000000000001",
+		RunID:              "20000000-0000-4000-8000-000000000001",
+		ThreadID:           "30000000-0000-4000-8000-000000000001",
+		InputMessageID:     "40000000-0000-4000-8000-000000000001",
+		AssistantMessageID: "50000000-0000-4000-8000-000000000001",
+		GoalID:             "60000000-0000-4000-8000-000000000001",
+		UserText:           "placeholder",
+		AssistantText:      "placeholder",
+		Attempt:            1,
+		CompletedAt:        time.Now().UTC(),
 	}
 }

@@ -4,9 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 )
 
 func TestIndexWorkerCompletesAndRetriesExplicitly(t *testing.T) {
@@ -17,7 +14,7 @@ func TestIndexWorkerCompletesAndRetriesExplicitly(t *testing.T) {
 		repository := &fakeIndexRepository{claims: []IndexClaim{claim}}
 		worker, err := NewIndexWorker(
 			repository,
-			&aifake.Embedder{Result: validEmbeddingResult()},
+			&indexEmbedderStub{result: validEmbeddingResult()},
 			testIndexConfig(),
 		)
 		if err != nil {
@@ -39,13 +36,10 @@ func TestIndexWorkerCompletesAndRetriesExplicitly(t *testing.T) {
 		repository := &fakeIndexRepository{claims: []IndexClaim{claim}}
 		worker, _ := NewIndexWorker(
 			repository,
-			&aifake.Embedder{Err: ai.NewEmbeddingError(
-				ai.ErrorRateLimited,
-				429,
-				"",
-				"",
-				nil,
-			)},
+			&indexEmbedderStub{err: indexProviderFailure{
+				category:  "rate_limited",
+				retryable: true,
+			}},
 			testIndexConfig(),
 		)
 		result, err := worker.ProcessPendingIndexes(
@@ -69,7 +63,7 @@ func TestIndexWorkerCompletesAndRetriesExplicitly(t *testing.T) {
 		}
 		worker, _ := NewIndexWorker(
 			repository,
-			&aifake.Embedder{Result: validEmbeddingResult()},
+			&indexEmbedderStub{result: validEmbeddingResult()},
 			testIndexConfig(),
 		)
 		result, err := worker.ProcessPendingIndexes(
@@ -125,7 +119,7 @@ func (repository *fakeIndexRepository) ReadIndexSource(
 func (repository *fakeIndexRepository) CompleteIndex(
 	_ context.Context,
 	claim IndexClaim,
-	_ ai.EmbeddingResult,
+	_ EmbeddingResult,
 ) (IndexJob, error) {
 	repository.completed++
 	job := claim.IndexJob
@@ -189,15 +183,44 @@ func validIndexClaim() IndexClaim {
 	}}
 }
 
-func validEmbeddingResult() ai.EmbeddingResult {
+func validEmbeddingResult() EmbeddingResult {
 	vector := make([]float32, MemoryEmbeddingDimensions)
 	vector[0] = 1
-	return ai.EmbeddingResult{
+	return EmbeddingResult{
 		Provider:    "qianwen",
 		Model:       "text-embedding-v4",
 		Dimensions:  MemoryEmbeddingDimensions,
-		Vectors:     [][]float32{vector},
+		Vector:      vector,
 		InputTokens: 3,
 		TotalTokens: 3,
 	}
+}
+
+type indexEmbedderStub struct {
+	result EmbeddingResult
+	err    error
+}
+
+func (embedder *indexEmbedderStub) Embed(
+	_ context.Context,
+	_ EmbeddingRequest,
+) (EmbeddingResult, error) {
+	return embedder.result, embedder.err
+}
+
+type indexProviderFailure struct {
+	category  string
+	retryable bool
+}
+
+func (failure indexProviderFailure) Error() string {
+	return "embedding failed"
+}
+
+func (failure indexProviderFailure) StableCategory() string {
+	return failure.category
+}
+
+func (failure indexProviderFailure) Retryable() bool {
+	return failure.retryable
 }

@@ -21,9 +21,8 @@ import (
 	"testing"
 	"time"
 
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -52,7 +51,7 @@ func TestVoiceInterviewFollowUpTextAnswerKeepsEffectiveTurn(t *testing.T) {
 		text,
 		VoiceConfiguration{
 			Recognizer: &voiceRecognizer{},
-			Synthesizer: fake.NewFailingSpeechSynthesizer(
+			Synthesizer: newFailingTestSpeechSynthesizer(
 				fmt.Errorf("tts unavailable"),
 			),
 			TemporaryAudio:         newVoiceTestVault(t),
@@ -158,7 +157,7 @@ func TestVoiceProductionCompositionBearerConcurrencyAndRestart(
 	pool := voiceIntegrationDatabase(t)
 	text := &voiceTextGenerator{}
 	recognizer := &voiceRecognizer{}
-	synthesizer := fake.NewFailingSpeechSynthesizer(
+	synthesizer := newFailingTestSpeechSynthesizer(
 		fmt.Errorf("tts unavailable"),
 	)
 	objects := newVoiceObjectStore()
@@ -792,7 +791,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 	pool := voiceIntegrationDatabase(t)
 	text := &voiceTextGenerator{}
 	recognizer := &voiceRecognizer{}
-	synthesizer := fake.NewFailingSpeechSynthesizer(
+	synthesizer := newFailingTestSpeechSynthesizer(
 		fmt.Errorf("tts unavailable"),
 	)
 	objects := newVoiceObjectStore()
@@ -1061,7 +1060,7 @@ func newVoiceProductionIntegrationServer(
 	t *testing.T,
 	pool *pgxpool.Pool,
 	catalog scene.CatalogReader,
-	generator ai.TextGenerator,
+	generator agentrun.TextGenerator,
 	configuration VoiceConfiguration,
 ) *httptest.Server {
 	t.Helper()
@@ -1085,7 +1084,7 @@ func newVoiceProductionIntegrationServer(
 		pool,
 		nil,
 		"",
-		generator,
+		testAgentModelProviders(generator),
 		agentrun.Configuration{
 			Provider:           "fake",
 			Model:              "fake-text-v1",
@@ -1094,6 +1093,7 @@ func newVoiceProductionIntegrationServer(
 		},
 		emptyBootstrapMemorySearcher{},
 		catalog,
+		testJobTargetGenerator(generator),
 		configuration,
 	)
 	if err != nil {
@@ -1605,7 +1605,7 @@ func voiceRawRequest(
 }
 
 type practiceVoiceRecognizerAdapter struct {
-	recognizer ai.SpeechRecognizer
+	recognizer agentvoice.SpeechRecognizer
 }
 
 func (adapter practiceVoiceRecognizerAdapter) Transcribe(
@@ -1614,7 +1614,7 @@ func (adapter practiceVoiceRecognizerAdapter) Transcribe(
 ) (practicevoice.TranscriptionResult, error) {
 	result, err := adapter.recognizer.Transcribe(
 		ctx,
-		ai.TranscriptionRequest{Audio: request.Audio},
+		agentvoice.TranscriptionRequest{Audio: request.Audio},
 	)
 	return practicevoice.TranscriptionResult{
 		ID:         result.ID,
@@ -1625,7 +1625,7 @@ func (adapter practiceVoiceRecognizerAdapter) Transcribe(
 }
 
 type practiceVoiceSynthesizerAdapter struct {
-	synthesizer ai.SpeechSynthesizer
+	synthesizer agentvoice.SpeechSynthesizer
 }
 
 func (adapter practiceVoiceSynthesizerAdapter) Synthesize(
@@ -1634,7 +1634,7 @@ func (adapter practiceVoiceSynthesizerAdapter) Synthesize(
 ) (practicevoice.SynthesisResult, error) {
 	result, err := adapter.synthesizer.Synthesize(
 		ctx,
-		ai.SynthesisRequest{Text: request.Text},
+		agentvoice.SynthesisRequest{Text: request.Text},
 	)
 	return practicevoice.SynthesisResult{
 		RequestID: result.RequestID,
@@ -1646,17 +1646,17 @@ func (adapter practiceVoiceSynthesizerAdapter) Synthesize(
 }
 
 type practiceVoiceQuestionGeneratorAdapter struct {
-	generator ai.TextGenerator
+	generator agentrun.TextGenerator
 }
 
 func (adapter practiceVoiceQuestionGeneratorAdapter) GenerateQuestion(
 	ctx context.Context,
 	request practicevoice.QuestionGenerationRequest,
 ) (string, error) {
-	result, err := adapter.generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{Role: ai.TextRoleSystem, Content: request.SystemPrompt},
-			{Role: ai.TextRoleUser, Content: request.UserPrompt},
+	result, err := adapter.generator.Generate(ctx, agentrun.TextRequest{
+		Messages: []agentrun.TextMessage{
+			{Role: agentrun.TextRoleSystem, Content: request.SystemPrompt},
+			{Role: agentrun.TextRoleUser, Content: request.UserPrompt},
 		},
 	})
 	return result.Content, err
@@ -1675,8 +1675,8 @@ type followUpVoiceTextGenerator struct {
 
 func (generator *followUpVoiceTextGenerator) Generate(
 	_ context.Context,
-	_ ai.TextRequest,
-) (ai.TextResult, error) {
+	_ agentrun.TextRequest,
+) (agentrun.TextResult, error) {
 	call := generator.questionCalls.Add(1)
 	content := "Tell me about a project you led."
 	if call == 2 {
@@ -1684,7 +1684,7 @@ func (generator *followUpVoiceTextGenerator) Generate(
 	} else if call > 2 {
 		content = `{"question_type":"PRIMARY","content":"Tell me about another difficult decision."}`
 	}
-	return ai.TextResult{
+	return agentrun.TextResult{
 		ID:       fmt.Sprintf("follow-up-question-completion-%d", call),
 		Provider: "fake",
 		Model:    "fake-text-v1",
@@ -1694,14 +1694,14 @@ func (generator *followUpVoiceTextGenerator) Generate(
 
 func (generator *voiceTextGenerator) Generate(
 	_ context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
+	request agentrun.TextRequest,
+) (agentrun.TextResult, error) {
 	last := request.Messages[len(request.Messages)-1].Content
 	if strings.HasPrefix(last, "RUBRIC=") {
 		generator.reviewCalls.Add(1)
 		if generator.quotaReviewPending.CompareAndSwap(true, false) {
-			return ai.TextResult{}, ai.NewGenerationError(
-				ai.ErrorQuotaExhausted,
+			return agentrun.TextResult{}, agentrun.NewGenerationError(
+				agentrun.ErrorQuotaExhausted,
 				http.StatusTooManyRequests,
 				"FreeTierOnly",
 				"review-quota-request",
@@ -1717,16 +1717,16 @@ func (generator *voiceTextGenerator) Generate(
 				pending,
 				pending-1,
 			) {
-				return ai.TextResult{}, fmt.Errorf(
+				return agentrun.TextResult{}, fmt.Errorf(
 					"review provider unavailable",
 				)
 			}
 		}
 		content, err := voiceReviewFixture(last)
 		if err != nil {
-			return ai.TextResult{}, err
+			return agentrun.TextResult{}, err
 		}
-		return ai.TextResult{
+		return agentrun.TextResult{
 			ID:       "review-completion",
 			Provider: "fake",
 			Model:    "fake-text-v1",
@@ -1734,7 +1734,7 @@ func (generator *voiceTextGenerator) Generate(
 		}, nil
 	}
 	call := generator.questionCalls.Add(1)
-	return ai.TextResult{
+	return agentrun.TextResult{
 		ID:       fmt.Sprintf("question-completion-%d", call),
 		Provider: "fake",
 		Model:    "fake-text-v1",
@@ -1832,13 +1832,13 @@ type voiceRecognizer struct {
 
 func (recognizer *voiceRecognizer) Transcribe(
 	_ context.Context,
-	request ai.TranscriptionRequest,
-) (ai.TranscriptionResult, error) {
-	if err := ai.ValidateTranscriptionRequest(request); err != nil {
-		return ai.TranscriptionResult{}, err
+	request agentvoice.TranscriptionRequest,
+) (agentvoice.TranscriptionResult, error) {
+	if err := agentvoice.ValidateTranscriptionRequest(request); err != nil {
+		return agentvoice.TranscriptionResult{}, err
 	}
 	call := recognizer.calls.Add(1)
-	return ai.TranscriptionResult{
+	return agentvoice.TranscriptionResult{
 		ID:         fmt.Sprintf("asr-result-%d", call),
 		Provider:   "fake",
 		Model:      "fake-asr-v1",
@@ -1848,21 +1848,21 @@ func (recognizer *voiceRecognizer) Transcribe(
 
 func (recognizer *voiceRecognizer) TranscribeStream(
 	ctx context.Context,
-	request ai.TranscriptionRequest,
-	observer ai.TranscriptionObserver,
-) (ai.TranscriptionResult, error) {
+	request agentvoice.TranscriptionRequest,
+	observer agentvoice.TranscriptionObserver,
+) (agentvoice.TranscriptionResult, error) {
 	result, err := recognizer.Transcribe(ctx, request)
 	if err != nil {
-		return ai.TranscriptionResult{}, err
+		return agentvoice.TranscriptionResult{}, err
 	}
 	if err := observer.OnTranscriptionUpdate(
 		ctx,
-		ai.TranscriptionUpdate{
+		agentvoice.TranscriptionUpdate{
 			Transcript: result.Transcript,
 			Final:      true,
 		},
 	); err != nil {
-		return ai.TranscriptionResult{}, err
+		return agentvoice.TranscriptionResult{}, err
 	}
 	return result, nil
 }

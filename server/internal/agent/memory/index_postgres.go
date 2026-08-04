@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -209,29 +208,21 @@ WHERE id = $1
 func (repository *PostgresRepository) CompleteIndex(
 	ctx context.Context,
 	claim IndexClaim,
-	result ai.EmbeddingResult,
+	result EmbeddingResult,
 ) (IndexJob, error) {
-	request := ai.EmbeddingRequest{
-		Inputs:     []string{"validated-separately"},
-		Dimensions: claim.Dimensions,
-	}
 	if ctx == nil ||
 		!claim.Valid() ||
 		result.Provider != claim.Provider ||
 		result.Model != claim.Model ||
 		result.Dimensions != claim.Dimensions ||
-		len(result.Vectors) != 1 ||
 		result.InputTokens < 0 ||
 		result.TotalTokens < result.InputTokens {
 		return IndexJob{}, ErrInvalidArgument
 	}
-	// Validate vector shape and numeric safety without retaining the source
-	// content in this persistence boundary.
-	request.Inputs[0] = "memory"
-	if err := ai.ValidateEmbeddingResult(request, result); err != nil {
+	if err := ValidateEmbeddingResult(claim.Dimensions, result); err != nil {
 		return IndexJob{}, ErrIndexResponse
 	}
-	vector, err := vectorLiteral(result.Vectors[0], claim.Dimensions)
+	vector, err := vectorLiteral(result.Vector, claim.Dimensions)
 	if err != nil {
 		return IndexJob{}, err
 	}

@@ -1,4 +1,4 @@
-package ai
+package voice
 
 import (
 	"context"
@@ -15,8 +15,8 @@ type SpeechRecognizer interface {
 	Transcribe(context.Context, TranscriptionRequest) (TranscriptionResult, error)
 }
 
-// StreamingSpeechRecognizer exposes provider-authored intermediate transcript
-// snapshots while preserving Transcribe as the final durable result boundary.
+// StreamingSpeechRecognizer exposes provider-authored transcript snapshots;
+// the final TranscriptionResult is the only durable result.
 type StreamingSpeechRecognizer interface {
 	SpeechRecognizer
 	TranscribeStream(
@@ -93,6 +93,31 @@ func ValidateSynthesisRequest(request SynthesisRequest) error {
 	return nil
 }
 
+type ErrorKind string
+
+const (
+	ErrorInvalidRequest      ErrorKind = "invalid_request"
+	ErrorConfiguration       ErrorKind = "configuration"
+	ErrorAuthentication      ErrorKind = "authentication"
+	ErrorAuthorization       ErrorKind = "authorization"
+	ErrorQuotaExhausted      ErrorKind = "quota_exhausted"
+	ErrorRateLimited         ErrorKind = "rate_limited"
+	ErrorTimeout             ErrorKind = "timeout"
+	ErrorProviderUnavailable ErrorKind = "provider_unavailable"
+	ErrorInvalidResponse     ErrorKind = "invalid_response"
+	ErrorCancelled           ErrorKind = "cancelled"
+)
+
+func (kind ErrorKind) Retryable() bool {
+	switch kind {
+	case ErrorRateLimited, ErrorTimeout, ErrorProviderUnavailable,
+		ErrorInvalidResponse, ErrorCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
 type SpeechOperation string
 
 const (
@@ -100,8 +125,8 @@ const (
 	SpeechOperationSynthesis     SpeechOperation = "synthesis"
 )
 
-// SpeechError carries stable failure metadata without retaining provider
-// messages, request bodies, audio bytes, synthesized text, or credentials.
+// SpeechError carries stable failure metadata without provider payloads,
+// audio, synthesized text, or credentials.
 type SpeechError struct {
 	Operation    SpeechOperation
 	Kind         ErrorKind
@@ -120,12 +145,8 @@ func NewSpeechError(
 	cause error,
 ) *SpeechError {
 	return &SpeechError{
-		Operation:    operation,
-		Kind:         kind,
-		StatusCode:   statusCode,
-		ProviderCode: providerCode,
-		RequestID:    requestID,
-		cause:        cause,
+		Operation: operation, Kind: kind, StatusCode: statusCode,
+		ProviderCode: providerCode, RequestID: requestID, cause: cause,
 	}
 }
 
@@ -152,4 +173,11 @@ func (e *SpeechError) Unwrap() error {
 
 func (e *SpeechError) Retryable() bool {
 	return e != nil && e.Kind.Retryable()
+}
+
+func (e *SpeechError) StableCategory() string {
+	if e == nil {
+		return ""
+	}
+	return string(e.Kind)
 }

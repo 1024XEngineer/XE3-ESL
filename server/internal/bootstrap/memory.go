@@ -10,7 +10,6 @@ import (
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const (
@@ -130,7 +129,7 @@ func buildMemoryExtractionProcessor(
 	runs completedAgentRunReader,
 	messages completedAgentMessageReader,
 	manifests completedAgentManifestReader,
-	generator ai.TextGenerator,
+	generator memory.Generator,
 	runConfiguration agentrun.Configuration,
 ) (memory.ExtractionProcessor, error) {
 	configuration := memory.ExtractionConfig{

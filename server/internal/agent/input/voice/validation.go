@@ -8,7 +8,6 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const runPersistenceTimeout = 5 * time.Second
@@ -44,7 +43,7 @@ func validIdempotencyKey(value string) bool {
 		!strings.ContainsAny(value, "\r\n\x00")
 }
 
-func ValidTranscription(result ai.TranscriptionResult) bool {
+func ValidTranscription(result TranscriptionResult) bool {
 	return ValidModelID(result.ID) &&
 		ValidProviderID(result.Provider) &&
 		ValidModelID(result.Model) &&

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -49,7 +48,7 @@ func (request SearchRequest) Valid() bool {
 	return request.Actor.Valid() &&
 		request.Query != "" &&
 		request.Query == strings.TrimSpace(request.Query) &&
-		len(request.Query) <= ai.MaxEmbeddingInputBytes &&
+		len(request.Query) <= maxEmbeddingInputBytes &&
 		(request.GoalID == "" || validUUID(request.GoalID)) &&
 		ValidStableProfileCanonicalKeys(request.ExcludedCanonicalKeys) &&
 		request.Limit >= 1 &&
@@ -95,14 +94,14 @@ type Searcher interface {
 
 type SearchService struct {
 	repository SearchCandidateRepository
-	embedder   ai.Embedder
+	embedder   Embedder
 	config     SearchConfig
 	now        func() time.Time
 }
 
 func NewSearchService(
 	repository SearchCandidateRepository,
-	embedder ai.Embedder,
+	embedder Embedder,
 	configuration SearchConfig,
 	now func() time.Time,
 ) (*SearchService, error) {
@@ -127,16 +126,16 @@ func (service *SearchService) Search(
 	if ctx == nil || !request.Valid() {
 		return nil, ErrInvalidArgument
 	}
-	embeddingRequest := ai.EmbeddingRequest{
-		Inputs:     []string{request.Query},
+	embeddingRequest := EmbeddingRequest{
+		Input:      request.Query,
 		Dimensions: service.config.Dimensions,
 	}
 	result, err := service.embedder.Embed(ctx, embeddingRequest)
 	if err != nil {
 		return nil, err
 	}
-	if err := ai.ValidateEmbeddingResult(
-		embeddingRequest,
+	if err := ValidateEmbeddingResult(
+		embeddingRequest.Dimensions,
 		result,
 	); err != nil {
 		return nil, ErrIndexResponse
@@ -144,13 +143,13 @@ func (service *SearchService) Search(
 	if result.Provider != service.config.Provider ||
 		result.Model != service.config.Model ||
 		result.Dimensions != service.config.Dimensions ||
-		len(result.Vectors) != 1 {
+		len(result.Vector) != service.config.Dimensions {
 		return nil, ErrIndexResponse
 	}
 	candidates, err := service.repository.SearchCandidates(
 		ctx,
 		request.Actor,
-		result.Vectors[0],
+		result.Vector,
 		request.GoalID,
 		request.ExcludedCanonicalKeys,
 		service.config,

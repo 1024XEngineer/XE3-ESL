@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformconfig "github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 func TestLiveMultimodalGenerationWithToolCall(t *testing.T) {
@@ -86,7 +86,7 @@ func TestLiveMultimodalGenerationWithToolCall(t *testing.T) {
 		t.Fatalf("sign live image: %v", err)
 	}
 
-	generator, err := New(Config{
+	generator, err := newTextClient(TextConfig{
 		BaseURL:         textConfig.BaseURL,
 		Model:           textConfig.Model,
 		Timeout:         textConfig.Timeout,
@@ -95,18 +95,18 @@ func TestLiveMultimodalGenerationWithToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Qianwen generator: %v", err)
 	}
-	result, err := generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{{
-			Role: ai.TextRoleUser,
-			ContentParts: []ai.ContentPart{
+	result, err := generator.Generate(ctx, protocol.TextRequest{
+		Messages: []protocol.TextMessage{{
+			Role: protocol.TextRoleUser,
+			ContentParts: []protocol.ContentPart{
 				{
-					Kind: ai.ContentPartText,
+					Kind: protocol.ContentPartText,
 					Text: "Inspect this fixed test image, then report its colors using the tool.",
 				},
-				{Kind: ai.ContentPartImageURL, ImageURL: signed.URL},
+				{Kind: protocol.ContentPartImageURL, ImageURL: signed.URL},
 			},
 		}},
-		Tools: []ai.ToolDefinition{{
+		Tools: []protocol.ToolDefinition{{
 			Name:        "report_image_colors",
 			Description: "Report the two solid colors visible in the test image.",
 			InputSchema: map[string]any{
@@ -126,8 +126,8 @@ func TestLiveMultimodalGenerationWithToolCall(t *testing.T) {
 				},
 			},
 		}},
-		ToolChoice: ai.ToolChoice{
-			Mode: ai.ToolChoiceSpecific,
+		ToolChoice: protocol.ToolChoice{
+			Mode: protocol.ToolChoiceSpecific,
 			Name: "report_image_colors",
 		},
 	})

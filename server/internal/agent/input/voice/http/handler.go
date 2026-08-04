@@ -12,7 +12,6 @@ import (
 	agentconversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	agentrunhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpinput"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
@@ -34,7 +33,7 @@ type Application interface {
 		context.Context,
 		requestcontext.Actor,
 		agentvoice.UploadRequest,
-		ai.TranscriptionObserver,
+		agentvoice.TranscriptionObserver,
 	) (agentvoice.Candidate, error)
 	GetCandidate(
 		context.Context,
@@ -315,7 +314,7 @@ type transcriptionSSEWriter struct {
 
 func (writer *transcriptionSSEWriter) OnTranscriptionUpdate(
 	_ context.Context,
-	update ai.TranscriptionUpdate,
+	update agentvoice.TranscriptionUpdate,
 ) error {
 	return writer.write("transcription.updated", gin.H{
 		"transcript": update.Transcript, "final": update.Final,
@@ -410,7 +409,7 @@ func mapThreadError(err error) error {
 }
 
 func mapError(err error) error {
-	var speechError *ai.SpeechError
+	var speechError *agentvoice.SpeechError
 	switch {
 	case errors.Is(err, agentvoice.ErrInvalidRequest):
 		return invalidRequest(err)
@@ -450,10 +449,10 @@ func mapError(err error) error {
 	}
 }
 
-func providerError(kind ai.ErrorKind, cause error) error {
+func providerError(kind agentvoice.ErrorKind, cause error) error {
 	code := "provider_unavailable"
 	message := "The configured provider is temporarily unavailable."
-	if kind == ai.ErrorQuotaExhausted {
+	if kind == agentvoice.ErrorQuotaExhausted {
 		code = "quota_exhausted"
 		message = "The configured provider quota is exhausted."
 	}

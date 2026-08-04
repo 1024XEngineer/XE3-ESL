@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 	"github.com/gorilla/websocket"
 )
 
@@ -39,25 +39,25 @@ type realtimeASREvent struct {
 	} `json:"payload"`
 }
 
-func (recognizer *Recognizer) transcribeRealtime(
+func (recognizer *speechRecognizer) transcribeRealtime(
 	ctx context.Context,
-	request ai.TranscriptionRequest,
-	observer ai.TranscriptionObserver,
-) (ai.TranscriptionResult, error) {
+	request protocol.TranscriptionRequest,
+	observer protocol.TranscriptionObserver,
+) (protocol.TranscriptionResult, error) {
 	if ctx == nil {
-		return ai.TranscriptionResult{}, ai.NewSpeechError(
-			ai.SpeechOperationTranscription,
-			ai.ErrorInvalidRequest,
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
 			errors.New("speech transcription context is required"),
 		)
 	}
-	if err := ai.ValidateTranscriptionRequest(request); err != nil {
-		return ai.TranscriptionResult{}, ai.NewSpeechError(
-			ai.SpeechOperationTranscription,
-			ai.ErrorInvalidRequest,
+	if err := protocol.ValidateTranscriptionRequest(request); err != nil {
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -80,9 +80,9 @@ func (recognizer *Recognizer) transcribeRealtime(
 			statusCode = response.StatusCode
 			requestID = response.Header.Get("X-Request-Id")
 		}
-		return ai.TranscriptionResult{}, ai.NewSpeechError(
-			ai.SpeechOperationTranscription,
-			ai.ErrorProviderUnavailable,
+		return protocol.TranscriptionResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationTranscription,
+			protocol.ErrorProviderUnavailable,
 			statusCode,
 			"",
 			sanitizeIdentifier(requestID),
@@ -96,7 +96,7 @@ func (recognizer *Recognizer) transcribeRealtime(
 	}
 	taskID, err := newRealtimeASRTaskID()
 	if err != nil {
-		return ai.TranscriptionResult{}, err
+		return protocol.TranscriptionResult{}, err
 	}
 	runTask := map[string]any{
 		"header": map[string]any{
@@ -113,10 +113,10 @@ func (recognizer *Recognizer) transcribeRealtime(
 		},
 	}
 	if err := connection.WriteJSON(runTask); err != nil {
-		return ai.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
+		return protocol.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
 	}
 	if err := waitForRealtimeASRStart(connection, taskID); err != nil {
-		return ai.TranscriptionResult{}, err
+		return protocol.TranscriptionResult{}, err
 	}
 	type readResult struct {
 		transcript string
@@ -139,7 +139,7 @@ func (recognizer *Recognizer) transcribeRealtime(
 	}()
 	if err := streamRealtimeASRAudio(connection, request.Audio); err != nil {
 		_ = connection.Close()
-		return ai.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
+		return protocol.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
 	}
 	finishTask := map[string]any{
 		"header": map[string]any{
@@ -148,24 +148,24 @@ func (recognizer *Recognizer) transcribeRealtime(
 		"payload": map[string]any{"input": map[string]any{}},
 	}
 	if err := connection.WriteJSON(finishTask); err != nil {
-		return ai.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
+		return protocol.TranscriptionResult{}, realtimeASRTransportError(callContext, err)
 	}
 	var completed readResult
 	select {
 	case completed = <-readResults:
 	case <-callContext.Done():
-		return ai.TranscriptionResult{}, realtimeASRTransportError(
+		return protocol.TranscriptionResult{}, realtimeASRTransportError(
 			callContext,
 			callContext.Err(),
 		)
 	}
 	if completed.err != nil {
-		return ai.TranscriptionResult{}, completed.err
+		return protocol.TranscriptionResult{}, completed.err
 	}
-	return ai.TranscriptionResult{
+	return protocol.TranscriptionResult{
 		ID: taskID, Provider: providerName, Model: recognizer.model,
 		Transcript: completed.transcript,
-		Usage:      ai.SpeechUsage{AudioSeconds: completed.duration},
+		Usage:      protocol.SpeechUsage{AudioSeconds: completed.duration},
 	}, nil
 }
 
@@ -214,7 +214,7 @@ func collectRealtimeASRResult(
 	ctx context.Context,
 	connection *websocket.Conn,
 	taskID string,
-	observer ai.TranscriptionObserver,
+	observer protocol.TranscriptionObserver,
 ) (string, int, error) {
 	accumulator := realtimeTranscriptAccumulator{}
 	duration := 0
@@ -237,7 +237,7 @@ func collectRealtimeASRResult(
 			if transcript != "" && observer != nil {
 				if err := observer.OnTranscriptionUpdate(
 					ctx,
-					ai.TranscriptionUpdate{Transcript: transcript},
+					protocol.TranscriptionUpdate{Transcript: transcript},
 				); err != nil {
 					return "", 0, err
 				}
@@ -246,14 +246,14 @@ func collectRealtimeASRResult(
 			transcript := accumulator.Transcript()
 			if transcript == "" {
 				return "", 0, invalidSpeechResponse(
-					ai.SpeechOperationTranscription, 0, taskID,
+					protocol.SpeechOperationTranscription, 0, taskID,
 					"Fun-ASR realtime response has no transcript",
 				)
 			}
 			if observer != nil {
 				if err := observer.OnTranscriptionUpdate(
 					ctx,
-					ai.TranscriptionUpdate{
+					protocol.TranscriptionUpdate{
 						Transcript: transcript,
 						Final:      true,
 					},
@@ -332,13 +332,13 @@ func readRealtimeASREvent(
 	var event realtimeASREvent
 	if err := json.Unmarshal(payload, &event); err != nil {
 		return realtimeASREvent{}, invalidSpeechResponse(
-			ai.SpeechOperationTranscription, 0, taskID,
+			protocol.SpeechOperationTranscription, 0, taskID,
 			"decode Fun-ASR realtime event",
 		)
 	}
 	if event.Header.TaskID != taskID || event.Header.Event == "" {
 		return realtimeASREvent{}, invalidSpeechResponse(
-			ai.SpeechOperationTranscription, 0, taskID,
+			protocol.SpeechOperationTranscription, 0, taskID,
 			"Fun-ASR realtime event has invalid task identity",
 		)
 	}
@@ -346,9 +346,9 @@ func readRealtimeASREvent(
 }
 
 func realtimeASRProviderError(event realtimeASREvent) error {
-	return ai.NewSpeechError(
-		ai.SpeechOperationTranscription,
-		ai.ErrorProviderUnavailable,
+	return protocol.NewSpeechError(
+		protocol.SpeechOperationTranscription,
+		protocol.ErrorProviderUnavailable,
 		0,
 		sanitizeIdentifier(event.Header.ErrorCode),
 		sanitizeIdentifier(event.Header.TaskID),
@@ -357,7 +357,7 @@ func realtimeASRProviderError(event realtimeASREvent) error {
 }
 
 func realtimeASRTransportError(ctx context.Context, err error) error {
-	return speechTransportError(ai.SpeechOperationTranscription, ctx, err)
+	return speechTransportError(protocol.SpeechOperationTranscription, ctx, err)
 }
 
 func realtimeASREndpoint(baseURL string) string {

@@ -6,7 +6,6 @@ import (
 	"math"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const maxSummarySweepLimit = 20
@@ -260,7 +259,7 @@ func summaryJobFailure(cause error) (string, bool) {
 	case errors.Is(cause, conversation.ErrConflict):
 		return "concurrent_update", true
 	}
-	var generationError *ai.GenerationError
+	var generationError GenerationFailure
 	if errors.As(cause, &generationError) {
 		kind := generationError.StableCategory()
 		if !summaryJobFailurePattern.MatchString(kind) {

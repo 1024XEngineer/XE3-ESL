@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	practiceevaluationfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/evaluationfeedback"
@@ -19,8 +19,8 @@ import (
 // composition root. Agent Voice and Practice Voice intentionally use their own
 // ports even when both are backed by the same provider.
 type VoiceConfiguration struct {
-	Recognizer                ai.StreamingSpeechRecognizer
-	Synthesizer               ai.SpeechSynthesizer
+	Recognizer                agentvoice.StreamingSpeechRecognizer
+	Synthesizer               agentvoice.SpeechSynthesizer
 	PracticeRecognizer        practicevoice.SpeechRecognizer
 	PracticeSynthesizer       practicevoice.SpeechSynthesizer
 	QuestionGenerator         practicevoice.QuestionGenerator
@@ -43,16 +43,16 @@ type AgentImageConfiguration struct {
 	UploadLease time.Duration
 }
 
-// NewSpeechRecognizer selects the Agent Voice ASR implementation.
-func NewSpeechRecognizer(
+// NewAgentSpeechRecognizer selects the Agent Voice ASR implementation.
+func NewAgentSpeechRecognizer(
 	configuration config.SpeechRecognitionConfig,
-) (ai.StreamingSpeechRecognizer, error) {
+) (agentvoice.StreamingSpeechRecognizer, error) {
 	if configuration.Provider != config.SpeechProviderQianwen {
 		return nil, errors.New(
 			"bootstrap: speech recognition provider is not registered",
 		)
 	}
-	return qianwen.NewRecognizer(
+	return qianwen.NewAgentVoiceRecognizer(
 		qianwen.ASRConfig{
 			BaseURL: configuration.BaseURL,
 			Model:   configuration.Model,
@@ -62,16 +62,16 @@ func NewSpeechRecognizer(
 	)
 }
 
-// NewSpeechSynthesizer selects the Agent Voice TTS implementation.
-func NewSpeechSynthesizer(
+// NewAgentSpeechSynthesizer selects the Agent Voice TTS implementation.
+func NewAgentSpeechSynthesizer(
 	configuration config.SpeechSynthesisConfig,
-) (ai.SpeechSynthesizer, error) {
+) (agentvoice.SpeechSynthesizer, error) {
 	if configuration.Provider != config.SpeechProviderQianwen {
 		return nil, errors.New(
 			"bootstrap: speech synthesis provider is not registered",
 		)
 	}
-	return qianwen.NewSynthesizer(
+	return qianwen.NewAgentVoiceSynthesizer(
 		qianwen.TTSConfig{
 			BaseURL:       configuration.BaseURL,
 			Model:         configuration.Model,
@@ -135,7 +135,7 @@ func NewPracticeQuestionGenerator(
 		)
 	}
 	return qianwen.NewPracticeVoiceQuestionGenerator(
-		qianwen.Config{
+		qianwen.TextConfig{
 			BaseURL:         configuration.BaseURL,
 			Model:           configuration.Model,
 			Timeout:         configuration.Timeout,

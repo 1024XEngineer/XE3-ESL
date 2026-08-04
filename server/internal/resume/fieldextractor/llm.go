@@ -12,7 +12,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
 )
@@ -85,15 +84,15 @@ func (failure *Failure) FailureCode() string {
 	return failure.code
 }
 
-// LLMExtractor 使用项目统一 TextGenerator 请求 JSON 字段结果。
+// LLMExtractor 通过 Resume 自有 Port 请求 JSON 字段结果。
 type LLMExtractor struct {
-	generator ai.TextGenerator
+	generator Generator
 	config    Config
 }
 
-// NewLLMExtractor 创建字段提取器；API 密钥只由 TextGenerator 持有。
+// NewLLMExtractor 创建字段提取器；API 密钥只由 Provider 持有。
 func NewLLMExtractor(
-	generator ai.TextGenerator,
+	generator Generator,
 	configuration Config,
 ) (*LLMExtractor, error) {
 	if generator == nil || !validIdentifier(
@@ -139,12 +138,10 @@ func (extractor *LLMExtractor) Extract(
 	if err != nil {
 		return resume.Content{}, &Failure{code: "field_extraction_failed"}
 	}
-	result, err := extractor.generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{Role: ai.TextRoleSystem, Content: systemPrompt},
-			{Role: ai.TextRoleUser, Content: string(payload)},
-		},
-		ResponseFormat: ai.TextResponseFormatJSON,
+	result, err := extractor.generator.GenerateJSON(ctx, GenerationRequest{
+		SystemPrompt:        systemPrompt,
+		DocumentPayload:     string(payload),
+		MinimumOutputTokens: MinimumGenerationOutputTokens,
 	})
 	if err != nil {
 		return resume.Content{}, providerFailure(err)
@@ -268,15 +265,15 @@ func cleanUnique(values []string) []string {
 }
 
 func providerFailure(err error) error {
-	var generation *ai.GenerationError
+	var generation GenerationFailure
 	if errors.As(err, &generation) {
-		switch generation.Kind {
-		case ai.ErrorTimeout, ai.ErrorCancelled:
+		switch generation.StableCategory() {
+		case "timeout", "cancelled":
 			return &Failure{code: "field_provider_timeout"}
-		case ai.ErrorRateLimited, ai.ErrorQuotaExhausted,
-			ai.ErrorProviderUnavailable:
+		case "rate_limited", "quota_exhausted",
+			"provider_unavailable":
 			return &Failure{code: "field_provider_unavailable"}
-		case ai.ErrorInvalidResponse:
+		case "invalid_response":
 			return &Failure{code: "field_output_invalid"}
 		}
 	}

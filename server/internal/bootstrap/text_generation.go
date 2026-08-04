@@ -3,45 +3,108 @@ package bootstrap
 import (
 	"errors"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
 )
 
-// NewTextGenerator is the production provider registration boundary. Business
-// modules receive only ai.TextGenerator and cannot select a provider or fall
-// back to a Fake implementation at runtime.
-func NewTextGenerator(
+// AgentModelProviders makes each Agent-owned model boundary explicit at the
+// composition root. No business module receives a provider's generic client.
+type AgentModelProviders struct {
+	Run     agentrun.TextGenerator
+	Memory  memory.Generator
+	Summary agentsummary.Generator
+}
+
+func NewAgentModelProviders(
 	configuration config.TextGenerationConfig,
-) (ai.TextGenerator, error) {
-	switch configuration.Provider {
-	case config.TextProviderQianwen:
-		return qianwen.New(
-			qianwen.Config{
-				BaseURL:         configuration.BaseURL,
-				Model:           configuration.Model,
-				Timeout:         configuration.Timeout,
-				MaxOutputTokens: configuration.MaxOutputTokens,
-			},
-			configuration.APIKey.Reveal(),
-		)
-	default:
-		return nil, errors.New(
-			"bootstrap: text generation provider is not registered",
-		)
+) (AgentModelProviders, error) {
+	providerConfig, apiKey, err := qianwenTextProvider(configuration)
+	if err != nil {
+		return AgentModelProviders{}, err
 	}
+	runGenerator, err := qianwen.NewAgentRunGenerator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
+	memoryGenerator, err := qianwen.NewMemoryGenerator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
+	summaryGenerator, err := qianwen.NewSummaryGenerator(providerConfig, apiKey)
+	if err != nil {
+		return AgentModelProviders{}, err
+	}
+	return AgentModelProviders{
+		Run:     runGenerator,
+		Memory:  memoryGenerator,
+		Summary: summaryGenerator,
+	}, nil
+}
+
+func NewPreparationJobTargetGenerator(
+	configuration config.TextGenerationConfig,
+) (preparation.JobTargetGenerator, error) {
+	providerConfig, apiKey, err := qianwenTextProvider(configuration)
+	if err != nil {
+		return nil, err
+	}
+	return qianwen.NewPreparationJobTargetGenerator(providerConfig, apiKey)
 }
 
 func NewEvaluationScoringGenerator(
-	generator ai.TextGenerator,
+	configuration config.TextGenerationConfig,
 ) (scoring.TextGenerator, error) {
-	return qianwen.NewEvaluationScoringGenerator(generator)
+	providerConfig, apiKey, err := qianwenTextProvider(configuration)
+	if err != nil {
+		return nil, err
+	}
+	return qianwen.NewEvaluationScoringGenerator(providerConfig, apiKey)
 }
 
 func NewEvaluationSpeechFeedbackGenerator(
-	generator ai.TextGenerator,
+	configuration config.TextGenerationConfig,
 ) (speechfeedback.TextGenerator, error) {
-	return qianwen.NewEvaluationSpeechFeedbackGenerator(generator)
+	providerConfig, apiKey, err := qianwenTextProvider(configuration)
+	if err != nil {
+		return nil, err
+	}
+	return qianwen.NewEvaluationSpeechFeedbackGenerator(providerConfig, apiKey)
+}
+
+func NewResumeFieldGenerator(
+	configuration config.TextGenerationConfig,
+) (fieldextractor.Generator, error) {
+	providerConfig, apiKey, err := qianwenTextProvider(configuration)
+	if err != nil {
+		return nil, err
+	}
+	if providerConfig.MaxOutputTokens <
+		fieldextractor.MinimumGenerationOutputTokens {
+		providerConfig.MaxOutputTokens =
+			fieldextractor.MinimumGenerationOutputTokens
+	}
+	return qianwen.NewResumeFieldGenerator(providerConfig, apiKey)
+}
+
+func qianwenTextProvider(
+	configuration config.TextGenerationConfig,
+) (qianwen.TextConfig, string, error) {
+	if configuration.Provider != config.TextProviderQianwen {
+		return qianwen.TextConfig{}, "", errors.New(
+			"bootstrap: text generation provider is not registered",
+		)
+	}
+	return qianwen.TextConfig{
+		BaseURL:         configuration.BaseURL,
+		Model:           configuration.Model,
+		Timeout:         configuration.Timeout,
+		MaxOutputTokens: configuration.MaxOutputTokens,
+	}, configuration.APIKey.Reveal(), nil
 }

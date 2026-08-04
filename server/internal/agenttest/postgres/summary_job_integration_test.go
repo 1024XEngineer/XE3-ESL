@@ -9,8 +9,6 @@ import (
 
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,7 +17,7 @@ func TestCompletedRunQueuesAndProcessesThreadSummaryJob(t *testing.T) {
 	_, dataService, runService, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	thread, err := dataService.CreateThread(
@@ -61,15 +59,13 @@ func TestCompletedRunQueuesAndProcessesThreadSummaryJob(t *testing.T) {
 		"",
 	)
 
-	summaryGenerator := &recordingTextGenerator{
-		result: ai.TextResult{
-			ID:           "summary-completion-1",
-			Provider:     "fake",
-			Model:        "configured-model",
-			Content:      summaryJobValidJSON(),
-			FinishReason: "stop",
+	summaryGenerator := newFixedSummaryGenerator(
+		agentsummary.GenerationResult{
+			Provider: "fake",
+			Model:    "configured-model",
+			Content:  summaryJobValidJSON(),
 		},
-	}
+	)
 	summaryService, err := agentsummary.NewService(
 		repository.summary,
 		summaryGenerator,
@@ -160,7 +156,7 @@ func TestThreadSummaryJobSkipsBelowThresholdAndSerializesThreadClaims(
 	_, dataService, runService, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	thread, err := dataService.CreateThread(
@@ -248,15 +244,13 @@ func TestThreadSummaryJobSkipsBelowThresholdAndSerializesThreadClaims(
 		t.Fatalf("finish first Job: %v", err)
 	}
 
-	generator := &recordingTextGenerator{
-		result: ai.TextResult{
-			ID:           "summary-unused",
-			Provider:     "fake",
-			Model:        "configured-model",
-			Content:      summaryJobValidJSON(),
-			FinishReason: "stop",
+	generator := newFixedSummaryGenerator(
+		agentsummary.GenerationResult{
+			Provider: "fake",
+			Model:    "configured-model",
+			Content:  summaryJobValidJSON(),
 		},
-	}
+	)
 	service, err := agentsummary.NewService(
 		repository.summary,
 		generator,
@@ -312,7 +306,7 @@ func TestThreadSummaryJobRecoversExpiredLeaseAndExhaustsRetries(
 	_, dataService, runService, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	thread, err := dataService.CreateThread(

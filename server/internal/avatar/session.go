@@ -27,19 +27,6 @@ type SessionReader interface {
 	) (practice.Session, error)
 }
 
-type TokenProvider interface {
-	CreateSessionToken(
-		context.Context,
-		string,
-		time.Time,
-	) (ProviderSessionToken, error)
-}
-
-type ProviderSessionToken struct {
-	Value     string
-	ExpiresAt time.Time
-}
-
 type ServiceConfiguration struct {
 	Enabled  bool
 	AppID    string

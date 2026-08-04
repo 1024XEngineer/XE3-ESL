@@ -4,21 +4,21 @@ import (
 	"context"
 	"errors"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 type EvaluationSpeechFeedbackGenerator struct {
-	generator ai.TextGenerator
+	generator *textClient
 }
 
 func NewEvaluationSpeechFeedbackGenerator(
-	generator ai.TextGenerator,
+	configuration TextConfig,
+	apiKey string,
 ) (*EvaluationSpeechFeedbackGenerator, error) {
-	if generator == nil {
-		return nil, errors.New(
-			"qianwen: Evaluation speech feedback generator is required",
-		)
+	generator, err := newTextClient(configuration, apiKey)
+	if err != nil {
+		return nil, err
 	}
 	return &EvaluationSpeechFeedbackGenerator{generator: generator}, nil
 }
@@ -33,12 +33,12 @@ func (generator *EvaluationSpeechFeedbackGenerator) Generate(
 			"qianwen: invalid Evaluation speech feedback request",
 		)
 	}
-	result, err := generator.generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{Role: ai.TextRoleSystem, Content: request.SystemPrompt},
-			{Role: ai.TextRoleUser, Content: request.UserPrompt},
+	result, err := generator.generator.Generate(ctx, protocol.TextRequest{
+		Messages: []protocol.TextMessage{
+			{Role: protocol.TextRoleSystem, Content: request.SystemPrompt},
+			{Role: protocol.TextRoleUser, Content: request.UserPrompt},
 		},
-		ResponseFormat: ai.TextResponseFormatJSON,
+		ResponseFormat: protocol.TextResponseFormatJSON,
 	})
 	if err != nil {
 		return speechfeedback.TextGenerationResult{}, err

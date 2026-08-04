@@ -9,10 +9,9 @@ import (
 	"testing"
 	"time"
 
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 
@@ -76,7 +75,7 @@ func TestAgentVoiceCompositionRequiresCleanupAwareConstructor(t *testing.T) {
 		nil,
 		nil,
 		"",
-		nil,
+		AgentModelProviders{},
 		agentrun.Configuration{},
 		emptyBootstrapMemorySearcher{},
 		VoiceConfiguration{AgentVoiceInputEnabled: true},
@@ -90,7 +89,7 @@ func TestAgentVoiceCompositionRequiresCleanupAwareConstructor(t *testing.T) {
 		pool,
 		nil,
 		"",
-		&voiceTextGenerator{},
+		testAgentModelProviders(&voiceTextGenerator{}),
 		agentrun.Configuration{
 			Provider:           "fake",
 			Model:              "fake-text-v1",
@@ -143,15 +142,15 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 	pool := voiceIntegrationDatabase(t)
 	textGenerator := &voiceTextGenerator{}
 	configuration := VoiceConfiguration{
-		Recognizer: aifake.NewSpeechRecognizer(
-			ai.TranscriptionResult{
+		Recognizer: newTestSpeechRecognizer(
+			agentvoice.TranscriptionResult{
 				ID:         "bootstrap-asr-result",
 				Provider:   "fake",
 				Model:      "fake-asr-v1",
 				Transcript: "A bootstrap transcript.",
 			},
 		),
-		Synthesizer: aifake.NewFailingSpeechSynthesizer(
+		Synthesizer: newFailingTestSpeechSynthesizer(
 			context.Canceled,
 		),
 		TemporaryAudio:         newVoiceTestVault(t),
@@ -180,7 +179,7 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 		pool,
 		nil,
 		"",
-		textGenerator,
+		testAgentModelProviders(textGenerator),
 		agentrun.Configuration{
 			Provider:           "fake",
 			Model:              "fake-text-v1",

@@ -8,7 +8,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -566,7 +565,7 @@ func (r *Repository) Complete(
 	runID string,
 	workerLeaseToken string,
 	content string,
-	result ai.TextResult,
+	result agentrun.TextResult,
 ) (agentrun.Run, error) {
 	tx, err := r.database.Begin(ctx)
 	if err != nil {

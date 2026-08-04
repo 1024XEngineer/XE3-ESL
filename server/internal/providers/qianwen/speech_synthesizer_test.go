@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 const testTTSProviderURL = "http://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/" +
@@ -189,7 +189,7 @@ func TestSynthesizeAcceptsExactProviderWAVSizeMarkers(t *testing.T) {
 	)
 	result, err := synthesizer.Synthesize(
 		context.Background(),
-		ai.SynthesisRequest{Text: "Question"},
+		protocol.SynthesisRequest{Text: "Question"},
 	)
 	if err != nil {
 		t.Fatalf("synthesize provider marker WAV: %v", err)
@@ -401,13 +401,13 @@ func TestSynthesizeRejectsUnsafeProviderWAVVariantsAndCleansUp(t *testing.T) {
 			)
 			_, err := synthesizer.Synthesize(
 				context.Background(),
-				ai.SynthesisRequest{Text: "Question"},
+				protocol.SynthesisRequest{Text: "Question"},
 			)
 			assertSpeechError(
 				t,
 				err,
-				ai.SpeechOperationSynthesis,
-				ai.ErrorInvalidResponse,
+				protocol.SpeechOperationSynthesis,
+				protocol.ErrorInvalidResponse,
 				true,
 			)
 			entries, readErr := os.ReadDir(directory)
@@ -484,7 +484,7 @@ func TestSynthesizeUsesDocumentedContractAndOwnsDownloadedAudio(t *testing.T) {
 
 	result, err := synthesizer.Synthesize(
 		context.Background(),
-		ai.SynthesisRequest{Text: "  Repeat after me.  "},
+		protocol.SynthesisRequest{Text: "  Repeat after me.  "},
 	)
 	if err != nil {
 		t.Fatalf("synthesize: %v", err)
@@ -552,13 +552,13 @@ func TestSynthesizeRejectsUnsafeProviderURLWithoutDownloading(t *testing.T) {
 
 			_, err := synthesizer.Synthesize(
 				context.Background(),
-				ai.SynthesisRequest{Text: "Question"},
+				protocol.SynthesisRequest{Text: "Question"},
 			)
 			assertSpeechError(
 				t,
 				err,
-				ai.SpeechOperationSynthesis,
-				ai.ErrorInvalidResponse,
+				protocol.SpeechOperationSynthesis,
+				protocol.ErrorInvalidResponse,
 				true,
 			)
 			if calls.Load() != 1 {
@@ -614,13 +614,13 @@ func TestSynthesizeRejectsEncodedProviderAudioAndCleansUp(t *testing.T) {
 			)
 			_, err := synthesizer.Synthesize(
 				context.Background(),
-				ai.SynthesisRequest{Text: "Question"},
+				protocol.SynthesisRequest{Text: "Question"},
 			)
 			assertSpeechError(
 				t,
 				err,
-				ai.SpeechOperationSynthesis,
-				ai.ErrorInvalidResponse,
+				protocol.SpeechOperationSynthesis,
+				protocol.ErrorInvalidResponse,
 				true,
 			)
 			entries, readErr := os.ReadDir(directory)
@@ -675,13 +675,13 @@ func TestSynthesizeRejectsUntrustedDownloadedMediaAndCleansUp(t *testing.T) {
 			}), "test-api-key", directory)
 			_, err := synthesizer.Synthesize(
 				context.Background(),
-				ai.SynthesisRequest{Text: "Question"},
+				protocol.SynthesisRequest{Text: "Question"},
 			)
 			assertSpeechError(
 				t,
 				err,
-				ai.SpeechOperationSynthesis,
-				ai.ErrorInvalidResponse,
+				protocol.SpeechOperationSynthesis,
+				protocol.ErrorInvalidResponse,
 				true,
 			)
 			entries, readErr := os.ReadDir(directory)
@@ -703,8 +703,8 @@ func TestSynthesizeRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
 		calls.Add(1)
 		return jsonResponse(http.StatusOK, `{}`), nil
 	}), "test-api-key", t.TempDir())
-	_, err := synthesizer.Synthesize(context.Background(), ai.SynthesisRequest{})
-	assertSpeechError(t, err, ai.SpeechOperationSynthesis, ai.ErrorInvalidRequest, false)
+	_, err := synthesizer.Synthesize(context.Background(), protocol.SynthesisRequest{})
+	assertSpeechError(t, err, protocol.SpeechOperationSynthesis, protocol.ErrorInvalidRequest, false)
 	if calls.Load() != 0 {
 		t.Fatalf("provider calls = %d, want zero", calls.Load())
 	}
@@ -722,13 +722,13 @@ func TestSynthesizeMapsProviderErrorWithoutLeakingTextOrCredentials(t *testing.T
 	}), sensitive, t.TempDir())
 	_, err := synthesizer.Synthesize(
 		context.Background(),
-		ai.SynthesisRequest{Text: sensitive},
+		protocol.SynthesisRequest{Text: sensitive},
 	)
 	assertSpeechError(
 		t,
 		err,
-		ai.SpeechOperationSynthesis,
-		ai.ErrorRateLimited,
+		protocol.SpeechOperationSynthesis,
+		protocol.ErrorRateLimited,
 		true,
 	)
 	if strings.Contains(err.Error(), sensitive) {
@@ -740,7 +740,7 @@ func TestSynthesizerTimeoutRedirectPolicyAndFormattingAreSafe(t *testing.T) {
 	t.Parallel()
 
 	const apiKey = "must-never-be-logged"
-	synthesizer, err := NewSynthesizer(TTSConfig{
+	synthesizer, err := newSpeechSynthesizer(TTSConfig{
 		BaseURL:      "https://dashscope.aliyuncs.com/api/v1",
 		Model:        "qwen-audio-3.0-tts-flash",
 		Voice:        "loongeva_v3.6",
@@ -769,7 +769,7 @@ func TestSynthesizerTimeoutRedirectPolicyAndFormattingAreSafe(t *testing.T) {
 			t.Fatalf("synthesizer formatting exposed API key: %q", value)
 		}
 	}
-	var nilSynthesizer *Synthesizer
+	var nilSynthesizer *speechSynthesizer
 	for _, value := range []string{
 		fmt.Sprint(nilSynthesizer),
 		fmt.Sprintf("%+v", nilSynthesizer),
@@ -826,7 +826,7 @@ func TestNewSynthesizerRejectsUnsupportedConfiguration(t *testing.T) {
 			t.Parallel()
 			config := valid
 			test.mutate(&config)
-			if _, err := NewSynthesizer(config, "test-api-key"); err == nil {
+			if _, err := newSpeechSynthesizer(config, "test-api-key"); err == nil {
 				t.Fatal("expected configuration error")
 			}
 		})
@@ -859,7 +859,7 @@ func mustSynthesizer(
 	client httpDoer,
 	apiKey string,
 	tempDirectory string,
-) *Synthesizer {
+) *speechSynthesizer {
 	t.Helper()
 	synthesizer, err := newSynthesizerWithClient(TTSConfig{
 		BaseURL:       "https://dashscope.aliyuncs.com/api/v1",

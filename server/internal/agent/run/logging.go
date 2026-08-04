@@ -5,8 +5,6 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const defaultInputPreviewMax = 500
@@ -37,7 +35,7 @@ func truncateString(value string, limit int) string {
 	return string(runes[:limit])
 }
 
-func toolCallNames(calls []ai.ToolCall) []string {
+func toolCallNames(calls []ModelToolCall) []string {
 	names := make([]string, 0, len(calls))
 	for _, call := range calls {
 		if call.Name != "" {

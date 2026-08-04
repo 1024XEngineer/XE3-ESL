@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -39,7 +38,7 @@ func TestSearchServiceReranksDeterministicallyAndEnforcesGoal(
 	}}
 	service, err := NewSearchService(
 		repository,
-		&aifake.Embedder{Result: validEmbeddingResult()},
+		&searchEmbedderStub{result: validEmbeddingResult()},
 		testSearchConfig(),
 		func() time.Time { return now },
 	)
@@ -77,7 +76,7 @@ func TestSearchServiceDistinguishesNoMatchFromDependencyFailure(t *testing.T) {
 
 	service, err := NewSearchService(
 		&fakeSearchRepository{},
-		&aifake.Embedder{Result: validEmbeddingResult()},
+		&searchEmbedderStub{result: validEmbeddingResult()},
 		testSearchConfig(),
 		time.Now,
 	)
@@ -114,7 +113,7 @@ func TestSearchServiceExcludesStableProfileBeforeCandidateRanking(
 	repository := &fakeSearchRepository{}
 	service, err := NewSearchService(
 		repository,
-		&aifake.Embedder{Result: validEmbeddingResult()},
+		&searchEmbedderStub{result: validEmbeddingResult()},
 		testSearchConfig(),
 		time.Now,
 	)
@@ -140,6 +139,18 @@ func TestSearchServiceExcludesStableProfileBeforeCandidateRanking(
 			repository.excludedCanonicalKeys,
 		)
 	}
+}
+
+type searchEmbedderStub struct {
+	result EmbeddingResult
+	err    error
+}
+
+func (embedder *searchEmbedderStub) Embed(
+	_ context.Context,
+	_ EmbeddingRequest,
+) (EmbeddingResult, error) {
+	return embedder.result, embedder.err
 }
 
 type fakeSearchRepository struct {

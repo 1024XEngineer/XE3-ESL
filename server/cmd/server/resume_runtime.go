@@ -17,10 +17,7 @@ import (
 	resumestorage "github.com/1024XEngineer/XE3-ESL/server/internal/resume/storage"
 )
 
-const (
-	resumeParsePollInterval      = 2 * time.Second
-	resumeMinimumLLMOutputTokens = 4096
-)
+const resumeParsePollInterval = 2 * time.Second
 
 // buildResumeComposition 在启用私有对象存储时组装完整 Resume 模块。
 func buildResumeComposition(
@@ -32,20 +29,16 @@ func buildResumeComposition(
 	if !storageConfig.Enabled {
 		return nil, nil
 	}
-	resumeTextConfig := textConfig
-	if resumeTextConfig.MaxOutputTokens < resumeMinimumLLMOutputTokens {
-		resumeTextConfig.MaxOutputTokens = resumeMinimumLLMOutputTokens
-	}
-	textGenerator, err := bootstrap.NewTextGenerator(resumeTextConfig)
+	fieldGenerator, err := bootstrap.NewResumeFieldGenerator(textConfig)
 	if err != nil {
 		return nil, err
 	}
 	fields, err := resumefieldextractor.NewLLMExtractor(
-		textGenerator,
+		fieldGenerator,
 		resumefieldextractor.Config{
-			Provider:              resumeTextConfig.Provider,
-			Model:                 resumeTextConfig.Model,
-			MaxDocumentCharacters: resumeTextConfig.MaxContextChars,
+			Provider:              textConfig.Provider,
+			Model:                 textConfig.Model,
+			MaxDocumentCharacters: textConfig.MaxContextChars,
 		},
 	)
 	if err != nil {

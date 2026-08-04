@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 )
@@ -121,7 +120,10 @@ func TestWorkerRetriesProviderFailureAndDiscardsMissingSource(t *testing.T) {
 		worker, _ := NewWorker(
 			repository,
 			fakeCompletedRunReader{source: source},
-			&fakeCandidateExtractor{err: errors.New("temporary")},
+			&fakeCandidateExtractor{err: extractionProviderFailure{
+				category:  "provider_unavailable",
+				retryable: true,
+			}},
 			policy,
 			testExtractionConfig(),
 		)
@@ -130,7 +132,7 @@ func TestWorkerRetriesProviderFailureAndDiscardsMissingSource(t *testing.T) {
 			t.Fatalf("ProcessPending: %v", err)
 		}
 		if result.Retried != 1 ||
-			repository.failedKind != "dependency" ||
+			repository.failedKind != "provider_unavailable" ||
 			!repository.failedRetryable {
 			t.Fatalf("result = %#v repo = %#v", result, repository)
 		}
@@ -155,6 +157,23 @@ func TestWorkerRetriesProviderFailureAndDiscardsMissingSource(t *testing.T) {
 			t.Fatalf("result = %#v repo = %#v", result, repository)
 		}
 	})
+}
+
+type extractionProviderFailure struct {
+	category  string
+	retryable bool
+}
+
+func (failure extractionProviderFailure) Error() string {
+	return "memory generation failed"
+}
+
+func (failure extractionProviderFailure) StableCategory() string {
+	return failure.category
+}
+
+func (failure extractionProviderFailure) Retryable() bool {
+	return failure.retryable
 }
 
 type fakeCompletedRunReader struct {
