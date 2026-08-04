@@ -9,9 +9,10 @@ import (
 	"time"
 
 	agentapp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/app"
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 	agentpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/agent/persistence"
-	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/summary"
 	agenttransport "github.com/1024XEngineer/XE3-ESL/server/internal/agent/transport"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/voice"
@@ -58,15 +59,15 @@ type RunRepository = core.RunRepository
 type RunApplication = core.RunApplication
 type IDGenerator = core.IDGenerator
 type Service = agentapp.Service
-type ContextRepository = agentruntime.ContextRepository
-type ContextAssembler = agentruntime.ContextAssembler
-type MemorySearchRequest = agentruntime.MemorySearchRequest
-type MemorySearchHit = agentruntime.MemorySearchHit
-type MemorySearcher = agentruntime.MemorySearcher
-type StableProfileReadRequest = agentruntime.StableProfileReadRequest
-type StableProfileMemory = agentruntime.StableProfileMemory
-type StableProfileReader = agentruntime.StableProfileReader
-type RunService = agentruntime.RunService
+type ContextRepository = agentcontext.Repository
+type ContextAssembler = agentcontext.Assembler
+type MemorySearchRequest = agentcontext.MemorySearchRequest
+type MemorySearchHit = agentcontext.MemorySearchHit
+type MemorySearcher = agentcontext.MemorySearcher
+type StableProfileReadRequest = agentcontext.StableProfileReadRequest
+type StableProfileMemory = agentcontext.StableProfileMemory
+type StableProfileReader = agentcontext.StableProfileReader
+type RunService = agentrun.Service
 type PostgreSQL = agentpersistence.PostgreSQL
 type PostgresRepository = agentpersistence.PostgresRepository
 
@@ -148,9 +149,9 @@ var (
 	ErrVoiceCandidateStale      = core.ErrVoiceCandidateStale
 	ErrVoiceCleanupPending      = core.ErrVoiceCleanupPending
 	NewService                  = agentapp.NewService
-	NewContextAssembler         = agentruntime.NewContextAssembler
-	NewRunService               = agentruntime.NewRunService
-	WithToolRegistry            = agentruntime.WithToolRegistry
+	NewContextAssembler         = agentcontext.NewAssembler
+	NewRunService               = agentrun.NewService
+	WithToolRegistry            = agentrun.WithToolRegistry
 	NewPostgresRepository       = agentpersistence.NewPostgresRepository
 	NewSummaryService           = agentsummary.NewService
 	NewVoiceMessageService      = agentvoice.NewVoiceMessageService

@@ -1,9 +1,11 @@
-package runtime
+package context
 
 import (
 	"html"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/core"
 )
 
 const (
@@ -23,17 +25,17 @@ func selectStableProfileContext(
 	systemBudget int,
 ) (
 	string,
-	[]ContextStableProfileSource,
+	[]core.ContextStableProfileSource,
 	[]string,
 	error,
 ) {
-	selected := make([]ContextStableProfileSource, 0, len(items))
+	selected := make([]core.ContextStableProfileSource, 0, len(items))
 	excluded := make([]string, 0, len(items))
 	if systemBudget < utf8.RuneCountInString(systemContent) {
-		return "", nil, nil, ErrInvalidContext
+		return "", nil, nil, core.ErrInvalidContext
 	}
 	if len(items) > stableProfileContextLimit {
-		return "", nil, nil, ErrRepository
+		return "", nil, nil, core.ErrRepository
 	}
 	if len(items) == 0 {
 		return systemContent, selected, excluded, nil
@@ -44,14 +46,14 @@ func selectStableProfileContext(
 	block.WriteString(stableProfileContextPrefix)
 	for _, item := range items {
 		if !item.Valid() {
-			return "", nil, nil, ErrRepository
+			return "", nil, nil, core.ErrRepository
 		}
 		if _, duplicate := seen[item.CanonicalKey]; duplicate {
-			return "", nil, nil, ErrRepository
+			return "", nil, nil, core.ErrRepository
 		}
 		position := stableProfilePositions[item.CanonicalKey]
 		if position <= previousPosition {
-			return "", nil, nil, ErrRepository
+			return "", nil, nil, core.ErrRepository
 		}
 		previousPosition = position
 		seen[item.CanonicalKey] = struct{}{}
@@ -69,7 +71,7 @@ func selectStableProfileContext(
 			break
 		}
 		block.WriteString(entry)
-		selected = append(selected, ContextStableProfileSource{
+		selected = append(selected, core.ContextStableProfileSource{
 			MemoryID:      item.MemoryID,
 			MemoryVersion: item.MemoryVersion,
 			CanonicalKey:  item.CanonicalKey,

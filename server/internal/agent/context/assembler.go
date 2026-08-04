@@ -1,4 +1,6 @@
-package runtime
+// Package context selects and budgets the trusted model input for one Agent
+// run. It does not own the run lifecycle or model loop.
+package context
 
 import (
 	"context"
@@ -29,42 +31,8 @@ const (
 	maxContextImages            = 8
 )
 
-type Thread = core.Thread
-type Message = core.Message
-type MessageRole = core.MessageRole
-type Run = core.Run
-type ContextMessageSource = core.ContextMessageSource
-type ContextMemorySource = core.ContextMemorySource
-type ContextStableProfileSource = core.ContextStableProfileSource
-type ContextSummarySource = core.ContextSummarySource
-type ContextManifest = core.ContextManifest
-type ToolCallRecord = core.ToolCallRecord
-type RunConfiguration = core.RunConfiguration
-type RunRepository = core.RunRepository
-type RunSubmission = core.RunSubmission
-type RunRetry = core.RunRetry
-
-const (
-	MessageRoleUser      = core.MessageRoleUser
-	MessageRoleAssistant = core.MessageRoleAssistant
-	RunStatusPending     = core.RunStatusPending
-)
-
-const (
-	RunFailureConfigurationDrift = core.RunFailureConfigurationDrift
-	RunFailureInvalidContext     = core.RunFailureInvalidContext
-	RunFailureInternal           = core.RunFailureInternal
-)
-
-var (
-	ErrInvalidRequest = core.ErrInvalidRequest
-	ErrNotFound       = core.ErrNotFound
-	ErrInvalidContext = core.ErrInvalidContext
-	ErrRepository     = core.ErrRepository
-)
-
-type ContextRepository interface {
-	FindThread(ctx context.Context, ownerID, threadID string) (Thread, error)
+type Repository interface {
+	FindThread(ctx context.Context, ownerID, threadID string) (core.Thread, error)
 	FindLatestSummaryCheckpoint(
 		ctx context.Context,
 		ownerID string,
@@ -78,29 +46,29 @@ type ContextRepository interface {
 		minSequenceExclusive int64,
 		maxSequence int64,
 		characterBudget int,
-	) ([]Message, int, error)
+	) ([]core.Message, int, error)
 	FindMessage(
 		ctx context.Context,
 		ownerID string,
 		threadID string,
 		messageID string,
-	) (Message, error)
+	) (core.Message, error)
 }
 
-type ContextAssembler struct {
-	repository     ContextRepository
+type Assembler struct {
+	repository     Repository
 	matters        matter.Reader
 	stableProfiles StableProfileReader
 	memories       MemorySearcher
 	images         agentimage.ContextReader
 }
 
-type ContextAssemblerOption func(*ContextAssembler) error
+type Option func(*Assembler) error
 
-func WithImageContextReader(
+func WithImageReader(
 	reader agentimage.ContextReader,
-) ContextAssemblerOption {
-	return func(assembler *ContextAssembler) error {
+) Option {
+	return func(assembler *Assembler) error {
 		if reader == nil {
 			return errors.New("agent: image context reader is required")
 		}
@@ -109,18 +77,18 @@ func WithImageContextReader(
 	}
 }
 
-func NewContextAssembler(
-	repository ContextRepository,
+func NewAssembler(
+	repository Repository,
 	matters matter.Reader,
 	stableProfiles StableProfileReader,
 	memories MemorySearcher,
-	options ...ContextAssemblerOption,
-) (*ContextAssembler, error) {
+	options ...Option,
+) (*Assembler, error) {
 	if repository == nil || matters == nil ||
 		stableProfiles == nil || memories == nil {
 		return nil, errors.New("agent: context dependency is required")
 	}
-	assembler := &ContextAssembler{
+	assembler := &Assembler{
 		repository:     repository,
 		matters:        matters,
 		stableProfiles: stableProfiles,
@@ -137,17 +105,17 @@ func NewContextAssembler(
 	return assembler, nil
 }
 
-func (assembler *ContextAssembler) Assemble(
+func (assembler *Assembler) Assemble(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	run Run,
-	configuration RunConfiguration,
-) (ContextManifest, ai.TextRequest, error) {
+	run core.Run,
+	configuration core.RunConfiguration,
+) (core.ContextManifest, ai.TextRequest, error) {
 	if !actor.Valid() ||
 		run.OwnerID != actor.UserID ||
 		!core.ValidUUID(run.ID) ||
 		!core.ValidRunConfiguration(configuration) {
-		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+		return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 	}
 	thread, err := assembler.repository.FindThread(
 		ctx,
@@ -155,7 +123,7 @@ func (assembler *ContextAssembler) Assemble(
 		run.ThreadID,
 	)
 	if err != nil {
-		return ContextManifest{}, ai.TextRequest{}, err
+		return core.ContextManifest{}, ai.TextRequest{}, err
 	}
 	input, err := assembler.repository.FindMessage(
 		ctx,
@@ -164,13 +132,13 @@ func (assembler *ContextAssembler) Assemble(
 		run.InputMessageID,
 	)
 	if err != nil {
-		return ContextManifest{}, ai.TextRequest{}, err
+		return core.ContextManifest{}, ai.TextRequest{}, err
 	}
-	if input.Role != MessageRoleUser {
-		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+	if input.Role != core.MessageRoleUser {
+		return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 	}
 	if len(input.Content) > ai.MaxEmbeddingInputBytes {
-		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+		return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 	}
 
 	systemContent := "You are SpeakUp, an English communication coach. " +
@@ -188,7 +156,7 @@ func (assembler *ContextAssembler) Assemble(
 		"coaching them; do not ask for a profile, plan, session, evaluation, or " +
 		"review identifier. Use historical Review search only when the user asks " +
 		"about an older practice."
-	manifest := ContextManifest{
+	manifest := core.ContextManifest{
 		RunID:                             run.ID,
 		OwnerID:                           actor.UserID,
 		ThreadID:                          run.ThreadID,
@@ -196,9 +164,9 @@ func (assembler *ContextAssembler) Assemble(
 		TrimReason:                        contextTrimNone,
 		InstructionVersion:                instructionV1,
 		StableProfileContextPolicyVersion: stableProfileContextPolicyV1,
-		SelectedStableProfile:             make([]ContextStableProfileSource, 0),
+		SelectedStableProfile:             make([]core.ContextStableProfileSource, 0),
 		MemoryContextPolicyVersion:        memoryContextPolicyV1,
-		SelectedMemories:                  make([]ContextMemorySource, 0),
+		SelectedMemories:                  make([]core.ContextMemorySource, 0),
 		SummaryContextPolicyVersion:       summaryContextPolicyV1,
 		SummaryContextStatus:              summaryContextNotAvailable,
 		MaxInputCharacters:                configuration.MaxInputCharacters,
@@ -214,12 +182,12 @@ func (assembler *ContextAssembler) Assemble(
 		)
 		if readErr != nil {
 			if errors.Is(readErr, matter.ErrNotFound) {
-				return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+				return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 			}
-			return ContextManifest{}, ai.TextRequest{}, ErrRepository
+			return core.ContextManifest{}, ai.TextRequest{}, core.ErrRepository
 		}
 		if activeMatter.Status != matter.StatusActive {
-			return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+			return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 		}
 		manifest.ActiveMatterID = activeMatter.ID
 		manifest.ActiveMatterVersion = activeMatter.Version
@@ -230,14 +198,14 @@ func (assembler *ContextAssembler) Assemble(
 	inputCharacters := utf8.RuneCountInString(input.Content)
 	if utf8.RuneCountInString(systemContent)+inputCharacters >
 		configuration.MaxInputCharacters {
-		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+		return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 	}
 	stableProfile, err := assembler.stableProfiles.ReadStableProfile(
 		ctx,
 		StableProfileReadRequest{Actor: actor},
 	)
 	if err != nil {
-		return ContextManifest{}, ai.TextRequest{}, ErrRepository
+		return core.ContextManifest{}, ai.TextRequest{}, core.ErrRepository
 	}
 	var excludedCanonicalKeys []string
 	systemContent, manifest.SelectedStableProfile,
@@ -247,7 +215,7 @@ func (assembler *ContextAssembler) Assemble(
 		configuration.MaxInputCharacters-inputCharacters,
 	)
 	if err != nil {
-		return ContextManifest{}, ai.TextRequest{}, err
+		return core.ContextManifest{}, ai.TextRequest{}, err
 	}
 	hits, err := assembler.memories.Search(ctx, MemorySearchRequest{
 		Actor:                 actor,
@@ -257,10 +225,10 @@ func (assembler *ContextAssembler) Assemble(
 		Limit:                 memoryContextLimit,
 	})
 	if err != nil {
-		return ContextManifest{}, ai.TextRequest{}, ErrRepository
+		return core.ContextManifest{}, ai.TextRequest{}, core.ErrRepository
 	}
 	if len(hits) > memoryContextLimit {
-		return ContextManifest{}, ai.TextRequest{}, ErrRepository
+		return core.ContextManifest{}, ai.TextRequest{}, core.ErrRepository
 	}
 	systemContent, manifest.SelectedMemories, err = selectMemoryContext(
 		systemContent,
@@ -269,7 +237,7 @@ func (assembler *ContextAssembler) Assemble(
 		configuration.MaxInputCharacters-inputCharacters,
 	)
 	if err != nil {
-		return ContextManifest{}, ai.TextRequest{}, err
+		return core.ContextManifest{}, ai.TextRequest{}, err
 	}
 	usedCharacters := utf8.RuneCountInString(systemContent)
 
@@ -283,15 +251,15 @@ func (assembler *ContextAssembler) Assemble(
 				input.Sequence-1,
 			)
 		switch {
-		case errors.Is(checkpointErr, ErrNotFound):
+		case errors.Is(checkpointErr, core.ErrNotFound):
 		case checkpointErr != nil:
-			return ContextManifest{}, ai.TextRequest{}, ErrRepository
+			return core.ContextManifest{}, ai.TextRequest{}, core.ErrRepository
 		default:
 			if !checkpoint.Valid() ||
 				checkpoint.OwnerID != actor.UserID ||
 				checkpoint.ThreadID != run.ThreadID ||
 				checkpoint.CoveredThroughSequence >= input.Sequence {
-				return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+				return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 			}
 			systemContent, manifest.SelectedSummary,
 				manifest.SummaryContextStatus, err = selectSummaryContext(
@@ -300,7 +268,7 @@ func (assembler *ContextAssembler) Assemble(
 				configuration.MaxInputCharacters-inputCharacters,
 			)
 			if err != nil {
-				return ContextManifest{}, ai.TextRequest{}, err
+				return core.ContextManifest{}, ai.TextRequest{}, err
 			}
 			if manifest.SelectedSummary != nil {
 				minMessageSequence = checkpoint.CoveredThroughSequence
@@ -319,11 +287,11 @@ func (assembler *ContextAssembler) Assemble(
 			configuration.MaxInputCharacters-usedCharacters,
 		)
 	if err != nil {
-		return ContextManifest{}, ai.TextRequest{}, err
+		return core.ContextManifest{}, ai.TextRequest{}, err
 	}
 	if len(messages) == 0 ||
 		messages[len(messages)-1].ID != input.ID {
-		return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+		return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 	}
 	manifest.OmittedMessageCount = omittedMessageCount
 	switch {
@@ -345,8 +313,8 @@ func (assembler *ContextAssembler) Assemble(
 		if message.Modality != core.MessageModalityMultimodal {
 			continue
 		}
-		if message.Role != MessageRoleUser || assembler.images == nil {
-			return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+		if message.Role != core.MessageRoleUser || assembler.images == nil {
+			return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 		}
 		images, imageErr := assembler.images.MessageImages(
 			ctx,
@@ -354,21 +322,21 @@ func (assembler *ContextAssembler) Assemble(
 			message.ThreadID,
 			message.ID,
 		)
-		if errors.Is(imageErr, ErrNotFound) && message.ID != input.ID {
+		if errors.Is(imageErr, core.ErrNotFound) && message.ID != input.ID {
 			continue
 		}
 		if imageErr != nil {
-			return ContextManifest{}, ai.TextRequest{}, imageErr
+			return core.ContextManifest{}, ai.TextRequest{}, imageErr
 		}
 		if len(images) == 0 {
 			if message.ID == input.ID {
-				return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+				return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 			}
 			continue
 		}
 		if len(images) > remainingImages {
 			if message.ID == input.ID {
-				return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+				return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 			}
 			continue
 		}
@@ -383,14 +351,14 @@ func (assembler *ContextAssembler) Assemble(
 		}},
 	}
 	manifest.SelectedMessages = make(
-		[]ContextMessageSource,
+		[]core.ContextMessageSource,
 		0,
 		len(messages),
 	)
 	for _, message := range messages {
 		role, ok := providerRole(message.Role)
 		if !ok {
-			return ContextManifest{}, ai.TextRequest{}, ErrInvalidContext
+			return core.ContextManifest{}, ai.TextRequest{}, core.ErrInvalidContext
 		}
 		providerMessage := ai.TextMessage{
 			Role:    role,
@@ -426,7 +394,7 @@ func (assembler *ContextAssembler) Assemble(
 		request.Messages = append(request.Messages, providerMessage)
 		manifest.SelectedMessages = append(
 			manifest.SelectedMessages,
-			ContextMessageSource{
+			core.ContextMessageSource{
 				MessageID: message.ID,
 				Sequence:  message.Sequence,
 				Role:      message.Role,
@@ -435,9 +403,9 @@ func (assembler *ContextAssembler) Assemble(
 	}
 	manifest.UsedInputCharacters = usedCharacters
 	if err := ai.ValidateTextRequest(request); err != nil {
-		return ContextManifest{}, ai.TextRequest{}, fmt.Errorf(
+		return core.ContextManifest{}, ai.TextRequest{}, fmt.Errorf(
 			"%w: %v",
-			ErrInvalidContext,
+			core.ErrInvalidContext,
 			err,
 		)
 	}
@@ -456,20 +424,20 @@ func selectSummaryContext(
 	systemContent string,
 	checkpoint core.ThreadSummaryCheckpoint,
 	systemBudget int,
-) (string, *ContextSummarySource, string, error) {
+) (string, *core.ContextSummarySource, string, error) {
 	if systemBudget < utf8.RuneCountInString(systemContent) {
-		return "", nil, "", ErrInvalidContext
+		return "", nil, "", core.ErrInvalidContext
 	}
 	content, err := json.Marshal(checkpoint.Content)
 	if err != nil {
-		return "", nil, "", ErrInvalidContext
+		return "", nil, "", core.ErrInvalidContext
 	}
 	candidate := systemContent + summaryContextPrefix +
 		string(content) + summaryContextSuffix
 	if utf8.RuneCountInString(candidate) > systemBudget {
 		return systemContent, nil, summaryContextOmittedBudget, nil
 	}
-	return candidate, &ContextSummarySource{
+	return candidate, &core.ContextSummarySource{
 		CheckpointID:           checkpoint.ID,
 		SourceFromSequence:     checkpoint.SourceFromSequence,
 		CoveredThroughSequence: checkpoint.CoveredThroughSequence,
@@ -493,10 +461,10 @@ func selectMemoryContext(
 	hits []MemorySearchHit,
 	matterID string,
 	systemBudget int,
-) (string, []ContextMemorySource, error) {
-	selected := make([]ContextMemorySource, 0, len(hits))
+) (string, []core.ContextMemorySource, error) {
+	selected := make([]core.ContextMemorySource, 0, len(hits))
 	if systemBudget < utf8.RuneCountInString(systemContent) {
-		return "", nil, ErrInvalidContext
+		return "", nil, core.ErrInvalidContext
 	}
 	if len(hits) == 0 {
 		return systemContent, selected, nil
@@ -505,7 +473,7 @@ func selectMemoryContext(
 	block.WriteString(memoryContextPrefix)
 	for _, hit := range hits {
 		if !hit.valid(matterID) {
-			return "", nil, ErrRepository
+			return "", nil, core.ErrRepository
 		}
 		entry := formatMemoryContextEntry(hit)
 		proposedCharacters := utf8.RuneCountInString(systemContent) +
@@ -532,8 +500,8 @@ func formatMemoryContextEntry(hit MemorySearchHit) string {
 		`</memory>`
 }
 
-func contextMemorySource(hit MemorySearchHit) ContextMemorySource {
-	return ContextMemorySource{
+func contextMemorySource(hit MemorySearchHit) core.ContextMemorySource {
+	return core.ContextMemorySource{
 		MemoryID:               hit.MemoryID,
 		MemoryVersion:          hit.MemoryVersion,
 		Type:                   hit.Type,
@@ -549,17 +517,13 @@ func contextMemorySource(hit MemorySearchHit) ContextMemorySource {
 	}
 }
 
-func providerRole(role MessageRole) (ai.TextRole, bool) {
+func providerRole(role core.MessageRole) (ai.TextRole, bool) {
 	switch role {
-	case MessageRoleUser:
+	case core.MessageRoleUser:
 		return ai.TextRoleUser, true
-	case MessageRoleAssistant:
+	case core.MessageRoleAssistant:
 		return ai.TextRoleAssistant, true
 	default:
 		return "", false
 	}
-}
-
-func validRunConfiguration(configuration RunConfiguration) bool {
-	return core.ValidRunConfiguration(configuration)
 }

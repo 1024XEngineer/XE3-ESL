@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
-	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
 )
 
 type agentStableProfileReader struct {
@@ -25,8 +25,8 @@ func newAgentStableProfileReader(
 
 func (reader *agentStableProfileReader) ReadStableProfile(
 	ctx context.Context,
-	request agentruntime.StableProfileReadRequest,
-) ([]agentruntime.StableProfileMemory, error) {
+	request agentcontext.StableProfileReadRequest,
+) ([]agentcontext.StableProfileMemory, error) {
 	if reader == nil || reader.reader == nil {
 		return nil, errors.New(
 			"bootstrap: Stable Profile read dependency is required",
@@ -42,9 +42,9 @@ func (reader *agentStableProfileReader) ReadStableProfile(
 	if !memory.ValidStableProfileMemories(items, request.Actor.UserID) {
 		return nil, memory.ErrRepository
 	}
-	result := make([]agentruntime.StableProfileMemory, 0, len(items))
+	result := make([]agentcontext.StableProfileMemory, 0, len(items))
 	for _, item := range items {
-		mapped := agentruntime.StableProfileMemory{
+		mapped := agentcontext.StableProfileMemory{
 			MemoryID:      item.ID,
 			MemoryVersion: item.Version,
 			CanonicalKey:  item.CanonicalKey,
@@ -60,4 +60,4 @@ func (reader *agentStableProfileReader) ReadStableProfile(
 	return result, nil
 }
 
-var _ agentruntime.StableProfileReader = (*agentStableProfileReader)(nil)
+var _ agentcontext.StableProfileReader = (*agentStableProfileReader)(nil)

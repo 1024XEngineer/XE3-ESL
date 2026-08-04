@@ -23,6 +23,7 @@ import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
 import 'package:speakup/review/review_history_controller.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/resume/resume.dart';
 
 class SpeakUpShell extends StatefulWidget {
   const SpeakUpShell({
@@ -38,6 +39,7 @@ class SpeakUpShell extends StatefulWidget {
     this.ieltsSpeakingReportController,
     this.ieltsSpeakingReportIndexController,
     this.speechFeedbackController,
+    this.resumeController,
     required this.agentController,
     super.key,
   });
@@ -55,6 +57,7 @@ class SpeakUpShell extends StatefulWidget {
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
   final SpeechFeedbackController? speechFeedbackController;
+  final ResumeController? resumeController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -419,6 +422,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         profileSaving: widget.authController?.profileSaving ?? false,
         onSaveDisplayName: widget.authController?.updateDisplayName,
         onLogout: widget.authController?.logout,
+        resumeController: widget.resumeController,
       ),
     ];
 
@@ -718,6 +722,7 @@ class _ProfilePage extends StatelessWidget {
     required this.profileSaving,
     required this.onSaveDisplayName,
     required this.onLogout,
+    required this.resumeController,
   });
 
   final bool showBackButton;
@@ -727,6 +732,7 @@ class _ProfilePage extends StatelessWidget {
   final bool profileSaving;
   final Future<String?> Function(String)? onSaveDisplayName;
   final VoidCallback? onLogout;
+  final ResumeController? resumeController;
 
   @override
   Widget build(BuildContext context) {
@@ -792,6 +798,10 @@ class _ProfilePage extends StatelessWidget {
               ),
             ],
             const SizedBox(height: SpeakUpDesign.space16),
+            if (resumeController != null) ...[
+              ResumeSummaryCard(controller: resumeController!),
+              const SizedBox(height: SpeakUpDesign.space16),
+            ],
             OutlinedButton.icon(
               key: const Key('profile-logout-button'),
               onPressed: onLogout,

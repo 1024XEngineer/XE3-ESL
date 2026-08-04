@@ -17,6 +17,20 @@ type stubTool struct {
 	calls      int
 }
 
+type conditionalStubTool struct {
+	*stubTool
+	effect      InvocationEffect
+	effectErr   error
+	effectInput json.RawMessage
+}
+
+func (tool *conditionalStubTool) ClassifyInvocationEffect(
+	input json.RawMessage,
+) (InvocationEffect, error) {
+	tool.effectInput = append(json.RawMessage{}, input...)
+	return tool.effect, tool.effectErr
+}
+
 func (tool *stubTool) Definition() Definition {
 	return tool.definition
 }
@@ -39,6 +53,18 @@ func TestRegistryRejectsDuplicateTools(t *testing.T) {
 	}
 	if err := registry.Register(tool); !errors.Is(err, ErrDuplicateTool) {
 		t.Fatalf("Register duplicate error = %v, want %v", err, ErrDuplicateTool)
+	}
+}
+
+func TestRegistryRejectsReadOnlyConditionalClassifier(t *testing.T) {
+	conditional := &conditionalStubTool{
+		stubTool: &stubTool{
+			definition: readToolDefinition("conditional.readonly.v1"),
+		},
+		effect: InvocationEffectMayWrite,
+	}
+	if _, err := NewRegistry(conditional); !errors.Is(err, ErrInvalidDefinition) {
+		t.Fatalf("NewRegistry() error = %v, want %v", err, ErrInvalidDefinition)
 	}
 }
 
@@ -78,6 +104,176 @@ func TestRegistryDefinitionsAreCompleteSortedAndIsolated(t *testing.T) {
 	}
 	if got, want := fresh[0].InputSchema["required"].([]string)[0], "query"; got != want {
 		t.Fatalf("fresh required field = %v, want %v", got, want)
+	}
+}
+
+func TestRegistryClassifiesInvocationEffects(t *testing.T) {
+	readOnly := &stubTool{
+		definition: readToolDefinition("readonly.search.v1"),
+	}
+	ordinaryWrite := &stubTool{
+		definition: writeToolDefinition("ordinary.write.v1"),
+	}
+	conditionalRead := &conditionalStubTool{
+		stubTool: &stubTool{
+			definition: writeToolDefinition("conditional.read.v1"),
+		},
+		effect: InvocationEffectReadOnly,
+	}
+	conditionalWrite := &conditionalStubTool{
+		stubTool: &stubTool{
+			definition: writeToolDefinition("conditional.write.v1"),
+		},
+		effect: InvocationEffectMayWrite,
+	}
+	registry, err := NewRegistry(
+		readOnly,
+		ordinaryWrite,
+		conditionalRead,
+		conditionalWrite,
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		invocation Invocation
+		want       InvocationEffect
+	}{
+		{
+			name: "static readonly",
+			invocation: Invocation{
+				Name:  "readonly.search.v1",
+				Input: json.RawMessage(`{"query":"history"}`),
+			},
+			want: InvocationEffectReadOnly,
+		},
+		{
+			name: "ordinary write",
+			invocation: Invocation{
+				Name:  "ordinary.write.v1",
+				Input: json.RawMessage(`{"query":"create"}`),
+			},
+			want: InvocationEffectMayWrite,
+		},
+		{
+			name: "conditional readonly",
+			invocation: Invocation{
+				Name: "conditional.read.v1",
+				Input: json.RawMessage(
+					`{"query":"lookup","unexpected":true}`,
+				),
+			},
+			want: InvocationEffectReadOnly,
+		},
+		{
+			name: "conditional write",
+			invocation: Invocation{
+				Name:  "conditional.write.v1",
+				Input: json.RawMessage(`{"query":"create"}`),
+			},
+			want: InvocationEffectMayWrite,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := registry.InvocationEffect(test.invocation); got != test.want {
+				t.Fatalf("InvocationEffect() = %v, want %v", got, test.want)
+			}
+		})
+	}
+	if got, want := string(conditionalRead.effectInput),
+		`{"query":"lookup"}`; got != want {
+		t.Fatalf("classifier input = %s, want %s", got, want)
+	}
+}
+
+func TestRegistryInvocationEffectFailsClosed(t *testing.T) {
+	classifierFailure := &conditionalStubTool{
+		stubTool: &stubTool{
+			definition: writeToolDefinition("conditional.error.v1"),
+		},
+		effect:    InvocationEffectReadOnly,
+		effectErr: errors.New("classification failed"),
+	}
+	invalidEffect := &conditionalStubTool{
+		stubTool: &stubTool{
+			definition: writeToolDefinition("conditional.invalid.v1"),
+		},
+	}
+	readOnly := &stubTool{
+		definition: readToolDefinition("readonly.search.v1"),
+	}
+	registry, err := NewRegistry(classifierFailure, invalidEffect, readOnly)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		registry   *Registry
+		invocation Invocation
+	}{
+		{
+			name:     "nil registry",
+			registry: nil,
+			invocation: Invocation{
+				Name:  "readonly.search.v1",
+				Input: json.RawMessage(`{"query":"history"}`),
+			},
+		},
+		{
+			name:     "unknown tool",
+			registry: registry,
+			invocation: Invocation{
+				Name:  "missing.v1",
+				Input: json.RawMessage(`{}`),
+			},
+		},
+		{
+			name:     "malformed input",
+			registry: registry,
+			invocation: Invocation{
+				Name:  "readonly.search.v1",
+				Input: json.RawMessage(`{`),
+			},
+		},
+		{
+			name:     "schema invalid input",
+			registry: registry,
+			invocation: Invocation{
+				Name:  "readonly.search.v1",
+				Input: json.RawMessage(`{"query":" "}`),
+			},
+		},
+		{
+			name:     "classifier error",
+			registry: registry,
+			invocation: Invocation{
+				Name:  "conditional.error.v1",
+				Input: json.RawMessage(`{"query":"lookup"}`),
+			},
+		},
+		{
+			name:     "classifier invalid effect",
+			registry: registry,
+			invocation: Invocation{
+				Name:  "conditional.invalid.v1",
+				Input: json.RawMessage(`{"query":"lookup"}`),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			effect := test.registry.InvocationEffect(test.invocation)
+			if effect != InvocationEffectMayWrite || !effect.MayWrite() {
+				t.Fatalf("InvocationEffect() = %v, want fail-closed write", effect)
+			}
+		})
+	}
+	if !InvocationEffect(0).MayWrite() {
+		t.Fatal("zero InvocationEffect must fail closed")
 	}
 }
 
@@ -223,6 +419,13 @@ func readToolDefinition(name string) Definition {
 		ReadOnly: true,
 		Risk:     RiskReadOnly,
 	}
+}
+
+func writeToolDefinition(name string) Definition {
+	definition := readToolDefinition(name)
+	definition.ReadOnly = false
+	definition.Risk = RiskLowRiskWrite
+	return definition
 }
 
 func TestExecutorNormalizesEmptyResultAndErrorCategories(t *testing.T) {

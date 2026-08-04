@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
-	agentruntime "github.com/1024XEngineer/XE3-ESL/server/internal/agent/runtime"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -34,7 +34,7 @@ func TestAgentStableProfileReaderPreservesFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAgentStableProfileReader: %v", err)
 	}
-	request := agentruntime.StableProfileReadRequest{Actor: actor}
+	request := agentcontext.StableProfileReadRequest{Actor: actor}
 	items, err := adapter.ReadStableProfile(context.Background(), request)
 	if err != nil {
 		t.Fatalf("ReadStableProfile: %v", err)
@@ -64,7 +64,7 @@ func TestAgentStableProfileReaderAcceptsEmptyProfile(t *testing.T) {
 	}
 	items, err := adapter.ReadStableProfile(
 		context.Background(),
-		agentruntime.StableProfileReadRequest{Actor: stableProfileActor()},
+		agentcontext.StableProfileReadRequest{Actor: stableProfileActor()},
 	)
 	if err != nil {
 		t.Fatalf("ReadStableProfile: %v", err)
@@ -98,7 +98,7 @@ func TestAgentStableProfileReaderRejectsInvalidDomainResult(t *testing.T) {
 	}
 	if _, err := adapter.ReadStableProfile(
 		context.Background(),
-		agentruntime.StableProfileReadRequest{Actor: actor},
+		agentcontext.StableProfileReadRequest{Actor: actor},
 	); !errors.Is(err, memory.ErrRepository) {
 		t.Fatalf("invalid domain result error = %v", err)
 	}
@@ -121,13 +121,13 @@ func TestAgentStableProfileReaderRequiresDependencyAndPropagatesFailure(
 	}
 	if _, err := adapter.ReadStableProfile(
 		context.Background(),
-		agentruntime.StableProfileReadRequest{Actor: stableProfileActor()},
+		agentcontext.StableProfileReadRequest{Actor: stableProfileActor()},
 	); !errors.Is(err, dependencyError) {
 		t.Fatalf("ReadStableProfile error = %v", err)
 	}
 	if _, err := adapter.ReadStableProfile(
 		context.Background(),
-		agentruntime.StableProfileReadRequest{},
+		agentcontext.StableProfileReadRequest{},
 	); !errors.Is(err, memory.ErrInvalidArgument) {
 		t.Fatalf("invalid request error = %v", err)
 	}

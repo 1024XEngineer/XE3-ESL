@@ -130,6 +130,19 @@ func (tool PreviewTool) Definition() Definition {
 	}
 }
 
+func (tool PreviewTool) ClassifyInvocationEffect(
+	input json.RawMessage,
+) (InvocationEffect, error) {
+	parsed, err := parsePreviewInput(input)
+	if err != nil {
+		return 0, err
+	}
+	if parsed.BackgroundSummary != "" && parsed.MaxEffectiveTurns > 0 {
+		return InvocationEffectMayWrite, nil
+	}
+	return InvocationEffectReadOnly, nil
+}
+
 func (tool PreviewTool) Execute(
 	ctx context.Context,
 	call CallContext,
@@ -138,15 +151,23 @@ func (tool PreviewTool) Execute(
 	if tool.port == nil {
 		return Result{}, ErrExecutionRejected
 	}
-	var parsed PreviewInput
-	if err := json.Unmarshal(input, &parsed); err != nil {
-		return Result{}, ErrInvalidInput
+	parsed, err := parsePreviewInput(input)
+	if err != nil {
+		return Result{}, err
 	}
 	result, err := tool.port.PreviewPractice(ctx, call, parsed)
 	if err != nil {
 		return Result{}, err
 	}
 	return previewToolResult(result), nil
+}
+
+func parsePreviewInput(input json.RawMessage) (PreviewInput, error) {
+	var parsed PreviewInput
+	if err := json.Unmarshal(input, &parsed); err != nil {
+		return PreviewInput{}, ErrInvalidInput
+	}
+	return parsed, nil
 }
 
 func previewToolResult(preview PreviewResult) Result {
