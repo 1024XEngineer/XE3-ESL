@@ -86,6 +86,33 @@ func (r *PostgresRepository) DeleteUserData(
 		return ErrDeletionGenerationStale
 	}
 	if _, err := tx.Exec(ctx, `
+		DELETE FROM learning_profile_dimensions
+		WHERE owner_user_id = $1
+	`, command.OwnerUserID); err != nil {
+		return fmt.Errorf(
+			"delete Evaluation Learning Profile: %w",
+			err,
+		)
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM evaluation_speech_feedbacks
+		WHERE owner_user_id = $1
+	`, command.OwnerUserID); err != nil {
+		return fmt.Errorf(
+			"delete Evaluation speech feedback: %w",
+			err,
+		)
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM evaluation_speech_feedback_turn_snapshots
+		WHERE owner_user_id = $1
+	`, command.OwnerUserID); err != nil {
+		return fmt.Errorf(
+			"delete Evaluation speech feedback evidence snapshots: %w",
+			err,
+		)
+	}
+	if _, err := tx.Exec(ctx, `
 		DELETE FROM evaluation_module_runs
 		WHERE owner_user_id = $1
 	`, command.OwnerUserID); err != nil {
@@ -110,4 +137,29 @@ func (r *PostgresRepository) DeleteUserData(
 		return fmt.Errorf("commit Evaluation user deletion: %w", err)
 	}
 	return nil
+}
+
+func lockActiveIdentityUser(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID string,
+	deletionGeneration int64,
+) error {
+	var status string
+	err := tx.QueryRow(ctx, `
+		SELECT owner.account_status
+		FROM identity_users AS owner
+		WHERE owner.id = $1
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM evaluation_deletion_fences AS fence
+		      WHERE fence.owner_user_id = owner.id
+		        AND fence.deletion_generation >= $2
+		  )
+		FOR SHARE OF owner
+	`, userID, deletionGeneration).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && status != "active") {
+		return ErrAccountUnavailable
+	}
+	return err
 }

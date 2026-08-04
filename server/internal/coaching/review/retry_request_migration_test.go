@@ -23,8 +23,15 @@ func TestRetryTurnMigrationFreezesNonEffectiveSameQuestionSaga(
 	if err != nil {
 		t.Fatal(err)
 	}
+	repractice, err := migrations.Files.ReadFile(
+		"000054_review_repractice_requests.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	retrySQL := strings.ToLower(string(content))
-	sql := retrySQL + "\n" + strings.ToLower(string(authority))
+	sql := retrySQL + "\n" + strings.ToLower(string(authority)) +
+		"\n" + strings.ToLower(string(repractice))
 	for _, required := range []string{
 		"practice_retry_turn_drafts",
 		"'answering'",
@@ -33,7 +40,7 @@ func TestRetryTurnMigrationFreezesNonEffectiveSameQuestionSaga(
 		"'retry'",
 		"counts_toward_effective_turn_limit",
 		"practice_retry_turn_authorizations",
-		"review_speech_feedback_retry_requests",
+		"review_repractice_requests",
 		"'pending'",
 		"'turn_created'",
 		"'failed'",

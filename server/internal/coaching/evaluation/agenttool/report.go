@@ -7,7 +7,7 @@ import (
 	. "github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 )
 
-const LatestPracticeReportToolName = "practice.report.latest.v1"
+const LatestPracticeReportToolName = "evaluation.report.latest.v1"
 
 type ReportFinding struct {
 	Message          string   `json:"message"`
@@ -16,24 +16,22 @@ type ReportFinding struct {
 }
 
 type ReportDimension struct {
+	Key                    string          `json:"key"`
 	Name                   string          `json:"name"`
-	Score                  *int            `json:"score,omitempty"`
+	Score                  *float64        `json:"score,omitempty"`
+	Scale                  string          `json:"scale"`
 	Strengths              []ReportFinding `json:"strengths"`
 	Improvements           []ReportFinding `json:"improvements"`
 	RecommendedExpressions []ReportFinding `json:"recommended_expressions"`
 }
 
-type ReportAnswer struct {
-	Question   string `json:"question"`
-	Transcript string `json:"confirmed_transcript,omitempty"`
-}
-
 type LatestPracticeReport struct {
 	Scene           string            `json:"scene"`
+	SceneModel      string            `json:"scene_model"`
 	CompletedAt     string            `json:"completed_at,omitempty"`
 	AssessmentMode  string            `json:"assessment_mode"`
+	Summary         string            `json:"summary"`
 	Dimensions      []ReportDimension `json:"dimensions"`
-	Answers         []ReportAnswer    `json:"answers"`
 	PriorityActions []ReportFinding   `json:"priority_actions"`
 }
 
@@ -57,7 +55,7 @@ func NewLatestPracticeReportTool(
 func (tool LatestPracticeReportTool) Definition() Definition {
 	return Definition{
 		Name:        LatestPracticeReportToolName,
-		Description: "Read the current user's latest completed interview practice report directly from the real Evaluation result. Use this first when the user says they just finished a practice or asks to continue reviewing it. It needs no user-supplied identifiers and returns only user-facing scores, findings, answers, and priority actions. Never ask for or expose profile, plan, session, evaluation, finding, question, or review ids.",
+		Description: "Read the current user's latest canonical Evaluation report across supported practice scenes. Use this first when the user says they just finished a practice or asks to continue reviewing it. It needs no user-supplied identifiers and returns only user-facing scores, findings, evidence excerpts, and priority actions. Never ask for or expose profile, plan, session, evaluation, finding, question, or report ids.",
 		InputSchema: ObjectSchema(
 			map[string]any{},
 			nil,

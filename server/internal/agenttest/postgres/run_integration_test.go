@@ -417,6 +417,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 	assembler, err := agentcontext.NewAssembler(
 		repository.context,
 		goalService,
+		emptyLearningProfileReader{},
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
 	)
@@ -507,7 +508,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 		!strings.Contains(string(record.Input), `"query":"metrics"`) {
 		t.Fatalf("ToolCall input = %s", record.Input)
 	}
-	if !strings.Contains(string(record.Result), `"reviews"`) {
+	if !strings.Contains(string(record.Result), `"reports"`) {
 		t.Fatalf("ToolCall result = %s", record.Result)
 	}
 	if _, err := runService.GetToolCalls(
@@ -550,7 +551,7 @@ WHERE table_schema = current_schema()
 		integrationToolResult(
 			"call-review-get",
 			reviewtool.ReviewGetToolName,
-			`{"review_id":"mock-review-001"}`,
+			`{"report_id":"mock-report-001"}`,
 		),
 		integrationFinalResult("review-get", "Here are the review details."),
 		integrationToolResult(
@@ -598,6 +599,7 @@ WHERE table_schema = current_schema()
 	assembler, err := agentcontext.NewAssembler(
 		repository.context,
 		goalService,
+		emptyLearningProfileReader{},
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
 	)
@@ -3632,6 +3634,7 @@ func newRunServiceWithContexts(
 	assembler, err := agentcontext.NewAssembler(
 		repository.context,
 		goalService,
+		emptyLearningProfileReader{},
 		stableProfiles,
 		memories,
 	)
@@ -3669,6 +3672,15 @@ type recordingMemorySearcher struct {
 }
 
 type emptyStableProfileReader struct{}
+
+type emptyLearningProfileReader struct{}
+
+func (emptyLearningProfileReader) ReadLearningProfile(
+	context.Context,
+	agentcontext.LearningProfileReadRequest,
+) ([]agentcontext.LearningProfileDimension, error) {
+	return []agentcontext.LearningProfileDimension{}, nil
+}
 
 func (emptyStableProfileReader) ReadStableProfile(
 	context.Context,

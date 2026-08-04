@@ -126,6 +126,7 @@ func newRetryRequestHTTPHandlerForTest(
 	t.Helper()
 	service, err := NewRetryRequestService(
 		repository,
+		&repracticeSourceReaderStub{source: repracticeSourceFixture()},
 		&retryPracticeStub{},
 		&retryConversationStub{newTurnID: "turn_retry_001"},
 	)
@@ -175,7 +176,7 @@ func assertRetryRequestHTTPPayload(
 	status RetryRequestStatus,
 ) {
 	t.Helper()
-	var payload SpeechFeedbackRetryRequest
+	var payload RepracticeRequest
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}

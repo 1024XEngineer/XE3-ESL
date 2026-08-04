@@ -1127,67 +1127,33 @@ assert.ok(
 assert.match(ieltsSpeakingReport.description ?? '', /another Actor/i);
 assert.match(ieltsSpeakingReport.description ?? '', /must not log/i);
 
-const ieltsSpeakingReportIndex = requireOperation(
-  'GET /v1/ielts-speaking-reports',
-);
-assert.equal(
-  ieltsSpeakingReportIndex.operationId,
-  'listIeltsSpeakingReports',
-);
-assert.deepEqual(
-  ieltsSpeakingReportIndex.security ?? openApi.security,
-  bearerSecurity,
-  'IELTS Speaking report history must derive the Actor from BearerSession.',
-);
-for (const status of ['200', '400', '401']) {
-  assert.ok(ieltsSpeakingReportIndex.responses?.[status]);
-}
-const ieltsSpeakingReportIndexResponse = resolveLocalReference(
-  ieltsSpeakingReportIndex.responses['200'],
-);
-assert.equal(
-  ieltsSpeakingReportIndexResponse?.headers?.['Cache-Control']?.schema?.const,
-  'private, no-store',
-  'IELTS Speaking report history must prohibit shared and private caching.',
-);
-assert.equal(
-  getJsonSchema(ieltsSpeakingReportIndexResponse)?.$ref,
-  '#/components/schemas/IeltsSpeakingReportIndexPage',
-);
-assert.ok(
-  schemas.IeltsSpeakingReportIndexPage,
-  'The root contract must export IeltsSpeakingReportIndexPage.',
-);
-assert.match(ieltsSpeakingReportIndex.description ?? '', /non-superseded/i);
-assert.match(ieltsSpeakingReportIndex.description ?? '', /report kind/i);
-
-const formalReviewHistory = requireOperation('GET /v1/formal-reviews');
-const formalReviewHistoryParameters = Object.fromEntries(
-  (formalReviewHistory.parameters ?? []).map((parameterValue) => {
+const evaluationReportHistory = requireOperation('GET /v1/evaluation-reports');
+const evaluationReportHistoryParameters = Object.fromEntries(
+  (evaluationReportHistory.parameters ?? []).map((parameterValue) => {
     const parameter = resolveLocalReference(parameterValue);
     return [parameter.name, parameter];
   }),
 );
-const formalReviewCursorPattern = resolveLocalReference(
-  formalReviewHistoryParameters.cursor?.schema,
+const evaluationReportCursorPattern = resolveLocalReference(
+  evaluationReportHistoryParameters.cursor?.schema,
 )?.pattern;
-const formalReviewHistoryResponse = resolveLocalReference(
-  formalReviewHistory.responses?.['200'],
+const evaluationReportHistoryResponse = resolveLocalReference(
+  evaluationReportHistory.responses?.['200'],
 );
-const formalReviewHistorySchema = resolveLocalReference(
-  getJsonSchema(formalReviewHistoryResponse),
+const evaluationReportHistorySchema = resolveLocalReference(
+  getJsonSchema(evaluationReportHistoryResponse),
 );
-const formalReviewNextCursorPattern = resolveLocalReference(
-  formalReviewHistorySchema?.properties?.next_cursor,
+const evaluationReportNextCursorPattern = resolveLocalReference(
+  evaluationReportHistorySchema?.properties?.next_cursor,
 )?.pattern;
 assert.equal(
-  formalReviewCursorPattern,
-  formalReviewNextCursorPattern,
-  'Formal Review request cursor must accept the server next_cursor format.',
+  evaluationReportCursorPattern,
+  evaluationReportNextCursorPattern,
+  'Evaluation report request cursor must accept the server next_cursor format.',
 );
 assert.match(
   'signed_payload.signed_mac',
-  new RegExp(formalReviewCursorPattern, 'u'),
+  new RegExp(evaluationReportCursorPattern, 'u'),
 );
 
 for (const retiredOperation of [

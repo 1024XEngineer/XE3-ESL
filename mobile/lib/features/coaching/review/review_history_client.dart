@@ -1,17 +1,17 @@
 import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/features/coaching/review/formal_review.dart';
+import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
 
 final class ReviewHistoryItem {
   const ReviewHistoryItem({
     required this.review,
-    required this.formalReview,
+    required this.report,
     required this.practiceSessionId,
     required this.createdAt,
     required this.completedAt,
   });
 
   final AgentReview review;
-  final FormalReview formalReview;
+  final EvaluationReport report;
   final String practiceSessionId;
   final DateTime createdAt;
   final DateTime completedAt;

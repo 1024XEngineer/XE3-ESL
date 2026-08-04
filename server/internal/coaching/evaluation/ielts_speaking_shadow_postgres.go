@@ -106,6 +106,10 @@ func (r *PostgresRepository) CompleteIELTSSpeakingShadow(
 	if err != nil {
 		return ErrInvalidRequest
 	}
+	report, err := ProjectIELTSFormalReport(claim.Snapshot, result)
+	if err != nil {
+		return err
+	}
 	var providerRequestID any
 	if result.Provider != nil {
 		providerRequestID = result.Provider.RequestID
@@ -116,6 +120,7 @@ func (r *PostgresRepository) CompleteIELTSSpeakingShadow(
 		durableClaimFromIELTS(claim),
 		payload,
 		providerRequestID,
+		report,
 	)
 }
 

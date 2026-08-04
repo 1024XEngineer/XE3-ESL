@@ -478,6 +478,16 @@ func (c *evidenceSnapshotComposerStub) Compose(
 	return c.command, c.err
 }
 
+func (c *evidenceSnapshotComposerStub) ComposeCompleted(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ Scope,
+	_ SceneType,
+) (EnsureEvidenceSnapshotCommand, error) {
+	return c.command, c.err
+}
+
 type evidenceSnapshotRepositoryStub struct {
 	snapshot       EvidenceSnapshot
 	replayed       bool

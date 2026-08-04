@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,309 +16,132 @@ import (
 )
 
 var reviewHTTPTestCursorKey = []byte(
-	"0123456789abcdef0123456789abcdef",
+	"review-history-test-signing-key-32-bytes-minimum",
 )
 
-func TestHandlerListsAuthenticatedHistoryWithOpaqueCursor(t *testing.T) {
-	newerCreatedAt := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
-	newer := completedReview(
-		"20000000-0000-4000-8000-000000000002", newerCreatedAt, 91,
+const reviewHTTPTestOwner = "10000000-0000-4000-8000-000000000001"
+
+func TestHandlerListsCanonicalEvaluationReportsWithOpaqueCursor(t *testing.T) {
+	t.Parallel()
+	newest := testReviewReport(
+		"20000000-0000-4000-8000-000000000002",
+		time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC),
 	)
-	older := completedReview(
-		"20000000-0000-4000-8000-000000000001",
-		newerCreatedAt.Add(-time.Hour),
-		78,
+	older := testReviewReport(
+		"30000000-0000-4000-8000-000000000003",
+		newest.CreatedAt.Add(-time.Hour),
 	)
-	router := reviewHTTPTestRouter(t, historyStub{items: []review.FormalReview{
-		newer, older,
+	router := reviewHTTPTestRouter(t, historyStub{items: []review.Report{
+		newest,
+		older,
 	}})
 
-	unauthenticated := httptest.NewRecorder()
-	router.ServeHTTP(
-		unauthenticated,
-		httptest.NewRequest(http.MethodGet, "/v1/formal-reviews", nil),
-	)
-	if unauthenticated.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated history status = %d", unauthenticated.Code)
-	}
-
-	firstResponse := reviewHTTPRequest(
-		t, router, http.MethodGet, "/v1/formal-reviews?limit=1",
-	)
-	if firstResponse.Code != http.StatusOK {
-		t.Fatalf(
-			"first history status = %d, body = %s",
-			firstResponse.Code,
-			firstResponse.Body,
-		)
-	}
-	first := decodeReviewJSONObject(t, firstResponse)
-	firstItems := first["items"].([]any)
-	if len(firstItems) != 1 {
-		t.Fatalf("first history items = %#v", firstItems)
-	}
-	firstItem := firstItems[0].(map[string]any)
-	if firstItem["review_id"] != newer.ID ||
-		firstItem["practice_session_id"] != newer.PracticeSessionID ||
-		firstItem["status"] != string(review.FormalReviewCompleted) {
-		t.Fatalf("first history item = %#v", firstItem)
-	}
-	if _, leaked := firstItem["owner_user_id"]; leaked {
-		t.Fatalf("history DTO leaked owner: %#v", firstItem)
-	}
-	cursor, ok := first["next_cursor"].(string)
-	if !ok || cursor == "" || strings.Contains(cursor, newer.ID) {
-		t.Fatalf("history cursor is not opaque: %#v", first["next_cursor"])
-	}
-
-	secondResponse := reviewHTTPRequest(
+	first := reviewHTTPRequest(
 		t,
 		router,
 		http.MethodGet,
-		"/v1/formal-reviews?limit=1&cursor="+cursor,
+		"/v1/evaluation-reports?limit=1",
+		true,
 	)
-	if secondResponse.Code != http.StatusOK {
-		t.Fatalf(
-			"second history status = %d, body = %s",
-			secondResponse.Code,
-			secondResponse.Body,
-		)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d body=%s", first.Code, first.Body.String())
 	}
-	secondItems := decodeReviewJSONObject(t, secondResponse)["items"].([]any)
-	if len(secondItems) != 1 ||
-		secondItems[0].(map[string]any)["review_id"] != older.ID {
-		t.Fatalf("second history items = %#v", secondItems)
+	payload := decodeReviewJSONObject(t, first)
+	items, ok := payload["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items = %#v", payload["items"])
+	}
+	item := items[0].(map[string]any)
+	if item["report_id"] != newest.ID ||
+		item["scene_type"] != newest.SceneType ||
+		item["scoreability_status"] != newest.ScoreabilityStatus ||
+		item["result"] != nil || item["implementation_version"] != nil {
+		t.Fatalf("canonical report = %#v", item)
+	}
+	cursor, ok := payload["next_cursor"].(string)
+	if !ok || cursor == "" {
+		t.Fatalf("next cursor = %#v", payload["next_cursor"])
 	}
 
-	for _, path := range []string{
-		"/v1/formal-reviews?limit=51",
-		"/v1/formal-reviews?limit=1&limit=2",
-		"/v1/formal-reviews?cursor=not-base64",
-		"/v1/formal-reviews?offset=1",
-		"/v1/formal-reviews?limit=1;offset=1",
-	} {
-		response := reviewHTTPRequest(t, router, http.MethodGet, path)
-		if response.Code != http.StatusBadRequest {
-			t.Fatalf("invalid history %q status = %d", path, response.Code)
-		}
+	second := reviewHTTPRequest(
+		t,
+		router,
+		http.MethodGet,
+		"/v1/evaluation-reports?limit=1&cursor="+cursor,
+		true,
+	)
+	secondPayload := decodeReviewJSONObject(t, second)
+	secondItems := secondPayload["items"].([]any)
+	if secondItems[0].(map[string]any)["report_id"] != older.ID {
+		t.Fatalf("second page = %#v", secondPayload)
 	}
 }
 
-func TestHistoryCursorIsSignedCanonicalAndActorBound(t *testing.T) {
-	handler := &Handler{cursorKey: reviewHTTPTestCursorKey}
-	cursor := review.HistoryCursor{
-		CreatedAt: time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC),
-		ReviewID:  "20000000-0000-4000-8000-000000000002",
+func TestHandlerGetsCanonicalEvaluationReport(t *testing.T) {
+	t.Parallel()
+	report := testReviewReport(
+		"20000000-0000-4000-8000-000000000002",
+		time.Now().UTC(),
+	)
+	router := reviewHTTPTestRouter(t, historyStub{items: []review.Report{report}})
+	response := reviewHTTPRequest(
+		t,
+		router,
+		http.MethodGet,
+		"/v1/evaluation-reports/"+report.ID,
+		true,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 	}
-	encoded, ok := handler.encodeCursor("actor-a", cursor)
-	if !ok || strings.Count(encoded, ".") != 1 {
-		t.Fatalf("encodeCursor() = %q, %t", encoded, ok)
-	}
-	decoded, ok := handler.decodeCursor("actor-a", encoded)
-	if !ok || decoded != cursor {
-		t.Fatalf("decodeCursor() = %+v, %t", decoded, ok)
-	}
-	if _, ok := handler.decodeCursor("actor-b", encoded); ok {
-		t.Fatal("cursor was accepted for another actor")
-	}
-	otherHandler := &Handler{
-		cursorKey: []byte("fedcba9876543210fedcba9876543210"),
-	}
-	if _, ok := otherHandler.decodeCursor("actor-a", encoded); ok {
-		t.Fatal("cursor was accepted with another signing key")
-	}
-	if _, ok := handler.decodeCursor("actor-a", "A"+encoded[1:]); ok {
-		t.Fatal("tampered cursor was accepted")
-	}
-	if _, ok := handler.decodeCursor("actor-a", encoded+"="); ok {
-		t.Fatal("non-canonical padded cursor was accepted")
+	payload := decodeReviewJSONObject(t, response)
+	if payload["report_id"] != report.ID || payload["detail_schema"] == nil ||
+		payload["dimensions"] == nil {
+		t.Fatalf("report response = %#v", payload)
 	}
 }
 
-func TestHistoryResponseBudget(t *testing.T) {
-	t.Run("maximum page remains below the response cap", func(t *testing.T) {
-		router := reviewHTTPTestRouter(
-			t, historyStub{items: maximumHistoryPage()},
-		)
-		response := reviewHTTPRequest(
-			t, router, http.MethodGet, "/v1/formal-reviews?limit=50",
-		)
-		if response.Code != http.StatusOK {
-			t.Fatalf(
-				"maximum history status = %d, body = %s",
-				response.Code,
-				response.Body,
-			)
-		}
-		if response.Body.Len() >= maxHistoryBody {
-			t.Fatalf(
-				"maximum history bytes = %d, limit = %d",
-				response.Body.Len(),
-				maxHistoryBody,
-			)
-		}
-		root := decodeReviewJSONObject(t, response)
-		items := root["items"].([]any)
-		if len(items) != 50 {
-			t.Fatalf("maximum history item count = %d", len(items))
-		}
-		cursor, ok := root["next_cursor"].(string)
-		if !ok || cursor == "" {
-			t.Fatalf("maximum history omitted next_cursor: %#v", root)
-		}
-		continuation := reviewHTTPRequest(
-			t,
-			router,
-			http.MethodGet,
-			"/v1/formal-reviews?limit=50&cursor="+cursor,
-		)
-		if continuation.Code != http.StatusOK {
-			t.Fatalf(
-				"continuation status = %d, body = %s",
-				continuation.Code,
-				continuation.Body,
-			)
-		}
-		continuationRoot := decodeReviewJSONObject(t, continuation)
-		if len(continuationRoot["items"].([]any)) != 1 {
-			t.Fatalf("continuation = %#v", continuationRoot)
-		}
-		if _, present := continuationRoot["next_cursor"]; present {
-			t.Fatalf("continuation exposed cursor: %#v", continuationRoot)
-		}
-	})
-
-	t.Run("oversized history returns only a safe error", func(t *testing.T) {
-		item := completedReview(
-			"20000000-0000-4000-8000-000000000001",
-			time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC),
-			80,
-		)
-		item.Result.Summary = strings.Repeat("<", maxHistoryBody)
-		router := reviewHTTPTestRouter(t, fixedHistoryStub{
-			page: review.HistoryPage{Items: []review.FormalReview{item}},
-		})
-		response := reviewHTTPRequest(
-			t, router, http.MethodGet, "/v1/formal-reviews?limit=1",
-		)
-		if response.Code != http.StatusInternalServerError {
-			t.Fatalf(
-				"oversized history status = %d, body bytes = %d",
-				response.Code,
-				response.Body.Len(),
-			)
-		}
-		failure := decodeReviewJSONObject(t, response)["error"].(map[string]any)
-		if failure["code"] != "internal_error" ||
-			strings.Contains(response.Body.String(), `"items"`) ||
-			strings.Contains(response.Body.String(), `"review_id"`) {
-			t.Fatalf("unsafe oversized response = %s", response.Body)
-		}
-	})
-
-	t.Run("hard cap rejects encoded product bytes", func(t *testing.T) {
-		gin.SetMode(gin.ReleaseMode)
-		recorder := httptest.NewRecorder()
-		context, _ := gin.CreateTestContext(recorder)
-		context.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-		handler := &Handler{errors: httpresponse.NewRenderer(
-			func() string { return "corr_review_cap" },
-		)}
-		handler.writeBoundedJSON(context, map[string]any{
-			"items": []string{strings.Repeat("x", maxHistoryBody)},
-		})
-		if recorder.Code != http.StatusInternalServerError {
-			t.Fatalf(
-				"hard-cap status = %d, body bytes = %d",
-				recorder.Code,
-				recorder.Body.Len(),
-			)
-		}
-		if strings.Contains(recorder.Body.String(), strings.Repeat("x", 64)) ||
-			strings.Contains(recorder.Body.String(), `"items"`) {
-			t.Fatalf("hard-cap response leaked product bytes: %s", recorder.Body)
-		}
-	})
-}
-
-func completedReview(
-	id string,
-	createdAt time.Time,
-	score int,
-) review.FormalReview {
-	completedAt := createdAt.Add(time.Minute)
-	return review.FormalReview{
-		ID:                    id,
-		OwnerUserID:           "private-owner",
-		PracticeSessionID:     "session-" + id,
-		Status:                review.FormalReviewCompleted,
-		ImplementationVersion: "review-v1",
-		SourceTurnID:          "turn-" + id,
-		SourceTurnVersion:     "conversation-turn:evidence-v1",
-		Result: &review.ReviewResult{
-			SummaryEligibility:  review.SummaryEligible,
-			OverallScore:        score,
-			OverallScorePresent: true,
-			Summary:             "Server-owned review history.",
-			Conclusions: []review.ReviewConclusion{{
-				Key:          "clarity",
-				Category:     "clarity",
-				Score:        score,
-				ScorePresent: true,
-				Message:      "Clear response.",
-				Suggestion:   "Add one concrete outcome.",
-			}},
-		},
-		CreatedAt:   createdAt,
-		UpdatedAt:   completedAt,
-		CompletedAt: &completedAt,
+func TestHandlerRejectsMissingAuthenticationAndInvalidCursor(t *testing.T) {
+	t.Parallel()
+	router := reviewHTTPTestRouter(t, historyStub{})
+	unauthenticated := reviewHTTPRequest(
+		t,
+		router,
+		http.MethodGet,
+		"/v1/evaluation-reports",
+		false,
+	)
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d", unauthenticated.Code)
+	}
+	invalidCursor := reviewHTTPRequest(
+		t,
+		router,
+		http.MethodGet,
+		"/v1/evaluation-reports?cursor=invalid",
+		true,
+	)
+	if invalidCursor.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cursor status = %d", invalidCursor.Code)
 	}
 }
 
-func maximumHistoryPage() []review.FormalReview {
-	items := make([]review.FormalReview, 51)
-	baseCreatedAt := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
-	for index := range items {
-		item := completedReview(
-			fmt.Sprintf("20000000-0000-4000-8000-%012d", 51-index),
-			baseCreatedAt.Add(-time.Duration(index)*time.Second),
-			100,
-		)
-		item.Result.Summary = strings.Repeat("s", 2048)
-		item.Result.Conclusions = make([]review.ReviewConclusion, 4)
-		for conclusionIndex := range item.Result.Conclusions {
-			item.Result.Conclusions[conclusionIndex] = review.ReviewConclusion{
-				Key:          fmt.Sprintf("clarity-%d", conclusionIndex),
-				Category:     "clarity",
-				Score:        100,
-				ScorePresent: true,
-				Message:      strings.Repeat("m", 1800),
-				Suggestion:   strings.Repeat("s", 300),
-			}
-		}
-		items[index] = item
-	}
-	return items
-}
-
-type historyStub struct {
-	items []review.FormalReview
-}
+type historyStub struct{ items []review.Report }
 
 func (stub historyStub) Get(
 	_ context.Context,
 	actor review.Actor,
-	reviewID string,
-) (review.FormalReview, error) {
-	if actor.UserID != "user-a" {
-		return review.FormalReview{}, review.ErrReviewNotFound
+	reportID string,
+) (review.Report, error) {
+	if actor.UserID != reviewHTTPTestOwner {
+		return review.Report{}, review.ErrReviewNotFound
 	}
 	for _, item := range stub.items {
-		if item.ID == reviewID {
+		if item.ID == reportID {
 			return item, nil
 		}
 	}
-	return review.FormalReview{}, review.ErrReviewNotFound
+	return review.Report{}, review.ErrReviewNotFound
 }
 
 func (stub historyStub) ListCompleted(
@@ -328,18 +149,15 @@ func (stub historyStub) ListCompleted(
 	actor review.Actor,
 	query review.HistoryQuery,
 ) (review.HistoryPage, error) {
-	if actor.UserID != "user-a" {
+	if actor.UserID != reviewHTTPTestOwner {
 		return review.HistoryPage{}, review.ErrReviewNotFound
 	}
-	eligible := make([]review.FormalReview, 0, len(stub.items))
+	eligible := make([]review.Report, 0, len(stub.items))
 	for _, item := range stub.items {
 		if query.Before != nil &&
-			!historyKeyBefore(
-				item.CreatedAt,
-				item.ID,
-				query.Before.CreatedAt,
-				query.Before.ReviewID,
-			) {
+			!(item.CreatedAt.Before(query.Before.CreatedAt) ||
+				(item.CreatedAt.Equal(query.Before.CreatedAt) &&
+					item.ID < query.Before.ReportID)) {
 			continue
 		}
 		eligible = append(eligible, item)
@@ -350,40 +168,43 @@ func (stub historyStub) ListCompleted(
 		last := eligible[count-1]
 		page.Next = &review.HistoryCursor{
 			CreatedAt: last.CreatedAt,
-			ReviewID:  last.ID,
+			ReportID:  last.ID,
 		}
 	}
 	return page, nil
 }
 
-type fixedHistoryStub struct {
-	page review.HistoryPage
-}
-
-func (stub fixedHistoryStub) Get(
-	context.Context,
-	review.Actor,
-	string,
-) (review.FormalReview, error) {
-	return review.FormalReview{}, review.ErrReviewNotFound
-}
-
-func (stub fixedHistoryStub) ListCompleted(
-	context.Context,
-	review.Actor,
-	review.HistoryQuery,
-) (review.HistoryPage, error) {
-	return stub.page, nil
-}
-
-func historyKeyBefore(
-	createdAt time.Time,
-	reviewID string,
-	boundaryCreatedAt time.Time,
-	boundaryReviewID string,
-) bool {
-	return createdAt.Before(boundaryCreatedAt) ||
-		(createdAt.Equal(boundaryCreatedAt) && reviewID < boundaryReviewID)
+func testReviewReport(id string, createdAt time.Time) review.Report {
+	score := 78.0
+	return review.Report{
+		ID:                   id,
+		EvaluationID:         "40000000-0000-4000-8000-000000000004",
+		EvaluationRevisionID: "50000000-0000-4000-8000-000000000005",
+		OwnerUserID:          reviewHTTPTestOwner,
+		PracticeSessionID:    "practice-session-1",
+		Revision:             1,
+		SchemaVersion:        "evaluation-report/v1",
+		SceneType:            "INTERVIEW",
+		SceneModel:           "project_interview",
+		ScoreabilityStatus:   "PROVISIONAL",
+		Summary:              "练习报告摘要",
+		Dimensions: []review.ReportDimension{{
+			Key:          "relevance",
+			Score:        &score,
+			Scale:        "PERCENTAGE_100",
+			Coverage:     1,
+			Confidence:   0.8,
+			ReasonCodes:  []string{},
+			EvidenceRefs: []string{"evidence:1"},
+			Strengths:    []review.ReportFinding{},
+			Improvements: []review.ReportFinding{},
+			Examples:     []review.ReportFinding{},
+		}},
+		PriorityActions: []review.ReportPriorityAction{},
+		DetailSchema:    "interview-report/v1",
+		Detail:          json.RawMessage(`{"schema_version":"interview-report/v1"}`),
+		CreatedAt:       createdAt.UTC(),
+	}
 }
 
 func reviewHTTPTestRouter(t *testing.T, history History) *gin.Engine {
@@ -394,7 +215,7 @@ func reviewHTTPTestRouter(t *testing.T, history History) *gin.Engine {
 		httpresponse.NewRenderer(func() string { return "corr_review" }),
 	)
 	if err != nil {
-		t.Fatalf("new review HTTP handler: %v", err)
+		t.Fatalf("new Review HTTP handler: %v", err)
 	}
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -402,7 +223,10 @@ func reviewHTTPTestRouter(t *testing.T, history History) *gin.Engine {
 		if c.GetHeader("Authorization") == "Bearer review-token-a" {
 			c.Request = c.Request.WithContext(requestcontext.WithActor(
 				c.Request.Context(),
-				requestcontext.Actor{UserID: "user-a", SessionID: "session-a"},
+				requestcontext.Actor{
+					UserID:    reviewHTTPTestOwner,
+					SessionID: "session-a",
+				},
 			))
 		}
 		c.Next()
@@ -416,10 +240,13 @@ func reviewHTTPRequest(
 	router http.Handler,
 	method string,
 	path string,
+	authenticated bool,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, path, bytes.NewReader(nil))
-	request.Header.Set("Authorization", "Bearer review-token-a")
+	if authenticated {
+		request.Header.Set("Authorization", "Bearer review-token-a")
+	}
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	return response

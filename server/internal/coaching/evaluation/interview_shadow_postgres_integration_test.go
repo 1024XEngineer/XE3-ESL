@@ -749,7 +749,10 @@ func TestPostgresInterviewShadowDeletionWinsAgainstLateResult(
 }
 
 func TestInterviewShadowRuntimeMigrationRoundTrip(t *testing.T) {
-	pool := evaluationDatabase(t)
+	pool := evaluationDatabaseThrough(
+		t,
+		"000039_evaluation_ielts_speaking_shadow_runtime.up.sql",
+	)
 	ctx := context.Background()
 	ieltsDown, err := migrations.Files.ReadFile(
 		"000039_evaluation_ielts_speaking_shadow_runtime.down.sql",

@@ -38,4 +38,11 @@ import "embed"
 //go:embed 000050_scene_authority_catalog.*.sql
 //go:embed 000051_preparation_plan_authority.*.sql
 //go:embed 000052_practice_runtime_authority.*.sql
+//go:embed 000053_evaluation_speech_feedback_authority.*.sql
+//go:embed 000054_review_repractice_requests.*.sql
+//go:embed 000055_practice_evaluation_handoff.*.sql
+//go:embed 000056_evaluation_reports_learning_profile.*.sql
+//go:embed 000057_agent_learning_profile_context_manifest.*.sql
+//go:embed 000058_evaluation_report_authority.*.sql
+//go:embed 000059_evaluation_general_scene_runtime.*.sql
 var Files embed.FS

@@ -14,11 +14,9 @@ const (
 	maxHistorySearchBytes    = 2000
 )
 
-// HistoryCursor is the stable keyset boundary for the Review-owned history
-// read model. CreatedAt and ReviewID match the repository order exactly.
 type HistoryCursor struct {
 	CreatedAt time.Time
-	ReviewID  string
+	ReportID  string
 }
 
 type HistoryQuery struct {
@@ -27,7 +25,7 @@ type HistoryQuery struct {
 }
 
 type HistoryPage struct {
-	Items []FormalReview
+	Items []Report
 	Next  *HistoryCursor
 }
 
@@ -37,24 +35,14 @@ type HistorySearchQuery struct {
 	Limit             int
 }
 
-// HistoryRepository is deliberately narrower than the mutation repository.
-// The Review module remains the only owner of its history query semantics.
 type HistoryRepository interface {
-	Get(
-		ctx context.Context,
-		actor Actor,
-		reviewID string,
-	) (FormalReview, error)
-	ListCompletedHistory(
-		ctx context.Context,
-		actor Actor,
-		query HistoryQuery,
-	) (HistoryPage, error)
-	SearchCompletedHistory(
-		ctx context.Context,
-		actor Actor,
-		query HistorySearchQuery,
-	) ([]FormalReview, error)
+	GetReport(context.Context, Actor, string) (Report, error)
+	ListReports(context.Context, Actor, HistoryQuery) (HistoryPage, error)
+	SearchReports(
+		context.Context,
+		Actor,
+		HistorySearchQuery,
+	) ([]Report, error)
 }
 
 type HistoryService struct {
@@ -68,61 +56,53 @@ func NewHistoryService(repository HistoryRepository) *HistoryService {
 func (service *HistoryService) Get(
 	ctx context.Context,
 	actor Actor,
-	reviewID string,
-) (FormalReview, error) {
-	if service == nil || service.repository == nil ||
-		actor.validate() != nil || strings.TrimSpace(reviewID) == "" {
-		return FormalReview{}, ErrInvalidReview
+	reportID string,
+) (Report, error) {
+	if service == nil || service.repository == nil || ctx == nil ||
+		actor.validate() != nil || !validUUID(reportID) {
+		return Report{}, ErrInvalidReview
 	}
-	return service.repository.Get(ctx, actor, reviewID)
+	return service.repository.GetReport(ctx, actor, reportID)
 }
 
-// ListCompleted returns only authoritative completed results. Offset
-// pagination is intentionally excluded because concurrent Review creation
-// would otherwise duplicate or skip rows.
 func (service *HistoryService) ListCompleted(
 	ctx context.Context,
 	actor Actor,
 	query HistoryQuery,
 ) (HistoryPage, error) {
-	if service == nil || service.repository == nil ||
+	if service == nil || service.repository == nil || ctx == nil ||
 		actor.validate() != nil || query.Limit < 1 ||
 		query.Limit > MaxHistoryPageSize ||
 		(query.Before != nil && !validHistoryCursor(*query.Before)) {
 		return HistoryPage{}, ErrInvalidReview
 	}
-	return service.repository.ListCompletedHistory(ctx, actor, query)
+	return service.repository.ListReports(ctx, actor, query)
 }
 
-// SearchCompleted returns a bounded set of authoritative Review results. Search
-// semantics remain Review-owned so callers never need to scan or filter history.
 func (service *HistoryService) SearchCompleted(
 	ctx context.Context,
 	actor Actor,
 	query HistorySearchQuery,
-) ([]FormalReview, error) {
+) ([]Report, error) {
 	query.Query = strings.TrimSpace(query.Query)
 	query.PracticeSessionID = strings.TrimSpace(query.PracticeSessionID)
-	if service == nil || service.repository == nil ||
+	if service == nil || service.repository == nil || ctx == nil ||
 		actor.validate() != nil || !validHistorySearchQuery(query) {
 		return nil, ErrInvalidReview
 	}
-	return service.repository.SearchCompletedHistory(ctx, actor, query)
+	return service.repository.SearchReports(ctx, actor, query)
 }
 
 func validHistoryCursor(cursor HistoryCursor) bool {
-	return !cursor.CreatedAt.IsZero() &&
-		validUUID(cursor.ReviewID)
+	return !cursor.CreatedAt.IsZero() && validUUID(cursor.ReportID)
 }
 
 func validHistorySearchQuery(query HistorySearchQuery) bool {
-	return query.Query != "" &&
-		utf8.ValidString(query.Query) &&
+	return query.Query != "" && utf8.ValidString(query.Query) &&
 		!strings.ContainsRune(query.Query, '\x00') &&
 		utf8.RuneCountInString(query.Query) <= maxHistorySearchRunes &&
 		len(query.Query) <= maxHistorySearchBytes &&
 		(query.PracticeSessionID == "" ||
-			validContextIdentifier(query.PracticeSessionID, 128)) &&
-		query.Limit >= 1 &&
-		query.Limit <= MaxHistorySearchPageSize
+			validRetryRequestResourceID(query.PracticeSessionID)) &&
+		query.Limit >= 1 && query.Limit <= MaxHistorySearchPageSize
 }

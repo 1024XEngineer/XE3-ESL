@@ -812,6 +812,22 @@ func (s *fakeEvidencePracticeSource) GetSessionSnapshot(
 	return s.snapshot, s.snapshotErr
 }
 
+func (s *fakeEvidencePracticeSource) GetCompletedSession(
+	context.Context,
+	string,
+	string,
+) (practice.Session, error) {
+	return s.session, s.sessionErr
+}
+
+func (s *fakeEvidencePracticeSource) GetCompletedSessionSnapshot(
+	context.Context,
+	string,
+	string,
+) (practice.SessionSnapshot, error) {
+	return s.snapshot, s.snapshotErr
+}
+
 type fakeEvidenceConversationSource struct {
 	turns        []practice.Turn
 	turnsErr     error
@@ -860,6 +876,34 @@ func (s *fakeEvidenceConversationSource) ListSessionTurns(
 	string,
 ) ([]practice.Turn, error) {
 	return slicesClone(s.turns), s.turnsErr
+}
+
+func (s *fakeEvidenceConversationSource) ListCompletedSessionQuestions(
+	ctx context.Context,
+	_ string,
+	sessionID string,
+) ([]practice.Question, error) {
+	return s.ListSessionQuestions(
+		ctx,
+		practiceinput.Actor{},
+		sessionID,
+	)
+}
+
+func (s *fakeEvidenceConversationSource) GetCompletedCandidate(
+	ctx context.Context,
+	_ string,
+	id string,
+) (practiceinput.StoredTranscriptCandidate, error) {
+	return s.GetCandidate(ctx, practiceinput.Actor{}, id)
+}
+
+func (s *fakeEvidenceConversationSource) ListCompletedSessionTurns(
+	ctx context.Context,
+	_ string,
+	sessionID string,
+) ([]practice.Turn, error) {
+	return s.ListSessionTurns(ctx, practiceinput.Actor{}, sessionID)
 }
 
 type fakeEvidenceAudioSource struct {

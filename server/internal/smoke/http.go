@@ -36,7 +36,7 @@ type Server struct {
 	preparation  *preparationBackend
 	practice     *practiceBackend
 	conversation *practiceinput.Service
-	review       *review.Service
+	review       *reviewService
 	application  *Application
 	idempotency  *idempotencyStore
 	identity     *mockIdentityStore
@@ -52,7 +52,7 @@ func NewServer(logger *slog.Logger) *Server {
 		conversationBackend{runtime: runtime},
 		provider,
 	)
-	reviewService := review.NewService(reviewBackend{runtime: runtime}, provider)
+	reviewService := newReviewService(reviewBackend{runtime: runtime}, provider)
 	toolRegistry, err := capabilityfixture.NewRegistry(
 		capabilityfixture.NewStore(),
 	)

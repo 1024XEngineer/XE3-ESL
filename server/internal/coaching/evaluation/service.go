@@ -48,6 +48,13 @@ type EvidenceSnapshotComposer interface {
 		scope Scope,
 		sceneType SceneType,
 	) (EnsureEvidenceSnapshotCommand, error)
+	ComposeCompleted(
+		ctx context.Context,
+		ownerUserID string,
+		practiceSessionID string,
+		scope Scope,
+		sceneType SceneType,
+	) (EnsureEvidenceSnapshotCommand, error)
 }
 
 type EvidenceSnapshotReader interface {
@@ -124,6 +131,48 @@ func (s *EvidenceSnapshotService) Freeze(
 	return snapshot, replayed, nil
 }
 
+func (s *EvidenceSnapshotService) FreezeCompleted(
+	ctx context.Context,
+	ownerUserID string,
+	practiceSessionID string,
+	scope Scope,
+	sceneType SceneType,
+) (EvidenceSnapshot, bool, error) {
+	if s == nil || s.composer == nil || s.repository == nil ||
+		ctx == nil || !validUUID(ownerUserID) {
+		return EvidenceSnapshot{}, false, ErrInvalidRequest
+	}
+	command, err := s.composer.ComposeCompleted(
+		ctx,
+		ownerUserID,
+		practiceSessionID,
+		scope,
+		sceneType,
+	)
+	if err != nil {
+		return EvidenceSnapshot{}, false, err
+	}
+	command, err = normalizeEvidenceSnapshotCommand(command)
+	if err != nil || command.OwnerUserID != ownerUserID ||
+		command.PracticeSessionID != practiceSessionID ||
+		command.Scope != scope || command.SceneType != sceneType {
+		return EvidenceSnapshot{}, false, ErrInvalidRequest
+	}
+	snapshot, replayed, err := s.repository.EnsureEvidenceSnapshot(ctx, command)
+	if err != nil {
+		return EvidenceSnapshot{}, false, err
+	}
+	if !snapshot.Valid() || snapshot.ID != command.SnapshotID ||
+		snapshot.OwnerUserID != command.OwnerUserID ||
+		snapshot.PracticeSessionID != command.PracticeSessionID ||
+		snapshot.Scope != command.Scope ||
+		snapshot.SceneType != command.SceneType ||
+		snapshot.SourceManifestHash != command.SourceManifestHash {
+		return EvidenceSnapshot{}, false, ErrInvalidRequest
+	}
+	return snapshot, replayed, nil
+}
+
 type Service struct {
 	repository        Repository
 	evidenceSnapshots EvidenceSnapshotReader
@@ -152,13 +201,33 @@ func (s *Service) Create(
 	if !ok || trustedActor != actor {
 		return Evaluation{}, false, ErrInvalidRequest
 	}
+	return s.create(ctx, actor.UserID, request)
+}
+
+func (s *Service) CreateCompleted(
+	ctx context.Context,
+	ownerUserID string,
+	request CreateRequest,
+) (Evaluation, bool, error) {
+	if s == nil || s.repository == nil || s.evidenceSnapshots == nil ||
+		ctx == nil || !validUUID(ownerUserID) {
+		return Evaluation{}, false, ErrInvalidRequest
+	}
+	return s.create(ctx, ownerUserID, request)
+}
+
+func (s *Service) create(
+	ctx context.Context,
+	ownerUserID string,
+	request CreateRequest,
+) (Evaluation, bool, error) {
 	input, err := normalizeCreate(request)
 	if err != nil {
 		return Evaluation{}, false, err
 	}
 	snapshot, err := s.evidenceSnapshots.GetEvidenceSnapshot(
 		ctx,
-		actor.UserID,
+		ownerUserID,
 		input.InputSnapshotID,
 	)
 	if err != nil {
@@ -166,7 +235,7 @@ func (s *Service) Create(
 	}
 	if !snapshot.Valid() ||
 		snapshot.ID != input.InputSnapshotID ||
-		snapshot.OwnerUserID != actor.UserID ||
+		snapshot.OwnerUserID != ownerUserID ||
 		snapshot.PracticeSessionID != input.PracticeSessionID ||
 		snapshot.InputRevision != input.InputRevision ||
 		snapshot.Scope != input.Scope ||
@@ -177,7 +246,7 @@ func (s *Service) Create(
 		OwnerUserID string      `json:"owner_user_id"`
 		Input       createInput `json:"input"`
 	}{
-		OwnerUserID: actor.UserID,
+		OwnerUserID: ownerUserID,
 		Input:       input,
 	})
 	if err != nil {
@@ -192,7 +261,7 @@ func (s *Service) Create(
 		return Evaluation{}, false, err
 	}
 	return s.repository.Ensure(ctx, EnsureCommand{
-		OwnerUserID:         actor.UserID,
+		OwnerUserID:         ownerUserID,
 		RootIdempotencyKey:  rootKey,
 		RootFingerprint:     rootFingerprint,
 		RevisionFingerprint: revisionFingerprint,

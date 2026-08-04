@@ -26,7 +26,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
@@ -1348,71 +1347,6 @@ func createVoiceFormalContextSession(
 		t.Fatalf("formal Context bootstrap has no Session ID: %#v", bootstrap)
 	}
 	return sessionID
-}
-
-func completeBootstrapHistoryReview(
-	t *testing.T,
-	pool *pgxpool.Pool,
-	ownerUserID string,
-	sessionID string,
-) review.FormalReview {
-	t.Helper()
-	repository := review.NewPostgresRepository(pool)
-	actor := review.Actor{UserID: ownerUserID}
-	sourceTurnID := "turn-" + sessionID
-	sourceTurnVersion := "conversation-turn:evidence-v1"
-	pending, err := repository.EnsurePending(
-		context.Background(),
-		review.EnsureReviewCommand{
-			Actor:                     actor,
-			PracticeSessionID:         sessionID,
-			ImplementationVersion:     "qianwen-voice-review-v1",
-			SourceTurnID:              sourceTurnID,
-			SourceTurnVersion:         sourceTurnVersion,
-			SourceManifestFingerprint: "manifest-" + sessionID,
-		},
-	)
-	if err != nil {
-		t.Fatalf("ensure bootstrap history Review %s: %v", sessionID, err)
-	}
-	_, claim, claimed, err := repository.ClaimGeneration(
-		context.Background(),
-		actor,
-		pending.ID,
-		time.Minute,
-	)
-	if err != nil || !claimed {
-		t.Fatalf(
-			"claim bootstrap history Review %s: claimed=%v err=%v",
-			sessionID,
-			claimed,
-			err,
-		)
-	}
-	completed, err := repository.CompleteGeneration(
-		context.Background(),
-		claim,
-		review.ReviewResult{
-			OverallScore: 80,
-			Summary:      "Persisted restart cursor fixture.",
-			Conclusions: []review.ReviewConclusion{{
-				Key:        "summary",
-				Category:   "clarity",
-				Message:    "The response is clear.",
-				Suggestion: "Add one concrete outcome.",
-			}},
-		},
-		[]review.ReviewEvidence{{
-			ConclusionKey: "summary",
-			SourceType:    review.SourceTypeConversationTurn,
-			SourceID:      sourceTurnID,
-			SourceVersion: sourceTurnVersion,
-		}},
-	)
-	if err != nil {
-		t.Fatalf("complete bootstrap history Review %s: %v", sessionID, err)
-	}
-	return completed
 }
 
 func registerAndLoginVoiceUser(

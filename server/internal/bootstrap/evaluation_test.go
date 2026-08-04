@@ -87,6 +87,36 @@ func TestIELTSSpeakingShadowRuntimeConfigurationIsDeterministic(
 	}
 }
 
+func TestGeneralSceneRuntimeConfigurationIsDeterministic(t *testing.T) {
+	t.Parallel()
+	configuration := EvaluationConfiguration{
+		Provider:        "qianwen",
+		Model:           "qwen-plus",
+		MaxOutputTokens: 2048,
+		LeaseDuration:   30 * time.Second,
+		MaxAttempts:     3,
+	}
+	first, err := generalSceneRuntimeConfiguration(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := generalSceneRuntimeConfiguration(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || !first.Valid() {
+		t.Fatalf("runtime configuration is unstable: %#v %#v", first, second)
+	}
+	configuration.Model = "qwen-max"
+	changed, err := generalSceneRuntimeConfiguration(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.FullConfigHash == first.FullConfigHash {
+		t.Fatal("model change did not alter full config hash")
+	}
+}
+
 func TestInterviewShadowProjectionNeverPublishesNumericScores(
 	t *testing.T,
 ) {
@@ -410,61 +440,6 @@ func TestEvaluationHTTPApplicationGetsOwnerScopedIELTSSpeakingReport(
 		resource.StableFailure != nil ||
 		resource.IsFinal {
 		t.Fatalf("reader=%#v resource=%#v", reader, resource)
-	}
-}
-
-func TestEvaluationHTTPApplicationListsOwnerScopedIELTSSpeakingReports(
-	t *testing.T,
-) {
-	t.Parallel()
-	actor := requestcontext.Actor{
-		UserID:    "00000000-0000-4000-8000-000000000001",
-		SessionID: "session-authenticated",
-	}
-	value := evaluationTestIELTSValue(evaluation.StatusReady)
-	reader := &ieltsSpeakingReportReaderStub{
-		page: evaluation.IELTSSpeakingReportIndexPage{
-			Items: []evaluation.IELTSSpeakingReportIndexEntry{{
-				PracticeSessionID:    value.PracticeSessionID,
-				EvaluationID:         value.ID,
-				EvaluationRevisionID: value.Revision.ID,
-				Revision:             value.Revision.Number,
-				EvaluationStatus:     value.Revision.Status,
-				IsFinal:              value.Revision.IsFinal,
-				CreatedAt:            value.CreatedAt,
-				UpdatedAt:            value.Revision.UpdatedAt,
-			}},
-			HasMore: true,
-		},
-	}
-	application := &evaluationHTTPApplication{
-		ieltsReports:       reader,
-		ieltsConfiguration: evaluationTestIELTSRuntimeConfiguration(t),
-	}
-	boundary := &evaluationtransport.IELTSSpeakingReportIndexBoundary{
-		UpdatedAt:    value.Revision.UpdatedAt.Add(time.Minute),
-		EvaluationID: "30000000-0000-4000-8000-000000000001",
-	}
-	page, err := application.ListIELTSSpeakingReports(
-		requestcontext.WithActor(context.Background(), actor),
-		actor,
-		evaluationtransport.IELTSSpeakingReportIndexQuery{
-			Limit:  1,
-			Before: boundary,
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reader.ownerUserID != actor.UserID ||
-		reader.limit != 1 ||
-		reader.boundary == nil ||
-		!reader.boundary.UpdatedAt.Equal(boundary.UpdatedAt) ||
-		reader.boundary.EvaluationID != boundary.EvaluationID ||
-		len(page.Items) != 1 ||
-		!page.HasMore ||
-		page.Items[0].PracticeSessionID != value.PracticeSessionID {
-		t.Fatalf("reader=%#v page=%#v", reader, page)
 	}
 }
 
@@ -841,12 +816,9 @@ func (stub *interviewReportReaderStub) GetCurrentInterviewReportState(
 
 type ieltsSpeakingReportReaderStub struct {
 	result            evaluation.IELTSSpeakingReportReadState
-	page              evaluation.IELTSSpeakingReportIndexPage
 	err               error
 	ownerUserID       string
 	practiceSessionID string
-	boundary          *evaluation.IELTSSpeakingReportIndexBoundary
-	limit             int
 }
 
 func (stub *ieltsSpeakingReportReaderStub) GetCurrentIELTSSpeakingReportState(
@@ -857,18 +829,6 @@ func (stub *ieltsSpeakingReportReaderStub) GetCurrentIELTSSpeakingReportState(
 	stub.ownerUserID = ownerUserID
 	stub.practiceSessionID = practiceSessionID
 	return stub.result, stub.err
-}
-
-func (stub *ieltsSpeakingReportReaderStub) ListCurrentIELTSSpeakingReportIndex(
-	_ context.Context,
-	ownerUserID string,
-	boundary *evaluation.IELTSSpeakingReportIndexBoundary,
-	limit int,
-) (evaluation.IELTSSpeakingReportIndexPage, error) {
-	stub.ownerUserID = ownerUserID
-	stub.boundary = boundary
-	stub.limit = limit
-	return stub.page, stub.err
 }
 
 var _ evaluationtransport.Application = (*evaluationHTTPApplication)(nil)

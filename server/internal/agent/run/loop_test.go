@@ -97,7 +97,7 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 	toolMessage := second.Messages[len(second.Messages)-1]
 	if toolMessage.Role != ai.TextRoleTool ||
 		toolMessage.ToolCallID != "call-review-1" ||
-		!strings.Contains(toolMessage.Content, `"reviews"`) {
+		!strings.Contains(toolMessage.Content, `"reports"`) {
 		t.Fatalf("tool message = %#v", toolMessage)
 	}
 }
@@ -292,7 +292,7 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 		message := messages[index+3]
 		if message.Role != ai.TextRoleTool ||
 			message.ToolCallID != callID ||
-			!strings.Contains(message.Content, `"reviews"`) {
+			!strings.Contains(message.Content, `"reports"`) {
 			t.Fatalf("tool message %d = %#v", index, message)
 		}
 	}

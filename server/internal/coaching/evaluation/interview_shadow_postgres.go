@@ -522,6 +522,10 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 	if err != nil {
 		return ErrInvalidRequest
 	}
+	report, err := ProjectInterviewFormalReport(claim.Snapshot, result)
+	if err != nil {
+		return err
+	}
 	var providerRequestID any
 	if result.Provider != nil {
 		providerRequestID = result.Provider.RequestID
@@ -532,6 +536,7 @@ func (r *PostgresRepository) CompleteInterviewShadow(
 		durableClaimFromInterview(claim),
 		payload,
 		providerRequestID,
+		report,
 	)
 }
 
@@ -541,9 +546,11 @@ func (r *PostgresRepository) completeDurableSceneJob(
 	claim durableSceneJobClaim,
 	payload []byte,
 	providerRequestID any,
+	report FormalReport,
 ) error {
 	if r == nil || r.pool == nil || ctx == nil ||
-		!claim.valid(spec) || len(payload) == 0 {
+		!claim.valid(spec) || len(payload) == 0 || !report.Valid() ||
+		report.SceneType != spec.sceneType {
 		return ErrInvalidRequest
 	}
 	tx, err := r.pool.Begin(ctx)
@@ -688,6 +695,14 @@ func (r *PostgresRepository) completeDurableSceneJob(
 		if !same {
 			return ErrInterviewShadowConfigurationConflict
 		}
+		if err := persistFormalReportAndLearningProfile(
+			ctx,
+			tx,
+			claim,
+			report,
+		); err != nil {
+			return err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf(
 				"commit durable Scene job completion replay: %w",
@@ -796,6 +811,14 @@ func (r *PostgresRepository) completeDurableSceneJob(
 	}
 	if stateUpdate.RowsAffected() != 1 {
 		return ErrInterviewShadowLeaseLost
+	}
+	if err := persistFormalReportAndLearningProfile(
+		ctx,
+		tx,
+		claim,
+		report,
+	); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit durable Scene job completion: %w", err)

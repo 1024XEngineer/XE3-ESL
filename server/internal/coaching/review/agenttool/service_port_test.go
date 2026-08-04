@@ -2,7 +2,6 @@ package agenttool
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -11,238 +10,147 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-const (
-	servicePortUserID  = "10000000-0000-4000-8000-000000000001"
-	servicePortOtherID = "10000000-0000-4000-8000-000000000002"
-	servicePortReview  = "20000000-0000-4000-8000-000000000001"
-)
-
-type historyRepositoryStub struct {
-	item        domainreview.FormalReview
-	listItems   []domainreview.FormalReview
-	listQuery   domainreview.HistoryQuery
-	listActor   domainreview.Actor
-	searchItems []domainreview.FormalReview
-	searchQuery domainreview.HistorySearchQuery
-	searchActor domainreview.Actor
-	getActor    domainreview.Actor
-	getID       string
-	err         error
+func TestServicePortListsCanonicalEvaluationReports(t *testing.T) {
+	t.Parallel()
+	report := validAgentToolReport()
+	repository := &reviewHistoryRepositoryStub{reports: []domainreview.Report{report}}
+	port, err := NewServicePort(domainreview.NewHistoryService(repository))
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := port.SearchReviews(
+		context.Background(),
+		validReviewCallContext(),
+		ReviewSearchInput{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.listQuery.Limit != defaultReviewSearchLimit ||
+		len(items) != 1 || items[0].ID != report.ID ||
+		items[0].SourceRefs[0].Type != "evaluation_report" {
+		t.Fatalf("query=%#v items=%#v", repository.listQuery, items)
+	}
+	if items[0].Summary != report.Summary ||
+		items[0].CompletedAt != report.CreatedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("item = %#v", items[0])
+	}
 }
 
-func (stub *historyRepositoryStub) Get(
-	ctx context.Context,
-	actor domainreview.Actor,
-	reviewID string,
-) (domainreview.FormalReview, error) {
-	stub.getActor = actor
-	stub.getID = reviewID
-	if stub.err != nil {
-		return domainreview.FormalReview{}, stub.err
+func TestServicePortMapsReportDetailWithoutRawEvidencePayload(t *testing.T) {
+	t.Parallel()
+	report := validAgentToolReport()
+	repository := &reviewHistoryRepositoryStub{report: report}
+	port, err := NewServicePort(domainreview.NewHistoryService(repository))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if actor.UserID != stub.item.OwnerUserID || reviewID != stub.item.ID {
-		return domainreview.FormalReview{}, domainreview.ErrReviewNotFound
+	detail, err := port.GetReview(
+		context.Background(),
+		validReviewCallContext(),
+		ReviewGetInput{ReportID: report.ID},
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return stub.item, nil
+	if detail.ID != report.ID || len(detail.Dimensions) != 1 ||
+		len(detail.Dimensions[0].Improvements) != 1 ||
+		detail.Dimensions[0].Improvements[0].OriginalExcerpts[0] !=
+			"I need room" || detail.SourceRefs[0].Type != "evaluation_report" {
+		t.Fatalf("detail = %#v", detail)
+	}
 }
 
-func (stub *historyRepositoryStub) ListCompletedHistory(
+func validAgentToolReport() domainreview.Report {
+	score := 72.0
+	return domainreview.Report{
+		ID:                   "10000000-0000-4000-8000-000000000001",
+		EvaluationID:         "20000000-0000-4000-8000-000000000001",
+		EvaluationRevisionID: "30000000-0000-4000-8000-000000000001",
+		OwnerUserID:          "40000000-0000-4000-8000-000000000001",
+		PracticeSessionID:    "practice-session-1",
+		Revision:             1,
+		SchemaVersion:        "evaluation-report/v1",
+		SceneType:            "OVERSEAS_DAILY_LIFE",
+		SceneModel:           "DAILY_BASIC_DIALOGUE",
+		ScoreabilityStatus:   "PROVISIONAL",
+		Summary:              "本次练习已形成场景沟通评估。",
+		Dimensions: []domainreview.ReportDimension{{
+			Key:          "TASK_ACHIEVEMENT",
+			Score:        &score,
+			Scale:        "PERCENTAGE_100",
+			Coverage:     1,
+			Confidence:   0.6,
+			ReasonCodes:  []string{"ASR_CONFIDENCE_UNAVAILABLE"},
+			EvidenceRefs: []string{"evidence-1"},
+			Strengths:    []domainreview.ReportFinding{},
+			Improvements: []domainreview.ReportFinding{{
+				ID:         "finding-improvement",
+				Message:    "Make the intended outcome clearer.",
+				Suggestion: "State the request first.",
+				Evidence: []domainreview.ReportEvidence{{
+					EvidenceRefID:   "evidence-1",
+					TurnID:          "turn-1",
+					StartUTF8Byte:   0,
+					EndUTF8Byte:     11,
+					OriginalExcerpt: "I need room",
+				}},
+			}},
+			Examples: []domainreview.ReportFinding{},
+		}},
+		PriorityActions: []domainreview.ReportPriorityAction{{
+			DimensionKey: "TASK_ACHIEVEMENT",
+			FindingID:    "finding-improvement",
+		}},
+		DetailSchema: "general-scene-evaluation/v1",
+		Detail:       []byte(`{"schema_version":"general-scene-evaluation/v1"}`),
+		CreatedAt: time.Date(
+			2026,
+			time.August,
+			4,
+			8,
+			0,
+			0,
+			0,
+			time.UTC,
+		),
+	}
+}
+
+func validReviewCallContext() tool.CallContext {
+	return tool.CallContext{Actor: requestcontext.Actor{
+		UserID:    "40000000-0000-4000-8000-000000000001",
+		SessionID: "session-1",
+	}}
+}
+
+type reviewHistoryRepositoryStub struct {
+	report    domainreview.Report
+	reports   []domainreview.Report
+	listQuery domainreview.HistoryQuery
+}
+
+func (repository *reviewHistoryRepositoryStub) GetReport(
+	context.Context,
+	domainreview.Actor,
+	string,
+) (domainreview.Report, error) {
+	return repository.report, nil
+}
+
+func (repository *reviewHistoryRepositoryStub) ListReports(
 	_ context.Context,
-	actor domainreview.Actor,
+	_ domainreview.Actor,
 	query domainreview.HistoryQuery,
 ) (domainreview.HistoryPage, error) {
-	stub.listActor = actor
-	stub.listQuery = query
-	if stub.err != nil {
-		return domainreview.HistoryPage{}, stub.err
-	}
-	return domainreview.HistoryPage{
-		Items: append([]domainreview.FormalReview(nil), stub.listItems...),
-	}, nil
+	repository.listQuery = query
+	return domainreview.HistoryPage{Items: repository.reports}, nil
 }
 
-func (stub *historyRepositoryStub) SearchCompletedHistory(
-	ctx context.Context,
-	actor domainreview.Actor,
-	query domainreview.HistorySearchQuery,
-) ([]domainreview.FormalReview, error) {
-	stub.searchActor = actor
-	stub.searchQuery = query
-	if stub.err != nil {
-		return nil, stub.err
-	}
-	return append([]domainreview.FormalReview(nil), stub.searchItems...), nil
-}
-
-func TestServicePortSearchesCompletedFormalReviews(t *testing.T) {
-	item := completedFormalReview()
-	repository := &historyRepositoryStub{
-		item:        item,
-		searchItems: []domainreview.FormalReview{item},
-	}
-	port, err := NewServicePort(domainreview.NewHistoryService(repository))
-	if err != nil {
-		t.Fatalf("NewServicePort() error = %v", err)
-	}
-
-	result, err := port.SearchReviews(
-		context.Background(),
-		servicePortCallContext(servicePortUserID),
-		ReviewSearchInput{Query: "metrics"},
-	)
-	if err != nil {
-		t.Fatalf("SearchReviews() error = %v", err)
-	}
-	if repository.searchActor.UserID != servicePortUserID ||
-		repository.searchQuery.Limit != defaultReviewSearchLimit ||
-		repository.searchQuery.Query != "metrics" {
-		t.Fatalf(
-			"search actor/query = %+v / %+v",
-			repository.searchActor,
-			repository.searchQuery,
-		)
-	}
-	if len(result) != 1 ||
-		result[0].ID != item.ID ||
-		result[0].Summary != item.Result.Summary ||
-		result[0].SceneID !=
-			item.EvaluationContext.SceneID ||
-		len(result[0].SourceRefs) != 1 ||
-		result[0].SourceRefs[0].Type != "formal_review" {
-		t.Fatalf("SearchReviews() = %+v", result)
-	}
-}
-
-func TestServicePortReturnsLatestCompletedReviewWithoutQuery(t *testing.T) {
-	item := completedFormalReview()
-	repository := &historyRepositoryStub{listItems: []domainreview.FormalReview{item}}
-	port, err := NewServicePort(domainreview.NewHistoryService(repository))
-	if err != nil {
-		t.Fatalf("NewServicePort() error = %v", err)
-	}
-
-	result, err := port.SearchReviews(
-		context.Background(),
-		servicePortCallContext(servicePortUserID),
-		ReviewSearchInput{Limit: 1},
-	)
-	if err != nil {
-		t.Fatalf("SearchReviews() error = %v", err)
-	}
-	if repository.listActor.UserID != servicePortUserID ||
-		repository.listQuery.Limit != 1 || len(result) != 1 ||
-		result[0].ID != item.ID {
-		t.Fatalf(
-			"latest actor/query/result = %+v / %+v / %+v",
-			repository.listActor,
-			repository.listQuery,
-			result,
-		)
-	}
-}
-
-func TestServicePortGetsStructuredFormalReview(t *testing.T) {
-	item := completedFormalReview()
-	repository := &historyRepositoryStub{item: item}
-	port, err := NewServicePort(domainreview.NewHistoryService(repository))
-	if err != nil {
-		t.Fatalf("NewServicePort() error = %v", err)
-	}
-
-	result, err := port.GetReview(
-		context.Background(),
-		servicePortCallContext(servicePortUserID),
-		ReviewGetInput{ReviewID: item.ID},
-	)
-	if err != nil {
-		t.Fatalf("GetReview() error = %v", err)
-	}
-	if repository.getActor.UserID != servicePortUserID ||
-		repository.getID != item.ID {
-		t.Fatalf("get actor/id = %+v / %q", repository.getActor, repository.getID)
-	}
-	if result.SummaryEligibility != string(domainreview.SummaryEligible) ||
-		result.OverallScore == nil ||
-		*result.OverallScore != 88 ||
-		len(result.Conclusions) != 1 ||
-		len(result.FeedbackItems) != 1 ||
-		result.CompletedAt == "" {
-		t.Fatalf("GetReview() = %+v", result)
-	}
-}
-
-func TestServicePortDoesNotExposeForeignOrIncompleteReview(t *testing.T) {
-	item := completedFormalReview()
-	repository := &historyRepositoryStub{item: item}
-	port, err := NewServicePort(domainreview.NewHistoryService(repository))
-	if err != nil {
-		t.Fatalf("NewServicePort() error = %v", err)
-	}
-
-	_, err = port.GetReview(
-		context.Background(),
-		servicePortCallContext(servicePortOtherID),
-		ReviewGetInput{ReviewID: item.ID},
-	)
-	if !errors.Is(err, tool.ErrExecutionRejected) {
-		t.Fatalf("foreign GetReview() error = %v", err)
-	}
-
-	incomplete := item
-	incomplete.Status = domainreview.FormalReviewPending
-	incomplete.Result = nil
-	repository.item = incomplete
-	_, err = port.GetReview(
-		context.Background(),
-		servicePortCallContext(servicePortUserID),
-		ReviewGetInput{ReviewID: item.ID},
-	)
-	if !errors.Is(err, tool.ErrExecutionRejected) {
-		t.Fatalf("incomplete GetReview() error = %v", err)
-	}
-}
-
-func completedFormalReview() domainreview.FormalReview {
-	completedAt := time.Date(2026, 7, 29, 8, 0, 0, 0, time.UTC)
-	return domainreview.FormalReview{
-		ID:                servicePortReview,
-		OwnerUserID:       servicePortUserID,
-		PracticeSessionID: "practice-session-1",
-		Status:            domainreview.FormalReviewCompleted,
-		EvaluationContext: domainreview.EvaluationContext{
-			SceneID: "scn_programmer_interview",
-		},
-		Result: &domainreview.ReviewResult{
-			SummaryEligibility:  domainreview.SummaryEligible,
-			OverallScore:        88,
-			OverallScorePresent: true,
-			Summary:             "Clear structure with measurable impact.",
-			Conclusions: []domainreview.ReviewConclusion{{
-				Key:      "clarity",
-				Category: "clarity",
-				Score:    88,
-				Message:  "The answer was clear.",
-			}},
-			FeedbackItems: []domainreview.ReviewFeedbackItem{{
-				Key:     "metrics",
-				Kind:    domainreview.FeedbackImprovement,
-				Message: "Add one concrete metric.",
-			}},
-			RepracticeSuggestionRefs: []string{"practice-session-2"},
-		},
-		CompletedAt: &completedAt,
-	}
-}
-
-func servicePortCallContext(userID string) tool.CallContext {
-	return tool.CallContext{
-		Actor: requestcontext.Actor{
-			UserID:    userID,
-			SessionID: "identity-session-1",
-		},
-		ThreadID:   "thread-1",
-		RunID:      "run-1",
-		ToolCallID: "tool-call-1",
-		RequestID:  "request-1",
-	}
+func (repository *reviewHistoryRepositoryStub) SearchReports(
+	context.Context,
+	domainreview.Actor,
+	domainreview.HistorySearchQuery,
+) ([]domainreview.Report, error) {
+	return repository.reports, nil
 }

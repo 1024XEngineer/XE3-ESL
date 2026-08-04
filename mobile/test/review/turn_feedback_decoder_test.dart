@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/features/coaching/review/turn_feedback.dart';
-import 'package:speakup/features/coaching/review/turn_feedback_decoder.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_decoder.dart';
 
 import 'turn_feedback_fixture.dart';
 

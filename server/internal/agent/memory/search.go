@@ -247,8 +247,6 @@ func memoryTypeWeight(memoryType Type) float64 {
 		return 0.10
 	case TypeIdentity, TypeProfile:
 		return 0.08
-	case TypeStrength, TypeWeakness, TypeProgress:
-		return 0.07
 	case TypeInterest:
 		return 0.05
 	case TypeTopic:

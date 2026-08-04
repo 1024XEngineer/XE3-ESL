@@ -15,11 +15,11 @@ import (
 	inputvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/qianwen"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
@@ -57,7 +57,7 @@ type VoiceConfiguration struct {
 	ASRLease                  time.Duration
 	AudioReadTimeout          time.Duration
 	ReviewHistoryCursorKey    []byte
-	SpeechFeedbackCoordinator *review.SpeechFeedbackCoordinator
+	SpeechFeedbackCoordinator *evaluation.SpeechFeedbackCoordinator
 }
 
 type AgentImageConfiguration struct {
@@ -1387,7 +1387,7 @@ func (adapter *voiceQuestionAdapter) SynthesizeQuestion(
 type voiceCheckpointAdapter struct {
 	repository  practiceinput.PersistenceStore
 	audioAssets *practiceinput.AudioAssetService
-	feedback    review.SpeechFeedbackReader
+	feedback    evaluation.SpeechFeedbackReader
 }
 
 func (adapter *voiceCheckpointAdapter) ListTurnHistory(
@@ -1542,7 +1542,7 @@ func (adapter *voiceCheckpointAdapter) withSpeechFeedback(
 }
 
 type voiceSpeechFeedbackAdapter struct {
-	coordinator *review.SpeechFeedbackCoordinator
+	coordinator *evaluation.SpeechFeedbackCoordinator
 }
 
 func (adapter *voiceSpeechFeedbackAdapter) EnsureMessage(
@@ -1561,7 +1561,7 @@ func (adapter *voiceSpeechFeedbackAdapter) EnsureMessage(
 		threadID,
 		messageID,
 	)
-	if errors.Is(err, review.ErrSpeechFeedbackNotApplicable) {
+	if errors.Is(err, evaluation.ErrSpeechFeedbackNotApplicable) {
 		return inputvoice.FeedbackReference{}, nil
 	}
 	if err != nil {
@@ -1588,7 +1588,7 @@ func (adapter *voiceSpeechFeedbackAdapter) EnsureConversationTurn(
 		sessionID,
 		turnID,
 	)
-	if errors.Is(err, review.ErrSpeechFeedbackNotApplicable) {
+	if errors.Is(err, evaluation.ErrSpeechFeedbackNotApplicable) {
 		return practicevoice.TurnFeedbackReference{}, nil
 	}
 	if err != nil {

@@ -12,25 +12,64 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func (r *PostgresRepository) ReserveRetryRequest(
+func (r *PostgresRepository) FindRetryRequestByKey(
 	ctx context.Context,
 	ownerUserID string,
-	feedbackItemID string,
 	idempotencyKey string,
-) (SpeechFeedbackRetryRequest, bool, error) {
+) (RepracticeRequest, bool, error) {
 	if r == nil || r.pool == nil || ctx == nil ||
-		!validUUID(ownerUserID) || !validUUID(feedbackItemID) ||
+		!validUUID(ownerUserID) ||
 		!validRetryRequestIdempotencyKey(idempotencyKey) {
-		return SpeechFeedbackRetryRequest{}, false, ErrRetryRequestInvalid
+		return RepracticeRequest{}, false, ErrRetryRequestInvalid
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, false,
-			fmt.Errorf("begin SpeechFeedbackRetryRequest reservation: %w", err)
+		return RepracticeRequest{}, false,
+			fmt.Errorf("begin RepracticeRequest replay read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockActiveIdentityUser(ctx, tx, ownerUserID, 0); err != nil {
-		return SpeechFeedbackRetryRequest{}, false, mapRetryRequestAccountError(err)
+		return RepracticeRequest{}, false, mapRetryRequestAccountError(err)
+	}
+	request, _, err := getRetryRequestByKey(
+		ctx,
+		tx,
+		ownerUserID,
+		idempotencyKey,
+		"",
+	)
+	if errors.Is(err, ErrRetryRequestNotFound) {
+		return RepracticeRequest{}, false, nil
+	}
+	if err != nil {
+		return RepracticeRequest{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return RepracticeRequest{}, false,
+			fmt.Errorf("commit RepracticeRequest replay read: %w", err)
+	}
+	return request, true, nil
+}
+
+func (r *PostgresRepository) ReserveRetryRequest(
+	ctx context.Context,
+	ownerUserID string,
+	source RepracticeSource,
+	idempotencyKey string,
+) (RepracticeRequest, bool, error) {
+	if r == nil || r.pool == nil || ctx == nil ||
+		!validUUID(ownerUserID) || !source.valid() ||
+		!validRetryRequestIdempotencyKey(idempotencyKey) {
+		return RepracticeRequest{}, false, ErrRetryRequestInvalid
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return RepracticeRequest{}, false,
+			fmt.Errorf("begin RepracticeRequest reservation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockActiveIdentityUser(ctx, tx, ownerUserID, 0); err != nil {
+		return RepracticeRequest{}, false, mapRetryRequestAccountError(err)
 	}
 	if err := lockRetryRequestKey(
 		ctx,
@@ -38,10 +77,10 @@ func (r *PostgresRepository) ReserveRetryRequest(
 		ownerUserID,
 		idempotencyKey,
 	); err != nil {
-		return SpeechFeedbackRetryRequest{}, false, err
+		return RepracticeRequest{}, false, err
 	}
 
-	fingerprint := retryRequestFingerprint(feedbackItemID)
+	fingerprint := retryRequestFingerprint(source.FeedbackItemID)
 	existing, storedFingerprint, err := getRetryRequestByKey(
 		ctx,
 		tx,
@@ -50,73 +89,25 @@ func (r *PostgresRepository) ReserveRetryRequest(
 		" FOR UPDATE",
 	)
 	if err == nil {
-		if existing.FeedbackItemID != feedbackItemID ||
+		if existing.FeedbackItemID != source.FeedbackItemID ||
 			!bytes.Equal(storedFingerprint, fingerprint[:]) {
-			return SpeechFeedbackRetryRequest{}, false, ErrRetryRequestConflict
+			return RepracticeRequest{}, false, ErrRetryRequestConflict
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return SpeechFeedbackRetryRequest{}, false,
-				fmt.Errorf("commit replayed SpeechFeedbackRetryRequest: %w", err)
+			return RepracticeRequest{}, false,
+				fmt.Errorf("commit replayed RepracticeRequest: %w", err)
 		}
 		return existing, false, nil
 	}
 	if !errors.Is(err, ErrRetryRequestNotFound) {
-		return SpeechFeedbackRetryRequest{}, false, err
+		return RepracticeRequest{}, false, err
 	}
 
-	var (
-		speechFeedbackID   string
-		practiceSessionID  string
-		originalTurnID     string
-		questionID         string
-		deletionGeneration int64
-	)
-	err = tx.QueryRow(ctx, `
-		SELECT
-			feedback.id::text,
-			feedback.practice_session_id,
-			feedback.turn_id,
-			turn.question_id,
-			feedback.deletion_generation
-		FROM review_speech_feedback_items AS item
-		JOIN review_speech_feedbacks AS feedback
-		  ON feedback.id = item.speech_feedback_id
-		 AND feedback.owner_user_id = item.owner_user_id
-		JOIN practice_turns AS turn
-		  ON turn.owner_user_id = feedback.owner_user_id
-		 AND turn.turn_id = feedback.turn_id
-		 AND turn.practice_session_id =
-		     feedback.practice_session_id
-		WHERE item.owner_user_id = $1
-		  AND item.id = $2
-		  AND item.repractice_mode = 'SAME_QUESTION'
-		  AND item.turn_id = feedback.turn_id
-		  AND feedback.source_kind = 'CONVERSATION_TURN'
-		  AND feedback.feedback_status = 'READY'
-		  AND feedback.scoreability_status = 'PROVISIONAL'
-		  AND feedback.gate_status = 'FEEDBACK_ONLY'
-		  AND turn.turn_kind = 'EFFECTIVE'
-		  AND turn.counts_toward_effective_turn_limit
-		FOR SHARE OF item, feedback, turn
-	`, ownerUserID, feedbackItemID).Scan(
-		&speechFeedbackID,
-		&practiceSessionID,
-		&originalTurnID,
-		&questionID,
-		&deletionGeneration,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SpeechFeedbackRetryRequest{}, false, ErrRetryRequestNotFound
-	}
-	if err != nil {
-		return SpeechFeedbackRetryRequest{}, false,
-			fmt.Errorf("read eligible SpeechFeedback retry item: %w", err)
-	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO review_speech_feedback_retry_requests (
+		INSERT INTO review_repractice_requests (
 			owner_user_id,
-			feedback_item_id,
-			speech_feedback_id,
+			source_feedback_item_id,
+			source_feedback_id,
 			idempotency_key,
 			request_fingerprint,
 			deletion_generation,
@@ -126,10 +117,11 @@ func (r *PostgresRepository) ReserveRetryRequest(
 			retry_status
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING')
-	`, ownerUserID, feedbackItemID, speechFeedbackID,
-		idempotencyKey, fingerprint[:], deletionGeneration,
-		practiceSessionID, originalTurnID, questionID); err != nil {
-		return SpeechFeedbackRetryRequest{}, false, classifyRetryRequestWrite(err)
+	`, ownerUserID, source.FeedbackItemID, source.SourceFeedbackID,
+		idempotencyKey, fingerprint[:], source.SourceGeneration,
+		source.PracticeSessionID, source.OriginalTurnID,
+		source.QuestionID); err != nil {
+		return RepracticeRequest{}, false, classifyRetryRequestWrite(err)
 	}
 	request, _, err := getRetryRequestByKey(
 		ctx,
@@ -139,11 +131,11 @@ func (r *PostgresRepository) ReserveRetryRequest(
 		"",
 	)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, false, err
+		return RepracticeRequest{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return SpeechFeedbackRetryRequest{}, false,
-			fmt.Errorf("commit SpeechFeedbackRetryRequest reservation: %w", err)
+		return RepracticeRequest{}, false,
+			fmt.Errorf("commit RepracticeRequest reservation: %w", err)
 	}
 	return request, true, nil
 }
@@ -152,18 +144,18 @@ func (r *PostgresRepository) GetRetryRequest(
 	ctx context.Context,
 	ownerUserID string,
 	retryRequestID string,
-) (SpeechFeedbackRetryRequest, error) {
+) (RepracticeRequest, error) {
 	if r == nil || r.pool == nil || ctx == nil ||
 		!validUUID(ownerUserID) || !validUUID(retryRequestID) {
-		return SpeechFeedbackRetryRequest{}, ErrRetryRequestInvalid
+		return RepracticeRequest{}, ErrRetryRequestInvalid
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, fmt.Errorf("begin SpeechFeedbackRetryRequest read: %w", err)
+		return RepracticeRequest{}, fmt.Errorf("begin RepracticeRequest read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockActiveIdentityUser(ctx, tx, ownerUserID, 0); err != nil {
-		return SpeechFeedbackRetryRequest{}, mapRetryRequestAccountError(err)
+		return RepracticeRequest{}, mapRetryRequestAccountError(err)
 	}
 	request, _, err := getRetryRequestByID(
 		ctx,
@@ -173,10 +165,10 @@ func (r *PostgresRepository) GetRetryRequest(
 		"",
 	)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, err
+		return RepracticeRequest{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return SpeechFeedbackRetryRequest{}, fmt.Errorf("commit SpeechFeedbackRetryRequest read: %w", err)
+		return RepracticeRequest{}, fmt.Errorf("commit RepracticeRequest read: %w", err)
 	}
 	return request, nil
 }
@@ -186,20 +178,20 @@ func (r *PostgresRepository) CompleteRetryRequest(
 	ownerUserID string,
 	retryRequestID string,
 	newTurnID string,
-) (SpeechFeedbackRetryRequest, error) {
+) (RepracticeRequest, error) {
 	if r == nil || r.pool == nil || ctx == nil ||
 		!validUUID(ownerUserID) || !validUUID(retryRequestID) ||
 		!validRetryRequestResourceID(newTurnID) {
-		return SpeechFeedbackRetryRequest{}, ErrRetryRequestInvalid
+		return RepracticeRequest{}, ErrRetryRequestInvalid
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{},
-			fmt.Errorf("begin SpeechFeedbackRetryRequest completion: %w", err)
+		return RepracticeRequest{},
+			fmt.Errorf("begin RepracticeRequest completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockActiveIdentityUser(ctx, tx, ownerUserID, 0); err != nil {
-		return SpeechFeedbackRetryRequest{}, mapRetryRequestAccountError(err)
+		return RepracticeRequest{}, mapRetryRequestAccountError(err)
 	}
 	request, _, err := getRetryRequestByID(
 		ctx,
@@ -209,18 +201,18 @@ func (r *PostgresRepository) CompleteRetryRequest(
 		" FOR UPDATE",
 	)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, err
+		return RepracticeRequest{}, err
 	}
 	switch request.RetryStatus {
 	case RetryRequestTurnCreated:
 		if request.NewTurnID != newTurnID {
-			return SpeechFeedbackRetryRequest{}, ErrRetryRequestConflict
+			return RepracticeRequest{}, ErrRetryRequestConflict
 		}
 	case RetryRequestFailed:
-		return SpeechFeedbackRetryRequest{}, ErrRetryRequestConflict
+		return RepracticeRequest{}, ErrRetryRequestConflict
 	case RetryRequestPending:
 		tag, updateErr := tx.Exec(ctx, `
-			UPDATE review_speech_feedback_retry_requests
+			UPDATE review_repractice_requests
 			SET retry_status = 'TURN_CREATED',
 			    new_turn_id = $3,
 			    updated_at = transaction_timestamp(),
@@ -230,14 +222,14 @@ func (r *PostgresRepository) CompleteRetryRequest(
 			  AND retry_status = 'PENDING'
 		`, ownerUserID, retryRequestID, newTurnID)
 		if updateErr != nil {
-			return SpeechFeedbackRetryRequest{},
+			return RepracticeRequest{},
 				classifyRetryRequestWrite(updateErr)
 		}
 		if tag.RowsAffected() != 1 {
-			return SpeechFeedbackRetryRequest{}, ErrRetryRequestConflict
+			return RepracticeRequest{}, ErrRetryRequestConflict
 		}
 	default:
-		return SpeechFeedbackRetryRequest{}, ErrRetryRequestConflict
+		return RepracticeRequest{}, ErrRetryRequestConflict
 	}
 	completed, _, err := getRetryRequestByID(
 		ctx,
@@ -247,11 +239,11 @@ func (r *PostgresRepository) CompleteRetryRequest(
 		"",
 	)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, err
+		return RepracticeRequest{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return SpeechFeedbackRetryRequest{},
-			fmt.Errorf("commit SpeechFeedbackRetryRequest completion: %w", err)
+		return RepracticeRequest{},
+			fmt.Errorf("commit RepracticeRequest completion: %w", err)
 	}
 	return completed, nil
 }
@@ -261,19 +253,19 @@ func (r *PostgresRepository) FailRetryRequest(
 	ownerUserID string,
 	retryRequestID string,
 	failure RetryRequestStableFailure,
-) (SpeechFeedbackRetryRequest, error) {
+) (RepracticeRequest, error) {
 	if r == nil || r.pool == nil || ctx == nil ||
 		!validUUID(ownerUserID) || !validUUID(retryRequestID) ||
 		!failure.valid() {
-		return SpeechFeedbackRetryRequest{}, ErrRetryRequestInvalid
+		return RepracticeRequest{}, ErrRetryRequestInvalid
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, fmt.Errorf("begin SpeechFeedbackRetryRequest failure: %w", err)
+		return RepracticeRequest{}, fmt.Errorf("begin RepracticeRequest failure: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockActiveIdentityUser(ctx, tx, ownerUserID, 0); err != nil {
-		return SpeechFeedbackRetryRequest{}, mapRetryRequestAccountError(err)
+		return RepracticeRequest{}, mapRetryRequestAccountError(err)
 	}
 	request, _, err := getRetryRequestByID(
 		ctx,
@@ -283,19 +275,19 @@ func (r *PostgresRepository) FailRetryRequest(
 		" FOR UPDATE",
 	)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, err
+		return RepracticeRequest{}, err
 	}
 	switch request.RetryStatus {
 	case RetryRequestFailed:
 		if request.StableFailure == nil ||
 			*request.StableFailure != failure {
-			return SpeechFeedbackRetryRequest{}, ErrRetryRequestConflict
+			return RepracticeRequest{}, ErrRetryRequestConflict
 		}
 	case RetryRequestTurnCreated:
-		return SpeechFeedbackRetryRequest{}, ErrRetryRequestConflict
+		return RepracticeRequest{}, ErrRetryRequestConflict
 	case RetryRequestPending:
 		tag, updateErr := tx.Exec(ctx, `
-			UPDATE review_speech_feedback_retry_requests
+			UPDATE review_repractice_requests
 			SET retry_status = 'FAILED',
 			    stable_failure_reason = $3,
 			    stable_failure_retryable = $4,
@@ -307,14 +299,14 @@ func (r *PostgresRepository) FailRetryRequest(
 		`, ownerUserID, retryRequestID, failure.ReasonCode,
 			failure.Retryable)
 		if updateErr != nil {
-			return SpeechFeedbackRetryRequest{},
+			return RepracticeRequest{},
 				classifyRetryRequestWrite(updateErr)
 		}
 		if tag.RowsAffected() != 1 {
-			return SpeechFeedbackRetryRequest{}, ErrRetryRequestConflict
+			return RepracticeRequest{}, ErrRetryRequestConflict
 		}
 	default:
-		return SpeechFeedbackRetryRequest{}, ErrRetryRequestConflict
+		return RepracticeRequest{}, ErrRetryRequestConflict
 	}
 	failed, _, err := getRetryRequestByID(
 		ctx,
@@ -324,10 +316,10 @@ func (r *PostgresRepository) FailRetryRequest(
 		"",
 	)
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, err
+		return RepracticeRequest{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return SpeechFeedbackRetryRequest{}, fmt.Errorf("commit SpeechFeedbackRetryRequest failure: %w", err)
+		return RepracticeRequest{}, fmt.Errorf("commit RepracticeRequest failure: %w", err)
 	}
 	return failed, nil
 }
@@ -335,7 +327,7 @@ func (r *PostgresRepository) FailRetryRequest(
 const retryRequestSelect = `
 	SELECT
 		retry_request_id::text,
-		feedback_item_id::text,
+		source_feedback_item_id::text,
 		practice_session_id,
 		original_turn_id,
 		question_id,
@@ -347,7 +339,7 @@ const retryRequestSelect = `
 		updated_at,
 		completed_at,
 		request_fingerprint
-	FROM review_speech_feedback_retry_requests
+	FROM review_repractice_requests
 `
 
 func getRetryRequestByKey(
@@ -356,7 +348,7 @@ func getRetryRequestByKey(
 	ownerUserID string,
 	idempotencyKey string,
 	suffix string,
-) (SpeechFeedbackRetryRequest, []byte, error) {
+) (RepracticeRequest, []byte, error) {
 	return scanRetryRequest(database.QueryRow(ctx, retryRequestSelect+`
 		WHERE owner_user_id = $1
 		  AND idempotency_key = $2
@@ -369,7 +361,7 @@ func getRetryRequestByID(
 	ownerUserID string,
 	retryRequestID string,
 	suffix string,
-) (SpeechFeedbackRetryRequest, []byte, error) {
+) (RepracticeRequest, []byte, error) {
 	return scanRetryRequest(database.QueryRow(ctx, retryRequestSelect+`
 		WHERE owner_user_id = $1
 		  AND retry_request_id = $2
@@ -378,8 +370,8 @@ func getRetryRequestByID(
 
 func scanRetryRequest(
 	row rowScanner,
-) (SpeechFeedbackRetryRequest, []byte, error) {
-	var request SpeechFeedbackRetryRequest
+) (RepracticeRequest, []byte, error) {
+	var request RepracticeRequest
 	var (
 		failureCode      string
 		failureRetryable sql.NullBool
@@ -402,14 +394,14 @@ func scanRetryRequest(
 		&fingerprint,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return SpeechFeedbackRetryRequest{}, nil, ErrRetryRequestNotFound
+		return RepracticeRequest{}, nil, ErrRetryRequestNotFound
 	}
 	if err != nil {
-		return SpeechFeedbackRetryRequest{}, nil,
-			fmt.Errorf("scan SpeechFeedbackRetryRequest: %w", err)
+		return RepracticeRequest{}, nil,
+			fmt.Errorf("scan RepracticeRequest: %w", err)
 	}
 	if len(fingerprint) != sha256.Size {
-		return SpeechFeedbackRetryRequest{}, nil, ErrRetryRequestInvalid
+		return RepracticeRequest{}, nil, ErrRetryRequestInvalid
 	}
 	if failureCode != "" && failureRetryable.Valid {
 		request.StableFailure = &RetryRequestStableFailure{
@@ -429,7 +421,7 @@ func scanRetryRequest(
 		request.AnswerPath = RetryTurnAnswerPath(request.NewTurnID)
 	}
 	if !request.valid() {
-		return SpeechFeedbackRetryRequest{}, nil, ErrRetryRequestInvalid
+		return RepracticeRequest{}, nil, ErrRetryRequestInvalid
 	}
 	return request, fingerprint, nil
 }
@@ -446,7 +438,7 @@ func lockRetryRequestKey(
 		ownerUserID+"\x1fretry-request\x1f"+idempotencyKey,
 	)
 	if err != nil {
-		return fmt.Errorf("lock SpeechFeedbackRetryRequest idempotency key: %w", err)
+		return fmt.Errorf("lock RepracticeRequest idempotency key: %w", err)
 	}
 	return nil
 }
@@ -461,7 +453,7 @@ func classifyRetryRequestWrite(err error) error {
 			return ErrRetryRequestConflict
 		}
 	}
-	return fmt.Errorf("persist SpeechFeedbackRetryRequest: %w", err)
+	return fmt.Errorf("persist RepracticeRequest: %w", err)
 }
 
 func mapRetryRequestAccountError(err error) error {

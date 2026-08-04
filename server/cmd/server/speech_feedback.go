@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
 const (
@@ -19,7 +19,7 @@ type speechFeedbackProcessor interface {
 	ProcessPending(
 		context.Context,
 		int,
-	) (review.SpeechFeedbackSweepResult, error)
+	) (evaluation.SpeechFeedbackSweepResult, error)
 }
 
 type speechFeedbackWorker struct {
@@ -98,9 +98,9 @@ func speechFeedbackErrorKind(err error) string {
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "deadline_exceeded"
-	case errors.Is(err, review.ErrSpeechFeedbackClaimLost):
+	case errors.Is(err, evaluation.ErrSpeechFeedbackClaimLost):
 		return "lease_lost"
-	case errors.Is(err, review.ErrInvalidSpeechFeedback):
+	case errors.Is(err, evaluation.ErrInvalidSpeechFeedback):
 		return "invalid_state"
 	default:
 		return "repository"

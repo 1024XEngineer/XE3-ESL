@@ -524,7 +524,10 @@ func TestPostgresOutboxFailureRollsBackRevisionAndSupersede(t *testing.T) {
 }
 
 func TestEvaluationMigrationDownRemovesOwnedSchema(t *testing.T) {
-	pool := evaluationDatabase(t)
+	pool := evaluationDatabaseThrough(
+		t,
+		"000024_evaluation_ledger.up.sql",
+	)
 	down, err := migrations.Files.ReadFile(
 		"000024_evaluation_ledger.down.sql",
 	)
@@ -555,6 +558,13 @@ func TestEvaluationMigrationDownRemovesOwnedSchema(t *testing.T) {
 var evaluationSchemaSequence atomic.Uint64
 
 func evaluationDatabase(t *testing.T) *pgxpool.Pool {
+	return evaluationDatabaseThrough(t, "")
+}
+
+func evaluationDatabaseThrough(
+	t *testing.T,
+	lastMigration string,
+) *pgxpool.Pool {
 	t.Helper()
 	databaseURL := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if databaseURL == "" {
@@ -603,6 +613,9 @@ func evaluationDatabase(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("enumerate migrations: %v", err)
 	}
 	for _, migration := range upMigrations {
+		if lastMigration != "" && migration > lastMigration {
+			break
+		}
 		up, readErr := migrations.Files.ReadFile(migration)
 		if readErr != nil {
 			t.Fatalf("read %s: %v", migration, readErr)

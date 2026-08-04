@@ -6,9 +6,9 @@ import 'dart:typed_data';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
-import 'package:speakup/features/coaching/review/formal_review.dart';
-import 'package:speakup/features/coaching/review/formal_review_decoder.dart';
-import 'package:speakup/features/coaching/review/formal_review_presentation.dart';
+import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
+import 'package:speakup/features/coaching/evaluation/evaluation_report_decoder.dart';
+import 'package:speakup/features/coaching/review/evaluation_report_presentation.dart';
 import 'package:speakup/features/coaching/review/review_history_client.dart';
 
 final class WireReviewHistoryClient implements ReviewHistoryClient {
@@ -57,7 +57,7 @@ final class WireReviewHistoryClient implements ReviewHistoryClient {
     }
     final generation = _accountGeneration;
     final uri = _baseUri
-        .resolve('/v1/formal-reviews')
+        .resolve('/v1/evaluation-reports')
         .replace(
           queryParameters: <String, String>{
             'limit': '$limit',
@@ -199,28 +199,20 @@ ReviewHistoryPage _decodeHistoryPage(String body, {required int limit}) {
 }
 
 ReviewHistoryItem _decodeHistoryItem(Object? value) {
-  late final FormalReview formalReview;
+  late final EvaluationReport report;
   try {
-    formalReview = decodeFormalReview(value);
-  } on FormalReviewDecodeException {
-    throw const ReviewHistoryException(
-      kind: ReviewHistoryFailureKind.invalidResponse,
-    );
-  }
-  if (formalReview.status != FormalReviewStatus.completed ||
-      formalReview.result == null ||
-      formalReview.completedAt == null ||
-      !_validUuid(formalReview.id)) {
+    report = decodeEvaluationReport(value);
+  } on EvaluationReportDecodeException {
     throw const ReviewHistoryException(
       kind: ReviewHistoryFailureKind.invalidResponse,
     );
   }
   return ReviewHistoryItem(
-    review: presentFormalReview(formalReview),
-    formalReview: formalReview,
-    practiceSessionId: formalReview.practiceSessionId,
-    createdAt: formalReview.createdAt,
-    completedAt: formalReview.completedAt!,
+    review: presentEvaluationReport(report),
+    report: report,
+    practiceSessionId: report.practiceSessionId,
+    createdAt: report.createdAt,
+    completedAt: report.createdAt,
   );
 }
 
@@ -244,14 +236,10 @@ Map<String, Object?> _object(
   return value;
 }
 
-bool _validUuid(String value) => RegExp(
-  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
-).hasMatch(value);
-
 bool _validCursor(String value) =>
     value.isNotEmpty &&
     value.length <= 512 &&
-    RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
+    RegExp(r'^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$').hasMatch(value);
 
 bool _isBefore(ReviewHistoryItem item, ReviewHistoryItem boundary) =>
     item.createdAt.isBefore(boundary.createdAt) ||

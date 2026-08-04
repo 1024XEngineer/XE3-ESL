@@ -134,14 +134,14 @@ func BaselineCases() []RoutingCase {
 			Name: "expand_first_review_candidate",
 			Messages: []EvalMessage{
 				{Role: "user", Content: "看看我上次面试评价"},
-				{Role: "assistant", Content: "1. mock-review-001 PM interview answer review"},
+				{Role: "assistant", Content: "1. mock-report-001 PM interview answer report"},
 				{Role: "user", Content: "把第一条评价展开"},
 			},
 			ExpectedDecision:  DecisionToolCall,
 			ExpectedToolNames: []string{reviewtool.ReviewGetToolName},
 			ExpectedArgs: map[string]map[string]any{
 				reviewtool.ReviewGetToolName: {
-					"review_id": "mock-review-001",
+					"report_id": "mock-report-001",
 				},
 			},
 		},

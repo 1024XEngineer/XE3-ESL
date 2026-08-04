@@ -168,8 +168,18 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	reviewRepository := review.NewPostgresRepository(database)
-	reviewHistory := review.NewHistoryService(reviewRepository)
+	evaluationRepository := evaluation.NewPostgresRepository(database)
+	learningProfileReader, err := newAgentLearningProfileReader(
+		evaluationRepository,
+	)
+	if err != nil {
+		return nil, err
+	}
+	reviewReports, err := newEvaluationReportHistory(evaluationRepository)
+	if err != nil {
+		return nil, err
+	}
+	reviewHistory := review.NewHistoryService(reviewReports)
 	goalTools, err := goalagentcapability.NewServicePort(
 		goalService,
 		agentService,
@@ -182,7 +192,7 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	evaluationTools, err := evaluationagenttool.NewServicePort(
-		evaluation.NewPostgresRepository(database),
+		evaluationRepository,
 	)
 	if err != nil {
 		return nil, err
@@ -223,6 +233,7 @@ func buildIdentityAgentComposition(
 	contextAssembler, err := agentcontext.NewAssembler(
 		contextRepository,
 		goalService,
+		learningProfileReader,
 		stableProfileReader,
 		contextMemorySearcher,
 		contextOptions...,

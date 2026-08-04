@@ -25,7 +25,7 @@ import (
 const (
 	maxHistoryBody    = 768 * 1024
 	cursorVersion     = 1
-	cursorKind        = "formal_reviews"
+	cursorKind        = "evaluation_reports"
 	minCursorKeyBytes = 32
 )
 
@@ -34,7 +34,7 @@ type History interface {
 		context.Context,
 		review.Actor,
 		string,
-	) (review.FormalReview, error)
+	) (review.Report, error)
 	ListCompleted(
 		context.Context,
 		review.Actor,
@@ -67,8 +67,8 @@ func NewHandler(
 }
 
 func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
-	routes.GET("/v1/formal-reviews", handler.list)
-	routes.GET("/v1/formal-reviews/:review_id", handler.get)
+	routes.GET("/v1/evaluation-reports", handler.list)
+	routes.GET("/v1/evaluation-reports/:report_id", handler.get)
 }
 
 func (handler *Handler) get(c *gin.Context) {
@@ -78,7 +78,7 @@ func (handler *Handler) get(c *gin.Context) {
 		return
 	}
 	item, err := handler.history.Get(
-		c.Request.Context(), review.Actor{UserID: actor.UserID}, c.Param("review_id"),
+		c.Request.Context(), review.Actor{UserID: actor.UserID}, c.Param("report_id"),
 	)
 	if err != nil {
 		handler.write(c, mapError(err))
@@ -121,31 +121,24 @@ func (handler *Handler) list(c *gin.Context) {
 	handler.writeBoundedJSON(c, result)
 }
 
-func Response(item review.FormalReview) gin.H {
-	result := gin.H{
-		"review_id":              item.ID,
+func Response(item review.Report) gin.H {
+	return gin.H{
+		"report_id":              item.ID,
+		"evaluation_id":          item.EvaluationID,
+		"evaluation_revision_id": item.EvaluationRevisionID,
 		"practice_session_id":    item.PracticeSessionID,
-		"status":                 item.Status,
-		"implementation_version": item.ImplementationVersion,
-		"source_turn_id":         item.SourceTurnID,
-		"source_turn_version":    item.SourceTurnVersion,
+		"revision":               item.Revision,
+		"schema_version":         item.SchemaVersion,
+		"scene_type":             item.SceneType,
+		"scene_model":            item.SceneModel,
+		"scoreability_status":    item.ScoreabilityStatus,
+		"summary":                item.Summary,
+		"dimensions":             item.Dimensions,
+		"priority_actions":       item.PriorityActions,
+		"detail_schema":          item.DetailSchema,
+		"detail":                 item.Detail,
 		"created_at":             item.CreatedAt.UTC().Format(time.RFC3339Nano),
-		"updated_at":             item.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
-	if item.EvaluationContext.ContextType != "" {
-		result["evaluation_context_type"] = item.EvaluationContext.ContextType
-		encoded, err := json.Marshal(item.EvaluationContext)
-		if err == nil {
-			result["evaluation_context"] = json.RawMessage(encoded)
-		}
-	}
-	if item.Result != nil {
-		result["result"] = item.Result
-	}
-	if item.CompletedAt != nil {
-		result["completed_at"] = item.CompletedAt.UTC().Format(time.RFC3339Nano)
-	}
-	return result
 }
 
 func (handler *Handler) writeBoundedJSON(c *gin.Context, value any) {
@@ -154,6 +147,7 @@ func (handler *Handler) writeBoundedJSON(c *gin.Context, value any) {
 		handler.write(c, internalError(err))
 		return
 	}
+	c.Header("Cache-Control", "private, no-store")
 	c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
 }
 
@@ -199,7 +193,7 @@ type cursorEnvelope struct {
 	Version   int    `json:"v"`
 	Kind      string `json:"kind"`
 	CreatedAt string `json:"created_at"`
-	ReviewID  string `json:"review_id"`
+	ReportID  string `json:"report_id"`
 }
 
 func (handler *Handler) encodeCursor(
@@ -208,14 +202,14 @@ func (handler *Handler) encodeCursor(
 ) (string, bool) {
 	if handler == nil || len(handler.cursorKey) < minCursorKeyBytes ||
 		strings.TrimSpace(actorUserID) == "" || cursor.CreatedAt.IsZero() ||
-		!validUUID(cursor.ReviewID) {
+		!validUUID(cursor.ReportID) {
 		return "", false
 	}
 	payload, err := json.Marshal(cursorEnvelope{
 		Version:   cursorVersion,
 		Kind:      cursorKind,
 		CreatedAt: cursor.CreatedAt.UTC().Format(time.RFC3339Nano),
-		ReviewID:  cursor.ReviewID,
+		ReportID:  cursor.ReportID,
 	})
 	if err != nil {
 		return "", false
@@ -249,14 +243,14 @@ func (handler *Handler) decodeCursor(
 	var envelope cursorEnvelope
 	if err := decoder.Decode(&envelope); err != nil ||
 		decoder.Decode(&struct{}{}) != io.EOF || envelope.Version != cursorVersion ||
-		envelope.Kind != cursorKind || !validUUID(envelope.ReviewID) {
+		envelope.Kind != cursorKind || !validUUID(envelope.ReportID) {
 		return review.HistoryCursor{}, false
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, envelope.CreatedAt)
 	if err != nil || createdAt.IsZero() {
 		return review.HistoryCursor{}, false
 	}
-	cursor := review.HistoryCursor{CreatedAt: createdAt, ReviewID: envelope.ReviewID}
+	cursor := review.HistoryCursor{CreatedAt: createdAt, ReportID: envelope.ReportID}
 	canonical, ok := handler.encodeCursor(actorUserID, cursor)
 	if !ok || canonical != value {
 		return review.HistoryCursor{}, false
@@ -303,10 +297,7 @@ func mapError(err error) error {
 			apperror.NotFound, "resource_not_found", "Resource was not found.",
 			apperror.WithCause(err),
 		)
-	case errors.Is(err, review.ErrReviewSourceConflict),
-		errors.Is(err, review.ErrReviewImplementationConflict),
-		errors.Is(err, review.ErrGenerationClaimLost),
-		errors.Is(err, review.ErrDeletionGenerationStale):
+	case errors.Is(err, review.ErrDeletionGenerationStale):
 		return apperror.New(
 			apperror.Conflict, "resource_conflict",
 			"Resource state conflicts with this operation.",
@@ -320,6 +311,7 @@ func mapError(err error) error {
 }
 
 func (handler *Handler) write(c *gin.Context, err error) {
+	c.Header("Cache-Control", "private, no-store")
 	if appError, ok := apperror.From(err); ok &&
 		appError.Category() == apperror.Unauthenticated {
 		c.Header("WWW-Authenticate", "Bearer")

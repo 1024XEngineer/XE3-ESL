@@ -12,8 +12,6 @@ import (
 
 const defaultReviewSearchLimit = 10
 
-// ServicePort adapts Review's ordinary application service to Agent Tool DTOs.
-// It never reads Review tables directly and derives ownership from CallContext.
 type ServicePort struct {
 	history *domainreview.HistoryService
 }
@@ -40,7 +38,7 @@ func (port *ServicePort) SearchReviews(
 	actor := domainreview.Actor{UserID: call.Actor.UserID}
 	query := strings.TrimSpace(input.Query)
 	practiceSessionID := strings.TrimSpace(input.PracticeSessionID)
-	var items []domainreview.FormalReview
+	var items []domainreview.Report
 	var err error
 	if query == "" && practiceSessionID == "" {
 		var page domainreview.HistoryPage
@@ -67,12 +65,12 @@ func (port *ServicePort) SearchReviews(
 	if err != nil {
 		return nil, mapReviewToolError(err)
 	}
-	result := make([]ReviewSummary, 0, len(items))
-	for _, item := range items {
-		if item.Result == nil || item.Status != domainreview.FormalReviewCompleted {
+	result := make([]ReviewSummary, len(items))
+	for index, item := range items {
+		if !item.Valid() {
 			return nil, tool.ErrExecutionRejected
 		}
-		result = append(result, mapReviewSummary(item))
+		result[index] = mapReviewSummary(item)
 	}
 	return result, nil
 }
@@ -88,85 +86,100 @@ func (port *ServicePort) GetReview(
 	item, err := port.history.Get(
 		ctx,
 		domainreview.Actor{UserID: call.Actor.UserID},
-		input.ReviewID,
+		input.ReportID,
 	)
 	if err != nil {
 		return ReviewDetail{}, mapReviewToolError(err)
 	}
-	if item.Status != domainreview.FormalReviewCompleted || item.Result == nil {
+	if !item.Valid() {
 		return ReviewDetail{}, tool.ErrExecutionRejected
 	}
 	return mapReviewDetail(item), nil
 }
 
-func mapReviewSummary(item domainreview.FormalReview) ReviewSummary {
+func mapReviewSummary(item domainreview.Report) ReviewSummary {
 	return ReviewSummary{
 		ID:                item.ID,
 		PracticeSessionID: item.PracticeSessionID,
-		SceneID:           item.EvaluationContext.SceneID,
-		Summary:           item.Result.Summary,
-		CompletedAt:       formatReviewTime(item.CompletedAt),
+		SceneType:         item.SceneType,
+		SceneModel:        item.SceneModel,
+		Scoreability:      item.ScoreabilityStatus,
+		Summary:           item.Summary,
+		CompletedAt:       item.CreatedAt.UTC().Format(time.RFC3339Nano),
 		SourceRefs: []tool.SourceRef{{
-			Type: "formal_review",
+			Type: "evaluation_report",
 			ID:   item.ID,
 		}},
 	}
 }
 
-func mapReviewDetail(item domainreview.FormalReview) ReviewDetail {
-	result := item.Result
-	detail := ReviewDetail{
-		ID:                          item.ID,
-		PracticeSessionID:           item.PracticeSessionID,
-		SceneID:                     item.EvaluationContext.SceneID,
-		Status:                      string(item.Status),
-		SummaryEligibility:          string(result.SummaryEligibility),
-		Summary:                     result.Summary,
-		Conclusions:                 make([]ReviewConclusion, len(result.Conclusions)),
-		FeedbackItems:               make([]ReviewFeedbackItem, len(result.FeedbackItems)),
-		RepracticeSuggestionRefs:    append([]string(nil), result.RepracticeSuggestionRefs...),
-		InsufficientEvidenceReasons: append([]string(nil), result.InsufficientEvidenceReasons...),
-		CompletedAt:                 formatReviewTime(item.CompletedAt),
+func mapReviewDetail(item domainreview.Report) ReviewDetail {
+	dimensions := make([]ReviewDimension, len(item.Dimensions))
+	for index, dimension := range item.Dimensions {
+		dimensions[index] = ReviewDimension{
+			Key:          dimension.Key,
+			Score:        cloneScore(dimension.Score),
+			Scale:        dimension.Scale,
+			Coverage:     dimension.Coverage,
+			Confidence:   dimension.Confidence,
+			Strengths:    mapFindings(dimension.Strengths),
+			Improvements: mapFindings(dimension.Improvements),
+			Examples:     mapFindings(dimension.Examples),
+		}
+	}
+	actions := make([]ReviewPriorityAction, len(item.PriorityActions))
+	for index, action := range item.PriorityActions {
+		actions[index] = ReviewPriorityAction{
+			DimensionKey: action.DimensionKey,
+			FindingID:    action.FindingID,
+		}
+	}
+	return ReviewDetail{
+		ID:                item.ID,
+		PracticeSessionID: item.PracticeSessionID,
+		SceneType:         item.SceneType,
+		SceneModel:        item.SceneModel,
+		Scoreability:      item.ScoreabilityStatus,
+		Summary:           item.Summary,
+		Dimensions:        dimensions,
+		PriorityActions:   actions,
+		CompletedAt:       item.CreatedAt.UTC().Format(time.RFC3339Nano),
 		SourceRefs: []tool.SourceRef{{
-			Type: "formal_review",
+			Type: "evaluation_report",
 			ID:   item.ID,
 		}},
 	}
-	if result.OverallScorePresent {
-		score := result.OverallScore
-		detail.OverallScore = &score
-	}
-	for index, conclusion := range result.Conclusions {
-		detail.Conclusions[index] = ReviewConclusion{
-			Key:        conclusion.Key,
-			Category:   conclusion.Category,
-			Score:      conclusion.Score,
-			Message:    conclusion.Message,
-			Suggestion: conclusion.Suggestion,
-		}
-	}
-	for index, item := range result.FeedbackItems {
-		detail.FeedbackItems[index] = ReviewFeedbackItem{
-			Key:        item.Key,
-			Kind:       string(item.Kind),
-			Message:    item.Message,
-			Suggestion: item.Suggestion,
-		}
-	}
-	return detail
 }
 
-func formatReviewTime(value *time.Time) string {
-	if value == nil || value.IsZero() {
-		return ""
+func mapFindings(items []domainreview.ReportFinding) []ReviewFinding {
+	result := make([]ReviewFinding, len(items))
+	for index, item := range items {
+		excerpts := make([]string, 0, len(item.Evidence))
+		for _, evidence := range item.Evidence {
+			if strings.TrimSpace(evidence.OriginalExcerpt) != "" {
+				excerpts = append(excerpts, evidence.OriginalExcerpt)
+			}
+		}
+		result[index] = ReviewFinding{
+			ID:               item.ID,
+			Message:          item.Message,
+			Suggestion:       item.Suggestion,
+			OriginalExcerpts: excerpts,
+		}
 	}
-	return value.UTC().Format(time.RFC3339Nano)
+	return result
+}
+
+func cloneScore(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func mapReviewToolError(err error) error {
 	switch {
-	case err == nil:
-		return nil
 	case errors.Is(err, domainreview.ErrInvalidReview):
 		return tool.ErrInvalidInput
 	case errors.Is(err, domainreview.ErrReviewNotFound),

@@ -1,0 +1,110 @@
+enum EvaluationReportSceneType {
+  ieltsSpeaking,
+  interview,
+  overseasDailyLife,
+  overseasWorkplace,
+}
+
+enum EvaluationReportScoreability { provisional, insufficient }
+
+enum EvaluationReportScoreScale { percentage100, ieltsBand }
+
+final class EvaluationReport {
+  const EvaluationReport({
+    required this.id,
+    required this.evaluationId,
+    required this.evaluationRevisionId,
+    required this.practiceSessionId,
+    required this.revision,
+    required this.sceneType,
+    required this.sceneModel,
+    required this.scoreability,
+    required this.summary,
+    required this.dimensions,
+    required this.priorityActions,
+    required this.detailSchema,
+    required this.detail,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String evaluationId;
+  final String evaluationRevisionId;
+  final String practiceSessionId;
+  final int revision;
+  final EvaluationReportSceneType sceneType;
+  final String sceneModel;
+  final EvaluationReportScoreability scoreability;
+  final String summary;
+  final List<EvaluationReportDimension> dimensions;
+  final List<EvaluationReportPriorityAction> priorityActions;
+  final String detailSchema;
+  final Map<String, Object?> detail;
+  final DateTime createdAt;
+}
+
+final class EvaluationReportDimension {
+  const EvaluationReportDimension({
+    required this.key,
+    required this.scale,
+    required this.coverage,
+    required this.confidence,
+    required this.reasonCodes,
+    required this.evidenceRefIds,
+    required this.strengths,
+    required this.improvements,
+    required this.recommendedExamples,
+    this.score,
+  });
+
+  final String key;
+  final double? score;
+  final EvaluationReportScoreScale scale;
+  final double coverage;
+  final double confidence;
+  final List<String> reasonCodes;
+  final List<String> evidenceRefIds;
+  final List<EvaluationReportFinding> strengths;
+  final List<EvaluationReportFinding> improvements;
+  final List<EvaluationReportFinding> recommendedExamples;
+}
+
+final class EvaluationReportFinding {
+  const EvaluationReportFinding({
+    required this.id,
+    required this.message,
+    required this.evidence,
+    this.suggestion,
+  });
+
+  final String id;
+  final String message;
+  final String? suggestion;
+  final List<EvaluationReportEvidence> evidence;
+}
+
+final class EvaluationReportEvidence {
+  const EvaluationReportEvidence({
+    required this.evidenceRefId,
+    required this.turnId,
+    required this.startUtf8Byte,
+    required this.endUtf8Byte,
+    required this.originalExcerpt,
+  });
+
+  final String evidenceRefId;
+  final String turnId;
+  final int startUtf8Byte;
+  final int endUtf8Byte;
+  final String originalExcerpt;
+}
+
+final class EvaluationReportPriorityAction {
+  const EvaluationReportPriorityAction({
+    required this.dimensionKey,
+    required this.findingId,
+  });
+
+  final String dimensionKey;
+  final String findingId;
+}

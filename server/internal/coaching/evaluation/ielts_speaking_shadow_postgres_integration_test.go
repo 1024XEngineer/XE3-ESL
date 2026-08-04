@@ -110,7 +110,7 @@ func TestPostgresIELTSSpeakingShadowConcurrentClaimAndComplete(
 	}
 }
 
-func TestPostgresIELTSSpeakingReportReadAndIndexAreOwnerScoped(
+func TestPostgresIELTSSpeakingReportReadIsOwnerScoped(
 	t *testing.T,
 ) {
 	_, repository, configuration, evaluation :=
@@ -151,69 +151,6 @@ func TestPostgresIELTSSpeakingReportReadAndIndexAreOwnerScoped(
 		evaluation.PracticeSessionID,
 	); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-owner report error = %v", err)
-	}
-	page, err := repository.ListCurrentIELTSSpeakingReportIndex(
-		context.Background(),
-		testOwnerA,
-		nil,
-		10,
-	)
-	if err != nil {
-		t.Fatalf("ListCurrentIELTSSpeakingReportIndex: %v", err)
-	}
-	if page.HasMore || len(page.Items) != 1 ||
-		page.Items[0].EvaluationID != evaluation.ID ||
-		page.Items[0].EvaluationStatus != StatusReady ||
-		page.Items[0].IsFinal {
-		t.Fatalf("index page = %#v", page)
-	}
-	otherPage, err := repository.ListCurrentIELTSSpeakingReportIndex(
-		context.Background(),
-		integrationOwnerB,
-		nil,
-		10,
-	)
-	if err != nil || len(otherPage.Items) != 0 {
-		t.Fatalf("cross-owner index = %#v, error=%v", otherPage, err)
-	}
-	boundary := &IELTSSpeakingReportIndexBoundary{
-		UpdatedAt:    page.Items[0].UpdatedAt,
-		EvaluationID: page.Items[0].EvaluationID,
-	}
-	next, err := repository.ListCurrentIELTSSpeakingReportIndex(
-		context.Background(),
-		testOwnerA,
-		boundary,
-		10,
-	)
-	if err != nil || len(next.Items) != 0 {
-		t.Fatalf("bounded index = %#v, error=%v", next, err)
-	}
-}
-
-func TestPostgresIELTSSpeakingIndexFailsClosedOnFinalRevision(
-	t *testing.T,
-) {
-	pool, repository, _, evaluation :=
-		prepareIELTSSpeakingShadowRuntime(t)
-	if _, err := pool.Exec(context.Background(), `
-		UPDATE evaluation_revision_states
-		SET is_final = true
-		WHERE evaluation_id = $1
-		  AND revision_id = $2
-	`, evaluation.ID, evaluation.Revision.ID); err != nil {
-		t.Fatalf("tamper finality: %v", err)
-	}
-	if _, err := repository.ListCurrentIELTSSpeakingReportIndex(
-		context.Background(),
-		testOwnerA,
-		nil,
-		10,
-	); !errors.Is(
-		err,
-		ErrIELTSSpeakingShadowConfigurationConflict,
-	) {
-		t.Fatalf("final index error = %v", err)
 	}
 }
 

@@ -75,12 +75,12 @@ func TestInterviewShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 	if request.ResponseFormat != ai.TextResponseFormatJSON ||
 		len(request.Messages) != 2 ||
 		request.Messages[0].Role != ai.TextRoleSystem ||
-		request.Messages[0].Content != interviewShadowSystemContract ||
+		request.Messages[0].Content != evaluation.InterviewShadowSystemContract ||
 		request.Messages[1].Role != ai.TextRoleUser {
 		t.Fatalf("request = %#v", request)
 	}
 	if request.Messages[1].Content == "" ||
-		request.Messages[1].Content == interviewShadowSystemContract {
+		request.Messages[1].Content == evaluation.InterviewShadowSystemContract {
 		t.Fatalf("evidence payload was not isolated: %#v", request.Messages)
 	}
 }
@@ -202,11 +202,11 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 		len(request.Messages) != 2 ||
 		request.Messages[0].Role != ai.TextRoleSystem ||
 		request.Messages[0].Content !=
-			ieltsSpeakingShadowSystemContract ||
+			evaluation.IELTSSpeakingShadowSystemContract ||
 		request.Messages[1].Role != ai.TextRoleUser ||
 		request.Messages[1].Content == "" ||
 		request.Messages[1].Content ==
-			ieltsSpeakingShadowSystemContract {
+			evaluation.IELTSSpeakingShadowSystemContract {
 		t.Fatalf("request = %#v", request)
 	}
 }
@@ -226,6 +226,57 @@ func TestIELTSSpeakingShadowTextProviderRejectsInvalidDependencies(
 		interviewShadowGenerationTimeout+time.Second,
 	); err == nil {
 		t.Fatal("timeout above bound was accepted")
+	}
+}
+
+func TestGeneralSceneTextProviderUsesEvaluationContract(t *testing.T) {
+	t.Parallel()
+	generator := &evaluationTextGenerator{result: ai.TextResult{
+		ID:       "request-general-1",
+		Provider: "qianwen",
+		Model:    "qwen-plus",
+		Content:  `{"schema_version":"general-scene-evaluation-provider/v1","dimensions":[]}`,
+	}}
+	provider, err := newGeneralSceneTextProvider(generator, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := provider.AnalyzeGeneralScene(
+		context.Background(),
+		evaluation.GeneralSceneProviderInput{
+			SchemaVersion:        evaluation.GeneralSceneProviderSchemaVersion,
+			PromptVersion:        evaluation.GeneralScenePromptVersion,
+			SceneType:            evaluation.SceneOverseasDaily,
+			SceneModel:           "DAILY_BASIC_DIALOGUE",
+			AssessableDimensions: evaluation.GeneralSceneDimensions(),
+			Opportunities: []evaluation.GeneralSceneOpportunity{{
+				QuestionID:   "question-1",
+				QuestionType: "PRIMARY",
+				QuestionText: "How can I help?",
+				Response: &evaluation.GeneralSceneResponse{
+					TurnID:        "turn-1",
+					EvidenceRefID: "evidence-1",
+					Transcript:    "I need a quieter room.",
+				},
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RequestID != generator.result.ID || len(generator.requests) != 1 {
+		t.Fatalf("result=%#v requests=%#v", result, generator.requests)
+	}
+	request := generator.requests[0]
+	if err := ai.ValidateTextRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	if request.ResponseFormat != ai.TextResponseFormatJSON ||
+		len(request.Messages) != 2 ||
+		request.Messages[0].Content != evaluation.GeneralSceneSystemContract ||
+		request.Messages[1].Role != ai.TextRoleUser ||
+		request.Messages[1].Content == "" {
+		t.Fatalf("request = %#v", request)
 	}
 }
 

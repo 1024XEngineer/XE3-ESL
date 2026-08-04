@@ -38,6 +38,16 @@ type EvidencePracticeSource interface {
 		practice.Actor,
 		string,
 	) (practice.SessionSnapshot, error)
+	GetCompletedSession(
+		context.Context,
+		string,
+		string,
+	) (practice.Session, error)
+	GetCompletedSessionSnapshot(
+		context.Context,
+		string,
+		string,
+	) (practice.SessionSnapshot, error)
 }
 
 type EvidenceConversationSource interface {
@@ -54,6 +64,21 @@ type EvidenceConversationSource interface {
 	ListSessionTurns(
 		context.Context,
 		practiceinput.Actor,
+		string,
+	) ([]practice.Turn, error)
+	ListCompletedSessionQuestions(
+		context.Context,
+		string,
+		string,
+	) ([]practice.Question, error)
+	GetCompletedCandidate(
+		context.Context,
+		string,
+		string,
+	) (practiceinput.StoredTranscriptCandidate, error)
+	ListCompletedSessionTurns(
+		context.Context,
+		string,
 		string,
 	) ([]practice.Turn, error)
 }
@@ -108,29 +133,202 @@ func (r *EvidenceSourceReader) Compose(
 		scope != ScopeSession || !validSceneType(sceneType) {
 		return EnsureEvidenceSnapshotCommand{}, ErrInvalidRequest
 	}
-
-	practiceActor := practice.Actor{
-		UserID:    actor.UserID,
-		SessionID: actor.SessionID,
-	}
-	session, err := r.practice.GetSession(
+	return r.compose(
 		ctx,
-		practiceActor,
+		actor.UserID,
 		practiceSessionID,
+		scope,
+		sceneType,
+		actorEvidenceSourceAccess{
+			reader: r,
+			practiceActor: practice.Actor{
+				UserID:    actor.UserID,
+				SessionID: actor.SessionID,
+			},
+			conversationActor: practiceinput.Actor{
+				UserID:    actor.UserID,
+				SessionID: actor.SessionID,
+			},
+		},
 	)
+}
+
+// ComposeCompleted is the background handoff path. It is owner-scoped and
+// does not mint an authenticated request Session.
+func (r *EvidenceSourceReader) ComposeCompleted(
+	ctx context.Context,
+	ownerUserID string,
+	practiceSessionID string,
+	scope Scope,
+	sceneType SceneType,
+) (EnsureEvidenceSnapshotCommand, error) {
+	practiceSessionID = strings.TrimSpace(practiceSessionID)
+	if r == nil || r.practice == nil || r.conversation == nil ||
+		r.audio == nil || ctx == nil || !validUUID(ownerUserID) ||
+		!validIdentifier(practiceSessionID) || scope != ScopeSession ||
+		!validSceneType(sceneType) {
+		return EnsureEvidenceSnapshotCommand{}, ErrInvalidRequest
+	}
+	return r.compose(
+		ctx,
+		ownerUserID,
+		practiceSessionID,
+		scope,
+		sceneType,
+		completedEvidenceSourceAccess{reader: r, ownerUserID: ownerUserID},
+	)
+}
+
+type evidenceSourceAccess interface {
+	GetSession(context.Context, string) (practice.Session, error)
+	GetSessionSnapshot(context.Context, string) (practice.SessionSnapshot, error)
+	ListSessionTurns(context.Context, string) ([]practice.Turn, error)
+	ListSessionQuestions(context.Context, string) ([]practice.Question, error)
+	GetCandidate(
+		context.Context,
+		string,
+	) (practiceinput.StoredTranscriptCandidate, error)
+}
+
+type actorEvidenceSourceAccess struct {
+	reader            *EvidenceSourceReader
+	practiceActor     practice.Actor
+	conversationActor practiceinput.Actor
+}
+
+func (access actorEvidenceSourceAccess) GetSession(
+	ctx context.Context,
+	sessionID string,
+) (practice.Session, error) {
+	return access.reader.practice.GetSession(ctx, access.practiceActor, sessionID)
+}
+
+func (access actorEvidenceSourceAccess) GetSessionSnapshot(
+	ctx context.Context,
+	sessionID string,
+) (practice.SessionSnapshot, error) {
+	return access.reader.practice.GetSessionSnapshot(
+		ctx,
+		access.practiceActor,
+		sessionID,
+	)
+}
+
+func (access actorEvidenceSourceAccess) ListSessionTurns(
+	ctx context.Context,
+	sessionID string,
+) ([]practice.Turn, error) {
+	return access.reader.conversation.ListSessionTurns(
+		ctx,
+		access.conversationActor,
+		sessionID,
+	)
+}
+
+func (access actorEvidenceSourceAccess) ListSessionQuestions(
+	ctx context.Context,
+	sessionID string,
+) ([]practice.Question, error) {
+	return access.reader.conversation.ListSessionQuestions(
+		ctx,
+		access.conversationActor,
+		sessionID,
+	)
+}
+
+func (access actorEvidenceSourceAccess) GetCandidate(
+	ctx context.Context,
+	candidateID string,
+) (practiceinput.StoredTranscriptCandidate, error) {
+	return access.reader.conversation.GetCandidate(
+		ctx,
+		access.conversationActor,
+		candidateID,
+	)
+}
+
+type completedEvidenceSourceAccess struct {
+	reader      *EvidenceSourceReader
+	ownerUserID string
+}
+
+func (access completedEvidenceSourceAccess) GetSession(
+	ctx context.Context,
+	sessionID string,
+) (practice.Session, error) {
+	return access.reader.practice.GetCompletedSession(
+		ctx,
+		access.ownerUserID,
+		sessionID,
+	)
+}
+
+func (access completedEvidenceSourceAccess) GetSessionSnapshot(
+	ctx context.Context,
+	sessionID string,
+) (practice.SessionSnapshot, error) {
+	return access.reader.practice.GetCompletedSessionSnapshot(
+		ctx,
+		access.ownerUserID,
+		sessionID,
+	)
+}
+
+func (access completedEvidenceSourceAccess) ListSessionTurns(
+	ctx context.Context,
+	sessionID string,
+) ([]practice.Turn, error) {
+	return access.reader.conversation.ListCompletedSessionTurns(
+		ctx,
+		access.ownerUserID,
+		sessionID,
+	)
+}
+
+func (access completedEvidenceSourceAccess) ListSessionQuestions(
+	ctx context.Context,
+	sessionID string,
+) ([]practice.Question, error) {
+	return access.reader.conversation.ListCompletedSessionQuestions(
+		ctx,
+		access.ownerUserID,
+		sessionID,
+	)
+}
+
+func (access completedEvidenceSourceAccess) GetCandidate(
+	ctx context.Context,
+	candidateID string,
+) (practiceinput.StoredTranscriptCandidate, error) {
+	return access.reader.conversation.GetCompletedCandidate(
+		ctx,
+		access.ownerUserID,
+		candidateID,
+	)
+}
+
+func (r *EvidenceSourceReader) compose(
+	ctx context.Context,
+	ownerUserID string,
+	practiceSessionID string,
+	scope Scope,
+	sceneType SceneType,
+	access evidenceSourceAccess,
+) (EnsureEvidenceSnapshotCommand, error) {
+	if access == nil {
+		return EnsureEvidenceSnapshotCommand{}, ErrInvalidRequest
+	}
+
+	session, err := access.GetSession(ctx, practiceSessionID)
 	if err != nil {
 		return EnsureEvidenceSnapshotCommand{}, mapEvidencePracticeError(err)
 	}
-	snapshot, err := r.practice.GetSessionSnapshot(
-		ctx,
-		practiceActor,
-		practiceSessionID,
-	)
+	snapshot, err := access.GetSessionSnapshot(ctx, practiceSessionID)
 	if err != nil {
 		return EnsureEvidenceSnapshotCommand{}, mapEvidencePracticeError(err)
 	}
 	if !validCompletedEvidenceSession(
-		actor.UserID,
+		ownerUserID,
 		practiceSessionID,
 		sceneType,
 		session,
@@ -139,15 +337,7 @@ func (r *EvidenceSourceReader) Compose(
 		return EnsureEvidenceSnapshotCommand{}, ErrInvalidRequest
 	}
 
-	conversationActor := practiceinput.Actor{
-		UserID:    actor.UserID,
-		SessionID: actor.SessionID,
-	}
-	turns, err := r.conversation.ListSessionTurns(
-		ctx,
-		conversationActor,
-		practiceSessionID,
-	)
+	turns, err := access.ListSessionTurns(ctx, practiceSessionID)
 	if err != nil {
 		return EnsureEvidenceSnapshotCommand{},
 			mapEvidenceConversationError(err)
@@ -170,11 +360,7 @@ func (r *EvidenceSourceReader) Compose(
 	if effectiveTurnCount != session.EffectiveTurns {
 		return EnsureEvidenceSnapshotCommand{}, ErrInvalidRequest
 	}
-	questions, err := r.conversation.ListSessionQuestions(
-		ctx,
-		conversationActor,
-		practiceSessionID,
-	)
+	questions, err := access.ListSessionQuestions(ctx, practiceSessionID)
 	if err != nil {
 		return EnsureEvidenceSnapshotCommand{},
 			mapEvidenceConversationError(err)
@@ -197,7 +383,7 @@ func (r *EvidenceSourceReader) Compose(
 
 	practiceContext, allParticipants, candidateParticipants, ok :=
 		evidencePracticeContextFromSnapshot(
-			actor.UserID,
+			ownerUserID,
 			session,
 			snapshot,
 		)
@@ -295,8 +481,8 @@ func (r *EvidenceSourceReader) Compose(
 		}
 		item, itemErr := r.composeTurn(
 			ctx,
-			actor.UserID,
-			conversationActor,
+			ownerUserID,
+			access,
 			practiceSessionID,
 			confirmedIndex+1,
 			turn,
@@ -336,7 +522,7 @@ func (r *EvidenceSourceReader) Compose(
 	}
 	sourceManifestHash := sha256.Sum256(manifestJSON)
 	snapshotID := deriveEvidenceSnapshotID(
-		actor.UserID,
+		ownerUserID,
 		practiceSessionID,
 		scope,
 		sourceManifestHash,
@@ -357,7 +543,7 @@ func (r *EvidenceSourceReader) Compose(
 	}
 	return EnsureEvidenceSnapshotCommand{
 		SnapshotID:         snapshotID,
-		OwnerUserID:        actor.UserID,
+		OwnerUserID:        ownerUserID,
 		PracticeSessionID:  practiceSessionID,
 		Scope:              scope,
 		SceneType:          sceneType,
@@ -376,7 +562,7 @@ type composedEvidenceTurn struct {
 func (r *EvidenceSourceReader) composeTurn(
 	ctx context.Context,
 	ownerUserID string,
-	actor practiceinput.Actor,
+	access evidenceSourceAccess,
 	practiceSessionID string,
 	expectedSequence int,
 	turn practice.Turn,
@@ -388,7 +574,7 @@ func (r *EvidenceSourceReader) composeTurn(
 		!validEvidenceTurn(turn) {
 		return composedEvidenceTurn{}, ErrInvalidRequest
 	}
-	candidate, err := r.conversation.GetCandidate(ctx, actor, turn.CandidateID)
+	candidate, err := access.GetCandidate(ctx, turn.CandidateID)
 	if err != nil {
 		return composedEvidenceTurn{}, mapEvidenceConversationError(err)
 	}
@@ -837,7 +1023,9 @@ func evidenceSceneMatches(
 	switch family {
 	case scene.SceneFamilyExam:
 		return sceneType == SceneIELTSSpeaking &&
-			(model == scene.SceneModelIELTSSpeakingPart2 ||
+			(model == scene.SceneModelIELTSSpeakingPart1 ||
+				model == scene.SceneModelIELTSSpeakingPart2 ||
+				model == scene.SceneModelIELTSSpeakingPart3 ||
 				model == scene.SceneModelIELTSSpeakingFullMock ||
 				model == scene.SceneModelExamBasicDialogue)
 	case scene.SceneFamilyInterview:

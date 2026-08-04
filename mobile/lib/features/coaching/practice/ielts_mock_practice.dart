@@ -16,9 +16,9 @@ import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart
 import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/features/coaching/review/turn_feedback.dart';
-import 'package:speakup/features/coaching/review/turn_feedback_controller.dart';
-import 'package:speakup/features/coaching/review/turn_feedback_disclosure.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 const ieltsSpeakingFullMockSceneId = 'scn_ielts_speaking_full';
 const _part2IntroNarration =

@@ -245,6 +245,49 @@ func (r *Repository) GetSessionSnapshot(
 	return bootstrap.Snapshot, nil
 }
 
+func (r *Repository) GetCompletedSession(
+	ctx context.Context,
+	ownerUserID string,
+	sessionID string,
+) (practice.Session, error) {
+	if r == nil || r.pool == nil || ctx == nil ||
+		!validUserID(ownerUserID) || !validContextResourceID(sessionID) {
+		return practice.Session{}, practice.ErrInvalidArgument
+	}
+	return scanSession(r.pool.QueryRow(ctx, contextSessionSelect+`
+		WHERE session.owner_user_id = $1
+		  AND session.session_id = $2
+		  AND session.status = 'completed'
+		  AND owner.account_status = 'active'
+		  AND fence.owner_user_id IS NULL
+	`, ownerUserID, sessionID))
+}
+
+func (r *Repository) GetCompletedSessionSnapshot(
+	ctx context.Context,
+	ownerUserID string,
+	sessionID string,
+) (practice.SessionSnapshot, error) {
+	if r == nil || r.pool == nil || ctx == nil ||
+		!validUserID(ownerUserID) || !validContextResourceID(sessionID) {
+		return practice.SessionSnapshot{}, practice.ErrInvalidArgument
+	}
+	bootstrap, err := readContextBootstrapWithQuery(
+		ctx,
+		r.pool,
+		ownerUserID,
+		sessionID,
+		false,
+	)
+	if err != nil {
+		return practice.SessionSnapshot{}, err
+	}
+	if bootstrap.Session.Status != practice.SessionCompleted {
+		return practice.SessionSnapshot{}, practice.ErrNotFound
+	}
+	return bootstrap.Snapshot, nil
+}
+
 func (r *Repository) ResolveSessionByPlan(
 	ctx context.Context,
 	actor practice.Actor,

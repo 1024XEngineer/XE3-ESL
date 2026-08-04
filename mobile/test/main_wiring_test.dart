@@ -28,6 +28,8 @@ import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
 import 'package:speakup/features/coaching/review/wire_review_history_client.dart';
 import 'package:speakup/features/coaching/review/wire_interview_report_client.dart';
 
+import 'review/evaluation_report_fixture.dart';
+
 void main() {
   test('iOS allows local development traffic without a global ATS bypass', () {
     final plist = File('ios/Runner/Info.plist').readAsStringSync();
@@ -577,7 +579,7 @@ final class _ControlledReviewHistoryTransport implements IdentityHttpTransport {
     String? body,
   }) {
     expect(method, 'GET');
-    expect(uri.path, '/v1/formal-reviews');
+    expect(uri.path, '/v1/evaluation-reports');
     expect(uri.queryParameters, {'limit': '20'});
     calls++;
     authorization = headers[HttpHeaders.authorizationHeader];
@@ -590,29 +592,12 @@ final class _ControlledReviewHistoryTransport implements IdentityHttpTransport {
         statusCode: HttpStatus.ok,
         body: jsonEncode({
           'items': [
-            {
-              'review_id': '20000000-0000-4000-8000-000000000088',
-              'practice_session_id': 'practice_session_main_wiring',
-              'status': 'completed',
-              'implementation_version': 'qianwen-voice-review-v1',
-              'source_turn_id': 'turn_main_wiring',
-              'source_turn_version': 'conversation-turn:evidence-v1',
-              'result': {
-                'overall_score': 90,
-                'summary': 'The response is clear.',
-                'conclusions': [
-                  {
-                    'key': 'clarity',
-                    'category': 'clarity',
-                    'message': 'The answer is easy to follow.',
-                    'suggestion': 'Add one concrete metric.',
-                  },
-                ],
-              },
-              'created_at': _timestamp,
-              'updated_at': _timestamp,
-              'completed_at': _timestamp,
-            },
+            evaluationReportWireFixture(
+              reportId: '20000000-0000-4000-8000-000000000088',
+              practiceSessionId: 'practice_session_main_wiring',
+              createdAt: _timestamp,
+              score: 90,
+            ),
           ],
         }),
       ),

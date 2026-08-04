@@ -12,7 +12,7 @@ import 'package:speakup/identity/network/transport_security.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
-import 'package:speakup/features/coaching/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 
 /// The single replaceable location for voice-practice routes.
 ///

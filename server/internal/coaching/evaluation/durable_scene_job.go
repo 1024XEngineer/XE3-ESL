@@ -29,7 +29,8 @@ func (spec durableSceneJobSpec) valid() bool {
 	}
 	switch spec.resultTable {
 	case "evaluation_interview_scene_results",
-		"evaluation_ielts_speaking_scene_results":
+		"evaluation_ielts_speaking_scene_results",
+		"evaluation_general_scene_results":
 		return true
 	default:
 		return false

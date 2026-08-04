@@ -67,6 +67,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 	assembler, err := agentcontext.NewAssembler(
 		contextRepository,
 		goalService,
+		emptyAgentLearningProfileReader{},
 		emptyAgentStableProfileReader{},
 		emptyAgentMemorySearcher{},
 	)
@@ -349,6 +350,15 @@ WHERE source_run_id IN ($1, $2)`,
 type emptyAgentMemorySearcher struct{}
 
 type emptyAgentStableProfileReader struct{}
+
+type emptyAgentLearningProfileReader struct{}
+
+func (emptyAgentLearningProfileReader) ReadLearningProfile(
+	context.Context,
+	agentcontext.LearningProfileReadRequest,
+) ([]agentcontext.LearningProfileDimension, error) {
+	return []agentcontext.LearningProfileDimension{}, nil
+}
 
 func (emptyAgentStableProfileReader) ReadStableProfile(
 	context.Context,

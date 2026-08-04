@@ -612,7 +612,11 @@ func TestPostgresGoalAgentToolPersistence(t *testing.T) {
 		)
 	}
 
-	for _, table := range []string{"practice_sessions", "reviews"} {
+	for _, table := range []string{
+		"practice_sessions",
+		"evaluation_ledgers",
+		"evaluation_formal_reports",
+	} {
 		var count int
 		if err := database.pool.QueryRow(
 			context.Background(),

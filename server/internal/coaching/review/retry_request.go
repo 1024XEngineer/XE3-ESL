@@ -11,15 +11,15 @@ import (
 )
 
 var (
-	ErrRetryRequestInvalid  = errors.New("review: invalid RetryRequest")
+	ErrRetryRequestInvalid  = errors.New("review: invalid RepracticeRequest")
 	ErrRetryRequestNotFound = errors.New(
-		"review: RetryRequest not found",
+		"review: RepracticeRequest not found",
 	)
 	ErrRetryRequestConflict = errors.New(
-		"review: RetryRequest idempotency conflict",
+		"review: RepracticeRequest idempotency conflict",
 	)
 	ErrRetryRequestSourceUnavailable = errors.New(
-		"review: RetryRequest source is no longer available",
+		"review: RepracticeRequest source is no longer available",
 	)
 )
 
@@ -43,7 +43,7 @@ type RetryRequestStableFailure struct {
 	Retryable  bool                    `json:"retryable"`
 }
 
-type SpeechFeedbackRetryRequest struct {
+type RepracticeRequest struct {
 	RetryRequestID    string                     `json:"retry_request_id"`
 	FeedbackItemID    string                     `json:"feedback_item_id"`
 	PracticeSessionID string                     `json:"practice_session_id"`
@@ -67,7 +67,7 @@ func RetryRequestStatusURL(retryRequestID string) string {
 	return "/v1/retry-requests/" + retryRequestID
 }
 
-func (request SpeechFeedbackRetryRequest) valid() bool {
+func (request RepracticeRequest) valid() bool {
 	if !validUUID(request.RetryRequestID) ||
 		!validUUID(request.FeedbackItemID) ||
 		!validRetryRequestResourceID(request.PracticeSessionID) ||
@@ -127,29 +127,60 @@ func (failure RetryRequestStableFailure) valid() bool {
 }
 
 type RetryRequestRepository interface {
-	ReserveRetryRequest(
+	FindRetryRequestByKey(
 		context.Context,
 		string,
 		string,
+	) (RepracticeRequest, bool, error)
+	ReserveRetryRequest(
+		context.Context,
 		string,
-	) (SpeechFeedbackRetryRequest, bool, error)
+		RepracticeSource,
+		string,
+	) (RepracticeRequest, bool, error)
 	GetRetryRequest(
 		context.Context,
 		string,
 		string,
-	) (SpeechFeedbackRetryRequest, error)
+	) (RepracticeRequest, error)
 	CompleteRetryRequest(
 		context.Context,
 		string,
 		string,
 		string,
-	) (SpeechFeedbackRetryRequest, error)
+	) (RepracticeRequest, error)
 	FailRetryRequest(
 		context.Context,
 		string,
 		string,
 		RetryRequestStableFailure,
-	) (SpeechFeedbackRetryRequest, error)
+	) (RepracticeRequest, error)
+}
+
+type RepracticeSource struct {
+	FeedbackItemID    string
+	SourceFeedbackID  string
+	PracticeSessionID string
+	OriginalTurnID    string
+	QuestionID        string
+	SourceGeneration  int64
+}
+
+func (source RepracticeSource) valid() bool {
+	return validUUID(source.FeedbackItemID) &&
+		validUUID(source.SourceFeedbackID) &&
+		validRetryRequestResourceID(source.PracticeSessionID) &&
+		validRetryRequestResourceID(source.OriginalTurnID) &&
+		validRetryRequestResourceID(source.QuestionID) &&
+		source.SourceGeneration >= 0
+}
+
+type RepracticeSourceReader interface {
+	ReadSameQuestionRepracticeSource(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (RepracticeSource, error)
 }
 
 type SameQuestionRetryPracticePort interface {
@@ -177,22 +208,26 @@ type SameQuestionRetrySource struct {
 
 type RetryRequestService struct {
 	repository   RetryRequestRepository
+	sources      RepracticeSourceReader
 	practice     SameQuestionRetryPracticePort
 	conversation SameQuestionRetryConversationPort
 }
 
 func NewRetryRequestService(
 	repository RetryRequestRepository,
+	sources RepracticeSourceReader,
 	practice SameQuestionRetryPracticePort,
 	conversation SameQuestionRetryConversationPort,
 ) (*RetryRequestService, error) {
-	if repository == nil || practice == nil || conversation == nil {
+	if repository == nil || sources == nil || practice == nil ||
+		conversation == nil {
 		return nil, errors.New(
-			"review: RetryRequest dependency is required",
+			"review: RepracticeRequest dependency is required",
 		)
 	}
 	return &RetryRequestService{
 		repository:   repository,
+		sources:      sources,
 		practice:     practice,
 		conversation: conversation,
 	}, nil
@@ -203,27 +238,54 @@ func (service *RetryRequestService) Request(
 	actor requestcontext.Actor,
 	feedbackItemID string,
 	idempotencyKey string,
-) (SpeechFeedbackRetryRequest, bool, error) {
+) (RepracticeRequest, bool, error) {
 	if service == nil || service.repository == nil ||
-		service.practice == nil || service.conversation == nil ||
+		service.sources == nil || service.practice == nil ||
+		service.conversation == nil ||
 		ctx == nil || !actor.Valid() ||
 		!validUUID(feedbackItemID) ||
 		!validRetryRequestIdempotencyKey(idempotencyKey) {
-		return SpeechFeedbackRetryRequest{}, false, ErrRetryRequestInvalid
+		return RepracticeRequest{}, false, ErrRetryRequestInvalid
 	}
 	if err := ctx.Err(); err != nil {
-		return SpeechFeedbackRetryRequest{}, false, err
+		return RepracticeRequest{}, false, err
+	}
+	existing, found, err := service.repository.FindRetryRequestByKey(
+		ctx,
+		actor.UserID,
+		idempotencyKey,
+	)
+	if err != nil {
+		return RepracticeRequest{}, false, err
+	}
+	if found {
+		if existing.FeedbackItemID != feedbackItemID {
+			return RepracticeRequest{}, false, ErrRetryRequestConflict
+		}
+		return existing, false, nil
+	}
+	resolvedSource, err := service.sources.ReadSameQuestionRepracticeSource(
+		ctx,
+		actor,
+		feedbackItemID,
+	)
+	if err != nil {
+		return RepracticeRequest{}, false, err
+	}
+	if !resolvedSource.valid() ||
+		resolvedSource.FeedbackItemID != feedbackItemID {
+		return RepracticeRequest{}, false, ErrRetryRequestInvalid
 	}
 	request, created, err := service.repository.ReserveRetryRequest(
 		ctx,
 		actor.UserID,
-		feedbackItemID,
+		resolvedSource,
 		idempotencyKey,
 	)
 	if err != nil || request.RetryStatus != RetryRequestPending {
 		return request, created, err
 	}
-	source := SameQuestionRetrySource{
+	retrySource := SameQuestionRetrySource{
 		RetryRequestID:    request.RetryRequestID,
 		PracticeSessionID: request.PracticeSessionID,
 		OriginalTurnID:    request.OriginalTurnID,
@@ -232,7 +294,7 @@ func (service *RetryRequestService) Request(
 	if err := service.practice.AuthorizeSameQuestionRetry(
 		ctx,
 		actor,
-		source,
+		retrySource,
 	); err != nil {
 		failure := retryRequestFailure(err)
 		failed, failErr := service.repository.FailRetryRequest(
@@ -246,7 +308,7 @@ func (service *RetryRequestService) Request(
 	newTurnID, err := service.conversation.CreateSameQuestionRetryTurn(
 		ctx,
 		actor,
-		source,
+		retrySource,
 	)
 	if err != nil || !validRetryRequestResourceID(newTurnID) {
 		if err == nil {
@@ -274,13 +336,13 @@ func (service *RetryRequestService) Get(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	retryRequestID string,
-) (SpeechFeedbackRetryRequest, error) {
+) (RepracticeRequest, error) {
 	if service == nil || service.repository == nil || ctx == nil ||
 		!actor.Valid() || !validUUID(retryRequestID) {
-		return SpeechFeedbackRetryRequest{}, ErrRetryRequestInvalid
+		return RepracticeRequest{}, ErrRetryRequestInvalid
 	}
 	if err := ctx.Err(); err != nil {
-		return SpeechFeedbackRetryRequest{}, err
+		return RepracticeRequest{}, err
 	}
 	return service.repository.GetRetryRequest(
 		ctx,

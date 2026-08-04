@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const maxRetryRequestResponseBytes = 512 * 1024
+
 type RetryRequestHTTPHandler struct {
 	service *RetryRequestService
 	errors  *httpresponse.Renderer
@@ -43,7 +45,7 @@ func (handler *RetryRequestHTTPHandler) RegisterRoutes(
 }
 
 func (handler *RetryRequestHTTPHandler) request(c *gin.Context) {
-	setSpeechFeedbackPrivateHeaders(c)
+	setRetryRequestPrivateHeaders(c)
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		handler.writeInvalid(c)
 		return
@@ -74,7 +76,7 @@ func (handler *RetryRequestHTTPHandler) request(c *gin.Context) {
 		return
 	}
 	encoded, err := json.Marshal(request)
-	if err != nil || len(encoded) > maxSpeechFeedbackResponseBytes {
+	if err != nil || len(encoded) > maxRetryRequestResponseBytes {
 		handler.writeInternal(c, errors.Join(
 			ErrRetryRequestInvalid,
 			err,
@@ -90,7 +92,7 @@ func (handler *RetryRequestHTTPHandler) request(c *gin.Context) {
 }
 
 func (handler *RetryRequestHTTPHandler) get(c *gin.Context) {
-	setSpeechFeedbackPrivateHeaders(c)
+	setRetryRequestPrivateHeaders(c)
 	retryRequestID := c.Param("retry_request_id")
 	if !validUUID(retryRequestID) {
 		handler.writeNotFound(c)
@@ -111,7 +113,7 @@ func (handler *RetryRequestHTTPHandler) get(c *gin.Context) {
 		return
 	}
 	encoded, err := json.Marshal(request)
-	if err != nil || len(encoded) > maxSpeechFeedbackResponseBytes {
+	if err != nil || len(encoded) > maxRetryRequestResponseBytes {
 		handler.writeInternal(c, errors.Join(
 			ErrRetryRequestInvalid,
 			err,
@@ -119,6 +121,12 @@ func (handler *RetryRequestHTTPHandler) get(c *gin.Context) {
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", encoded)
+}
+
+func setRetryRequestPrivateHeaders(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Pragma", "no-cache")
+	c.Header("X-Content-Type-Options", "nosniff")
 }
 
 func (handler *RetryRequestHTTPHandler) writeServiceError(

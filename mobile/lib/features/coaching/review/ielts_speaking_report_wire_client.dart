@@ -9,12 +9,8 @@ import 'package:speakup/identity/network/transport_security.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_decoder.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_index.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_index_client.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_index_decoder.dart';
 
-final class WireIeltsSpeakingReportClient
-    implements IeltsSpeakingReportClient, IeltsSpeakingReportIndexClient {
+final class WireIeltsSpeakingReportClient implements IeltsSpeakingReportClient {
   factory WireIeltsSpeakingReportClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -102,48 +98,6 @@ final class WireIeltsSpeakingReportClient
     }
   }
 
-  @override
-  Future<IeltsSpeakingReportIndexPage> listReports({
-    String? cursor,
-    int limit = 20,
-  }) async {
-    if (limit < 1 || limit > 100 || (cursor != null && !_validCursor(cursor))) {
-      throw const IeltsSpeakingReportException(
-        kind: IeltsSpeakingReportFailureKind.invalidRequest,
-      );
-    }
-    final generation = _accountGeneration;
-    final uri = _baseUri.replace(
-      path: '/v1/ielts-speaking-reports',
-      queryParameters: <String, String>{'limit': '$limit', 'cursor': ?cursor},
-      fragment: null,
-    );
-    final response = await _send(uri);
-    _requireCurrent(generation);
-    switch (response.statusCode) {
-      case HttpStatus.ok:
-        try {
-          return decodeIeltsSpeakingReportIndexJson(response.body);
-        } on IeltsSpeakingReportIndexDecodeException {
-          throw const IeltsSpeakingReportException(
-            kind: IeltsSpeakingReportFailureKind.invalidResponse,
-          );
-        }
-      case HttpStatus.badRequest:
-        throw const IeltsSpeakingReportException(
-          kind: IeltsSpeakingReportFailureKind.invalidRequest,
-          statusCode: HttpStatus.badRequest,
-        );
-      case HttpStatus.unauthorized:
-        throw const IeltsSpeakingReportException(
-          kind: IeltsSpeakingReportFailureKind.authenticationRequired,
-          statusCode: HttpStatus.unauthorized,
-        );
-      default:
-        throw _unexpectedStatus(response.statusCode);
-    }
-  }
-
   Future<IdentityHttpResponse> _send(Uri uri) async {
     _trustedOrigin.validateResourceUri(uri);
     validateNoSessionCredentialInUri(uri);
@@ -222,11 +176,6 @@ bool _validPracticeSessionId(String value) =>
     value.length <= 128 &&
     value == value.trim() &&
     RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]*$').hasMatch(value);
-
-bool _validCursor(String value) =>
-    value.length >= 16 &&
-    value.length <= 512 &&
-    RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
 
 final class _IoIeltsSpeakingReportHttpTransport
     implements IdentityHttpTransport {

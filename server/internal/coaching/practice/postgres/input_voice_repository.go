@@ -150,7 +150,26 @@ func (r *Repository) ListSessionQuestions(
 	if !validInputActor(actor) || strings.TrimSpace(sessionID) == "" {
 		return nil, practiceinput.ErrPersistenceInvalid
 	}
-	tx, err := r.beginActorRead(ctx, actor)
+	return r.listSessionQuestions(ctx, actor.UserID, sessionID)
+}
+
+func (r *Repository) ListCompletedSessionQuestions(
+	ctx context.Context,
+	ownerUserID string,
+	sessionID string,
+) ([]practice.Question, error) {
+	if !validUUID(ownerUserID) || strings.TrimSpace(sessionID) == "" {
+		return nil, practiceinput.ErrPersistenceInvalid
+	}
+	return r.listSessionQuestions(ctx, ownerUserID, sessionID)
+}
+
+func (r *Repository) listSessionQuestions(
+	ctx context.Context,
+	ownerUserID string,
+	sessionID string,
+) ([]practice.Question, error) {
+	tx, err := r.beginOwnerRead(ctx, ownerUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +179,7 @@ func (r *Repository) ListSessionQuestions(
 		questionColumns+`
 		 WHERE owner_user_id = $1 AND practice_session_id = $2
 		 ORDER BY sequence, created_at, question_id`,
-		actor.UserID,
+		ownerUserID,
 		sessionID,
 	)
 	if err != nil {
@@ -624,12 +643,32 @@ func (r *Repository) GetCandidate(
 	if !validInputActor(actor) || strings.TrimSpace(candidateID) == "" {
 		return practiceinput.StoredTranscriptCandidate{}, practiceinput.ErrPersistenceInvalid
 	}
-	tx, err := r.beginActorRead(ctx, actor)
+	return r.getCompletedCandidate(ctx, actor.UserID, candidateID)
+}
+
+func (r *Repository) GetCompletedCandidate(
+	ctx context.Context,
+	ownerUserID string,
+	candidateID string,
+) (practiceinput.StoredTranscriptCandidate, error) {
+	if !validUUID(ownerUserID) || strings.TrimSpace(candidateID) == "" {
+		return practiceinput.StoredTranscriptCandidate{},
+			practiceinput.ErrPersistenceInvalid
+	}
+	return r.getCompletedCandidate(ctx, ownerUserID, candidateID)
+}
+
+func (r *Repository) getCompletedCandidate(
+	ctx context.Context,
+	ownerUserID string,
+	candidateID string,
+) (practiceinput.StoredTranscriptCandidate, error) {
+	tx, err := r.beginOwnerRead(ctx, ownerUserID)
 	if err != nil {
 		return practiceinput.StoredTranscriptCandidate{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	candidate, err := getCandidate(ctx, tx, actor.UserID, candidateID)
+	candidate, err := getCandidate(ctx, tx, ownerUserID, candidateID)
 	if err != nil {
 		return practiceinput.StoredTranscriptCandidate{}, err
 	}
@@ -1112,7 +1151,26 @@ func (r *Repository) ListSessionTurns(
 	if !validInputActor(actor) || strings.TrimSpace(sessionID) == "" {
 		return nil, practiceinput.ErrPersistenceInvalid
 	}
-	tx, err := r.beginActorRead(ctx, actor)
+	return r.listCompletedSessionTurns(ctx, actor.UserID, sessionID)
+}
+
+func (r *Repository) ListCompletedSessionTurns(
+	ctx context.Context,
+	ownerUserID string,
+	sessionID string,
+) ([]practice.Turn, error) {
+	if !validUUID(ownerUserID) || strings.TrimSpace(sessionID) == "" {
+		return nil, practiceinput.ErrPersistenceInvalid
+	}
+	return r.listCompletedSessionTurns(ctx, ownerUserID, sessionID)
+}
+
+func (r *Repository) listCompletedSessionTurns(
+	ctx context.Context,
+	ownerUserID string,
+	sessionID string,
+) ([]practice.Turn, error) {
+	tx, err := r.beginOwnerRead(ctx, ownerUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -1124,7 +1182,7 @@ func (r *Repository) ListSessionTurns(
 		   AND practice_session_id = $2
 		   AND turn_kind = 'EFFECTIVE'
 		 ORDER BY sequence, created_at, turn_id`,
-		actor.UserID,
+		ownerUserID,
 		sessionID,
 	)
 	if err != nil {
@@ -1484,11 +1542,18 @@ func (r *Repository) beginActorRead(
 	ctx context.Context,
 	actor practiceinput.Actor,
 ) (pgx.Tx, error) {
+	return r.beginOwnerRead(ctx, actor.UserID)
+}
+
+func (r *Repository) beginOwnerRead(
+	ctx context.Context,
+	ownerUserID string,
+) (pgx.Tx, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, safeDatabaseError(err)
 	}
-	if _, err := ensureActorWritable(ctx, tx, actor.UserID); err != nil {
+	if _, err := ensureActorWritable(ctx, tx, ownerUserID); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}

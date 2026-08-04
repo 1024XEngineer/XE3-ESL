@@ -157,10 +157,10 @@ paths:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1transcription-candidates~1{candidate_id}~1confirmations
   /v1/voice-questions/{question_id}/speech:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1voice-questions~1{question_id}~1speech
-  /v1/formal-reviews:
-    $ref: ./modules/review.yaml#/paths/~1v1~1formal-reviews
-  /v1/formal-reviews/{review_id}:
-    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1formal-reviews~1{review_id}
+  /v1/evaluation-reports:
+    $ref: ./modules/review.yaml#/paths/~1v1~1evaluation-reports
+  /v1/evaluation-reports/{report_id}:
+    $ref: ./modules/review.yaml#/paths/~1v1~1evaluation-reports~1{report_id}
   /v1/evaluations:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1evaluations
   /v1/evaluations/{evaluation_id}:
@@ -171,8 +171,6 @@ paths:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1interview-report
   /v1/practice-sessions/{practice_session_id}/ielts-speaking-report:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1ielts-speaking-report
-  /v1/ielts-speaking-reports:
-    $ref: ./modules/evaluation.yaml#/paths/~1v1~1ielts-speaking-reports
   /v1/scenes/{scene_id}:
     $ref: ./modules/scene.yaml#/paths/~1v1~1scenes~1{scene_id}
   /v1/scenes/{scene_id}/roles:
@@ -386,8 +384,6 @@ components:
       $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReportEnvelope
     IeltsSpeakingReport:
       $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReport
-    IeltsSpeakingReportIndexPage:
-      $ref: ./modules/evaluation.yaml#/components/schemas/IeltsSpeakingReportIndexPage
     Evaluation:
       $ref: ./modules/evaluation.yaml#/components/schemas/Evaluation
     SceneEvaluationResult:

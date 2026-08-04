@@ -3,103 +3,74 @@ package agenttool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
-	. "github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 )
 
-type fakeReviewPort struct {
-	searchInput ReviewSearchInput
-	getInput    ReviewGetInput
-}
-
-func (port *fakeReviewPort) SearchReviews(
-	ctx context.Context,
-	call CallContext,
-	input ReviewSearchInput,
-) ([]ReviewSummary, error) {
-	port.searchInput = input
-	return []ReviewSummary{{
-		ID:                "review-1",
+func TestReviewSearchToolReturnsReportsAndEvaluationSources(t *testing.T) {
+	t.Parallel()
+	port := &reviewPortStub{summaries: []ReviewSummary{{
+		ID:                "10000000-0000-4000-8000-000000000001",
 		PracticeSessionID: "practice-session-1",
-		Summary:           "Answer was too long.",
-	}}, nil
-}
-
-func (port *fakeReviewPort) GetReview(
-	ctx context.Context,
-	call CallContext,
-	input ReviewGetInput,
-) (ReviewDetail, error) {
-	port.getInput = input
-	return ReviewDetail{
-		ID:                input.ReviewID,
-		PracticeSessionID: "practice-session-1",
-		Status:            "completed",
-		Summary:           "Answer was too long.",
-	}, nil
-}
-
-func TestReviewSearchToolMapsInput(t *testing.T) {
-	port := &fakeReviewPort{}
-	result, err := NewReviewSearchTool(port).Execute(
+		SceneType:         "OVERSEAS_DAILY_LIFE",
+		SceneModel:        "DAILY_BASIC_DIALOGUE",
+		Scoreability:      "PROVISIONAL",
+		Summary:           "Completed report",
+		CompletedAt:       "2026-08-04T08:00:00Z",
+		SourceRefs: []tool.SourceRef{{
+			Type: "evaluation_report",
+			ID:   "10000000-0000-4000-8000-000000000001",
+		}},
+	}}}
+	reviewTool := NewReviewSearchTool(port)
+	if err := tool.ValidateDefinition(reviewTool.Definition()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := reviewTool.Execute(
 		context.Background(),
-		validCallContext(),
-		json.RawMessage(`{"query":"上次面试评价"}`),
-	)
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if got, want := port.searchInput.Query, "上次面试评价"; got != want {
-		t.Fatalf("searchInput.Query = %q, want %q", got, want)
-	}
-	if result.Content["reviews"] == nil {
-		t.Fatalf("result.Content = %#v, want reviews", result.Content)
-	}
-}
-
-func TestReviewSearchToolAllowsLatestCompletedLookup(t *testing.T) {
-	port := &fakeReviewPort{}
-	if _, err := NewReviewSearchTool(port).Execute(
-		context.Background(),
-		validCallContext(),
+		validReviewCallContext(),
 		json.RawMessage(`{}`),
-	); err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if port.searchInput.Query != "" {
-		t.Fatalf("searchInput.Query = %q, want latest lookup", port.searchInput.Query)
-	}
-}
-
-func TestReviewGetToolMapsInput(t *testing.T) {
-	port := &fakeReviewPort{}
-	result, err := NewReviewGetTool(port).Execute(
-		context.Background(),
-		validCallContext(),
-		json.RawMessage(`{"review_id":"review-1"}`),
 	)
 	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
+		t.Fatal(err)
 	}
-	if got, want := port.getInput.ReviewID, "review-1"; got != want {
-		t.Fatalf("getInput.ReviewID = %q, want %q", got, want)
-	}
-	if result.Content["review"] == nil {
-		t.Fatalf("result.Content = %#v, want review", result.Content)
+	reports, ok := result.Content["reports"].([]ReviewSummary)
+	if !ok || len(reports) != 1 || len(result.SourceRefs) != 1 ||
+		result.SourceRefs[0].Type != "evaluation_report" {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
-func validCallContext() CallContext {
-	return CallContext{
-		Actor: requestcontext.Actor{
-			UserID:    "user-1",
-			SessionID: "session-1",
-		},
-		ThreadID:   "thread-1",
-		RunID:      "run-1",
-		ToolCallID: "tool-call-1",
-		RequestID:  "request-1",
+func TestReviewGetToolRejectsMissingReportID(t *testing.T) {
+	t.Parallel()
+	_, err := NewReviewGetTool(&reviewPortStub{}).Execute(
+		context.Background(),
+		validReviewCallContext(),
+		json.RawMessage(`{}`),
+	)
+	if !errors.Is(err, tool.ErrInvalidInput) {
+		t.Fatalf("error = %v", err)
 	}
+}
+
+type reviewPortStub struct {
+	summaries []ReviewSummary
+}
+
+func (port *reviewPortStub) SearchReviews(
+	context.Context,
+	tool.CallContext,
+	ReviewSearchInput,
+) ([]ReviewSummary, error) {
+	return port.summaries, nil
+}
+
+func (port *reviewPortStub) GetReview(
+	context.Context,
+	tool.CallContext,
+	ReviewGetInput,
+) (ReviewDetail, error) {
+	return ReviewDetail{}, nil
 }

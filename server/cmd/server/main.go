@@ -14,6 +14,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
@@ -171,10 +172,8 @@ func run() int {
 			MaxOutputTokens:   textConfig.MaxOutputTokens,
 			GenerationTimeout: 45 * time.Second,
 			LeaseDuration:     60 * time.Second,
+			RetryDelay:        5 * time.Second,
 			MaxAttempts:       3,
-			CursorSigningKey: []byte(
-				reviewHistoryConfig.CursorSigningKey.Reveal(),
-			),
 		},
 	)
 	if err != nil {
@@ -229,7 +228,7 @@ func run() int {
 			UploadLease: 2 * time.Minute,
 		}
 	}
-	var speechFeedbackAcoustics review.SpeechFeedbackAcousticProvider
+	var speechFeedbackAcoustics evaluation.SpeechFeedbackAcousticProvider
 	speechFeedbackLease := 30 * time.Second
 	if recordingStore != nil {
 		iseConfig, configurationErr := config.LoadISE()

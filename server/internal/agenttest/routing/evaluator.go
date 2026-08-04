@@ -212,7 +212,7 @@ func (DeterministicRouter) Route(
 				ToolCalls: []ToolCall{{
 					Name: reviewtool.ReviewGetToolName,
 					Input: mustRaw(map[string]any{
-						"review_id": "mock-review-001",
+						"report_id": "mock-report-001",
 					}),
 				}},
 			}

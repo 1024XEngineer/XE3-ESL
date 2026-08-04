@@ -27,6 +27,12 @@ func (r *Repository) SaveManifest(
 	if err != nil {
 		return agentcontext.Manifest{}, agentcontext.ErrInvalidContext
 	}
+	selectedLearningProfile, err := json.Marshal(
+		manifest.SelectedLearningProfile,
+	)
+	if err != nil {
+		return agentcontext.Manifest{}, agentcontext.ErrInvalidContext
+	}
 	var activeGoalID any
 	var activeGoalVersion any
 	if manifest.ActiveGoalID != "" {
@@ -55,6 +61,7 @@ func (r *Repository) SaveManifest(
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
 	var selectedStableProfileJSON []byte
+	var selectedLearningProfileJSON []byte
 	var exposedToolsJSON []byte
 	var toolSchemaHashesJSON []byte
 	var persistedGoalID pgtype.Text
@@ -96,12 +103,15 @@ INSERT INTO agent_context_manifests (
     requested_provider,
     requested_model,
     max_output_tokens,
+    learning_profile_context_policy_version,
+    selected_learning_profile,
     created_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
     $10, $11::jsonb, $12, $13, $14, $15, $16, $17, $18,
-    $19, $20,
-    $21::jsonb, $22, $23, $24, $25, $26, $27, $28,
+	$19, $20,
+	$21::jsonb, $22, $23, $24, $25, $26, $27, $28,
+	$29, $30::jsonb,
     CURRENT_TIMESTAMP
 )
 RETURNING
@@ -133,6 +143,8 @@ RETURNING
     requested_provider,
     requested_model,
     max_output_tokens,
+    learning_profile_context_policy_version,
+    selected_learning_profile,
     exposed_tools,
     tool_schema_hashes,
     created_at`,
@@ -164,6 +176,8 @@ RETURNING
 		manifest.RequestedProvider,
 		manifest.RequestedModel,
 		manifest.MaxOutputTokens,
+		manifest.LearningProfileContextPolicyVersion,
+		selectedLearningProfile,
 	).Scan(
 		&result.RunID,
 		&result.OwnerID,
@@ -193,6 +207,8 @@ RETURNING
 		&result.RequestedProvider,
 		&result.RequestedModel,
 		&result.MaxOutputTokens,
+		&result.LearningProfileContextPolicyVersion,
+		&selectedLearningProfileJSON,
 		&exposedToolsJSON,
 		&toolSchemaHashesJSON,
 		&result.CreatedAt,
@@ -214,6 +230,7 @@ RETURNING
 		selectedJSON,
 		selectedStableProfileJSON,
 		selectedMemoriesJSON,
+		selectedLearningProfileJSON,
 		exposedToolsJSON,
 		toolSchemaHashesJSON,
 	); err != nil {
@@ -231,6 +248,7 @@ func (r *Repository) FindManifest(
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
 	var selectedStableProfileJSON []byte
+	var selectedLearningProfileJSON []byte
 	var exposedToolsJSON []byte
 	var toolSchemaHashesJSON []byte
 	var activeGoalID pgtype.Text
@@ -272,6 +290,8 @@ SELECT
     requested_provider,
     requested_model,
     max_output_tokens,
+    learning_profile_context_policy_version,
+    selected_learning_profile,
     exposed_tools,
     tool_schema_hashes,
     created_at
@@ -308,6 +328,8 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result.RequestedProvider,
 		&result.RequestedModel,
 		&result.MaxOutputTokens,
+		&result.LearningProfileContextPolicyVersion,
+		&selectedLearningProfileJSON,
 		&exposedToolsJSON,
 		&toolSchemaHashesJSON,
 		&result.CreatedAt,
@@ -329,6 +351,7 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		selectedJSON,
 		selectedStableProfileJSON,
 		selectedMemoriesJSON,
+		selectedLearningProfileJSON,
 		exposedToolsJSON,
 		toolSchemaHashesJSON,
 	); err != nil {
@@ -383,6 +406,7 @@ func decodeManifestOptionals(
 	selectedJSON []byte,
 	selectedStableProfileJSON []byte,
 	selectedMemoriesJSON []byte,
+	selectedLearningProfileJSON []byte,
 	exposedToolsJSON []byte,
 	toolSchemaHashesJSON []byte,
 ) error {
@@ -432,6 +456,12 @@ func decodeManifestOptionals(
 	if err := json.Unmarshal(
 		selectedMemoriesJSON,
 		&manifest.SelectedMemories,
+	); err != nil {
+		return agentcontext.ErrRepository
+	}
+	if err := json.Unmarshal(
+		selectedLearningProfileJSON,
+		&manifest.SelectedLearningProfile,
 	); err != nil {
 		return agentcontext.ErrRepository
 	}

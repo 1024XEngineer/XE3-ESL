@@ -1,17 +1,18 @@
 paths:
-  /v1/formal-reviews:
+  /v1/evaluation-reports:
     get:
       tags:
         - Review
-      summary: List the current Actor's completed formal Reviews
+      summary: List the current Actor's completed Evaluation reports
       description: |
-        Returns only completed, Review-owned results ordered by
-        `created_at DESC, review_id DESC`. Pagination uses an opaque keyset
+        Review reads the canonical reports owned by Evaluation and returns only
+        READY, latest-revision results ordered by
+        `created_at DESC, report_id DESC`. Pagination uses an opaque keyset
         cursor; clients must not synthesize or inspect it. `next_cursor` is
         omitted, never `null`, when no older result remains. The server fully
         encodes the response before writing it and rejects a body larger than
-        768 KiB without returning a partial Review page.
-      operationId: listFormalReviews
+        768 KiB without returning a partial page.
+      operationId: listEvaluationReports
       parameters:
         - name: limit
           in: query
@@ -31,38 +32,79 @@ paths:
             pattern: '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
       responses:
         '200':
-          description: Actor-owned completed formal Reviews in stable order.
+          description: Actor-owned Evaluation reports in stable order.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FormalReviewHistoryPage'
+                $ref: '#/components/schemas/EvaluationReportHistoryPage'
               example:
                 items:
-                  - review_id: 20000000-0000-4000-8000-000000000002
+                  - report_id: 20000000-0000-4000-8000-000000000002
+                    evaluation_id: 7b000001-0000-4000-8000-000000000001
+                    evaluation_revision_id: a1000001-0000-4000-8000-000000000001
                     practice_session_id: session_demo_002
-                    status: completed
-                    implementation_version: qianwen-voice-review-v1
-                    source_turn_id: turn_demo_006
-                    source_turn_version: conversation-turn:evidence-v1
-                    result:
-                      summary_eligibility: eligible
-                      overall_score: 91
-                      summary: The answer is clear and outcome-focused.
-                      conclusions:
-                        - key: clarity
-                          category: clarity
-                          message: The response is easy to follow.
-                          suggestion: Add one concrete metric.
+                    revision: 1
+                    schema_version: evaluation-report/v1
+                    scene_type: INTERVIEW
+                    scene_model: PROJECT_EXPERIENCE_DEEP_DIVE
+                    scoreability_status: PROVISIONAL
+                    summary: 本次练习已形成面试表达评估，可按优先行动继续复练。
+                    dimensions:
+                      - key: INTERVIEW_STRUCTURE
+                        score: 82
+                        scale: PERCENTAGE_100
+                        coverage: 1
+                        confidence: 0.8
+                        reason_codes:
+                          - ASR_CONFIDENCE_UNAVAILABLE
+                        evidence_ref_ids:
+                          - evidence_demo_001
+                        strengths: []
+                        improvements: []
+                        recommended_examples: []
+                    priority_actions: []
+                    detail_schema: interview-report/v1
+                    detail: {}
                     created_at: '2026-07-26T10:00:00Z'
-                    updated_at: '2026-07-26T10:00:01Z'
-                    completed_at: '2026-07-26T10:00:01Z'
-                next_cursor: eyJ2IjoxLCJraW5kIjoiZm9ybWFsX3Jldmlld3MifQ.QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE
+                next_cursor: eyJ2IjoxLCJraW5kIjoiZXZhbHVhdGlvbl9yZXBvcnRzIn0.QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE
         '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
+          $ref: '#/components/responses/PrivateBadRequest'
         '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+          $ref: '#/components/responses/PrivateUnauthorized'
         default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
+          $ref: '#/components/responses/PrivateDefaultError'
+  /v1/evaluation-reports/{report_id}:
+    get:
+      tags:
+        - Review
+      summary: Get one Actor-owned Evaluation report
+      description: |
+        Returns one canonical Evaluation report through Review's read-only
+        history boundary. Unknown, superseded, deleted, hidden, and cross-Actor
+        resources all return 404. This read never starts scoring or changes the
+        Learning Profile.
+      operationId: getEvaluationReport
+      parameters:
+        - $ref: '#/components/parameters/ReportId'
+      responses:
+        '200':
+          description: One current Evaluation report.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: ./evaluation.yaml#/components/schemas/EvaluationFormalReport
+        '401':
+          $ref: '#/components/responses/PrivateUnauthorized'
+        '404':
+          $ref: '#/components/responses/PrivateNotFound'
+        default:
+          $ref: '#/components/responses/PrivateDefaultError'
   /v1/speech-feedback/{speech_feedback_id}:
     get:
       tags:
@@ -191,6 +233,12 @@ paths:
           $ref: '#/components/responses/PrivateDefaultError'
 components:
   parameters:
+    ReportId:
+      name: report_id
+      in: path
+      required: true
+      schema:
+        $ref: ./evaluation.yaml#/components/schemas/EvaluationUUID
     SpeechFeedbackId:
       name: speech_feedback_id
       in: path
@@ -283,11 +331,11 @@ components:
           schema:
             $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
   schemas:
-    FormalReviewHistoryPage:
+    EvaluationReportHistoryPage:
       type: object
       additionalProperties: false
       description: |
-        One completed Review history page. The complete UTF-8 JSON response is
+        One Evaluation report history page. The complete UTF-8 JSON response is
         limited to 768 KiB (786432 bytes), including field names and escaping.
       x-max-json-bytes: 786432
       required:
@@ -297,7 +345,7 @@ components:
           type: array
           maxItems: 50
           items:
-            $ref: '#/components/schemas/CompletedFormalReview'
+            $ref: ./evaluation.yaml#/components/schemas/EvaluationFormalReport
         next_cursor:
           type: string
           minLength: 1
@@ -307,69 +355,6 @@ components:
             its decoded metadata fields remain subject to the server's
             128-byte UTF-8 metadata boundary.
           pattern: '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
-    CompletedFormalReview:
-      allOf:
-        - $ref: ./practice-runtime.yaml#/components/schemas/FormalReview
-        - type: object
-          description: |
-            Completed Review projection. Each metadata string uses
-            PostgreSQL-compatible valid UTF-8, excludes U+0000, and is at most
-            128 UTF-8 bytes, even where maxLength counts Unicode code points.
-          required:
-            - result
-            - completed_at
-          properties:
-            review_id:
-              allOf:
-                - $ref: '#/components/schemas/ResourceId'
-              pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-              description: |
-                PostgreSQL-compatible valid UTF-8 without U+0000; at most
-                128 UTF-8 bytes.
-              x-max-utf8-bytes: 128
-            practice_session_id:
-              allOf:
-                - $ref: '#/components/schemas/ResourceId'
-              pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
-              description: |
-                PostgreSQL-compatible valid UTF-8 without U+0000; at most
-                128 UTF-8 bytes.
-              x-max-utf8-bytes: 128
-            status:
-              const: completed
-            implementation_version:
-              type: string
-              minLength: 1
-              maxLength: 128
-              pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
-              description: |
-                PostgreSQL-compatible valid UTF-8 without U+0000; at most
-                128 UTF-8 bytes.
-              x-max-utf8-bytes: 128
-            source_turn_id:
-              allOf:
-                - $ref: '#/components/schemas/ResourceId'
-              pattern: '^(?![\s\S]*\u0000)[\s\S]*\S[\s\S]*$'
-              description: |
-                PostgreSQL-compatible valid UTF-8 without U+0000; at most
-                128 UTF-8 bytes.
-              x-max-utf8-bytes: 128
-            source_turn_version:
-              type: string
-              minLength: 1
-              maxLength: 128
-              pattern: '^conversation-turn:evidence-v[1-9][0-9]*$'
-              description: |
-                PostgreSQL-compatible valid UTF-8 without U+0000; at most
-                128 UTF-8 bytes.
-              x-max-utf8-bytes: 128
-            result:
-              description: |
-                New writes are bounded by the Review service. Results committed
-                before that limit remain readable; the complete page is still
-                subject to the 768 KiB response budget.
-              allOf:
-                - $ref: ./practice-runtime.yaml#/components/schemas/FormalReviewResult
     ResourceId:
       type: string
       minLength: 1

@@ -246,6 +246,14 @@ func (r *PostgresRepository) Reevaluate(
 			err,
 		)
 	}
+	if err := rebuildLearningProfileForRevision(
+		ctx,
+		tx,
+		command.OwnerUserID,
+		latestRevisionID,
+	); err != nil {
+		return Evaluation{}, false, err
+	}
 
 	evaluation, err := insertRevision(
 		ctx,
@@ -293,6 +301,15 @@ func (r *PostgresRepository) Get(
 
 type queryable interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+type queryer interface {
+	queryable
+	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
 
 func selectLatest(

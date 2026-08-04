@@ -21,6 +21,7 @@ func TestRetryRequestServiceCreatesOneAuthorizedConversationDraft(
 	}
 	service, err := NewRetryRequestService(
 		repository,
+		&repracticeSourceReaderStub{source: repracticeSourceFixture()},
 		practice,
 		conversation,
 	)
@@ -73,6 +74,7 @@ func TestRetryRequestServicePersistsUnavailableSourceFailure(
 	}
 	service, err := NewRetryRequestService(
 		repository,
+		&repracticeSourceReaderStub{source: repracticeSourceFixture()},
 		practice,
 		conversation,
 	)
@@ -98,8 +100,8 @@ func TestRetryRequestServicePersistsUnavailableSourceFailure(
 	}
 }
 
-func retryRequestFixture(now time.Time) SpeechFeedbackRetryRequest {
-	return SpeechFeedbackRetryRequest{
+func retryRequestFixture(now time.Time) RepracticeRequest {
+	return RepracticeRequest{
 		RetryRequestID:    "92000000-0000-4000-8000-000000000001",
 		FeedbackItemID:    "93000000-0000-4000-8000-000000000001",
 		PracticeSessionID: "session_daily_001",
@@ -121,26 +123,57 @@ func retryRequestActor() requestcontext.Actor {
 }
 
 type retryRequestRepositoryStub struct {
-	request       SpeechFeedbackRetryRequest
+	request       RepracticeRequest
 	reserveReplay bool
 	reserveErr    error
 	getErr        error
 }
 
-func (stub *retryRequestRepositoryStub) ReserveRetryRequest(
+func (stub *retryRequestRepositoryStub) FindRetryRequestByKey(
 	_ context.Context,
 	_ string,
 	_ string,
+) (RepracticeRequest, bool, error) {
+	return stub.request, stub.reserveReplay, stub.getErr
+}
+
+func (stub *retryRequestRepositoryStub) ReserveRetryRequest(
+	_ context.Context,
 	_ string,
-) (SpeechFeedbackRetryRequest, bool, error) {
+	_ RepracticeSource,
+	_ string,
+) (RepracticeRequest, bool, error) {
 	return stub.request, !stub.reserveReplay, stub.reserveErr
+}
+
+type repracticeSourceReaderStub struct {
+	source RepracticeSource
+	err    error
+}
+
+func (stub *repracticeSourceReaderStub) ReadSameQuestionRepracticeSource(
+	_ context.Context,
+	_ requestcontext.Actor,
+	_ string,
+) (RepracticeSource, error) {
+	return stub.source, stub.err
+}
+
+func repracticeSourceFixture() RepracticeSource {
+	return RepracticeSource{
+		FeedbackItemID:    "93000000-0000-4000-8000-000000000001",
+		SourceFeedbackID:  "96000000-0000-4000-8000-000000000001",
+		PracticeSessionID: "session_daily_001",
+		OriginalTurnID:    "turn_daily_001",
+		QuestionID:        "question_daily_001",
+	}
 }
 
 func (stub *retryRequestRepositoryStub) GetRetryRequest(
 	_ context.Context,
 	_ string,
 	_ string,
-) (SpeechFeedbackRetryRequest, error) {
+) (RepracticeRequest, error) {
 	return stub.request, stub.getErr
 }
 
@@ -149,7 +182,7 @@ func (stub *retryRequestRepositoryStub) CompleteRetryRequest(
 	_ string,
 	_ string,
 	newTurnID string,
-) (SpeechFeedbackRetryRequest, error) {
+) (RepracticeRequest, error) {
 	completed := stub.request
 	completed.RetryStatus = RetryRequestTurnCreated
 	completed.NewTurnID = newTurnID
@@ -167,7 +200,7 @@ func (stub *retryRequestRepositoryStub) FailRetryRequest(
 	_ string,
 	_ string,
 	failure RetryRequestStableFailure,
-) (SpeechFeedbackRetryRequest, error) {
+) (RepracticeRequest, error) {
 	failed := stub.request
 	failed.RetryStatus = RetryRequestFailed
 	failed.StableFailure = &failure
@@ -212,6 +245,7 @@ func (stub *retryConversationStub) CreateSameQuestionRetryTurn(
 }
 
 var _ RetryRequestRepository = (*retryRequestRepositoryStub)(nil)
+var _ RepracticeSourceReader = (*repracticeSourceReaderStub)(nil)
 var _ SameQuestionRetryPracticePort = (*retryPracticeStub)(nil)
 var _ SameQuestionRetryConversationPort = (*retryConversationStub)(nil)
 

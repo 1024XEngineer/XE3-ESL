@@ -6,8 +6,8 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/review/interview_report.dart';
 import 'package:speakup/features/coaching/review/interview_report_controller.dart';
-import 'package:speakup/features/coaching/review/turn_feedback_controller.dart';
-import 'package:speakup/features/coaching/review/turn_feedback_disclosure.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 class InterviewReportPage extends StatefulWidget {
   const InterviewReportPage({
