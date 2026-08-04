@@ -123,9 +123,9 @@ func (r *PostgresRepository) EnsureConfirmedConversationTurn(
 	if err != nil {
 		return SpeechFeedbackReference{}, err
 	}
-	englishEvidence := classifySpeechFeedbackLanguage(
+	englishEvidence := speechFeedbackHasAssessableEnglish(
 		snapshot.CanonicalText,
-	) == speechFeedbackLanguageEnglish
+	)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO evaluation_speech_feedbacks (
 			owner_user_id,
@@ -248,9 +248,7 @@ func (r *PostgresRepository) EnsureConfirmedAgentVoiceMessage(
 	if err != nil {
 		return SpeechFeedbackReference{}, err
 	}
-	englishEvidence := classifySpeechFeedbackLanguage(
-		canonicalText,
-	) == speechFeedbackLanguageEnglish
+	englishEvidence := speechFeedbackHasAssessableEnglish(canonicalText)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO evaluation_speech_feedbacks (
 			owner_user_id,

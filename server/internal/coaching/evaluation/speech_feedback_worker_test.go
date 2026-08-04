@@ -91,6 +91,48 @@ func TestSpeechFeedbackWorkerKeepsChineseTextInsufficient(t *testing.T) {
 	}
 }
 
+func TestSpeechFeedbackWorkerGeneratesFeedbackForMixedEnglishText(
+	t *testing.T,
+) {
+	t.Parallel()
+	claim := validSpeechFeedbackClaim()
+	claim.CanonicalText = "这是补充。 I like AI because it helps me."
+	repository := &speechFeedbackRepositoryStub{claim: claim}
+	payload, err := json.Marshal(map[string]any{
+		"items": []any{map[string]any{
+			"kind":        "STRENGTH",
+			"explanation": "The English clause gives a clear reason.",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &speechFeedbackProviderStub{
+		result: SpeechFeedbackProviderResult{
+			Payload:   payload,
+			Provider:  "qianwen",
+			Model:     "qwen-plus",
+			RequestID: "request-mixed-english",
+		},
+	}
+	worker, err := NewSpeechFeedbackWorker(
+		repository,
+		provider,
+		validSpeechFeedbackWorkerConfiguration(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sweep, err := worker.ProcessPending(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("process mixed English text: %v", err)
+	}
+	if provider.calls != 1 || sweep.Completed != 1 ||
+		sweep.Insufficient != 0 {
+		t.Fatalf("mixed sweep = %#v, provider calls = %d", sweep, provider.calls)
+	}
+}
+
 func TestSpeechFeedbackWorkerPersistsProviderFailureNotInsufficient(
 	t *testing.T,
 ) {

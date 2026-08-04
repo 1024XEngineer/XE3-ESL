@@ -203,6 +203,52 @@ func TestSpeechFeedbackAcousticProviderRejectsChineseBeforeReadingAudio(
 	}
 }
 
+func TestXFYUNSpeechFeedbackAcousticProviderAssessesEnglishInMixedSpeech(
+	t *testing.T,
+) {
+	t.Parallel()
+	accuracy, fluency, integrity := 78.0, 75.0, 80.0
+	rejected := false
+	evaluator := &speechFeedbackISEEvaluatorStub{
+		result: xfyun.EvaluationResult{
+			SessionID: "ise-mixed-session",
+			RawXML:    "<xml_result/>",
+			Summary: xfyun.ScoreSummary{
+				AccuracyScore:  &accuracy,
+				FluencyScore:   &fluency,
+				IntegrityScore: &integrity,
+				Rejected:       &rejected,
+			},
+		},
+	}
+	provider, err := NewXFYUNSpeechFeedbackAcousticProvider(
+		&speechFeedbackAudioReaderStub{
+			audio: speechFeedbackTestWAV([]byte{1, 2, 3, 4}),
+		},
+		evaluator,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = provider.EvaluateSpeechFeedbackAcoustics(
+		context.Background(),
+		SpeechFeedbackAcousticInput{
+			OwnerUserID:       "f475b521-a96f-44be-b447-8b85bed7e6e9",
+			AudioAssetID:      "audio_asset_mixed",
+			AudioAssetVersion: 1,
+			AudioChecksum:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			ConfirmedText:     "这是补充。 I like AI, 因为 it helps me.",
+		},
+	)
+	if err != nil {
+		t.Fatalf("evaluate mixed acoustics: %v", err)
+	}
+	if evaluator.request.ReferenceText != "I like AI, it helps me" ||
+		evaluator.request.Category != xfyun.CategoryReadSentence {
+		t.Fatalf("mixed ISE request = %#v", evaluator.request)
+	}
+}
+
 func TestSpeechFeedbackWorkerPersistsAcousticsForShortEnglishText(
 	t *testing.T,
 ) {

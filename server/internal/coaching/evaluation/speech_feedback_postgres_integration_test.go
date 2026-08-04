@@ -511,7 +511,7 @@ func TestPostgresSpeechFeedbackDeletionFencesLateWorker(
 	}
 }
 
-func TestPostgresSpeechFeedbackPublishesInsufficientForMixedLanguageTurn(
+func TestPostgresSpeechFeedbackQueuesAssessableMixedLanguageTurn(
 	t *testing.T,
 ) {
 	pool := speechFeedbackDatabase(t)
@@ -558,12 +558,10 @@ func TestPostgresSpeechFeedbackPublishesInsufficientForMixedLanguageTurn(
 	if err != nil {
 		t.Fatalf("get mixed-language SpeechFeedback: %v", err)
 	}
-	if feedback.FeedbackStatus != evaluation.SpeechFeedbackReady ||
-		feedback.ScoreabilityStatus == nil ||
-		*feedback.ScoreabilityStatus != evaluation.SpeechFeedbackInsufficient ||
-		len(feedback.ReasonCodes) != 1 ||
-		feedback.ReasonCodes[0] !=
-			evaluation.SpeechFeedbackReasonTranscriptConfidenceInsufficient {
+	if feedback.FeedbackStatus != evaluation.SpeechFeedbackQueued ||
+		feedback.ScoreabilityStatus != nil ||
+		feedback.GateStatus != nil ||
+		len(feedback.ReasonCodes) != 0 {
 		t.Fatalf("mixed-language SpeechFeedback = %#v", feedback)
 	}
 	assertSpeechFeedbackCounts(t, pool, ownerID, 1, 1)

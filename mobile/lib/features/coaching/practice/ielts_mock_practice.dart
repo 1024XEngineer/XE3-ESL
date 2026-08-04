@@ -104,6 +104,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   bool _convertedAnswerSubmitting = false;
   bool _startingPart2Recording = false;
   bool _finishingPart2Recording = false;
+  bool _part2DeadlineHandled = false;
   bool _part2RetryNeeded = false;
   bool _exitApproved = false;
   bool _exitInFlight = false;
@@ -229,8 +230,13 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (restored.phase == IeltsMockPhase.part2Speaking &&
         widget.controller.recordingState == PracticeRecordingState.idle &&
         !widget.controller.hasPendingPracticeAudio &&
-        widget.controller.errorMessage == null) {
+        widget.controller.errorMessage == null &&
+        _secondsUntil(restored.speakingDeadline) > 0) {
       unawaited(_startPart2Speaking(restart: true));
+    } else if (restored.phase == IeltsMockPhase.part2Speaking &&
+        widget.controller.recordingState == PracticeRecordingState.idle &&
+        _secondsUntil(restored.speakingDeadline) <= 0) {
+      setState(() => _part2RetryNeeded = true);
     }
     _recordCompletedParts();
     _syncReport();
@@ -276,17 +282,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
           clearSpeakingDeadline: true,
         );
       }
-      if (completed >= 2 || value.phase == IeltsMockPhase.part3) {
+      if (completed >= 1 || value.phase == IeltsMockPhase.part3) {
         return value.copyWith(
           phase: IeltsMockPhase.part3,
-          clearPreparationDeadline: true,
-          clearSpeakingStartedAt: true,
-          clearSpeakingDeadline: true,
-        );
-      }
-      if (completed == 1) {
-        return value.copyWith(
-          phase: IeltsMockPhase.part2Complete,
           clearPreparationDeadline: true,
           clearSpeakingStartedAt: true,
           clearSpeakingDeadline: true,
@@ -308,19 +306,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         clearSpeakingDeadline: true,
       );
     }
-    if (completed >= 10) {
+    if (completed >= 9) {
       return value.copyWith(
         phase: IeltsMockPhase.part3,
-        clearPreparationDeadline: true,
-        clearSpeakingDeadline: true,
-      );
-    }
-    if (completed == 9) {
-      final phase = value.phase == IeltsMockPhase.part3
-          ? IeltsMockPhase.part3
-          : IeltsMockPhase.part2Complete;
-      return value.copyWith(
-        phase: phase,
         clearPreparationDeadline: true,
         clearSpeakingDeadline: true,
       );
@@ -402,7 +390,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   Future<void> _playQuestionNarration(String questionId, String text) async {
     final currentQuestion = widget.controller.currentQuestion;
-    if (currentQuestion?.id == questionId &&
+    if (_progress?.phase == IeltsMockPhase.part1 &&
+        currentQuestion?.id == questionId &&
         widget.controller.canUsePracticeAudio) {
       await _stopExaminerSpeakerSafely();
       _questionNarrationGeneration++;
@@ -608,13 +597,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     if (progress.phase == IeltsMockPhase.part2Speaking &&
         _secondsUntil(progress.speakingDeadline) <= 0) {
-      if (widget.controller.recordingState == PracticeRecordingState.idle &&
-          !widget.controller.hasPendingPracticeAudio &&
-          widget.controller.errorMessage == null) {
-        unawaited(_startPart2Speaking(restart: true));
-      } else if (!widget.controller.hasPendingPracticeAudio) {
-        unawaited(_finishPart2Speaking());
+      if (_part2DeadlineHandled) {
+        return;
       }
+      _part2DeadlineHandled = true;
+      unawaited(_finishPart2Speaking());
     }
   }
 
@@ -732,6 +719,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (progress == null ||
         _startingPart2Recording ||
         (progress.phase == IeltsMockPhase.part2Speaking &&
+            (_part2DeadlineHandled ||
+                _secondsUntil(progress.speakingDeadline) <= 0)) ||
+        (progress.phase == IeltsMockPhase.part2Speaking &&
             widget.controller.recordingState != PracticeRecordingState.idle)) {
       return;
     }
@@ -745,6 +735,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       }
     }
     _startingPart2Recording = true;
+    _part2DeadlineHandled = false;
     _part2RetryNeeded = false;
     final now = widget.now().toUtc();
     final speaking = progress.copyWith(
@@ -1159,15 +1150,22 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         errorMessage: _narrationError,
         onRetry: _narratePart2CueCard,
       ),
-      IeltsMockPhase.part2Preparation => _Part2Preparation(
+      IeltsMockPhase.part2Preparation => _Part2LongTurn(
+        speaking: false,
         secondsRemaining: _secondsUntil(progress.preparationDeadline),
         question: _currentQuestionText(),
         notesController: _notesController,
+        notes: progress.notes,
+        recordingState: widget.controller.recordingState,
+        busy: _startingPart2Recording,
+        errorMessage: null,
         onPressed: _startPart2Speaking,
       ),
-      IeltsMockPhase.part2Speaking => _Part2Speaking(
-        controller: widget.controller,
+      IeltsMockPhase.part2Speaking => _Part2LongTurn(
+        speaking: true,
         secondsRemaining: _secondsUntil(progress.speakingDeadline),
+        question: _currentQuestionText(),
+        notesController: _notesController,
         notes: progress.notes,
         recordingState: widget.controller.recordingState,
         busy:
@@ -1181,28 +1179,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
             (_part2RetryNeeded ? '录音识别失败，请重新录音。' : null),
         onPressed: _handlePart2SpeakingAction,
       ),
-      IeltsMockPhase.part2Complete =>
-        _mode == IeltsPracticeMode.fullMock
-            ? _CompletionStep(
-                key: const Key('ielts-mock-part-2-complete'),
-                title: 'Part 2 已完成',
-                message: '长回答已保存。接下来进入 Part 3 深入讨论。',
-                buttonLabel: '进入 Part 3',
-                onPressed: _beginPart3,
-              )
-            : _Part2PracticeComplete(
-                detail: _Part2AnswerFeedback(
-                  controller: widget.controller,
-                  speechFeedbackController: widget.speechFeedbackController,
-                ),
-                onContinuePart3: _beginPart3,
-                onNext: () =>
-                    _finishSection(IeltsPracticeCompletionAction.next),
-                onRetry: () =>
-                    _finishSection(IeltsPracticeCompletionAction.retry),
-                onList: () =>
-                    _finishSection(IeltsPracticeCompletionAction.list),
-              ),
+      IeltsMockPhase.part2Complete => const Center(
+        child: CircularProgressIndicator(
+          key: Key('ielts-mock-entering-part-3'),
+        ),
+      ),
       IeltsMockPhase.part3Intro => _Part3Intro(
         topicTitle: _currentTopicTitle(),
         cueCardPrompt: _topicGroup?.cueCard.prompt ?? _currentCueCard(),
@@ -1840,88 +1821,6 @@ class _CompletionStep extends StatelessWidget {
   }
 }
 
-class _Part2AnswerFeedback extends StatelessWidget {
-  const _Part2AnswerFeedback({
-    required this.controller,
-    required this.speechFeedbackController,
-  });
-
-  final AgentController controller;
-  final SpeechFeedbackController? speechFeedbackController;
-
-  @override
-  Widget build(BuildContext context) {
-    final answer = controller.practiceMessages
-        .where((message) => message.role == AgentMessageRole.user)
-        .lastOrNull;
-    if (answer == null) {
-      return const SizedBox.shrink();
-    }
-    final candidateProjection =
-        answer.speechFeedbackStatusUrl != null &&
-            speechFeedbackController != null
-        ? speechFeedbackController!.projectionFor(
-            _ieltsFeedbackSourceKey(controller, answer),
-          )
-        : null;
-    final projection =
-        candidateProjection?.feedback?.scoreabilityStatus ==
-            SpeechFeedbackScoreabilityStatus.insufficient
-        ? null
-        : candidateProjection;
-    return Column(
-      key: const Key('ielts-part2-answer-feedback'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        PracticeChatBubble(message: answer, maxWidth: 420),
-        if (projection != null) ...[
-          const SizedBox(height: 10),
-          SpeechFeedbackDisclosure(
-            key: ValueKey('ielts-speech-feedback-${projection.sourceKey}'),
-            projection: projection,
-            onRetry: projection.canRetry
-                ? () => unawaited(
-                    speechFeedbackController!.retry(projection.sourceKey),
-                  )
-                : null,
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _Part2PracticeComplete extends StatelessWidget {
-  const _Part2PracticeComplete({
-    required this.detail,
-    required this.onContinuePart3,
-    required this.onNext,
-    required this.onRetry,
-    required this.onList,
-  });
-
-  final Widget detail;
-  final VoidCallback onContinuePart3;
-  final VoidCallback onNext;
-  final VoidCallback onRetry;
-  final VoidCallback onList;
-
-  @override
-  Widget build(BuildContext context) {
-    return _SectionActionLayout(
-      key: const Key('ielts-part2-practice-complete'),
-      title: 'Part 2 已完成',
-      message: '题卡陈述已完成。你可以继续练同主题 Part 3，或切换下一张题卡。',
-      detail: detail,
-      primaryLabel: '继续对应 Part 3',
-      onPrimary: onContinuePart3,
-      onNext: onNext,
-      onRetry: onRetry,
-      onList: onList,
-    );
-  }
-}
-
 class _SectionPracticeComplete extends StatelessWidget {
   const _SectionPracticeComplete({
     required this.mode,
@@ -1965,7 +1864,6 @@ class _SectionActionLayout extends StatelessWidget {
     required this.onNext,
     required this.onRetry,
     required this.onList,
-    this.detail,
     super.key,
   });
 
@@ -1976,7 +1874,6 @@ class _SectionActionLayout extends StatelessWidget {
   final VoidCallback? onNext;
   final VoidCallback onRetry;
   final VoidCallback onList;
-  final Widget? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -2009,10 +1906,6 @@ class _SectionActionLayout extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: SpeakUpDesign.body,
               ),
-              if (detail case final content?) ...[
-                const SizedBox(height: 20),
-                content,
-              ],
               const SizedBox(height: 30),
               FilledButton(
                 key: const Key('ielts-section-primary-action'),
@@ -2222,75 +2115,12 @@ class _Part2CueCardReading extends StatelessWidget {
   }
 }
 
-class _Part2Preparation extends StatelessWidget {
-  const _Part2Preparation({
+class _Part2LongTurn extends StatelessWidget {
+  const _Part2LongTurn({
+    required this.speaking,
     required this.secondsRemaining,
     required this.question,
     required this.notesController,
-    required this.onPressed,
-  });
-
-  final int secondsRemaining;
-  final String question;
-  final TextEditingController notesController;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      key: const Key('ielts-mock-part-2-preparation'),
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            '${secondsRemaining}s',
-            key: const Key('ielts-mock-preparation-countdown'),
-            textAlign: TextAlign.center,
-            style: SpeakUpDesign.pageTitle.copyWith(fontSize: 44),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            '准备时间',
-            textAlign: TextAlign.center,
-            style: SpeakUpDesign.body,
-          ),
-          const SizedBox(height: 18),
-          _CueCard(question: question),
-          const SizedBox(height: 14),
-          TextField(
-            key: const Key('ielts-mock-notes'),
-            controller: notesController,
-            minLines: 2,
-            maxLines: 4,
-            maxLength: 4000,
-            decoration: const InputDecoration(
-              hintText: '在这里记录要点…',
-              counterText: '',
-              alignLabelWithHint: true,
-            ),
-          ),
-          const SizedBox(height: 18),
-          FilledButton(
-            key: const Key('ielts-mock-start-speaking'),
-            onPressed: onPressed,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(52),
-              backgroundColor: SpeakUpDesign.ink,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('提前开始作答 →'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Part2Speaking extends StatelessWidget {
-  const _Part2Speaking({
-    required this.controller,
-    required this.secondsRemaining,
     required this.notes,
     required this.recordingState,
     required this.busy,
@@ -2298,8 +2128,10 @@ class _Part2Speaking extends StatelessWidget {
     required this.onPressed,
   });
 
-  final AgentController controller;
+  final bool speaking;
   final int secondsRemaining;
+  final String question;
+  final TextEditingController notesController;
   final String notes;
   final PracticeRecordingState recordingState;
   final bool busy;
@@ -2311,70 +2143,94 @@ class _Part2Speaking extends StatelessWidget {
     final minutes = secondsRemaining ~/ 60;
     final seconds = (secondsRemaining % 60).toString().padLeft(2, '0');
     return SingleChildScrollView(
-      key: const Key('ielts-mock-part-2-speaking'),
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+      key: const Key('ielts-mock-part-2-long-turn'),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Text(
-                '$minutes:$seconds',
-                key: const Key('ielts-mock-speaking-countdown'),
-                style: SpeakUpDesign.pageTitle.copyWith(fontSize: 42),
-              ),
-              const Spacer(),
-              const Row(
-                children: [
-                  CircleAvatar(radius: 5, backgroundColor: Color(0xFF5C97E5)),
-                  SizedBox(width: 7),
-                  CircleAvatar(radius: 5, backgroundColor: Color(0xFFAFC7EB)),
-                  SizedBox(width: 7),
-                  CircleAvatar(radius: 5, backgroundColor: Color(0xFFDDE9F8)),
-                ],
-              ),
-            ],
+          Text(
+            '$minutes:$seconds',
+            key: Key(
+              speaking
+                  ? 'ielts-mock-speaking-countdown'
+                  : 'ielts-mock-preparation-countdown',
+            ),
+            textAlign: TextAlign.center,
+            style: SpeakUpDesign.pageTitle.copyWith(fontSize: 44),
           ),
           const SizedBox(height: 4),
-          const Text('作答时间·请开始讲述', style: SpeakUpDesign.body),
-          const SizedBox(height: 22),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFAFAF9),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Text(
-              notes.isEmpty ? '准备阶段未记录要点。' : notes,
-              textAlign: TextAlign.center,
-              style: SpeakUpDesign.body,
-            ),
+          Text(
+            speaking ? '作答时间 · 已自动开始录音' : '准备时间 · 阅读题目并记录要点',
+            textAlign: TextAlign.center,
+            style: SpeakUpDesign.body,
           ),
-          const SizedBox(height: 24),
-          _Part2RecordingStatus(
-            state: recordingState,
-            elapsedSeconds: 120 - secondsRemaining,
-          ),
-          if (errorMessage != null) ...[
-            const SizedBox(height: 16),
-            Text(
-              errorMessage!,
-              style: const TextStyle(color: SpeakUpDesign.error),
+          const SizedBox(height: 18),
+          _CueCard(question: question),
+          const SizedBox(height: 14),
+          if (!speaking) ...[
+            TextField(
+              key: const Key('ielts-mock-notes'),
+              controller: notesController,
+              minLines: 2,
+              maxLines: 4,
+              maxLength: 4000,
+              decoration: const InputDecoration(
+                hintText: '在这里记录要点…',
+                counterText: '',
+                alignLabelWithHint: true,
+              ),
             ),
-          ],
-          if (recordingState == PracticeRecordingState.idle &&
-              errorMessage != null) ...[
-            const SizedBox(height: 26),
+            const SizedBox(height: 18),
             FilledButton(
-              key: const Key('ielts-mock-finish-speaking'),
+              key: const Key('ielts-mock-start-speaking'),
               onPressed: busy ? null : onPressed,
               style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(58),
+                minimumSize: const Size.fromHeight(52),
                 backgroundColor: SpeakUpDesign.ink,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('重新录音 →'),
+              child: const Text('提前开始作答 →'),
             ),
+          ] else ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFAFAF9),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Text(
+                notes.isEmpty ? '准备阶段未记录要点。' : notes,
+                textAlign: TextAlign.center,
+                style: SpeakUpDesign.body,
+              ),
+            ),
+            const SizedBox(height: 20),
+            _Part2RecordingStatus(
+              state: recordingState,
+              elapsedSeconds: 120 - secondsRemaining,
+            ),
+            if (errorMessage != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                errorMessage!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: SpeakUpDesign.error),
+              ),
+            ],
+            if (recordingState == PracticeRecordingState.idle &&
+                errorMessage != null) ...[
+              const SizedBox(height: 20),
+              FilledButton(
+                key: const Key('ielts-mock-finish-speaking'),
+                onPressed: busy ? null : onPressed,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
+                  backgroundColor: SpeakUpDesign.ink,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('重新录音 →'),
+              ),
+            ],
           ],
         ],
       ),

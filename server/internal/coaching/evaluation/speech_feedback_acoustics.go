@@ -126,8 +126,16 @@ func (provider *speechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcoustics(
 		!validSpeechFeedbackIdentifier(input.AudioAssetID) ||
 		input.AudioAssetVersion < 1 ||
 		len(input.AudioChecksum) != 64 ||
-		classifySpeechFeedbackLanguage(input.ConfirmedText) !=
-			speechFeedbackLanguageEnglish {
+		!speechFeedbackHasAssessableEnglish(input.ConfirmedText) {
+		return SpeechFeedbackAcousticEvidence{},
+			ErrSpeechFeedbackAcousticUnavailable
+	}
+	language := classifySpeechFeedbackLanguage(input.ConfirmedText)
+	referenceText := strings.TrimSpace(input.ConfirmedText)
+	if language == speechFeedbackLanguageMixed {
+		referenceText = speechFeedbackEnglishReferenceText(input.ConfirmedText)
+	}
+	if referenceText == "" {
 		return SpeechFeedbackAcousticEvidence{},
 			ErrSpeechFeedbackAcousticUnavailable
 	}
@@ -145,8 +153,7 @@ func (provider *speechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcoustics(
 	if err != nil {
 		return SpeechFeedbackAcousticEvidence{}, err
 	}
-	category := speechFeedbackAcousticCategory(input.ConfirmedText)
-	referenceText := input.ConfirmedText
+	category := speechFeedbackAcousticCategory(referenceText)
 	result, err := provider.evaluator.Evaluate(
 		ctx,
 		AcousticAssessmentRequest{
