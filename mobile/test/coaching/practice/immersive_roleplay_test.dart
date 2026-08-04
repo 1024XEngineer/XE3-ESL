@@ -50,11 +50,55 @@ void main() {
     expect(find.text('画面已连接'), findsOneWidget);
     expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
     expect(
+      find.byKey(const Key('immersive-toggle-conversation-text')),
+      findsNothing,
+    );
+    expect(
       tester.getSize(find.byKey(const Key('immersive-avatar-region'))).height,
       closeTo(844 * 0.44, 0.1),
     );
     expect(find.byKey(const Key('immersive-conversation-history')), findsOne);
     expect(find.textContaining('评分'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('toggles interview subtitles and conversation text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final controller = await _roleplayController(
+      practiceClient: _AsyncReviewPracticeClient(
+        sceneFamily: SceneFamily.interview,
+        sceneModel: SceneModel.interviewBasicDialogue,
+      ),
+    );
+    addTearDown(controller.dispose);
+    final question = controller.currentQuestion!.text;
+
+    await tester.pumpWidget(
+      MaterialApp(home: ImmersiveRoleplayPage(agentController: controller)),
+    );
+    await tester.pump();
+
+    final toggle = find.byKey(const Key('immersive-toggle-conversation-text'));
+    expect(toggle, findsOneWidget);
+    expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
+    expect(find.text(question), findsWidgets);
+
+    await tester.tap(toggle);
+    await tester.pump();
+
+    expect(find.byKey(const Key('immersive-live-subtitle')), findsNothing);
+    expect(find.text(question), findsNothing);
+    expect(find.byKey(const Key('immersive-record')).hitTestable(), findsOne);
+
+    await tester.tap(toggle);
+    await tester.pump();
+
+    expect(find.byKey(const Key('immersive-live-subtitle')), findsOneWidget);
+    expect(find.text(question), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
