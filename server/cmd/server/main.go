@@ -15,7 +15,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -87,6 +87,21 @@ func run() int {
 	synthesizer, err := bootstrap.NewSpeechSynthesizer(ttsConfig)
 	if err != nil {
 		logger.Error("speech synthesis startup failed")
+		return 1
+	}
+	practiceRecognizer, err := bootstrap.NewPracticeSpeechRecognizer(asrConfig)
+	if err != nil {
+		logger.Error("Practice speech recognition startup failed")
+		return 1
+	}
+	practiceSynthesizer, err := bootstrap.NewPracticeSpeechSynthesizer(ttsConfig)
+	if err != nil {
+		logger.Error("Practice speech synthesis startup failed")
+		return 1
+	}
+	practiceQuestions, err := bootstrap.NewPracticeQuestionGenerator(textConfig)
+	if err != nil {
+		logger.Error("Practice question generation startup failed")
 		return 1
 	}
 	temporaryAudioConfig, err := config.LoadTemporaryAudio()
@@ -316,6 +331,9 @@ func run() int {
 			bootstrap.VoiceConfiguration{
 				Recognizer:             recognizer,
 				Synthesizer:            synthesizer,
+				PracticeRecognizer:     practiceRecognizer,
+				PracticeSynthesizer:    practiceSynthesizer,
+				QuestionGenerator:      practiceQuestions,
 				TemporaryAudio:         audioVault,
 				ObjectStore:            recordingStore,
 				AgentVoiceInputEnabled: storageConfig.Enabled,
@@ -556,7 +574,7 @@ func run() int {
 		},
 		preparation.New(),
 		practice.New(),
-		practiceinput.New(),
+		practicevoice.New(),
 		review.New(),
 	)
 	bootstrap.RegisterSceneCatalog(router, sceneCatalog)

@@ -7,9 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpinput"
@@ -24,13 +22,13 @@ const defaultReadTimeout = 15 * time.Second
 type Options struct {
 	AudioReadTimeout  time.Duration
 	SameQuestionRetry *practicevoice.SameQuestionRetryApplication
-	AudioAssets       practiceinput.AudioAssetHTTPService
+	AudioAssets       AudioAssetHTTPService
 }
 
 type Handler struct {
 	application *practicevoice.SessionApplication
 	retry       *practicevoice.SameQuestionRetryApplication
-	audioAssets practiceinput.AudioAssetHTTPService
+	audioAssets AudioAssetHTTPService
 	readTimeout time.Duration
 	errors      *httpresponse.Renderer
 }
@@ -91,16 +89,16 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 		)
 	}
 	if handler.audioAssets != nil {
-		_ = practiceinput.RegisterAudioAssetRoutes(
+		_ = RegisterAudioAssetRoutes(
 			routes,
 			handler.audioAssets,
-			practiceinput.AudioAssetActorResolverFunc(
+			AudioAssetActorResolverFunc(
 				func(request *http.Request) (
-					practiceinput.AudioAssetActor,
+					practicevoice.AudioAssetActor,
 					bool,
 				) {
 					actor, ok := requestcontext.ActorFromContext(request.Context())
-					return practiceinput.AudioAssetActor{UserID: actor.UserID},
+					return practicevoice.AudioAssetActor{UserID: actor.UserID},
 						ok && actor.Valid()
 				},
 			),
@@ -158,7 +156,7 @@ func (handler *Handler) transcribeCandidate(c *gin.Context) {
 	candidate, err := handler.application.Transcribe(
 		c.Request.Context(),
 		actor,
-		practiceinput.TranscribeVoiceCommand{
+		practicevoice.TranscribeVoiceCommand{
 			SessionID:      c.Param("practice_session_id"),
 			QuestionID:     c.Param("question_id"),
 			IdempotencyKey: key,
@@ -227,7 +225,7 @@ func (handler *Handler) confirmCandidate(c *gin.Context) {
 	state, err := handler.application.Confirm(
 		c.Request.Context(),
 		actor,
-		practiceinput.ConfirmVoiceTurnCommand{
+		practicevoice.ConfirmVoiceTurnCommand{
 			CandidateID: c.Param("candidate_id"), IdempotencyKey: key,
 		},
 	)
@@ -267,7 +265,7 @@ func (handler *Handler) submitText(c *gin.Context) {
 	}
 	state, err := handler.application.SubmitText(
 		c.Request.Context(), actor,
-		practiceinput.SubmitTextAnswerCommand{
+		practicevoice.SubmitTextAnswerCommand{
 			SessionID:      c.Param("practice_session_id"),
 			QuestionID:     c.Param("question_id"),
 			IdempotencyKey: key, AnswerText: answerText,
@@ -361,7 +359,7 @@ func QuestionResponse(question practice.Question) gin.H {
 }
 
 func TranscriptionCandidateResponse(
-	candidate practiceinput.TranscriptionCandidate,
+	candidate practicevoice.TranscriptionCandidate,
 ) gin.H {
 	return gin.H{
 		"candidate_id":              candidate.ID,
@@ -396,18 +394,17 @@ func ConfirmedTurnResponse(turn practice.Turn) gin.H {
 }
 
 func mapError(err error) error {
-	var speechError *ai.SpeechError
-	var generationError *ai.GenerationError
+	var providerFailure *practicevoice.ProviderError
 	switch {
 	case errors.Is(err, practicevoice.ErrInvalidRequest),
 		errors.Is(err, practicevoice.ErrInvalidContext),
-		errors.Is(err, practiceinput.ErrVoiceRoundInvalid):
+		errors.Is(err, practicevoice.ErrVoiceRoundInvalid):
 		return invalidRequest(err)
 	case errors.Is(err, practicevoice.ErrNotFound),
-		errors.Is(err, practiceinput.ErrVoiceRoundNotFound):
+		errors.Is(err, practicevoice.ErrVoiceRoundNotFound):
 		return resourceNotFound(err)
 	case errors.Is(err, practicevoice.ErrIdempotencyConflict),
-		errors.Is(err, practiceinput.ErrVoiceRoundConflict):
+		errors.Is(err, practicevoice.ErrVoiceRoundConflict):
 		return apperror.New(
 			apperror.Conflict, "idempotency_key_conflict",
 			"Idempotency key conflicts with the original request.",
@@ -419,31 +416,29 @@ func mapError(err error) error {
 			"Resource state conflicts with this operation.",
 			apperror.WithCause(err),
 		)
-	case errors.Is(err, practiceinput.ErrVoiceRoundProcessing):
+	case errors.Is(err, practicevoice.ErrVoiceRoundProcessing):
 		return apperror.New(
 			apperror.Conflict, "resource_processing",
 			"Resource processing is still in progress.",
 			apperror.WithRetryable(true), apperror.WithCause(err),
 		)
-	case errors.Is(err, practiceinput.ErrVoiceRoundCapacity):
+	case errors.Is(err, practicevoice.ErrVoiceRoundCapacity):
 		return apperror.New(
 			apperror.Unavailable, "voice_capacity_exhausted",
 			"Voice processing capacity is temporarily exhausted.",
 			apperror.WithRetryable(true), apperror.WithCause(err),
 		)
-	case errors.As(err, &speechError):
-		return providerError(speechError.Kind, err)
-	case errors.As(err, &generationError):
-		return providerError(generationError.Kind, err)
+	case errors.As(err, &providerFailure):
+		return providerError(providerFailure.Kind, err)
 	default:
 		return internalError(err)
 	}
 }
 
-func providerError(kind ai.ErrorKind, cause error) error {
+func providerError(kind practicevoice.ProviderErrorKind, cause error) error {
 	code := "provider_unavailable"
 	message := "The configured provider is temporarily unavailable."
-	if kind == ai.ErrorQuotaExhausted {
+	if kind == practicevoice.ProviderErrorQuotaExhausted {
 		code = "quota_exhausted"
 		message = "The configured provider quota is exhausted."
 	}

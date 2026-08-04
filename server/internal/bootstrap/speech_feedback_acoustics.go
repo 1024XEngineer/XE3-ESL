@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/xfyun"
@@ -36,15 +36,15 @@ func NewSpeechFeedbackAcousticProvider(
 	if err != nil {
 		return nil, err
 	}
-	repository, err := conversationpostgres.NewAudioAssetRepository(database)
+	repository, err := practicevoicepostgres.NewAudioAssetRepository(database)
 	if err != nil {
 		return nil, err
 	}
-	service, err := practiceinput.NewAudioAssetService(
+	service, err := practicevoice.NewAudioAssetService(
 		repository,
 		store,
-		practiceinput.SecureAudioAssetIDGenerator{},
-		practiceinput.NewAudioAssetSystemClock(),
+		practicevoice.SecureAudioAssetIDGenerator{},
+		practicevoice.NewAudioAssetSystemClock(),
 		repository,
 		24*time.Hour,
 	)

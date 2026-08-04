@@ -8,8 +8,9 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -91,9 +92,11 @@ func NewSpeechFeedbackComposition(
 	if err != nil {
 		return nil, err
 	}
-	retryTurns, err := practiceinput.NewRetryTurnService(
-		practiceRepository,
-	)
+	voiceRepository, err := practicevoicepostgres.New(database)
+	if err != nil {
+		return nil, err
+	}
+	retryTurns, err := practicevoice.NewRetryTurnService(voiceRepository)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +115,7 @@ func NewSpeechFeedbackComposition(
 		&speechFeedbackRetryPracticeAdapter{
 			application: retryPractice,
 		},
-		&speechFeedbackRetryConversationAdapter{
+		&speechFeedbackRetryVoiceAdapter{
 			service: retryTurns,
 		},
 	)
@@ -222,11 +225,11 @@ func (adapter *speechFeedbackRetryPracticeAdapter) AuthorizeSameQuestionRetry(
 	return err
 }
 
-type speechFeedbackRetryConversationAdapter struct {
-	service *practiceinput.RetryTurnService
+type speechFeedbackRetryVoiceAdapter struct {
+	service *practicevoice.RetryTurnService
 }
 
-func (adapter *speechFeedbackRetryConversationAdapter) CreateSameQuestionRetryTurn(
+func (adapter *speechFeedbackRetryVoiceAdapter) CreateSameQuestionRetryTurn(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	source review.SameQuestionRetrySource,
@@ -237,7 +240,7 @@ func (adapter *speechFeedbackRetryConversationAdapter) CreateSameQuestionRetryTu
 	draft, err := adapter.service.Create(
 		ctx,
 		actor,
-		practiceinput.CreateRetryTurnCommand{
+		practicevoice.CreateRetryTurnCommand{
 			RetryRequestID:    source.RetryRequestID,
 			PracticeSessionID: source.PracticeSessionID,
 			OriginalTurnID:    source.OriginalTurnID,

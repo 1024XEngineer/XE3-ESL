@@ -141,6 +141,7 @@ func TestAgentVoiceObjectReadAllowedHostsComeFromTrustedStorageConfig(
 
 func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 	pool := voiceIntegrationDatabase(t)
+	textGenerator := &voiceTextGenerator{}
 	configuration := VoiceConfiguration{
 		Recognizer: aifake.NewSpeechRecognizer(
 			ai.TranscriptionResult{
@@ -165,12 +166,21 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 		AudioReadTimeout:       time.Second,
 		ReviewHistoryCursorKey: make([]byte, 32),
 	}
+	configuration.PracticeRecognizer = practiceVoiceRecognizerAdapter{
+		recognizer: configuration.Recognizer,
+	}
+	configuration.PracticeSynthesizer = practiceVoiceSynthesizerAdapter{
+		synthesizer: configuration.Synthesizer,
+	}
+	configuration.QuestionGenerator = practiceVoiceQuestionGeneratorAdapter{
+		generator: textGenerator,
+	}
 	composition, err := buildIdentityAgentComposition(
 		context.Background(),
 		pool,
 		nil,
 		"",
-		&voiceTextGenerator{},
+		textGenerator,
 		agentrun.Configuration{
 			Provider:           "fake",
 			Model:              "fake-text-v1",

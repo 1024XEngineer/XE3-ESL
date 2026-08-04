@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
@@ -49,7 +48,6 @@ var (
 
 type Question = practice.Question
 type Turn = practice.Turn
-type Event = practiceinput.Event
 type Runtime struct {
 	mu sync.Mutex
 
@@ -319,7 +317,7 @@ func (r *Runtime) sessionLocked() practice.Session {
 	return session
 }
 
-func (r *Runtime) conversationBootstrap() map[string]any {
+func (r *Runtime) voiceBootstrap() map[string]any {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	result := map[string]any{
@@ -386,7 +384,7 @@ func (r *Runtime) saveQuestion(
 
 func (r *Runtime) prepareTurn(
 	questionID string,
-	request practiceinput.SubmitTurnRequest,
+	request SubmitTurnRequest,
 ) (Turn, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

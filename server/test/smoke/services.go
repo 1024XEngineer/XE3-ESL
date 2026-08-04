@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
@@ -250,18 +249,18 @@ func (b practiceBackend) ApplyTurnOutcome(
 	return decision, nil
 }
 
-type conversationBackend struct {
+type voiceBackend struct {
 	runtime *Runtime
 }
 
-func (b conversationBackend) Bootstrap(sessionID string) (map[string]any, error) {
+func (b voiceBackend) Bootstrap(sessionID string) (map[string]any, error) {
 	if sessionID != demoPracticeSession {
 		return nil, ErrSessionNotFound
 	}
-	return b.runtime.conversationBootstrap(), nil
+	return b.runtime.voiceBootstrap(), nil
 }
 
-func (b conversationBackend) CurrentQuestion(
+func (b voiceBackend) CurrentQuestion(
 	sessionID string,
 ) (Question, bool, error) {
 	if sessionID != demoPracticeSession {
@@ -274,7 +273,7 @@ func (b conversationBackend) CurrentQuestion(
 	return question, err == nil, err
 }
 
-func (b conversationBackend) SaveQuestion(
+func (b voiceBackend) SaveQuestion(
 	sessionID string,
 	sequence int,
 	draft practice.QuestionDraft,
@@ -282,29 +281,29 @@ func (b conversationBackend) SaveQuestion(
 	return b.runtime.saveQuestion(sessionID, sequence, draft)
 }
 
-func (b conversationBackend) PrepareTurn(
+func (b voiceBackend) PrepareTurn(
 	questionID string,
-	request practiceinput.SubmitTurnRequest,
+	request SubmitTurnRequest,
 ) (Turn, error) {
 	return b.runtime.prepareTurn(questionID, request)
 }
 
-func (b conversationBackend) CommitTurn(turn Turn) (Turn, error) {
+func (b voiceBackend) CommitTurn(turn Turn) (Turn, error) {
 	return b.runtime.commitTurn(turn)
 }
 
-func (b conversationBackend) CreateRetryTurn(
+func (b voiceBackend) CreateRetryTurn(
 	retryID string,
 	originalTurnID string,
 ) (Turn, error) {
 	return b.runtime.createRetryTurn(retryID, originalTurnID)
 }
 
-func (b conversationBackend) PublishProcessingFailure(questionID string) {
+func (b voiceBackend) PublishProcessingFailure(questionID string) {
 	b.runtime.publishProcessingFailure(questionID)
 }
 
-func (b conversationBackend) PublishReviewCompleted(
+func (b voiceBackend) PublishReviewCompleted(
 	analysisID string,
 	turnID string,
 	score int,
@@ -318,23 +317,23 @@ func (b conversationBackend) PublishReviewCompleted(
 	})
 }
 
-func (b conversationBackend) PublishSessionStarted(version int) {
+func (b voiceBackend) PublishSessionStarted(version int) {
 	b.runtime.publishSessionStarted(version)
 }
 
-func (b conversationBackend) PublishSessionCompleted(version int, reason string) {
+func (b voiceBackend) PublishSessionCompleted(version int, reason string) {
 	b.runtime.publishSessionCompleted(version, reason)
 }
 
-func (b conversationBackend) GetTurn(id string) (Turn, bool) {
+func (b voiceBackend) GetTurn(id string) (Turn, bool) {
 	return b.runtime.getTurn(id)
 }
 
-func (b conversationBackend) GetQuestion(id string) (Question, bool) {
+func (b voiceBackend) GetQuestion(id string) (Question, bool) {
 	return b.runtime.getQuestion(id)
 }
 
-func (b conversationBackend) Subscribe(
+func (b voiceBackend) Subscribe(
 	sessionID string,
 	afterSequence int,
 ) ([]Event, <-chan Event, func(), error) {
@@ -345,7 +344,7 @@ func (b conversationBackend) Subscribe(
 	return replay, live, unsubscribe, nil
 }
 
-func (b conversationBackend) StreamReady(sessionID string) (Event, error) {
+func (b voiceBackend) StreamReady(sessionID string) (Event, error) {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()
 	if sessionID != demoPracticeSession {

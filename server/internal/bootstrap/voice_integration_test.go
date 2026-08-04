@@ -24,8 +24,8 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
-	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
+	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	practicevoicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
@@ -904,7 +904,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 	); err != nil {
 		t.Fatalf("expire staged recording: %v", err)
 	}
-	audioRepository, err := conversationpostgres.NewAudioAssetRepository(pool)
+	audioRepository, err := practicevoicepostgres.NewAudioAssetRepository(pool)
 	if err != nil {
 		t.Fatalf("create cleanup repository: %v", err)
 	}
@@ -1001,7 +1001,7 @@ func TestVoiceRecordingCleanupWinNeverLeavesRecoverableTurn(
 		t.Fatalf("read database deletion time: %v", err)
 	}
 	deleted := claims[0].Asset
-	deleted.Status = practiceinput.AudioAssetDeleted
+	deleted.Status = practicevoice.AudioAssetDeleted
 	deleted.DeletedAt = deletedAt.UTC()
 	deleted.UpdatedAt = deleted.DeletedAt
 	deleted.Version++
@@ -1065,6 +1065,21 @@ func newVoiceProductionIntegrationServer(
 	configuration VoiceConfiguration,
 ) *httptest.Server {
 	t.Helper()
+	if configuration.PracticeRecognizer == nil {
+		configuration.PracticeRecognizer = practiceVoiceRecognizerAdapter{
+			recognizer: configuration.Recognizer,
+		}
+	}
+	if configuration.PracticeSynthesizer == nil {
+		configuration.PracticeSynthesizer = practiceVoiceSynthesizerAdapter{
+			synthesizer: configuration.Synthesizer,
+		}
+	}
+	if configuration.QuestionGenerator == nil {
+		configuration.QuestionGenerator = practiceVoiceQuestionGeneratorAdapter{
+			generator: generator,
+		}
+	}
 	composition, err := NewIdentityAgentAndPracticeComposition(
 		context.Background(),
 		pool,
@@ -1587,6 +1602,64 @@ func voiceRawRequest(
 		request.Header.Set("Content-Type", contentType)
 	}
 	return http.DefaultClient.Do(request)
+}
+
+type practiceVoiceRecognizerAdapter struct {
+	recognizer ai.SpeechRecognizer
+}
+
+func (adapter practiceVoiceRecognizerAdapter) Transcribe(
+	ctx context.Context,
+	request practicevoice.TranscriptionRequest,
+) (practicevoice.TranscriptionResult, error) {
+	result, err := adapter.recognizer.Transcribe(
+		ctx,
+		ai.TranscriptionRequest{Audio: request.Audio},
+	)
+	return practicevoice.TranscriptionResult{
+		ID:         result.ID,
+		Provider:   result.Provider,
+		Model:      result.Model,
+		Transcript: result.Transcript,
+	}, err
+}
+
+type practiceVoiceSynthesizerAdapter struct {
+	synthesizer ai.SpeechSynthesizer
+}
+
+func (adapter practiceVoiceSynthesizerAdapter) Synthesize(
+	ctx context.Context,
+	request practicevoice.SynthesisRequest,
+) (practicevoice.SynthesisResult, error) {
+	result, err := adapter.synthesizer.Synthesize(
+		ctx,
+		ai.SynthesisRequest{Text: request.Text},
+	)
+	return practicevoice.SynthesisResult{
+		RequestID: result.RequestID,
+		Provider:  result.Provider,
+		Model:     result.Model,
+		AudioID:   result.AudioID,
+		Audio:     result.Audio,
+	}, err
+}
+
+type practiceVoiceQuestionGeneratorAdapter struct {
+	generator ai.TextGenerator
+}
+
+func (adapter practiceVoiceQuestionGeneratorAdapter) GenerateQuestion(
+	ctx context.Context,
+	request practicevoice.QuestionGenerationRequest,
+) (string, error) {
+	result, err := adapter.generator.Generate(ctx, ai.TextRequest{
+		Messages: []ai.TextMessage{
+			{Role: ai.TextRoleSystem, Content: request.SystemPrompt},
+			{Role: ai.TextRoleUser, Content: request.UserPrompt},
+		},
+	})
+	return result.Content, err
 }
 
 type voiceTextGenerator struct {
