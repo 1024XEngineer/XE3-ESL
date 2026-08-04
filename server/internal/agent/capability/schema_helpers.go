@@ -1,4 +1,4 @@
-package tool
+package capability
 
 // objectSchema 构造工具定义里使用的简单 JSON Schema 对象。
 func objectSchema(properties map[string]any, required []string) map[string]any {

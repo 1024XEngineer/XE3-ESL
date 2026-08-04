@@ -1,4 +1,4 @@
-package agenttool
+package agentcapability
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -14,7 +14,7 @@ type fakeLatestPracticeReportPort struct{}
 
 func (fakeLatestPracticeReportPort) LatestPracticeReport(
 	context.Context,
-	tool.CallContext,
+	capability.CallContext,
 ) (LatestPracticeReport, error) {
 	score := 76.0
 	return LatestPracticeReport{
@@ -47,7 +47,7 @@ func TestLatestPracticeReportToolNeedsNoUserIdentifier(t *testing.T) {
 		fakeLatestPracticeReportPort{},
 	).Execute(
 		context.Background(),
-		tool.CallContext{
+		capability.CallContext{
 			Actor: requestcontext.Actor{
 				UserID:    "user-1",
 				SessionID: "session-1",

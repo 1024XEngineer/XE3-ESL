@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -35,7 +35,7 @@ func NewServicePort(
 ) (*ServicePort, error) {
 	if service == nil || links == nil {
 		return nil, errors.New(
-			"goal agentcapability: service and active Goal linker are required",
+			"goal capability: service and active Goal linker are required",
 		)
 	}
 	return &ServicePort{service: service, links: links}, nil
@@ -43,12 +43,12 @@ func NewServicePort(
 
 func (port *ServicePort) CreateGoal(
 	ctx context.Context,
-	call tool.CallContext,
+	call capability.CallContext,
 	input GoalCreateInput,
 ) (GoalResult, error) {
 	if port == nil || port.service == nil || port.links == nil ||
 		!call.Actor.Valid() || call.ThreadID == "" || call.RequestID == "" {
-		return GoalResult{}, tool.ErrExecutionRejected
+		return GoalResult{}, capability.ErrExecutionRejected
 	}
 	item, err := port.service.CreateIdempotent(
 		ctx,
@@ -65,18 +65,18 @@ func (port *ServicePort) CreateGoal(
 		call.ThreadID,
 		item.ID,
 	); err != nil {
-		return GoalResult{}, tool.ErrExecutionRejected
+		return GoalResult{}, capability.ErrExecutionRejected
 	}
 	return mapGoalResult(item), nil
 }
 
 func (port *ServicePort) SearchGoals(
 	ctx context.Context,
-	call tool.CallContext,
+	call capability.CallContext,
 	input GoalSearchInput,
 ) ([]GoalResult, error) {
 	if port == nil || port.service == nil || !call.Actor.Valid() {
-		return nil, tool.ErrExecutionRejected
+		return nil, capability.ErrExecutionRejected
 	}
 	limit := input.Limit
 	if limit == 0 {
@@ -103,7 +103,7 @@ func mapGoalResult(item goal.Goal) GoalResult {
 		Status:    string(item.Status),
 		Version:   item.Version,
 		UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		SourceRefs: []tool.SourceRef{{
+		SourceRefs: []capability.SourceRef{{
 			Type: "goal",
 			ID:   item.ID,
 		}},
@@ -115,10 +115,10 @@ func mapGoalToolError(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, goal.ErrInvalidRequest):
-		return tool.ErrInvalidInput
+		return capability.ErrInvalidInput
 	case errors.Is(err, goal.ErrNotFound),
 		errors.Is(err, goal.ErrConflict):
-		return tool.ErrExecutionRejected
+		return capability.ErrExecutionRejected
 	default:
 		return err
 	}

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -28,8 +28,8 @@ func TestRegistryExposesInitialMockToolSet(t *testing.T) {
 		goalcapability.GoalSearchCapabilityName,
 		MaterialSearchToolName,
 		MistakeSearchToolName,
-		reviewtool.ReviewGetToolName,
-		reviewtool.ReviewSearchToolName,
+		reviewcapability.ReviewGetToolName,
+		reviewcapability.ReviewSearchToolName,
 	}
 	if !equalStrings(names, want) {
 		t.Fatalf("tool names = %#v, want %#v", names, want)
@@ -109,12 +109,12 @@ func TestGoalCreateIsAvailableAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
-	executor := tool.NewExecutor(registry)
+	executor := capability.NewExecutor(registry)
 	input := json.RawMessage(`{"title":"PM interview"}`)
 	first, err := executor.Execute(
 		context.Background(),
 		validCallContext("create-goal-1"),
-		tool.Invocation{Name: goalcapability.GoalCreateCapabilityName, Input: input},
+		capability.Invocation{Name: goalcapability.GoalCreateCapabilityName, Input: input},
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -122,7 +122,7 @@ func TestGoalCreateIsAvailableAndIdempotent(t *testing.T) {
 	replayed, err := executor.Execute(
 		context.Background(),
 		validCallContext("create-goal-1"),
-		tool.Invocation{Name: goalcapability.GoalCreateCapabilityName, Input: input},
+		capability.Invocation{Name: goalcapability.GoalCreateCapabilityName, Input: input},
 	)
 	if err != nil {
 		t.Fatalf("replay Execute() error = %v", err)
@@ -134,12 +134,12 @@ func TestGoalCreateIsAvailableAndIdempotent(t *testing.T) {
 	_, err = executor.Execute(
 		context.Background(),
 		validCallContext("create-goal-1"),
-		tool.Invocation{
+		capability.Invocation{
 			Name:  goalcapability.GoalCreateCapabilityName,
 			Input: json.RawMessage(`{"title":"Different Goal"}`),
 		},
 	)
-	if !errors.Is(err, tool.ErrExecutionRejected) {
+	if !errors.Is(err, capability.ErrExecutionRejected) {
 		t.Fatalf("changed replay error = %v, want execution rejected", err)
 	}
 }
@@ -161,14 +161,14 @@ func TestReadOnlyMockToolsReturnExpectedFixtures(t *testing.T) {
 		},
 		{
 			name:       "review search",
-			toolName:   reviewtool.ReviewSearchToolName,
+			toolName:   reviewcapability.ReviewSearchToolName,
 			input:      json.RawMessage(`{"query":"metrics","limit":1}`),
 			resultKey:  "reports",
 			sourceType: "evaluation_report",
 		},
 		{
 			name:       "review get",
-			toolName:   reviewtool.ReviewGetToolName,
+			toolName:   reviewcapability.ReviewGetToolName,
 			input:      json.RawMessage(`{"report_id":"mock-report-001"}`),
 			resultKey:  "report",
 			sourceType: "evaluation_report",
@@ -194,10 +194,10 @@ func TestReadOnlyMockToolsReturnExpectedFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewRegistry() error = %v", err)
 			}
-			result, err := tool.NewExecutor(registry).Execute(
+			result, err := capability.NewExecutor(registry).Execute(
 				context.Background(),
 				validCallContext("read-"+tt.toolName),
-				tool.Invocation{Name: tt.toolName, Input: tt.input},
+				capability.Invocation{Name: tt.toolName, Input: tt.input},
 			)
 			if err != nil {
 				t.Fatalf("Execute() error = %v", err)
@@ -219,11 +219,11 @@ func TestMockToolsSupportEmptyResultInvalidForbiddenAndUnavailable(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
-	executor := tool.NewExecutor(registry)
+	executor := capability.NewExecutor(registry)
 	empty, err := executor.Execute(
 		context.Background(),
 		validCallContext("empty-material"),
-		tool.Invocation{
+		capability.Invocation{
 			Name:  MaterialSearchToolName,
 			Input: json.RawMessage(`{"query":"nothing matches this"}`),
 		},
@@ -238,26 +238,26 @@ func TestMockToolsSupportEmptyResultInvalidForbiddenAndUnavailable(t *testing.T)
 	_, err = executor.Execute(
 		context.Background(),
 		validCallContext("invalid-material"),
-		tool.Invocation{
+		capability.Invocation{
 			Name:  MaterialSearchToolName,
 			Input: json.RawMessage(`{"query":"backend","kind":"linkedin"}`),
 		},
 	)
-	if !errors.Is(err, tool.ErrInvalidInput) {
-		t.Fatalf("invalid Execute() error = %v, want %v", err, tool.ErrInvalidInput)
+	if !errors.Is(err, capability.ErrInvalidInput) {
+		t.Fatalf("invalid Execute() error = %v, want %v", err, capability.ErrInvalidInput)
 	}
 
 	store.SetForbidden(MaterialSearchToolName, true)
 	_, err = executor.Execute(
 		context.Background(),
 		validCallContext("forbidden-material"),
-		tool.Invocation{
+		capability.Invocation{
 			Name:  MaterialSearchToolName,
 			Input: json.RawMessage(`{"query":"backend"}`),
 		},
 	)
-	if !errors.Is(err, tool.ErrExecutionRejected) {
-		t.Fatalf("forbidden Execute() error = %v, want %v", err, tool.ErrExecutionRejected)
+	if !errors.Is(err, capability.ErrExecutionRejected) {
+		t.Fatalf("forbidden Execute() error = %v, want %v", err, capability.ErrExecutionRejected)
 	}
 	store.SetForbidden(MaterialSearchToolName, false)
 
@@ -265,7 +265,7 @@ func TestMockToolsSupportEmptyResultInvalidForbiddenAndUnavailable(t *testing.T)
 	_, err = executor.Execute(
 		context.Background(),
 		validCallContext("unavailable-material"),
-		tool.Invocation{
+		capability.Invocation{
 			Name:  MaterialSearchToolName,
 			Input: json.RawMessage(`{"query":"backend"}`),
 		},
@@ -291,7 +291,7 @@ func TestCapabilitySummariesIncludeRiskAndSchemaFields(t *testing.T) {
 			break
 		}
 	}
-	if goalSummary.Risk != string(tool.RiskLowRiskWrite) ||
+	if goalSummary.Risk != string(capability.RiskLowRiskWrite) ||
 		goalSummary.ReadOnly ||
 		!containsString(goalSummary.SchemaFields, "title") ||
 		!containsString(goalSummary.RequiredNames, "title") {
@@ -299,8 +299,8 @@ func TestCapabilitySummariesIncludeRiskAndSchemaFields(t *testing.T) {
 	}
 }
 
-func validCallContext(requestID string) tool.CallContext {
-	return tool.CallContext{
+func validCallContext(requestID string) capability.CallContext {
+	return capability.CallContext{
 		Actor: requestcontext.Actor{
 			UserID:    "user-1",
 			SessionID: "session-1",

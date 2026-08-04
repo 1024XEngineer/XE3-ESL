@@ -10,9 +10,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -40,8 +40,8 @@ type Service struct {
 	assembler        *agentcontext.Assembler
 	generator        ai.TextGenerator
 	configuration    Configuration
-	registry         *tool.Registry
-	executor         *tool.Executor
+	registry         *capability.Registry
+	executor         *capability.Executor
 	loopLimits       LoopLimits
 	logger           *slog.Logger
 	logOptions       LogOptions
@@ -99,13 +99,13 @@ func NewService(
 	return service, nil
 }
 
-func WithToolRegistry(registry *tool.Registry) Option {
+func WithToolRegistry(registry *capability.Registry) Option {
 	return func(service *Service) error {
 		if registry == nil {
 			return errors.New("agent: tool registry is required")
 		}
 		service.registry = registry
-		service.executor = tool.NewExecutorWithLogger(
+		service.executor = capability.NewExecutorWithLogger(
 			registry,
 			service.logger,
 			service.logOptions.LogToolPayloads,
@@ -121,7 +121,7 @@ func WithRunLogger(logger *slog.Logger) Option {
 		}
 		service.logger = logger
 		if service.registry != nil {
-			service.executor = tool.NewExecutorWithLogger(
+			service.executor = capability.NewExecutorWithLogger(
 				service.registry,
 				logger,
 				service.logOptions.LogToolPayloads,
@@ -135,7 +135,7 @@ func WithLogOptions(options LogOptions) Option {
 	return func(service *Service) error {
 		service.logOptions = normalizeLogOptions(options)
 		if service.registry != nil {
-			service.executor = tool.NewExecutorWithLogger(
+			service.executor = capability.NewExecutorWithLogger(
 				service.registry,
 				service.logger,
 				service.logOptions.LogToolPayloads,
@@ -847,7 +847,7 @@ func (service *Service) generateObserved(
 				}
 				request.Messages = append(
 					request.Messages,
-					toolFailureMessage(call.ID, tool.ErrUnknownTool),
+					toolFailureMessage(call.ID, capability.ErrUnknownTool),
 				)
 				continue
 			}
@@ -863,7 +863,7 @@ func (service *Service) generateObserved(
 				}
 				request.Messages = append(
 					request.Messages,
-					toolFailureMessage(call.ID, tool.ErrUnknownTool),
+					toolFailureMessage(call.ID, capability.ErrUnknownTool),
 				)
 				continue
 			}
@@ -943,14 +943,14 @@ func (service *Service) executeToolCall(
 	}
 	result, err := service.executor.Execute(
 		toolCtx,
-		tool.CallContext{
+		capability.CallContext{
 			Actor:      actor,
 			ThreadID:   run.ThreadID,
 			RunID:      run.ID,
 			ToolCallID: call.ID,
 			RequestID:  requestID,
 		},
-		tool.Invocation{Name: call.Name, Input: call.Arguments},
+		capability.Invocation{Name: call.Name, Input: call.Arguments},
 	)
 	if err != nil {
 		persistCtx, persistCancel := runPersistenceContext(ctx)
@@ -961,7 +961,7 @@ func (service *Service) executeToolCall(
 			run.ID,
 			call.ID,
 			ToolCallFailed,
-			tool.ErrorCategory(err),
+			capability.ErrorCategory(err),
 		); persistErr != nil {
 			return ai.TextMessage{}, persistErr
 		}
@@ -1050,7 +1050,7 @@ func (service *Service) saveContextToolSnapshot(
 	return err
 }
 
-func toolSourceRefs(refs []tool.SourceRef) []ToolSourceRef {
+func toolSourceRefs(refs []capability.SourceRef) []ToolSourceRef {
 	result := make([]ToolSourceRef, 0, len(refs))
 	for _, ref := range refs {
 		result = append(result, ToolSourceRef{
@@ -1373,13 +1373,13 @@ func normalizeLoopLimits(limits LoopLimits) LoopLimits {
 	return limits
 }
 
-func (service *Service) toolDefinition(name string) (tool.Definition, bool) {
+func (service *Service) toolDefinition(name string) (capability.Definition, bool) {
 	if service.registry == nil {
-		return tool.Definition{}, false
+		return capability.Definition{}, false
 	}
 	registered, ok := service.registry.Get(name)
 	if !ok {
-		return tool.Definition{}, false
+		return capability.Definition{}, false
 	}
 	return registered.Definition(), true
 }
@@ -1394,7 +1394,7 @@ func (service *Service) writeToolCallCount(
 ) int {
 	count := 0
 	for _, call := range calls {
-		effect := service.registry.InvocationEffect(tool.Invocation{
+		effect := service.registry.InvocationEffect(capability.Invocation{
 			Name:  call.Name,
 			Input: call.Arguments,
 		})
@@ -1452,7 +1452,7 @@ func repeatedToolCallID(
 
 // toolFailureMessage 只向模型暴露稳定错误语义，不泄漏数据库或业务内部错误文本。
 func toolFailureMessage(toolCallID string, err error) ai.TextMessage {
-	category := tool.ErrorCategory(err)
+	category := capability.ErrorCategory(err)
 	message := "tool execution failed"
 	switch category {
 	case "invalid_input":
@@ -1466,7 +1466,7 @@ func toolFailureMessage(toolCallID string, err error) ai.TextMessage {
 		"error": map[string]any{
 			"category":  category,
 			"message":   message,
-			"retryable": tool.RetryableError(err),
+			"retryable": capability.RetryableError(err),
 		},
 	})
 	return ai.TextMessage{
@@ -1492,7 +1492,7 @@ type providerToolResult struct {
 	Content map[string]any `json:"content"`
 }
 
-func marshalToolResult(result tool.Result, maxBytes int) (string, error) {
+func marshalToolResult(result capability.Result, maxBytes int) (string, error) {
 	raw, err := json.Marshal(providerToolResult{Content: result.Content})
 	if err != nil {
 		return "", err

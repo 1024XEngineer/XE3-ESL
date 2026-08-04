@@ -8,12 +8,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
-	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
+	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -41,8 +41,8 @@ type CaseResult struct {
 }
 
 type Evaluator struct {
-	registry *tool.Registry
-	executor *tool.Executor
+	registry *capability.Registry
+	executor *capability.Executor
 	router   DeterministicRouter
 }
 
@@ -53,7 +53,7 @@ func NewEvaluator() (*Evaluator, error) {
 	}
 	return &Evaluator{
 		registry: registry,
-		executor: tool.NewExecutor(registry),
+		executor: capability.NewExecutor(registry),
 		router:   DeterministicRouter{},
 	}, nil
 }
@@ -125,17 +125,17 @@ func (e *Evaluator) evaluateCase(
 	for callIndex, call := range route.ToolCalls {
 		_, err := e.executor.Execute(
 			ctx,
-			tool.CallContext{
+			capability.CallContext{
 				Actor:      actor,
 				ThreadID:   "eval-thread",
 				RunID:      runID,
 				ToolCallID: fmt.Sprintf("eval-call-%d", callIndex+1),
 				RequestID:  fmt.Sprintf("%s-%d", runID, callIndex+1),
 			},
-			tool.Invocation{Name: call.Name, Input: call.Input},
+			capability.Invocation{Name: call.Name, Input: call.Input},
 		)
 		if err != nil {
-			caseResult.ErrorCategory = tool.ErrorCategory(err)
+			caseResult.ErrorCategory = capability.ErrorCategory(err)
 			if route.Decision != DecisionRefuse {
 				caseResult.Failures = append(
 					caseResult.Failures,
@@ -205,11 +205,11 @@ func (DeterministicRouter) Route(
 			return Route{Decision: DecisionDirect}
 		}
 	case hasAny(input, "第一条", "first"):
-		if containsString(allowed, reviewtool.ReviewGetToolName) {
+		if containsString(allowed, reviewcapability.ReviewGetToolName) {
 			return Route{
 				Decision: DecisionToolCall,
 				ToolCalls: []ToolCall{{
-					Name: reviewtool.ReviewGetToolName,
+					Name: reviewcapability.ReviewGetToolName,
 					Input: mustRaw(map[string]any{
 						"report_id": "mock-report-001",
 					}),
@@ -217,11 +217,11 @@ func (DeterministicRouter) Route(
 			}
 		}
 	case hasAny(input, "刚完成", "刚练完", "最新报告", "latest report"):
-		if containsString(allowed, evaluationtool.LatestPracticeReportToolName) {
+		if containsString(allowed, evaluationcapability.LatestPracticeReportToolName) {
 			return Route{
 				Decision: DecisionToolCall,
 				ToolCalls: []ToolCall{{
-					Name:  evaluationtool.LatestPracticeReportToolName,
+					Name:  evaluationcapability.LatestPracticeReportToolName,
 					Input: mustRaw(map[string]any{}),
 				}},
 			}
@@ -243,11 +243,11 @@ func (DeterministicRouter) Route(
 			}
 		}
 	case hasAny(input, "评价", "评家", "复盘", "review", "feedback"):
-		if containsString(allowed, reviewtool.ReviewSearchToolName) {
+		if containsString(allowed, reviewcapability.ReviewSearchToolName) {
 			return Route{
 				Decision: DecisionToolCall,
 				ToolCalls: []ToolCall{{
-					Name: reviewtool.ReviewSearchToolName,
+					Name: reviewcapability.ReviewSearchToolName,
 					Input: mustRaw(map[string]any{
 						"query": "interview",
 						"limit": 1,
@@ -326,7 +326,7 @@ func (DeterministicRouter) Route(
 	return Route{Decision: DecisionDirect}
 }
 
-func registeredToolNames(registry *tool.Registry) []string {
+func registeredToolNames(registry *capability.Registry) []string {
 	if registry == nil {
 		return nil
 	}
@@ -338,7 +338,7 @@ func registeredToolNames(registry *tool.Registry) []string {
 	return names
 }
 
-func registeredWriteToolNames(registry *tool.Registry) []string {
+func registeredWriteToolNames(registry *capability.Registry) []string {
 	if registry == nil {
 		return nil
 	}

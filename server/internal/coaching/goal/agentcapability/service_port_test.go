@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -174,13 +174,13 @@ func TestServicePortRejectsMissingTrustedRequestID(t *testing.T) {
 		call,
 		GoalCreateInput{Title: "PM interview"},
 	)
-	if !errors.Is(err, tool.ErrExecutionRejected) {
+	if !errors.Is(err, capability.ErrExecutionRejected) {
 		t.Fatalf("CreateGoal() error = %v, want execution rejected", err)
 	}
 }
 
-func portCallContext() tool.CallContext {
-	return tool.CallContext{
+func portCallContext() capability.CallContext {
+	return capability.CallContext{
 		Actor: requestcontext.Actor{
 			UserID:    "user-1",
 			SessionID: "session-1",

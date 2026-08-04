@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
-	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
+	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 )
 
 const (
@@ -93,7 +93,7 @@ func BaselineCases() []RoutingCase {
 			Name:              "historical_review_search",
 			Messages:          userOnly("看看我上次面试评价"),
 			ExpectedDecision:  DecisionToolCall,
-			ExpectedToolNames: []string{reviewtool.ReviewSearchToolName},
+			ExpectedToolNames: []string{reviewcapability.ReviewSearchToolName},
 		},
 		{
 			Name:              "practice_preview",
@@ -122,7 +122,7 @@ func BaselineCases() []RoutingCase {
 			Name:              "latest_practice_report",
 			Messages:          userOnly("看看我刚完成练习的最新报告"),
 			ExpectedDecision:  DecisionToolCall,
-			ExpectedToolNames: []string{evaluationtool.LatestPracticeReportToolName},
+			ExpectedToolNames: []string{evaluationcapability.LatestPracticeReportToolName},
 		},
 		{
 			Name: "expand_first_review_candidate",
@@ -132,9 +132,9 @@ func BaselineCases() []RoutingCase {
 				{Role: "user", Content: "把第一条评价展开"},
 			},
 			ExpectedDecision:  DecisionToolCall,
-			ExpectedToolNames: []string{reviewtool.ReviewGetToolName},
+			ExpectedToolNames: []string{reviewcapability.ReviewGetToolName},
 			ExpectedArgs: map[string]map[string]any{
-				reviewtool.ReviewGetToolName: {
+				reviewcapability.ReviewGetToolName: {
 					"report_id": "mock-report-001",
 				},
 			},
@@ -161,13 +161,13 @@ func BaselineCases() []RoutingCase {
 			Name:              "asr_noise_review",
 			Messages:          userOnly("看 一下 我 上次 面试 评家"),
 			ExpectedDecision:  DecisionToolCall,
-			ExpectedToolNames: []string{reviewtool.ReviewSearchToolName},
+			ExpectedToolNames: []string{reviewcapability.ReviewSearchToolName},
 		},
 		{
 			Name:              "multi_intent_read_first_no_write",
 			Messages:          userOnly("创建面试，再看看上次评价"),
 			ExpectedDecision:  DecisionToolCall,
-			ExpectedToolNames: []string{reviewtool.ReviewSearchToolName},
+			ExpectedToolNames: []string{reviewcapability.ReviewSearchToolName},
 			ForbiddenTools:    []string{goalcapability.GoalCreateCapabilityName},
 		},
 		{
@@ -194,9 +194,9 @@ func allToolNames() []string {
 		goalcapability.GoalCreateCapabilityName,
 		goalcapability.GoalSearchCapabilityName,
 		preparationcapability.PracticePreviewToolName,
-		evaluationtool.LatestPracticeReportToolName,
-		reviewtool.ReviewSearchToolName,
-		reviewtool.ReviewGetToolName,
+		evaluationcapability.LatestPracticeReportToolName,
+		reviewcapability.ReviewSearchToolName,
+		reviewcapability.ReviewGetToolName,
 		capabilityfixture.MaterialSearchToolName,
 		capabilityfixture.MistakeSearchToolName,
 	}

@@ -1,6 +1,6 @@
-// Package tool defines the Agent tool contract and adapts domain services into
-// tools the Agent runtime can call.
-package tool
+// Package capability defines the provider-neutral contract for business
+// capabilities exposed to the model as tools.
+package capability
 
 import (
 	"bytes"

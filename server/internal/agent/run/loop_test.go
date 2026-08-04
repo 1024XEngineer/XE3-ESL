@@ -12,15 +12,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
-	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
+	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -48,8 +48,8 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 		goalcapability.GoalSearchCapabilityName,
 		capabilityfixture.MaterialSearchToolName,
 		capabilityfixture.MistakeSearchToolName,
-		reviewtool.ReviewGetToolName,
-		reviewtool.ReviewSearchToolName,
+		reviewcapability.ReviewGetToolName,
+		reviewcapability.ReviewSearchToolName,
 	}
 	if !reflect.DeepEqual(gotTools, wantTools) {
 		t.Fatalf("Tools = %#v, want %#v", gotTools, wantTools)
@@ -61,7 +61,7 @@ func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
 
 func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 	generator := newScriptedGenerator(
-		toolLoopResult("call-review-1", reviewtool.ReviewSearchToolName, `{"query":"metrics","limit":1}`),
+		toolLoopResult("call-review-1", reviewcapability.ReviewSearchToolName, `{"query":"metrics","limit":1}`),
 		finalLoopResult("I found the review and summarized it."),
 	)
 	service := newLoopTestService(t, generator)
@@ -178,22 +178,22 @@ func TestRunLoopLetsModelSelectLatestReportCapability(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-latest-report-1",
-			evaluationtool.LatestPracticeReportToolName,
+			evaluationcapability.LatestPracticeReportToolName,
 			`{}`,
 		),
 		finalLoopResult("Here is your latest practice feedback."),
 	)
 	service := newLoopTestService(t, generator)
 	store := capabilityfixture.NewStore()
-	registry, err := tool.NewRegistry(append(
+	registry, err := capability.NewRegistry(append(
 		capabilityfixture.Tools(store),
-		evaluationtool.NewLatestPracticeReportTool(loopLatestReportPort{}),
+		evaluationcapability.NewLatestPracticeReportTool(loopLatestReportPort{}),
 	)...)
 	if err != nil {
-		t.Fatalf("tool.NewRegistry() error = %v", err)
+		t.Fatalf("capability.NewRegistry() error = %v", err)
 	}
 	service.registry = registry
-	service.executor = tool.NewExecutor(registry)
+	service.executor = capability.NewExecutor(registry)
 
 	input := "我刚完成了面试练习。请直接读取这次练习的真实评分与报告。"
 	result, err := service.generate(
@@ -217,7 +217,7 @@ func TestRunLoopLetsModelSelectLatestReportCapability(t *testing.T) {
 	if initial.ToolChoice.Mode != ai.ToolChoiceAuto ||
 		!toolExposed(
 			exposedToolNames(initial.Tools),
-			evaluationtool.LatestPracticeReportToolName,
+			evaluationcapability.LatestPracticeReportToolName,
 		) {
 		t.Fatalf(
 			"initial routing = choice %#v, tools %#v",
@@ -238,7 +238,7 @@ func TestRunLoopLetsModelSelectLatestReportCapability(t *testing.T) {
 	toolResult := messages[3]
 	if len(assistant.ToolCalls) != 1 ||
 		assistant.ToolCalls[0].ID != "call-latest-report-1" ||
-		assistant.ToolCalls[0].Name != evaluationtool.LatestPracticeReportToolName ||
+		assistant.ToolCalls[0].Name != evaluationcapability.LatestPracticeReportToolName ||
 		toolResult.Role != ai.TextRoleTool ||
 		toolResult.ToolCallID != "call-latest-report-1" ||
 		!strings.Contains(toolResult.Content, `"practice_report"`) {
@@ -254,9 +254,9 @@ type loopLatestReportPort struct{}
 
 func (loopLatestReportPort) LatestPracticeReport(
 	context.Context,
-	tool.CallContext,
-) (evaluationtool.LatestPracticeReport, error) {
-	return evaluationtool.LatestPracticeReport{
+	capability.CallContext,
+) (evaluationcapability.LatestPracticeReport, error) {
+	return evaluationcapability.LatestPracticeReport{
 		Scene:          "面试英语",
 		AssessmentMode: "评分与反馈",
 	}, nil
@@ -272,12 +272,12 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 			ToolCalls: []ai.ToolCall{
 				{
 					ID:        "call-review-1",
-					Name:      reviewtool.ReviewSearchToolName,
+					Name:      reviewcapability.ReviewSearchToolName,
 					Arguments: json.RawMessage(`{"query":"first","limit":1}`),
 				},
 				{
 					ID:        "call-review-2",
-					Name:      reviewtool.ReviewSearchToolName,
+					Name:      reviewcapability.ReviewSearchToolName,
 					Arguments: json.RawMessage(`{"query":"second","limit":1}`),
 				},
 			},
@@ -332,7 +332,7 @@ func TestRunLoopSupportsConsecutiveToolRoundsBeforeFinalResponse(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-review-1",
-			reviewtool.ReviewSearchToolName,
+			reviewcapability.ReviewSearchToolName,
 			`{"query":"metrics","limit":1}`,
 		),
 		toolLoopResult(
@@ -394,7 +394,7 @@ func TestRunLoopTreatsSlashPrefixedTextAsNaturalLanguage(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-review-from-model",
-			reviewtool.ReviewSearchToolName,
+			reviewcapability.ReviewSearchToolName,
 			`{"query":"last interview","limit":1}`,
 		),
 		finalLoopResult("I found your review."),
@@ -504,7 +504,7 @@ func TestRunLoopFeedsInvalidArgumentsBackToModel(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
 			"call-review-invalid",
-			reviewtool.ReviewSearchToolName,
+			reviewcapability.ReviewSearchToolName,
 			`{"limit":99}`,
 		),
 		finalLoopResult("Please tell me which review you want to find."),
@@ -534,8 +534,8 @@ func TestRunLoopFeedsInvalidArgumentsBackToModel(t *testing.T) {
 
 func TestRunLoopReturnsFallbackWhenToolBudgetExhausted(t *testing.T) {
 	generator := newScriptedGenerator(
-		toolLoopResult("call-1", reviewtool.ReviewSearchToolName, `{"query":"one"}`),
-		toolLoopResult("call-2", reviewtool.ReviewSearchToolName, `{"query":"two"}`),
+		toolLoopResult("call-1", reviewcapability.ReviewSearchToolName, `{"query":"one"}`),
+		toolLoopResult("call-2", reviewcapability.ReviewSearchToolName, `{"query":"two"}`),
 	)
 	service := newLoopTestService(t, generator)
 	service.loopLimits.MaxToolCalls = 1
@@ -587,7 +587,7 @@ func TestRunLoopRejectsUnexposedToolCall(t *testing.T) {
 
 func TestRunLoopStopsAfterToolIterationBudget(t *testing.T) {
 	generator := newScriptedGenerator(
-		toolLoopResult("call-1", reviewtool.ReviewSearchToolName, `{"query":"one"}`),
+		toolLoopResult("call-1", reviewcapability.ReviewSearchToolName, `{"query":"one"}`),
 		toolLoopResult("call-2", capabilityfixture.MaterialSearchToolName, `{"query":"two"}`),
 	)
 	service := newLoopTestService(t, generator)
@@ -834,7 +834,7 @@ func TestRunLoopLogsEndToEndToolSequence(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 	generator := newScriptedGenerator(
-		toolLoopResult("call-review-1", reviewtool.ReviewSearchToolName, `{"query":"metrics","limit":1}`),
+		toolLoopResult("call-review-1", reviewcapability.ReviewSearchToolName, `{"query":"metrics","limit":1}`),
 		finalLoopResult("I found the review and summarized it."),
 	)
 	service := newLoopTestService(t, generator)
@@ -844,7 +844,7 @@ func TestRunLoopLogsEndToEndToolSequence(t *testing.T) {
 		LogToolPayloads: true,
 		InputPreviewMax: 64,
 	}
-	service.executor = tool.NewExecutorWithLogger(
+	service.executor = capability.NewExecutorWithLogger(
 		service.registry,
 		logger,
 		service.logOptions.LogToolPayloads,
@@ -901,7 +901,7 @@ func TestRunLoopLogOptionsAndPayloadSummariesDoNotLeakSensitiveContent(t *testin
 	service := newLoopTestService(t, generator)
 	service.logger = logger
 	service.logOptions = LogOptions{LogUserInput: false, LogToolPayloads: true}
-	service.executor = tool.NewExecutorWithLogger(
+	service.executor = capability.NewExecutorWithLogger(
 		service.registry,
 		logger,
 		service.logOptions.LogToolPayloads,
@@ -953,7 +953,7 @@ func TestValidLoopTextResultRejectsInvalidToolCalls(t *testing.T) {
 		},
 		"non-object arguments": {
 			ID:        "call-1",
-			Name:      reviewtool.ReviewSearchToolName,
+			Name:      reviewcapability.ReviewSearchToolName,
 			Arguments: json.RawMessage(`[]`),
 		},
 	}
@@ -984,24 +984,24 @@ const loopSensitiveSourceToolName = "sensitive.source.read.v1"
 
 type loopSensitiveSourceTool struct{}
 
-func (loopSensitiveSourceTool) Definition() tool.Definition {
-	return tool.Definition{
+func (loopSensitiveSourceTool) Definition() capability.Definition {
+	return capability.Definition{
 		Name:        loopSensitiveSourceToolName,
 		Description: "Return public content with internal audit source references.",
-		InputSchema: tool.ObjectSchema(map[string]any{}, nil),
+		InputSchema: capability.ObjectSchema(map[string]any{}, nil),
 		ReadOnly:    true,
-		Risk:        tool.RiskReadOnly,
+		Risk:        capability.RiskReadOnly,
 	}
 }
 
 func (loopSensitiveSourceTool) Execute(
 	context.Context,
-	tool.CallContext,
+	capability.CallContext,
 	json.RawMessage,
-) (tool.Result, error) {
-	return tool.Result{
+) (capability.Result, error) {
+	return capability.Result{
 		Content: map[string]any{"status": "ready"},
-		SourceRefs: []tool.SourceRef{
+		SourceRefs: []capability.SourceRef{
 			{Type: "preparation_snapshot", ID: "snapshot-internal-1"},
 			{Type: "preparation_profile", ID: "profile-internal-1"},
 			{Type: "voice_config", ID: "config-internal-1"},
@@ -1038,42 +1038,42 @@ type loopConditionalTool struct {
 	inputs []loopConditionalInput
 }
 
-func (conditional *loopConditionalTool) Definition() tool.Definition {
-	return tool.Definition{
+func (conditional *loopConditionalTool) Definition() capability.Definition {
+	return capability.Definition{
 		Name:        loopConditionalToolName,
 		Description: "Query without input or perform one conditional write.",
-		InputSchema: tool.ObjectSchema(map[string]any{
-			"write_value": tool.TextSchema("Value to persist.", 100),
+		InputSchema: capability.ObjectSchema(map[string]any{
+			"write_value": capability.TextSchema("Value to persist.", 100),
 		}, nil),
 		ReadOnly: false,
-		Risk:     tool.RiskLowRiskWrite,
+		Risk:     capability.RiskLowRiskWrite,
 	}
 }
 
 func (conditional *loopConditionalTool) ClassifyInvocationEffect(
 	input json.RawMessage,
-) (tool.InvocationEffect, error) {
+) (capability.InvocationEffect, error) {
 	parsed, err := parseLoopConditionalInput(input)
 	if err != nil {
 		return 0, err
 	}
 	if parsed.WriteValue != "" {
-		return tool.InvocationEffectMayWrite, nil
+		return capability.InvocationEffectMayWrite, nil
 	}
-	return tool.InvocationEffectReadOnly, nil
+	return capability.InvocationEffectReadOnly, nil
 }
 
 func (conditional *loopConditionalTool) Execute(
 	_ context.Context,
-	_ tool.CallContext,
+	_ capability.CallContext,
 	input json.RawMessage,
-) (tool.Result, error) {
+) (capability.Result, error) {
 	parsed, err := parseLoopConditionalInput(input)
 	if err != nil {
-		return tool.Result{}, err
+		return capability.Result{}, err
 	}
 	conditional.inputs = append(conditional.inputs, parsed)
-	return tool.Result{Content: map[string]any{"ok": true}}, nil
+	return capability.Result{Content: map[string]any{"ok": true}}, nil
 }
 
 func parseLoopConditionalInput(
@@ -1081,7 +1081,7 @@ func parseLoopConditionalInput(
 ) (loopConditionalInput, error) {
 	var parsed loopConditionalInput
 	if err := json.Unmarshal(input, &parsed); err != nil {
-		return loopConditionalInput{}, tool.ErrInvalidInput
+		return loopConditionalInput{}, capability.ErrInvalidInput
 	}
 	return parsed, nil
 }
@@ -1090,16 +1090,16 @@ func setLoopTools(
 	t *testing.T,
 	service *Service,
 	store *capabilityfixture.Store,
-	extra ...tool.Tool,
+	extra ...capability.Tool,
 ) {
 	t.Helper()
 	items := append(capabilityfixture.Tools(store), extra...)
-	registry, err := tool.NewRegistry(items...)
+	registry, err := capability.NewRegistry(items...)
 	if err != nil {
-		t.Fatalf("tool.NewRegistry() error = %v", err)
+		t.Fatalf("capability.NewRegistry() error = %v", err)
 	}
 	service.registry = registry
-	service.executor = tool.NewExecutor(registry)
+	service.executor = capability.NewExecutor(registry)
 }
 
 func assertGoalNotCreated(
@@ -1110,7 +1110,7 @@ func assertGoalNotCreated(
 	t.Helper()
 	items, err := store.SearchGoals(
 		context.Background(),
-		tool.CallContext{},
+		capability.CallContext{},
 		goalcapability.GoalSearchInput{Query: title},
 	)
 	if err != nil {
@@ -1203,7 +1203,7 @@ func newLoopTestServiceWithStore(
 			MaxInputCharacters: 12000,
 		},
 		registry:   registry,
-		executor:   tool.NewExecutor(registry),
+		executor:   capability.NewExecutor(registry),
 		loopLimits: normalizeLoopLimits(LoopLimits{LoopTimeout: time.Second}),
 	}
 }

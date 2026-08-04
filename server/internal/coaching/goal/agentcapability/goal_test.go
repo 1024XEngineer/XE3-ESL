@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	. "github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	. "github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 

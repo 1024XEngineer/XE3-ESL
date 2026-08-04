@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 )
 
 const (
@@ -25,7 +25,7 @@ type Store struct {
 	mu sync.Mutex
 
 	goals     []goalcapability.GoalResult
-	reviews   []reviewtool.ReviewDetail
+	reviews   []reviewcapability.ReviewDetail
 	materials []Material
 	mistakes  []Mistake
 
@@ -56,7 +56,7 @@ func NewStore() *Store {
 			Title:   "English PM interview",
 			Status:  "active",
 			Version: 1,
-			SourceRefs: []tool.SourceRef{{
+			SourceRefs: []capability.SourceRef{{
 				Type: "mock_goal",
 				ID:   "mock-goal-001",
 			}},
@@ -65,19 +65,19 @@ func NewStore() *Store {
 			Title:   "Customer escalation meeting",
 			Status:  "active",
 			Version: 1,
-			SourceRefs: []tool.SourceRef{{
+			SourceRefs: []capability.SourceRef{{
 				Type: "mock_goal",
 				ID:   "mock-goal-002",
 			}},
 		}},
-		reviews: []reviewtool.ReviewDetail{{
+		reviews: []reviewcapability.ReviewDetail{{
 			ID:                "mock-report-001",
 			PracticeSessionID: "mock-practice-session-001",
 			SceneType:         "INTERVIEW",
 			SceneModel:        "project_interview",
 			Scoreability:      "PROVISIONAL",
 			Summary:           "The answer had clear structure, but the example needed stronger metrics.",
-			SourceRefs: []tool.SourceRef{{
+			SourceRefs: []capability.SourceRef{{
 				Type: "evaluation_report",
 				ID:   "mock-report-001",
 			}},
@@ -88,7 +88,7 @@ func NewStore() *Store {
 			SceneModel:        "workplace_communication",
 			Scoreability:      "PROVISIONAL",
 			Summary:           "Tone was calm, but the next action and owner were not explicit enough.",
-			SourceRefs: []tool.SourceRef{{
+			SourceRefs: []capability.SourceRef{{
 				Type: "evaluation_report",
 				ID:   "mock-report-002",
 			}},
@@ -123,22 +123,22 @@ func NewStore() *Store {
 	}
 }
 
-func Tools(store *Store) []tool.Tool {
+func Tools(store *Store) []capability.Tool {
 	if store == nil {
 		store = NewStore()
 	}
-	return []tool.Tool{
+	return []capability.Tool{
 		goalcapability.NewGoalCreateCapability(store),
 		goalcapability.NewGoalSearchCapability(store),
-		reviewtool.NewReviewSearchTool(store),
-		reviewtool.NewReviewGetTool(store),
+		reviewcapability.NewReviewSearchTool(store),
+		reviewcapability.NewReviewGetTool(store),
 		NewMaterialSearchTool(store),
 		NewMistakeSearchTool(store),
 	}
 }
 
-func NewRegistry(store *Store) (*tool.Registry, error) {
-	return tool.NewRegistry(Tools(store)...)
+func NewRegistry(store *Store) (*capability.Registry, error) {
+	return capability.NewRegistry(Tools(store)...)
 }
 
 func (s *Store) SetForbidden(name string, forbidden bool) {
@@ -155,7 +155,7 @@ func (s *Store) SetUnavailable(name string, unavailable bool) {
 
 func (s *Store) CreateGoal(
 	ctx context.Context,
-	call tool.CallContext,
+	call capability.CallContext,
 	input goalcapability.GoalCreateInput,
 ) (goalcapability.GoalResult, error) {
 	s.mu.Lock()
@@ -164,17 +164,17 @@ func (s *Store) CreateGoal(
 		return goalcapability.GoalResult{}, err
 	}
 	if call.RequestID == "" {
-		return goalcapability.GoalResult{}, tool.ErrExecutionRejected
+		return goalcapability.GoalResult{}, capability.ErrExecutionRejected
 	}
 	if existing, ok := s.createdGoals[call.RequestID]; ok {
 		if existing.Title != strings.TrimSpace(input.Title) {
-			return goalcapability.GoalResult{}, tool.ErrExecutionRejected
+			return goalcapability.GoalResult{}, capability.ErrExecutionRejected
 		}
 		return existing, nil
 	}
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
-		return goalcapability.GoalResult{}, tool.ErrInvalidInput
+		return goalcapability.GoalResult{}, capability.ErrInvalidInput
 	}
 	id := "mock-created-goal-" + stableSuffix(call.RequestID)
 	result := goalcapability.GoalResult{
@@ -182,7 +182,7 @@ func (s *Store) CreateGoal(
 		Title:   title,
 		Status:  "active",
 		Version: 1,
-		SourceRefs: []tool.SourceRef{{
+		SourceRefs: []capability.SourceRef{{
 			Type: "mock_goal",
 			ID:   id,
 		}},
@@ -194,7 +194,7 @@ func (s *Store) CreateGoal(
 
 func (s *Store) SearchGoals(
 	ctx context.Context,
-	call tool.CallContext,
+	call capability.CallContext,
 	input goalcapability.GoalSearchInput,
 ) ([]goalcapability.GoalResult, error) {
 	s.mu.Lock()
@@ -213,15 +213,15 @@ func (s *Store) SearchGoals(
 
 func (s *Store) SearchReviews(
 	ctx context.Context,
-	call tool.CallContext,
-	input reviewtool.ReviewSearchInput,
-) ([]reviewtool.ReviewSummary, error) {
+	call capability.CallContext,
+	input reviewcapability.ReviewSearchInput,
+) ([]reviewcapability.ReviewSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.beforeLocked(reviewtool.ReviewSearchToolName); err != nil {
+	if err := s.beforeLocked(reviewcapability.ReviewSearchToolName); err != nil {
 		return nil, err
 	}
-	results := make([]reviewtool.ReviewSummary, 0)
+	results := make([]reviewcapability.ReviewSummary, 0)
 	for _, review := range s.reviews {
 		if input.PracticeSessionID != "" &&
 			input.PracticeSessionID != review.PracticeSessionID {
@@ -234,7 +234,7 @@ func (s *Store) SearchReviews(
 			review.SceneType,
 			review.SceneModel,
 		) {
-			results = append(results, reviewtool.ReviewSummary{
+			results = append(results, reviewcapability.ReviewSummary{
 				ID:                review.ID,
 				PracticeSessionID: review.PracticeSessionID,
 				SceneType:         review.SceneType,
@@ -251,20 +251,20 @@ func (s *Store) SearchReviews(
 
 func (s *Store) GetReview(
 	ctx context.Context,
-	call tool.CallContext,
-	input reviewtool.ReviewGetInput,
-) (reviewtool.ReviewDetail, error) {
+	call capability.CallContext,
+	input reviewcapability.ReviewGetInput,
+) (reviewcapability.ReviewDetail, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.beforeLocked(reviewtool.ReviewGetToolName); err != nil {
-		return reviewtool.ReviewDetail{}, err
+	if err := s.beforeLocked(reviewcapability.ReviewGetToolName); err != nil {
+		return reviewcapability.ReviewDetail{}, err
 	}
 	for _, review := range s.reviews {
 		if review.ID == input.ReportID {
 			return review, nil
 		}
 	}
-	return reviewtool.ReviewDetail{}, tool.ErrInvalidInput
+	return reviewcapability.ReviewDetail{}, capability.ErrInvalidInput
 }
 
 func (s *Store) SearchMaterials(name string, query MaterialSearchInput) ([]Material, error) {
@@ -305,7 +305,7 @@ func (s *Store) SearchMistakes(name string, query MistakeSearchInput) ([]Mistake
 
 func (s *Store) beforeLocked(name string) error {
 	if s.forbidden[name] {
-		return tool.ErrExecutionRejected
+		return capability.ErrExecutionRejected
 	}
 	if s.unavailable[name] {
 		return ErrTemporarilyUnavailable
@@ -359,7 +359,7 @@ type CapabilitySummary struct {
 	RequiredNames []string `json:"required_names"`
 }
 
-func CapabilitySummaries(registry *tool.Registry) []CapabilitySummary {
+func CapabilitySummaries(registry *capability.Registry) []CapabilitySummary {
 	definitions := registry.Definitions()
 	summaries := make([]CapabilitySummary, 0, len(definitions))
 	for _, definition := range definitions {

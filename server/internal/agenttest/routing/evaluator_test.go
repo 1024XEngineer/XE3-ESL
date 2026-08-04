@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
+	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 )
 
 func TestBaselineRoutingEval(t *testing.T) {
@@ -45,12 +45,12 @@ func TestEvaluationRegistryContainsInterviewMainlineTools(t *testing.T) {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
 	want := map[string]bool{
-		goalcapability.GoalCreateCapabilityName:       true,
-		goalcapability.GoalSearchCapabilityName:       true,
-		preparationcapability.PracticePreviewToolName: true,
-		evaluationtool.LatestPracticeReportToolName:   true,
-		reviewtool.ReviewSearchToolName:               true,
-		reviewtool.ReviewGetToolName:                  true,
+		goalcapability.GoalCreateCapabilityName:           true,
+		goalcapability.GoalSearchCapabilityName:           true,
+		preparationcapability.PracticePreviewToolName:     true,
+		evaluationcapability.LatestPracticeReportToolName: true,
+		reviewcapability.ReviewSearchToolName:             true,
+		reviewcapability.ReviewGetToolName:                true,
 	}
 	for _, definition := range evaluator.registry.Definitions() {
 		if definition.Name == removedPracticeStartToolName {
@@ -79,8 +79,8 @@ func TestRegisteredWriteToolNamesUsesToolDefinitions(t *testing.T) {
 	}
 	for _, name := range []string{
 		goalcapability.GoalSearchCapabilityName,
-		evaluationtool.LatestPracticeReportToolName,
-		reviewtool.ReviewSearchToolName,
+		evaluationcapability.LatestPracticeReportToolName,
+		reviewcapability.ReviewSearchToolName,
 	} {
 		if containsString(writes, name) {
 			t.Errorf("read-only tool %q classified as write", name)

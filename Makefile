@@ -107,12 +107,12 @@ check-api-contracts: check-api-dependencies
 
 check-smoke:
 	@set -euo pipefail; \
-	available_tests="$$(cd server && go test -list '^TestDeterministicMainFlow$$' ./internal/smoke)"; \
+	available_tests="$$(cd server && go test -list '^TestDeterministicMainFlow$$' ./test/smoke)"; \
 	if ! grep -qx 'TestDeterministicMainFlow' <<< "$$available_tests"; then \
 		printf '%s\n' 'Deterministic smoke entrypoint is missing.'; \
 		exit 1; \
 	fi
-	cd server && go test -count=1 -run '^TestDeterministicMainFlow$$' ./internal/smoke
+	cd server && go test -count=1 -run '^TestDeterministicMainFlow$$' ./test/smoke
 
 dev-android:
 	./tools/android-dev/run.sh

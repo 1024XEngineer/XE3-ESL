@@ -3,8 +3,8 @@ package run
 import (
 	"log/slog"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
@@ -20,7 +20,7 @@ type modelToolRouting struct {
 
 // buildModelToolRouting 将 Registry 中的全部工具交给模型自主选择。
 func buildModelToolRouting(
-	registry *tool.Registry,
+	registry *capability.Registry,
 	logger *slog.Logger,
 	runID string,
 ) modelToolRouting {

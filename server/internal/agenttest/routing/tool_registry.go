@@ -3,29 +3,29 @@ package routing
 import (
 	"context"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
-	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
+	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 )
 
-func newEvaluationRegistry() (*tool.Registry, error) {
+func newEvaluationRegistry() (*capability.Registry, error) {
 	tools := capabilityfixture.Tools(capabilityfixture.NewStore())
 	ports := evaluationPorts{}
 	tools = append(
 		tools,
 		preparationcapability.NewPreviewTool(ports),
-		evaluationtool.NewLatestPracticeReportTool(ports),
+		evaluationcapability.NewLatestPracticeReportTool(ports),
 	)
-	return tool.NewRegistry(tools...)
+	return capability.NewRegistry(tools...)
 }
 
 type evaluationPorts struct{}
 
 func (evaluationPorts) PreviewPractice(
 	context.Context,
-	tool.CallContext,
+	capability.CallContext,
 	preparationcapability.PreviewInput,
 ) (preparationcapability.PreviewResult, error) {
 	return preparationcapability.PreviewResult{
@@ -52,9 +52,9 @@ func (evaluationPorts) PreviewPractice(
 
 func (evaluationPorts) LatestPracticeReport(
 	context.Context,
-	tool.CallContext,
-) (evaluationtool.LatestPracticeReport, error) {
-	return evaluationtool.LatestPracticeReport{
+	capability.CallContext,
+) (evaluationcapability.LatestPracticeReport, error) {
+	return evaluationcapability.LatestPracticeReport{
 		Scene:          "英文产品经理面试",
 		AssessmentMode: "interview",
 	}, nil

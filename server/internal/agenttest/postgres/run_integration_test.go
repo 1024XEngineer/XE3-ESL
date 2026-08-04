@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	agentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
@@ -24,13 +25,12 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	runhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
-	agenttool "github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -486,7 +486,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 			FinishReason: "tool_calls",
 			ToolCalls: []ai.ToolCall{{
 				ID:        "call-review-1",
-				Name:      reviewtool.ReviewSearchToolName,
+				Name:      reviewcapability.ReviewSearchToolName,
 				Arguments: json.RawMessage(`{"query":"metrics","limit":1}`),
 			}},
 			Usage: ai.TokenUsage{
@@ -573,8 +573,8 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get ContextManifest: %v", err)
 	}
-	if !containsString(manifest.ExposedTools, reviewtool.ReviewSearchToolName) ||
-		manifest.ToolSchemaHashes[reviewtool.ReviewSearchToolName] == "" {
+	if !containsString(manifest.ExposedTools, reviewcapability.ReviewSearchToolName) ||
+		manifest.ToolSchemaHashes[reviewcapability.ReviewSearchToolName] == "" {
 		t.Fatalf("unexpected ContextManifest tool snapshot: %#v", manifest)
 	}
 	records, err := runService.GetToolCalls(
@@ -593,7 +593,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 		record.RunID != submission.Run.ID ||
 		record.OwnerID != actorA.UserID ||
 		record.ThreadID != thread.ID ||
-		record.Name != reviewtool.ReviewSearchToolName ||
+		record.Name != reviewcapability.ReviewSearchToolName ||
 		record.SchemaVersion == "" ||
 		record.Status != agentrun.ToolCallSucceeded ||
 		record.RequestID == "" ||
@@ -653,7 +653,7 @@ func TestPostgresAgentHandoffPersistsProjectsAndStaysOutOfProviderInput(
 	if err != nil {
 		t.Fatalf("new agentcontext.Assembler: %v", err)
 	}
-	registry, err := agenttool.NewRegistry(integrationHandoffTool{})
+	registry, err := agentcapability.NewRegistry(integrationHandoffTool{})
 	if err != nil {
 		t.Fatalf("new Handoff Registry: %v", err)
 	}
@@ -782,13 +782,13 @@ WHERE table_schema = current_schema()
 		integrationFinalResult("direct", "Here is the polished sentence."),
 		integrationToolResult(
 			"call-review-search",
-			reviewtool.ReviewSearchToolName,
+			reviewcapability.ReviewSearchToolName,
 			`{"query":"metrics","limit":1}`,
 		),
 		integrationFinalResult("review-search", "I found your latest review."),
 		integrationToolResult(
 			"call-review-get",
-			reviewtool.ReviewGetToolName,
+			reviewcapability.ReviewGetToolName,
 			`{"report_id":"mock-report-001"}`,
 		),
 		integrationFinalResult("review-get", "Here are the review details."),
@@ -823,7 +823,7 @@ WHERE table_schema = current_schema()
 		),
 		integrationToolResult(
 			"call-dependent-review",
-			reviewtool.ReviewSearchToolName,
+			reviewcapability.ReviewSearchToolName,
 			`{"query":"metrics","limit":1}`,
 		),
 		integrationFinalResult("dependent", "I combined the Goal and its review."),
@@ -883,12 +883,12 @@ WHERE table_schema = current_schema()
 		{
 			name:          "review search",
 			content:       "帮我回顾最近一次反馈里和数据表达有关的部分",
-			expectedCalls: []string{reviewtool.ReviewSearchToolName},
+			expectedCalls: []string{reviewcapability.ReviewSearchToolName},
 		},
 		{
 			name:          "review get",
 			content:       "展开刚才那条反馈的完整内容",
-			expectedCalls: []string{reviewtool.ReviewGetToolName},
+			expectedCalls: []string{reviewcapability.ReviewGetToolName},
 		},
 		{
 			name:          "material search",
@@ -915,7 +915,7 @@ WHERE table_schema = current_schema()
 			content: "先定位我的面试目标，再结合最近评价给建议",
 			expectedCalls: []string{
 				goalcapability.GoalSearchCapabilityName,
-				reviewtool.ReviewSearchToolName,
+				reviewcapability.ReviewSearchToolName,
 			},
 		},
 	}
@@ -3792,22 +3792,22 @@ const integrationHandoffToolName = "practice.plan.preview.integration.v1"
 
 type integrationHandoffTool struct{}
 
-func (integrationHandoffTool) Definition() agenttool.Definition {
-	return agenttool.Definition{
+func (integrationHandoffTool) Definition() agentcapability.Definition {
+	return agentcapability.Definition{
 		Name:        integrationHandoffToolName,
 		Description: "Create a test practice plan confirmation projection.",
-		InputSchema: agenttool.ObjectSchema(map[string]any{}, nil),
+		InputSchema: agentcapability.ObjectSchema(map[string]any{}, nil),
 		ReadOnly:    true,
-		Risk:        agenttool.RiskReadOnly,
+		Risk:        agentcapability.RiskReadOnly,
 	}
 }
 
 func (integrationHandoffTool) Execute(
 	context.Context,
-	agenttool.CallContext,
+	agentcapability.CallContext,
 	json.RawMessage,
-) (agenttool.Result, error) {
-	return agenttool.Result{
+) (agentcapability.Result, error) {
+	return agentcapability.Result{
 		Content:  map[string]any{"status": "ready"},
 		Handoffs: []agenthandoff.Item{integrationPracticeHandoff()},
 	}, nil
