@@ -160,11 +160,10 @@ func TestProductionAgentVoiceCompositionRegistersAllRoutes(t *testing.T) {
 		ObjectReadAllowedHosts: []string{
 			"private-audio.example.invalid",
 		},
-		AudioStagedTTL:          time.Hour,
-		ASRLease:                5 * time.Second,
-		ReviewGenerationTimeout: 2 * time.Second,
-		AudioReadTimeout:        time.Second,
-		ReviewHistoryCursorKey:  make([]byte, 32),
+		AudioStagedTTL:         time.Hour,
+		ASRLease:               5 * time.Second,
+		AudioReadTimeout:       time.Second,
+		ReviewHistoryCursorKey: make([]byte, 32),
 	}
 	composition, err := buildIdentityAgentComposition(
 		context.Background(),

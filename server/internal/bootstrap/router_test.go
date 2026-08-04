@@ -14,9 +14,9 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/gin-gonic/gin"
 )
@@ -40,7 +40,7 @@ func TestHealthIncludesRegisteredModules(t *testing.T) {
 	router := bootstrap.NewRouter(logger,
 		preparation.New(),
 		practice.New(),
-		conversation.New(),
+		practiceinput.New(),
 		review.New(),
 	)
 
@@ -92,7 +92,7 @@ func TestModuleCanRegisterProductionRoutes(t *testing.T) {
 		[]bootstrap.RouteRegistrar{routedModule{}},
 		preparation.New(),
 		practice.New(),
-		conversation.New(),
+		practiceinput.New(),
 		review.New(),
 	)
 

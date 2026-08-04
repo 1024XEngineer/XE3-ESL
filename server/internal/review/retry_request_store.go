@@ -82,7 +82,7 @@ func (r *PostgresRepository) ReserveRetryRequest(
 		JOIN review_speech_feedbacks AS feedback
 		  ON feedback.id = item.speech_feedback_id
 		 AND feedback.owner_user_id = item.owner_user_id
-		JOIN conversation_confirmed_turns AS turn
+		JOIN practice_turns AS turn
 		  ON turn.owner_user_id = feedback.owner_user_id
 		 AND turn.turn_id = feedback.turn_id
 		 AND turn.practice_session_id =

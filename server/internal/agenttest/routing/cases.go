@@ -7,9 +7,9 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
-	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 

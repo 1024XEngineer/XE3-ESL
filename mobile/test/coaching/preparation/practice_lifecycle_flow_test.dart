@@ -15,8 +15,8 @@ import 'package:speakup/features/coaching/preparation/preparation_launch_control
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
-import 'package:speakup/practice/practice_client.dart';
-import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

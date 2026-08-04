@@ -6,11 +6,10 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -85,18 +84,18 @@ func NewSpeechFeedbackComposition(
 	if err != nil {
 		return nil, err
 	}
-	conversationRepository, err := conversationpostgres.New(database)
+	practiceRepository, err := practicepostgres.New(database)
 	if err != nil {
 		return nil, err
 	}
-	retryTurns, err := conversation.NewRetryTurnService(
-		conversationRepository,
+	retryTurns, err := practiceinput.NewRetryTurnService(
+		practiceRepository,
 	)
 	if err != nil {
 		return nil, err
 	}
 	retryPractice, err := practice.NewRetryTurnApplication(
-		practicepostgres.New(database),
+		practiceRepository,
 		"speakup.user",
 	)
 	if err != nil {
@@ -185,7 +184,7 @@ func (adapter *speechFeedbackRetryPracticeAdapter) AuthorizeSameQuestionRetry(
 }
 
 type speechFeedbackRetryConversationAdapter struct {
-	service *conversation.RetryTurnService
+	service *practiceinput.RetryTurnService
 }
 
 func (adapter *speechFeedbackRetryConversationAdapter) CreateSameQuestionRetryTurn(
@@ -199,7 +198,7 @@ func (adapter *speechFeedbackRetryConversationAdapter) CreateSameQuestionRetryTu
 	draft, err := adapter.service.Create(
 		ctx,
 		actor,
-		conversation.CreateRetryTurnCommand{
+		practiceinput.CreateRetryTurnCommand{
 			RetryRequestID:    source.RetryRequestID,
 			PracticeSessionID: source.PracticeSessionID,
 			OriginalTurnID:    source.OriginalTurnID,

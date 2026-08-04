@@ -8,11 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
@@ -49,9 +48,9 @@ var (
 	ErrResourceConflict   = errors.New("resource already exists")
 )
 
-type Question = conversation.Question
-type Turn = conversation.Turn
-type Event = conversation.Event
+type Question = practice.Question
+type Turn = practice.Turn
+type Event = practiceinput.Event
 type Analysis = review.Analysis
 type Feedback = review.Feedback
 type RetryRequest = review.RetryRequest
@@ -67,7 +66,7 @@ type Runtime struct {
 	snapshotCreated bool
 	plan            *preparation.PracticePlan
 	sessionCreated  bool
-	sessionStatus   practicepersistence.ContextSessionStatus
+	sessionStatus   practice.SessionStatus
 	sessionVersion  int
 	effectiveTurns  int
 
@@ -278,31 +277,31 @@ func (r *Runtime) createPlan(
 }
 
 func (r *Runtime) createSession() (
-	practicepersistence.ContextSessionBootstrap,
+	practice.SessionBootstrap,
 	error,
 ) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.plan == nil {
-		return practicepersistence.ContextSessionBootstrap{}, ErrResourceConflict
+		return practice.SessionBootstrap{}, ErrResourceConflict
 	}
 	if r.sessionCreated {
-		return practicepersistence.ContextSessionBootstrap{}, ErrResourceConflict
+		return practice.SessionBootstrap{}, ErrResourceConflict
 	}
 	r.sessionCreated = true
-	r.sessionStatus = practicepersistence.ContextSessionStarting
+	r.sessionStatus = practice.SessionStarting
 	r.sessionVersion = 1
-	return practicepersistence.ContextSessionBootstrap{
+	return practice.SessionBootstrap{
 		Session:  r.sessionLocked(),
 		Snapshot: r.snapshotLocked(),
 	}, nil
 }
 
-func (r *Runtime) sessionLocked() practicepersistence.ContextSession {
+func (r *Runtime) sessionLocked() practice.Session {
 	if r.plan == nil {
 		panic("deterministic Practice Plan is required")
 	}
-	session := practicepersistence.ContextSession{
+	session := practice.Session{
 		ID:             demoPracticeSession,
 		PlanID:         r.plan.ID,
 		PlanRevision:   r.plan.Revision,
@@ -314,11 +313,11 @@ func (r *Runtime) sessionLocked() practicepersistence.ContextSession {
 		Version:        r.sessionVersion,
 		CreatedAt:      r.now.Add(4 * time.Second),
 	}
-	if r.sessionStatus != practicepersistence.ContextSessionStarting {
+	if r.sessionStatus != practice.SessionStarting {
 		startedAt := r.now.Add(5 * time.Second)
 		session.StartedAt = &startedAt
 	}
-	if r.sessionStatus == practicepersistence.ContextSessionCompleted {
+	if r.sessionStatus == practice.SessionCompleted {
 		endedAt := r.now.Add(80 * time.Second)
 		session.EndedAt = &endedAt
 		session.EndReason = practice.EndReasonCoverageSatisfiedAtCheckpoint
@@ -350,7 +349,7 @@ func (r *Runtime) currentQuestion() (Question, error) {
 func (r *Runtime) saveQuestion(
 	sessionID string,
 	sequence int,
-	draft conversation.QuestionDraft,
+	draft practice.QuestionDraft,
 ) (Question, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -361,22 +360,24 @@ func (r *Runtime) saveQuestion(
 		return Question{}, ErrResourceConflict
 	}
 	question := Question{
-		ID:               fmt.Sprintf("question_demo_%03d", sequence),
-		SessionID:        demoPracticeSession,
-		SpeakerID:        demoFacilitatorID,
-		AddresseeIDs:     []string{demoLearnerID},
-		ObjectiveID:      draft.ObjectiveID,
-		Type:             draft.Type,
-		ParentQuestionID: draft.ParentQuestionID,
-		Content:          draft.Content,
-		Sequence:         sequence,
-		CreatedAt:        r.timestamp(10 + sequence*12),
+		ID:                      fmt.Sprintf("question_demo_%03d", sequence),
+		SessionID:               demoPracticeSession,
+		SpeakerParticipantID:    demoFacilitatorID,
+		AddresseeParticipantIDs: []string{demoLearnerID},
+		ObjectiveID:             draft.ObjectiveID,
+		Type:                    draft.Type,
+		ParentQuestionID:        draft.ParentQuestionID,
+		Content:                 draft.Content,
+		Sequence:                sequence,
+		CreatedAt: r.now.Add(
+			time.Duration(10+sequence*12) * time.Second,
+		),
 	}
 	r.questions = append(r.questions, question)
 	payload := map[string]any{
 		"question_id":               question.ID,
-		"speaker_participant_id":    question.SpeakerID,
-		"addressee_participant_ids": question.AddresseeIDs,
+		"speaker_participant_id":    question.SpeakerParticipantID,
+		"addressee_participant_ids": question.AddresseeParticipantIDs,
 		"objective_id":              question.ObjectiveID,
 		"question_type":             question.Type,
 		"content":                   question.Content,
@@ -391,7 +392,7 @@ func (r *Runtime) saveQuestion(
 
 func (r *Runtime) prepareTurn(
 	questionID string,
-	request conversation.SubmitTurnRequest,
+	request practiceinput.SubmitTurnRequest,
 ) (Turn, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -421,28 +422,39 @@ func (r *Runtime) prepareTurn(
 		turn.AudioAssetID = request.AudioAssetID
 		turn.InteractionMode = request.InteractionMode
 		turn.Status = "completed"
-		turn.SubmittedAt = r.timestamp(72 + len(r.retryTurnByRequest)*2)
-		turn.CompletedAt = r.timestamp(73 + len(r.retryTurnByRequest)*2)
+		turn.SubmittedAt = r.now.Add(
+			time.Duration(72+len(r.retryTurnByRequest)*2) * time.Second,
+		)
+		turn.CompletedAt = r.now.Add(
+			time.Duration(73+len(r.retryTurnByRequest)*2) * time.Second,
+		)
 	} else {
 		for _, existing := range r.turns {
-			if !existing.IsRetry && existing.QuestionID == questionID {
+			if existing.Kind != practice.TurnKindRetry &&
+				existing.QuestionID == questionID {
 				return Turn{}, ErrResourceConflict
 			}
 		}
 		turn = Turn{
-			ID:              fmt.Sprintf("turn_demo_%03d", turnNumber),
-			SessionID:       demoPracticeSession,
-			QuestionID:      question.ID,
-			RespondentID:    demoLearnerID,
-			Sequence:        question.Sequence,
-			InteractionMode: request.InteractionMode,
-			AnswerText:      answer,
-			AudioAssetID:    request.AudioAssetID,
-			Status:          "completed",
-			IsRetry:         false,
-			SubmittedAt:     r.timestamp(13 + question.Sequence*12),
-			CreatedAt:       r.timestamp(13 + question.Sequence*12),
-			CompletedAt:     r.timestamp(14 + question.Sequence*12),
+			ID:                      fmt.Sprintf("turn_demo_%03d", turnNumber),
+			SessionID:               demoPracticeSession,
+			QuestionID:              question.ID,
+			RespondentParticipantID: demoLearnerID,
+			Sequence:                question.Sequence,
+			InteractionMode:         request.InteractionMode,
+			AnswerText:              answer,
+			AudioAssetID:            request.AudioAssetID,
+			Status:                  "completed",
+			Kind:                    practice.TurnKindEffective,
+			SubmittedAt: r.now.Add(
+				time.Duration(13+question.Sequence*12) * time.Second,
+			),
+			CreatedAt: r.now.Add(
+				time.Duration(13+question.Sequence*12) * time.Second,
+			),
+			CompletedAt: r.now.Add(
+				time.Duration(14+question.Sequence*12) * time.Second,
+			),
 		}
 	}
 	return turn, nil
@@ -454,7 +466,7 @@ func (r *Runtime) commitTurn(turn Turn) (Turn, error) {
 	if _, ok := r.findQuestionLocked(turn.QuestionID); !ok {
 		return Turn{}, ErrQuestionNotFound
 	}
-	if turn.IsRetry {
+	if turn.Kind == practice.TurnKindRetry {
 		existing, ok := r.findTurnLocked(turn.ID)
 		if !ok || existing.Status != "answering" {
 			return Turn{}, ErrResourceConflict
@@ -462,7 +474,8 @@ func (r *Runtime) commitTurn(turn Turn) (Turn, error) {
 		r.replaceTurnLocked(turn)
 	} else {
 		for _, existing := range r.turns {
-			if !existing.IsRetry && existing.QuestionID == turn.QuestionID {
+			if existing.Kind != practice.TurnKindRetry &&
+				existing.QuestionID == turn.QuestionID {
 				return Turn{}, ErrResourceConflict
 			}
 		}
@@ -477,7 +490,7 @@ func (r *Runtime) commitTurn(turn Turn) (Turn, error) {
 	r.appendEventLocked("turn.completed", map[string]any{
 		"turn_id":                   turn.ID,
 		"question_id":               turn.QuestionID,
-		"respondent_participant_id": turn.RespondentID,
+		"respondent_participant_id": turn.RespondentParticipantID,
 		"turn_status":               "completed",
 		"completed_at":              turn.CompletedAt,
 	})
@@ -545,15 +558,17 @@ func (r *Runtime) createRetryTurn(retryID, originalTurnID string) (Turn, error) 
 	}
 	retryNumber := len(r.retryTurnByRequest) + 1
 	retryTurn := Turn{
-		ID:              fmt.Sprintf("turn_retry_demo_%03d", retryNumber),
-		SessionID:       original.SessionID,
-		QuestionID:      original.QuestionID,
-		RespondentID:    original.RespondentID,
-		Sequence:        original.Sequence,
-		InteractionMode: "PUSH_TO_TALK",
-		Status:          "answering",
-		IsRetry:         true,
-		CreatedAt:       r.timestamp(70 + retryNumber),
+		ID:                      fmt.Sprintf("turn_retry_demo_%03d", retryNumber),
+		SessionID:               original.SessionID,
+		QuestionID:              original.QuestionID,
+		RespondentParticipantID: original.RespondentParticipantID,
+		Sequence:                original.Sequence,
+		InteractionMode:         "PUSH_TO_TALK",
+		Status:                  "answering",
+		Kind:                    practice.TurnKindRetry,
+		CreatedAt: r.now.Add(
+			time.Duration(70+retryNumber) * time.Second,
+		),
 	}
 	r.turns = append(r.turns, retryTurn)
 	r.retryTurnByRequest[retryID] = retryTurn.ID
@@ -582,7 +597,7 @@ func (r *Runtime) eventsSnapshot() []Event {
 func (r *Runtime) effectiveTurnCountLocked() int {
 	count := 0
 	for _, turn := range r.turns {
-		if turn.Status == "completed" && !turn.IsRetry {
+		if turn.Status == "completed" && turn.Kind != practice.TurnKindRetry {
 			count++
 		}
 	}
@@ -599,7 +614,7 @@ func (r *Runtime) lastEventSequenceLocked() int {
 	return last
 }
 
-func (r *Runtime) snapshotLocked() practicepersistence.ContextSessionSnapshot {
+func (r *Runtime) snapshotLocked() practice.SessionSnapshot {
 	if r.plan == nil {
 		panic("deterministic Practice Plan is required")
 	}
@@ -608,7 +623,7 @@ func (r *Runtime) snapshotLocked() practicepersistence.ContextSessionSnapshot {
 		panic("resolve deterministic Scene role")
 	}
 	roleSnapshot := roles[0]
-	return practicepersistence.ContextSessionSnapshot{
+	return practice.SessionSnapshot{
 		ID:             "snapshot_session_demo_001",
 		SessionID:      demoPracticeSession,
 		PlanRevision:   r.plan.Revision,
@@ -616,12 +631,12 @@ func (r *Runtime) snapshotLocked() practicepersistence.ContextSessionSnapshot {
 		SceneModel:     r.plan.SceneSelection.Scene.Model,
 		SceneSelection: r.plan.SceneSelection,
 		Preparation:    r.plan.PreparationSnapshot,
-		Participants: []practicepersistence.ContextParticipant{
+		Participants: []practice.Participant{
 			{
 				ID:               demoFacilitatorID,
 				SessionID:        demoPracticeSession,
 				Role:             "FACILITATOR",
-				SubjectRef:       practicepersistence.SubjectRef{Namespace: "speakup.role", SubjectID: DemoRoleDefinition},
+				SubjectRef:       practice.SubjectRef{Namespace: "speakup.role", SubjectID: DemoRoleDefinition},
 				RoleDefinitionID: DemoRoleDefinition,
 				RoleSnapshot:     &roleSnapshot,
 				Order:            1,
@@ -630,7 +645,7 @@ func (r *Runtime) snapshotLocked() practicepersistence.ContextSessionSnapshot {
 				ID:         demoLearnerID,
 				SessionID:  demoPracticeSession,
 				Role:       "LEARNER",
-				SubjectRef: practicepersistence.SubjectRef{Namespace: "speakup.user", SubjectID: DemoUserID},
+				SubjectRef: practice.SubjectRef{Namespace: "speakup.user", SubjectID: DemoUserID},
 				Order:      2,
 			},
 		},

@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	conversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
-	practice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -80,7 +80,7 @@ func TestPostgresEvidenceSnapshotIdempotencyAndIsolation(
 
 	const revisedQuestion = "Tell me about a production migration you led."
 	if _, err := pool.Exec(ctx, `
-		UPDATE conversation_questions
+		UPDATE practice_questions
 		SET content = $1
 		WHERE owner_user_id = $2
 		  AND practice_session_id = $3
@@ -294,7 +294,7 @@ func TestPostgresEvidenceSnapshotRejectsTamperedTurnAudience(t *testing.T) {
 	installEvidenceAuthorities(t, pool, command)
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
-		UPDATE conversation_confirmed_turns
+		UPDATE practice_turns
 		SET speaker_participant_id = 'participant-other'
 		WHERE owner_user_id = $1 AND turn_id = 'turn-1'
 	`, testOwnerA); err != nil {
@@ -647,11 +647,11 @@ func TestPostgresEvidenceSnapshotFencesConcurrentQuestionInsert(
 	go func() {
 		_, saveErr := conversationRepository.SaveQuestion(
 			context.Background(),
-			conversation.Actor{
+			practiceinput.Actor{
 				UserID:    command.OwnerUserID,
 				SessionID: "trusted-session",
 			},
-			conversation.PersistentQuestion{
+			practice.Question{
 				ID:                      "question-concurrent",
 				SessionID:               command.PracticeSessionID,
 				SpeakerParticipantID:    "participant-interviewer",
@@ -708,7 +708,7 @@ func TestPostgresEvidenceSnapshotFencesConcurrentQuestionInsert(
 	var questionCount int
 	if err := pool.QueryRow(context.Background(), `
 		SELECT count(*)
-		FROM conversation_questions
+		FROM practice_questions
 		WHERE owner_user_id = $1 AND practice_session_id = $2
 	`, command.OwnerUserID, command.PracticeSessionID).Scan(
 		&questionCount,
@@ -920,7 +920,7 @@ func installEvidenceAuthorities(
 			sceneSelection.Scene.Prompt.TurnBlueprints,
 		)
 	}
-	sessionSnapshot := practice.ContextSessionSnapshot{
+	sessionSnapshot := practice.SessionSnapshot{
 		ID:             practiceContext.SessionSnapshotID,
 		SessionID:      command.PracticeSessionID,
 		PlanRevision:   practiceContext.PlanRevision,
@@ -935,7 +935,7 @@ func installEvidenceAuthorities(
 			CreatedAt:          authorityAt,
 		},
 		Participants: make(
-			[]practice.ContextParticipant,
+			[]practice.Participant,
 			len(practiceContext.Participants),
 		),
 		SessionPolicy: preparation.SessionPolicy{
@@ -965,7 +965,7 @@ func installEvidenceAuthorities(
 				SubjectID: command.OwnerUserID,
 			}
 		}
-		sessionSnapshot.Participants[index] = practice.ContextParticipant{
+		sessionSnapshot.Participants[index] = practice.Participant{
 			ID:         participant.ID,
 			SessionID:  command.PracticeSessionID,
 			Role:       participant.Role,
@@ -976,12 +976,12 @@ func installEvidenceAuthorities(
 	completedAt := authorityAt.Add(time.Minute)
 	expectedContext, _, _, ok := evidencePracticeContextFromSnapshot(
 		command.OwnerUserID,
-		practice.ContextSession{
+		practice.Session{
 			ID:             command.PracticeSessionID,
 			SceneFamily:    sessionSnapshot.SceneFamily,
 			SceneModel:     sessionSnapshot.SceneModel,
 			SnapshotID:     sessionSnapshot.ID,
-			Status:         practice.ContextSessionCompleted,
+			Status:         practice.SessionCompleted,
 			Version:        practiceContext.SessionVersion,
 			EffectiveTurns: len(payload.ConfirmedTurns),
 			StartedAt:      &authorityAt,
@@ -1279,7 +1279,7 @@ func installEvidenceAuthorities(
 	}
 	for _, opportunity := range payload.OpportunityManifest {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO conversation_questions (
+			INSERT INTO practice_questions (
 				owner_user_id,
 				question_id,
 				practice_session_id,
@@ -1323,7 +1323,7 @@ func installEvidenceAuthorities(
 		)
 		attemptID := fmt.Sprintf("attempt-%d", turn.Sequence)
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO conversation_transcription_reservations (
+			INSERT INTO practice_transcription_reservations (
 				owner_user_id,
 				reservation_id,
 				question_id,
@@ -1363,7 +1363,7 @@ func installEvidenceAuthorities(
 			)
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO conversation_transcript_candidates (
+			INSERT INTO practice_transcript_candidates (
 				owner_user_id,
 				candidate_id,
 				reservation_id,
@@ -1401,7 +1401,7 @@ func installEvidenceAuthorities(
 			)
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO conversation_confirmed_turns (
+			INSERT INTO practice_turns (
 				owner_user_id,
 				turn_id,
 				candidate_id,

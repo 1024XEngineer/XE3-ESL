@@ -17,9 +17,9 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -35,7 +35,7 @@ type Server struct {
 	router       *gin.Engine
 	preparation  *preparationBackend
 	practice     *practiceBackend
-	conversation *conversation.Service
+	conversation *practiceinput.Service
 	review       *review.Service
 	application  *Application
 	idempotency  *idempotencyStore
@@ -48,7 +48,7 @@ func NewServer(logger *slog.Logger) *Server {
 	provider := NewDeterministicProvider()
 	preparationStore := &preparationBackend{runtime: runtime}
 	practiceStore := &practiceBackend{runtime: runtime}
-	conversationService := conversation.NewService(
+	conversationService := practiceinput.NewService(
 		conversationBackend{runtime: runtime},
 		provider,
 	)
@@ -62,7 +62,7 @@ func NewServer(logger *slog.Logger) *Server {
 	router := bootstrap.NewRouter(logger,
 		preparation.New(),
 		practice.New(),
-		conversation.New(),
+		practiceinput.New(),
 		review.New(),
 	)
 	server := &Server{
@@ -331,7 +331,7 @@ func (s *Server) submitTurn(c *gin.Context) {
 		return
 	}
 	s.executeIdempotent(c, raw, func() apiResponse {
-		var request conversation.SubmitTurnRequest
+		var request practiceinput.SubmitTurnRequest
 		if err := decodeStrict(raw, &request); err != nil {
 			return invalidRequest()
 		}
@@ -363,7 +363,7 @@ func (s *Server) submitTurn(c *gin.Context) {
 		}
 		submitted := turn
 		submitted.Status = "submitted"
-		submitted.CompletedAt = ""
+		submitted.CompletedAt = time.Time{}
 		return apiResponse{status: http.StatusAccepted, payload: submitted}
 	})
 }

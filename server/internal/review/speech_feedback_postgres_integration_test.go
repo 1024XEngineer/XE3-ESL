@@ -47,7 +47,7 @@ func TestPostgresSpeechFeedbackRejectsTextTurnWithoutReadableAudio(
 	assertSpeechFeedbackCounts(t, pool, ownerID, 0, 0)
 
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO conversation_audio_assets (
+		INSERT INTO practice_audio_assets (
 			audio_asset_id,
 			owner_user_id,
 			candidate_id,
@@ -507,7 +507,7 @@ func TestPostgresSpeechFeedbackPublishesInsufficientForMixedLanguageTurn(
 		true,
 	)
 	if _, err := pool.Exec(ctx, `
-		UPDATE conversation_confirmed_turns
+		UPDATE practice_turns
 		SET answer_text = '是不是拿下了？ My name is Nai Long. I like AI.'
 		WHERE owner_user_id = $1
 		  AND turn_id = $2
@@ -675,7 +675,7 @@ func insertConversationSpeechFeedbackFixture(
 		t.Fatalf("insert Practice Session fixture: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO conversation_questions (
+		INSERT INTO practice_questions (
 			owner_user_id,
 			question_id,
 			practice_session_id,
@@ -691,7 +691,7 @@ func insertConversationSpeechFeedbackFixture(
 		t.Fatalf("insert question fixture: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO conversation_transcript_candidates (
+		INSERT INTO practice_transcript_candidates (
 			owner_user_id,
 			candidate_id,
 			practice_session_id,
@@ -704,7 +704,7 @@ func insertConversationSpeechFeedbackFixture(
 		t.Fatalf("insert transcript candidate fixture: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO conversation_confirmed_turns (
+		INSERT INTO practice_turns (
 			owner_user_id,
 			turn_id,
 			candidate_id,
@@ -729,7 +729,7 @@ func insertConversationSpeechFeedbackFixture(
 		return
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO conversation_audio_assets (
+		INSERT INTO practice_audio_assets (
 			audio_asset_id,
 			owner_user_id,
 			candidate_id,
@@ -825,6 +825,9 @@ func speechFeedbackDatabase(t *testing.T) *pgxpool.Pool {
 	}
 	if _, err := pool.Exec(ctx, string(iseTopicUp)); err != nil {
 		t.Fatalf("apply SpeechFeedback ISE topic migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, practiceReviewSourceAuthorityFixtureSQL); err != nil {
+		t.Fatalf("apply Practice source authority fixture: %v", err)
 	}
 	return pool
 }
@@ -925,6 +928,14 @@ const speechFeedbackModulePrerequisiteSQL = `
 		object_key text NOT NULL,
 		status text NOT NULL
 	);
+`
+
+const practiceReviewSourceAuthorityFixtureSQL = `
+	ALTER TABLE conversation_questions RENAME TO practice_questions;
+	ALTER TABLE conversation_transcript_candidates
+		RENAME TO practice_transcript_candidates;
+	ALTER TABLE conversation_confirmed_turns RENAME TO practice_turns;
+	ALTER TABLE conversation_audio_assets RENAME TO practice_audio_assets;
 `
 
 func assertSpeechFeedbackCounts(

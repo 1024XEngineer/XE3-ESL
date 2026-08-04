@@ -12,7 +12,7 @@ import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
-import 'package:speakup/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/review/formal_review.dart';
 import 'package:speakup/review/formal_review_presentation.dart';
 import 'package:speakup/review/review_history_client.dart';
@@ -675,162 +675,138 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Shell init refreshes history once for a preloaded current Review',
-    (tester) async {
-      final client = _SequencedControlledClient();
-      final historyController = ReviewHistoryController(client: client);
-      final agentController = await _agentControllerWithReview(_newerId);
-      addTearDown(historyController.dispose);
-      addTearDown(agentController.dispose);
+  testWidgets('Shell refreshes history only when the Review tab is opened', (
+    tester,
+  ) async {
+    final client = _SequencedControlledClient();
+    final historyController = ReviewHistoryController(client: client);
+    final agentController = await _completedAgentController(_newerId);
+    addTearDown(historyController.dispose);
+    addTearDown(agentController.dispose);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: SpeakUpShell(
-            agentController: agentController,
-            reviewHistoryController: historyController,
-          ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SpeakUpShell(
+          agentController: agentController,
+          reviewHistoryController: historyController,
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      expect(client.requests, hasLength(1));
-      expect(client.requests.single.cursor, isNull);
-      expect(
-        find.byKey(const Key('review-content')).hitTestable(),
-        findsOneWidget,
-      );
+    expect(client.requests, isEmpty);
+    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
 
-      client.complete(
-        0,
-        ReviewHistoryPage(items: [_item(_olderId, score: 78)]),
-      );
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('primary-tab-review')));
+    await tester.pump();
 
-      expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
-      expect(client.requests, hasLength(1));
-    },
-  );
+    expect(client.requests, hasLength(1));
+    expect(client.requests.single.cursor, isNull);
 
-  testWidgets(
-    'Shell refreshes history once when Agent restore presents a late Review',
-    (tester) async {
-      final client = _SequencedControlledClient();
-      final historyController = ReviewHistoryController(client: client);
-      final agentController = _configuredAgentControllerWithReview(_newerId);
-      addTearDown(historyController.dispose);
-      addTearDown(agentController.dispose);
+    client.complete(0, ReviewHistoryPage(items: [_item(_olderId, score: 78)]));
+    await tester.pumpAndSettle();
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: SpeakUpShell(
-            agentController: agentController,
-            reviewHistoryController: historyController,
-          ),
+    expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
+    expect(client.requests, hasLength(1));
+  });
+
+  testWidgets('Agent restore does not trigger Review history loading', (
+    tester,
+  ) async {
+    final client = _SequencedControlledClient();
+    final historyController = ReviewHistoryController(client: client);
+    final agentController = _configuredCompletedAgentController(_newerId);
+    addTearDown(historyController.dispose);
+    addTearDown(agentController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SpeakUpShell(
+          agentController: agentController,
+          reviewHistoryController: historyController,
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      expect(client.requests, isEmpty);
-      expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
+    expect(client.requests, isEmpty);
+    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
 
-      await _restoreConfiguredReview(agentController, _newerId);
-      await tester.pump();
+    await _restoreCompletedPractice(agentController, _newerId);
+    await tester.pump();
 
-      expect(client.requests, hasLength(1));
-      expect(client.requests.single.cursor, isNull);
-      expect(
-        find.byKey(const Key('review-content')).hitTestable(),
-        findsOneWidget,
-      );
+    expect(client.requests, isEmpty);
+    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
 
-      client.complete(0, const ReviewHistoryPage(items: []));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('primary-tab-review')));
+    await tester.pump();
 
-      expect(client.requests, hasLength(1));
-      expect(find.byKey(const Key('review-current-$_newerId')), findsOneWidget);
-    },
-  );
+    expect(client.requests, hasLength(1));
+    expect(client.requests.single.cursor, isNull);
 
-  testWidgets(
-    'Shell widget updates coalesce one refresh without rebuild storms',
-    (tester) async {
-      final firstClient = _SequencedControlledClient();
-      final firstHistoryController = ReviewHistoryController(
-        client: firstClient,
-      );
-      final secondClient = _SequencedControlledClient();
-      final secondHistoryController = ReviewHistoryController(
-        client: secondClient,
-      );
-      final firstAgentController = await _agentControllerWithReview(_newerId);
-      final secondAgentController = await _agentControllerWithReview(_olderId);
-      addTearDown(firstHistoryController.dispose);
-      addTearDown(secondHistoryController.dispose);
-      addTearDown(firstAgentController.dispose);
-      addTearDown(secondAgentController.dispose);
+    client.complete(0, const ReviewHistoryPage(items: []));
+    await tester.pumpAndSettle();
 
-      var agentController = firstAgentController;
-      var historyController = firstHistoryController;
-      late StateSetter rebuild;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: StatefulBuilder(
-            builder: (context, setState) {
-              rebuild = setState;
-              return SpeakUpShell(
-                agentController: agentController,
-                reviewHistoryController: historyController,
-              );
-            },
-          ),
+    expect(client.requests, hasLength(1));
+    expect(find.byKey(const Key('review-availability-title')), findsOneWidget);
+  });
+
+  testWidgets('Shell rebuilds do not duplicate a Review tab refresh', (
+    tester,
+  ) async {
+    final firstClient = _SequencedControlledClient();
+    final firstHistoryController = ReviewHistoryController(client: firstClient);
+    final firstAgentController = await _completedAgentController(_newerId);
+    final secondAgentController = await _completedAgentController(_olderId);
+    addTearDown(firstHistoryController.dispose);
+    addTearDown(firstAgentController.dispose);
+    addTearDown(secondAgentController.dispose);
+
+    var agentController = firstAgentController;
+    late StateSetter rebuild;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            rebuild = setState;
+            return SpeakUpShell(
+              agentController: agentController,
+              reviewHistoryController: firstHistoryController,
+            );
+          },
         ),
-      );
+      ),
+    );
+    await tester.pump();
+
+    expect(firstClient.requests, isEmpty);
+
+    for (var index = 0; index < 5; index++) {
+      rebuild(() {});
       await tester.pump();
+    }
+    expect(firstClient.requests, isEmpty);
 
-      expect(firstClient.requests, hasLength(1));
+    await tester.tap(find.byKey(const Key('primary-tab-review')));
+    await tester.pump();
+    expect(firstClient.requests, hasLength(1));
 
-      for (var index = 0; index < 5; index++) {
-        rebuild(() {});
-        await tester.pump();
-      }
-      expect(firstClient.requests, hasLength(1));
-
-      rebuild(() => agentController = secondAgentController);
+    rebuild(() => agentController = secondAgentController);
+    await tester.pump();
+    for (var index = 0; index < 5; index++) {
+      rebuild(() {});
       await tester.pump();
-      for (var index = 0; index < 5; index++) {
-        rebuild(() {});
-        await tester.pump();
-      }
+    }
 
-      expect(firstClient.requests, hasLength(1));
-      firstClient.complete(0, const ReviewHistoryPage(items: []));
+    expect(firstClient.requests, hasLength(1));
+    firstClient.complete(0, const ReviewHistoryPage(items: []));
+    for (var index = 0; index < 5; index++) {
+      rebuild(() {});
       await tester.pump();
+    }
 
-      expect(firstClient.requests, hasLength(2));
-      expect(firstClient.requests.last.cursor, isNull);
-      firstClient.complete(1, const ReviewHistoryPage(items: []));
-      await tester.pump();
-
-      rebuild(() => historyController = secondHistoryController);
-      await tester.pump();
-      for (var index = 0; index < 5; index++) {
-        rebuild(() {});
-        await tester.pump();
-      }
-
-      expect(secondClient.requests, hasLength(1));
-      expect(secondClient.requests.single.cursor, isNull);
-      secondClient.complete(0, const ReviewHistoryPage(items: []));
-      await tester.pumpAndSettle();
-
-      expect(secondClient.requests, hasLength(1));
-      expect(
-        find.byKey(const Key('review-current-$_olderId')).hitTestable(),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(firstClient.requests, hasLength(1));
+  });
 
   testWidgets(
     'Review tab shows server history, selection, pagination, and retry states',
@@ -975,143 +951,100 @@ void main() {
     expect(controller.hasMore, isFalse);
   });
 
-  testWidgets(
-    'current server Review stays visible while history loads and deduplicates',
-    (tester) async {
-      final historyClient = _ControlledClient();
-      final historyController = ReviewHistoryController(client: historyClient);
-      final agentController = await _agentControllerWithReview(_newerId);
-      addTearDown(historyController.dispose);
-      addTearDown(agentController.dispose);
+  testWidgets('server Review history appears after its initial load', (
+    tester,
+  ) async {
+    final historyClient = _ControlledClient();
+    final historyController = ReviewHistoryController(client: historyClient);
+    addTearDown(historyController.dispose);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ReviewPage(
-            historyController: historyController,
-            agentController: agentController,
-          ),
-        ),
-      );
-      await tester.pump();
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: historyController)),
+    );
+    await tester.pump();
 
-      expect(find.byKey(const Key('review-content')), findsOneWidget);
-      expect(find.byKey(const Key('review-title')), findsOneWidget);
-      expect(find.byKey(const Key('review-current-label')), findsOneWidget);
-      expect(find.text('本次结果'), findsOneWidget);
-      expect(find.textContaining('刚'), findsNothing);
-      expect(
-        find.byKey(const Key('review-history-page-loading')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const Key('review-history-initial-loading')),
-        findsNothing,
-      );
+    expect(find.byKey(const Key('review-content')), findsNothing);
+    expect(
+      find.byKey(const Key('review-history-initial-loading')),
+      findsOneWidget,
+    );
 
-      historyClient.complete(
-        ReviewHistoryPage(items: [_item(_newerId, score: 91)]),
-      );
-      await tester.pumpAndSettle();
+    historyClient.complete(
+      ReviewHistoryPage(items: [_item(_newerId, score: 91)]),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('review-current-$_newerId')), findsNothing);
-      expect(find.byKey(const Key('review-history-$_newerId')), findsOneWidget);
-      expect(find.byKey(const Key('review-content')), findsOneWidget);
-      expect(find.byKey(const Key('review-title')), findsOneWidget);
-    },
-  );
+    expect(find.byKey(const Key('review-current-$_newerId')), findsNothing);
+    expect(find.byKey(const Key('review-history-$_newerId')), findsOneWidget);
+    expect(find.byKey(const Key('review-content')), findsOneWidget);
+    expect(find.byKey(const Key('review-title')), findsOneWidget);
+  });
 
-  testWidgets(
-    'history failure or empty page never hides the current server Review',
-    (tester) async {
-      final failureController = ReviewHistoryController(
-        client: _AlwaysFailClient(),
-      );
-      final agentController = await _agentControllerWithReview(_newerId);
-      addTearDown(failureController.dispose);
-      addTearDown(agentController.dispose);
+  testWidgets('history failure and empty history expose their own states', (
+    tester,
+  ) async {
+    final failureController = ReviewHistoryController(
+      client: _AlwaysFailClient(),
+    );
+    addTearDown(failureController.dispose);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ReviewPage(
-            historyController: failureController,
-            agentController: agentController,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: failureController)),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('review-content')), findsOneWidget);
-      expect(
-        find.byKey(const Key('review-history-page-error')),
-        findsOneWidget,
-      );
-      expect(find.byKey(const Key('review-history-error')), findsNothing);
+    expect(find.byKey(const Key('review-content')), findsNothing);
+    expect(find.byKey(const Key('review-history-error')), findsOneWidget);
 
-      final emptyController = ReviewHistoryController(client: _EmptyClient());
-      addTearDown(emptyController.dispose);
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ReviewPage(
-            historyController: emptyController,
-            agentController: agentController,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
+    final emptyController = ReviewHistoryController(client: _EmptyClient());
+    addTearDown(emptyController.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: emptyController)),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('review-content')), findsOneWidget);
-      expect(find.byKey(const Key('review-current-$_newerId')), findsOneWidget);
-      expect(find.byKey(const Key('review-availability-title')), findsNothing);
-    },
-  );
+    expect(find.byKey(const Key('review-content')), findsNothing);
+    expect(find.byKey(const Key('review-availability-title')), findsOneWidget);
+  });
 
-  testWidgets(
-    'current Review and older history remain distinct selectable results',
-    (tester) async {
-      final historyController = ReviewHistoryController(
-        client: _SinglePageClient(_item(_olderId, score: 78)),
-      );
-      final agentController = await _agentControllerWithReview(_newerId);
-      addTearDown(historyController.dispose);
-      addTearDown(agentController.dispose);
+  testWidgets('multiple server Reviews remain distinct selectable results', (
+    tester,
+  ) async {
+    final historyController = ReviewHistoryController(
+      client: _FixedItemsClient(<ReviewHistoryItem>[
+        _item(_newerId, score: 91),
+        _item(_olderId, score: 78),
+      ]),
+    );
+    addTearDown(historyController.dispose);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ReviewPage(
-            historyController: historyController,
-            agentController: agentController,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: historyController)),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('review-current-$_newerId')), findsOneWidget);
-      expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
-      expect(find.byKey(const Key('review-content')), findsOneWidget);
-      expect(find.text('summary-91'), findsOneWidget);
-      expect(find.text('summary-78'), findsOneWidget);
+    expect(find.byKey(const Key('review-history-$_newerId')), findsOneWidget);
+    expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
+    expect(find.byKey(const Key('review-content')), findsOneWidget);
+    expect(find.text('summary-91'), findsOneWidget);
+    expect(find.text('summary-78'), findsOneWidget);
 
-      await tester.tap(
-        find.byKey(const Key('review-current-select-$_newerId')),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-      expect(find.text('summary-91'), findsOneWidget);
-      expect(find.text('summary-78'), findsNothing);
+    await tester.tap(find.byKey(const Key('review-history-select-$_newerId')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+    expect(find.text('summary-91'), findsOneWidget);
+    expect(find.text('summary-78'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('review-detail-back')));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const Key('review-history-select-$_olderId')),
-      );
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('review-detail-back')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('review-history-select-$_olderId')));
+    await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-      expect(find.byKey(const Key('review-detail-title')), findsOneWidget);
-      expect(find.text('summary-91'), findsNothing);
-      expect(find.text('summary-78'), findsOneWidget);
-    },
-  );
+    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+    expect(find.byKey(const Key('review-detail-title')), findsOneWidget);
+    expect(find.text('summary-91'), findsNothing);
+    expect(find.text('summary-78'), findsOneWidget);
+  });
 
   testWidgets('one history item opens a dedicated detail page', (tester) async {
     final item = _fixtureItem(index: 0);
@@ -1705,19 +1638,6 @@ final class _EmptyClient implements ReviewHistoryClient {
   Future<void> clearAccountState() async {}
 }
 
-final class _SinglePageClient implements ReviewHistoryClient {
-  const _SinglePageClient(this.item);
-
-  final ReviewHistoryItem item;
-
-  @override
-  Future<ReviewHistoryPage> list({String? cursor, int limit = 20}) async =>
-      ReviewHistoryPage(items: <ReviewHistoryItem>[item]);
-
-  @override
-  Future<void> clearAccountState() async {}
-}
-
 final class _FixedItemsClient implements ReviewHistoryClient {
   const _FixedItemsClient(this.items);
 
@@ -1741,15 +1661,15 @@ final class _FixedItemsClient implements ReviewHistoryClient {
   Future<void> clearAccountState() async {}
 }
 
-Future<AgentController> _agentControllerWithReview(String reviewId) async {
-  final controller = _configuredAgentControllerWithReview(reviewId);
-  await _restoreConfiguredReview(controller, reviewId);
+Future<AgentController> _completedAgentController(String identity) async {
+  final controller = _configuredCompletedAgentController(identity);
+  await _restoreCompletedPractice(controller, identity);
   return controller;
 }
 
-AgentController _configuredAgentControllerWithReview(String reviewId) {
+AgentController _configuredCompletedAgentController(String identity) {
   final scene = testScenes.first;
-  final sessionId = _reviewSessionId(reviewId);
+  final sessionId = _reviewSessionId(identity);
   return AgentController(
     client: FakeAgentClient(),
     practiceClient: FakePracticeClient(
@@ -1759,27 +1679,20 @@ AgentController _configuredAgentControllerWithReview(String reviewId) {
         scene: scene,
         sessionId: sessionId,
         completedTurns: 3,
-        review: AgentReview(
-          id: reviewId,
-          title: '本次练习 · 91 分',
-          summary: 'summary-91',
-          strength: 'strength-91',
-          nextFocus: 'focus-91',
-        ),
       ),
     ),
   );
 }
 
-Future<void> _restoreConfiguredReview(
+Future<void> _restoreCompletedPractice(
   AgentController controller,
-  String reviewId,
+  String identity,
 ) async {
   final scene = testScenes.first;
   await controller.initialize();
   await controller.selectScene(scene);
   await controller.restoreCreatedPractice(
-    sessionId: _reviewSessionId(reviewId),
+    sessionId: _reviewSessionId(identity),
     scene: scene,
   );
 }

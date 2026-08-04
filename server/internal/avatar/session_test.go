@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 )
 
 func TestServiceIssuesFrozenClientContractForOwnedInteractiveSession(
@@ -100,7 +100,7 @@ func TestServiceRejectsUnownedAndNonInteractiveSessionsBeforeProvider(
 		{
 			name: "unowned",
 			reader: contextSessionReaderStub{
-				err: persistence.ErrNotFound,
+				err: practice.ErrNotFound,
 			},
 			expected:     apperror.NotFound,
 			expectedCode: "practice_session_not_found",
@@ -108,9 +108,9 @@ func TestServiceRejectsUnownedAndNonInteractiveSessionsBeforeProvider(
 		{
 			name: "paused",
 			reader: contextSessionReaderStub{
-				session: func() persistence.ContextSession {
+				session: func() practice.Session {
 					session := interactiveSession()
-					session.Status = persistence.ContextSessionPaused
+					session.Status = practice.SessionPaused
 					return session
 				}(),
 			},
@@ -120,9 +120,9 @@ func TestServiceRejectsUnownedAndNonInteractiveSessionsBeforeProvider(
 		{
 			name: "terminal",
 			reader: contextSessionReaderStub{
-				session: func() persistence.ContextSession {
+				session: func() practice.Session {
 					session := interactiveSession()
-					session.Status = persistence.ContextSessionCompleted
+					session.Status = practice.SessionCompleted
 					return session
 				}(),
 			},
@@ -132,7 +132,7 @@ func TestServiceRejectsUnownedAndNonInteractiveSessionsBeforeProvider(
 		{
 			name: "unsupported scenario",
 			reader: contextSessionReaderStub{
-				session: func() persistence.ContextSession {
+				session: func() practice.Session {
 					session := interactiveSession()
 					session.SceneFamily =
 						scene.SceneFamilyExam
@@ -283,11 +283,11 @@ func newTestService(
 	return service
 }
 
-func interactiveSession() persistence.ContextSession {
-	return persistence.ContextSession{
+func interactiveSession() practice.Session {
+	return practice.Session{
 		ID:          "practice-session-1",
 		SceneFamily: scene.SceneFamilyWorkplace,
-		Status:      persistence.ContextSessionProgress,
+		Status:      practice.SessionInProgress,
 	}
 }
 
@@ -299,7 +299,7 @@ func testActor() requestcontext.Actor {
 }
 
 type contextSessionReaderStub struct {
-	session persistence.ContextSession
+	session practice.Session
 	err     error
 }
 
@@ -307,7 +307,7 @@ func (stub contextSessionReaderStub) GetSession(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (persistence.ContextSession, error) {
+) (practice.Session, error) {
 	return stub.session, stub.err
 }
 

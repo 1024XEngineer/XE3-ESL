@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/gorilla/websocket"
 )
 
@@ -102,7 +102,7 @@ func runMainFlow(t *testing.T) flowTrace {
 		"expected_plan_revision": 1,
 		"user_confirmed":         true,
 	}, map[string]string{"Idempotency-Key": "session-key-1"}, http.StatusCreated, &sessionBootstrap)
-	var sessionSnapshot practicepersistence.ContextSessionSnapshot
+	var sessionSnapshot practice.SessionSnapshot
 	client.expect(
 		t,
 		http.MethodGet,

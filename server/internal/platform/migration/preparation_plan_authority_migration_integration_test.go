@@ -370,6 +370,10 @@ func TestPreparationPlanAuthorityEnforcesExactExecutableRevision(
 	}
 
 	changed, err := runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("down Practice runtime authority = changed %t, error %v", changed, err)
+	}
+	changed, err = runner.DownOne()
 	if err == nil || changed || !strings.Contains(
 		err.Error(),
 		"recreate the development or test database",

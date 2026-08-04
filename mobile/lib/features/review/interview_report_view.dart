@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/design/five_dimension_radar.dart';
 import 'package:speakup/design/speak_up_design.dart';
-import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/review/interview_report.dart';
 import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';

@@ -14,12 +14,11 @@ import 'package:speakup/agent/agent_voice_client.dart';
 import 'package:speakup/agent/agent_voice_controller.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
-import 'package:speakup/practice/practice_client.dart';
-import 'package:speakup/practice/practice_audio_player.dart';
-import 'package:speakup/practice/practice_media.dart';
-import 'package:speakup/practice/practice_models.dart';
-import 'package:speakup/practice/practice_recording.dart';
-import 'package:speakup/review/formal_review.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
+import 'package:speakup/features/coaching/practice/practice_media.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/review/turn_feedback.dart';
 
 typedef AgentClientIdFactory = String Function(String scope);
@@ -136,8 +135,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   List<AgentMessage> _messages = const <AgentMessage>[];
   List<AgentMessage> _practiceMessages = const <AgentMessage>[];
   PracticeRecordingState _recordingState = PracticeRecordingState.idle;
-  AgentReview? _review;
-  FormalReview? _formalReview;
   String? _errorMessage;
   _AgentRetry? _retry;
   int _completedTurns = 0;
@@ -215,8 +212,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   PracticeRecordingState get recordingState => _recordingState;
   String? get transcript =>
       _speechFeedbackRetryCandidate?.text ?? _candidate?.text;
-  AgentReview? get review => _review;
-  FormalReview? get formalReview => _formalReview;
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
@@ -249,9 +244,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       !isBusy &&
       _speechFeedbackRetry == null &&
       switch (_recordingState) {
-        PracticeRecordingState.idle ||
-        PracticeRecordingState.reviewFailed ||
-        PracticeRecordingState.completed => true,
+        PracticeRecordingState.idle || PracticeRecordingState.completed => true,
         PracticeRecordingState.starting ||
         PracticeRecordingState.recording ||
         PracticeRecordingState.transcribing ||
@@ -277,7 +270,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       switch (_recordingState) {
         PracticeRecordingState.idle ||
         PracticeRecordingState.awaitingConfirmation ||
-        PracticeRecordingState.reviewFailed ||
         PracticeRecordingState.completed => true,
         PracticeRecordingState.starting ||
         PracticeRecordingState.recording ||
@@ -299,7 +291,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         _pendingPracticeAudio == null &&
         switch (_recordingState) {
           PracticeRecordingState.idle ||
-          PracticeRecordingState.reviewFailed ||
           PracticeRecordingState.completed => true,
           _ => false,
         };
@@ -455,13 +446,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _errorMessage = textRecovery.retryable
           ? '上次 Agent 运行未能完成，可以继续重试。'
           : '上次 Agent 运行未能完成，服务端不允许重试。';
-    } else if (_isSessionCompleted &&
-        _review == null &&
-        !usesAsynchronousPracticeReport(
-          _practiceSceneFamily,
-          _practiceSceneModel,
-        )) {
-      _errorMessage = '练习已完成，正在等待服务端恢复同一次复盘。';
     }
   }
 
@@ -3065,8 +3049,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
         confirmation.sessionVersion ?? _practiceSessionVersion;
     _endPracticeClientId = null;
     _currentQuestion = confirmation.nextQuestion;
-    _review = confirmation.review;
-    _formalReview = confirmation.formalReview;
     final audioAssetId = confirmation.audioAssetId;
     if (audioAssetId != null &&
         !_recordings.any(
@@ -3092,16 +3074,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       ?confirmation.nextQuestion?.presentation,
     ]);
     if (confirmation.sessionCompleted) {
-      final usesAsynchronousReport = usesAsynchronousPracticeReport(
-        _practiceSceneFamily,
-        _practiceSceneModel,
-      );
-      _recordingState = confirmation.review != null || usesAsynchronousReport
-          ? PracticeRecordingState.completed
-          : PracticeRecordingState.reviewFailed;
-      _errorMessage = confirmation.review == null && !usesAsynchronousReport
-          ? '练习已完成，正在等待服务端恢复同一次复盘。'
-          : null;
+      _recordingState = PracticeRecordingState.completed;
+      _errorMessage = null;
     } else {
       _recordingState = PracticeRecordingState.idle;
     }
@@ -3150,49 +3124,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Refetches the server-owned result. Flutter never creates a Review.
-  Future<void> retryReview() async {
-    final practice = practiceClient;
-    final expectedSessionId = _practiceSessionId;
-    if (practice == null ||
-        expectedSessionId == null ||
-        !_isSessionCompleted ||
-        _review != null ||
-        _recordingState != PracticeRecordingState.reviewFailed) {
-      return;
-    }
-    final fence = _captureOperationFence(
-      threadId: threadId,
-      practiceSessionId: expectedSessionId,
-    );
-    _recordingState = PracticeRecordingState.submitting;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      final snapshot = await practice.restorePractice(
-        sessionId: expectedSessionId,
-      );
-      if (!_isOperationCurrent(fence)) {
-        return;
-      }
-      if (snapshot.sessionId != expectedSessionId) {
-        throw StateError('Practice Session identity changed during Review.');
-      }
-      _applyPracticeSnapshot(snapshot, preserveKnownRecordings: true);
-      if (_review == null) {
-        throw StateError('Review is not ready.');
-      }
-    } catch (error) {
-      if (_isOperationCurrent(fence)) {
-        _recordingState = PracticeRecordingState.reviewFailed;
-        _errorMessage = _reviewFailureMessage(error);
-      }
-    }
-    if (_isOperationCurrent(fence)) {
-      notifyListeners();
-    }
-  }
-
   /// Invalidates private UI state synchronously, then removes temporary audio
   /// and waits for all account-scoped transports to stop.
   Future<void> clearPrivateState() async {
@@ -3230,8 +3161,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _messages = const <AgentMessage>[];
     _practiceMessages = const <AgentMessage>[];
     _recordingState = PracticeRecordingState.idle;
-    _review = null;
-    _formalReview = null;
     _errorMessage = null;
     _retry = null;
     _completedTurns = 0;
@@ -3439,8 +3368,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _completedTurns = 0;
       _turnLimit = 0;
       _sessionCompleted = false;
-      _review = null;
-      _formalReview = null;
       _recordings = const <PracticeRecordingReference>[];
       _practiceMessages = const <AgentMessage>[];
       _recordingState = PracticeRecordingState.idle;
@@ -3461,8 +3388,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _completedTurns = snapshot.completedTurns;
     _turnLimit = snapshot.turnLimit;
     _sessionCompleted = snapshot.sessionCompleted;
-    _review = snapshot.review;
-    _formalReview = snapshot.formalReview;
     final currentTurn = snapshot.currentTurn;
     final audioAssetId = currentTurn?.audioAssetId;
     if (!mayPreserveKnownRecordings) {
@@ -3498,14 +3423,8 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _appendPracticeMessages([?currentQuestion]);
     }
-    final usesAsynchronousReport = usesAsynchronousPracticeReport(
-      snapshot.sceneFamily,
-      snapshot.sceneModel,
-    );
     _recordingState = snapshot.sessionCompleted
-        ? snapshot.review != null || usesAsynchronousReport
-              ? PracticeRecordingState.completed
-              : PracticeRecordingState.reviewFailed
+        ? PracticeRecordingState.completed
         : PracticeRecordingState.idle;
   }
 
@@ -3818,21 +3737,6 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     return '同题复练没有提交成功，请重试。';
-  }
-
-  String _reviewFailureMessage(Object error) {
-    if (error is AgentClientException) {
-      if (_isFreeQuotaExhausted(error)) {
-        return '今日免费复盘额度已用完，请稍后刷新。';
-      }
-      if (error.kind == AgentClientFailureKind.network) {
-        return '网络连接不稳定，暂时无法刷新复盘。';
-      }
-      if (error.kind == AgentClientFailureKind.rateLimited) {
-        return '复盘刷新过于频繁，请稍后再试。';
-      }
-    }
-    return '复盘仍在生成，请稍后重试。';
   }
 
   bool _isFreeQuotaExhausted(AgentClientException error) {

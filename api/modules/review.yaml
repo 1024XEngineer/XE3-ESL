@@ -309,7 +309,7 @@ components:
           pattern: '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
     CompletedFormalReview:
       allOf:
-        - $ref: ./conversation.yaml#/components/schemas/FormalReview
+        - $ref: ./practice-runtime.yaml#/components/schemas/FormalReview
         - type: object
           description: |
             Completed Review projection. Each metadata string uses
@@ -369,7 +369,7 @@ components:
                 before that limit remain readable; the complete page is still
                 subject to the 768 KiB response budget.
               allOf:
-                - $ref: ./conversation.yaml#/components/schemas/FormalReviewResult
+                - $ref: ./practice-runtime.yaml#/components/schemas/FormalReviewResult
     ResourceId:
       type: string
       minLength: 1

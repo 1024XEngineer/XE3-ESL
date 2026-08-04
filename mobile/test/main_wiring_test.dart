@@ -21,10 +21,10 @@ import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/session_store.dart';
 import 'package:speakup/main.dart' as production;
-import 'package:speakup/practice/practice_audio_player.dart';
-import 'package:speakup/practice/practice_media.dart';
-import 'package:speakup/practice/practice_recording.dart';
-import 'package:speakup/practice/wire_practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
+import 'package:speakup/features/coaching/practice/practice_media.dart';
+import 'package:speakup/features/coaching/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
 import 'package:speakup/review/wire_review_history_client.dart';
 import 'package:speakup/review/wire_interview_report_client.dart';
 

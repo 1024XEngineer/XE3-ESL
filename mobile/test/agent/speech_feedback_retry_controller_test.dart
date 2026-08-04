@@ -5,9 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/practice/practice_client.dart';
-import 'package:speakup/practice/practice_models.dart';
-import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/review/turn_feedback.dart';
 
 void main() {
@@ -265,14 +265,6 @@ final _failedRetryRequest = PracticeRetryRequest(
   completedAt: DateTime.utc(2026, 7, 30, 11, 0, 1),
 );
 
-const _review = AgentReview(
-  id: 'review_daily_001',
-  title: 'Daily review',
-  summary: 'Summary',
-  strength: 'Strength',
-  nextFocus: 'Next focus',
-);
-
 final _dailyScene = testScene(
   id: 'scene_daily_001',
   family: SceneFamily.daily,
@@ -299,7 +291,6 @@ final _completedDailySnapshot = PracticeSessionSnapshot(
   completedTurns: 3,
   turnLimit: 3,
   sessionCompleted: true,
-  review: _review,
   turnHistory: const [
     PracticeTurnExchange(
       question: PracticeQuestion(

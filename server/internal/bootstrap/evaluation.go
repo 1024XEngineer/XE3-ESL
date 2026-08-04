@@ -10,12 +10,11 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
+	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
 	evaluationtransport "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/transport"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -68,12 +67,12 @@ func NewEvaluationComposition(
 			"bootstrap: Evaluation dependencies are required",
 		)
 	}
-	practiceRepository := practicepostgres.New(database)
-	conversationRepository, err := postgres.New(database)
+	practiceRepository, err := practicepostgres.New(database)
 	if err != nil {
 		return nil, err
 	}
-	audioRepository, err := postgres.NewAudioAssetRepository(database)
+	conversationRepository := practiceRepository
+	audioRepository, err := practicepostgres.NewAudioAssetRepository(database)
 	if err != nil {
 		return nil, err
 	}

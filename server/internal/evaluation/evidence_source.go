@@ -13,12 +13,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	domainconversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	conversation "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	practice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 )
 
 const (
@@ -29,34 +28,34 @@ const (
 )
 
 type EvidencePracticeSource interface {
-	GetContextSession(
+	GetSession(
 		context.Context,
 		practice.Actor,
 		string,
-	) (practice.ContextSession, error)
-	GetContextSessionSnapshot(
+	) (practice.Session, error)
+	GetSessionSnapshot(
 		context.Context,
 		practice.Actor,
 		string,
-	) (practice.ContextSessionSnapshot, error)
+	) (practice.SessionSnapshot, error)
 }
 
 type EvidenceConversationSource interface {
 	ListSessionQuestions(
 		context.Context,
-		conversation.Actor,
+		practiceinput.Actor,
 		string,
-	) ([]conversation.PersistentQuestion, error)
+	) ([]practice.Question, error)
 	GetCandidate(
 		context.Context,
-		conversation.Actor,
+		practiceinput.Actor,
 		string,
-	) (conversation.TranscriptCandidate, error)
+	) (practiceinput.StoredTranscriptCandidate, error)
 	ListSessionTurns(
 		context.Context,
-		conversation.Actor,
+		practiceinput.Actor,
 		string,
-	) ([]conversation.ConfirmedTurn, error)
+	) ([]practice.Turn, error)
 }
 
 type EvidenceAudioSource interface {
@@ -64,7 +63,7 @@ type EvidenceAudioSource interface {
 		context.Context,
 		string,
 		string,
-	) (domainconversation.AudioAsset, error)
+	) (practiceinput.AudioAsset, error)
 }
 
 // EvidenceSourceReader composes Evaluation's immutable input from the
@@ -114,7 +113,7 @@ func (r *EvidenceSourceReader) Compose(
 		UserID:    actor.UserID,
 		SessionID: actor.SessionID,
 	}
-	session, err := r.practice.GetContextSession(
+	session, err := r.practice.GetSession(
 		ctx,
 		practiceActor,
 		practiceSessionID,
@@ -122,7 +121,7 @@ func (r *EvidenceSourceReader) Compose(
 	if err != nil {
 		return EnsureEvidenceSnapshotCommand{}, mapEvidencePracticeError(err)
 	}
-	snapshot, err := r.practice.GetContextSessionSnapshot(
+	snapshot, err := r.practice.GetSessionSnapshot(
 		ctx,
 		practiceActor,
 		practiceSessionID,
@@ -140,7 +139,7 @@ func (r *EvidenceSourceReader) Compose(
 		return EnsureEvidenceSnapshotCommand{}, ErrInvalidRequest
 	}
 
-	conversationActor := conversation.Actor{
+	conversationActor := practiceinput.Actor{
 		UserID:    actor.UserID,
 		SessionID: actor.SessionID,
 	}
@@ -153,7 +152,7 @@ func (r *EvidenceSourceReader) Compose(
 		return EnsureEvidenceSnapshotCommand{},
 			mapEvidenceConversationError(err)
 	}
-	slices.SortFunc(turns, func(left, right conversation.ConfirmedTurn) int {
+	slices.SortFunc(turns, func(left, right practice.Turn) int {
 		if left.Sequence != right.Sequence {
 			return left.Sequence - right.Sequence
 		}
@@ -182,7 +181,7 @@ func (r *EvidenceSourceReader) Compose(
 	}
 	slices.SortFunc(
 		questions,
-		func(left, right conversation.PersistentQuestion) int {
+		func(left, right practice.Question) int {
 			if left.Sequence != right.Sequence {
 				return left.Sequence - right.Sequence
 			}
@@ -244,7 +243,7 @@ func (r *EvidenceSourceReader) Compose(
 		},
 	}
 	turnsByQuestion := make(
-		map[string]conversation.ConfirmedTurn,
+		map[string]practice.Turn,
 		len(turns),
 	)
 	for _, turn := range turns {
@@ -377,11 +376,11 @@ type composedEvidenceTurn struct {
 func (r *EvidenceSourceReader) composeTurn(
 	ctx context.Context,
 	ownerUserID string,
-	actor conversation.Actor,
+	actor practiceinput.Actor,
 	practiceSessionID string,
 	expectedSequence int,
-	turn conversation.ConfirmedTurn,
-	question conversation.PersistentQuestion,
+	turn practice.Turn,
+	question practice.Question,
 	candidateParticipants map[string]struct{},
 ) (composedEvidenceTurn, error) {
 	if turn.SessionID != practiceSessionID ||
@@ -473,10 +472,10 @@ func (r *EvidenceSourceReader) composeTurn(
 func (r *EvidenceSourceReader) readEvidenceAudio(
 	ctx context.Context,
 	ownerUserID string,
-	turn conversation.ConfirmedTurn,
+	turn practice.Turn,
 ) (evidenceAudio, uint64, error) {
 	asset, err := r.audio.GetByTurn(ctx, ownerUserID, turn.ID)
-	if errors.Is(err, domainconversation.ErrAudioAssetNotFound) {
+	if errors.Is(err, practiceinput.ErrAudioAssetNotFound) {
 		return evidenceAudio{
 			Availability: evidenceUnavailable,
 			Quality:      evidenceNotAssessed,
@@ -491,7 +490,7 @@ func (r *EvidenceSourceReader) readEvidenceAudio(
 	}
 	durationMS := int64((asset.Duration-1)/time.Millisecond) + 1
 	availability := evidenceUnavailable
-	if asset.Status == domainconversation.AudioAssetReadable {
+	if asset.Status == practiceinput.AudioAssetReadable {
 		availability = "AVAILABLE"
 	}
 	return evidenceAudio{
@@ -784,12 +783,12 @@ func validCompletedEvidenceSession(
 	ownerUserID string,
 	practiceSessionID string,
 	sceneType SceneType,
-	session practice.ContextSession,
-	snapshot practice.ContextSessionSnapshot,
+	session practice.Session,
+	snapshot practice.SessionSnapshot,
 ) bool {
 	option, optionErr := snapshot.SceneSelection.PracticeOption()
 	if session.ID != practiceSessionID ||
-		session.Status != practice.ContextSessionCompleted ||
+		session.Status != practice.SessionCompleted ||
 		session.Version < 1 ||
 		session.EffectiveTurns < 1 ||
 		session.StartedAt == nil ||
@@ -856,7 +855,7 @@ func evidenceParticipants(
 	ownerUserID string,
 	practiceSessionID string,
 	sceneID string,
-	source []practice.ContextParticipant,
+	source []practice.Participant,
 ) (
 	[]evidenceParticipant,
 	map[string]struct{},
@@ -933,8 +932,8 @@ func evidenceParticipants(
 
 func evidencePracticeContextFromSnapshot(
 	ownerUserID string,
-	session practice.ContextSession,
-	snapshot practice.ContextSessionSnapshot,
+	session practice.Session,
+	snapshot practice.SessionSnapshot,
 ) (
 	evidencePracticeContext,
 	map[string]struct{},
@@ -1069,7 +1068,7 @@ func evidenceTextHash(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func validEvidenceTurn(turn conversation.ConfirmedTurn) bool {
+func validEvidenceTurn(turn practice.Turn) bool {
 	return strings.TrimSpace(turn.ID) != "" &&
 		strings.TrimSpace(turn.QuestionID) != "" &&
 		strings.TrimSpace(turn.SpeakerParticipantID) != "" &&
@@ -1084,7 +1083,7 @@ func validEvidenceTurn(turn conversation.ConfirmedTurn) bool {
 }
 
 func validEvidenceQuestion(
-	question conversation.PersistentQuestion,
+	question practice.Question,
 	practiceSessionID string,
 	expectedSequence int,
 	allParticipants map[string]struct{},
@@ -1135,8 +1134,8 @@ func validEvidenceQuestion(
 }
 
 func validEvidenceQuestionTurn(
-	question conversation.PersistentQuestion,
-	turn conversation.ConfirmedTurn,
+	question practice.Question,
+	turn practice.Turn,
 ) bool {
 	if question.ID != turn.QuestionID ||
 		question.SessionID != turn.SessionID ||
@@ -1166,7 +1165,7 @@ func validEvidenceQuestionTurn(
 }
 
 func evidenceOpportunityFromQuestion(
-	question conversation.PersistentQuestion,
+	question practice.Question,
 ) evidenceOpportunity {
 	return evidenceOpportunity{
 		Sequence:             question.Sequence,
@@ -1183,8 +1182,8 @@ func evidenceOpportunityFromQuestion(
 }
 
 func validEvidenceCandidate(
-	candidate conversation.TranscriptCandidate,
-	turn conversation.ConfirmedTurn,
+	candidate practiceinput.StoredTranscriptCandidate,
+	turn practice.Turn,
 ) bool {
 	return candidate.ID == turn.CandidateID &&
 		candidate.SessionID == turn.SessionID &&
@@ -1193,7 +1192,7 @@ func validEvidenceCandidate(
 			turn.RespondentParticipantID &&
 		candidate.EvidenceVersion == turn.EvidenceVersion &&
 		candidate.Text == turn.AnswerText &&
-		candidate.Status == conversation.CandidateConfirmed &&
+		candidate.Status == practiceinput.CandidateConfirmed &&
 		strings.TrimSpace(candidate.TranscriptID) != "" &&
 		strings.TrimSpace(candidate.Provider) != "" &&
 		strings.TrimSpace(candidate.Model) != "" &&
@@ -1201,14 +1200,14 @@ func validEvidenceCandidate(
 }
 
 func validEvidenceAudio(
-	asset domainconversation.AudioAsset,
+	asset practiceinput.AudioAsset,
 	ownerUserID string,
-	turn conversation.ConfirmedTurn,
+	turn practice.Turn,
 ) bool {
 	switch asset.Status {
-	case domainconversation.AudioAssetReadable,
-		domainconversation.AudioAssetDeleting,
-		domainconversation.AudioAssetDeleted:
+	case practiceinput.AudioAssetReadable,
+		practiceinput.AudioAssetDeleting,
+		practiceinput.AudioAssetDeleted:
 	default:
 		return false
 	}
@@ -1390,11 +1389,11 @@ func mapEvidencePracticeError(err error) error {
 
 func mapEvidenceConversationError(err error) error {
 	switch {
-	case errors.Is(err, conversation.ErrPersistenceNotFound),
-		errors.Is(err, conversation.ErrActorDeleted):
+	case errors.Is(err, practiceinput.ErrPersistenceNotFound),
+		errors.Is(err, practiceinput.ErrActorDeleted):
 		return ErrNotFound
-	case errors.Is(err, conversation.ErrPersistenceInvalid),
-		errors.Is(err, conversation.ErrPersistenceConflict):
+	case errors.Is(err, practiceinput.ErrPersistenceInvalid),
+		errors.Is(err, practiceinput.ErrPersistenceConflict):
 		return ErrInvalidRequest
 	default:
 		return err

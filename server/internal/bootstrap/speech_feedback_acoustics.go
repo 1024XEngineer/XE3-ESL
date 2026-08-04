@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/postgres"
+	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
+	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,11 +36,11 @@ func NewSpeechFeedbackAcousticProvider(
 	if err != nil {
 		return nil, err
 	}
-	service, err := conversation.NewAudioAssetService(
+	service, err := practiceinput.NewAudioAssetService(
 		repository,
 		store,
-		conversation.SecureAudioAssetIDGenerator{},
-		conversation.NewAudioAssetSystemClock(),
+		practiceinput.SecureAudioAssetIDGenerator{},
+		practiceinput.NewAudioAssetSystemClock(),
 		repository,
 		24*time.Hour,
 	)
@@ -66,7 +66,7 @@ func NewSpeechFeedbackAcousticProvider(
 }
 
 type speechFeedbackAudioReader struct {
-	service *conversation.AudioAssetService
+	service *practiceinput.AudioAssetService
 	store   objectstore.Store
 	client  *http.Client
 }
@@ -87,7 +87,7 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 	if audioObjectKey == "" {
 		playback, err = reader.service.Playback(
 			ctx,
-			conversation.AudioAssetActor{UserID: ownerUserID},
+			practiceinput.AudioAssetActor{UserID: ownerUserID},
 			audioAssetID,
 		)
 	} else {
@@ -101,7 +101,7 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 		!strings.EqualFold(playbackURL.Scheme, "https") ||
 		playbackURL.Host == "" ||
 		playback.ExpiresAt.After(
-			time.Now().Add(conversation.MaxPlaybackURLTTL),
+			time.Now().Add(practiceinput.MaxPlaybackURLTTL),
 		) {
 		return nil, review.ErrSpeechFeedbackAcousticUnavailable
 	}

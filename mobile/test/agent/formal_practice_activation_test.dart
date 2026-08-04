@@ -6,8 +6,8 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/goal/goal.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
-import 'package:speakup/practice/practice_client.dart';
-import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 
 import '../support/scene_fixtures.dart';
 
@@ -328,13 +328,6 @@ void main() {
           completedTurns: 4,
           turnLimit: 6,
           sessionCompleted: true,
-          review: const AgentReview(
-            id: 'review-1',
-            title: 'Review',
-            summary: 'Covered',
-            strength: 'Clear evidence',
-            nextFocus: 'Concise delivery',
-          ),
         ),
       );
       final controller = AgentController(
@@ -357,7 +350,7 @@ void main() {
       expect(controller.completedTurns, 4);
       expect(controller.turnLimit, 6);
       expect(controller.hasActivePractice, isFalse);
-      expect(controller.review?.id, 'review-1');
+      expect(controller.recordingState, PracticeRecordingState.completed);
     },
   );
 }

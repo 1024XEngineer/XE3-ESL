@@ -10,11 +10,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
-import 'package:speakup/practice/practice_audio_player.dart';
-import 'package:speakup/practice/practice_client.dart';
-import 'package:speakup/practice/practice_media.dart';
-import 'package:speakup/practice/practice_models.dart';
-import 'package:speakup/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_media.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_recording.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -325,13 +325,6 @@ final class _AccountPracticeClient implements PracticeClient {
       completedTurns: 2,
       turnLimit: 2,
       sessionCompleted: true,
-      review: AgentReview(
-        id: 'review-${account.value}',
-        title: 'Review',
-        summary: 'Summary',
-        strength: 'Strength',
-        nextFocus: 'Next',
-      ),
       audioAssetId: 'audio-${account.value}-2',
     );
   }

@@ -15,11 +15,11 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

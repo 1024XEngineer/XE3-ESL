@@ -126,7 +126,6 @@ enum PracticeRecordingState {
   transcribing,
   awaitingConfirmation,
   submitting,
-  reviewFailed,
   completed,
 }
 

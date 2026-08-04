@@ -1,7 +1,6 @@
 import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
-import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 
 String testPracticePlanId(String sessionId) => 'practice-plan-$sessionId';
 
@@ -11,7 +10,6 @@ PracticeSessionSnapshot testPracticeSnapshot({
   int completedTurns = 0,
   int turnLimit = 3,
   int? sessionVersion,
-  AgentReview? review,
 }) {
   if (completedTurns < 0 ||
       completedTurns > turnLimit ||
@@ -36,7 +34,6 @@ PracticeSessionSnapshot testPracticeSnapshot({
             sessionId: sessionId,
             text: 'Question ${completedTurns + 1}',
           ),
-    review: review,
   );
 }
 

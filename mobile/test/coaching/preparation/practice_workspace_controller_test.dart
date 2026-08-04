@@ -12,8 +12,8 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
-import 'package:speakup/practice/practice_client.dart';
-import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

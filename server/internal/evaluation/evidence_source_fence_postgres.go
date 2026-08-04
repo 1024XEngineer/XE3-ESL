@@ -9,8 +9,8 @@ import (
 	"slices"
 	"time"
 
+	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	practice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -109,16 +109,16 @@ func lockCurrentEvidenceSources(
 			err,
 		)
 	}
-	var sourceSnapshot practice.ContextSessionSnapshot
+	var sourceSnapshot practice.SessionSnapshot
 	if json.Unmarshal(snapshotDocument, &sourceSnapshot) != nil {
 		return ErrInvalidRequest
 	}
-	sourceSession := practice.ContextSession{
+	sourceSession := practice.Session{
 		ID:             command.PracticeSessionID,
 		SceneFamily:    scene.SceneFamily(scenarioType),
 		SceneModel:     scene.SceneModel(scenarioModel),
 		SnapshotID:     snapshotID,
-		Status:         practice.ContextSessionStatus(status),
+		Status:         practice.SessionStatus(status),
 		Version:        sessionVersion,
 		EffectiveTurns: effectiveTurns,
 		StartedAt:      startedAt,
@@ -147,11 +147,11 @@ func lockCurrentEvidenceSources(
 	if err := tx.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*)
-			 FROM conversation_questions
+			 FROM practice_questions
 			 WHERE owner_user_id = $1
 			   AND practice_session_id = $2),
 			(SELECT count(*)
-			 FROM conversation_confirmed_turns
+			 FROM practice_turns
 			 WHERE owner_user_id = $1
 			   AND practice_session_id = $2)
 	`, command.OwnerUserID, command.PracticeSessionID).Scan(
@@ -237,7 +237,7 @@ func lockEvidenceQuestion(
 			coalesce(parent_question_id, ''),
 			content,
 			sequence
-		FROM conversation_questions
+		FROM practice_questions
 		WHERE owner_user_id = $1 AND question_id = $2
 		FOR SHARE
 	`, command.OwnerUserID, expected.QuestionID).Scan(
@@ -301,7 +301,7 @@ func lockEvidenceTurn(
 			interaction_mode,
 			answer_text,
 			evidence_version
-		FROM conversation_confirmed_turns
+		FROM practice_turns
 		WHERE owner_user_id = $1 AND turn_id = $2
 		FOR SHARE
 	`, command.OwnerUserID, expected.TurnID).Scan(
@@ -378,7 +378,7 @@ func lockEvidenceCandidate(
 			provider_request_id,
 			transcript_text,
 			status
-		FROM conversation_transcript_candidates
+		FROM practice_transcript_candidates
 		WHERE owner_user_id = $1 AND candidate_id = $2
 		FOR SHARE
 	`, command.OwnerUserID, ref.Lineage.CandidateID).Scan(
@@ -430,7 +430,7 @@ func lockEvidenceAudio(
 		var unexpectedID string
 		err := tx.QueryRow(ctx, `
 			SELECT audio_asset_id
-			FROM conversation_audio_assets
+			FROM practice_audio_assets
 			WHERE owner_user_id = $1 AND turn_id = $2
 			FOR SHARE
 		`, command.OwnerUserID, turn.TurnID).Scan(&unexpectedID)
@@ -463,7 +463,7 @@ func lockEvidenceAudio(
 			duration_ns,
 			status,
 			version
-		FROM conversation_audio_assets
+		FROM practice_audio_assets
 		WHERE owner_user_id = $1 AND audio_asset_id = $2
 		FOR SHARE
 	`, command.OwnerUserID, turn.Audio.AudioAssetID).Scan(

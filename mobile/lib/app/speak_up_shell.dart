@@ -8,8 +8,8 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
-import 'package:speakup/features/conversation/conversation.dart';
-import 'package:speakup/features/practice/ielts_mock_practice.dart';
+import 'package:speakup/features/coaching/practice/conversation.dart';
+import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
@@ -17,7 +17,7 @@ import 'package:speakup/features/coaching/preparation/preparation_launch_control
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
-import 'package:speakup/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
@@ -86,7 +86,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
-  bool _reviewPresented = false;
   bool _practiceRouteInFlight = false;
   int _navigationGeneration = 0;
   int _openInterviewRequestGeneration = 0;
@@ -95,7 +94,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   void initState() {
     super.initState();
     widget.agentController.addListener(_handleAgentState);
-    _restorePresentedReview();
   }
 
   @override
@@ -103,14 +101,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     super.didUpdateWidget(oldWidget);
     final agentControllerChanged =
         oldWidget.agentController != widget.agentController;
-    final historyControllerChanged =
-        oldWidget.reviewHistoryController != widget.reviewHistoryController;
     if (agentControllerChanged) {
       oldWidget.agentController.removeListener(_handleAgentState);
       widget.agentController.addListener(_handleAgentState);
-    }
-    if (agentControllerChanged || historyControllerChanged) {
-      _restorePresentedReview();
     }
   }
 
@@ -250,10 +243,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
           return;
         }
       }
-      if (widget.agentController.review != null) {
-        _selectDestination(2);
-        return;
-      }
       if (!widget.agentController.hasActivePractice) {
         _showMockNotice('请先从训练页选择一项练习');
         return;
@@ -285,27 +274,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     if (!mounted) {
       return;
     }
-    final review = widget.agentController.review;
-    final suppressReview = isIeltsSpeakingSession(widget.agentController);
-    if (review == null || suppressReview) {
-      _reviewPresented = false;
-    } else if (!_reviewPresented) {
-      _reviewPresented = true;
-      _selectedIndex = 2;
-      _refreshReviewIndexes();
-    }
     setState(() {});
-  }
-
-  void _restorePresentedReview() {
-    if (widget.agentController.review == null ||
-        isIeltsSpeakingSession(widget.agentController)) {
-      _reviewPresented = false;
-      return;
-    }
-    _reviewPresented = true;
-    _selectedIndex = 2;
-    _refreshReviewIndexes();
   }
 
   @override
@@ -408,7 +377,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
         ieltsSpeakingReportIndexController:
             widget.ieltsSpeakingReportIndexController,
-        agentController: widget.agentController,
         autoload: false,
       ),
       _ProfilePage(
