@@ -7,13 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 	"unicode/utf8"
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	slashcommand "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/slashcommand"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -45,7 +43,6 @@ type Service struct {
 	registry         *tool.Registry
 	executor         *tool.Executor
 	loopLimits       LoopLimits
-	slashCommands    *slashcommand.Router
 	logger           *slog.Logger
 	logOptions       LogOptions
 }
@@ -160,16 +157,6 @@ func WithLoopLimits(limits LoopLimits) Option {
 			return errors.New("agent: loop limits are invalid")
 		}
 		service.loopLimits = normalized
-		return nil
-	}
-}
-
-func WithSlashCommands(router *slashcommand.Router) Option {
-	return func(service *Service) error {
-		if router == nil {
-			return errors.New("agent: command router is required")
-		}
-		service.slashCommands = router
 		return nil
 	}
 }
@@ -699,26 +686,6 @@ func (service *Service) generateObserved(
 	input := lastUserContent(request)
 	service.logRunReceived(run, input, request)
 	routing := buildModelToolRouting(service.registry, service.logger, run.ID)
-	parsed, explicitCommand, err := service.parseSlashCommand(input)
-	if err != nil {
-		return fallbackResult(
-			service.configuration,
-			"我暂时无法识别这条命令，请换成自然语言告诉我你想做什么。",
-		), nil
-	}
-	if !explicitCommand && requestsLatestPracticeReport(input) {
-		if _, available := service.toolDefinition(
-			slashcommand.ToolLatestPracticeReport,
-		); available {
-			parsed.Invocation = tool.Invocation{
-				Name:  slashcommand.ToolLatestPracticeReport,
-				Input: json.RawMessage(`{}`),
-			}
-			explicitCommand = true
-		}
-	}
-
-	// 自然语言请求始终拿到 Registry 的全量工具，是否调用完全由模型判断。
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
 	applyModelToolSnapshot(&manifest, routing)
@@ -732,38 +699,6 @@ func (service *Service) generateObserved(
 	modelIterations := 0
 	seenToolCallIDs := make(map[string]struct{})
 	finalDecision := "direct_response"
-	if explicitCommand {
-		// 显式命令只负责预先确定第一个工具，执行结果仍进入统一有界循环。
-		commandCall := ai.ToolCall{
-			ID:        "command-call",
-			Name:      parsed.Invocation.Name,
-			Arguments: parsed.Invocation.Input,
-		}
-		commandEffect := service.registry.InvocationEffect(parsed.Invocation)
-		if commandEffect.MayWrite() {
-			writeCalls++
-		}
-		if err := service.saveToolCallProposed(loopCtx, run, commandCall); err != nil {
-			return ai.TextResult{}, err
-		}
-		toolMessage, err := service.executeToolCall(
-			loopCtx,
-			actor,
-			run,
-			commandCall,
-		)
-		if err != nil {
-			return ai.TextResult{}, err
-		}
-		request.Messages = append(request.Messages, ai.TextMessage{
-			Role:      ai.TextRoleAssistant,
-			ToolCalls: []ai.ToolCall{commandCall},
-		}, toolMessage)
-		seenToolCallIDs[commandCall.ID] = struct{}{}
-		toolCalls = 1
-		toolIterations = 1
-		finalDecision = "tool_call_then_response"
-	}
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
 		result, err := service.generateModel(loopCtx, request, deltaObserver)
@@ -1429,22 +1364,6 @@ func normalizeLoopLimits(limits LoopLimits) LoopLimits {
 		limits.MaxToolResultBytes = defaults.MaxToolResultBytes
 	}
 	return limits
-}
-
-func (service *Service) parseSlashCommand(
-	input string,
-) (slashcommand.Parsed, bool, error) {
-	if service.slashCommands == nil {
-		return slashcommand.Parsed{}, false, nil
-	}
-	return service.slashCommands.Parse(input)
-}
-
-func requestsLatestPracticeReport(input string) bool {
-	return strings.Contains(
-		input,
-		"请直接读取这次练习的真实评分与报告",
-	)
 }
 
 func (service *Service) toolDefinition(name string) (tool.Definition, bool) {

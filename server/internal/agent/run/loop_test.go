@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -13,10 +14,10 @@ import (
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	slashcommand "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/slashcommand"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
@@ -173,8 +174,13 @@ func TestRunLoopKeepsSourceRefsOutOfProviderMessagesAndInAudit(t *testing.T) {
 	}
 }
 
-func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
+func TestRunLoopLetsModelSelectLatestReportCapability(t *testing.T) {
 	generator := newScriptedGenerator(
+		toolLoopResult(
+			"call-latest-report-1",
+			evaluationtool.LatestPracticeReportToolName,
+			`{}`,
+		),
 		finalLoopResult("Here is your latest practice feedback."),
 	)
 	service := newLoopTestService(t, generator)
@@ -189,14 +195,13 @@ func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
 	service.registry = registry
 	service.executor = tool.NewExecutor(registry)
 
+	input := "我刚完成了面试练习。请直接读取这次练习的真实评分与报告。"
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
 		agentcontext.Manifest{},
-		loopRequest(
-			"我刚完成了面试练习。请直接读取这次练习的真实评分与报告。",
-		),
+		loopRequest(input),
 	)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
@@ -205,21 +210,37 @@ func TestRunLoopForcesLatestReportAfterCompletedPractice(t *testing.T) {
 		t.Fatalf("Content = %q", result.Content)
 	}
 	requests := generator.Requests()
-	if got, want := len(requests), 1; got != want {
+	if got, want := len(requests), 2; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
-	request := requests[0]
-	if request.ToolChoice.Mode != ai.ToolChoiceAuto {
-		t.Fatalf("ToolChoice = %#v, want auto", request.ToolChoice)
+	initial := requests[0]
+	if initial.ToolChoice.Mode != ai.ToolChoiceAuto ||
+		!toolExposed(
+			exposedToolNames(initial.Tools),
+			evaluationtool.LatestPracticeReportToolName,
+		) {
+		t.Fatalf(
+			"initial routing = choice %#v, tools %#v",
+			initial.ToolChoice,
+			exposedToolNameList(initial.Tools),
+		)
 	}
-	if got, want := len(request.Messages), 4; got != want {
-		t.Fatalf("messages = %d, want %d", got, want)
+	if got, want := len(initial.Messages), 2; got != want ||
+		initial.Messages[1].Role != ai.TextRoleUser ||
+		initial.Messages[1].Content != input {
+		t.Fatalf("initial messages = %#v, want original input", initial.Messages)
 	}
-	assistant := request.Messages[2]
-	toolResult := request.Messages[3]
+	messages := requests[1].Messages
+	if got, want := len(messages), 4; got != want {
+		t.Fatalf("second request messages = %d, want %d", got, want)
+	}
+	assistant := messages[2]
+	toolResult := messages[3]
 	if len(assistant.ToolCalls) != 1 ||
+		assistant.ToolCalls[0].ID != "call-latest-report-1" ||
 		assistant.ToolCalls[0].Name != evaluationtool.LatestPracticeReportToolName ||
 		toolResult.Role != ai.TextRoleTool ||
+		toolResult.ToolCallID != "call-latest-report-1" ||
 		!strings.Contains(toolResult.Content, `"practice_report"`) {
 		t.Fatalf(
 			"latest report messages = assistant %#v, tool %#v",
@@ -369,21 +390,24 @@ func TestRunLoopAllowsModelToAnswerWithoutToolCall(t *testing.T) {
 	}
 }
 
-func TestRunLoopExecutesExplicitCommandBeforeModelResponse(t *testing.T) {
-	generator := newScriptedGenerator(finalLoopResult("I found your review."))
+func TestRunLoopTreatsSlashPrefixedTextAsNaturalLanguage(t *testing.T) {
+	generator := newScriptedGenerator(
+		toolLoopResult(
+			"call-review-from-model",
+			reviewtool.ReviewSearchToolName,
+			`{"query":"last interview","limit":1}`,
+		),
+		finalLoopResult("I found your review."),
+	)
 	service := newLoopTestService(t, generator)
-	commandRegistry, err := slashcommand.NewRegistry(slashcommand.Builtins()...)
-	if err != nil {
-		t.Fatalf("slashcommand.NewRegistry() error = %v", err)
-	}
-	service.slashCommands = slashcommand.NewRouter(commandRegistry)
 
+	input := "/查评价 last interview"
 	result, err := service.generate(
 		context.Background(),
 		loopActor(),
 		loopRun(),
 		agentcontext.Manifest{},
-		loopRequest("/查评价 last interview"),
+		loopRequest(input),
 	)
 	if err != nil {
 		t.Fatalf("generate() error = %v", err)
@@ -392,115 +416,30 @@ func TestRunLoopExecutesExplicitCommandBeforeModelResponse(t *testing.T) {
 		t.Fatalf("Content = %q", result.Content)
 	}
 	requests := generator.Requests()
-	if got, want := len(requests), 1; got != want {
-		t.Fatalf("Generate calls = %d, want %d", got, want)
-	}
-	request := requests[0]
-	if request.ToolChoice.Mode != ai.ToolChoiceAuto ||
-		len(request.Tools) != 6 {
-		t.Fatalf(
-			"command response routing = choice %#v, tools %d",
-			request.ToolChoice,
-			len(request.Tools),
-		)
-	}
-	if got, want := len(request.Messages), 4; got != want {
-		t.Fatalf("messages = %d, want %d", got, want)
-	}
-	assistant := request.Messages[2]
-	toolResult := request.Messages[3]
-	if len(assistant.ToolCalls) != 1 ||
-		assistant.ToolCalls[0].Name != reviewtool.ReviewSearchToolName ||
-		toolResult.Role != ai.TextRoleTool ||
-		toolResult.ToolCallID != "command-call" {
-		t.Fatalf(
-			"command messages = assistant %#v, tool %#v",
-			assistant,
-			toolResult,
-		)
-	}
-}
-
-func TestRunLoopContinuesToolCallingAfterExplicitCommand(t *testing.T) {
-	generator := newScriptedGenerator(
-		toolLoopResult(
-			"call-material-after-command",
-			capabilityfixture.MaterialSearchToolName,
-			`{"query":"backend","limit":1}`,
-		),
-		finalLoopResult("I combined the command result with your material."),
-	)
-	service := newLoopTestService(t, generator)
-	commandRegistry, err := slashcommand.NewRegistry(slashcommand.Builtins()...)
-	if err != nil {
-		t.Fatalf("slashcommand.NewRegistry() error = %v", err)
-	}
-	service.slashCommands = slashcommand.NewRouter(commandRegistry)
-
-	result, err := service.generate(
-		context.Background(),
-		loopActor(),
-		loopRun(),
-		agentcontext.Manifest{},
-		loopRequest("/查评价 last interview"),
-	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if result.Content != "I combined the command result with your material." {
-		t.Fatalf("Content = %q", result.Content)
-	}
-	requests := generator.Requests()
 	if got, want := len(requests), 2; got != want {
 		t.Fatalf("Generate calls = %d, want %d", got, want)
 	}
+	initial := requests[0]
+	if initial.ToolChoice.Mode != ai.ToolChoiceAuto || len(initial.Tools) != 6 {
+		t.Fatalf(
+			"initial routing = choice %#v, tools %d",
+			initial.ToolChoice,
+			len(initial.Tools),
+		)
+	}
+	if got, want := len(initial.Messages), 2; got != want ||
+		initial.Messages[1].Role != ai.TextRoleUser ||
+		initial.Messages[1].Content != input {
+		t.Fatalf("initial messages = %#v, want original input", initial.Messages)
+	}
 	messages := requests[1].Messages
-	if got, want := len(messages), 6; got != want {
-		t.Fatalf("final request messages = %d, want %d", got, want)
-	}
-	if messages[3].ToolCallID != "command-call" ||
-		messages[5].ToolCallID != "call-material-after-command" {
-		t.Fatalf("command tool chain = %#v", messages)
+	if got, want := len(messages), 4; got != want ||
+		messages[3].ToolCallID != "call-review-from-model" {
+		t.Fatalf("model-selected tool chain = %#v", messages)
 	}
 }
 
-func TestRunLoopCountsExplicitWriteCommand(t *testing.T) {
-	store := capabilityfixture.NewStore()
-	firstTitle := "explicit-write-first-unique"
-	secondTitle := "explicit-write-second-unique"
-	generator := newScriptedGenerator(toolLoopResult(
-		"call-create-after-command",
-		goalcapability.GoalCreateCapabilityName,
-		`{"title":"`+secondTitle+`"}`,
-	))
-	service := newLoopTestServiceWithStore(t, generator, store)
-	commandRegistry, err := slashcommand.NewRegistry(slashcommand.Builtins()...)
-	if err != nil {
-		t.Fatalf("slashcommand.NewRegistry() error = %v", err)
-	}
-	service.slashCommands = slashcommand.NewRouter(commandRegistry)
-
-	result, err := service.generate(
-		context.Background(),
-		loopActor(),
-		loopRun(),
-		agentcontext.Manifest{},
-		loopRequest("/创建面试 "+firstTitle),
-	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if !strings.Contains(result.Content, "写操作上限") {
-		t.Fatalf("fallback content = %q", result.Content)
-	}
-	if got, want := generator.CallCount(), 1; got != want {
-		t.Fatalf("Generate calls = %d, want %d", got, want)
-	}
-	assertGoalCreated(t, store, firstTitle)
-	assertGoalNotCreated(t, store, secondTitle)
-}
-
-func TestRunLoopFeedsToolErrorBackToModel(t *testing.T) {
+func TestRunLoopFeedsExplicitCapabilityFailureBackToModel(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult("call-material-1", capabilityfixture.MaterialSearchToolName, `{"query":"backend"}`),
 		finalLoopResult("I could not read the material, so I will continue without it."),
@@ -531,6 +470,33 @@ func TestRunLoopFeedsToolErrorBackToModel(t *testing.T) {
 		!strings.Contains(toolResult.Content, `"category":"internal"`) ||
 		!strings.Contains(toolResult.Content, `"retryable":true`) {
 		t.Fatalf("tool error result = %#v", toolResult)
+	}
+}
+
+func TestRunLoopReturnsExplicitModelFailure(t *testing.T) {
+	want := ai.NewGenerationError(
+		ai.ErrorProviderUnavailable,
+		0,
+		"",
+		"",
+		errors.New("provider unavailable"),
+	)
+	service := newLoopTestService(
+		t,
+		aifake.NewFailingTextGenerator(want),
+	)
+
+	_, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		loopRequest("请帮我继续准备面试"),
+	)
+	var generationError *ai.GenerationError
+	if !errors.As(err, &generationError) ||
+		generationError.Kind != ai.ErrorProviderUnavailable {
+		t.Fatalf("generate() error = %#v, want provider unavailable", err)
 	}
 }
 
@@ -754,62 +720,6 @@ func TestRunLoopStopsAfterWriteBudget(t *testing.T) {
 	}
 	assertGoalNotCreated(t, store, firstTitle)
 	assertGoalNotCreated(t, store, secondTitle)
-}
-
-func TestRunLoopCountsConditionalWritesAcrossExplicitCommand(t *testing.T) {
-	store := capabilityfixture.NewStore()
-	conditional := &loopConditionalTool{}
-	generator := newScriptedGenerator(
-		toolLoopResult(
-			"call-conditional-write",
-			loopConditionalToolName,
-			`{"write_value":"persisted-value"}`,
-		),
-		toolLoopResult(
-			"call-create-after-conditional",
-			goalcapability.GoalCreateCapabilityName,
-			`{"title":"write-after-conditional-unique"}`,
-		),
-	)
-	service := newLoopTestServiceWithStore(t, generator, store)
-	setLoopTools(t, service, store, conditional)
-	commandRegistry, err := slashcommand.NewRegistry(slashcommand.Definition{
-		Name:        "条件查询",
-		Description: "Run the query-only form of a conditional tool.",
-		ToolName:    loopConditionalToolName,
-		BuildInput: func(_ string) (json.RawMessage, error) {
-			return slashcommand.JSONObjectInput(nil)
-		},
-	})
-	if err != nil {
-		t.Fatalf("slashcommand.NewRegistry() error = %v", err)
-	}
-	service.slashCommands = slashcommand.NewRouter(commandRegistry)
-
-	result, err := service.generate(
-		context.Background(),
-		loopActor(),
-		loopRun(),
-		agentcontext.Manifest{},
-		loopRequest("/条件查询"),
-	)
-	if err != nil {
-		t.Fatalf("generate() error = %v", err)
-	}
-	if !strings.Contains(result.Content, "写操作上限") {
-		t.Fatalf("fallback content = %q", result.Content)
-	}
-	if got, want := len(conditional.inputs), 2; got != want {
-		t.Fatalf("conditional calls = %d, want %d", got, want)
-	}
-	if conditional.inputs[0].WriteValue != "" ||
-		conditional.inputs[1].WriteValue == "" {
-		t.Fatalf("conditional inputs = %#v", conditional.inputs)
-	}
-	if got, want := generator.CallCount(), 2; got != want {
-		t.Fatalf("Generate calls = %d, want %d", got, want)
-	}
-	assertGoalNotCreated(t, store, "write-after-conditional-unique")
 }
 
 func TestRunLoopQueriesThenExecutesOneConditionalWrite(t *testing.T) {
@@ -1208,25 +1118,6 @@ func assertGoalNotCreated(
 	}
 	if len(items) != 0 {
 		t.Fatalf("goal %q was created before batch rejection: %#v", title, items)
-	}
-}
-
-func assertGoalCreated(
-	t *testing.T,
-	store *capabilityfixture.Store,
-	title string,
-) {
-	t.Helper()
-	items, err := store.SearchGoals(
-		context.Background(),
-		tool.CallContext{},
-		goalcapability.GoalSearchInput{Query: title},
-	)
-	if err != nil {
-		t.Fatalf("SearchGoals() error = %v", err)
-	}
-	if len(items) != 1 || items[0].Title != title {
-		t.Fatalf("goal %q was not created: %#v", title, items)
 	}
 }
 
