@@ -10,21 +10,53 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
+	resumedocument "github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
+	resumefieldextractor "github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
 	resumeidentifier "github.com/1024XEngineer/XE3-ESL/server/internal/resume/identifier"
 	resumeparser "github.com/1024XEngineer/XE3-ESL/server/internal/resume/parser"
 	resumestorage "github.com/1024XEngineer/XE3-ESL/server/internal/resume/storage"
 )
 
-const resumeParsePollInterval = 2 * time.Second
+const (
+	resumeParsePollInterval      = 2 * time.Second
+	resumeMinimumLLMOutputTokens = 4096
+)
 
 // buildResumeComposition 在启用私有对象存储时组装完整 Resume 模块。
 func buildResumeComposition(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	storageConfig config.ObjectStorageConfig,
+	textConfig config.TextGenerationConfig,
 ) (*bootstrap.ResumeComposition, error) {
 	if !storageConfig.Enabled {
 		return nil, nil
+	}
+	resumeTextConfig := textConfig
+	if resumeTextConfig.MaxOutputTokens < resumeMinimumLLMOutputTokens {
+		resumeTextConfig.MaxOutputTokens = resumeMinimumLLMOutputTokens
+	}
+	textGenerator, err := bootstrap.NewTextGenerator(resumeTextConfig)
+	if err != nil {
+		return nil, err
+	}
+	fields, err := resumefieldextractor.NewLLMExtractor(
+		textGenerator,
+		resumefieldextractor.Config{
+			Provider:              resumeTextConfig.Provider,
+			Model:                 resumeTextConfig.Model,
+			MaxDocumentCharacters: resumeTextConfig.MaxContextChars,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resumePipeline, err := resumeparser.NewPipeline(
+		resumedocument.NewTextPDFParser(),
+		fields,
+	)
+	if err != nil {
+		return nil, err
 	}
 	provider, err := ossstore.NewCredentialsProvider(storageConfig)
 	if err != nil {
@@ -50,7 +82,7 @@ func buildResumeComposition(
 	return bootstrap.NewResumeComposition(
 		pool,
 		files,
-		resumeparser.NewPDFParser(),
+		resumePipeline,
 		ids,
 		bootstrap.ResumeConfiguration{
 			MaximumFileBytes:  10 * 1024 * 1024,

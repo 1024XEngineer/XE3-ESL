@@ -15,6 +15,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/app"
+	resumedocument "github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/identifier"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/parser"
 	resumestorage "github.com/1024XEngineer/XE3-ESL/server/internal/resume/storage"
@@ -42,7 +43,14 @@ func TestResumeRuntimeEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	worker, err := app.NewParseWorker(repository, files, parser.NewPDFParser(), time.Millisecond)
+	resumePipeline, err := parser.NewPipeline(
+		resumedocument.NewTextPDFParser(),
+		&runtimeFieldExtractor{},
+	)
+	if err != nil {
+		t.Fatalf("new parser pipeline: %v", err)
+	}
+	worker, err := app.NewParseWorker(repository, files, resumePipeline, time.Millisecond)
 	if err != nil {
 		t.Fatalf("new worker: %v", err)
 	}
@@ -105,6 +113,27 @@ func TestResumeRuntimeEndToEnd(t *testing.T) {
 		t.Fatalf("items after delete = %#v, err = %v", page.Items, err)
 	}
 }
+
+// runtimeFieldExtractor 保持集成测试离线，同时覆盖 Worker 的两阶段流水线接入。
+type runtimeFieldExtractor struct{}
+
+func (*runtimeFieldExtractor) Extract(
+	_ context.Context,
+	document resumedocument.StructuredDocument,
+) (resume.Content, error) {
+	if !strings.Contains(document.Markdown, "Backend Engineer") {
+		return resume.Content{}, fmt.Errorf("unexpected document: %s", document.Format)
+	}
+	return resume.Content{
+		TargetPosition:       "Backend Engineer",
+		WorkExperiences:      []resume.WorkExperience{},
+		ProjectExperiences:   []resume.ProjectExperience{},
+		EducationExperiences: []resume.EducationExperience{},
+		Skills:               []string{"Go", "PostgreSQL", "Docker"},
+	}, nil
+}
+
+func (*runtimeFieldExtractor) Version() string { return "runtime-fields/v1" }
 
 // runtimeTestPDF 构造可被文本提取器读取的最小测试 PDF。
 func runtimeTestPDF(text string) []byte {

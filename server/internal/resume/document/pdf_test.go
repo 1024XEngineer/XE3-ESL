@@ -1,5 +1,4 @@
-// 本文件使用最小 PDF 验证文本提取、结构化和失败分类。
-package parser
+package document
 
 import (
 	"bytes"
@@ -9,36 +8,27 @@ import (
 	"testing"
 )
 
-// TestPDFParserExtractsStructuredSections 验证文本型 PDF 可生成核心结构化字段。
-func TestPDFParserExtractsStructuredSections(t *testing.T) {
+func TestTextPDFParserProducesStructuredDocument(t *testing.T) {
 	body := testPDF(strings.Join([]string{
-		"Target Position: Backend Engineer",
-		"Professional Summary",
-		"Backend engineer with distributed systems experience",
-		"Skills",
-		"Go, PostgreSQL, Docker",
-		"Work Experience",
-		"Acme | Senior Engineer",
-		"Built reliable APIs",
-		"Project Experience",
-		"Interview Coach | Backend Lead",
-		"Designed resume parsing service",
-		"Education",
-		"HDU | Computer Science | Bachelor",
+		"Backend Engineer",
+		"Built reliable APIs with Go and PostgreSQL",
 	}, "\n"))
-	content, err := NewPDFParser().Parse(context.Background(), bytes.NewReader(body))
+	document, err := NewTextPDFParser().Parse(
+		context.Background(),
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if content.TargetPosition != "Backend Engineer" ||
-		len(content.Skills) != 3 || len(content.WorkExperiences) != 1 ||
-		len(content.ProjectExperiences) != 1 || len(content.EducationExperiences) != 1 {
-		t.Fatalf("unexpected content: %#v", content)
+	if document.Format != "pdf" ||
+		document.ParserVersion != "pdf-native-text/v1" ||
+		!strings.Contains(document.Markdown, "PostgreSQL") ||
+		len(document.Pages) != 1 || len(document.Pages[0].Blocks) != 1 {
+		t.Fatalf("document = %#v", document)
 	}
 }
 
-// TestPDFParserRejectsInvalidAndTextlessFiles 验证损坏文件和无文本扫描件返回稳定失败码。
-func TestPDFParserRejectsInvalidAndTextlessFiles(t *testing.T) {
+func TestTextPDFParserRejectsInvalidAndTextlessFiles(t *testing.T) {
 	for name, test := range map[string]struct {
 		body []byte
 		code string
@@ -47,7 +37,10 @@ func TestPDFParserRejectsInvalidAndTextlessFiles(t *testing.T) {
 		"textless": {body: testPDF(""), code: "pdf_text_unavailable"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := NewPDFParser().Parse(context.Background(), bytes.NewReader(test.body))
+			_, err := NewTextPDFParser().Parse(
+				context.Background(),
+				bytes.NewReader(test.body),
+			)
 			failure, ok := err.(interface{ FailureCode() string })
 			if !ok || failure.FailureCode() != test.code {
 				t.Fatalf("error = %v, want code %q", err, test.code)
@@ -56,7 +49,6 @@ func TestPDFParserRejectsInvalidAndTextlessFiles(t *testing.T) {
 	}
 }
 
-// testPDF 构造使用 Helvetica 的最小文本 PDF 测试文件。
 func testPDF(text string) []byte {
 	commands := "BT /F1 10 Tf 14 TL 72 760 Td "
 	for index, line := range strings.Split(text, "\n") {

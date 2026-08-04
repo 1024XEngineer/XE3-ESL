@@ -14,6 +14,7 @@ func TestBuildResumeCompositionIsOptionalWithoutObjectStorage(t *testing.T) {
 		context.Background(),
 		nil,
 		config.ObjectStorageConfig{Enabled: false},
+		config.TextGenerationConfig{},
 	)
 	if err != nil || composition != nil {
 		t.Fatalf("composition = %#v, err = %v", composition, err)

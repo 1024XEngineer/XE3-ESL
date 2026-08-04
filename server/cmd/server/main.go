@@ -166,6 +166,7 @@ func run() int {
 		ctx,
 		databasePool.Native(),
 		storageConfig,
+		textConfig,
 	)
 	if err != nil {
 		logger.Error(
