@@ -167,7 +167,7 @@ void main() {
     },
   );
 
-  testWidgets('shows interview Tips in the immersive answer composer', (
+  testWidgets('shows inline interview Tips without blocking the composer', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -187,12 +187,13 @@ void main() {
     await tester.tap(find.byKey(const Key('immersive-question-tip')));
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
     expect(
-      find.byKey(const Key('practice-question-tip-sheet')),
+      find.text('I would describe the situation and my specific role.'),
       findsOneWidget,
     );
     expect(
-      find.text('I would describe the situation and my specific role.'),
+      find.byKey(const Key('immersive-record')).hitTestable(),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
