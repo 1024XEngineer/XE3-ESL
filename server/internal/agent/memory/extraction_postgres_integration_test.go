@@ -70,6 +70,7 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 		emptyAgentLearningProfileReader{},
 		emptyAgentStableProfileReader{},
 		emptyAgentMemorySearcher{},
+		emptyAgentMemoryExtractionBarrier{},
 	)
 	if err != nil {
 		t.Fatalf("NewContextAssembler: %v", err)
@@ -372,4 +373,17 @@ func (emptyAgentMemorySearcher) Search(
 	agentcontext.MemorySearchRequest,
 ) ([]agentcontext.MemorySearchHit, error) {
 	return []agentcontext.MemorySearchHit{}, nil
+}
+
+type emptyAgentMemoryExtractionBarrier struct{}
+
+func (emptyAgentMemoryExtractionBarrier) Await(
+	_ context.Context,
+	request agentcontext.MemoryExtractionBarrierRequest,
+) (agentcontext.MemoryExtractionBarrierResult, error) {
+	return agentcontext.MemoryExtractionBarrierResult{
+		PolicyVersion: agentcontext.MemoryExtractionBarrierPolicyV1,
+		Cutoff:        request.Cutoff,
+		Status:        agentcontext.MemoryExtractionBarrierReady,
+	}, nil
 }

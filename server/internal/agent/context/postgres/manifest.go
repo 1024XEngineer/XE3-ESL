@@ -57,6 +57,11 @@ func (r *Repository) SaveManifest(
 		summaryProvider = manifest.SelectedSummary.Provider
 		summaryModel = manifest.SelectedSummary.Model
 	}
+	var memoryExtractionBarrierCoveredThrough any
+	if !manifest.MemoryExtractionBarrierCoveredThrough.IsZero() {
+		memoryExtractionBarrierCoveredThrough =
+			manifest.MemoryExtractionBarrierCoveredThrough
+	}
 	var result agentcontext.Manifest
 	var selectedJSON []byte
 	var selectedMemoriesJSON []byte
@@ -73,6 +78,7 @@ func (r *Repository) SaveManifest(
 	var persistedSummaryPromptVersion pgtype.Text
 	var persistedSummaryProvider pgtype.Text
 	var persistedSummaryModel pgtype.Text
+	var persistedMemoryExtractionBarrierCoveredThrough pgtype.Timestamptz
 	err = r.database.QueryRow(ctx, `
 INSERT INTO agent_context_manifests (
     run_id,
@@ -105,13 +111,18 @@ INSERT INTO agent_context_manifests (
     max_output_tokens,
     learning_profile_context_policy_version,
     selected_learning_profile,
+    memory_extraction_barrier_policy_version,
+    memory_extraction_barrier_cutoff,
+    memory_extraction_barrier_status,
+    memory_extraction_barrier_waited_milliseconds,
+    memory_extraction_barrier_covered_through,
     created_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
     $10, $11::jsonb, $12, $13, $14, $15, $16, $17, $18,
 	$19, $20,
 	$21::jsonb, $22, $23, $24, $25, $26, $27, $28,
-	$29, $30::jsonb,
+	$29, $30::jsonb, $31, $32, $33, $34, $35,
     CURRENT_TIMESTAMP
 )
 RETURNING
@@ -145,6 +156,11 @@ RETURNING
     max_output_tokens,
     learning_profile_context_policy_version,
     selected_learning_profile,
+    memory_extraction_barrier_policy_version,
+    memory_extraction_barrier_cutoff,
+    memory_extraction_barrier_status,
+    memory_extraction_barrier_waited_milliseconds,
+    memory_extraction_barrier_covered_through,
     exposed_tools,
     tool_schema_hashes,
     created_at`,
@@ -178,6 +194,11 @@ RETURNING
 		manifest.MaxOutputTokens,
 		manifest.LearningProfileContextPolicyVersion,
 		selectedLearningProfile,
+		manifest.MemoryExtractionBarrierPolicyVersion,
+		manifest.MemoryExtractionBarrierCutoff,
+		manifest.MemoryExtractionBarrierStatus,
+		manifest.MemoryExtractionBarrierWaitedMilliseconds,
+		memoryExtractionBarrierCoveredThrough,
 	).Scan(
 		&result.RunID,
 		&result.OwnerID,
@@ -209,6 +230,11 @@ RETURNING
 		&result.MaxOutputTokens,
 		&result.LearningProfileContextPolicyVersion,
 		&selectedLearningProfileJSON,
+		&result.MemoryExtractionBarrierPolicyVersion,
+		&result.MemoryExtractionBarrierCutoff,
+		&result.MemoryExtractionBarrierStatus,
+		&result.MemoryExtractionBarrierWaitedMilliseconds,
+		&persistedMemoryExtractionBarrierCoveredThrough,
 		&exposedToolsJSON,
 		&toolSchemaHashesJSON,
 		&result.CreatedAt,
@@ -236,6 +262,12 @@ RETURNING
 	); err != nil {
 		return agentcontext.Manifest{}, err
 	}
+	if persistedMemoryExtractionBarrierCoveredThrough.Valid {
+		result.MemoryExtractionBarrierCoveredThrough =
+			persistedMemoryExtractionBarrierCoveredThrough.Time.UTC()
+	}
+	result.MemoryExtractionBarrierCutoff =
+		result.MemoryExtractionBarrierCutoff.UTC()
 	return result, nil
 }
 
@@ -260,6 +292,7 @@ func (r *Repository) FindManifest(
 	var selectedSummaryPromptVersion pgtype.Text
 	var selectedSummaryProvider pgtype.Text
 	var selectedSummaryModel pgtype.Text
+	var memoryExtractionBarrierCoveredThrough pgtype.Timestamptz
 	err := r.database.QueryRow(ctx, `
 SELECT
     run_id::text,
@@ -292,6 +325,11 @@ SELECT
     max_output_tokens,
     learning_profile_context_policy_version,
     selected_learning_profile,
+    memory_extraction_barrier_policy_version,
+    memory_extraction_barrier_cutoff,
+    memory_extraction_barrier_status,
+    memory_extraction_barrier_waited_milliseconds,
+    memory_extraction_barrier_covered_through,
     exposed_tools,
     tool_schema_hashes,
     created_at
@@ -330,6 +368,11 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result.MaxOutputTokens,
 		&result.LearningProfileContextPolicyVersion,
 		&selectedLearningProfileJSON,
+		&result.MemoryExtractionBarrierPolicyVersion,
+		&result.MemoryExtractionBarrierCutoff,
+		&result.MemoryExtractionBarrierStatus,
+		&result.MemoryExtractionBarrierWaitedMilliseconds,
+		&memoryExtractionBarrierCoveredThrough,
 		&exposedToolsJSON,
 		&toolSchemaHashesJSON,
 		&result.CreatedAt,
@@ -357,6 +400,12 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 	); err != nil {
 		return agentcontext.Manifest{}, err
 	}
+	if memoryExtractionBarrierCoveredThrough.Valid {
+		result.MemoryExtractionBarrierCoveredThrough =
+			memoryExtractionBarrierCoveredThrough.Time.UTC()
+	}
+	result.MemoryExtractionBarrierCutoff =
+		result.MemoryExtractionBarrierCutoff.UTC()
 	return result, nil
 }
 

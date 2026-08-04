@@ -547,6 +547,7 @@ func (service *Service) process(
 			OwnerID:            claimed.OwnerID,
 			ThreadID:           claimed.ThreadID,
 			InputMessageID:     claimed.InputMessageID,
+			RunCreatedAt:       claimed.CreatedAt.UTC(),
 			Provider:           service.configuration.Provider,
 			Model:              service.configuration.Model,
 			MaxOutputTokens:    service.configuration.MaxOutputTokens,
@@ -556,8 +557,14 @@ func (service *Service) process(
 	if err != nil {
 		kind := FailureInternal
 		retryable := true
-		if errors.Is(err, agentcontext.ErrInvalidContext) {
+		switch {
+		case errors.Is(err, agentcontext.ErrInvalidContext):
 			kind = FailureInvalidContext
+			retryable = false
+		case errors.Is(err, agentcontext.ErrMemoryConsistencyUnavailable):
+			kind = FailureMemoryConsistencyUnavailable
+		case errors.Is(err, agentcontext.ErrMemoryConsistencyRejected):
+			kind = FailureMemoryConsistencyUnavailable
 			retryable = false
 		}
 		failed, failErr := service.persistFailure(

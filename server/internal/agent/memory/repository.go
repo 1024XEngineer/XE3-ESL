@@ -9,13 +9,19 @@ import (
 )
 
 var (
-	ErrInvalidArgument     = errors.New("memory: invalid argument")
-	ErrNotFound            = errors.New("memory: not found")
-	ErrConflict            = errors.New("memory: conflict")
-	ErrAccountDeleted      = errors.New("memory: account is not active")
-	ErrDeletionGeneration  = errors.New("memory: stale deletion generation")
-	ErrRepository          = errors.New("memory repository: operation failed")
-	ErrExtractionResponse  = errors.New("memory: invalid extraction response")
+	ErrInvalidArgument              = errors.New("memory: invalid argument")
+	ErrNotFound                     = errors.New("memory: not found")
+	ErrConflict                     = errors.New("memory: conflict")
+	ErrAccountDeleted               = errors.New("memory: account is not active")
+	ErrDeletionGeneration           = errors.New("memory: stale deletion generation")
+	ErrRepository                   = errors.New("memory repository: operation failed")
+	ErrExtractionResponse           = errors.New("memory: invalid extraction response")
+	ErrExtractionBarrierUnavailable = errors.New(
+		"memory: extraction barrier unavailable",
+	)
+	ErrExtractionBarrierRejected = errors.New(
+		"memory: extraction barrier rejected",
+	)
 	ErrExtractionExhausted = errors.New(
 		"memory: extraction attempts exhausted during recovery",
 	)

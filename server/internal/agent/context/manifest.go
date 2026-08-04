@@ -53,33 +53,38 @@ type SummarySource struct {
 }
 
 type Manifest struct {
-	RunID                               string
-	OwnerID                             string
-	ThreadID                            string
-	InputMessageID                      string
-	ActiveGoalID                        string
-	ActiveGoalVersion                   int64
-	InstructionVersion                  string
-	LearningProfileContextPolicyVersion string
-	SelectedLearningProfile             []LearningProfileSource
-	StableProfileContextPolicyVersion   string
-	SelectedStableProfile               []StableProfileSource
-	MemoryContextPolicyVersion          string
-	SelectedMemories                    []MemorySource
-	SummaryContextPolicyVersion         string
-	SummaryContextStatus                string
-	SelectedSummary                     *SummarySource
-	SelectedMessages                    []MessageSource
-	OmittedMessageCount                 int
-	TrimReason                          string
-	MaxInputCharacters                  int
-	UsedInputCharacters                 int
-	RequestedProvider                   string
-	RequestedModel                      string
-	MaxOutputTokens                     int
-	ExposedTools                        []string
-	ToolSchemaHashes                    map[string]string
-	CreatedAt                           time.Time
+	RunID                                     string
+	OwnerID                                   string
+	ThreadID                                  string
+	InputMessageID                            string
+	ActiveGoalID                              string
+	ActiveGoalVersion                         int64
+	InstructionVersion                        string
+	LearningProfileContextPolicyVersion       string
+	SelectedLearningProfile                   []LearningProfileSource
+	StableProfileContextPolicyVersion         string
+	SelectedStableProfile                     []StableProfileSource
+	MemoryContextPolicyVersion                string
+	SelectedMemories                          []MemorySource
+	MemoryExtractionBarrierPolicyVersion      string
+	MemoryExtractionBarrierCutoff             time.Time
+	MemoryExtractionBarrierStatus             string
+	MemoryExtractionBarrierWaitedMilliseconds int64
+	MemoryExtractionBarrierCoveredThrough     time.Time
+	SummaryContextPolicyVersion               string
+	SummaryContextStatus                      string
+	SelectedSummary                           *SummarySource
+	SelectedMessages                          []MessageSource
+	OmittedMessageCount                       int
+	TrimReason                                string
+	MaxInputCharacters                        int
+	UsedInputCharacters                       int
+	RequestedProvider                         string
+	RequestedModel                            string
+	MaxOutputTokens                           int
+	ExposedTools                              []string
+	ToolSchemaHashes                          map[string]string
+	CreatedAt                                 time.Time
 }
 
 func (manifest Manifest) Valid() bool {
@@ -94,5 +99,34 @@ func (manifest Manifest) Valid() bool {
 		manifest.MaxInputCharacters >= 5000 &&
 		manifest.MaxInputCharacters <= maxBudget &&
 		manifest.UsedInputCharacters >= 0 &&
-		manifest.UsedInputCharacters <= manifest.MaxInputCharacters
+		manifest.UsedInputCharacters <= manifest.MaxInputCharacters &&
+		manifest.validMemoryExtractionBarrier()
+}
+
+func (manifest Manifest) validMemoryExtractionBarrier() bool {
+	if manifest.MemoryExtractionBarrierPolicyVersion !=
+		MemoryExtractionBarrierPolicyV1 ||
+		manifest.MemoryExtractionBarrierCutoff.IsZero() ||
+		manifest.MemoryExtractionBarrierCutoff.Location() != time.UTC ||
+		manifest.MemoryExtractionBarrierWaitedMilliseconds < 0 ||
+		manifest.MemoryExtractionBarrierWaitedMilliseconds > 5000 ||
+		(!manifest.MemoryExtractionBarrierCoveredThrough.IsZero() &&
+			(manifest.MemoryExtractionBarrierCoveredThrough.Location() != time.UTC ||
+				manifest.MemoryExtractionBarrierCoveredThrough.After(
+					manifest.MemoryExtractionBarrierCutoff,
+				))) {
+		return false
+	}
+	switch manifest.MemoryExtractionBarrierStatus {
+	case memoryExtractionBarrierNotRequired:
+		return manifest.MemoryExtractionBarrierWaitedMilliseconds == 0 &&
+			manifest.MemoryExtractionBarrierCoveredThrough.IsZero()
+	case string(MemoryExtractionBarrierReady):
+		return manifest.MemoryExtractionBarrierWaitedMilliseconds == 0
+	case string(MemoryExtractionBarrierWaited):
+		return manifest.MemoryExtractionBarrierWaitedMilliseconds > 0 &&
+			!manifest.MemoryExtractionBarrierCoveredThrough.IsZero()
+	default:
+		return false
+	}
 }

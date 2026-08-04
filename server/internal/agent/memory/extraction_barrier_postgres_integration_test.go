@@ -172,6 +172,84 @@ func TestPostgresExtractionBarrierRejectsInvalidRequest(t *testing.T) {
 	}
 }
 
+func TestPostgresExtractionBarrierObservesConcurrentCompletionAndRestart(
+	t *testing.T,
+) {
+	database := newMemoryTestDatabase(t)
+	repository, err := NewPostgresRepository(
+		database,
+		identity.NewUUIDv4Generator(nil),
+	)
+	if err != nil {
+		t.Fatalf("NewPostgresRepository: %v", err)
+	}
+	base := time.Date(2026, time.July, 29, 10, 0, 0, 0, time.UTC)
+	actor := requestcontext.Actor{
+		UserID:    integrationUserA,
+		SessionID: integrationSessionA,
+	}
+	job := barrierIntegrationJob{
+		runID:           "aa000000-0000-4000-8000-000000000010",
+		ownerID:         actor.UserID,
+		status:          "pending",
+		sourceCompleted: base,
+	}
+	insertBarrierIntegrationJob(t, database, job)
+	cutoff := base.Add(2 * time.Second)
+	scheduler := &fakeExtractionBarrierScheduler{now: cutoff.Add(time.Second)}
+	scheduler.onWait = func() {
+		_, updateErr := database.Exec(context.Background(), `
+UPDATE agent_memory_extraction_jobs
+SET
+    status = 'completed',
+    attempt_count = 1,
+    candidate_count = 0,
+    applied_count = 0,
+    rejected_count = 0,
+    updated_at = transaction_timestamp(),
+    completed_at = transaction_timestamp()
+WHERE source_run_id = $1`, job.runID)
+		if updateErr != nil {
+			t.Fatalf("complete Extraction job: %v", updateErr)
+		}
+		scheduler.onWait = nil
+	}
+	coordinator := newTestExtractionBarrierCoordinator(
+		t,
+		repository,
+		scheduler,
+	)
+
+	result, err := coordinator.Await(
+		context.Background(),
+		ExtractionBarrierRequest{Actor: actor, Cutoff: cutoff},
+	)
+	if err != nil {
+		t.Fatalf("Await concurrent completion: %v", err)
+	}
+	if result.Status != ExtractionBarrierWaited ||
+		!result.CoveredThrough.Equal(job.sourceCompleted) {
+		t.Fatalf("waited result = %#v", result)
+	}
+
+	restarted := newTestExtractionBarrierCoordinator(
+		t,
+		repository,
+		&fakeExtractionBarrierScheduler{now: scheduler.now},
+	)
+	restartedResult, err := restarted.Await(
+		context.Background(),
+		ExtractionBarrierRequest{Actor: actor, Cutoff: cutoff},
+	)
+	if err != nil {
+		t.Fatalf("Await after restart: %v", err)
+	}
+	if restartedResult.Status != ExtractionBarrierReady ||
+		restartedResult.Waited != 0 {
+		t.Fatalf("restart result = %#v", restartedResult)
+	}
+}
+
 type barrierIntegrationJob struct {
 	runID           string
 	ownerID         string

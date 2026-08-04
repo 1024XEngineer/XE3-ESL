@@ -215,6 +215,21 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	memoryBarrier, err := memory.NewExtractionBarrierCoordinator(
+		memoryRepository,
+		memory.SystemExtractionBarrierScheduler{},
+		memory.ExtractionBarrierWaitPolicy{
+			MaximumWait:  5 * time.Second,
+			PollInterval: 50 * time.Millisecond,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	contextMemoryBarrier, err := newAgentMemoryExtractionBarrier(memoryBarrier)
+	if err != nil {
+		return nil, err
+	}
 	stableProfileReader, err := newAgentStableProfileReader(memoryRepository)
 	if err != nil {
 		return nil, err
@@ -236,6 +251,7 @@ func buildIdentityAgentComposition(
 		learningProfileReader,
 		stableProfileReader,
 		contextMemorySearcher,
+		contextMemoryBarrier,
 		contextOptions...,
 	)
 	if err != nil {
