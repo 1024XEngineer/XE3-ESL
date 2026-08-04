@@ -487,7 +487,6 @@ final class PreparationController extends ChangeNotifier {
       'scn_interview_behavioral' => 'BEHAVIORAL_INTERVIEWER',
       'scn_interview_system_design_spoken' => 'SYSTEM_DESIGN_INTERVIEWER',
       'scn_interview_hiring_manager' => 'HIRING_MANAGER',
-      'scn_interview_custom' => 'CUSTOM_INTERVIEWER',
       _ => 'TECHNICAL_INTERVIEWER',
     };
     final role =

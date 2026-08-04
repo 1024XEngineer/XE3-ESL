@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -30,6 +31,7 @@ type Repository interface {
 		string,
 		json.RawMessage,
 		[]ToolSourceRef,
+		[]agenthandoff.Item,
 	) (ToolCall, error)
 	FailToolCall(
 		stdcontext.Context,

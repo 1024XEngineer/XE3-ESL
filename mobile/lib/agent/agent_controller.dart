@@ -297,9 +297,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool get hasActivePractice {
-    return _practiceSessionId != null &&
-        _activeGoal != null &&
-        !_isSessionCompleted;
+    return _practiceSessionId != null && !_isSessionCompleted;
   }
 
   bool get _isSessionCompleted => _sessionCompleted;
@@ -571,7 +569,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final fence = _captureOperationFence();
     _retry = null;
     _errorMessage = null;
-    if (_threadHistoryRecovery == _ThreadHistoryRecovery.refresh) {
+    if (_isPageRefreshRecovery(_threadHistoryRecovery)) {
       _threadHistoryRecovery = null;
     }
     if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
@@ -749,7 +747,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final fence = _captureOperationFence();
     _retry = null;
     _errorMessage = null;
-    if (_threadHistoryRecovery == _ThreadHistoryRecovery.refresh) {
+    if (_isPageRefreshRecovery(_threadHistoryRecovery)) {
       _threadHistoryRecovery = null;
       _threadHistoryErrorMessage = null;
     } else if (_threadHistoryRecovery != _ThreadHistoryRecovery.create) {
@@ -1054,11 +1052,10 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   /// Adopts the exact Session created by the Preparation launch chain.
   ///
   /// The voice client activates the formal Session already created for the
-  /// trusted Thread and Goal. This method requires the returned identities
+  /// trusted Practice workspace. This method requires the returned identities
   /// and frozen Turn budget to match; it never guesses a recent Session.
   Future<void> activateCreatedPractice({
     required String threadId,
-    required String goalId,
     required SceneDefinition scene,
     required String sessionId,
     required String planId,
@@ -1068,12 +1065,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     final accountFence = _captureOperationFence();
     await _ensureInitialized();
     final practice = practiceClient;
-    final goal = _activeGoal;
     if (!_isOperationCurrent(accountFence) ||
         practice == null ||
         _threadId != threadId ||
-        goal?.id != goalId ||
-        goal?.title != scene.name ||
         planId.trim().isEmpty ||
         scene.id.trim().isEmpty ||
         scene.name.trim().isEmpty ||
@@ -1617,6 +1611,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   }) async {
     var assistantID = localAssistantID;
     var assistantText = '';
+    String? completedAssistantMessageID;
     final pending = StringBuffer();
     Timer? frameTimer;
 
@@ -1685,6 +1680,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
             pending.write(delta);
             frameTimer ??= Timer(const Duration(milliseconds: 16), flushDelta);
           case AgentRunCompleted(:final assistantMessageId):
+            completedAssistantMessageID = assistantMessageId;
             frameTimer?.cancel();
             flushDelta();
             final current = _messages
@@ -1720,6 +1716,12 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
           historyClient,
           fence: fence,
           failureMessage: '消息已发送，但对话顺序暂时无法刷新。请重试。',
+        );
+        await _refreshAuthoritativeMessagePage(
+          historyClient,
+          fence: fence,
+          requiredMessageID: completedAssistantMessageID,
+          failureMessage: '回复已完成，但确认入口暂时无法读取。请重试刷新。',
         );
       }
     } catch (error) {
@@ -1766,7 +1768,9 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
           await selectThread(threadId);
         }
         return;
-      case _ThreadHistoryRecovery.refresh:
+      case _ThreadHistoryRecovery.refreshThreadPage:
+      case _ThreadHistoryRecovery.refreshMessagePage:
+      case _ThreadHistoryRecovery.refreshThreadAndMessagePages:
         await _retryThreadHistoryRefresh();
         return;
       case null:
@@ -1781,17 +1785,91 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     }
     final historyClient = client as AgentThreadHistoryClient;
     final fence = _captureOperationFence(threadId: threadId);
+    final recovery = _threadHistoryRecovery;
+    final refreshThreadPage = _requiresThreadPageRefresh(recovery);
+    final refreshMessagePage = _requiresMessagePageRefresh(recovery);
     _setBusy(true);
     try {
-      await _refreshAuthoritativeThreadPage(
-        historyClient,
-        fence: fence,
-        failureMessage: '对话顺序暂时无法刷新，请稍后再试。',
-      );
+      if (refreshThreadPage) {
+        await _refreshAuthoritativeThreadPage(
+          historyClient,
+          fence: fence,
+          failureMessage: '对话顺序暂时无法刷新，请稍后再试。',
+        );
+      }
+      if (refreshMessagePage) {
+        await _refreshAuthoritativeMessagePage(
+          historyClient,
+          fence: fence,
+          failureMessage: '对话消息暂时无法刷新，请稍后再试。',
+        );
+      }
     } finally {
       if (_isOperationCurrent(fence)) {
         _setBusy(false);
       }
+    }
+  }
+
+  void _requireThreadPageRefresh() {
+    _threadHistoryRecovery = switch (_threadHistoryRecovery) {
+      _ThreadHistoryRecovery.refreshMessagePage =>
+        _ThreadHistoryRecovery.refreshThreadAndMessagePages,
+      _ThreadHistoryRecovery.refreshThreadAndMessagePages =>
+        _ThreadHistoryRecovery.refreshThreadAndMessagePages,
+      _ThreadHistoryRecovery.create ||
+      _ThreadHistoryRecovery.focus => _threadHistoryRecovery,
+      _ => _ThreadHistoryRecovery.refreshThreadPage,
+    };
+  }
+
+  void _requireMessagePageRefresh() {
+    _threadHistoryRecovery = switch (_threadHistoryRecovery) {
+      _ThreadHistoryRecovery.refreshThreadPage =>
+        _ThreadHistoryRecovery.refreshThreadAndMessagePages,
+      _ThreadHistoryRecovery.refreshThreadAndMessagePages =>
+        _ThreadHistoryRecovery.refreshThreadAndMessagePages,
+      _ThreadHistoryRecovery.create ||
+      _ThreadHistoryRecovery.focus => _threadHistoryRecovery,
+      _ => _ThreadHistoryRecovery.refreshMessagePage,
+    };
+  }
+
+  void _resolveThreadPageRefresh() {
+    switch (_threadHistoryRecovery) {
+      case _ThreadHistoryRecovery.refreshThreadPage:
+        _threadHistoryRecovery = null;
+        _threadHistoryErrorMessage = null;
+        break;
+      case _ThreadHistoryRecovery.refreshThreadAndMessagePages:
+        _threadHistoryRecovery = _ThreadHistoryRecovery.refreshMessagePage;
+        break;
+      case null:
+        _threadHistoryErrorMessage = null;
+        break;
+      case _ThreadHistoryRecovery.create:
+      case _ThreadHistoryRecovery.focus:
+      case _ThreadHistoryRecovery.refreshMessagePage:
+        break;
+    }
+  }
+
+  void _resolveMessagePageRefresh() {
+    switch (_threadHistoryRecovery) {
+      case _ThreadHistoryRecovery.refreshMessagePage:
+        _threadHistoryRecovery = null;
+        _threadHistoryErrorMessage = null;
+        break;
+      case _ThreadHistoryRecovery.refreshThreadAndMessagePages:
+        _threadHistoryRecovery = _ThreadHistoryRecovery.refreshThreadPage;
+        break;
+      case null:
+        _threadHistoryErrorMessage = null;
+        break;
+      case _ThreadHistoryRecovery.create:
+      case _ThreadHistoryRecovery.focus:
+      case _ThreadHistoryRecovery.refreshThreadPage:
+        break;
     }
   }
 
@@ -1818,13 +1896,52 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
       _threads = List<AgentThreadSummary>.from(page.threads);
       _nextThreadCursor = page.nextCursor;
       _currentThreadSummary = current;
-      _threadHistoryRecovery = null;
-      _threadHistoryErrorMessage = null;
+      _resolveThreadPageRefresh();
       notifyListeners();
       return true;
     } catch (_) {
       if (_isOperationCurrent(fence)) {
-        _threadHistoryRecovery = _ThreadHistoryRecovery.refresh;
+        _requireThreadPageRefresh();
+        _threadHistoryErrorMessage = failureMessage;
+        notifyListeners();
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _refreshAuthoritativeMessagePage(
+    AgentThreadHistoryClient historyClient, {
+    required _AgentOperationFence fence,
+    required String failureMessage,
+    String? requiredMessageID,
+  }) async {
+    try {
+      final threadId = _threadId;
+      if (threadId == null) {
+        throw StateError(
+          'No selected Thread is available for Message refresh.',
+        );
+      }
+      final page = await historyClient.listMessages(threadId: threadId);
+      _validateMessagePage(page);
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      if (requiredMessageID != null &&
+          !page.messages.any((message) => message.id == requiredMessageID)) {
+        throw StateError(
+          'The authoritative Message page omitted the completed response.',
+        );
+      }
+      _messages = List<AgentMessage>.from(page.messages);
+      _nextMessageCursor = page.nextCursor;
+      _voiceController?.syncMessages(_messages);
+      _resolveMessagePageRefresh();
+      notifyListeners();
+      return true;
+    } catch (_) {
+      if (_isOperationCurrent(fence)) {
+        _requireMessagePageRefresh();
         _threadHistoryErrorMessage = failureMessage;
         notifyListeners();
       }
@@ -4112,7 +4229,25 @@ sealed class _AgentRetry {
   const _AgentRetry();
 }
 
-enum _ThreadHistoryRecovery { create, focus, refresh }
+enum _ThreadHistoryRecovery {
+  create,
+  focus,
+  refreshThreadPage,
+  refreshMessagePage,
+  refreshThreadAndMessagePages,
+}
+
+bool _isPageRefreshRecovery(_ThreadHistoryRecovery? recovery) =>
+    _requiresThreadPageRefresh(recovery) ||
+    _requiresMessagePageRefresh(recovery);
+
+bool _requiresThreadPageRefresh(_ThreadHistoryRecovery? recovery) =>
+    recovery == _ThreadHistoryRecovery.refreshThreadPage ||
+    recovery == _ThreadHistoryRecovery.refreshThreadAndMessagePages;
+
+bool _requiresMessagePageRefresh(_ThreadHistoryRecovery? recovery) =>
+    recovery == _ThreadHistoryRecovery.refreshMessagePage ||
+    recovery == _ThreadHistoryRecovery.refreshThreadAndMessagePages;
 
 final class _RestoreRetry extends _AgentRetry {
   const _RestoreRetry();

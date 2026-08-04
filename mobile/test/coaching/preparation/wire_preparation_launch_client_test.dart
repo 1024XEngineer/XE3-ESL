@@ -61,7 +61,7 @@ void main() {
         '/v1/preparation-profiles',
         '/v1/preparation-profiles/$_profileId/snapshots',
         '/v1/practice-plans',
-        '/v1/agent-threads/$_threadId/practice-start-confirmations',
+        '/v1/practice-plans/$_planId/practice-sessions',
       ]);
       expect(jsonDecode(transport.calls.first.body!), {
         'background_summary': _background,
@@ -78,7 +78,6 @@ void main() {
       expect(jsonDecode(transport.calls.last.body!), {
         'expected_plan_revision': 1,
         'user_confirmed': true,
-        'practice_plan_id': _planId,
       });
       for (final call in transport.calls) {
         expect(
@@ -184,7 +183,7 @@ void main() {
 
       expect(bootstrap.session.id, _sessionId);
       final sessionCalls = transport.calls.where(
-        (call) => call.uri.path.endsWith('/practice-start-confirmations'),
+        (call) => call.uri.path.endsWith('/practice-sessions'),
       );
       expect(sessionCalls, hasLength(2));
       expect(
@@ -415,7 +414,6 @@ void main() {
       },
     });
     expect(jsonDecode(transport.calls.last.body!), {
-      'practice_plan_id': _planId,
       'expected_plan_revision': 1,
       'user_confirmed': true,
     });

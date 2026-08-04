@@ -11,7 +11,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-func TestContextApplicationCreatesSessionFromExactExecutablePlan(t *testing.T) {
+func TestSessionApplicationCreatesSessionFromExactExecutablePlan(t *testing.T) {
 	t.Parallel()
 	plan := practicePlanFixture()
 	repository := &sessionRepositoryStub{}
@@ -57,7 +57,7 @@ func TestContextApplicationCreatesSessionFromExactExecutablePlan(t *testing.T) {
 	}
 }
 
-func TestContextApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
+func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 	t.Parallel()
 	plan := practicePlanFixture()
 	plan.SceneSelection.Scene.Family = scene.SceneFamilyExam
@@ -111,7 +111,7 @@ func TestContextApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 	}
 }
 
-func TestContextApplicationRejectsUnconfirmedSessionBeforePlanRead(
+func TestSessionApplicationRejectsUnconfirmedSessionBeforePlanRead(
 	t *testing.T,
 ) {
 	t.Parallel()
@@ -129,7 +129,7 @@ func TestContextApplicationRejectsUnconfirmedSessionBeforePlanRead(
 	}
 }
 
-func TestContextApplicationMapsStaleExecutablePlanToConflict(t *testing.T) {
+func TestSessionApplicationMapsStaleExecutablePlanToConflict(t *testing.T) {
 	t.Parallel()
 	application := newContextTestApplication(
 		t,
@@ -148,7 +148,7 @@ func TestContextApplicationMapsStaleExecutablePlanToConflict(t *testing.T) {
 	}
 }
 
-func TestContextApplicationReplaysSessionWithoutReadingPlan(t *testing.T) {
+func TestSessionApplicationReplaysSessionWithoutReadingPlan(t *testing.T) {
 	t.Parallel()
 	want := contextBootstrapFixture()
 	repository := &sessionRepositoryStub{replay: want, replayFound: true}
@@ -167,81 +167,13 @@ func TestContextApplicationReplaysSessionWithoutReadingPlan(t *testing.T) {
 	}
 }
 
-func TestConfirmAndStartRequiresExactPlanSourceThread(t *testing.T) {
-	t.Parallel()
-	plan := practicePlanFixture()
-	plan.SourceThreadID = "thread-1"
-	reader := &planReaderStub{plan: plan}
-	application := newContextTestApplication(t, &sessionRepositoryStub{}, reader)
-
-	_, err := application.ConfirmAndStartPractice(
-		context.Background(),
-		practiceActorFixture(),
-		"session-create-0005",
-		StartConfirmation{
-			AgentThreadID:        "thread-other",
-			PracticePlanID:       plan.ID,
-			ExpectedPlanRevision: plan.Revision,
-		},
-	)
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("ConfirmAndStartPractice thread error = %v", err)
-	}
-
-	plan.SourceThreadID = ""
-	reader.plan = plan
-	_, err = application.ConfirmAndStartPractice(
-		context.Background(),
-		practiceActorFixture(),
-		"session-create-0006",
-		StartConfirmation{
-			AgentThreadID:        "thread-1",
-			PracticePlanID:       plan.ID,
-			ExpectedPlanRevision: plan.Revision,
-		},
-	)
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("ConfirmAndStartPractice empty source error = %v", err)
-	}
-}
-
-func TestConfirmAndStartResolvesActiveConflictByPlan(t *testing.T) {
-	t.Parallel()
-	plan := practicePlanFixture()
-	plan.SourceThreadID = "thread-1"
-	want := contextBootstrapFixture()
-	repository := &sessionRepositoryStub{
-		createErr: ErrActiveSessionConflict,
-		resolved:  want,
-	}
-	application := newContextTestApplication(
-		t,
-		repository,
-		&planReaderStub{plan: plan},
-	)
-	result, err := application.ConfirmAndStartPractice(
-		context.Background(),
-		practiceActorFixture(),
-		"session-create-0007",
-		StartConfirmation{
-			AgentThreadID:        plan.SourceThreadID,
-			PracticePlanID:       plan.ID,
-			ExpectedPlanRevision: plan.Revision,
-		},
-	)
-	if err != nil || !result.ActiveConflict ||
-		repository.resolvedPlanID != plan.ID {
-		t.Fatalf("ConfirmAndStartPractice = (%#v,%v), resolved=%q", result, err, repository.resolvedPlanID)
-	}
-}
-
 func newContextTestApplication(
 	t *testing.T,
 	repository SessionRepository,
 	reader preparation.PlanReader,
-) *ContextApplication {
+) *SessionApplication {
 	t.Helper()
-	application, err := NewContextApplication(
+	application, err := NewSessionApplication(
 		repository,
 		&practiceIDStub{values: []string{
 			"session-1",
@@ -252,7 +184,7 @@ func newContextTestApplication(
 		reader,
 	)
 	if err != nil {
-		t.Fatalf("NewContextApplication: %v", err)
+		t.Fatalf("NewSessionApplication: %v", err)
 	}
 	return application
 }

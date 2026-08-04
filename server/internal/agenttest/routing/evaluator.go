@@ -12,7 +12,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -228,19 +227,7 @@ func (DeterministicRouter) Route(
 			}
 		}
 	case hasAny(input, "确认开始练习", "确认开始面试", "confirm practice"):
-		if containsString(allowed, practicetool.PracticeStartToolName) {
-			return Route{
-				Decision: DecisionToolCall,
-				ToolCalls: []ToolCall{{
-					Name: practicetool.PracticeStartToolName,
-					Input: mustRaw(map[string]any{
-						"practice_plan_id":       "eval-practice-plan-001",
-						"expected_plan_revision": 1,
-						"user_confirmed":         true,
-					}),
-				}},
-			}
-		}
+		return Route{Decision: DecisionDirect}
 	case hasAny(input, "开始练习", "开始面试", "start practice"):
 		return Route{Decision: DecisionClarify}
 	case hasAny(input, "预览", "练习方案", "preview"):

@@ -83,7 +83,6 @@ void main() {
               );
               await agentController.activateCreatedPractice(
                 threadId: context.threadId,
-                goalId: context.goalId,
                 scene: scene,
                 sessionId: bootstrap.session.id,
                 planId: bootstrap.session.planId,
@@ -196,7 +195,7 @@ void main() {
           suggestedDurationSeconds: 600,
         ),
       );
-      final unrelatedGoal = await agentController.activateGoalForScene(
+      await agentController.activateGoalForScene(
         threadId: unrelatedPracticeThreadId,
         scene: unrelatedScene,
         clientOperationId: 'unrelated-legacy-goal',
@@ -208,7 +207,6 @@ void main() {
       );
       await agentController.activateCreatedPractice(
         threadId: unrelatedPracticeThreadId,
-        goalId: unrelatedGoal.id,
         scene: unrelatedScene,
         sessionId: 'unrelated-legacy-session',
         planId: 'unrelated-legacy-plan',

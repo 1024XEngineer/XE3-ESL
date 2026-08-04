@@ -8,6 +8,8 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/glass_navigation_bar.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/agent/handoff/practice_plan_handoff_controller.dart';
 import 'package:speakup/features/coaching/practice/conversation.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
@@ -31,6 +33,7 @@ class SpeakUpShell extends StatefulWidget {
     this.authController,
     this.preparationController,
     this.preparationLaunchController,
+    this.practicePlanHandoffController,
     this.jobPreparationController,
     this.reviewHistoryController,
     this.interviewReportController,
@@ -47,6 +50,7 @@ class SpeakUpShell extends StatefulWidget {
   final AgentController agentController;
   final PreparationController? preparationController;
   final PreparationLaunchController? preparationLaunchController;
+  final PracticePlanHandoffController? practicePlanHandoffController;
   final JobPreparationController? jobPreparationController;
   final ReviewHistoryController? reviewHistoryController;
   final InterviewReportController? interviewReportController;
@@ -85,7 +89,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   int _selectedIndex = 0;
   bool _practiceRouteInFlight = false;
   int _navigationGeneration = 0;
-  int _openInterviewRequestGeneration = 0;
 
   @override
   void initState() {
@@ -185,26 +188,23 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     unawaited(_openPracticeRoute());
   }
 
-  Future<void> _openAgentCreatedInterview(AgentMessageAction action) async {
-    if (action.type != AgentMessageActionType.openInterviewPreparation ||
+  Future<void> _confirmAgentHandoff(AgentHandoff handoff) async {
+    final controller = widget.practicePlanHandoffController;
+    if (handoff is! ConfirmPracticePlanHandoff ||
+        controller == null ||
+        controller.isBusy ||
         widget.agentController.isBusy) {
       return;
     }
-    final reloaded = await widget.agentController.reloadCurrentThread();
+    final confirmed = await controller.confirm(handoff);
     if (!mounted) {
       return;
     }
-    if (!reloaded ||
-        !await widget.agentController.prepareActiveGoalForScene(
-          action.goalId,
-        )) {
-      _showMockNotice('这场面试暂时无法打开，请稍后重试');
+    if (!confirmed) {
+      _showMockNotice(controller.errorMessage ?? '练习暂时无法开始，请重试');
       return;
     }
-    setState(() {
-      _selectedIndex = 1;
-      _openInterviewRequestGeneration++;
-    });
+    await _openPracticeRoute();
   }
 
   Future<void> _openPracticeRoute() async {
@@ -304,8 +304,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onBrowseScenes: () => _selectDestination(1),
         onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
-        onMessageAction: (action) =>
-            unawaited(_openAgentCreatedInterview(action)),
+        onMessageHandoff: (handoff) => unawaited(_confirmAgentHandoff(handoff)),
         onStartVoice: widget.agentController.supportsAgentVoice
             ? widget.agentController.startAgentVoiceRecording
             : null,
@@ -362,7 +361,6 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             : _openJobPreparation,
         onSceneSelected: () => _selectDestination(0),
         onPracticeStarted: _openPractice,
-        openInterviewRequestGeneration: _openInterviewRequestGeneration,
       ),
       ReviewPage(
         showBackButton: widget.showBackButton,

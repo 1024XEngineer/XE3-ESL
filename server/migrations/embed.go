@@ -46,4 +46,5 @@ import "embed"
 //go:embed 000058_evaluation_report_authority.*.sql
 //go:embed 000059_evaluation_general_scene_runtime.*.sql
 //go:embed 000060_resumes.*.sql
+//go:embed 000061_agent_practice_handoffs.*.sql
 var Files embed.FS

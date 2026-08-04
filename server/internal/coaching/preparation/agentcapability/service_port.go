@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
@@ -135,23 +136,56 @@ func (port *ServicePort) PreviewPractice(
 	if err != nil {
 		return PreviewResult{}, mapPreparationToolError(err)
 	}
+	handoff, err := practicePlanHandoff(plan)
+	if err != nil {
+		return PreviewResult{}, tool.ErrExecutionRejected
+	}
 	return PreviewResult{
-		Status:             "preview_ready",
-		PracticePlanID:     plan.ID,
-		PlanRevision:       plan.Revision,
-		PracticePlanStatus: string(plan.Status),
-		SceneName:          plan.SceneSelection.Scene.Name,
-		SceneFamily:        string(plan.SceneSelection.Scene.Family),
-		SceneModel:         string(plan.SceneSelection.Scene.Model),
-		SelectedRoleIDs:    append([]string(nil), plan.SceneSelection.SelectedRoleIDs...),
-		PracticeOptionID:   plan.SceneSelection.PracticeOptionID,
-		MaxEffectiveTurns:  plan.SessionPolicy.MaxEffectiveTurns,
-		Replayed:           replayed,
+		Status:   "preview_ready",
+		Replayed: replayed,
+		Handoff:  handoff,
 		SourceRefs: []tool.SourceRef{
 			{Type: "practice_plan", ID: plan.ID},
 			{Type: "preparation_snapshot", ID: plan.PreparationSnapshot.ID},
 		},
 	}, nil
+}
+
+func practicePlanHandoff(
+	plan preparation.PracticePlan,
+) (agenthandoff.Item, error) {
+	roles, err := plan.SceneSelection.SelectedRoles()
+	if err != nil || len(roles) == 0 {
+		return agenthandoff.Item{}, agenthandoff.ErrInvalid
+	}
+	option, err := plan.SceneSelection.PracticeOption()
+	if err != nil {
+		return agenthandoff.Item{}, agenthandoff.ErrInvalid
+	}
+	roleNames := make([]string, len(roles))
+	for index, role := range roles {
+		roleNames[index] = role.DisplayName
+	}
+	target := strings.TrimSpace(plan.SceneSelection.Scene.Prompt.PracticeGoal)
+	if plan.GoalSnapshot != nil {
+		target = strings.TrimSpace(plan.GoalSnapshot.Title)
+	}
+	return agenthandoff.NewConfirmPracticePlan(agenthandoff.Item{
+		Label:                    "确认并开始练习",
+		PracticePlanID:           plan.ID,
+		PlanRevision:             plan.Revision,
+		Target:                   target,
+		SceneName:                plan.SceneSelection.Scene.Name,
+		SceneFamily:              string(plan.SceneSelection.Scene.Family),
+		SceneModel:               string(plan.SceneSelection.Scene.Model),
+		Roles:                    roleNames,
+		PracticeScope:            option.DisplayName,
+		SuggestedDurationSeconds: plan.SessionPolicy.SuggestedDurationSeconds,
+		MinEffectiveTurns:        plan.SessionPolicy.MinEffectiveTurns,
+		MaxEffectiveTurns:        plan.SessionPolicy.MaxEffectiveTurns,
+		ExecutableStatus:         string(plan.Status),
+		ConfirmationPrompt:       "确认后将创建练习会话；确认前不会开始练习。",
+	})
 }
 
 func (port *ServicePort) resolveCandidates(

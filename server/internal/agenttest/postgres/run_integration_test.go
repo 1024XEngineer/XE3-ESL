@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -18,10 +19,12 @@ import (
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	conversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	runhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
+	agenttool "github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
@@ -517,6 +520,142 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 		submission.Run.ID,
 	); !errors.Is(err, agentrun.ErrNotFound) {
 		t.Fatalf("cross-owner ToolCalls error = %v, want not found", err)
+	}
+}
+
+func TestPostgresAgentHandoffPersistsProjectsAndStaysOutOfProviderInput(
+	t *testing.T,
+) {
+	database := newAgentTestDatabase(t)
+	generator := newSequenceTextGenerator(
+		integrationToolResult(
+			"call-practice-handoff-1",
+			integrationHandoffToolName,
+			`{}`,
+		),
+		integrationFinalResult(
+			"practice-handoff",
+			"Your practice plan is ready for confirmation.",
+		),
+	)
+	goalService, dataService, _, repositories := newAgentRunServices(
+		t,
+		database.pool,
+		generator,
+		testRunConfiguration,
+	)
+	assembler, err := agentcontext.NewAssembler(
+		repositories.context,
+		goalService,
+		emptyLearningProfileReader{},
+		emptyStableProfileReader{},
+		&recordingMemorySearcher{},
+	)
+	if err != nil {
+		t.Fatalf("new agentcontext.Assembler: %v", err)
+	}
+	registry, err := agenttool.NewRegistry(integrationHandoffTool{})
+	if err != nil {
+		t.Fatalf("new Handoff Registry: %v", err)
+	}
+	runService, err := agentrun.NewService(
+		repositories.run,
+		repositories.conversation,
+		repositories.context,
+		assembler,
+		generator,
+		testRunConfiguration,
+		agentrun.WithToolRegistry(registry),
+	)
+	if err != nil {
+		t.Fatalf("new Run service with Handoff tool: %v", err)
+	}
+	actor := testActorA()
+	thread, err := dataService.CreateThread(context.Background(), actor, "")
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+	submission, err := runService.SubmitText(
+		context.Background(),
+		actor,
+		thread.ID,
+		"ios-handoff-0001",
+		"Create an interview practice plan.",
+	)
+	if err != nil {
+		t.Fatalf("submit Handoff Run: %v", err)
+	}
+	records, err := runService.GetToolCalls(
+		context.Background(),
+		actor,
+		submission.Run.ID,
+	)
+	if err != nil {
+		t.Fatalf("get Handoff Tool Calls: %v", err)
+	}
+	wantHandoff := integrationPracticeHandoff()
+	if len(records) != 1 ||
+		len(records[0].Handoffs) != 1 ||
+		!reflect.DeepEqual(records[0].Handoffs[0], wantHandoff) {
+		t.Fatalf("persisted Handoff records = %#v", records)
+	}
+
+	requests := generator.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("Provider requests = %d, want 2", len(requests))
+	}
+	toolMessage := requests[1].Messages[len(requests[1].Messages)-1]
+	if toolMessage.Role != ai.TextRoleTool ||
+		!strings.Contains(toolMessage.Content, `"status":"ready"`) {
+		t.Fatalf("Provider Tool Result = %#v", toolMessage)
+	}
+	for _, forbidden := range []string{
+		agenthandoff.ConfirmPracticePlanType,
+		wantHandoff.PracticePlanID,
+		wantHandoff.ConfirmationPrompt,
+	} {
+		if strings.Contains(toolMessage.Content, forbidden) {
+			t.Fatalf("Provider Tool Result leaked %q: %s", forbidden, toolMessage.Content)
+		}
+	}
+
+	router := newAgentRunHTTPRouter(
+		t,
+		dataService,
+		runService,
+		map[string]requestcontext.Actor{"token-a": actor},
+		"corr_agent_handoff",
+	)
+	messages := performAgentRequest(
+		router,
+		http.MethodGet,
+		"/v1/agent-threads/"+thread.ID+"/messages",
+		"",
+		"token-a",
+	)
+	if messages.Code != http.StatusOK ||
+		!strings.Contains(messages.Body.String(), `"handoffs"`) ||
+		!strings.Contains(messages.Body.String(), wantHandoff.PracticePlanID) {
+		t.Fatalf("Handoff message projection: %d %s", messages.Code, messages.Body)
+	}
+
+	reopenedPool := database.reopen(t)
+	_, _, recoveredRuns, _ := newAgentRunServices(
+		t,
+		reopenedPool,
+		generator,
+		testRunConfiguration,
+	)
+	recovered, err := recoveredRuns.GetToolCalls(
+		context.Background(),
+		actor,
+		submission.Run.ID,
+	)
+	if err != nil ||
+		len(recovered) != 1 ||
+		len(recovered[0].Handoffs) != 1 ||
+		!reflect.DeepEqual(recovered[0].Handoffs[0], wantHandoff) {
+		t.Fatalf("recovered Handoff records = %#v, %v", recovered, err)
 	}
 }
 
@@ -3546,6 +3685,51 @@ func integrationFinalResult(id string, content string) ai.TextResult {
 			OutputTokens: 12,
 			TotalTokens:  44,
 		},
+	}
+}
+
+const integrationHandoffToolName = "practice.plan.preview.integration.v1"
+
+type integrationHandoffTool struct{}
+
+func (integrationHandoffTool) Definition() agenttool.Definition {
+	return agenttool.Definition{
+		Name:        integrationHandoffToolName,
+		Description: "Create a test practice plan confirmation projection.",
+		InputSchema: agenttool.ObjectSchema(map[string]any{}, nil),
+		ReadOnly:    true,
+		Risk:        agenttool.RiskReadOnly,
+	}
+}
+
+func (integrationHandoffTool) Execute(
+	context.Context,
+	agenttool.CallContext,
+	json.RawMessage,
+) (agenttool.Result, error) {
+	return agenttool.Result{
+		Content:  map[string]any{"status": "ready"},
+		Handoffs: []agenthandoff.Item{integrationPracticeHandoff()},
+	}, nil
+}
+
+func integrationPracticeHandoff() agenthandoff.Item {
+	return agenthandoff.Item{
+		Type:                     agenthandoff.ConfirmPracticePlanType,
+		Label:                    "Confirm practice",
+		PracticePlanID:           "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		PlanRevision:             2,
+		Target:                   "Backend interview",
+		SceneName:                "Project deep dive",
+		SceneFamily:              "INTERVIEW",
+		SceneModel:               "PROJECT_EXPERIENCE_DEEP_DIVE",
+		Roles:                    []string{"Technical interviewer"},
+		PracticeScope:            "Full simulation",
+		SuggestedDurationSeconds: 600,
+		MinEffectiveTurns:        3,
+		MaxEffectiveTurns:        5,
+		ExecutableStatus:         agenthandoff.PracticePlanReadyStatus,
+		ConfirmationPrompt:       "Confirm this exact practice plan.",
 	}
 }
 

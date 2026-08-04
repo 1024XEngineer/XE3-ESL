@@ -3,6 +3,8 @@ package run
 import (
 	"encoding/json"
 	"time"
+
+	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 )
 
 type ToolCallStatus string
@@ -37,6 +39,7 @@ type ToolCall struct {
 	ErrorCategory string
 	RequestID     string
 	SourceRefs    []ToolSourceRef
+	Handoffs      []agenthandoff.Item
 	ProposedAt    time.Time
 	StartedAt     time.Time
 	CompletedAt   time.Time

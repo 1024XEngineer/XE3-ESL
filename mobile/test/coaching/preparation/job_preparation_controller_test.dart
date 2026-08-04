@@ -606,7 +606,6 @@ JobPreparationController _workspaceJobController({
           );
           await agentController.activateCreatedPractice(
             threadId: context.threadId,
-            goalId: context.goalId,
             scene: scene,
             sessionId: bootstrap.session.id,
             planId: bootstrap.session.planId,

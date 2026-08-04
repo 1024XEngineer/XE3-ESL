@@ -121,16 +121,20 @@ func TestServicePortCreatesSnapshotBeforeCanonicalPlan(t *testing.T) {
 	plans := &planApplicationStub{
 		replayed: true,
 		plan: preparation.PracticePlan{
-			ID:                  "plan-1",
+			ID:                  "10000000-0000-4000-8000-000000000001",
 			PreparationSnapshot: profiles.snapshot,
 			SceneSelection: scene.SelectionSnapshot{
 				Scene:            candidate.Scene,
 				SelectedRoleIDs:  append([]string(nil), candidate.DefaultRoleIDs...),
 				PracticeOptionID: candidate.DefaultOption.ID,
 			},
-			SessionPolicy: preparation.SessionPolicy{MaxEffectiveTurns: 4},
-			Revision:      1,
-			Status:        preparation.PlanStatusReady,
+			SessionPolicy: preparation.SessionPolicy{
+				SuggestedDurationSeconds: 600,
+				MinEffectiveTurns:        2,
+				MaxEffectiveTurns:        4,
+			},
+			Revision: 1,
+			Status:   preparation.PlanStatusReady,
 		},
 	}
 	port, err := NewServicePort(plans, previewCatalogStub{
@@ -153,7 +157,11 @@ func TestServicePortCreatesSnapshotBeforeCanonicalPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreviewPractice() error = %v", err)
 	}
-	if result.Status != "preview_ready" || result.PracticePlanID != "plan-1" ||
+	if result.Status != "preview_ready" ||
+		result.Handoff.PracticePlanID != plans.plan.ID ||
+		result.Handoff.SceneName != candidate.Scene.Name ||
+		result.Handoff.Roles[0] != "面试官" ||
+		result.Handoff.PracticeScope != "完整模拟" ||
 		!result.Replayed || len(result.SourceRefs) != 2 {
 		t.Fatalf("result = %#v", result)
 	}
@@ -228,10 +236,22 @@ func previewCatalogCandidate() scene.PreviewCatalogCandidate {
 			Model:   scene.SceneModelProjectExperienceDeepDive,
 			Name:    "项目经历深挖",
 			Version: 1,
+			Prompt: scene.ScenePrompt{
+				PracticeGoal: "练习清晰表达项目影响力",
+			},
+			Roles: []scene.RoleDefinition{{
+				ID:          "role-1",
+				DisplayName: "面试官",
+			}},
+			PracticeOptions: []scene.PracticeOption{{
+				ID:          "option-1",
+				DisplayName: "完整模拟",
+			}},
 		},
 		DefaultRoleIDs: []string{"role-1"},
 		DefaultOption: scene.PracticeOption{
-			ID: "option-1",
+			ID:          "option-1",
+			DisplayName: "完整模拟",
 		},
 	}
 }

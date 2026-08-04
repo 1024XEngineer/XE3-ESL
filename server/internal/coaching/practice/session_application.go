@@ -17,30 +17,30 @@ type PracticeResourceIDGenerator interface {
 	NewID() (string, error)
 }
 
-// ContextApplication owns only Practice Session orchestration. Preparation
+// SessionApplication owns only Practice Session orchestration. Preparation
 // owns complete executable Plans and exposes them through PlanReader.
-type ContextApplication struct {
+type SessionApplication struct {
 	repository SessionRepository
 	ids        PracticeResourceIDGenerator
 	plans      preparation.PlanReader
 }
 
-func NewContextApplication(
+func NewSessionApplication(
 	repository SessionRepository,
 	ids PracticeResourceIDGenerator,
 	plans preparation.PlanReader,
-) (*ContextApplication, error) {
+) (*SessionApplication, error) {
 	if repository == nil || ids == nil || plans == nil {
-		return nil, errors.New("practice: context dependency is required")
+		return nil, errors.New("practice: session dependencies are required")
 	}
-	return &ContextApplication{
+	return &SessionApplication{
 		repository: repository,
 		ids:        ids,
 		plans:      plans,
 	}, nil
 }
 
-func (a *ContextApplication) CreateSession(
+func (a *SessionApplication) CreateSession(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	planID string,
@@ -135,70 +135,7 @@ func (a *ContextApplication) CreateSession(
 	)
 }
 
-func (a *ContextApplication) ConfirmAndStartPractice(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	idempotencyKey string,
-	confirmation StartConfirmation,
-) (ConfirmAndStartResult, error) {
-	if ctx == nil || !actor.Valid() ||
-		!validContextResourceID(confirmation.AgentThreadID) ||
-		!validContextResourceID(confirmation.PracticePlanID) ||
-		confirmation.ExpectedPlanRevision < 1 {
-		return ConfirmAndStartResult{}, ErrInvalidArgument
-	}
-	plan, err := a.plans.ReadExecutablePlan(
-		ctx,
-		actor,
-		confirmation.PracticePlanID,
-		confirmation.ExpectedPlanRevision,
-	)
-	if err != nil {
-		return ConfirmAndStartResult{}, mapPlanReadError(err)
-	}
-	if !validExecutablePlan(
-		plan,
-		actor,
-		confirmation.PracticePlanID,
-		confirmation.ExpectedPlanRevision,
-	) {
-		return ConfirmAndStartResult{}, ErrConflict
-	}
-	if plan.SourceThreadID != confirmation.AgentThreadID {
-		return ConfirmAndStartResult{}, ErrNotFound
-	}
-
-	bootstrap, replayed, err := a.CreateSession(
-		ctx,
-		actor,
-		confirmation.PracticePlanID,
-		idempotencyKey,
-		CreateSessionRequest{
-			ExpectedPlanRevision: confirmation.ExpectedPlanRevision,
-			UserConfirmed:        true,
-		},
-	)
-	if errors.Is(err, ErrActiveSessionConflict) {
-		active, resolveErr := a.repository.ResolveSessionByPlan(
-			ctx,
-			contextActor(actor),
-			confirmation.PracticePlanID,
-		)
-		if resolveErr != nil {
-			return ConfirmAndStartResult{}, err
-		}
-		return ConfirmAndStartResult{
-			Bootstrap:      active,
-			ActiveConflict: true,
-		}, nil
-	}
-	if err != nil {
-		return ConfirmAndStartResult{}, err
-	}
-	return ConfirmAndStartResult{Bootstrap: bootstrap, Replayed: replayed}, nil
-}
-
-func (a *ContextApplication) GetSession(
+func (a *SessionApplication) GetSession(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	sessionID string,
@@ -209,7 +146,7 @@ func (a *ContextApplication) GetSession(
 	return a.repository.GetSession(ctx, contextActor(actor), sessionID)
 }
 
-func (a *ContextApplication) GetSessionSnapshot(
+func (a *SessionApplication) GetSessionSnapshot(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	sessionID string,
@@ -224,7 +161,7 @@ func (a *ContextApplication) GetSessionSnapshot(
 	)
 }
 
-func (a *ContextApplication) ResolveSessionByPlan(
+func (a *SessionApplication) ResolveSessionByPlan(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	planID string,
@@ -239,7 +176,7 @@ func (a *ContextApplication) ResolveSessionByPlan(
 	)
 }
 
-func (a *ContextApplication) TransitionSession(
+func (a *SessionApplication) TransitionSession(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	sessionID string,
@@ -277,7 +214,7 @@ func (a *ContextApplication) TransitionSession(
 	)
 }
 
-func (a *ContextApplication) newSessionIdentities(
+func (a *SessionApplication) newSessionIdentities(
 	actor requestcontext.Actor,
 	roles []scene.RoleDefinition,
 ) (string, string, []Participant, error) {

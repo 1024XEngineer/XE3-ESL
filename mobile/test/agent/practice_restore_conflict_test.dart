@@ -67,7 +67,6 @@ void main() {
 
       await controller.activateCreatedPractice(
         threadId: _threadId,
-        goalId: _goalId,
         scene: _scene,
         sessionId: _newSessionId,
         planId: 'plan-new',

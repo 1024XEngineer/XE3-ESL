@@ -69,7 +69,6 @@ void main() {
 
       await controller.activateCreatedPractice(
         threadId: _threadId,
-        goalId: _goalId,
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,
@@ -102,7 +101,6 @@ void main() {
       await expectLater(
         controller.activateCreatedPractice(
           threadId: _threadId,
-          goalId: _goalId,
           scene: _scene,
           sessionId: _sessionId,
           planId: _planId,
@@ -130,7 +128,6 @@ void main() {
     await expectLater(
       controller.activateCreatedPractice(
         threadId: _threadId,
-        goalId: _goalId,
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,
@@ -147,7 +144,6 @@ void main() {
     );
     await controller.activateCreatedPractice(
       threadId: _threadId,
-      goalId: _goalId,
       scene: _scene,
       sessionId: _sessionId,
       planId: _planId,
@@ -187,7 +183,6 @@ void main() {
     await expectLater(
       controller.activateCreatedPractice(
         threadId: _threadId,
-        goalId: _goalId,
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,
@@ -214,7 +209,6 @@ void main() {
 
     final activation = controller.activateCreatedPractice(
       threadId: _threadId,
-      goalId: _goalId,
       scene: _scene,
       sessionId: _sessionId,
       planId: _planId,
@@ -248,7 +242,6 @@ void main() {
     await _initializeFormalContext(controller);
     await controller.activateCreatedPractice(
       threadId: _threadId,
-      goalId: _goalId,
       scene: _scene,
       sessionId: _sessionId,
       planId: _planId,
@@ -259,7 +252,6 @@ void main() {
     await expectLater(
       controller.activateCreatedPractice(
         threadId: _threadId,
-        goalId: _goalId,
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,
@@ -271,7 +263,6 @@ void main() {
     await expectLater(
       controller.activateCreatedPractice(
         threadId: _threadId,
-        goalId: _goalId,
         scene: _scene,
         sessionId: 'session-other',
         planId: _planId,
@@ -298,7 +289,6 @@ void main() {
     await _initializeFormalContext(controller);
     await controller.activateCreatedPractice(
       threadId: _threadId,
-      goalId: _goalId,
       scene: _scene,
       sessionId: _sessionId,
       planId: _planId,
@@ -339,7 +329,6 @@ void main() {
 
       await controller.activateCreatedPractice(
         threadId: _threadId,
-        goalId: _goalId,
         scene: _scene,
         sessionId: _sessionId,
         planId: _planId,

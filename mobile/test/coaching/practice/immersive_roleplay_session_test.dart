@@ -483,7 +483,6 @@ Future<void> _activateCreatedPractice(
   PracticeSessionSnapshot snapshot,
 ) => controller.activateCreatedPractice(
   threadId: controller.threadId!,
-  goalId: controller.activeGoal!.id,
   scene: scene,
   sessionId: snapshot.sessionId,
   planId: snapshot.planId,

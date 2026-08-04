@@ -53,7 +53,7 @@ void main() {
         containsPair('practice_thread_id', retried?.practiceThreadId),
       );
       expect(record, containsPair('return_thread_id', homeThreadId));
-      expect(record, containsPair('schema_version', 5));
+      expect(record, containsPair('schema_version', 6));
 
       final replacement = await workspace.acquireThread(
         'different-operation-2',
@@ -369,7 +369,6 @@ void main() {
       );
       await harness.agent.activateCreatedPractice(
         threadId: practiceThreadId,
-        goalId: goal.id,
         scene: scene,
         sessionId: 'practice-session-without-record',
         planId: 'practice-plan-without-record',
@@ -1054,7 +1053,6 @@ Future<_LaunchedPractice> _launchPractice({
   );
   await harness.agent.activateCreatedPractice(
     threadId: lease.practiceThreadId,
-    goalId: goal.id,
     scene: scene,
     sessionId: sessionId,
     planId: 'practice-plan-$sessionId',
