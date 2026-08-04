@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
@@ -7,6 +9,8 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
     required this.client,
     this.pollInterval = const Duration(seconds: 2),
     this.maximumPollAttempts = 30,
+    this.maximumAutomaticRegenerations = 1,
+    this.automaticRecoveryInterval = const Duration(seconds: 10),
   }) {
     if (pollInterval < Duration.zero) {
       throw ArgumentError.value(pollInterval, 'pollInterval');
@@ -14,11 +18,26 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
     if (maximumPollAttempts < 1) {
       throw ArgumentError.value(maximumPollAttempts, 'maximumPollAttempts');
     }
+    if (maximumAutomaticRegenerations < 0 ||
+        maximumAutomaticRegenerations > 10) {
+      throw ArgumentError.value(
+        maximumAutomaticRegenerations,
+        'maximumAutomaticRegenerations',
+      );
+    }
+    if (automaticRecoveryInterval < Duration.zero) {
+      throw ArgumentError.value(
+        automaticRecoveryInterval,
+        'automaticRecoveryInterval',
+      );
+    }
   }
 
   final IeltsSpeakingReportClient client;
   final Duration pollInterval;
   final int maximumPollAttempts;
+  final int maximumAutomaticRegenerations;
+  final Duration automaticRecoveryInterval;
 
   String? _practiceSessionId;
   IeltsSpeakingReportEnvelope? _envelope;
@@ -28,6 +47,9 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
   bool _canRetry = false;
   bool _disposed = false;
   int _requestGeneration = 0;
+  int _automaticRecoveryCycle = 0;
+  int _automaticRegenerationCount = 0;
+  Timer? _automaticRecoveryTimer;
 
   String? get practiceSessionId => _practiceSessionId;
   IeltsSpeakingReportEnvelope? get envelope => _envelope;
@@ -36,9 +58,24 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
   bool get isLoading => _loading;
   bool get canRetry => _canRetry;
 
-  Future<void> load(String practiceSessionId) async {
+  Future<void> load(String practiceSessionId) =>
+      _load(practiceSessionId, automatic: false);
+
+  Future<void> _load(
+    String practiceSessionId, {
+    required bool automatic,
+  }) async {
     if (_disposed || practiceSessionId.isEmpty) {
       return;
+    }
+    final sameSession = _practiceSessionId == practiceSessionId;
+    _automaticRecoveryTimer?.cancel();
+    _automaticRecoveryTimer = null;
+    if (!automatic || !sameSession) {
+      _automaticRecoveryCycle = 0;
+      if (!sameSession) {
+        _automaticRegenerationCount = 0;
+      }
     }
     final generation = ++_requestGeneration;
     _practiceSessionId = practiceSessionId;
@@ -63,55 +100,121 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
                 IeltsSpeakingReportEvaluationStatus.queued ||
             envelope.evaluationStatus ==
                 IeltsSpeakingReportEvaluationStatus.running;
+        final regenerationClient =
+            client is IeltsSpeakingReportRegenerationClient
+            ? client as IeltsSpeakingReportRegenerationClient
+            : null;
+        final automaticallyRecoverable =
+            envelope.evaluationStatus ==
+                IeltsSpeakingReportEvaluationStatus.failed &&
+            regenerationClient != null &&
+            _automaticRegenerationCount < maximumAutomaticRegenerations;
+        if (automaticallyRecoverable) {
+          _automaticRegenerationCount++;
+          await regenerationClient.regenerateReport(envelope);
+          if (!_isCurrent(generation, practiceSessionId)) {
+            return;
+          }
+          _envelope = null;
+          notifyListeners();
+          if (attempt + 1 < maximumPollAttempts) {
+            if (!await _waitBeforeNextPoll(generation, practiceSessionId)) {
+              return;
+            }
+          }
+          continue;
+        }
         if (!pending) {
+          if (envelope.evaluationStatus ==
+              IeltsSpeakingReportEvaluationStatus.failed) {
+            // A terminal revision cannot become READY by polling it. Keep the
+            // bounded automatic regeneration above as the only background
+            // mutation; otherwise every recovery window would create another
+            // revision forever.
+            _loading = false;
+            _canRetry = true;
+            notifyListeners();
+            return;
+          }
+          _automaticRecoveryCycle = 0;
           _loading = false;
-          _canRetry =
-              envelope.evaluationStatus ==
-                  IeltsSpeakingReportEvaluationStatus.failed &&
-              ((envelope.stableFailure?.retryable ?? false) ||
-                  client is IeltsSpeakingReportRegenerationClient);
+          _canRetry = false;
           notifyListeners();
           return;
         }
         notifyListeners();
         if (attempt + 1 < maximumPollAttempts) {
-          await Future<void>.delayed(pollInterval);
-          if (!_isCurrent(generation, practiceSessionId)) {
+          if (!await _waitBeforeNextPoll(generation, practiceSessionId)) {
             return;
           }
         }
       } on IeltsSpeakingReportException catch (error) {
-        if (!_isCurrent(generation, practiceSessionId) ||
-            error.kind == IeltsSpeakingReportFailureKind.superseded) {
+        if (!_isCurrent(generation, practiceSessionId)) {
           return;
         }
-        _loading = false;
+        final transient =
+            error.kind == IeltsSpeakingReportFailureKind.notFound ||
+            error.kind == IeltsSpeakingReportFailureKind.conflict ||
+            error.retryable;
+        if (transient && attempt + 1 < maximumPollAttempts) {
+          _envelope = null;
+          _errorMessage = null;
+          _failureKind = null;
+          _canRetry = false;
+          notifyListeners();
+          if (!await _waitBeforeNextPoll(generation, practiceSessionId)) {
+            return;
+          }
+          continue;
+        }
+        if (error.kind == IeltsSpeakingReportFailureKind.superseded) {
+          return;
+        }
         _failureKind = error.kind;
-        _canRetry =
-            error.retryable ||
-            error.kind == IeltsSpeakingReportFailureKind.notFound;
-        _errorMessage = _messageFor(error);
-        notifyListeners();
+        _scheduleAutomaticRecovery(generation, practiceSessionId);
         return;
       } on Object {
         if (!_isCurrent(generation, practiceSessionId)) {
           return;
         }
-        _loading = false;
         _failureKind = IeltsSpeakingReportFailureKind.network;
-        _canRetry = true;
-        _errorMessage = 'IELTS 练习报告暂时无法加载，请稍后重试。';
-        notifyListeners();
+        _scheduleAutomaticRecovery(generation, practiceSessionId);
         return;
       }
     }
     if (_isCurrent(generation, practiceSessionId)) {
-      _loading = false;
       _failureKind = IeltsSpeakingReportFailureKind.network;
-      _canRetry = true;
-      _errorMessage = '报告仍在生成，请稍后重试。';
-      notifyListeners();
+      _scheduleAutomaticRecovery(generation, practiceSessionId);
     }
+  }
+
+  void _scheduleAutomaticRecovery(int generation, String practiceSessionId) {
+    if (!_isCurrent(generation, practiceSessionId)) {
+      return;
+    }
+    _loading = true;
+    _canRetry = false;
+    _errorMessage = null;
+    _envelope = null;
+    _automaticRecoveryTimer?.cancel();
+    final multiplier = 1 << _automaticRecoveryCycle.clamp(0, 3);
+    _automaticRecoveryCycle++;
+    _automaticRecoveryTimer = Timer(automaticRecoveryInterval * multiplier, () {
+      _automaticRecoveryTimer = null;
+      if (!_isCurrent(generation, practiceSessionId)) {
+        return;
+      }
+      unawaited(_load(practiceSessionId, automatic: true));
+    });
+    notifyListeners();
+  }
+
+  Future<bool> _waitBeforeNextPoll(
+    int generation,
+    String practiceSessionId,
+  ) async {
+    await Future<void>.delayed(pollInterval);
+    return _isCurrent(generation, practiceSessionId);
   }
 
   Future<void> retry() async {
@@ -174,6 +277,10 @@ final class IeltsSpeakingReportController extends ChangeNotifier {
       practiceSessionId == _practiceSessionId;
 
   void _reset() {
+    _automaticRecoveryTimer?.cancel();
+    _automaticRecoveryTimer = null;
+    _automaticRecoveryCycle = 0;
+    _automaticRegenerationCount = 0;
     _practiceSessionId = null;
     _envelope = null;
     _errorMessage = null;

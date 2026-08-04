@@ -34,11 +34,128 @@ void main() {
     expect(controller.errorMessage, isNull);
   });
 
-  test('bounded polling stops and exposes an explicit retry', () async {
+  test('polling window continues automatically without a user retry', () async {
     final queued = decodeIeltsSpeakingReport(
       ieltsSpeakingReportContractFixture()['queued'],
     );
-    final client = _QueueClient([queued, queued]);
+    final ready = decodeIeltsSpeakingReport(
+      ieltsSpeakingReportContractFixture()['ready'],
+    );
+    final client = _QueueClient([queued, queued, ready]);
+    final controller = IeltsSpeakingReportController(
+      client: client,
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 2,
+      automaticRecoveryInterval: Duration.zero,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.load('session_ielts_report_001');
+    await _waitFor(
+      () =>
+          controller.envelope?.evaluationStatus ==
+          IeltsSpeakingReportEvaluationStatus.ready,
+    );
+
+    expect(client.calls, 3);
+    expect(controller.isLoading, isFalse);
+    expect(controller.canRetry, isFalse);
+    expect(controller.errorMessage, isNull);
+  });
+
+  test(
+    'terminal report is replaced automatically even when marked nonretryable',
+    () async {
+      final fixture = ieltsSpeakingReportContractFixture();
+      final failedValue = cloneIeltsSpeakingReportFixture(fixture['failed']);
+      failedValue['stable_failure'] = <String, Object?>{
+        'reason_code': 'VERSION_CONFLICT',
+        'retryable': false,
+      };
+      final client = _RegeneratingClient(
+        decodeIeltsSpeakingReport(failedValue),
+        decodeIeltsSpeakingReport(fixture['ready']),
+      );
+      final controller = IeltsSpeakingReportController(
+        client: client,
+        pollInterval: Duration.zero,
+        maximumPollAttempts: 3,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load('session_ielts_report_001');
+
+      expect(client.regenerationCalls, 1);
+      expect(client.getCalls, 2);
+      expect(
+        controller.envelope?.evaluationStatus,
+        IeltsSpeakingReportEvaluationStatus.ready,
+      );
+      expect(controller.canRetry, isFalse);
+      expect(controller.errorMessage, isNull);
+    },
+  );
+
+  test(
+    'automatically replaces a retryable failed revision and reaches READY',
+    () async {
+      final fixture = ieltsSpeakingReportContractFixture();
+      final client = _RegeneratingClient(
+        decodeIeltsSpeakingReport(fixture['failed']),
+        decodeIeltsSpeakingReport(fixture['ready']),
+      );
+      final controller = IeltsSpeakingReportController(
+        client: client,
+        pollInterval: Duration.zero,
+        maximumPollAttempts: 3,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load('session_ielts_report_001');
+
+      expect(client.regenerationCalls, 1);
+      expect(client.getCalls, 2);
+      expect(
+        controller.envelope?.evaluationStatus,
+        IeltsSpeakingReportEvaluationStatus.ready,
+      );
+      expect(controller.errorMessage, isNull);
+      expect(controller.canRetry, isFalse);
+    },
+  );
+
+  test('automatic recovery never creates revisions without a bound', () async {
+    final failed = decodeIeltsSpeakingReport(
+      ieltsSpeakingReportContractFixture()['failed'],
+    );
+    final client = _AlwaysFailedRegeneratingClient(failed);
+    final controller = IeltsSpeakingReportController(
+      client: client,
+      pollInterval: Duration.zero,
+      maximumPollAttempts: 2,
+      maximumAutomaticRegenerations: 1,
+      automaticRecoveryInterval: Duration.zero,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.load('session_ielts_report_001');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(client.regenerationCalls, 1);
+  });
+
+  test('keeps polling through a transient revision conflict', () async {
+    final ready = decodeIeltsSpeakingReport(
+      ieltsSpeakingReportContractFixture()['ready'],
+    );
+    final client = _TransientFailureClient(
+      const IeltsSpeakingReportException(
+        kind: IeltsSpeakingReportFailureKind.conflict,
+        statusCode: 409,
+        retryable: true,
+      ),
+      ready,
+    );
     final controller = IeltsSpeakingReportController(
       client: client,
       pollInterval: Duration.zero,
@@ -49,32 +166,36 @@ void main() {
     await controller.load('session_ielts_report_001');
 
     expect(client.calls, 2);
-    expect(controller.isLoading, isFalse);
-    expect(controller.canRetry, isTrue);
-    expect(controller.errorMessage, '报告仍在生成，请稍后重试。');
+    expect(
+      controller.envelope?.evaluationStatus,
+      IeltsSpeakingReportEvaluationStatus.ready,
+    );
+    expect(controller.errorMessage, isNull);
   });
 
   test(
-    'terminal report can create a replacement revision and poll again',
+    'keeps polling while the completion hook is creating the report',
     () async {
-      final fixture = ieltsSpeakingReportContractFixture();
-      final client = _RegeneratingClient(
-        decodeIeltsSpeakingReport(fixture['failed']),
-        decodeIeltsSpeakingReport(fixture['ready']),
+      final ready = decodeIeltsSpeakingReport(
+        ieltsSpeakingReportContractFixture()['ready'],
+      );
+      final client = _TransientFailureClient(
+        const IeltsSpeakingReportException(
+          kind: IeltsSpeakingReportFailureKind.notFound,
+          statusCode: 404,
+        ),
+        ready,
       );
       final controller = IeltsSpeakingReportController(
         client: client,
         pollInterval: Duration.zero,
+        maximumPollAttempts: 2,
       );
       addTearDown(controller.dispose);
 
       await controller.load('session_ielts_report_001');
-      expect(controller.canRetry, isTrue);
 
-      await controller.retry();
-
-      expect(client.regenerationCalls, 1);
-      expect(client.getCalls, 2);
+      expect(client.calls, 2);
       expect(
         controller.envelope?.evaluationStatus,
         IeltsSpeakingReportEvaluationStatus.ready,
@@ -116,6 +237,16 @@ void main() {
     expect(controller.envelope, isNull);
     expect(controller.errorMessage, isNull);
   });
+}
+
+Future<void> _waitFor(bool Function() condition) async {
+  for (var attempt = 0; attempt < 20; attempt++) {
+    if (condition()) {
+      return;
+    }
+    await Future<void>.delayed(Duration.zero);
+  }
+  fail('condition was not reached');
 }
 
 final class _QueueClient implements IeltsSpeakingReportClient {
@@ -174,6 +305,50 @@ final class _RegeneratingClient
   @override
   Future<void> regenerateReport(IeltsSpeakingReportEnvelope envelope) async {
     regenerationCalls++;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _AlwaysFailedRegeneratingClient
+    implements
+        IeltsSpeakingReportClient,
+        IeltsSpeakingReportRegenerationClient {
+  _AlwaysFailedRegeneratingClient(this.failed);
+
+  final IeltsSpeakingReportEnvelope failed;
+  int regenerationCalls = 0;
+
+  @override
+  Future<IeltsSpeakingReportEnvelope> getReport(
+    String practiceSessionId,
+  ) async => failed;
+
+  @override
+  Future<void> regenerateReport(IeltsSpeakingReportEnvelope envelope) async {
+    regenerationCalls++;
+  }
+
+  @override
+  Future<void> clearAccountState() async {}
+}
+
+final class _TransientFailureClient implements IeltsSpeakingReportClient {
+  _TransientFailureClient(this.failure, this.ready);
+
+  final IeltsSpeakingReportException failure;
+  final IeltsSpeakingReportEnvelope ready;
+  int calls = 0;
+
+  @override
+  Future<IeltsSpeakingReportEnvelope> getReport(
+    String practiceSessionId,
+  ) async {
+    if (calls++ == 0) {
+      throw failure;
+    }
+    return ready;
   }
 
   @override

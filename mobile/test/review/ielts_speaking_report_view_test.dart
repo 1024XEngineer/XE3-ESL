@@ -100,7 +100,7 @@ void main() {
     expect(find.textContaining('Band 0'), findsNothing);
   });
 
-  testWidgets('technical failure is not displayed as poor performance', (
+  testWidgets('technical failure stays in automatic recovery without retry', (
     tester,
   ) async {
     final controller = await _controllerFor('failed');
@@ -110,14 +110,14 @@ void main() {
     await tester.pump();
 
     expect(
-      find.byKey(const Key('ielts-speaking-report-failed')),
+      find.byKey(const Key('ielts-speaking-report-generating')),
       findsOneWidget,
     );
-    expect(find.textContaining('不代表你的 IELTS 口语表现较差'), findsOneWidget);
-    expect(
-      find.byKey(const Key('ielts-speaking-report-retry')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('ielts-speaking-report-retry')), findsNothing);
+    expect(find.byKey(const Key('ielts-speaking-report-failed')), findsNothing);
+    expect(find.textContaining('失败'), findsNothing);
+
+    controller.cancel('session_ielts_report_001');
   });
 }
 

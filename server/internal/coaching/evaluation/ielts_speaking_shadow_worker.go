@@ -216,6 +216,31 @@ func (worker *IELTSSpeakingShadowWorker) processClaim(
 	}
 	result, err := worker.engine.Evaluate(ctx, claim.Snapshot)
 	if err != nil {
+		if claim.AttemptCount >= worker.configuration.MaxAttempts {
+			fallback, fallbackErr := fallbackIELTSSpeakingShadowResult(
+				claim.Snapshot,
+				claim.Provider,
+				claim.Model,
+				"fallback-"+claim.ModuleRunID,
+			)
+			if fallbackErr == nil {
+				if completeErr := worker.repository.CompleteIELTSSpeakingShadow(
+					ctx,
+					claim,
+					fallback,
+				); completeErr != nil {
+					return "", completeErr
+				}
+				slog.Warn(
+					"IELTS Speaking report completed with safe fallback",
+					"evaluation_id",
+					claim.EvaluationID,
+					"cause",
+					classifyIELTSSpeakingShadowFailure(err).Code,
+				)
+				return IELTSSpeakingShadowRuntimeReady, nil
+			}
+		}
 		return worker.recordFailure(ctx, claim, err)
 	}
 	if result.Provider != nil &&

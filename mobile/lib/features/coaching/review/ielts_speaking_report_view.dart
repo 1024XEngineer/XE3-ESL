@@ -53,41 +53,27 @@ class _IeltsSpeakingReportPanelState extends State<IeltsSpeakingReportPanel> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final envelope = controller.envelope;
-    final errorMessage = controller.errorMessage;
     if (envelope == null) {
-      if (errorMessage != null) {
-        return _ReportFailure(
-          message: errorMessage,
-          retryable: controller.canRetry,
-          onRetry: controller.retry,
-        );
-      }
       return const _GeneratingReport();
     }
     return switch (envelope.evaluationStatus) {
       IeltsSpeakingReportEvaluationStatus.queued ||
-      IeltsSpeakingReportEvaluationStatus.running => _GeneratingReport(
-        message: errorMessage,
-        onRetry: controller.canRetry ? controller.retry : null,
-      ),
+      IeltsSpeakingReportEvaluationStatus.running => const _GeneratingReport(),
       IeltsSpeakingReportEvaluationStatus.ready => _ReadyReport(
         report: envelope.report!,
         onRepracticeQuestion: widget.onRepracticeQuestion,
       ),
-      IeltsSpeakingReportEvaluationStatus.failed => _ReportFailure(
-        message: '报告暂未生成，这不代表你的 IELTS 口语表现较差。',
-        retryable: controller.canRetry,
-        onRetry: controller.retry,
+      IeltsSpeakingReportEvaluationStatus.failed => const _GeneratingReport(
+        message: '报告正在自动恢复，无需重新操作',
       ),
     };
   }
 }
 
 class _GeneratingReport extends StatelessWidget {
-  const _GeneratingReport({this.message, this.onRetry});
+  const _GeneratingReport({this.message});
 
   final String? message;
-  final Future<void> Function()? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -105,73 +91,16 @@ class _GeneratingReport extends StatelessWidget {
             Text(
               message ?? 'IELTS 练习报告生成中',
               textAlign: TextAlign.center,
-              style: message == null
-                  ? SpeakUpDesign.cardTitle
-                  : const TextStyle(color: SpeakUpDesign.error),
-            ),
-            if (message == null) ...[
-              const SizedBox(height: 6),
-              Text(
-                '答题已经完成，正在整理 14 道题的文本证据。',
-                textAlign: TextAlign.center,
-                style: SpeakUpDesign.body,
-              ),
-            ],
-            if (onRetry != null) ...[
-              const SizedBox(height: 12),
-              OutlinedButton(
-                key: const Key('ielts-speaking-report-retry'),
-                onPressed: onRetry,
-                child: const Text('重新查询'),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ReportFailure extends StatelessWidget {
-  const _ReportFailure({
-    required this.message,
-    required this.retryable,
-    required this.onRetry,
-  });
-
-  final String message;
-  final bool retryable;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      key: const Key('ielts-speaking-report-failed'),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            const Icon(Icons.error_outline_rounded, color: SpeakUpDesign.error),
-            const SizedBox(height: 10),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: SpeakUpDesign.body,
+              style: SpeakUpDesign.cardTitle,
             ),
             const SizedBox(height: 6),
             Text(
-              retryable ? '本次模考已保留，可以重新生成报告。' : '本次模考已保留，可稍后在复盘中查看。',
+              message == null
+                  ? '答题已经完成，系统正在整理评分证据。完成后会自动显示报告。'
+                  : '本次模考已安全保存，系统会在后台继续处理。',
               textAlign: TextAlign.center,
-              style: SpeakUpDesign.meta,
+              style: SpeakUpDesign.body,
             ),
-            if (retryable) ...[
-              const SizedBox(height: 12),
-              OutlinedButton(
-                key: const Key('ielts-speaking-report-retry'),
-                onPressed: onRetry,
-                child: const Text('重新生成报告'),
-              ),
-            ],
           ],
         ),
       ),

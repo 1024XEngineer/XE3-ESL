@@ -341,6 +341,153 @@ func (engine *IELTSSpeakingShadowEngine) Evaluate(
 	return result, nil
 }
 
+// fallbackIELTSSpeakingShadowResult keeps a completed mock usable when the
+// external scorer exhausts its retries. It deliberately does not invent an
+// acoustic score: text-assessable criteria receive the most conservative
+// rubric descriptor and an exact, frozen transcript anchor, while
+// pronunciation remains blocked. The zero-confidence lineage makes the
+// degraded nature of the estimate explicit without losing the report.
+func fallbackIELTSSpeakingShadowResult(
+	snapshot EvidenceSnapshot,
+	provider string,
+	model string,
+	requestID string,
+) (IELTSSpeakingShadowResult, error) {
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		return IELTSSpeakingShadowResult{}, err
+	}
+	if prepared.result.Scoreability ==
+		IELTSSpeakingScoreabilityInsufficient {
+		return prepared.result, nil
+	}
+	evidence, err := fallbackIELTSSpeakingEvidence(prepared)
+	if err != nil {
+		return IELTSSpeakingShadowResult{}, err
+	}
+	result := prepared.result
+	result.Provider = &IELTSSpeakingShadowProviderLineage{
+		Provider:       provider,
+		Model:          model,
+		RequestID:      requestID,
+		PromptVersion:  IELTSSpeakingShadowPromptVersion,
+		ResponseSchema: IELTSSpeakingShadowProviderSchemaVersion,
+		RubricVersion:  IELTSSpeakingShadowRubricVersion,
+	}
+	result.Criteria = make(
+		[]IELTSSpeakingShadowCriterionResult,
+		0,
+		len(ieltsCriterionOrder),
+	)
+	for _, criterionID := range []IELTSCriterion{
+		IELTSCriterionFC,
+		IELTSCriterionLR,
+		IELTSCriterionGRA,
+	} {
+		template, _ := lookupIELTSFeedbackTemplate(
+			criterionID,
+			ieltsFindingImprovement,
+		)
+		finding := IELTSSpeakingShadowFinding{
+			Message:    template.Message,
+			Suggestion: "请结合完整题意扩展英文回答，并优先保证表达清晰、准确。",
+			Evidence:   []IELTSSpeakingShadowEvidence{evidence},
+		}
+		finding.ID = stableIELTSFindingID(
+			prepared.result.SnapshotID,
+			criterionID,
+			ieltsFindingImprovement,
+			finding,
+		)
+		criterion := IELTSSpeakingShadowCriterionResult{
+			CriterionID:     criterionID,
+			Scoreability:    IELTSSpeakingScoreabilityProvisional,
+			Gate:            IELTSSpeakingGateFeedbackOnly,
+			Coverage:        ratio(1, ieltsQuestionCount),
+			Confidence:      0,
+			EvidenceRefIDs:  []string{evidence.EvidenceRefID},
+			Strengths:       []IELTSSpeakingShadowFinding{},
+			Improvements:    []IELTSSpeakingShadowFinding{finding},
+			UpgradeExamples: []IELTSSpeakingShadowFinding{},
+		}
+		if criterionID == IELTSCriterionFC {
+			criterion.ReasonCodes = []IELTSSpeakingReasonCode{
+				IELTSReasonASRConfidenceUnavailable,
+				IELTSReasonFluencyTimingUnavailable,
+			}
+		} else {
+			band := 1
+			criterion.EstimatedBand = &band
+			criterion.BandDescriptor =
+				ieltsPublicBandDescriptions(criterionID)[0]
+			criterion.ReasonCodes = []IELTSSpeakingReasonCode{
+				IELTSReasonASRConfidenceUnavailable,
+			}
+		}
+		result.Criteria = append(result.Criteria, criterion)
+	}
+	result.Criteria = append(
+		result.Criteria,
+		blockedIELTSCriterion(
+			IELTSCriterionPR,
+			1,
+			IELTSReasonPronunciationArtifactUnavailable,
+		),
+	)
+	result.QuestionResults = ieltsSpeakingQuestionResults(
+		prepared,
+		result.Criteria,
+	)
+	if err := ValidateIELTSSpeakingShadowResult(snapshot, result); err != nil {
+		return IELTSSpeakingShadowResult{}, err
+	}
+	return result, nil
+}
+
+func fallbackIELTSSpeakingEvidence(
+	prepared preparedIELTSSpeakingShadow,
+) (IELTSSpeakingShadowEvidence, error) {
+	for _, question := range prepared.input.Questions {
+		if question.Response == nil ||
+			question.Response.EnglishWordCount == 0 {
+			continue
+		}
+		ref, refExists := prepared.refsByID[question.Response.EvidenceRefID]
+		turn, turnExists := prepared.turnsByID[question.Response.TurnID]
+		if !refExists || !turnExists {
+			continue
+		}
+		start := -1
+		end := -1
+		for offset, character := range turn.Transcript.Text {
+			english := unicode.In(character, unicode.Latin) &&
+				unicode.IsLetter(character)
+			if english && start < 0 {
+				start = offset
+			}
+			if start >= 0 && !english {
+				end = offset
+				break
+			}
+		}
+		if start >= 0 && end < 0 {
+			end = len(turn.Transcript.Text)
+		}
+		if start < ref.TranscriptSpan.StartUTF8Byte ||
+			end <= start || end > ref.TranscriptSpan.EndUTF8Byte {
+			continue
+		}
+		return IELTSSpeakingShadowEvidence{
+			EvidenceRefID:   ref.EvidenceRefID,
+			TurnID:          ref.TurnID,
+			StartUTF8Byte:   start,
+			EndUTF8Byte:     end,
+			OriginalExcerpt: turn.Transcript.Text[start:end],
+		}, nil
+	}
+	return IELTSSpeakingShadowEvidence{}, ErrInvalidIELTSSpeakingShadow
+}
+
 func (engine *IELTSSpeakingShadowEngine) withAcoustics(
 	ctx context.Context,
 	snapshot EvidenceSnapshot,
@@ -1138,6 +1285,23 @@ func resolveIELTSProviderAnchor(
 	prepared preparedIELTSSpeakingShadow,
 	anchor ieltsProviderAnchor,
 ) (IELTSSpeakingShadowEvidence, error) {
+	resolved, err := resolveStrictIELTSProviderAnchor(prepared, anchor)
+	if err == nil {
+		return resolved, nil
+	}
+	// Providers occasionally copy an exact quote but pair it with the adjacent
+	// response's evidence_ref_id (or an occurrence number that belongs to that
+	// adjacent response). The quote is still trustworthy when it has exactly
+	// one eligible location in the frozen snapshot. Canonicalize that unique
+	// location instead of discarding the entire report. Ambiguous or inexact
+	// quotes remain invalid and never become evidence.
+	return resolveUniqueIELTSProviderQuote(prepared, anchor.Quote)
+}
+
+func resolveStrictIELTSProviderAnchor(
+	prepared preparedIELTSSpeakingShadow,
+	anchor ieltsProviderAnchor,
+) (IELTSSpeakingShadowEvidence, error) {
 	ref, exists := prepared.refsByID[anchor.EvidenceRefID]
 	_, allowed := prepared.responseRefs[anchor.EvidenceRefID]
 	turn, turnExists := prepared.turnsByID[ref.TurnID]
@@ -1168,6 +1332,65 @@ func resolveIELTSProviderAnchor(
 		EndUTF8Byte:     end,
 		OriginalExcerpt: turn.Transcript.Text[start:end],
 	}, nil
+}
+
+func resolveUniqueIELTSProviderQuote(
+	prepared preparedIELTSSpeakingShadow,
+	quote string,
+) (IELTSSpeakingShadowEvidence, error) {
+	if !validInterviewText(quote, ieltsMaximumFindingText) {
+		return IELTSSpeakingShadowEvidence{},
+			ErrInvalidIELTSSpeakingShadow
+	}
+	var unique IELTSSpeakingShadowEvidence
+	matches := 0
+	for _, question := range prepared.input.Questions {
+		response := question.Response
+		if response == nil {
+			continue
+		}
+		ref, exists := prepared.refsByID[response.EvidenceRefID]
+		turn, turnExists := prepared.turnsByID[response.TurnID]
+		_, allowed := prepared.responseRefs[response.EvidenceRefID]
+		if !exists || !turnExists || !allowed {
+			continue
+		}
+		searchStart := ref.TranscriptSpan.StartUTF8Byte
+		searchEnd := ref.TranscriptSpan.EndUTF8Byte
+		for searchStart < searchEnd {
+			relative := strings.Index(
+				turn.Transcript.Text[searchStart:searchEnd],
+				quote,
+			)
+			if relative < 0 {
+				break
+			}
+			start := searchStart + relative
+			end := start + len(quote)
+			if end > searchEnd ||
+				!utf8.ValidString(turn.Transcript.Text[start:end]) {
+				break
+			}
+			matches++
+			if matches > 1 {
+				return IELTSSpeakingShadowEvidence{},
+					ErrInvalidIELTSSpeakingShadow
+			}
+			unique = IELTSSpeakingShadowEvidence{
+				EvidenceRefID:   ref.EvidenceRefID,
+				TurnID:          ref.TurnID,
+				StartUTF8Byte:   start,
+				EndUTF8Byte:     end,
+				OriginalExcerpt: turn.Transcript.Text[start:end],
+			}
+			searchStart = end
+		}
+	}
+	if matches != 1 {
+		return IELTSSpeakingShadowEvidence{},
+			ErrInvalidIELTSSpeakingShadow
+	}
+	return unique, nil
 }
 
 func ieltsSpeakingQuestionResults(

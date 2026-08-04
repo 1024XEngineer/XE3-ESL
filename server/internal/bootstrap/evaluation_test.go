@@ -506,8 +506,9 @@ func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 			reason: evaluationtransport.ReasonVersionConflict,
 		},
 		{
-			code:   "runtime_configuration_changed",
-			reason: evaluationtransport.ReasonVersionConflict,
+			code:          "runtime_configuration_changed",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
 		},
 		{
 			code:          "provider_canceled",

@@ -149,6 +149,40 @@ void main() {
       );
     },
   );
+
+  testWidgets('failed report revisions are presented as automatic recovery', (
+    tester,
+  ) async {
+    final now = DateTime.utc(2026, 7, 30, 9, 10);
+    final item = IeltsSpeakingReportIndexItem(
+      reportKind: IeltsSpeakingReportKind.fullMock,
+      practiceSessionId: 'session_ielts_recovering',
+      evaluationId: '7b000101-0000-4000-8000-000000000004',
+      evaluationRevisionId: 'a1000101-0000-4000-8000-000000000004',
+      revision: 1,
+      evaluationStatus: IeltsSpeakingReportEvaluationStatus.failed,
+      isFinal: false,
+      statusUrl:
+          '/v1/practice-sessions/session_ielts_recovering/'
+          'ielts-speaking-report',
+      createdAt: now.subtract(const Duration(minutes: 10)),
+      updatedAt: now,
+    );
+    final indexController = IeltsSpeakingReportIndexController(
+      client: _IndexClient([item]),
+    );
+    addTearDown(indexController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReviewPage(ieltsSpeakingReportIndexController: indexController),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('报告自动恢复中'), findsOneWidget);
+    expect(find.textContaining('报告生成失败'), findsNothing);
+  });
 }
 
 final class _IndexClient implements IeltsSpeakingReportIndexClient {

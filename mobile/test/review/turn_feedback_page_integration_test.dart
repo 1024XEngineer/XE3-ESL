@@ -157,7 +157,7 @@ void main() {
     },
   );
 
-  testWidgets('IELTS Part 2 English answer enters Part 3 without a report stop', (
+  testWidgets('IELTS Part 2 English answer enters Part 3 after confirmation', (
     tester,
   ) async {
     final feedback = _practiceFeedback();
@@ -195,9 +195,19 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(client.calls, 1);
+    expect(
+      find.byKey(const Key('ielts-mock-part-2-transition')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
+    await tester.pumpAndSettle();
+
     expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
     expect(find.text('Part 3 · Discussion'), findsOneWidget);
-    expect(find.byKey(const Key('ielts-part2-practice-complete')), findsNothing);
+    expect(
+      find.byKey(const Key('ielts-part2-practice-complete')),
+      findsNothing,
+    );
     expect(
       feedbackController.projectionFor(
         'practice:practice_session_001:practice_turn_001',
@@ -274,8 +284,18 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
+    expect(
+      find.byKey(const Key('ielts-mock-part-2-transition')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
+    await tester.pumpAndSettle();
+
     expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
-    expect(find.byKey(const Key('ielts-part2-practice-complete')), findsNothing);
+    expect(
+      find.byKey(const Key('ielts-part2-practice-complete')),
+      findsNothing,
+    );
     expect(find.textContaining('证据不足'), findsNothing);
     expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
   });

@@ -127,6 +127,7 @@ final class WireIeltsSpeakingReportClient
         throw const IeltsSpeakingReportException(
           kind: IeltsSpeakingReportFailureKind.conflict,
           statusCode: HttpStatus.conflict,
+          retryable: true,
         );
       default:
         throw _unexpectedStatus(response.statusCode);

@@ -1185,9 +1185,14 @@ func interviewShadowFailure(
 		return evaluationtransport.EvaluationFailure{
 			ReasonCode: evaluationtransport.ReasonEvidenceRefInvalid,
 		}
-	case "version_conflict", "runtime_configuration_changed":
+	case "version_conflict":
 		return evaluationtransport.EvaluationFailure{
 			ReasonCode: evaluationtransport.ReasonVersionConflict,
+		}
+	case "runtime_configuration_changed":
+		return evaluationtransport.EvaluationFailure{
+			ReasonCode: evaluationtransport.ReasonInternalRetryable,
+			Retryable:  true,
 		}
 	case "provider_canceled",
 		"provider_timeout",

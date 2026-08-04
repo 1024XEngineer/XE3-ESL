@@ -51,4 +51,6 @@ import "embed"
 //go:embed 000063_speech_feedback_acoustic_provider_boundary.*.sql
 //go:embed 000064_evaluation_ielts_speaking_prompt_v2.*.sql
 //go:embed 000065_evaluation_ielts_speaking_prompt_v3.*.sql
+//go:embed 000066_evaluation_ielts_speaking_prompt_v4.*.sql
+//go:embed 000067_evaluation_ielts_speaking_acoustic_payload.*.sql
 var Files embed.FS

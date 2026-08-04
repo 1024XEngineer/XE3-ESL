@@ -68,7 +68,7 @@ void main() {
           (
             status: HttpStatus.conflict,
             kind: IeltsSpeakingReportFailureKind.conflict,
-            retryable: false,
+            retryable: true,
           ),
           (
             status: HttpStatus.serviceUnavailable,

@@ -201,6 +201,51 @@ void main() {
     transport.expectDone();
   });
 
+  test('uploads a full 120-second IELTS Part 2 WAV', () async {
+    const fullPart2WavBytes = 3_840_044;
+    final audioFile = await _temporaryAudio(sizeBytes: fullPart2WavBytes);
+    addTearDown(() => audioFile.parent.delete(recursive: true));
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path:
+            '/v1/voice-practice-sessions/$_sessionId/questions/'
+            '$_questionId/transcription-candidates',
+        verify: (request) {
+          expect(request.rawFilePath, audioFile.path);
+          expect(request.headers[HttpHeaders.contentTypeHeader], 'audio/wav');
+          expect(request.headers['Idempotency-Key'], 'part-2-turn');
+        },
+        response: _json(HttpStatus.created, {
+          'candidate_id': _candidateId,
+          'practice_session_id': _sessionId,
+          'question_id': _questionId,
+          'respondent_participant_id': 'participant-user',
+          'transcript_id': 'part-2-transcript',
+          'evidence_version': 1,
+          'transcript': 'I would like to describe my experience.',
+          'created_at': _timestamp,
+        }),
+      ),
+    ]);
+
+    final candidate = await _client(transport).transcribe(
+      PracticeTranscriptionRequest(
+        sessionId: _sessionId,
+        questionId: _questionId,
+        clientTurnId: 'part-2-turn',
+        audio: RecordedPracticeAudio(
+          path: audioFile.path,
+          contentType: 'audio/wav',
+          sizeBytes: fullPart2WavBytes,
+        ),
+      ),
+    );
+
+    expect(candidate.id, _candidateId);
+    transport.expectDone();
+  });
+
   test('submits text through the combined durable answer route', () async {
     const answer = 'I led the rollout and communicated the risk.';
     final transport = _Transport([
@@ -685,12 +730,12 @@ void main() {
   });
 }
 
-Future<File> _temporaryAudio() async {
+Future<File> _temporaryAudio({int sizeBytes = 64044}) async {
   final directory = await Directory.systemTemp.createTemp(
     'speakup-wire-audio-',
   );
   final file = File('${directory.path}/turn.wav');
-  await file.writeAsBytes(List<int>.filled(64044, 1));
+  await file.writeAsBytes(List<int>.filled(sizeBytes, 1));
   return file;
 }
 

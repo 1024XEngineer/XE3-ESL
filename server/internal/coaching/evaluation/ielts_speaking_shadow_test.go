@@ -263,7 +263,7 @@ func TestIELTSSpeakingShadowRejectsNonFrozenModelVersion(t *testing.T) {
 	}
 }
 
-func TestIELTSSpeakingShadowRejectsCrossTurnAnchor(t *testing.T) {
+func TestIELTSSpeakingShadowRepairsUniquelyMispairedAnchor(t *testing.T) {
 	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
 	prepared, err := prepareIELTSSpeakingShadow(snapshot)
 	if err != nil {
@@ -272,12 +272,34 @@ func TestIELTSSpeakingShadowRejectsCrossTurnAnchor(t *testing.T) {
 	payload := validIELTSProviderPayload(prepared.input)
 	payload.Criteria[0].Strengths[0].Evidence[0].EvidenceRefID =
 		prepared.input.Questions[1].Response.EvidenceRefID
+	result, err := normalizeIELTSSpeakingProviderResult(
+		prepared,
+		ieltsProviderResult(t, payload),
+	)
+	if err != nil {
+		t.Fatalf("repair unique cross-turn anchor: %v", err)
+	}
+	if got := result.Criteria[0].Strengths[0].Evidence[0].EvidenceRefID; got != prepared.input.Questions[0].Response.EvidenceRefID {
+		t.Fatalf("repaired evidence_ref_id = %q", got)
+	}
+}
+
+func TestIELTSSpeakingShadowRejectsAmbiguousMispairedAnchor(t *testing.T) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := validIELTSProviderPayload(prepared.input)
+	anchor := &payload.Criteria[0].Strengths[0].Evidence[0]
+	anchor.EvidenceRefID = "missing-evidence-ref"
+	anchor.Quote = "I explain"
 	_, err = normalizeIELTSSpeakingProviderResult(
 		prepared,
 		ieltsProviderResult(t, payload),
 	)
 	if !errors.Is(err, ErrInvalidIELTSSpeakingShadow) {
-		t.Fatalf("cross-turn anchor error = %v", err)
+		t.Fatalf("ambiguous cross-turn anchor error = %v", err)
 	}
 }
 

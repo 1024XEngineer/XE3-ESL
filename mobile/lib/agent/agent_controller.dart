@@ -148,6 +148,7 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void>? _initializationFuture;
   Future<void>? _accountCleanupFuture;
   Future<void>? _recorderStartFuture;
+  Future<RecordedPracticeAudio>? _recorderStopFuture;
   Future<void>? _stopRecordingFuture;
   Timer? _recordingLimitTimer;
   StreamSubscription<void>? _mediaCompletionSubscription;
@@ -191,6 +192,81 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
   bool get hasPendingPracticeAudio => _pendingPracticeAudio != null;
   Goal? get activeGoal => _activeGoal;
   SceneDefinition? get scene => _activeScene;
+
+  /// Resolves as soon as the active capture has released the shared recorder.
+  /// Network transcription may still continue after this Future completes.
+  Future<void> waitForPracticeRecorderRelease() async {
+    final operation = _recorderStopFuture;
+    if (operation == null) {
+      return;
+    }
+    try {
+      await operation;
+    } on Object {
+      // The caller only needs the recorder lease to be released. The original
+      // recording flow owns and reports its transport failure separately.
+    }
+  }
+
+  /// Adopts a locally buffered answer for the current practice question.
+  ///
+  /// IELTS Part 3 uses this after it records while the previous Part 2 answer
+  /// is still being transcribed. Returning true transfers audio ownership to
+  /// this controller; false leaves ownership with the caller.
+  bool submitBufferedPracticeAudio(RecordedPracticeAudio audio) {
+    final practice = practiceClient;
+    final sessionId = _practiceSessionId;
+    final question = _currentQuestion;
+    if (practice == null ||
+        sessionId == null ||
+        question == null ||
+        _disposed ||
+        isBusy ||
+        _isSessionCompleted ||
+        _pendingPracticeAudio != null ||
+        _recordingState != PracticeRecordingState.idle) {
+      return false;
+    }
+    final generation = ++_practiceGeneration;
+    final pending = _PendingPracticeAudio(
+      audio: audio,
+      sessionId: sessionId,
+      questionId: question.id,
+      clientTurnId: _newClientId('turn'),
+    );
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+    _retry = null;
+    _errorMessage = null;
+    _pendingPracticeAudio = pending;
+    _recordingState = PracticeRecordingState.transcribing;
+    final fence = _captureOperationFence(
+      threadId: _threadId,
+      practiceGeneration: generation,
+      practiceSessionId: sessionId,
+      questionId: question.id,
+    );
+    notifyListeners();
+    final operation = _transcribePendingPracticeAudio(
+      practice: practice,
+      pending: pending,
+      fence: fence,
+    );
+    _stopRecordingFuture = operation;
+    unawaited(
+      operation.whenComplete(() {
+        if (identical(_stopRecordingFuture, operation)) {
+          _stopRecordingFuture = null;
+        }
+        if (_isOperationCurrent(fence)) {
+          notifyListeners();
+        }
+      }),
+    );
+    return true;
+  }
+
   List<AgentMessage> get messages => List.unmodifiable(_messages);
   List<AgentMessage> get practiceMessages =>
       List.unmodifiable(_practiceMessages);
@@ -2663,7 +2739,15 @@ final class AgentController extends ChangeNotifier with WidgetsBindingObserver {
     _recordingState = PracticeRecordingState.transcribing;
     notifyListeners();
     try {
-      audio = await recorder.stop();
+      final stopOperation = recorder.stop();
+      _recorderStopFuture = stopOperation;
+      try {
+        audio = await stopOperation;
+      } finally {
+        if (identical(_recorderStopFuture, stopOperation)) {
+          _recorderStopFuture = null;
+        }
+      }
       if (!_isOperationCurrent(fence)) {
         return;
       }

@@ -81,6 +81,36 @@ func TestIELTSSpeakingAcousticSourceKeepsValidPartialEvidence(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingAcousticSourceSkipsMissingAndPendingEvidence(
+	t *testing.T,
+) {
+	reader := &ieltsSpeakingFeedbackReaderStub{
+		referenceByTurn: map[string]string{
+			"turn_pending": "feedback_pending",
+		},
+		feedbackByID: map[string]review.SpeechFeedback{
+			"feedback_pending": {
+				FeedbackStatus: review.SpeechFeedbackRunning,
+			},
+		},
+	}
+	values, err := (&ieltsSpeakingAcousticSource{feedback: reader}).
+		GetIELTSSpeakingAcoustics(
+			context.Background(),
+			"10000000-0000-4000-8000-000000000001",
+			[]evaluation.IELTSSpeakingAcousticRequest{
+				{TurnID: "turn_text", EvidenceRefID: "evidence_text"},
+				{
+					TurnID:        "turn_pending",
+					EvidenceRefID: "evidence_pending",
+				},
+			},
+		)
+	if err != nil || len(values) != 0 {
+		t.Fatalf("acoustics = %#v; err = %v", values, err)
+	}
+}
+
 type ieltsSpeakingFeedbackReaderStub struct {
 	feedback        review.SpeechFeedback
 	referenceByTurn map[string]string
@@ -94,6 +124,9 @@ func (stub *ieltsSpeakingFeedbackReaderStub) FindSpeechFeedbackByConversationTur
 ) (review.SpeechFeedbackReference, bool, error) {
 	if id, ok := stub.referenceByTurn[turnID]; ok {
 		return review.SpeechFeedbackReference{SpeechFeedbackID: id}, true, nil
+	}
+	if stub.referenceByTurn != nil {
+		return review.SpeechFeedbackReference{}, false, nil
 	}
 	return review.SpeechFeedbackReference{
 		SpeechFeedbackID: "20000000-0000-4000-8000-000000000001",

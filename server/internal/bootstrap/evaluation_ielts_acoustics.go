@@ -51,7 +51,10 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 			return nil, err
 		}
 		if !found {
-			return nil, evaluation.ErrIELTSSpeakingAcousticsPending
+			// Text answers and voice turns whose optional feedback projection has
+			// not been created are still valid IELTS evidence. The report must not
+			// wait forever for an acoustic row that may never exist.
+			continue
 		}
 		feedback, err := source.feedback.GetSpeechFeedback(
 			ctx,
@@ -63,7 +66,10 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 		}
 		switch feedback.FeedbackStatus {
 		case review.SpeechFeedbackQueued, review.SpeechFeedbackRunning:
-			return nil, evaluation.ErrIELTSSpeakingAcousticsPending
+			// Acoustic feedback enriches a report when it is already available;
+			// it is not a report-generation prerequisite. This also prevents a
+			// slow ISE request from holding the completed mock report hostage.
+			continue
 		case review.SpeechFeedbackFailed:
 			continue
 		case review.SpeechFeedbackReady:
