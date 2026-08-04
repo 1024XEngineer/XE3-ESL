@@ -4,8 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	review "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
 func TestIELTSSpeakingAcousticSourceAcceptsSentenceAssessment(t *testing.T) {
@@ -28,7 +27,7 @@ func TestIELTSSpeakingAcousticSourceAcceptsSentenceAssessment(t *testing.T) {
 		GetIELTSSpeakingAcoustics(
 			context.Background(),
 			"10000000-0000-4000-8000-000000000001",
-			[]evaluation.IELTSSpeakingAcousticRequest{{
+			[]review.IELTSSpeakingAcousticRequest{{
 				TurnID:        "turn_1",
 				EvidenceRefID: "evidence_1",
 			}},
@@ -71,7 +70,7 @@ func TestIELTSSpeakingAcousticSourceKeepsValidPartialEvidence(t *testing.T) {
 		GetIELTSSpeakingAcoustics(
 			context.Background(),
 			"10000000-0000-4000-8000-000000000001",
-			[]evaluation.IELTSSpeakingAcousticRequest{
+			[]review.IELTSSpeakingAcousticRequest{
 				{TurnID: "turn_ready", EvidenceRefID: "evidence_ready"},
 				{TurnID: "turn_failed", EvidenceRefID: "evidence_failed"},
 			},
@@ -98,7 +97,7 @@ func TestIELTSSpeakingAcousticSourceSkipsMissingAndPendingEvidence(
 		GetIELTSSpeakingAcoustics(
 			context.Background(),
 			"10000000-0000-4000-8000-000000000001",
-			[]evaluation.IELTSSpeakingAcousticRequest{
+			[]review.IELTSSpeakingAcousticRequest{
 				{TurnID: "turn_text", EvidenceRefID: "evidence_text"},
 				{
 					TurnID:        "turn_pending",

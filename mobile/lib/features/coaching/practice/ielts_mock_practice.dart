@@ -2042,7 +2042,6 @@ class _RecorderDock extends StatelessWidget {
     final state = stateOverride ?? controller.recordingState;
     final phase = switch (state) {
       PracticeRecordingState.idle ||
-      PracticeRecordingState.reviewFailed ||
       PracticeRecordingState.completed => VoiceCapturePhase.idle,
       PracticeRecordingState.starting => VoiceCapturePhase.starting,
       PracticeRecordingState.recording => VoiceCapturePhase.recording,

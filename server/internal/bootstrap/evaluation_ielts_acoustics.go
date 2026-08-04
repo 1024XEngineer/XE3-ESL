@@ -6,8 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
 type ieltsSpeakingFeedbackReader interface {
@@ -15,12 +14,12 @@ type ieltsSpeakingFeedbackReader interface {
 		context.Context,
 		string,
 		string,
-	) (review.SpeechFeedbackReference, bool, error)
+	) (evaluation.SpeechFeedbackReference, bool, error)
 	GetSpeechFeedback(
 		context.Context,
 		string,
 		string,
-	) (review.SpeechFeedback, error)
+	) (evaluation.SpeechFeedback, error)
 }
 
 type ieltsSpeakingAcousticSource struct {
@@ -65,20 +64,20 @@ func (source *ieltsSpeakingAcousticSource) GetIELTSSpeakingAcoustics(
 			return nil, err
 		}
 		switch feedback.FeedbackStatus {
-		case review.SpeechFeedbackQueued, review.SpeechFeedbackRunning:
+		case evaluation.SpeechFeedbackQueued, evaluation.SpeechFeedbackRunning:
 			// Acoustic feedback enriches a report when it is already available;
 			// it is not a report-generation prerequisite. This also prevents a
 			// slow ISE request from holding the completed mock report hostage.
 			continue
-		case review.SpeechFeedbackFailed:
+		case evaluation.SpeechFeedbackFailed:
 			continue
-		case review.SpeechFeedbackReady:
+		case evaluation.SpeechFeedbackReady:
 		default:
 			return nil, errors.New("bootstrap: unsupported speech feedback status")
 		}
 		assessment := feedback.AcousticAssessment
-		if assessment.Pronunciation != review.SpeechFeedbackAssessed ||
-			assessment.AcousticFluency != review.SpeechFeedbackAssessed {
+		if assessment.Pronunciation != evaluation.SpeechFeedbackAssessed ||
+			assessment.AcousticFluency != evaluation.SpeechFeedbackAssessed {
 			continue
 		}
 		pronunciation := assessment.PronunciationScore

@@ -248,13 +248,14 @@ void main() {
     'Part 2 section hides the Cue Card after formal recording starts',
     (tester) async {
       final now = DateTime.utc(2026, 8, 4, 8);
+      final practice = _IeltsPracticeClient(
+        initialCompleted: 0,
+        turnLimit: 6,
+        scenarioModel: 'IELTS_SPEAKING_PART_2',
+      );
       final controller = AgentController(
         client: FakeAgentClient(),
-        practiceClient: _IeltsPracticeClient(
-          initialCompleted: 0,
-          turnLimit: 6,
-          scenarioModel: 'IELTS_SPEAKING_PART_2',
-        ),
+        practiceClient: practice,
         recorder: _Recorder(),
       );
       final store = _MemoryProgressStore(
@@ -267,7 +268,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(_ieltsPart2Scene);
+      await _activatePractice(controller, practice, _ieltsPart2Scene);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -459,7 +460,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(_ieltsScene);
+      await _activatePractice(controller, practice, _ieltsScene);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -536,7 +537,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -577,7 +578,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -632,7 +633,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(_ieltsScene);
+    await _activatePractice(controller, practice, _ieltsScene);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -1485,7 +1486,6 @@ final class _IeltsPracticeClient implements PracticeClient {
     this.turnLimit = 14,
     this.transcriptionFailuresRemaining = 0,
     this.transcriptionText,
-    this.scenarioType = 'EXAM',
     this.scenarioModel = 'IELTS_SPEAKING_FULL_MOCK',
   }) : completed = initialCompleted;
 
@@ -1495,7 +1495,6 @@ final class _IeltsPracticeClient implements PracticeClient {
   final int turnLimit;
   int transcriptionFailuresRemaining;
   final String? transcriptionText;
-  final String scenarioType;
   final String scenarioModel;
   int completed;
   SceneDefinition? activeScene;
