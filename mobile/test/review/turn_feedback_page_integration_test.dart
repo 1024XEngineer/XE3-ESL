@@ -157,7 +157,7 @@ void main() {
     },
   );
 
-  testWidgets('IELTS Part 2 English answer shows the shared feedback entry', (
+  testWidgets('IELTS Part 2 English answer enters Part 3 after confirmation', (
     tester,
   ) async {
     final feedback = _practiceFeedback();
@@ -196,29 +196,25 @@ void main() {
 
     expect(client.calls, 1);
     expect(
-      find.byKey(const Key('ielts-part2-practice-complete')),
+      find.byKey(const Key('ielts-mock-part-2-transition')),
       findsOneWidget,
     );
+    await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
+    expect(find.text('Part 3 · Discussion'), findsOneWidget);
     expect(
-      find.byKey(const Key('ielts-part2-answer-feedback')),
-      findsOneWidget,
+      find.byKey(const Key('ielts-part2-practice-complete')),
+      findsNothing,
     );
-    expect(find.text('I manage the release.'), findsOneWidget);
     expect(
       feedbackController.projectionFor(
         'practice:practice_session_001:practice_turn_001',
       ),
       isNotNull,
     );
-    expect(find.text('评分与纠错'), findsOneWidget);
-    expect(
-      find.byKey(
-        const ValueKey(
-          'ielts-speech-feedback-practice:practice_session_001:practice_turn_001',
-        ),
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('评分与纠错'), findsNothing);
   });
 
   testWidgets('IELTS keeps a Chinese answer but hides insufficient feedback', (
@@ -288,10 +284,17 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('然后，黄天宇主要来把这个。'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-mock-part-2-transition')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
     expect(
       find.byKey(const Key('ielts-part2-practice-complete')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.textContaining('证据不足'), findsNothing);
     expect(find.byType(SpeechFeedbackDisclosure), findsNothing);

@@ -175,7 +175,9 @@ final class WirePracticeClient
     this._transcriptionTimeout,
   );
 
-  static const _maximumAudioBytes = 2000044;
+  // Matches the server-owned media contract. A 120-second, 16 kHz, mono WAV
+  // is about 3.84 MB and must remain uploadable for IELTS Part 2.
+  static const _maximumAudioBytes = 7_400_000;
 
   final Uri _baseUri;
   final TrustedIdentityHttpOrigin _trustedOrigin;

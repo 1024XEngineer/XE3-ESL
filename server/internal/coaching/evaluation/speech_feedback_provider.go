@@ -115,7 +115,7 @@ Return one JSON object only: {"items":[...]}.
 Each item has exactly: kind, explanation, and suggested_text when required.
 kind is CORRECTION, STRENGTH, IMPROVEMENT, or RECOMMENDED_EXPRESSION.
 CORRECTION, IMPROVEMENT, and RECOMMENDED_EXPRESSION require non-empty suggested_text. STRENGTH must omit suggested_text.
-Use only the confirmed text. Do not score, grade, infer pronunciation, fluency, confidence, audio quality, intent, or facts not present in the transcript.
+Use only the confirmed text. When Chinese and English are mixed, assess only the English spans; do not treat Chinese wording as an English error or rewrite it as if it were English evidence. Do not score, grade, infer pronunciation, fluency, confidence, audio quality, intent, or facts not present in the transcript.
 Return at most 8 items and no unknown fields.`
 
 type SpeechFeedbackDraftItem struct {

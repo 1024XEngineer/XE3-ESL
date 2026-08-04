@@ -304,6 +304,49 @@ func TestEvaluationHTTPApplicationReturnsReevaluationReplayHonestly(
 	}
 }
 
+func TestEvaluationHTTPApplicationReevaluatesIELTSSpeakingReport(
+	t *testing.T,
+) {
+	t.Parallel()
+	current := evaluationTestIELTSValue(evaluation.StatusFailed)
+	queued := evaluationTestIELTSValue(evaluation.StatusQueued)
+	queued.Revision.ID = "30000000-0000-4000-8000-000000000001"
+	queued.Revision.Number = 2
+	queued.Revision.SupersedesRevisionID = current.Revision.ID
+	service := &evaluationServiceStub{
+		getResult:        current,
+		reevaluateResult: queued,
+	}
+	application := &evaluationHTTPApplication{
+		evaluations:        service,
+		ieltsConfiguration: evaluationTestIELTSRuntimeConfiguration(t),
+	}
+	accepted, err := application.Reevaluate(
+		context.Background(),
+		requestcontext.Actor{
+			UserID: "00000000-0000-4000-8000-000000000001",
+		},
+		current.ID,
+		evaluation.ReevaluateRequest{
+			Channels: []evaluation.Channel{
+				evaluation.ChannelScene,
+			},
+			SceneStrategyRef: evaluation.IELTSSpeakingShadowStrategyRef,
+			PipelineVersion: evaluation.
+				IELTSSpeakingShadowPipelineVersion,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.reevaluateCalls != 1 || accepted.Replayed ||
+		accepted.EvaluationRevisionID != queued.Revision.ID ||
+		accepted.SupersedesRevisionID != current.Revision.ID ||
+		accepted.EvaluationStatus != evaluation.StatusQueued {
+		t.Fatalf("accepted = %#v, calls = %d", accepted, service.reevaluateCalls)
+	}
+}
+
 func TestEvaluationHTTPApplicationRejectsReevaluationBeforeMutation(
 	t *testing.T,
 ) {
@@ -463,8 +506,9 @@ func TestInterviewShadowFailureDerivesStableRetryability(t *testing.T) {
 			reason: evaluationtransport.ReasonVersionConflict,
 		},
 		{
-			code:   "runtime_configuration_changed",
-			reason: evaluationtransport.ReasonVersionConflict,
+			code:          "runtime_configuration_changed",
+			reason:        evaluationtransport.ReasonInternalRetryable,
+			wantRetryable: true,
 		},
 		{
 			code:          "provider_canceled",

@@ -6,6 +6,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_index.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_index_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
 import 'package:speakup/features/coaching/review/review_history_client.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 
@@ -15,6 +20,8 @@ class ReviewPage extends StatefulWidget {
     this.previewMode = false,
     this.practiceAvailable = true,
     this.historyController,
+    this.ieltsSpeakingReportController,
+    this.ieltsSpeakingReportIndexController,
     this.autoload = true,
     super.key,
   });
@@ -23,6 +30,8 @@ class ReviewPage extends StatefulWidget {
   final bool previewMode;
   final bool practiceAvailable;
   final ReviewHistoryController? historyController;
+  final IeltsSpeakingReportController? ieltsSpeakingReportController;
+  final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
   final bool autoload;
 
   @override
@@ -34,8 +43,9 @@ class _ReviewPageState extends State<ReviewPage> {
   void initState() {
     super.initState();
     widget.historyController?.addListener(_rebuild);
+    widget.ieltsSpeakingReportIndexController?.addListener(_rebuild);
     if (widget.autoload) {
-      unawaited(widget.historyController?.refresh());
+      unawaited(_refresh());
     }
   }
 
@@ -49,11 +59,20 @@ class _ReviewPageState extends State<ReviewPage> {
         unawaited(widget.historyController?.refresh());
       }
     }
+    if (oldWidget.ieltsSpeakingReportIndexController !=
+        widget.ieltsSpeakingReportIndexController) {
+      oldWidget.ieltsSpeakingReportIndexController?.removeListener(_rebuild);
+      widget.ieltsSpeakingReportIndexController?.addListener(_rebuild);
+      if (widget.autoload) {
+        unawaited(widget.ieltsSpeakingReportIndexController?.refresh());
+      }
+    }
   }
 
   @override
   void dispose() {
     widget.historyController?.removeListener(_rebuild);
+    widget.ieltsSpeakingReportIndexController?.removeListener(_rebuild);
     super.dispose();
   }
 
@@ -62,7 +81,11 @@ class _ReviewPageState extends State<ReviewPage> {
   }
 
   Future<void> _refresh() async {
-    await widget.historyController?.refresh();
+    await Future.wait<void>([
+      if (widget.historyController != null) widget.historyController!.refresh(),
+      if (widget.ieltsSpeakingReportIndexController != null)
+        widget.ieltsSpeakingReportIndexController!.refresh(),
+    ]);
   }
 
   void _openDetail(ReviewHistoryItem item) {
@@ -73,12 +96,43 @@ class _ReviewPageState extends State<ReviewPage> {
     );
   }
 
+  void _openIeltsReport(IeltsSpeakingReportIndexItem item) {
+    final controller = widget.ieltsSpeakingReportController;
+    if (controller == null ||
+        item.reportKind == IeltsSpeakingReportKind.interview) {
+      return;
+    }
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              _IeltsReportDetailPage(item: item, controller: controller),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.historyController;
     final items = controller?.items ?? const <ReviewHistoryItem>[];
-    final initialLoading = items.isEmpty && (controller?.isLoading ?? false);
-    final initialError = items.isEmpty ? controller?.errorMessage : null;
+    final ieltsController = widget.ieltsSpeakingReportIndexController;
+    final reportItems =
+        ieltsController?.items ?? const <IeltsSpeakingReportIndexItem>[];
+    final interviewItems = reportItems
+        .where((item) => item.reportKind == IeltsSpeakingReportKind.interview)
+        .toList(growable: false);
+    final ieltsItems = reportItems
+        .where((item) => item.reportKind == IeltsSpeakingReportKind.fullMock)
+        .toList(growable: false);
+    final hasItems = items.isNotEmpty || reportItems.isNotEmpty;
+    final initialLoading =
+        !hasItems &&
+        ((controller?.isLoading ?? false) ||
+            (ieltsController?.isLoading ?? false));
+    final initialError = !hasItems
+        ? ieltsController?.errorMessage ?? controller?.errorMessage
+        : null;
     return Scaffold(
       key: const Key('review-page'),
       appBar: widget.showBackButton
@@ -120,7 +174,7 @@ class _ReviewPageState extends State<ReviewPage> {
                     ),
                   ),
                 )
-              else if (items.isEmpty)
+              else if (!hasItems)
                 SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   sliver: SliverToBoxAdapter(
@@ -130,21 +184,35 @@ class _ReviewPageState extends State<ReviewPage> {
                     ),
                   ),
                 )
-              else
-                SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate((context, index) {
-                      if (index.isOdd) return const SizedBox(height: 10);
-                      final item = items[index ~/ 2];
-                      return _ReviewListCard(
-                        item: item,
-                        primary: index == 0,
-                        onTap: () => _openDetail(item),
-                      );
-                    }, childCount: items.length * 2 - 1),
+              else ...[
+                if (interviewItems.isNotEmpty)
+                  _IeltsReportSection(
+                    title: '面试练习报告',
+                    items: interviewItems,
+                    onOpen: _openIeltsReport,
                   ),
-                ),
+                if (ieltsItems.isNotEmpty)
+                  _IeltsReportSection(
+                    title: 'IELTS 模考报告',
+                    items: ieltsItems,
+                    onOpen: _openIeltsReport,
+                  ),
+                if (items.isNotEmpty)
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        if (index.isOdd) return const SizedBox(height: 10);
+                        final item = items[index ~/ 2];
+                        return _ReviewListCard(
+                          item: item,
+                          primary: index == 0,
+                          onTap: () => _openDetail(item),
+                        );
+                      }, childCount: items.length * 2 - 1),
+                    ),
+                  ),
+              ],
               if (items.isNotEmpty && controller != null)
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -180,6 +248,90 @@ class _ReviewHeader extends StatelessWidget {
             style: SpeakUpDesign.body,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _IeltsReportSection extends StatelessWidget {
+  const _IeltsReportSection({
+    required this.title,
+    required this.items,
+    required this.onOpen,
+  });
+
+  final String title;
+  final List<IeltsSpeakingReportIndexItem> items;
+  final void Function(IeltsSpeakingReportIndexItem item) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+      sliver: SliverList(
+        delegate: SliverChildListDelegate([
+          Text(title, style: SpeakUpDesign.sectionTitle),
+          const SizedBox(height: 10),
+          for (var index = 0; index < items.length; index++) ...[
+            if (index > 0) const SizedBox(height: 10),
+            _IeltsReportCard(
+              item: items[index],
+              onTap: () => onOpen(items[index]),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
+class _IeltsReportCard extends StatelessWidget {
+  const _IeltsReportCard({required this.item, required this.onTap});
+
+  final IeltsSpeakingReportIndexItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = switch (item.evaluationStatus) {
+      IeltsSpeakingReportEvaluationStatus.queued ||
+      IeltsSpeakingReportEvaluationStatus.running => '报告生成中',
+      IeltsSpeakingReportEvaluationStatus.ready => '评分报告已生成',
+      IeltsSpeakingReportEvaluationStatus.failed => '报告自动恢复中',
+    };
+    final title =
+        item.title ??
+        (item.reportKind == IeltsSpeakingReportKind.interview
+            ? '面试复盘'
+            : 'IELTS 口语完整模考');
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: Key('ielts-report-history-select-${item.practiceSessionId}'),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.assessment_outlined,
+                color: SpeakUpDesign.primary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: SpeakUpDesign.cardTitle),
+                    const SizedBox(height: 5),
+                    Text(status, style: SpeakUpDesign.meta),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -389,6 +541,44 @@ class _EmptyReview extends StatelessWidget {
             style: SpeakUpDesign.body,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _IeltsReportDetailPage extends StatefulWidget {
+  const _IeltsReportDetailPage({required this.item, required this.controller});
+
+  final IeltsSpeakingReportIndexItem item;
+  final IeltsSpeakingReportController controller;
+
+  @override
+  State<_IeltsReportDetailPage> createState() => _IeltsReportDetailPageState();
+}
+
+class _IeltsReportDetailPageState extends State<_IeltsReportDetailPage> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(widget.controller.load(widget.item.practiceSessionId));
+  }
+
+  @override
+  void dispose() {
+    widget.controller.cancel(widget.item.practiceSessionId);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: const Key('ielts-speaking-report-detail-page'),
+      appBar: AppBar(title: const Text('IELTS 口语模考报告')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
+          child: IeltsSpeakingReportPanel(controller: widget.controller),
+        ),
       ),
     );
   }

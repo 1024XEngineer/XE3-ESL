@@ -387,6 +387,5 @@ func classifySpeechFeedbackFailure(
 }
 
 func speechFeedbackTextHasEnoughEvidence(text string) bool {
-	return classifySpeechFeedbackLanguage(text) ==
-		speechFeedbackLanguageEnglish
+	return speechFeedbackHasAssessableEnglish(text)
 }

@@ -20,6 +20,15 @@ type ISEConfig struct {
 	APISecret Secret
 }
 
+// ISEConfigured reports whether any ISE credential was provided. A completely
+// absent credential set means acoustic scoring is intentionally unavailable;
+// a partial set is still treated as a configuration error by LoadISE.
+func ISEConfigured() bool {
+	return strings.TrimSpace(os.Getenv("APPID")) != "" ||
+		strings.TrimSpace(os.Getenv("APIKey")) != "" ||
+		strings.TrimSpace(os.Getenv("APISecret")) != ""
+}
+
 func LoadISE() (ISEConfig, error) {
 	endpoint := strings.TrimSpace(os.Getenv("XFYUN_ISE_ENDPOINT"))
 	if endpoint == "" {

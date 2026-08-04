@@ -335,6 +335,23 @@ func TestResumeMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingAcousticPayloadMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000067_evaluation_ielts_speaking_acoustic_payload.up.sql",
+		"000067_evaluation_ielts_speaking_acoustic_payload.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf(
+				"read embedded IELTS acoustic payload migration %q: %v",
+				name,
+				err,
+			)
+		}
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 

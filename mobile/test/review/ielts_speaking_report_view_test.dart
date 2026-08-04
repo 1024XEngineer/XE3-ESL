@@ -22,7 +22,17 @@ void main() {
       find.byKey(const Key('ielts-speaking-report-ready')),
       findsOneWidget,
     );
-    expect(find.text('练习估分 Band 6（暂定）'), findsNWidgets(2));
+    expect(
+      find.byKey(const Key('ielts-speaking-band-lexicalResource')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('ielts-speaking-band-grammaticalRangeAndAccuracy')),
+      findsOneWidget,
+    );
+    expect(find.text('IELTS Speaking'), findsOneWidget);
+    expect(find.textContaining('Part 2&3'), findsOneWidget);
+    expect(find.textContaining('共 14/14 题'), findsOneWidget);
     expect(find.textContaining('缺少可信发音工件'), findsOneWidget);
     expect(
       find.byKey(const Key('ielts-speaking-overall-unavailable')),
@@ -31,8 +41,46 @@ void main() {
     expect(find.text('暂不可用'), findsOneWidget);
     expect(find.textContaining('非 IELTS 官方成绩'), findsOneWidget);
     expect(find.textContaining('距目标差值'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-speaking-score-radar')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-speaking-evidence-standard')),
+      findsOneWidget,
+    );
+    expect(find.text('部分练习报告'), findsNothing);
+    expect(find.text('分 Part 复盘'), findsNothing);
+    expect(find.text('同题复练'), findsOneWidget);
     expect(find.byKey(const Key('ielts-speaking-question-14')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-speaking-repractice-14')),
+      findsOneWidget,
+    );
     expect(find.textContaining('Band 0'), findsNothing);
+  });
+
+  testWidgets('same-question list starts the selected question directly', (
+    tester,
+  ) async {
+    final controller = await _controllerFor('ready');
+    addTearDown(controller.dispose);
+    IeltsSpeakingQuestionReview? selected;
+
+    await tester.pumpWidget(
+      _app(
+        controller,
+        onRepracticeQuestion: (question) async {
+          selected = question;
+          return true;
+        },
+      ),
+    );
+    await tester.pump();
+    final button = find.byKey(const Key('ielts-speaking-repractice-1'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pump();
+
+    expect(selected?.index, 1);
+    expect(selected?.questionText, isNotEmpty);
   });
 
   testWidgets('renders insufficient evidence without a zero score', (
@@ -52,7 +100,7 @@ void main() {
     expect(find.textContaining('Band 0'), findsNothing);
   });
 
-  testWidgets('technical failure is not displayed as poor performance', (
+  testWidgets('technical failure stays in automatic recovery without retry', (
     tester,
   ) async {
     final controller = await _controllerFor('failed');
@@ -62,14 +110,14 @@ void main() {
     await tester.pump();
 
     expect(
-      find.byKey(const Key('ielts-speaking-report-failed')),
+      find.byKey(const Key('ielts-speaking-report-generating')),
       findsOneWidget,
     );
-    expect(find.textContaining('不代表你的 IELTS 口语表现较差'), findsOneWidget);
-    expect(
-      find.byKey(const Key('ielts-speaking-report-retry')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('ielts-speaking-report-retry')), findsNothing);
+    expect(find.byKey(const Key('ielts-speaking-report-failed')), findsNothing);
+    expect(find.textContaining('失败'), findsNothing);
+
+    controller.cancel('session_ielts_report_001');
   });
 }
 
@@ -86,10 +134,17 @@ Future<IeltsSpeakingReportController> _controllerFor(String fixtureKey) async {
   return controller;
 }
 
-Widget _app(IeltsSpeakingReportController controller) => MaterialApp(
+Widget _app(
+  IeltsSpeakingReportController controller, {
+  Future<bool> Function(IeltsSpeakingQuestionReview question)?
+  onRepracticeQuestion,
+}) => MaterialApp(
   home: Scaffold(
     body: SingleChildScrollView(
-      child: IeltsSpeakingReportPanel(controller: controller),
+      child: IeltsSpeakingReportPanel(
+        controller: controller,
+        onRepracticeQuestion: onRepracticeQuestion,
+      ),
     ),
   ),
 );

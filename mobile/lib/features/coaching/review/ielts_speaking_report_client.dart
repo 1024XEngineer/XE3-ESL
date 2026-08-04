@@ -31,3 +31,7 @@ abstract interface class IeltsSpeakingReportClient {
 
   Future<void> clearAccountState();
 }
+
+abstract interface class IeltsSpeakingReportRegenerationClient {
+  Future<void> regenerateReport(IeltsSpeakingReportEnvelope envelope);
+}

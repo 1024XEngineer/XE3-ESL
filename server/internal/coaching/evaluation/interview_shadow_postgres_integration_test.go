@@ -157,10 +157,10 @@ func TestPostgresInterviewShadowLeaseStartsFromWallClock(t *testing.T) {
 	}
 }
 
-func TestPostgresInterviewShadowConfigurationDriftTerminatesJob(
+func TestPostgresInterviewShadowConfigurationDriftCannotStealFrozenJob(
 	t *testing.T,
 ) {
-	pool, repository, configuration, evaluation :=
+	pool, repository, configuration, _ :=
 		prepareInterviewShadowRuntime(t)
 	first := claimInterviewShadow(t, repository, configuration)
 	expireInterviewShadowLease(t, pool, first.OutboxID)
@@ -173,35 +173,17 @@ func TestPostgresInterviewShadowConfigurationDriftTerminatesJob(
 		context.Background(),
 		changed,
 	)
-	if !errors.Is(err, ErrInterviewShadowConfigurationConflict) {
-		t.Fatalf("configuration drift error = %v", err)
+	if err != nil {
+		t.Fatalf("configuration drift claim error = %v", err)
 	}
 	if acquired || claim.OutboxID != "" || claim.ModuleRunID != "" {
 		t.Fatalf("configuration drift claim acquired=%t value=%#v", acquired, claim)
 	}
-	assertInterviewShadowTerminalRuntime(
-		t,
-		pool,
-		first.OutboxID,
-		"FAILED",
-		"FAILED",
-		"FAILED",
-		interviewShadowConfigurationChangedCode,
-	)
 
-	next := reevaluateInterviewShadow(
-		t,
-		repository,
-		evaluation.ID,
-		"configuration-drift-next",
-	)
-	continued := claimInterviewShadow(t, repository, changed)
-	if continued.EvaluationRevisionID != next.Revision.ID {
-		t.Fatalf(
-			"continued revision = %q, want %q",
-			continued.EvaluationRevisionID,
-			next.Revision.ID,
-		)
+	continued := claimInterviewShadow(t, repository, configuration)
+	if continued.ModuleRunID != first.ModuleRunID ||
+		continued.AttemptCount != first.AttemptCount+1 {
+		t.Fatalf("frozen configuration retry = %#v, first = %#v", continued, first)
 	}
 }
 

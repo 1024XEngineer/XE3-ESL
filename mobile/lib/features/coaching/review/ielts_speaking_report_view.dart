@@ -1,12 +1,20 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
 import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 
 class IeltsSpeakingReportPanel extends StatefulWidget {
-  const IeltsSpeakingReportPanel({required this.controller, super.key});
+  const IeltsSpeakingReportPanel({
+    required this.controller,
+    this.onRepracticeQuestion,
+    super.key,
+  });
 
   final IeltsSpeakingReportController controller;
+  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
+  onRepracticeQuestion;
 
   @override
   State<IeltsSpeakingReportPanel> createState() =>
@@ -45,40 +53,27 @@ class _IeltsSpeakingReportPanelState extends State<IeltsSpeakingReportPanel> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final envelope = controller.envelope;
-    final errorMessage = controller.errorMessage;
     if (envelope == null) {
-      if (errorMessage != null) {
-        return _ReportFailure(
-          message: errorMessage,
-          retryable: controller.canRetry,
-          onRetry: controller.retry,
-        );
-      }
       return const _GeneratingReport();
     }
     return switch (envelope.evaluationStatus) {
       IeltsSpeakingReportEvaluationStatus.queued ||
-      IeltsSpeakingReportEvaluationStatus.running => _GeneratingReport(
-        message: errorMessage,
-        onRetry: controller.canRetry ? controller.retry : null,
-      ),
+      IeltsSpeakingReportEvaluationStatus.running => const _GeneratingReport(),
       IeltsSpeakingReportEvaluationStatus.ready => _ReadyReport(
         report: envelope.report!,
+        onRepracticeQuestion: widget.onRepracticeQuestion,
       ),
-      IeltsSpeakingReportEvaluationStatus.failed => _ReportFailure(
-        message: '报告生成遇到技术问题，这不代表你的 IELTS 口语表现较差。',
-        retryable: envelope.stableFailure!.retryable,
-        onRetry: controller.retry,
+      IeltsSpeakingReportEvaluationStatus.failed => const _GeneratingReport(
+        message: '报告正在自动恢复，无需重新操作',
       ),
     };
   }
 }
 
 class _GeneratingReport extends StatelessWidget {
-  const _GeneratingReport({this.message, this.onRetry});
+  const _GeneratingReport({this.message});
 
   final String? message;
-  final Future<void> Function()? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -96,73 +91,16 @@ class _GeneratingReport extends StatelessWidget {
             Text(
               message ?? 'IELTS 练习报告生成中',
               textAlign: TextAlign.center,
-              style: message == null
-                  ? SpeakUpDesign.cardTitle
-                  : const TextStyle(color: SpeakUpDesign.error),
-            ),
-            if (message == null) ...[
-              const SizedBox(height: 6),
-              Text(
-                '答题已经完成，正在整理 14 道题的文本证据。',
-                textAlign: TextAlign.center,
-                style: SpeakUpDesign.body,
-              ),
-            ],
-            if (onRetry != null) ...[
-              const SizedBox(height: 12),
-              OutlinedButton(
-                key: const Key('ielts-speaking-report-retry'),
-                onPressed: onRetry,
-                child: const Text('重新查询'),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ReportFailure extends StatelessWidget {
-  const _ReportFailure({
-    required this.message,
-    required this.retryable,
-    required this.onRetry,
-  });
-
-  final String message;
-  final bool retryable;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      key: const Key('ielts-speaking-report-failed'),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            const Icon(Icons.error_outline_rounded, color: SpeakUpDesign.error),
-            const SizedBox(height: 10),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: SpeakUpDesign.body,
+              style: SpeakUpDesign.cardTitle,
             ),
             const SizedBox(height: 6),
             Text(
-              retryable ? '可以稍后重新查询。' : '请保留本次模考，稍后再试。',
+              message == null
+                  ? '答题已经完成，系统正在整理评分证据。完成后会自动显示报告。'
+                  : '本次模考已安全保存，系统会在后台继续处理。',
               textAlign: TextAlign.center,
-              style: SpeakUpDesign.meta,
+              style: SpeakUpDesign.body,
             ),
-            if (retryable) ...[
-              const SizedBox(height: 12),
-              OutlinedButton(
-                key: const Key('ielts-speaking-report-retry'),
-                onPressed: onRetry,
-                child: const Text('重新查询'),
-              ),
-            ],
           ],
         ),
       ),
@@ -171,9 +109,11 @@ class _ReportFailure extends StatelessWidget {
 }
 
 class _ReadyReport extends StatelessWidget {
-  const _ReadyReport({required this.report});
+  const _ReadyReport({required this.report, this.onRepracticeQuestion});
 
   final IeltsSpeakingReport report;
+  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
+  onRepracticeQuestion;
 
   @override
   Widget build(BuildContext context) {
@@ -185,59 +125,108 @@ class _ReadyReport extends StatelessWidget {
       key: const Key('ielts-speaking-report-ready'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ReportNotice(disclaimer: report.disclaimer),
-        const SizedBox(height: 12),
-        const _OverallUnavailable(),
-        const SizedBox(height: 12),
-        _Criteria(report: report),
-        const SizedBox(height: 12),
-        _PartReviews(report: report),
-        const SizedBox(height: 12),
-        _QuestionReviews(report: report),
-        const SizedBox(height: 12),
+        _ReportHeader(report: report),
+        const SizedBox(height: SpeakUpDesign.space16),
+        _OverallScore(report: report),
+        const SizedBox(height: SpeakUpDesign.space16),
+        _ScoreOverview(report: report),
+        const SizedBox(height: SpeakUpDesign.space12),
+        _EvidenceStandard(report: report),
+        const SizedBox(height: SpeakUpDesign.space24),
+        const _ReportSectionTitle(title: '评分描述'),
+        const SizedBox(height: SpeakUpDesign.space12),
+        for (final criterion in report.criteria) ...[
+          _CriterionFeedback(criterion: criterion),
+          const SizedBox(height: SpeakUpDesign.space12),
+        ],
+        const SizedBox(height: SpeakUpDesign.space12),
+        const _ReportSectionTitle(title: '改进建议'),
+        const SizedBox(height: SpeakUpDesign.space12),
         _TargetPlan(report: report),
+        const SizedBox(height: SpeakUpDesign.space24),
+        _QuestionReviews(
+          report: report,
+          onRepracticeQuestion: onRepracticeQuestion,
+        ),
       ],
     );
   }
 }
 
-class _ReportNotice extends StatelessWidget {
-  const _ReportNotice({required this.disclaimer});
+class _ReportHeader extends StatelessWidget {
+  const _ReportHeader({required this.report});
 
-  final String disclaimer;
+  final IeltsSpeakingReport report;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      key: const Key('ielts-speaking-report-notice'),
-      color: SpeakUpDesign.primaryMuted,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('部分练习报告', style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: 8),
-            const Text(
-              '词汇与语法可显示基于已确认文字的暂定整数 Band；流利与连贯只显示定性反馈。',
-              style: SpeakUpDesign.body,
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              '当前没有可信发音工件，因此不评估发音，也不计算 Speaking Overall。',
-              style: SpeakUpDesign.body,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              disclaimer,
-              key: const Key('ielts-speaking-report-disclaimer'),
-              style: SpeakUpDesign.body,
-            ),
-          ],
+    final summary = report.testSummary;
+    return Semantics(
+      container: true,
+      label: 'IELTS 口语模考报告摘要',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: SpeakUpDesign.primaryMuted,
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusMedia),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(SpeakUpDesign.space20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'IELTS Speaking',
+                style: SpeakUpDesign.pageTitle.copyWith(
+                  color: SpeakUpDesign.primary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+              Text(
+                'Test Report',
+                style: SpeakUpDesign.pageTitle.copyWith(
+                  color: const Color(0xFF2A6D7E),
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+              const SizedBox(height: SpeakUpDesign.space20),
+              _SummaryLine(label: 'Part 1', value: summary.part1Topic),
+              const SizedBox(height: SpeakUpDesign.space8),
+              _SummaryLine(label: 'Part 2&3', value: summary.part2Topic),
+              const SizedBox(height: SpeakUpDesign.space12),
+              Text(
+                '共 ${summary.answeredCount}/${summary.questionCount} 题 · '
+                '录音 ${_durationLabel(summary.recordingDurationMs)}',
+                style: SpeakUpDesign.meta,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+class _SummaryLine extends StatelessWidget {
+  const _SummaryLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Text.rich(
+    TextSpan(
+      style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
+      children: [
+        TextSpan(
+          text: '$label: ',
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        TextSpan(text: value),
+      ],
+    ),
+    maxLines: 2,
+    overflow: TextOverflow.ellipsis,
+  );
 }
 
 class _InsufficientReport extends StatelessWidget {
@@ -269,23 +258,55 @@ class _InsufficientReport extends StatelessWidget {
   }
 }
 
-class _OverallUnavailable extends StatelessWidget {
-  const _OverallUnavailable();
+class _OverallScore extends StatelessWidget {
+  const _OverallScore({required this.report});
+
+  final IeltsSpeakingReport report;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    final band = report.speakingOverallBand;
+    return Container(
       key: const Key('ielts-speaking-overall-unavailable'),
-      child: const Padding(
-        padding: EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [SpeakUpDesign.primary, Color(0xFF2A6D7E)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusMedia),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Speaking Overall', style: SpeakUpDesign.cardTitle),
-            SizedBox(height: 6),
-            Text('暂不可用', style: SpeakUpDesign.body),
-            SizedBox(height: 4),
-            Text('四项标准尚未全部具备可靠证据，因此不计算总分。', style: SpeakUpDesign.meta),
+            Text(
+              '口语总分',
+              style: SpeakUpDesign.cardTitle.copyWith(color: Colors.white),
+            ),
+            const SizedBox(height: SpeakUpDesign.space8),
+            Text(
+              band == null ? '暂不可用' : _bandLabel(band),
+              style: SpeakUpDesign.pageTitle.copyWith(
+                color: Colors.white,
+                fontSize: band == null ? 26 : 48,
+              ),
+            ),
+            const SizedBox(height: SpeakUpDesign.space12),
+            Container(
+              padding: const EdgeInsets.all(SpeakUpDesign.space16),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.94),
+                borderRadius: BorderRadius.circular(
+                  SpeakUpDesign.radiusControl,
+                ),
+              ),
+              child: Text(
+                report.speakingOverallExplanation,
+                style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
+              ),
+            ),
           ],
         ),
       ),
@@ -293,8 +314,8 @@ class _OverallUnavailable extends StatelessWidget {
   }
 }
 
-class _Criteria extends StatelessWidget {
-  const _Criteria({required this.report});
+class _ScoreOverview extends StatelessWidget {
+  const _ScoreOverview({required this.report});
 
   final IeltsSpeakingReport report;
 
@@ -303,25 +324,226 @@ class _Criteria extends StatelessWidget {
     return Card(
       key: const Key('ielts-speaking-report-criteria'),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('评分标准', style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: 14),
-            for (var index = 0; index < report.criteria.length; index++) ...[
-              if (index > 0) ...[
-                const SizedBox(height: 16),
-                const Divider(height: 1),
-                const SizedBox(height: 16),
-              ],
-              _CriterionFeedback(criterion: report.criteria[index]),
-            ],
+            const Text('四项评分', style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: SpeakUpDesign.space8),
+            Text('0–9 分练习估分 · 图形越靠外代表该维度表现越强', style: SpeakUpDesign.meta),
+            const SizedBox(height: SpeakUpDesign.space16),
+            _ScoreRadarChart(criteria: report.criteria),
           ],
         ),
       ),
     );
   }
+}
+
+class _ScoreRadarChart extends StatelessWidget {
+  const _ScoreRadarChart({required this.criteria});
+
+  final List<IeltsSpeakingCriterion> criteria;
+
+  @override
+  Widget build(BuildContext context) {
+    final byId = {for (final item in criteria) item.id: item};
+    final ordered = [
+      byId[IeltsSpeakingCriterionId.fluencyAndCoherence],
+      byId[IeltsSpeakingCriterionId.pronunciation],
+      byId[IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy],
+      byId[IeltsSpeakingCriterionId.lexicalResource],
+    ];
+    final values = ordered
+        .map((item) => (item?.estimatedBand ?? 0).toDouble())
+        .toList(growable: false);
+    final semanticLabel = ordered
+        .whereType<IeltsSpeakingCriterion>()
+        .map(
+          (item) =>
+              '${_criterionChineseLabel(item.id)} ${item.estimatedBand ?? '未评分'}分',
+        )
+        .join('，');
+    return Semantics(
+      key: const Key('ielts-speaking-score-radar'),
+      label: 'IELTS 口语四维雷达图，$semanticLabel',
+      child: SizedBox(
+        height: 300,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.all(48),
+                child: CustomPaint(painter: _RadarPainter(values)),
+              ),
+            ),
+            _RadarLabel(
+              alignment: Alignment.topCenter,
+              label: '流利与连贯',
+              score: ordered[0]?.estimatedBand,
+            ),
+            _RadarLabel(
+              alignment: Alignment.centerRight,
+              label: '发音',
+              score: ordered[1]?.estimatedBand,
+            ),
+            _RadarLabel(
+              alignment: Alignment.bottomCenter,
+              label: '语法',
+              score: ordered[2]?.estimatedBand,
+            ),
+            _RadarLabel(
+              alignment: Alignment.centerLeft,
+              label: '词汇',
+              score: ordered[3]?.estimatedBand,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RadarLabel extends StatelessWidget {
+  const _RadarLabel({required this.alignment, required this.label, this.score});
+
+  final Alignment alignment;
+  final String label;
+  final int? score;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: alignment,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label, style: SpeakUpDesign.label),
+        Text(
+          score?.toString() ?? '--',
+          style: SpeakUpDesign.cardTitle.copyWith(color: SpeakUpDesign.primary),
+        ),
+      ],
+    ),
+  );
+}
+
+class _RadarPainter extends CustomPainter {
+  const _RadarPainter(this.values);
+
+  final List<double> values;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = math.min(size.width, size.height) / 2;
+    final grid = Paint()
+      ..color = SpeakUpDesign.border
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    for (final level in [1 / 3, 2 / 3, 1.0]) {
+      canvas.drawPath(
+        _polygon(center, radius * level, const [1, 1, 1, 1]),
+        grid,
+      );
+    }
+    for (final point in _points(center, radius, const [1, 1, 1, 1])) {
+      canvas.drawLine(center, point, grid);
+    }
+    final normalized = values
+        .map((value) => (value / 9).clamp(0.0, 1.0))
+        .toList();
+    final dataPath = _polygon(center, radius, normalized);
+    canvas.drawPath(
+      dataPath,
+      Paint()
+        ..color = SpeakUpDesign.primary.withValues(alpha: 0.2)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawPath(
+      dataPath,
+      Paint()
+        ..color = SpeakUpDesign.primary
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+  }
+
+  Path _polygon(Offset center, double radius, List<num> scales) {
+    final points = _points(center, radius, scales);
+    return Path()
+      ..moveTo(points.first.dx, points.first.dy)
+      ..addPolygon(points, true);
+  }
+
+  List<Offset> _points(Offset center, double radius, List<num> scales) => [
+    Offset(center.dx, center.dy - radius * scales[0]),
+    Offset(center.dx + radius * scales[1], center.dy),
+    Offset(center.dx, center.dy + radius * scales[2]),
+    Offset(center.dx - radius * scales[3], center.dy),
+  ];
+
+  @override
+  bool shouldRepaint(covariant _RadarPainter oldDelegate) =>
+      oldDelegate.values != values;
+}
+
+class _EvidenceStandard extends StatelessWidget {
+  const _EvidenceStandard({required this.report});
+
+  final IeltsSpeakingReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final pronunciation = report.criteria.firstWhere(
+      (item) => item.id == IeltsSpeakingCriterionId.pronunciation,
+    );
+    final acousticSamples =
+        (pronunciation.coverage * report.testSummary.questionCount).round();
+    return Card(
+      key: const Key('ielts-speaking-evidence-standard'),
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('评分依据', style: SpeakUpDesign.cardTitle),
+            const SizedBox(height: SpeakUpDesign.space12),
+            Text(
+              '语音证据 · $acousticSamples/${report.testSummary.questionCount} 道回答通过声学验真；累计有效英文语音不少于 3 秒才进入发音评分。',
+              style: SpeakUpDesign.body,
+            ),
+            const SizedBox(height: SpeakUpDesign.space8),
+            const Text(
+              '文字证据 · 仅使用已确认的英文转写，按整场回答评估衔接、词汇和语法，不按单个错误机械扣分。',
+              style: SpeakUpDesign.body,
+            ),
+            const SizedBox(height: SpeakUpDesign.space8),
+            const Text(
+              '中英混合 · 中文片段不计入英文词汇、语法或发音证据，也不会被标成英文错误；只评估其中可确认的英文表达。',
+              style: SpeakUpDesign.body,
+            ),
+            const SizedBox(height: SpeakUpDesign.space12),
+            Text(
+              report.disclaimer,
+              key: const Key('ielts-speaking-report-disclaimer'),
+              style: SpeakUpDesign.meta,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReportSectionTitle extends StatelessWidget {
+  const _ReportSectionTitle({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) =>
+      Text(title, style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24));
 }
 
 class _CriterionFeedback extends StatelessWidget {
@@ -339,68 +561,100 @@ class _CriterionFeedback extends StatelessWidget {
       for (final finding in criterion.upgradeExamples)
         (label: '提升表达', finding: finding),
     ];
-    return Column(
-      key: Key('ielts-speaking-criterion-${criterion.id.name}'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(_criterionLabel(criterion.id), style: SpeakUpDesign.label),
-        const SizedBox(height: 5),
-        if (criterion.estimatedBand case final band?)
-          Text(
-            '练习估分 Band $band（暂定）',
-            key: Key('ielts-speaking-band-${criterion.id.name}'),
-            style: SpeakUpDesign.cardTitle,
-          )
-        else
-          Text(_unscoredCriterionLabel(criterion), style: SpeakUpDesign.meta),
-        if (criterion.bandDescriptor case final descriptor?) ...[
-          const SizedBox(height: 4),
-          Text(descriptor, style: SpeakUpDesign.body),
-        ],
-        for (final item in findings) ...[
-          const SizedBox(height: 10),
-          Text(item.label, style: SpeakUpDesign.meta),
-          const SizedBox(height: 3),
-          Text(item.finding.message, style: SpeakUpDesign.body),
-          if (item.finding.suggestion case final suggestion?) ...[
-            const SizedBox(height: 3),
-            Text('建议：$suggestion', style: SpeakUpDesign.body),
-          ],
-          for (final evidence in item.finding.evidence) ...[
-            const SizedBox(height: 5),
-            Text('原句：“${evidence.originalExcerpt}”', style: SpeakUpDesign.meta),
-          ],
-        ],
-      ],
-    );
-  }
-}
-
-class _PartReviews extends StatelessWidget {
-  const _PartReviews({required this.report});
-
-  final IeltsSpeakingReport report;
-
-  @override
-  Widget build(BuildContext context) {
     return Card(
-      key: const Key('ielts-speaking-report-parts'),
+      key: Key('ielts-speaking-criterion-${criterion.id.name}'),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('分 Part 复盘', style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: 6),
-            Text('Part 级只汇总反馈，不显示 Band 或平均分。', style: SpeakUpDesign.meta),
-            const SizedBox(height: 14),
-            for (var index = 0; index < report.partReviews.length; index++) ...[
-              if (index > 0) ...[
-                const SizedBox(height: 14),
-                const Divider(height: 1),
-                const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: _criterionColor(
+                      criterion.id,
+                    ).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    _criterionIcon(criterion.id),
+                    color: _criterionColor(criterion.id),
+                  ),
+                ),
+                const SizedBox(width: SpeakUpDesign.space12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _criterionChineseLabel(criterion.id),
+                        style: SpeakUpDesign.cardTitle,
+                      ),
+                      Text(
+                        _criterionEnglishLabel(criterion.id),
+                        style: SpeakUpDesign.meta,
+                      ),
+                    ],
+                  ),
+                ),
+                if (criterion.estimatedBand case final band?)
+                  Text(
+                    '$band',
+                    key: Key('ielts-speaking-band-${criterion.id.name}'),
+                    style: SpeakUpDesign.pageTitle.copyWith(
+                      color: _criterionColor(criterion.id),
+                      fontSize: 38,
+                    ),
+                  )
+                else
+                  Text(
+                    '--',
+                    style: SpeakUpDesign.pageTitle.copyWith(
+                      color: SpeakUpDesign.tertiary,
+                    ),
+                  ),
               ],
-              _PartFeedback(part: report.partReviews[index], report: report),
+            ),
+            const SizedBox(height: SpeakUpDesign.space16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(SpeakUpDesign.space16),
+              decoration: BoxDecoration(
+                color: SpeakUpDesign.canvas,
+                borderRadius: BorderRadius.circular(
+                  SpeakUpDesign.radiusControl,
+                ),
+                border: Border.all(color: SpeakUpDesign.border),
+              ),
+              child: Text(criterion.explanation, style: SpeakUpDesign.body),
+            ),
+            if (findings.isEmpty) ...[
+              const SizedBox(height: SpeakUpDesign.space12),
+              Text(
+                _unscoredCriterionLabel(criterion),
+                style: SpeakUpDesign.meta,
+              ),
+            ],
+            for (final item in findings) ...[
+              const SizedBox(height: SpeakUpDesign.space12),
+              Text(item.label, style: SpeakUpDesign.label),
+              const SizedBox(height: SpeakUpDesign.space4),
+              Text(item.finding.message, style: SpeakUpDesign.body),
+              if (item.finding.suggestion case final suggestion?) ...[
+                const SizedBox(height: SpeakUpDesign.space4),
+                Text('建议：$suggestion', style: SpeakUpDesign.body),
+              ],
+              for (final evidence in item.finding.evidence) ...[
+                const SizedBox(height: SpeakUpDesign.space4),
+                Text(
+                  '原句：“${evidence.originalExcerpt}”',
+                  style: SpeakUpDesign.meta,
+                ),
+              ],
             ],
           ],
         ),
@@ -409,46 +663,12 @@ class _PartReviews extends StatelessWidget {
   }
 }
 
-class _PartFeedback extends StatelessWidget {
-  const _PartFeedback({required this.part, required this.report});
-
-  final IeltsSpeakingPartReview part;
-  final IeltsSpeakingReport report;
-
-  @override
-  Widget build(BuildContext context) {
-    final ids = <String>[
-      ...part.strengthFindingIds,
-      ...part.improvementFindingIds,
-      ...part.upgradeExampleFindingIds,
-    ];
-    return Column(
-      key: Key('ielts-speaking-part-${part.id.name}'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(_partLabel(part.id), style: SpeakUpDesign.label),
-        const SizedBox(height: 4),
-        Text(
-          '题目 ${_questionRange(part.questionIndexes)}',
-          style: SpeakUpDesign.meta,
-        ),
-        if (ids.isEmpty) ...[
-          const SizedBox(height: 6),
-          Text('本 Part 暂无额外结论。', style: SpeakUpDesign.body),
-        ],
-        for (final id in ids) ...[
-          const SizedBox(height: 6),
-          Text(report.finding(id)!.message, style: SpeakUpDesign.body),
-        ],
-      ],
-    );
-  }
-}
-
 class _QuestionReviews extends StatelessWidget {
-  const _QuestionReviews({required this.report});
+  const _QuestionReviews({required this.report, this.onRepracticeQuestion});
 
   final IeltsSpeakingReport report;
+  final Future<bool> Function(IeltsSpeakingQuestionReview question)?
+  onRepracticeQuestion;
 
   @override
   Widget build(BuildContext context) {
@@ -459,9 +679,12 @@ class _QuestionReviews extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('14 题复盘', style: SpeakUpDesign.cardTitle),
+            const Text('同题复练', style: SpeakUpDesign.cardTitle),
             const SizedBox(height: 6),
-            Text('逐题只展示证据与建议，不显示题级分数。', style: SpeakUpDesign.meta),
+            Text(
+              '本次问到的 ${report.questions.length} 道题，可直接选择原题重新作答。',
+              style: SpeakUpDesign.meta,
+            ),
             const SizedBox(height: 14),
             for (var index = 0; index < report.questions.length; index++) ...[
               if (index > 0) ...[
@@ -469,9 +692,11 @@ class _QuestionReviews extends StatelessWidget {
                 const Divider(height: 1),
                 const SizedBox(height: 14),
               ],
-              _QuestionFeedback(
+              _RepracticeQuestion(
                 question: report.questions[index],
-                report: report,
+                onPressed: onRepracticeQuestion == null
+                    ? null
+                    : () => onRepracticeQuestion!(report.questions[index]),
               ),
             ],
           ],
@@ -481,20 +706,14 @@ class _QuestionReviews extends StatelessWidget {
   }
 }
 
-class _QuestionFeedback extends StatelessWidget {
-  const _QuestionFeedback({required this.question, required this.report});
+class _RepracticeQuestion extends StatelessWidget {
+  const _RepracticeQuestion({required this.question, this.onPressed});
 
   final IeltsSpeakingQuestionReview question;
-  final IeltsSpeakingReport report;
+  final Future<bool> Function()? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final ids = <String>{};
-    for (final result in question.criterionFindings) {
-      ids.addAll(result.strengthFindingIds);
-      ids.addAll(result.improvementFindingIds);
-      ids.addAll(result.upgradeExampleFindingIds);
-    }
     return Column(
       key: Key('ielts-speaking-question-${question.index}'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -505,21 +724,16 @@ class _QuestionFeedback extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(question.questionText, style: SpeakUpDesign.label),
-        const SizedBox(height: 7),
-        if (question.confirmedTranscript case final response?) ...[
-          Text('你的原回答', style: SpeakUpDesign.meta),
-          const SizedBox(height: 3),
-          Text(response, style: SpeakUpDesign.body),
-        ] else
-          Text('本题未提供可确认的回答。', style: SpeakUpDesign.body),
-        for (final id in ids) ...[
-          const SizedBox(height: 8),
-          Text(report.finding(id)!.message, style: SpeakUpDesign.body),
-          if (report.finding(id)!.suggestion case final suggestion?) ...[
-            const SizedBox(height: 3),
-            Text('建议：$suggestion', style: SpeakUpDesign.body),
-          ],
-        ],
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerRight,
+          child: OutlinedButton.icon(
+            key: Key('ielts-speaking-repractice-${question.index}'),
+            onPressed: onPressed,
+            icon: const Icon(Icons.mic_none_rounded, size: 18),
+            label: const Text('直接重练'),
+          ),
+        ),
       ],
     );
   }
@@ -583,22 +797,56 @@ String _unscoredCriterionLabel(IeltsSpeakingCriterion criterion) {
   return '定性反馈，不提供完整 Band';
 }
 
-String _criterionLabel(IeltsSpeakingCriterionId criterion) =>
+String _criterionChineseLabel(IeltsSpeakingCriterionId criterion) =>
+    switch (criterion) {
+      IeltsSpeakingCriterionId.fluencyAndCoherence => '流利性与连贯性',
+      IeltsSpeakingCriterionId.lexicalResource => '词汇丰富度',
+      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy => '语法多样性及准确性',
+      IeltsSpeakingCriterionId.pronunciation => '发音',
+    };
+
+String _criterionEnglishLabel(IeltsSpeakingCriterionId criterion) =>
+    switch (criterion) {
+      IeltsSpeakingCriterionId.fluencyAndCoherence => 'Fluency and Coherence',
+      IeltsSpeakingCriterionId.lexicalResource => 'Lexical Resource',
+      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy =>
+        'Grammatical Range and Accuracy',
+      IeltsSpeakingCriterionId.pronunciation => 'Pronunciation',
+    };
+
+Color _criterionColor(IeltsSpeakingCriterionId criterion) =>
+    switch (criterion) {
+      IeltsSpeakingCriterionId.fluencyAndCoherence => const Color(0xFF7651C8),
+      IeltsSpeakingCriterionId.lexicalResource => const Color(0xFFDA633B),
+      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy => const Color(
+        0xFF3E8A5B,
+      ),
+      IeltsSpeakingCriterionId.pronunciation => const Color(0xFF3478C8),
+    };
+
+IconData _criterionIcon(IeltsSpeakingCriterionId criterion) =>
     switch (criterion) {
       IeltsSpeakingCriterionId.fluencyAndCoherence =>
-        'Fluency and Coherence (FC)',
-      IeltsSpeakingCriterionId.lexicalResource => 'Lexical Resource (LR)',
+        Icons.auto_stories_rounded,
+      IeltsSpeakingCriterionId.lexicalResource => Icons.translate_rounded,
       IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy =>
-        'Grammatical Range and Accuracy (GRA)',
-      IeltsSpeakingCriterionId.pronunciation => 'Pronunciation (PR)',
+        Icons.task_alt_rounded,
+      IeltsSpeakingCriterionId.pronunciation => Icons.record_voice_over_rounded,
     };
+
+String _durationLabel(int durationMs) {
+  final totalSeconds = durationMs ~/ 1000;
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  return '$minutes分${seconds.toString().padLeft(2, '0')}秒';
+}
+
+String _bandLabel(double band) => band == band.roundToDouble()
+    ? band.toInt().toString()
+    : band.toStringAsFixed(1);
 
 String _partLabel(IeltsSpeakingPartId part) => switch (part) {
   IeltsSpeakingPartId.part1 => 'Part 1',
   IeltsSpeakingPartId.part2 => 'Part 2',
   IeltsSpeakingPartId.part3 => 'Part 3',
 };
-
-String _questionRange(List<int> indexes) => indexes.length == 1
-    ? '${indexes.single}'
-    : '${indexes.first}–${indexes.last}';

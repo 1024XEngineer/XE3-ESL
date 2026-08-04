@@ -68,6 +68,110 @@ func TestIELTSSpeakingShadowProducesHonestPartialReport(t *testing.T) {
 	}
 }
 
+func TestIELTSSpeakingShadowProducesFourBandsAndOverallWithAcoustics(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	provider := &ieltsProviderStub{}
+	acoustics := &ieltsAcousticSourceStub{}
+	result, err := NewIELTSSpeakingShadowEngineWithAcoustics(
+		provider,
+		acoustics,
+	).Evaluate(context.Background(), snapshot)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if acoustics.calls != 1 || len(result.Criteria) != 4 {
+		t.Fatalf("acoustic calls = %d; result = %#v", acoustics.calls, result)
+	}
+	for _, criterion := range result.Criteria {
+		if criterion.Scoreability != IELTSSpeakingScoreabilityProvisional ||
+			criterion.EstimatedBand == nil ||
+			*criterion.EstimatedBand != 6 {
+			t.Fatalf("criterion = %#v", criterion)
+		}
+	}
+	report, err := ProjectIELTSSpeakingReport(snapshot, result)
+	if err != nil {
+		t.Fatalf("ProjectIELTSSpeakingReport: %v", err)
+	}
+	if report.SpeakingOverall.Status != IELTSSpeakingOverallAvailable ||
+		report.SpeakingOverall.EstimatedBand == nil ||
+		*report.SpeakingOverall.EstimatedBand != 6 {
+		t.Fatalf("speaking overall = %#v", report.SpeakingOverall)
+	}
+}
+
+func TestIELTSSpeakingShadowUsesVerifiedPartialAcousticCoverage(t *testing.T) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	provider := &ieltsProviderStub{}
+	result, err := NewIELTSSpeakingShadowEngineWithAcoustics(
+		provider,
+		&ieltsAcousticSourceStub{limit: 4},
+	).Evaluate(context.Background(), snapshot)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	pronunciation := result.Criteria[3]
+	if pronunciation.EstimatedBand == nil ||
+		!sameRatio(pronunciation.Coverage, ratio(4, ieltsQuestionCount)) {
+		t.Fatalf("pronunciation = %#v", pronunciation)
+	}
+	report, err := ProjectIELTSSpeakingReport(snapshot, result)
+	if err != nil || report.SpeakingOverall.Status != IELTSSpeakingOverallAvailable {
+		t.Fatalf("report = %#v; err = %v", report, err)
+	}
+}
+
+func TestIELTSSpeakingShadowClassifiesMixedLanguageWithoutScoringChinese(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingSnapshotWithTranscript(
+		t,
+		"I explain my English answer clearly. 这是中文补充。",
+	)
+	provider := &ieltsProviderStub{}
+	_, err := NewIELTSSpeakingShadowEngine(provider).Evaluate(
+		context.Background(),
+		snapshot,
+	)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	response := provider.input.Questions[0].Response
+	if response == nil || response.LanguageEvidence != ieltsLanguageMixed ||
+		response.EnglishWordCount != 6 || response.CJKCharacterCount == 0 {
+		t.Fatalf("mixed response = %#v", response)
+	}
+}
+
+func TestIELTSSpeakingShadowRejectsChineseOnlySessionAsUnscoreable(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingSnapshotWithTranscript(t, "这是中文回答。")
+	provider := &ieltsProviderStub{}
+	result, err := NewIELTSSpeakingShadowEngine(provider).Evaluate(
+		context.Background(),
+		snapshot,
+	)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if provider.calls != 0 ||
+		result.Scoreability != IELTSSpeakingScoreabilityInsufficient ||
+		!slices.Equal(result.ReasonCodes, []IELTSSpeakingReasonCode{
+			IELTSReasonInsufficientEvidence,
+		}) {
+		t.Fatalf("result = %#v; provider calls = %d", result, provider.calls)
+	}
+	if err := ValidateIELTSSpeakingShadowResult(snapshot, result); err != nil {
+		t.Fatalf("ValidateIELTSSpeakingShadowResult: %v", err)
+	}
+	if _, err := ProjectIELTSSpeakingReport(snapshot, result); err != nil {
+		t.Fatalf("ProjectIELTSSpeakingReport: %v", err)
+	}
+}
+
 func TestIELTSSpeakingShadowDoesNotCallProviderWithoutFourteenAnswers(
 	t *testing.T,
 ) {
@@ -159,7 +263,7 @@ func TestIELTSSpeakingShadowRejectsNonFrozenModelVersion(t *testing.T) {
 	}
 }
 
-func TestIELTSSpeakingShadowRejectsCrossTurnAnchor(t *testing.T) {
+func TestIELTSSpeakingShadowRepairsUniquelyMispairedAnchor(t *testing.T) {
 	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
 	prepared, err := prepareIELTSSpeakingShadow(snapshot)
 	if err != nil {
@@ -168,12 +272,57 @@ func TestIELTSSpeakingShadowRejectsCrossTurnAnchor(t *testing.T) {
 	payload := validIELTSProviderPayload(prepared.input)
 	payload.Criteria[0].Strengths[0].Evidence[0].EvidenceRefID =
 		prepared.input.Questions[1].Response.EvidenceRefID
+	result, err := normalizeIELTSSpeakingProviderResult(
+		prepared,
+		ieltsProviderResult(t, payload),
+	)
+	if err != nil {
+		t.Fatalf("repair unique cross-turn anchor: %v", err)
+	}
+	if got := result.Criteria[0].Strengths[0].Evidence[0].EvidenceRefID; got != prepared.input.Questions[0].Response.EvidenceRefID {
+		t.Fatalf("repaired evidence_ref_id = %q", got)
+	}
+}
+
+func TestIELTSSpeakingShadowRejectsAmbiguousMispairedAnchor(t *testing.T) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := validIELTSProviderPayload(prepared.input)
+	anchor := &payload.Criteria[0].Strengths[0].Evidence[0]
+	anchor.EvidenceRefID = "missing-evidence-ref"
+	anchor.Quote = "I explain"
 	_, err = normalizeIELTSSpeakingProviderResult(
 		prepared,
 		ieltsProviderResult(t, payload),
 	)
 	if !errors.Is(err, ErrInvalidIELTSSpeakingShadow) {
-		t.Fatalf("cross-turn anchor error = %v", err)
+		t.Fatalf("ambiguous cross-turn anchor error = %v", err)
+	}
+}
+
+func TestIELTSSpeakingShadowIgnoresFCDescriptorWithoutAcoustics(
+	t *testing.T,
+) {
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	prepared, err := prepareIELTSSpeakingShadow(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := validIELTSProviderPayload(prepared.input)
+	payload.Criteria[0].RubricDescriptor = "FC_PRACTICE_BAND_7"
+	result, err := normalizeIELTSSpeakingProviderResult(
+		prepared,
+		ieltsProviderResult(t, payload),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Criteria[0].EstimatedBand != nil ||
+		result.Criteria[0].BandDescriptor != "" {
+		t.Fatalf("FC criterion = %#v", result.Criteria[0])
 	}
 }
 
@@ -303,6 +452,36 @@ type ieltsProviderStub struct {
 	payload []byte
 	err     error
 	calls   int
+	input   IELTSSpeakingShadowProviderInput
+}
+
+type ieltsAcousticSourceStub struct {
+	calls int
+	limit int
+}
+
+func (source *ieltsAcousticSourceStub) GetIELTSSpeakingAcoustics(
+	_ context.Context,
+	_ string,
+	requests []IELTSSpeakingAcousticRequest,
+) ([]IELTSSpeakingTurnAcoustics, error) {
+	source.calls++
+	result := make([]IELTSSpeakingTurnAcoustics, 0, len(requests))
+	for _, request := range requests {
+		if source.limit > 0 && len(result) == source.limit {
+			break
+		}
+		fluency := 76.0
+		result = append(result, IELTSSpeakingTurnAcoustics{
+			TurnID:               request.TurnID,
+			EvidenceRefID:        request.EvidenceRefID,
+			PronunciationScore:   72,
+			AcousticFluencyScore: &fluency,
+			Provider:             "xfyun_ise",
+			ProviderRun:          "run_fixture",
+		})
+	}
+	return result, nil
 }
 
 func (provider *ieltsProviderStub) AnalyzeIELTSSpeaking(
@@ -310,6 +489,7 @@ func (provider *ieltsProviderStub) AnalyzeIELTSSpeaking(
 	input IELTSSpeakingShadowProviderInput,
 ) (IELTSSpeakingShadowProviderResult, error) {
 	provider.calls++
+	provider.input = input
 	if provider.err != nil {
 		return IELTSSpeakingShadowProviderResult{}, provider.err
 	}
@@ -352,10 +532,11 @@ func validIELTSProviderPayload(
 			Improvements:    []ieltsProviderFinding{},
 			UpgradeExamples: []ieltsProviderFinding{},
 		}
-		if criterion == IELTSCriterionLR ||
-			criterion == IELTSCriterionGRA {
+		if descriptors := ieltsDescriptorsFor(criterion); len(descriptors) > 0 &&
+			(criterion != IELTSCriterionFC ||
+				slices.Contains(input.AssessableCriteria, IELTSCriterionPR)) {
 			value.RubricDescriptor =
-				ieltsDescriptorsFor(criterion)[5]
+				descriptors[5].ID
 		}
 		criteria = append(criteria, value)
 	}
@@ -575,6 +756,23 @@ func ieltsSpeakingTestSnapshot(
 			payload.OpportunityManifest,
 			opportunity,
 		)
+	}
+	return rebuildIELTSSpeakingSnapshot(t, payload)
+}
+
+func ieltsSpeakingSnapshotWithTranscript(
+	t *testing.T,
+	transcript string,
+) EvidenceSnapshot {
+	t.Helper()
+	snapshot := ieltsSpeakingTestSnapshot(t, ieltsQuestionCount)
+	var payload evidencePayload
+	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
+		t.Fatalf("decode IELTS Snapshot: %v", err)
+	}
+	for index := range payload.ConfirmedTurns {
+		payload.ConfirmedTurns[index].Transcript.Text = transcript
+		payload.EvidenceRefs[index].TranscriptSpan.EndUTF8Byte = len(transcript)
 	}
 	return rebuildIELTSSpeakingSnapshot(t, payload)
 }

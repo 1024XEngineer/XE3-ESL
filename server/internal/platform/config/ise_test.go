@@ -22,6 +22,22 @@ func TestLoadISE(t *testing.T) {
 	}
 }
 
+func TestISEConfiguredDistinguishesAbsentAndPartialCredentials(t *testing.T) {
+	t.Setenv("APPID", "")
+	t.Setenv("APIKey", "")
+	t.Setenv("APISecret", "")
+	if ISEConfigured() {
+		t.Fatal("empty ISE credentials must be treated as disabled")
+	}
+	t.Setenv("APPID", "partial-app-id")
+	if !ISEConfigured() {
+		t.Fatal("partial ISE credentials must be validated by LoadISE")
+	}
+	if _, err := LoadISE(); err == nil {
+		t.Fatal("partial ISE credentials must not silently degrade")
+	}
+}
+
 func TestLoadISERejectsIncompleteOrUnsafeConfiguration(t *testing.T) {
 	tests := []struct {
 		name  string

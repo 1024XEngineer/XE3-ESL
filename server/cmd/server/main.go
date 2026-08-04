@@ -229,7 +229,7 @@ func run() int {
 	}
 	var speechFeedbackAcoustics evaluation.SpeechFeedbackAcousticProvider
 	speechFeedbackLease := 30 * time.Second
-	if recordingStore != nil {
+	if recordingStore != nil && config.ISEConfigured() {
 		iseConfig, configurationErr := config.LoadISE()
 		if configurationErr != nil {
 			logger.Error(
@@ -252,6 +252,11 @@ func run() int {
 			)
 			return 1
 		}
+	} else if recordingStore != nil {
+		logger.Warn(
+			"iFlytek ISE is not configured; acoustic scoring is unavailable",
+			slog.String("fallback", "transcript_only"),
+		)
 	}
 	speechFeedbackComposition, err :=
 		bootstrap.NewSpeechFeedbackComposition(

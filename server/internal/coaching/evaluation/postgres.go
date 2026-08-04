@@ -174,18 +174,25 @@ func (r *PostgresRepository) Reevaluate(
 	var latestRevisionID string
 	var latestRevision int
 	var latestFingerprint []byte
+	var latestStatus Status
 	err = tx.QueryRow(ctx, `
-		SELECT id::text, revision, request_fingerprint
-		FROM evaluation_revisions
-		WHERE evaluation_id = $1
-		  AND owner_user_id = $2
-		ORDER BY revision DESC
+		SELECT revision.id::text,
+		       revision.revision,
+		       revision.request_fingerprint,
+		       state.evaluation_status
+		FROM evaluation_revisions AS revision
+		JOIN evaluation_revision_states AS state
+		  ON state.revision_id = revision.id
+		WHERE revision.evaluation_id = $1
+		  AND revision.owner_user_id = $2
+		ORDER BY revision.revision DESC
 		LIMIT 1
 		FOR UPDATE
 	`, command.EvaluationID, command.OwnerUserID).Scan(
 		&latestRevisionID,
 		&latestRevision,
 		&latestFingerprint,
+		&latestStatus,
 	)
 	if err != nil {
 		return Evaluation{}, false, fmt.Errorf(
@@ -193,7 +200,8 @@ func (r *PostgresRepository) Reevaluate(
 			err,
 		)
 	}
-	if bytes.Equal(latestFingerprint, command.RevisionFingerprint[:]) {
+	if bytes.Equal(latestFingerprint, command.RevisionFingerprint[:]) &&
+		latestStatus != StatusFailed {
 		evaluation, selectErr := selectLatest(
 			ctx,
 			tx,

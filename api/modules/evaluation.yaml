@@ -1531,6 +1531,7 @@ components:
         - disclaimer
         - scoreability_status
         - gate_status
+        - test_summary
         - criteria
         - speaking_overall
         - part_reviews
@@ -1551,10 +1552,14 @@ components:
           $ref: '#/components/schemas/IeltsSpeakingReportScoreabilityStatus'
         gate_status:
           $ref: '#/components/schemas/IeltsSpeakingReportGateStatus'
+        test_summary:
+          $ref: '#/components/schemas/IeltsSpeakingReportTestSummary'
         criteria:
           $ref: '#/components/schemas/IeltsSpeakingReportCriteria'
         speaking_overall:
-          $ref: '#/components/schemas/IeltsSpeakingOverallUnavailable'
+          oneOf:
+            - $ref: '#/components/schemas/IeltsSpeakingOverallAvailable'
+            - $ref: '#/components/schemas/IeltsSpeakingOverallUnavailable'
         part_reviews:
           $ref: '#/components/schemas/IeltsSpeakingPartReviews'
         questions:
@@ -1629,6 +1634,34 @@ components:
       enum:
         - FEEDBACK_ONLY
         - BLOCKED
+    IeltsSpeakingReportTestSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - part_1_topic
+        - part_2_topic
+        - part_3_topic
+        - question_count
+        - answered_count
+        - recording_duration_ms
+      properties:
+        part_1_topic:
+          $ref: '#/components/schemas/IeltsSpeakingReportText'
+        part_2_topic:
+          $ref: '#/components/schemas/IeltsSpeakingReportText'
+        part_3_topic:
+          $ref: '#/components/schemas/IeltsSpeakingReportText'
+        question_count:
+          type: integer
+          const: 14
+        answered_count:
+          type: integer
+          minimum: 0
+          maximum: 14
+        recording_duration_ms:
+          type: integer
+          format: int64
+          minimum: 0
     IeltsSpeakingReportReasonCode:
       type: string
       enum:
@@ -1637,6 +1670,7 @@ components:
         - PRONUNCIATION_ARTIFACT_UNAVAILABLE
         - INSUFFICIENT_EVIDENCE
         - OPPORTUNITY_NOT_PROVIDED
+        - PRACTICE_ESTIMATE_UNCALIBRATED
     IeltsSpeakingCriterionId:
       type: string
       enum:
@@ -1663,12 +1697,6 @@ components:
           properties:
             criterion_id:
               const: IELTS_FC
-          not:
-            anyOf:
-              - required:
-                  - estimated_band
-              - required:
-                  - band_descriptor
         - if:
             type: object
             properties:
@@ -1678,11 +1706,26 @@ components:
               - scoreability_status
           then:
             type: object
-            properties:
-              reason_codes:
-                type: array
-                contains:
-                  const: FLUENCY_TIMING_UNAVAILABLE
+            oneOf:
+              - required:
+                  - estimated_band
+                  - band_descriptor
+                properties:
+                  reason_codes:
+                    type: array
+                    contains:
+                      const: PRACTICE_ESTIMATE_UNCALIBRATED
+              - not:
+                  anyOf:
+                    - required:
+                        - estimated_band
+                    - required:
+                        - band_descriptor
+                properties:
+                  reason_codes:
+                    type: array
+                    contains:
+                      const: FLUENCY_TIMING_UNAVAILABLE
     IeltsSpeakingLexicalResourceCriterion:
       allOf:
         - $ref: '#/components/schemas/IeltsSpeakingReportCriterion'
@@ -1744,23 +1787,37 @@ components:
           properties:
             criterion_id:
               const: IELTS_PR
-            scoreability_status:
-              const: INSUFFICIENT
-            gate_status:
-              const: BLOCKED
-            reason_codes:
-              type: array
-              minItems: 1
-              maxItems: 1
-              prefixItems:
-                - const: PRONUNCIATION_ARTIFACT_UNAVAILABLE
-              items: false
-          not:
-            anyOf:
-              - required:
-                  - estimated_band
-              - required:
-                  - band_descriptor
+          oneOf:
+            - required:
+                - estimated_band
+                - band_descriptor
+              properties:
+                scoreability_status:
+                  const: PROVISIONAL
+                gate_status:
+                  const: FEEDBACK_ONLY
+                reason_codes:
+                  type: array
+                  contains:
+                    const: PRACTICE_ESTIMATE_UNCALIBRATED
+            - properties:
+                scoreability_status:
+                  const: INSUFFICIENT
+                gate_status:
+                  const: BLOCKED
+                reason_codes:
+                  type: array
+                  minItems: 1
+                  maxItems: 1
+                  prefixItems:
+                    - const: PRONUNCIATION_ARTIFACT_UNAVAILABLE
+                  items: false
+              not:
+                anyOf:
+                  - required:
+                      - estimated_band
+                  - required:
+                      - band_descriptor
     IeltsSpeakingReportCriterion:
       type: object
       additionalProperties: false
@@ -1768,6 +1825,7 @@ components:
         - criterion_id
         - scoreability_status
         - gate_status
+        - explanation
         - coverage
         - confidence
         - reason_codes
@@ -1790,6 +1848,8 @@ components:
             Provisional transcript-rubric estimate; never a final or official
             IELTS result.
         band_descriptor:
+          $ref: '#/components/schemas/IeltsSpeakingReportText'
+        explanation:
           $ref: '#/components/schemas/IeltsSpeakingReportText'
         coverage:
           type: number
@@ -1935,10 +1995,31 @@ components:
       additionalProperties: false
       required:
         - status
+        - explanation
       properties:
         status:
           type: string
           const: NOT_AVAILABLE
+        explanation:
+          $ref: '#/components/schemas/IeltsSpeakingReportText'
+    IeltsSpeakingOverallAvailable:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - estimated_band
+        - explanation
+      properties:
+        status:
+          type: string
+          const: AVAILABLE
+        estimated_band:
+          type: number
+          minimum: 1
+          maximum: 9
+          multipleOf: 0.5
+        explanation:
+          $ref: '#/components/schemas/IeltsSpeakingReportText'
     IeltsSpeakingPartId:
       type: string
       enum:

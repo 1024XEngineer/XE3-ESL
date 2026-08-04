@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -215,6 +216,31 @@ func (worker *IELTSSpeakingShadowWorker) processClaim(
 	}
 	result, err := worker.engine.Evaluate(ctx, claim.Snapshot)
 	if err != nil {
+		if claim.AttemptCount >= worker.configuration.MaxAttempts {
+			fallback, fallbackErr := fallbackIELTSSpeakingShadowResult(
+				claim.Snapshot,
+				claim.Provider,
+				claim.Model,
+				"fallback-"+claim.ModuleRunID,
+			)
+			if fallbackErr == nil {
+				if completeErr := worker.repository.CompleteIELTSSpeakingShadow(
+					ctx,
+					claim,
+					fallback,
+				); completeErr != nil {
+					return "", completeErr
+				}
+				slog.Warn(
+					"IELTS Speaking report completed with safe fallback",
+					"evaluation_id",
+					claim.EvaluationID,
+					"cause",
+					classifyIELTSSpeakingShadowFailure(err).Code,
+				)
+				return IELTSSpeakingShadowRuntimeReady, nil
+			}
+		}
 		return worker.recordFailure(ctx, claim, err)
 	}
 	if result.Provider != nil &&
@@ -247,6 +273,13 @@ func (worker *IELTSSpeakingShadowWorker) recordFailure(
 	claim IELTSSpeakingShadowClaim,
 	cause error,
 ) (IELTSSpeakingShadowRuntimeStatus, error) {
+	if errors.Is(cause, ErrInvalidIELTSSpeakingShadow) {
+		slog.Warn(
+			"IELTS Speaking provider response rejected",
+			"validation_error",
+			cause,
+		)
+	}
 	status, err := worker.repository.FailIELTSSpeakingShadow(
 		ctx,
 		claim,
@@ -282,7 +315,7 @@ func classifyIELTSSpeakingShadowFailure(
 		errors.Is(cause, ErrInvalidRequest):
 		return IELTSSpeakingShadowFailure{
 			Code:      "provider_invalid_response",
-			Retryable: false,
+			Retryable: errors.Is(cause, ErrInvalidIELTSSpeakingShadow),
 		}
 	case errors.Is(cause, context.Canceled):
 		return IELTSSpeakingShadowFailure{

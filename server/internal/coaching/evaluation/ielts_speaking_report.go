@@ -3,6 +3,7 @@ package evaluation
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"slices"
 )
 
@@ -10,6 +11,7 @@ const (
 	IELTSSpeakingReportSchemaVersion  = "ielts-speaking-report/v1"
 	IELTSSpeakingReportDisclaimerCode = "AI_PRACTICE_ESTIMATE_NOT_OFFICIAL_IELTS"
 	IELTSSpeakingReportDisclaimer     = "AI 练习估分，非 IELTS 官方成绩。"
+	IELTSSpeakingOverallAvailable     = "AVAILABLE"
 	IELTSSpeakingOverallNotAvailable  = "NOT_AVAILABLE"
 	IELTSTargetPlanNotConfigured      = "NOT_CONFIGURED"
 )
@@ -20,6 +22,7 @@ type IELTSSpeakingReport struct {
 	Disclaimer         string                           `json:"disclaimer"`
 	ScoreabilityStatus IELTSSpeakingScoreabilityStatus  `json:"scoreability_status"`
 	GateStatus         IELTSSpeakingGateStatus          `json:"gate_status"`
+	TestSummary        IELTSSpeakingReportTestSummary   `json:"test_summary"`
 	Criteria           []IELTSSpeakingReportCriterion   `json:"criteria"`
 	SpeakingOverall    IELTSSpeakingReportOverall       `json:"speaking_overall"`
 	PartReviews        []IELTSSpeakingReportPartReview  `json:"part_reviews"`
@@ -28,12 +31,22 @@ type IELTSSpeakingReport struct {
 	PriorityActions    []IELTSSpeakingReportPriorityRef `json:"priority_actions"`
 }
 
+type IELTSSpeakingReportTestSummary struct {
+	Part1Topic          string `json:"part_1_topic"`
+	Part2Topic          string `json:"part_2_topic"`
+	Part3Topic          string `json:"part_3_topic"`
+	QuestionCount       int    `json:"question_count"`
+	AnsweredCount       int    `json:"answered_count"`
+	RecordingDurationMS int64  `json:"recording_duration_ms"`
+}
+
 type IELTSSpeakingReportCriterion struct {
 	CriterionID     IELTSCriterion                  `json:"criterion_id"`
 	Scoreability    IELTSSpeakingScoreabilityStatus `json:"scoreability_status"`
 	Gate            IELTSSpeakingGateStatus         `json:"gate_status"`
 	EstimatedBand   *int                            `json:"estimated_band,omitempty"`
 	BandDescriptor  string                          `json:"band_descriptor,omitempty"`
+	Explanation     string                          `json:"explanation"`
 	Coverage        float64                         `json:"coverage"`
 	Confidence      float64                         `json:"confidence"`
 	ReasonCodes     []IELTSSpeakingReasonCode       `json:"reason_codes"`
@@ -44,7 +57,9 @@ type IELTSSpeakingReportCriterion struct {
 }
 
 type IELTSSpeakingReportOverall struct {
-	Status string `json:"status"`
+	Status        string   `json:"status"`
+	EstimatedBand *float64 `json:"estimated_band,omitempty"`
+	Explanation   string   `json:"explanation"`
 }
 
 type IELTSSpeakingReportPartReview struct {
@@ -110,12 +125,14 @@ func ProjectIELTSSpeakingReport(
 		Disclaimer:         IELTSSpeakingReportDisclaimer,
 		ScoreabilityStatus: result.Scoreability,
 		GateStatus:         result.Gate,
+		TestSummary:        projectIELTSSpeakingTestSummary(evidence),
 		Criteria: make(
 			[]IELTSSpeakingReportCriterion,
 			len(result.Criteria),
 		),
 		SpeakingOverall: IELTSSpeakingReportOverall{
-			Status: IELTSSpeakingOverallNotAvailable,
+			Status:      IELTSSpeakingOverallNotAvailable,
+			Explanation: "当前证据还不能同时支持四项评分，因此暂不计算口语总分。",
 		},
 		PartReviews: make(
 			[]IELTSSpeakingReportPartReview,
@@ -145,6 +162,9 @@ func ProjectIELTSSpeakingReport(
 				},
 			)
 		}
+	}
+	if overall, available := projectIELTSSpeakingOverall(report.Criteria); available {
+		report.SpeakingOverall = overall
 	}
 	for index, question := range result.QuestionResults {
 		opportunity := evidence.OpportunityManifest[index]
@@ -189,6 +209,28 @@ func ProjectIELTSSpeakingReport(
 	return report, nil
 }
 
+func projectIELTSSpeakingOverall(
+	criteria []IELTSSpeakingReportCriterion,
+) (IELTSSpeakingReportOverall, bool) {
+	if len(criteria) != len(ieltsCriterionOrder) {
+		return IELTSSpeakingReportOverall{}, false
+	}
+	total := 0
+	for index, criterion := range criteria {
+		if criterion.CriterionID != ieltsCriterionOrder[index] ||
+			criterion.EstimatedBand == nil {
+			return IELTSSpeakingReportOverall{}, false
+		}
+		total += *criterion.EstimatedBand
+	}
+	band := math.Round((float64(total)/float64(len(criteria)))*2) / 2
+	return IELTSSpeakingReportOverall{
+		Status:        IELTSSpeakingOverallAvailable,
+		EstimatedBand: &band,
+		Explanation:   "口语总分按四项练习估分等权平均，并四舍五入到最近的 0.5 分。",
+	}, true
+}
+
 func projectIELTSSpeakingReportCriterion(
 	source IELTSSpeakingShadowCriterionResult,
 ) IELTSSpeakingReportCriterion {
@@ -203,6 +245,7 @@ func projectIELTSSpeakingReportCriterion(
 		Gate:            source.Gate,
 		EstimatedBand:   estimatedBand,
 		BandDescriptor:  source.BandDescriptor,
+		Explanation:     ieltsCriterionExplanation(source),
 		Coverage:        source.Coverage,
 		Confidence:      source.Confidence,
 		ReasonCodes:     slices.Clone(source.ReasonCodes),
@@ -210,6 +253,50 @@ func projectIELTSSpeakingReportCriterion(
 		Strengths:       cloneIELTSFindings(source.Strengths),
 		Improvements:    cloneIELTSFindings(source.Improvements),
 		UpgradeExamples: cloneIELTSFindings(source.UpgradeExamples),
+	}
+}
+
+func projectIELTSSpeakingTestSummary(
+	evidence evidencePayload,
+) IELTSSpeakingReportTestSummary {
+	summary := IELTSSpeakingReportTestSummary{
+		QuestionCount: len(evidence.OpportunityManifest),
+	}
+	for _, turn := range evidence.ConfirmedTurns {
+		summary.AnsweredCount++
+		summary.RecordingDurationMS += turn.Audio.DurationMS
+	}
+	if len(evidence.OpportunityManifest) >= ieltsQuestionCount {
+		summary.Part1Topic = evidence.OpportunityManifest[0].QuestionText
+		summary.Part2Topic = evidence.OpportunityManifest[8].QuestionText
+		summary.Part3Topic = evidence.OpportunityManifest[9].QuestionText
+	}
+	return summary
+}
+
+func ieltsCriterionExplanation(
+	criterion IELTSSpeakingShadowCriterionResult,
+) string {
+	if criterion.Scoreability == IELTSSpeakingScoreabilityInsufficient {
+		if criterion.CriterionID == IELTSCriterionPR {
+			return "本次缺少可用于整场评分的可信发音工件，因此不展示发音分数。"
+		}
+		return "本次可确认的回答证据不足，因此不展示该维度分数。"
+	}
+	if criterion.BandDescriptor != "" {
+		return criterion.BandDescriptor
+	}
+	switch criterion.CriterionID {
+	case IELTSCriterionFC:
+		return "根据已确认回答评估观点衔接与话题展开；缺少完整时序证据时只提供定性反馈。"
+	case IELTSCriterionLR:
+		return "根据已确认回答评估词汇范围、准确性、搭配和改述能力。"
+	case IELTSCriterionGRA:
+		return "根据已确认回答评估句式范围、复杂结构控制和语法准确性。"
+	case IELTSCriterionPR:
+		return "根据录音声学证据评估可理解度、音段、重音、节奏与语调。"
+	default:
+		return ""
 	}
 }
 
@@ -323,9 +410,10 @@ func (report IELTSSpeakingReport) Valid() bool {
 			report.ScoreabilityStatus,
 			report.GateStatus,
 		) ||
+		!validIELTSSpeakingTestSummary(report.TestSummary) ||
 		len(report.Criteria) != len(ieltsCriterionOrder) ||
-		report.SpeakingOverall.Status !=
-			IELTSSpeakingOverallNotAvailable ||
+		!validIELTSSpeakingOverall(report.SpeakingOverall, report.Criteria) ||
+		report.SpeakingOverall.Explanation == "" ||
 		len(report.PartReviews) != len(ieltsPartOrder) ||
 		len(report.Questions) != ieltsQuestionCount ||
 		report.TargetPlan.Status != IELTSTargetPlanNotConfigured ||
@@ -445,6 +533,35 @@ func (report IELTSSpeakingReport) Valid() bool {
 	return true
 }
 
+func validIELTSSpeakingOverall(
+	overall IELTSSpeakingReportOverall,
+	criteria []IELTSSpeakingReportCriterion,
+) bool {
+	if overall.Explanation == "" {
+		return false
+	}
+	expected, available := projectIELTSSpeakingOverall(criteria)
+	if !available {
+		return overall.Status == IELTSSpeakingOverallNotAvailable &&
+			overall.EstimatedBand == nil
+	}
+	return overall.Status == IELTSSpeakingOverallAvailable &&
+		overall.EstimatedBand != nil &&
+		*overall.EstimatedBand == *expected.EstimatedBand
+}
+
+func validIELTSSpeakingTestSummary(
+	summary IELTSSpeakingReportTestSummary,
+) bool {
+	return summary.QuestionCount == ieltsQuestionCount &&
+		summary.AnsweredCount >= 0 &&
+		summary.AnsweredCount <= summary.QuestionCount &&
+		summary.RecordingDurationMS >= 0 &&
+		validInterviewText(summary.Part1Topic, interviewShadowMaximumInputString) &&
+		validInterviewText(summary.Part2Topic, interviewShadowMaximumInputString) &&
+		validInterviewText(summary.Part3Topic, interviewShadowMaximumInputString)
+}
+
 func validIELTSRootGate(
 	scoreability IELTSSpeakingScoreabilityStatus,
 	gate IELTSSpeakingGateStatus,
@@ -463,6 +580,7 @@ func validIELTSReportCriterion(
 		criterion.Scoreability,
 		criterion.Gate,
 	) ||
+		criterion.Explanation == "" ||
 		criterion.Coverage < 0 || criterion.Coverage > 1 ||
 		criterion.Confidence != 0 ||
 		criterion.ReasonCodes == nil ||
@@ -493,9 +611,11 @@ func validIELTSReportCriterion(
 	}
 	switch criterion.CriterionID {
 	case IELTSCriterionFC:
-		return criterion.EstimatedBand == nil &&
-			criterion.BandDescriptor == ""
-	case IELTSCriterionLR, IELTSCriterionGRA:
+		if criterion.EstimatedBand == nil {
+			return criterion.BandDescriptor == ""
+		}
+		fallthrough
+	case IELTSCriterionLR, IELTSCriterionGRA, IELTSCriterionPR:
 		if criterion.EstimatedBand == nil {
 			return false
 		}
@@ -504,8 +624,6 @@ func validIELTSReportCriterion(
 			*criterion.EstimatedBand,
 		)
 		return valid && criterion.BandDescriptor == descriptor
-	case IELTSCriterionPR:
-		return false
 	default:
 		return false
 	}

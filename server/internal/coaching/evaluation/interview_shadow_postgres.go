@@ -161,7 +161,11 @@ func (r *PostgresRepository) claimDurableSceneJob(
 		spec.sceneType,
 		spec.strategyRef,
 		spec.pipelineVersion,
-		SchemaVersion).Scan(
+		SchemaVersion,
+		configuration.FullConfigHash[:],
+		configuration.PromptVersion,
+		configuration.Provider,
+		configuration.Model).Scan(
 		&ownerUserID,
 		&evaluationID,
 		&evaluationRevisionID,
@@ -1539,6 +1543,33 @@ const durableSceneJobCandidateOwnerSQL = `
 	  AND revision.pipeline_version = $4
 	  AND revision.schema_version = $5
 	  AND state.evaluation_status IN ('QUEUED', 'RUNNING')
+	  AND (
+	      NOT EXISTS (
+	          SELECT 1
+	          FROM evaluation_module_runs AS existing_run
+	          WHERE existing_run.evaluation_id = outbox.evaluation_id
+	            AND existing_run.evaluation_revision_id =
+	                outbox.evaluation_revision_id
+	            AND existing_run.owner_user_id = outbox.owner_user_id
+	            AND existing_run.channel = outbox.channel
+	            AND existing_run.strategy_ref = revision.scene_strategy_ref
+	      )
+	      OR EXISTS (
+	          SELECT 1
+	          FROM evaluation_module_runs AS existing_run
+	          WHERE existing_run.evaluation_id = outbox.evaluation_id
+	            AND existing_run.evaluation_revision_id =
+	                outbox.evaluation_revision_id
+	            AND existing_run.owner_user_id = outbox.owner_user_id
+	            AND existing_run.channel = outbox.channel
+	            AND existing_run.strategy_ref = revision.scene_strategy_ref
+	            AND existing_run.run_status = 'RUNNING'
+	            AND existing_run.full_config_hash = $6
+	            AND existing_run.prompt_version = $7
+	            AND existing_run.provider = $8
+	            AND existing_run.model = $9
+	      )
+	  )
 	  AND owner.account_status = 'active'
 	  AND NOT EXISTS (
 	      SELECT 1

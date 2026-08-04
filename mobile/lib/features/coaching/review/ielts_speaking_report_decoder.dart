@@ -89,6 +89,7 @@ IeltsSpeakingReport _report(Object? value) {
       'disclaimer',
       'scoreability_status',
       'gate_status',
+      'test_summary',
       'criteria',
       'speaking_overall',
       'part_reviews',
@@ -112,6 +113,7 @@ IeltsSpeakingReport _report(Object? value) {
   }
 
   final criteria = _criteria(root['criteria']);
+  final testSummary = _testSummary(root['test_summary']);
   final findings =
       <
         String,
@@ -272,11 +274,44 @@ IeltsSpeakingReport _report(Object? value) {
 
   final speakingOverall = _exactObject(
     root['speaking_overall'],
-    required: const {'status'},
+    required: const {'status', 'explanation'},
+    optional: const {'estimated_band'},
   );
-  if (speakingOverall['status'] != 'NOT_AVAILABLE') {
+  final overallStatus = switch (speakingOverall['status']) {
+    'AVAILABLE' => IeltsSpeakingOverallStatus.available,
+    'NOT_AVAILABLE' => IeltsSpeakingOverallStatus.notAvailable,
+    _ => throw const IeltsSpeakingReportDecodeException(),
+  };
+  final overallBandValue = speakingOverall['estimated_band'];
+  final overallBand = overallBandValue is num
+      ? overallBandValue.toDouble()
+      : null;
+  final criterionBands = criteria
+      .map((criterion) => criterion.estimatedBand)
+      .whereType<int>()
+      .toList(growable: false);
+  final expectedOverall = criterionBands.length == criteria.length
+      ? (criterionBands.reduce((left, right) => left + right) /
+                    criteria.length *
+                    2)
+                .round() /
+            2
+      : null;
+  if ((overallStatus == IeltsSpeakingOverallStatus.available &&
+          (overallBand == null ||
+              overallBand < 1 ||
+              overallBand > 9 ||
+              overallBand * 2 != (overallBand * 2).roundToDouble() ||
+              overallBand != expectedOverall)) ||
+      (overallStatus == IeltsSpeakingOverallStatus.notAvailable &&
+          (speakingOverall.containsKey('estimated_band') ||
+              expectedOverall != null))) {
     throw const IeltsSpeakingReportDecodeException();
   }
+  final speakingOverallExplanation = _text(
+    speakingOverall['explanation'],
+    maxBytes: _maximumFeedbackTextBytes,
+  );
   final targetPlan = _exactObject(
     root['target_plan'],
     required: const {'status'},
@@ -290,12 +325,48 @@ IeltsSpeakingReport _report(Object? value) {
     disclaimer: 'AI 练习估分，非 IELTS 官方成绩。',
     scoreabilityStatus: scoreability,
     gateStatus: gate,
+    testSummary: testSummary,
     criteria: criteria,
-    speakingOverallStatus: IeltsSpeakingOverallStatus.notAvailable,
+    speakingOverallStatus: overallStatus,
+    speakingOverallBand: overallBand,
+    speakingOverallExplanation: speakingOverallExplanation,
     partReviews: partReviews,
     questions: questions,
     targetPlanStatus: IeltsSpeakingTargetPlanStatus.notConfigured,
     priorityActions: priorityActions,
+  );
+}
+
+IeltsSpeakingTestSummary _testSummary(Object? value) {
+  final root = _exactObject(
+    value,
+    required: const {
+      'part_1_topic',
+      'part_2_topic',
+      'part_3_topic',
+      'question_count',
+      'answered_count',
+      'recording_duration_ms',
+    },
+  );
+  final questionCount = _positiveInt(root['question_count']);
+  final answeredCount = root['answered_count'];
+  final recordingDurationMs = root['recording_duration_ms'];
+  if (questionCount != 14 ||
+      answeredCount is! int ||
+      answeredCount < 0 ||
+      answeredCount > questionCount ||
+      recordingDurationMs is! int ||
+      recordingDurationMs < 0) {
+    throw const IeltsSpeakingReportDecodeException();
+  }
+  return IeltsSpeakingTestSummary(
+    part1Topic: _text(root['part_1_topic'], maxBytes: 2048),
+    part2Topic: _text(root['part_2_topic'], maxBytes: 2048),
+    part3Topic: _text(root['part_3_topic'], maxBytes: 2048),
+    questionCount: questionCount,
+    answeredCount: answeredCount,
+    recordingDurationMs: recordingDurationMs,
   );
 }
 
@@ -319,6 +390,7 @@ IeltsSpeakingCriterion _criterion(
       'criterion_id',
       'scoreability_status',
       'gate_status',
+      'explanation',
       'coverage',
       'confidence',
       'reason_codes',
@@ -346,6 +418,10 @@ IeltsSpeakingCriterion _criterion(
     throw const IeltsSpeakingReportDecodeException();
   }
   final estimatedBand = hasBand ? root['estimated_band']! as int : null;
+  final explanation = _text(
+    root['explanation'],
+    maxBytes: _maximumFeedbackTextBytes,
+  );
   final descriptor = hasDescriptor
       ? _text(root['band_descriptor'], maxBytes: _maximumFeedbackTextBytes)
       : null;
@@ -381,9 +457,14 @@ IeltsSpeakingCriterion _criterion(
 
   switch (id) {
     case IeltsSpeakingCriterionId.fluencyAndCoherence:
-      if (hasBand ||
-          (!insufficient &&
-              !reasonCodes.contains('FLUENCY_TIMING_UNAVAILABLE'))) {
+      if ((!insufficient &&
+              ((hasBand &&
+                      !reasonCodes.contains(
+                        'PRACTICE_ESTIMATE_UNCALIBRATED',
+                      )) ||
+                  (!hasBand &&
+                      !reasonCodes.contains('FLUENCY_TIMING_UNAVAILABLE')))) ||
+          (insufficient && hasBand)) {
         throw const IeltsSpeakingReportDecodeException();
       }
     case IeltsSpeakingCriterionId.lexicalResource:
@@ -395,11 +476,18 @@ IeltsSpeakingCriterion _criterion(
         throw const IeltsSpeakingReportDecodeException();
       }
     case IeltsSpeakingCriterionId.pronunciation:
-      if (!insufficient ||
-          gate != IeltsSpeakingReportGateStatus.blocked ||
-          hasBand ||
-          reasonCodes.length != 1 ||
-          reasonCodes.single != 'PRONUNCIATION_ARTIFACT_UNAVAILABLE') {
+      final validProvisional =
+          !insufficient &&
+          gate == IeltsSpeakingReportGateStatus.feedbackOnly &&
+          hasBand &&
+          reasonCodes.contains('PRACTICE_ESTIMATE_UNCALIBRATED');
+      final validInsufficient =
+          insufficient &&
+          gate == IeltsSpeakingReportGateStatus.blocked &&
+          !hasBand &&
+          reasonCodes.length == 1 &&
+          reasonCodes.single == 'PRONUNCIATION_ARTIFACT_UNAVAILABLE';
+      if (!validProvisional && !validInsufficient) {
         throw const IeltsSpeakingReportDecodeException();
       }
   }
@@ -407,6 +495,7 @@ IeltsSpeakingCriterion _criterion(
     id: id,
     scoreabilityStatus: scoreability,
     gateStatus: gate,
+    explanation: explanation,
     estimatedBand: estimatedBand,
     bandDescriptor: descriptor,
     coverage: _ratio(root['coverage']),
@@ -605,12 +694,6 @@ IeltsSpeakingQuestionCriterionFindings _questionCriterionFinding(
       maximumItems: 3,
     ),
   );
-  if (expected == IeltsSpeakingCriterionId.pronunciation &&
-      (result.strengthFindingIds.isNotEmpty ||
-          result.improvementFindingIds.isNotEmpty ||
-          result.upgradeExampleFindingIds.isNotEmpty)) {
-    throw const IeltsSpeakingReportDecodeException();
-  }
   return result;
 }
 
@@ -940,6 +1023,7 @@ const _reportReasonCodes = <String>{
   'PRONUNCIATION_ARTIFACT_UNAVAILABLE',
   'INSUFFICIENT_EVIDENCE',
   'OPPORTUNITY_NOT_PROVIDED',
+  'PRACTICE_ESTIMATE_UNCALIBRATED',
 };
 
 const _insufficientReasonCodes = <String>{
