@@ -11,7 +11,6 @@ import (
 	"time"
 
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
@@ -240,27 +239,11 @@ func run() int {
 			return 1
 		}
 		speechFeedbackLease = iseConfig.Timeout + 30*time.Second
-		iseEvaluator, evaluatorErr := xfyun.NewEvaluator(
-			xfyun.ISEConfig{
-				Endpoint: iseConfig.Endpoint,
-				Timeout:  iseConfig.Timeout,
-			},
-			iseConfig.AppID.Reveal(),
-			iseConfig.APIKey.Reveal(),
-			iseConfig.APISecret.Reveal(),
-		)
-		if evaluatorErr != nil {
-			logger.Error(
-				"iFlytek ISE startup failed",
-				slog.String("error_kind", "dependency"),
-			)
-			return 1
-		}
 		speechFeedbackAcoustics, err =
 			bootstrap.NewSpeechFeedbackAcousticProvider(
 				databasePool.Native(),
 				recordingStore,
-				iseEvaluator,
+				iseConfig,
 			)
 		if err != nil {
 			logger.Error(

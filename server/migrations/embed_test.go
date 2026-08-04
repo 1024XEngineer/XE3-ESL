@@ -91,6 +91,53 @@ func TestEveryEmbeddedMigrationVersionIsUniqueAndPaired(t *testing.T) {
 	}
 }
 
+func TestSpeechFeedbackAcousticProviderBoundaryMigrationIsEmbedded(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000063_speech_feedback_acoustic_provider_boundary.up.sql",
+		"000063_speech_feedback_acoustic_provider_boundary.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf(
+				"read SpeechFeedback acoustic Provider migration %q: %v",
+				name,
+				err,
+			)
+		}
+	}
+
+	upContent, err := Files.ReadFile(
+		"000063_speech_feedback_acoustic_provider_boundary.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := string(upContent)
+	for _, required := range []string{
+		"octet_length(provider) BETWEEN 1 AND 128",
+		"provider ~ '^[A-Za-z0-9._:-]+$'",
+		"provider_session_id !~ '^[[:space:]]*$'",
+		"category IN ('read_word', 'read_sentence', 'topic')",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("Provider boundary migration is missing %q", required)
+		}
+	}
+	downContent, err := Files.ReadFile(
+		"000063_speech_feedback_acoustic_provider_boundary.down.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	down := string(downContent)
+	if !strings.Contains(down, "provider = 'xfyun-ise'") {
+		t.Error("Provider boundary rollback must restore the XFYUN constraint")
+	}
+}
+
 func TestIELTSSpeakingSectionModelMigrationIsEmbedded(t *testing.T) {
 	t.Parallel()
 

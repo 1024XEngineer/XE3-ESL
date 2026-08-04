@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/qianwen"
 	platformconfig "github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
 )
 
 func TestLiveFixedExtractionContract(t *testing.T) {

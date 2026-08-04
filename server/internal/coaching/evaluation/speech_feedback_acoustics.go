@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 )
 
 var ErrSpeechFeedbackAcousticUnavailable = errors.New(
@@ -27,7 +25,7 @@ type SpeechFeedbackAcousticInput struct {
 type SpeechFeedbackAcousticEvidence struct {
 	Assessment      SpeechFeedbackAcousticAssessment
 	RawResult       string
-	AvailableFields []xfyun.ResultField
+	AvailableFields []AcousticAssessmentField
 }
 
 func (evidence SpeechFeedbackAcousticEvidence) valid() bool {
@@ -47,11 +45,50 @@ type SpeechFeedbackAudioReader interface {
 	) ([]byte, error)
 }
 
-type SpeechFeedbackISEEvaluator interface {
+type AcousticAssessmentCategory string
+
+const (
+	AcousticCategoryReadWord     AcousticAssessmentCategory = "read_word"
+	AcousticCategoryReadSentence AcousticAssessmentCategory = "read_sentence"
+	AcousticCategoryTopic        AcousticAssessmentCategory = "topic"
+)
+
+type AcousticAssessmentRequest struct {
+	Audio         []byte
+	ReferenceText string
+	TopicTitle    string
+	Category      AcousticAssessmentCategory
+}
+
+type AcousticAssessmentResult struct {
+	Provider        string
+	SessionID       string
+	RawResult       string
+	AvailableFields []AcousticAssessmentField
+	Summary         AcousticAssessmentSummary
+}
+
+type AcousticAssessmentField struct {
+	Path  string `json:"path"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type AcousticAssessmentSummary struct {
+	AccuracyScore  *float64
+	FluencyScore   *float64
+	IntegrityScore *float64
+	PhoneScore     *float64
+	SpeakingSpeed  *float64
+	Rejected       *bool
+	ExceptionInfo  string
+}
+
+type AcousticEvaluator interface {
 	Evaluate(
 		context.Context,
-		xfyun.EvaluationRequest,
-	) (xfyun.EvaluationResult, error)
+		AcousticAssessmentRequest,
+	) (AcousticAssessmentResult, error)
 }
 
 type SpeechFeedbackAcousticProvider interface {
@@ -61,25 +98,25 @@ type SpeechFeedbackAcousticProvider interface {
 	) (SpeechFeedbackAcousticEvidence, error)
 }
 
-type XFYUNSpeechFeedbackAcousticProvider struct {
+type speechFeedbackAcousticProvider struct {
 	audio     SpeechFeedbackAudioReader
-	evaluator SpeechFeedbackISEEvaluator
+	evaluator AcousticEvaluator
 }
 
-func NewXFYUNSpeechFeedbackAcousticProvider(
+func NewSpeechFeedbackAcousticProvider(
 	audio SpeechFeedbackAudioReader,
-	evaluator SpeechFeedbackISEEvaluator,
-) (*XFYUNSpeechFeedbackAcousticProvider, error) {
+	evaluator AcousticEvaluator,
+) (SpeechFeedbackAcousticProvider, error) {
 	if audio == nil || evaluator == nil {
 		return nil, ErrInvalidSpeechFeedback
 	}
-	return &XFYUNSpeechFeedbackAcousticProvider{
+	return &speechFeedbackAcousticProvider{
 		audio:     audio,
 		evaluator: evaluator,
 	}, nil
 }
 
-func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcoustics(
+func (provider *speechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcoustics(
 	ctx context.Context,
 	input SpeechFeedbackAcousticInput,
 ) (SpeechFeedbackAcousticEvidence, error) {
@@ -108,23 +145,23 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 	if err != nil {
 		return SpeechFeedbackAcousticEvidence{}, err
 	}
-	category := speechFeedbackISECategory(input.ConfirmedText)
+	category := speechFeedbackAcousticCategory(input.ConfirmedText)
 	referenceText := input.ConfirmedText
 	result, err := provider.evaluator.Evaluate(
 		ctx,
-		xfyun.EvaluationRequest{
+		AcousticAssessmentRequest{
 			Audio:         pcm,
 			ReferenceText: referenceText,
 			// The scene prompt is used by the text evaluator for relevance and
-			// task completion. ISE should compare the audio with the learner's
-			// confirmed answer, not require the learner to repeat the question.
+			// task completion. Acoustic assessment compares the audio with the
+			// confirmed answer, not with the question.
 			Category: category,
 		},
 	)
 	if err != nil {
 		return SpeechFeedbackAcousticEvidence{}, err
 	}
-	if err := validateSpeechFeedbackISESummary(
+	if err := validateSpeechFeedbackAcousticSummary(
 		result.Summary,
 		category,
 	); err != nil {
@@ -133,12 +170,12 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 	assessment := SpeechFeedbackAcousticAssessment{
 		Pronunciation:   SpeechFeedbackAssessed,
 		AcousticFluency: SpeechFeedbackAssessed,
-		Provider:        SpeechFeedbackAcousticProviderName,
+		Provider:        strings.TrimSpace(result.Provider),
 		ProviderSession: strings.TrimSpace(result.SessionID),
 		Category:        string(category),
 		Notice:          SpeechFeedbackAcousticNotice,
 	}
-	if category == xfyun.CategoryTopic {
+	if category == AcousticCategoryTopic {
 		assessment.PronunciationScore = result.Summary.PhoneScore
 		assessment.SpeakingSpeedWPM = result.Summary.SpeakingSpeed
 		assessment.SemanticScore = result.Summary.AccuracyScore
@@ -150,7 +187,7 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 	}
 	evidence := SpeechFeedbackAcousticEvidence{
 		Assessment:      assessment,
-		RawResult:       result.RawXML,
+		RawResult:       result.RawResult,
 		AvailableFields: result.AvailableFields,
 	}
 	if !evidence.valid() {
@@ -160,11 +197,11 @@ func (provider *XFYUNSpeechFeedbackAcousticProvider) EvaluateSpeechFeedbackAcous
 	return evidence, nil
 }
 
-func validateSpeechFeedbackISESummary(
-	summary xfyun.ScoreSummary,
-	category xfyun.EvaluationCategory,
+func validateSpeechFeedbackAcousticSummary(
+	summary AcousticAssessmentSummary,
+	category AcousticAssessmentCategory,
 ) error {
-	if summary.Rejected == nil && category != xfyun.CategoryTopic {
+	if summary.Rejected == nil && category != AcousticCategoryTopic {
 		return fmt.Errorf(
 			"%w: result is missing is_rejected",
 			ErrSpeechFeedbackAcousticUnavailable,
@@ -177,7 +214,7 @@ func validateSpeechFeedbackISESummary(
 			strings.TrimSpace(summary.ExceptionInfo),
 		)
 	}
-	if category == xfyun.CategoryTopic {
+	if category == AcousticCategoryTopic {
 		missing := make([]string, 0, 3)
 		if !validSpeechFeedbackScore(summary.PhoneScore) {
 			missing = append(missing, "phone_score")

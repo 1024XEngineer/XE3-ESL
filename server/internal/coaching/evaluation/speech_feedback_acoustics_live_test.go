@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/xfyun"
 )
 
 func TestSpeechFeedbackAcousticsLive(t *testing.T) {
@@ -27,7 +27,7 @@ func TestSpeechFeedbackAcousticsLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load ISE config: %v", err)
 	}
-	evaluator, err := xfyun.NewEvaluator(
+	evaluator, err := xfyun.NewSpeechFeedbackEvaluator(
 		xfyun.ISEConfig{
 			Endpoint: configuration.Endpoint,
 			Timeout:  configuration.Timeout,
@@ -39,7 +39,7 @@ func TestSpeechFeedbackAcousticsLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create ISE evaluator: %v", err)
 	}
-	provider, err := evaluation.NewXFYUNSpeechFeedbackAcousticProvider(
+	provider, err := evaluation.NewSpeechFeedbackAcousticProvider(
 		liveSpeechFeedbackAudioReader{audio: audio},
 		evaluator,
 	)

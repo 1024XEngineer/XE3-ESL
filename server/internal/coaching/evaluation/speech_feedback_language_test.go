@@ -2,8 +2,6 @@ package evaluation
 
 import (
 	"testing"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 )
 
 func TestClassifySpeechFeedbackLanguage(t *testing.T) {
@@ -22,15 +20,15 @@ func TestClassifySpeechFeedbackLanguage(t *testing.T) {
 	}
 }
 
-func TestSpeechFeedbackISECategory(t *testing.T) {
-	tests := map[string]xfyun.EvaluationCategory{
-		"Hello":         xfyun.CategoryReadWord,
-		"Hello!":        xfyun.CategoryReadWord,
-		"I am ready.":   xfyun.CategoryReadSentence,
-		"well-prepared": xfyun.CategoryReadSentence,
+func TestSpeechFeedbackAcousticCategory(t *testing.T) {
+	tests := map[string]AcousticAssessmentCategory{
+		"Hello":         AcousticCategoryReadWord,
+		"Hello!":        AcousticCategoryReadWord,
+		"I am ready.":   AcousticCategoryReadSentence,
+		"well-prepared": AcousticCategoryReadSentence,
 	}
 	for text, expected := range tests {
-		if actual := speechFeedbackISECategory(text); actual != expected {
+		if actual := speechFeedbackAcousticCategory(text); actual != expected {
 			t.Fatalf("%q category = %s, want %s", text, actual, expected)
 		}
 	}

@@ -1,4 +1,4 @@
-package bootstrap
+package evaluationhistory
 
 import (
 	"context"
@@ -8,27 +8,38 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 )
 
-type evaluationReportHistory struct {
-	repository *evaluation.PostgresRepository
+type Source interface {
+	GetFormalReport(
+		context.Context,
+		string,
+		string,
+	) (evaluation.StoredFormalReport, error)
+	ListFormalReports(
+		context.Context,
+		string,
+		evaluation.FormalReportHistoryQuery,
+	) (evaluation.FormalReportHistoryPage, error)
 }
 
-func newEvaluationReportHistory(
-	repository *evaluation.PostgresRepository,
-) (*evaluationReportHistory, error) {
-	if repository == nil {
+type Repository struct {
+	source Source
+}
+
+func New(source Source) (*Repository, error) {
+	if source == nil {
 		return nil, errors.New(
-			"bootstrap: Evaluation report history dependency is required",
+			"review: Evaluation report history source is required",
 		)
 	}
-	return &evaluationReportHistory{repository: repository}, nil
+	return &Repository{source: source}, nil
 }
 
-func (history *evaluationReportHistory) GetReport(
+func (history *Repository) GetReport(
 	ctx context.Context,
 	actor review.Actor,
 	reportID string,
 ) (review.Report, error) {
-	item, err := history.repository.GetFormalReport(
+	item, err := history.source.GetFormalReport(
 		ctx,
 		actor.UserID,
 		reportID,
@@ -39,7 +50,7 @@ func (history *evaluationReportHistory) GetReport(
 	return mapEvaluationReport(item)
 }
 
-func (history *evaluationReportHistory) ListReports(
+func (history *Repository) ListReports(
 	ctx context.Context,
 	actor review.Actor,
 	query review.HistoryQuery,
@@ -51,7 +62,7 @@ func (history *evaluationReportHistory) ListReports(
 			ReportID:  query.Before.ReportID,
 		}
 	}
-	page, err := history.repository.ListFormalReports(
+	page, err := history.source.ListFormalReports(
 		ctx,
 		actor.UserID,
 		evaluation.FormalReportHistoryQuery{
@@ -77,12 +88,12 @@ func (history *evaluationReportHistory) ListReports(
 	return result, nil
 }
 
-func (history *evaluationReportHistory) SearchReports(
+func (history *Repository) SearchReports(
 	ctx context.Context,
 	actor review.Actor,
 	query review.HistorySearchQuery,
 ) ([]review.Report, error) {
-	page, err := history.repository.ListFormalReports(
+	page, err := history.source.ListFormalReports(
 		ctx,
 		actor.UserID,
 		evaluation.FormalReportHistoryQuery{
@@ -122,8 +133,8 @@ func mapEvaluationReport(
 			Scale:        string(dimension.Scale),
 			Coverage:     dimension.Coverage,
 			Confidence:   dimension.Confidence,
-			ReasonCodes:  append([]string(nil), dimension.ReasonCodes...),
-			EvidenceRefs: append([]string(nil), dimension.EvidenceRefs...),
+			ReasonCodes:  cloneReportStrings(dimension.ReasonCodes),
+			EvidenceRefs: cloneReportStrings(dimension.EvidenceRefs),
 			Strengths:    mapEvaluationFindings(dimension.Strengths),
 			Improvements: mapEvaluationFindings(dimension.Improvements),
 			Examples:     mapEvaluationFindings(dimension.Examples),
@@ -196,6 +207,13 @@ func cloneReportScore(value *float64) *float64 {
 	return &cloned
 }
 
+func cloneReportStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append([]string{}, values...)
+}
+
 func mapEvaluationReportHistoryError(err error) error {
 	switch {
 	case errors.Is(err, evaluation.ErrInvalidRequest):
@@ -209,4 +227,4 @@ func mapEvaluationReportHistoryError(err error) error {
 	}
 }
 
-var _ review.HistoryRepository = (*evaluationReportHistory)(nil)
+var _ review.HistoryRepository = (*Repository)(nil)

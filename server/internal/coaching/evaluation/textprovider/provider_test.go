@@ -1,4 +1,4 @@
-package bootstrap
+package textprovider
 
 import (
 	"context"
@@ -20,12 +20,12 @@ func TestInterviewShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 			Content:  `{"schema_version":"interview-scene-shadow-provider/v2","dimensions":[]}`,
 		},
 	}
-	provider, err := newInterviewShadowTextProvider(
+	provider, err := NewInterviewShadowProvider(
 		generator,
 		time.Second,
 	)
 	if err != nil {
-		t.Fatalf("newInterviewShadowTextProvider: %v", err)
+		t.Fatalf("NewInterviewShadowProvider: %v", err)
 	}
 	input := evaluation.InterviewShadowProviderInput{
 		SchemaVersion: evaluation.InterviewShadowProviderSchemaVersion,
@@ -98,12 +98,12 @@ func TestInterviewShadowTextProviderRejectsInvalidDependencies(t *testing.T) {
 		{
 			name:      "timeout above bound",
 			generator: generator,
-			timeout:   interviewShadowGenerationTimeout + time.Second,
+			timeout:   MaxGenerationTimeout + time.Second,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := newInterviewShadowTextProvider(
+			if _, err := NewInterviewShadowProvider(
 				test.generator,
 				test.timeout,
 			); err == nil {
@@ -116,12 +116,12 @@ func TestInterviewShadowTextProviderRejectsInvalidDependencies(t *testing.T) {
 func TestInterviewShadowTextProviderPropagatesGenerationFailure(t *testing.T) {
 	t.Parallel()
 	want := errors.New("provider unavailable")
-	provider, err := newInterviewShadowTextProvider(
+	provider, err := NewInterviewShadowProvider(
 		&evaluationTextGenerator{err: want},
 		time.Second,
 	)
 	if err != nil {
-		t.Fatalf("newInterviewShadowTextProvider: %v", err)
+		t.Fatalf("NewInterviewShadowProvider: %v", err)
 	}
 	_, err = provider.AnalyzeInterview(
 		context.Background(),
@@ -142,12 +142,12 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 			Content:  `{"schema_version":"ielts-speaking-full-mock-shadow-provider/v1","criteria":[]}`,
 		},
 	}
-	provider, err := newIELTSSpeakingShadowTextProvider(
+	provider, err := NewIELTSSpeakingShadowProvider(
 		generator,
 		time.Second,
 	)
 	if err != nil {
-		t.Fatalf("newIELTSSpeakingShadowTextProvider: %v", err)
+		t.Fatalf("NewIELTSSpeakingShadowProvider: %v", err)
 	}
 	input := evaluation.IELTSSpeakingShadowProviderInput{
 		SchemaVersion: evaluation.IELTSSpeakingShadowProviderSchemaVersion,
@@ -215,15 +215,15 @@ func TestIELTSSpeakingShadowTextProviderRejectsInvalidDependencies(
 	t *testing.T,
 ) {
 	t.Parallel()
-	if _, err := newIELTSSpeakingShadowTextProvider(
+	if _, err := NewIELTSSpeakingShadowProvider(
 		nil,
 		time.Second,
 	); err == nil {
 		t.Fatal("nil generator was accepted")
 	}
-	if _, err := newIELTSSpeakingShadowTextProvider(
+	if _, err := NewIELTSSpeakingShadowProvider(
 		&evaluationTextGenerator{},
-		interviewShadowGenerationTimeout+time.Second,
+		MaxGenerationTimeout+time.Second,
 	); err == nil {
 		t.Fatal("timeout above bound was accepted")
 	}
@@ -237,7 +237,7 @@ func TestGeneralSceneTextProviderUsesEvaluationContract(t *testing.T) {
 		Model:    "qwen-plus",
 		Content:  `{"schema_version":"general-scene-evaluation-provider/v1","dimensions":[]}`,
 	}}
-	provider, err := newGeneralSceneTextProvider(generator, time.Second)
+	provider, err := NewGeneralSceneProvider(generator, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

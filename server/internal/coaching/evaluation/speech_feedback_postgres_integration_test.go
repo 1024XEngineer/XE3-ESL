@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/migrations"
 )
@@ -140,6 +140,29 @@ func TestPostgresSpeechFeedbackPersistsTopicAcousticEvidence(t *testing.T) {
 		t.Fatalf("claim = %#v, %t, %v", claim, acquired, err)
 	}
 	pronunciation, speed, semantic := 88.5, 156.0, 82.0
+	_, err = pool.Exec(context.Background(), `
+		INSERT INTO evaluation_speech_feedback_acoustic_evidence (
+			speech_feedback_id,
+			owner_user_id,
+			provider,
+			provider_session_id,
+			category,
+			accuracy_score,
+			phone_score,
+			speaking_speed_wpm,
+			raw_result,
+			available_fields
+		) VALUES (
+			$1, $2, 'invalid/provider', 'invalid-provider-session',
+			'topic', $3, $4, $5, '<xml_result/>', '[]'::jsonb
+		)
+	`, claim.SpeechFeedbackID, claim.OwnerUserID, semantic, pronunciation, speed)
+	var constraintError *pgconn.PgError
+	if !errors.As(err, &constraintError) ||
+		constraintError.ConstraintName !=
+			"evaluation_speech_feedback_acoustic_provider_check" {
+		t.Fatalf("invalid acoustic Provider error = %v", err)
+	}
 	err = repository.SaveSpeechFeedbackAcousticEvidence(
 		context.Background(),
 		claim,
@@ -150,15 +173,14 @@ func TestPostgresSpeechFeedbackPersistsTopicAcousticEvidence(t *testing.T) {
 				PronunciationScore: &pronunciation,
 				SpeakingSpeedWPM:   &speed,
 				SemanticScore:      &semantic,
-				Provider: evaluation.
-					SpeechFeedbackAcousticProviderName,
-				ProviderSession: "ise-topic-session-1",
-				Category:        "topic",
+				Provider:           "test-acoustic",
+				ProviderSession:    "ise-topic-session-1",
+				Category:           "topic",
 				Notice: evaluation.
 					SpeechFeedbackAcousticNotice,
 			},
 			RawResult:       "<xml_result/>",
-			AvailableFields: []xfyun.ResultField{},
+			AvailableFields: []evaluation.AcousticAssessmentField{},
 		},
 	)
 	if err != nil {
@@ -837,6 +859,15 @@ func speechFeedbackDatabase(t *testing.T) *pgxpool.Pool {
 	}
 	if _, err := pool.Exec(ctx, string(authorityUp)); err != nil {
 		t.Fatalf("apply Evaluation SpeechFeedback authority migration: %v", err)
+	}
+	providerBoundaryUp, err := migrations.Files.ReadFile(
+		"000063_speech_feedback_acoustic_provider_boundary.up.sql",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(providerBoundaryUp)); err != nil {
+		t.Fatalf("apply SpeechFeedback acoustic Provider migration: %v", err)
 	}
 	if _, err := pool.Exec(ctx, practiceReviewSourceAuthorityFixtureSQL); err != nil {
 		t.Fatalf("apply Practice source authority fixture: %v", err)

@@ -1,4 +1,4 @@
-package bootstrap
+package evaluationprofile
 
 import (
 	"context"
@@ -8,30 +8,36 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
-type agentLearningProfileReader struct {
-	repository *evaluation.PostgresRepository
+type Source interface {
+	ReadLearningProfile(
+		context.Context,
+		string,
+		evaluation.LearningProfileQuery,
+	) ([]evaluation.LearningProfileDimension, error)
 }
 
-func newAgentLearningProfileReader(
-	repository *evaluation.PostgresRepository,
-) (*agentLearningProfileReader, error) {
-	if repository == nil {
+type Reader struct {
+	source Source
+}
+
+func New(source Source) (*Reader, error) {
+	if source == nil {
 		return nil, errors.New(
-			"bootstrap: Learning Profile read dependency is required",
+			"agent context: Learning Profile source is required",
 		)
 	}
-	return &agentLearningProfileReader{repository: repository}, nil
+	return &Reader{source: source}, nil
 }
 
-func (reader *agentLearningProfileReader) ReadLearningProfile(
+func (reader *Reader) ReadLearningProfile(
 	ctx context.Context,
 	request agentcontext.LearningProfileReadRequest,
 ) ([]agentcontext.LearningProfileDimension, error) {
-	if reader == nil || reader.repository == nil || ctx == nil ||
+	if reader == nil || reader.source == nil || ctx == nil ||
 		!request.Valid() {
-		return nil, evaluation.ErrInvalidRequest
+		return nil, agentcontext.ErrInvalidContext
 	}
-	dimensions, err := reader.repository.ReadLearningProfile(
+	dimensions, err := reader.source.ReadLearningProfile(
 		ctx,
 		request.Actor.UserID,
 		evaluation.LearningProfileQuery{
@@ -86,4 +92,4 @@ func (reader *agentLearningProfileReader) ReadLearningProfile(
 	return result, nil
 }
 
-var _ agentcontext.LearningProfileReader = (*agentLearningProfileReader)(nil)
+var _ agentcontext.LearningProfileReader = (*Reader)(nil)

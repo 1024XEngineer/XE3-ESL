@@ -15,7 +15,6 @@ const (
 	SpeechFeedbackPromptVersion   = "speech-feedback-prompt/v3"
 
 	SpeechFeedbackAcousticReasonUnavailable = "ACOUSTIC_EVIDENCE_UNAVAILABLE"
-	SpeechFeedbackAcousticProviderName      = "xfyun-ise"
 	SpeechFeedbackAcousticNotice            = "根据本次录音自动评估，仅供练习参考。"
 )
 
@@ -337,7 +336,7 @@ func (assessment SpeechFeedbackAcousticAssessment) valid() bool {
 	}
 	if assessment.Pronunciation != SpeechFeedbackAssessed ||
 		assessment.AcousticFluency != SpeechFeedbackAssessed ||
-		assessment.Provider != SpeechFeedbackAcousticProviderName ||
+		!validSpeechFeedbackIdentifier(assessment.Provider) ||
 		!validSpeechFeedbackProviderSession(assessment.ProviderSession) ||
 		assessment.ReasonCode != "" ||
 		assessment.Notice != SpeechFeedbackAcousticNotice {

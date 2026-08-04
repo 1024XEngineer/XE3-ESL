@@ -6,11 +6,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 )
 
-func TestXFYUNSpeechFeedbackAcousticProviderUsesConfirmedTextAndAudio(
+const testSpeechFeedbackAcousticProvider = "test-acoustic"
+
+func TestSpeechFeedbackAcousticProviderUsesConfirmedTextAndAudio(
 	t *testing.T,
 ) {
 	t.Parallel()
@@ -20,16 +20,17 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesConfirmedTextAndAudio(
 	audio := &speechFeedbackAudioReaderStub{
 		audio: speechFeedbackTestWAV(pcm),
 	}
-	evaluator := &speechFeedbackISEEvaluatorStub{
-		result: xfyun.EvaluationResult{
+	evaluator := &acousticEvaluatorStub{
+		result: AcousticAssessmentResult{
+			Provider:  testSpeechFeedbackAcousticProvider,
 			SessionID: "wse00000001@ll36940e324c59000100",
-			RawXML:    "<xml_result/>",
-			AvailableFields: []xfyun.ResultField{{
+			RawResult: "<xml_result/>",
+			AvailableFields: []AcousticAssessmentField{{
 				Path:  "/read_word",
 				Name:  "accuracy_score",
 				Value: "81.5",
 			}},
-			Summary: xfyun.ScoreSummary{
+			Summary: AcousticAssessmentSummary{
 				AccuracyScore:  &accuracy,
 				FluencyScore:   &fluency,
 				IntegrityScore: &integrity,
@@ -37,7 +38,7 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesConfirmedTextAndAudio(
 			},
 		},
 	}
-	provider, err := NewXFYUNSpeechFeedbackAcousticProvider(
+	provider, err := NewSpeechFeedbackAcousticProvider(
 		audio,
 		evaluator,
 	)
@@ -59,12 +60,12 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesConfirmedTextAndAudio(
 	}
 	if audio.calls != 1 ||
 		evaluator.request.ReferenceText != "Hello" ||
-		evaluator.request.Category != xfyun.CategoryReadWord ||
+		evaluator.request.Category != AcousticCategoryReadWord ||
 		string(evaluator.request.Audio) != string(pcm) ||
 		evidence.Assessment.AccuracyScore == nil ||
 		*evidence.Assessment.AccuracyScore != accuracy ||
 		evidence.Assessment.Provider !=
-			SpeechFeedbackAcousticProviderName {
+			testSpeechFeedbackAcousticProvider {
 		t.Fatalf(
 			"unexpected evidence/request: %#v / %#v",
 			evidence,
@@ -85,17 +86,17 @@ func TestSpeechFeedbackPCM16MonoRejectsMismatchedFormat(t *testing.T) {
 	}
 }
 
-func TestValidateSpeechFeedbackISESummaryExplainsUnavailableResult(
+func TestValidateSpeechFeedbackAcousticSummaryExplainsUnavailableResult(
 	t *testing.T,
 ) {
 	t.Parallel()
 	rejected := true
-	err := validateSpeechFeedbackISESummary(
-		xfyun.ScoreSummary{
+	err := validateSpeechFeedbackAcousticSummary(
+		AcousticAssessmentSummary{
 			Rejected:      &rejected,
 			ExceptionInfo: "28676",
 		},
-		xfyun.CategoryReadSentence,
+		AcousticCategoryReadSentence,
 	)
 	if !errors.Is(err, ErrSpeechFeedbackAcousticUnavailable) ||
 		!strings.Contains(err.Error(), "except_info=28676") {
@@ -103,9 +104,9 @@ func TestValidateSpeechFeedbackISESummaryExplainsUnavailableResult(
 	}
 
 	rejected = false
-	err = validateSpeechFeedbackISESummary(
-		xfyun.ScoreSummary{Rejected: &rejected},
-		xfyun.CategoryReadSentence,
+	err = validateSpeechFeedbackAcousticSummary(
+		AcousticAssessmentSummary{Rejected: &rejected},
+		AcousticCategoryReadSentence,
 	)
 	if !errors.Is(err, ErrSpeechFeedbackAcousticUnavailable) ||
 		!strings.Contains(err.Error(), "full-dimension") {
@@ -113,17 +114,18 @@ func TestValidateSpeechFeedbackISESummaryExplainsUnavailableResult(
 	}
 }
 
-func TestXFYUNSpeechFeedbackAcousticProviderUsesReadSentenceForPracticePrompt(
+func TestSpeechFeedbackAcousticProviderUsesReadSentenceForPracticePrompt(
 	t *testing.T,
 ) {
 	t.Parallel()
 	accuracy, fluency, integrity := 88.5, 92.0, 100.0
 	rejected := false
-	evaluator := &speechFeedbackISEEvaluatorStub{
-		result: xfyun.EvaluationResult{
+	evaluator := &acousticEvaluatorStub{
+		result: AcousticAssessmentResult{
+			Provider:  testSpeechFeedbackAcousticProvider,
 			SessionID: "wse00000001@ll36940e324c59000100",
-			RawXML:    "<xml_result/>",
-			Summary: xfyun.ScoreSummary{
+			RawResult: "<xml_result/>",
+			Summary: AcousticAssessmentSummary{
 				AccuracyScore:  &accuracy,
 				FluencyScore:   &fluency,
 				IntegrityScore: &integrity,
@@ -131,7 +133,7 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesReadSentenceForPracticePrompt(
 			},
 		},
 	}
-	provider, err := NewXFYUNSpeechFeedbackAcousticProvider(
+	provider, err := NewSpeechFeedbackAcousticProvider(
 		&speechFeedbackAudioReaderStub{
 			audio: speechFeedbackTestWAV([]byte{1, 2, 3, 4}),
 		},
@@ -154,7 +156,7 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesReadSentenceForPracticePrompt(
 	if err != nil {
 		t.Fatalf("evaluate practice acoustics: %v", err)
 	}
-	if evaluator.request.Category != xfyun.CategoryReadSentence ||
+	if evaluator.request.Category != AcousticCategoryReadSentence ||
 		evaluator.request.TopicTitle != "" ||
 		evaluator.request.ReferenceText !=
 			"I use AI to summarize customer feedback." ||
@@ -173,14 +175,14 @@ func TestXFYUNSpeechFeedbackAcousticProviderUsesReadSentenceForPracticePrompt(
 	}
 }
 
-func TestXFYUNSpeechFeedbackAcousticProviderRejectsChineseBeforeReadingAudio(
+func TestSpeechFeedbackAcousticProviderRejectsChineseBeforeReadingAudio(
 	t *testing.T,
 ) {
 	t.Parallel()
 	audio := &speechFeedbackAudioReaderStub{}
-	provider, err := NewXFYUNSpeechFeedbackAcousticProvider(
+	provider, err := NewSpeechFeedbackAcousticProvider(
 		audio,
-		&speechFeedbackISEEvaluatorStub{},
+		&acousticEvaluatorStub{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -290,16 +292,16 @@ func (reader *speechFeedbackAudioReaderStub) ReadSpeechFeedbackAudio(
 	return reader.audio, reader.err
 }
 
-type speechFeedbackISEEvaluatorStub struct {
-	request xfyun.EvaluationRequest
-	result  xfyun.EvaluationResult
+type acousticEvaluatorStub struct {
+	request AcousticAssessmentRequest
+	result  AcousticAssessmentResult
 	err     error
 }
 
-func (evaluator *speechFeedbackISEEvaluatorStub) Evaluate(
+func (evaluator *acousticEvaluatorStub) Evaluate(
 	_ context.Context,
-	request xfyun.EvaluationRequest,
-) (xfyun.EvaluationResult, error) {
+	request AcousticAssessmentRequest,
+) (AcousticAssessmentResult, error) {
 	evaluator.request = request
 	return evaluator.result, evaluator.err
 }
@@ -328,13 +330,13 @@ func validSpeechFeedbackAcousticEvidence() SpeechFeedbackAcousticEvidence {
 			AccuracyScore:   &accuracy,
 			FluencyScore:    &fluency,
 			IntegrityScore:  &integrity,
-			Provider:        SpeechFeedbackAcousticProviderName,
+			Provider:        testSpeechFeedbackAcousticProvider,
 			ProviderSession: "ise-session-1",
 			Category:        "read_word",
 			Notice:          SpeechFeedbackAcousticNotice,
 		},
 		RawResult:       "<xml_result/>",
-		AvailableFields: []xfyun.ResultField{},
+		AvailableFields: []AcousticAssessmentField{},
 	}
 }
 

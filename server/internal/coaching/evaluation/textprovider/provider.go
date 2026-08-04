@@ -1,4 +1,4 @@
-package bootstrap
+package textprovider
 
 import (
 	"context"
@@ -10,21 +10,21 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
-const interviewShadowGenerationTimeout = 45 * time.Second
+const MaxGenerationTimeout = 45 * time.Second
 
 type interviewShadowTextProvider struct {
 	generator ai.TextGenerator
 	timeout   time.Duration
 }
 
-func newInterviewShadowTextProvider(
+func NewInterviewShadowProvider(
 	generator ai.TextGenerator,
 	timeout time.Duration,
-) (*interviewShadowTextProvider, error) {
+) (evaluation.InterviewShadowProvider, error) {
 	if generator == nil || timeout <= 0 ||
-		timeout > interviewShadowGenerationTimeout {
+		timeout > MaxGenerationTimeout {
 		return nil, errors.New(
-			"bootstrap: Interview shadow provider dependencies are required",
+			"evaluation: Interview shadow provider dependencies are required",
 		)
 	}
 	return &interviewShadowTextProvider{
@@ -81,14 +81,14 @@ type ieltsSpeakingShadowTextProvider struct {
 	timeout   time.Duration
 }
 
-func newIELTSSpeakingShadowTextProvider(
+func NewIELTSSpeakingShadowProvider(
 	generator ai.TextGenerator,
 	timeout time.Duration,
-) (*ieltsSpeakingShadowTextProvider, error) {
+) (evaluation.IELTSSpeakingShadowProvider, error) {
 	if generator == nil || timeout <= 0 ||
-		timeout > interviewShadowGenerationTimeout {
+		timeout > MaxGenerationTimeout {
 		return nil, errors.New(
-			"bootstrap: IELTS Speaking shadow provider dependencies are required",
+			"evaluation: IELTS Speaking shadow provider dependencies are required",
 		)
 	}
 	return &ieltsSpeakingShadowTextProvider{
@@ -147,14 +147,14 @@ type generalSceneTextProvider struct {
 	timeout   time.Duration
 }
 
-func newGeneralSceneTextProvider(
+func NewGeneralSceneProvider(
 	generator ai.TextGenerator,
 	timeout time.Duration,
-) (*generalSceneTextProvider, error) {
+) (evaluation.GeneralSceneProvider, error) {
 	if generator == nil || timeout <= 0 ||
-		timeout > interviewShadowGenerationTimeout {
+		timeout > MaxGenerationTimeout {
 		return nil, errors.New(
-			"bootstrap: general Scene provider dependencies are required",
+			"evaluation: general Scene provider dependencies are required",
 		)
 	}
 	return &generalSceneTextProvider{generator: generator, timeout: timeout}, nil

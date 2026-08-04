@@ -11,6 +11,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	evaluationtext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/textprovider"
 	evaluationtransport "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/transport"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
@@ -53,13 +54,13 @@ func NewEvaluationComposition(
 	configuration EvaluationConfiguration,
 ) (*EvaluationComposition, error) {
 	if database == nil || textGenerator == nil ||
-		configuration.Provider != "qianwen" ||
+		configuration.Provider == "" ||
 		configuration.Model == "" ||
 		configuration.MaxOutputTokens < 1 ||
 		configuration.MaxOutputTokens > 1_000_000 ||
 		configuration.GenerationTimeout <= 0 ||
 		configuration.GenerationTimeout >
-			interviewShadowGenerationTimeout ||
+			evaluationtext.MaxGenerationTimeout ||
 		configuration.LeaseDuration < time.Second ||
 		configuration.LeaseDuration > 10*time.Minute ||
 		configuration.RetryDelay < 0 ||
@@ -108,7 +109,7 @@ func NewEvaluationComposition(
 	if err != nil {
 		return nil, err
 	}
-	provider, err := newInterviewShadowTextProvider(
+	provider, err := evaluationtext.NewInterviewShadowProvider(
 		textGenerator,
 		configuration.GenerationTimeout,
 	)
@@ -129,7 +130,7 @@ func NewEvaluationComposition(
 	if err != nil {
 		return nil, err
 	}
-	ieltsProvider, err := newIELTSSpeakingShadowTextProvider(
+	ieltsProvider, err := evaluationtext.NewIELTSSpeakingShadowProvider(
 		textGenerator,
 		configuration.GenerationTimeout,
 	)
@@ -149,7 +150,7 @@ func NewEvaluationComposition(
 	if err != nil {
 		return nil, err
 	}
-	generalProvider, err := newGeneralSceneTextProvider(
+	generalProvider, err := evaluationtext.NewGeneralSceneProvider(
 		textGenerator,
 		configuration.GenerationTimeout,
 	)
