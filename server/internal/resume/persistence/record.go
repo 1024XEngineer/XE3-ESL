@@ -19,7 +19,8 @@ type resumeRecord struct {
 	ObjectKey        string         `gorm:"column:object_key"`
 	FileStatus       string         `gorm:"column:file_status"`
 	ParseStatus      string         `gorm:"column:parse_status"`
-	CurrentRevision  int64          `gorm:"column:current_revision"`
+	ParseFailureCode *string        `gorm:"column:parse_failure_code"`
+	CurrentRevision  *int64         `gorm:"column:current_revision"`
 	Version          int64          `gorm:"column:version"`
 	CreatedAt        time.Time      `gorm:"column:created_at"`
 	UpdatedAt        time.Time      `gorm:"column:updated_at"`
@@ -28,22 +29,21 @@ type resumeRecord struct {
 
 // TableName 返回 Resume 元数据表的稳定名称。
 func (resumeRecord) TableName() string {
-	// TODO(issue-320): 在数据库迁移 Issue 中验证表名和约束。
 	return "resumes"
 }
 
 // revisionRecord 映射 resume_revisions 表的一行。
 type revisionRecord struct {
+	OwnerUserID   string    `gorm:"column:owner_user_id;type:uuid"`
 	ResumeID      string    `gorm:"column:resume_id;type:uuid;primaryKey"`
 	Revision      int64     `gorm:"column:revision;primaryKey"`
 	Source        string    `gorm:"column:source"`
-	ParserVersion string    `gorm:"column:parser_version"`
+	ParserVersion *string   `gorm:"column:parser_version"`
 	Content       []byte    `gorm:"column:content;type:jsonb"`
 	CreatedAt     time.Time `gorm:"column:created_at"`
 }
 
 // TableName 返回结构化简历修订表的稳定名称。
 func (revisionRecord) TableName() string {
-	// TODO(issue-320): 在数据库迁移 Issue 中验证复合主键和外键。
 	return "resume_revisions"
 }

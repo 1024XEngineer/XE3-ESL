@@ -45,4 +45,5 @@ import "embed"
 //go:embed 000057_agent_learning_profile_context_manifest.*.sql
 //go:embed 000058_evaluation_report_authority.*.sql
 //go:embed 000059_evaluation_general_scene_runtime.*.sql
+//go:embed 000060_resumes.*.sql
 var Files embed.FS

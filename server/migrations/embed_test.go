@@ -275,6 +275,19 @@ func TestPreparationPlanAuthorityMigrationIsEmbeddedAndHasNoLegacyPlanTable(
 	}
 }
 
+func TestResumeMigrationIsEmbedded(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"000060_resumes.up.sql",
+		"000060_resumes.down.sql",
+	} {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Fatalf("read Resume migration %q: %v", name, err)
+		}
+	}
+}
+
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 

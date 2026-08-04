@@ -15,6 +15,7 @@ type Resume struct {
 	ObjectKey        string
 	FileStatus       FileStatus
 	ParseStatus      ParseStatus
+	ParseFailureCode string
 	CurrentRevision  int64
 	Version          int64
 	CreatedAt        time.Time
