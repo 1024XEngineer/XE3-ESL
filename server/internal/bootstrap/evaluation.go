@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	evaluationtransport "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/transport"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
-	evaluationtransport "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/transport"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +25,9 @@ const (
 	ieltsSpeakingShadowAggregationVersion = "ielts-speaking-shadow-aggregation/v1"
 	ieltsSpeakingShadowCalibrationVersion = "NOT_CONFIGURED"
 	ieltsSpeakingShadowGateVersion        = "ielts-speaking-shadow-gate/v1"
+	generalSceneAggregationVersion        = "general-scene-aggregation/v1"
+	generalSceneCalibrationVersion        = "NOT_CONFIGURED"
+	generalSceneGateVersion               = "general-scene-evidence-gate/v1"
 )
 
 type EvaluationConfiguration struct {
@@ -33,8 +36,8 @@ type EvaluationConfiguration struct {
 	MaxOutputTokens   int
 	GenerationTimeout time.Duration
 	LeaseDuration     time.Duration
+	RetryDelay        time.Duration
 	MaxAttempts       int
-	CursorSigningKey  []byte
 }
 
 type EvaluationComposition struct {
@@ -59,10 +62,10 @@ func NewEvaluationComposition(
 			interviewShadowGenerationTimeout ||
 		configuration.LeaseDuration < time.Second ||
 		configuration.LeaseDuration > 10*time.Minute ||
+		configuration.RetryDelay < 0 ||
+		configuration.RetryDelay > time.Hour ||
 		configuration.MaxAttempts < 1 ||
-		configuration.MaxAttempts > 10 ||
-		len(configuration.CursorSigningKey) < 32 ||
-		len(configuration.CursorSigningKey) > 128 {
+		configuration.MaxAttempts > 10 {
 		return nil, errors.New(
 			"bootstrap: Evaluation dependencies are required",
 		)
@@ -146,9 +149,45 @@ func NewEvaluationComposition(
 	if err != nil {
 		return nil, err
 	}
+	generalProvider, err := newGeneralSceneTextProvider(
+		textGenerator,
+		configuration.GenerationTimeout,
+	)
+	if err != nil {
+		return nil, err
+	}
+	generalConfiguration, err := generalSceneRuntimeConfiguration(
+		configuration,
+	)
+	if err != nil {
+		return nil, err
+	}
+	generalWorker, err := evaluation.NewGeneralSceneWorker(
+		repository,
+		evaluation.NewGeneralSceneEngine(generalProvider),
+		generalConfiguration,
+	)
+	if err != nil {
+		return nil, err
+	}
+	completionIntake, err := evaluation.NewCompletionIntake(
+		practiceRepository,
+		evidenceService,
+		evaluationService,
+		evaluation.CompletionIntakeConfiguration{
+			MaxAttempts:   configuration.MaxAttempts,
+			LeaseDuration: configuration.LeaseDuration,
+			RetryDelay:    configuration.RetryDelay,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
 	combinedWorker, err := newEvaluationShadowProcessor(
+		completionIntake,
 		worker,
 		ieltsWorker,
+		generalWorker,
 	)
 	if err != nil {
 		return nil, err
@@ -161,10 +200,7 @@ func NewEvaluationComposition(
 		configuration:      runtimeConfiguration,
 		ieltsConfiguration: ieltsRuntimeConfiguration,
 	}
-	handler, err := evaluationtransport.NewHTTPHandler(
-		application,
-		configuration.CursorSigningKey,
-	)
+	handler, err := evaluationtransport.NewHTTPHandler(application)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +210,65 @@ func NewEvaluationComposition(
 		handler:              handler,
 		worker:               combinedWorker,
 	}, nil
+}
+
+func generalSceneRuntimeConfiguration(
+	configuration EvaluationConfiguration,
+) (evaluation.GeneralSceneRuntimeConfiguration, error) {
+	if configuration.MaxOutputTokens < 1 ||
+		configuration.MaxOutputTokens > 1_000_000 {
+		return evaluation.GeneralSceneRuntimeConfiguration{},
+			evaluation.ErrInvalidRequest
+	}
+	promptContractHash := sha256.Sum256(
+		[]byte(evaluation.GeneralSceneSystemContract),
+	)
+	manifest := struct {
+		SchemaVersion         string `json:"schema_version"`
+		StrategyRef           string `json:"strategy_ref"`
+		PipelineVersion       string `json:"pipeline_version"`
+		PromptVersion         string `json:"prompt_version"`
+		PromptContractHash    string `json:"prompt_contract_hash"`
+		ProviderSchemaVersion string `json:"provider_schema_version"`
+		GateVersion           string `json:"gate_version"`
+		AggregationVersion    string `json:"aggregation_version"`
+		CalibrationVersion    string `json:"calibration_version"`
+		Provider              string `json:"provider"`
+		Model                 string `json:"model"`
+		MaxOutputTokens       int    `json:"max_output_tokens"`
+	}{
+		SchemaVersion:         evaluation.SchemaVersion,
+		StrategyRef:           evaluation.GeneralSceneStrategyRef,
+		PipelineVersion:       evaluation.GeneralScenePipelineVersion,
+		PromptVersion:         evaluation.GeneralScenePromptVersion,
+		PromptContractHash:    "sha256:" + hex.EncodeToString(promptContractHash[:]),
+		ProviderSchemaVersion: evaluation.GeneralSceneProviderSchemaVersion,
+		GateVersion:           generalSceneGateVersion,
+		AggregationVersion:    generalSceneAggregationVersion,
+		CalibrationVersion:    generalSceneCalibrationVersion,
+		Provider:              configuration.Provider,
+		Model:                 configuration.Model,
+		MaxOutputTokens:       configuration.MaxOutputTokens,
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return evaluation.GeneralSceneRuntimeConfiguration{}, err
+	}
+	result := evaluation.GeneralSceneRuntimeConfiguration{
+		MaxAttempts:     configuration.MaxAttempts,
+		LeaseDuration:   configuration.LeaseDuration,
+		StrategyRef:     evaluation.GeneralSceneStrategyRef,
+		PipelineVersion: evaluation.GeneralScenePipelineVersion,
+		FullConfigHash:  sha256.Sum256(encoded),
+		PromptVersion:   evaluation.GeneralScenePromptVersion,
+		Provider:        configuration.Provider,
+		Model:           configuration.Model,
+	}
+	if !result.Valid() {
+		return evaluation.GeneralSceneRuntimeConfiguration{},
+			evaluation.ErrInvalidRequest
+	}
+	return result, nil
 }
 
 func (composition *EvaluationComposition) InterviewShadowCoordinator() *evaluation.InterviewShadowCoordinator {
@@ -213,7 +308,7 @@ func interviewShadowRuntimeConfiguration(
 			evaluation.ErrInvalidRequest
 	}
 	promptContractHash := sha256.Sum256(
-		[]byte(interviewShadowSystemContract),
+		[]byte(evaluation.InterviewShadowSystemContract),
 	)
 	manifest := struct {
 		SchemaVersion         string `json:"schema_version"`
@@ -273,7 +368,7 @@ func ieltsSpeakingShadowRuntimeConfiguration(
 			evaluation.ErrInvalidRequest
 	}
 	promptContractHash := sha256.Sum256(
-		[]byte(ieltsSpeakingShadowSystemContract),
+		[]byte(evaluation.IELTSSpeakingShadowSystemContract),
 	)
 	manifest := struct {
 		SchemaVersion         string `json:"schema_version"`
@@ -369,12 +464,6 @@ type ieltsSpeakingReportReader interface {
 		string,
 		string,
 	) (evaluation.IELTSSpeakingReportReadState, error)
-	ListCurrentIELTSSpeakingReportIndex(
-		context.Context,
-		string,
-		*evaluation.IELTSSpeakingReportIndexBoundary,
-		int,
-	) (evaluation.IELTSSpeakingReportIndexPage, error)
 }
 
 type evaluationHTTPApplication struct {
@@ -561,80 +650,6 @@ func (application *evaluationHTTPApplication) GetIELTSSpeakingReport(
 		return evaluationtransport.IELTSSpeakingReportResource{}, err
 	}
 	return ieltsSpeakingReportResource(practiceSessionID, state)
-}
-
-func (application *evaluationHTTPApplication) ListIELTSSpeakingReports(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	query evaluationtransport.IELTSSpeakingReportIndexQuery,
-) (evaluationtransport.IELTSSpeakingReportIndexPageResource, error) {
-	if application == nil ||
-		application.ieltsReports == nil ||
-		ctx == nil ||
-		!actor.Valid() ||
-		!application.ieltsConfiguration.Valid() ||
-		query.Limit < 1 ||
-		query.Limit > 100 {
-		return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
-			evaluation.ErrInvalidRequest
-	}
-	trustedActor, ok := requestcontext.ActorFromContext(ctx)
-	if !ok || trustedActor != actor {
-		return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
-			evaluation.ErrInvalidRequest
-	}
-	var boundary *evaluation.IELTSSpeakingReportIndexBoundary
-	if query.Before != nil {
-		boundary = &evaluation.IELTSSpeakingReportIndexBoundary{
-			UpdatedAt:    query.Before.UpdatedAt,
-			EvaluationID: query.Before.EvaluationID,
-		}
-	}
-	page, err := application.ieltsReports.
-		ListCurrentIELTSSpeakingReportIndex(
-			ctx,
-			actor.UserID,
-			boundary,
-			query.Limit,
-		)
-	if err != nil {
-		if errors.Is(
-			err,
-			evaluation.ErrIELTSSpeakingShadowConfigurationConflict,
-		) {
-			return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
-				interviewShadowVersionConflictError()
-		}
-		return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
-			err
-	}
-	items := make(
-		[]evaluationtransport.IELTSSpeakingReportIndexEntryResource,
-		len(page.Items),
-	)
-	for index, item := range page.Items {
-		if !item.Valid() {
-			return evaluationtransport.IELTSSpeakingReportIndexPageResource{},
-				evaluation.ErrInvalidRequest
-		}
-		items[index] =
-			evaluationtransport.IELTSSpeakingReportIndexEntryResource{
-				SceneType:            item.SceneType,
-				PracticeSessionID:    item.PracticeSessionID,
-				EvaluationID:         item.EvaluationID,
-				EvaluationRevisionID: item.EvaluationRevisionID,
-				Revision:             item.Revision,
-				EvaluationStatus:     item.EvaluationStatus,
-				IsFinal:              item.IsFinal,
-				Title:                item.Title,
-				CreatedAt:            item.CreatedAt,
-				UpdatedAt:            item.UpdatedAt,
-			}
-	}
-	return evaluationtransport.IELTSSpeakingReportIndexPageResource{
-		Items:   items,
-		HasMore: page.HasMore,
-	}, nil
 }
 
 func interviewShadowAccepted(

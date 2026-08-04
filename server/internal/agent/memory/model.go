@@ -34,9 +34,6 @@ const (
 	TypePreference Type = "preference"
 	TypeGoal       Type = "goal"
 	TypeInterest   Type = "interest"
-	TypeStrength   Type = "strength"
-	TypeWeakness   Type = "weakness"
-	TypeProgress   Type = "progress"
 	TypeTopic      Type = "topic"
 )
 
@@ -47,9 +44,6 @@ func (memoryType Type) Valid() bool {
 		TypePreference,
 		TypeGoal,
 		TypeInterest,
-		TypeStrength,
-		TypeWeakness,
-		TypeProgress,
 		TypeTopic:
 		return true
 	default:
@@ -84,7 +78,6 @@ type SourceType string
 const (
 	SourceAgentMessage    SourceType = "agent_message"
 	SourceAgentRun        SourceType = "agent_run"
-	SourceFormalReview    SourceType = "formal_review"
 	SourcePracticeSession SourceType = "practice_session"
 )
 
@@ -92,7 +85,6 @@ func (sourceType SourceType) Valid() bool {
 	switch sourceType {
 	case SourceAgentMessage,
 		SourceAgentRun,
-		SourceFormalReview,
 		SourcePracticeSession:
 		return true
 	default:

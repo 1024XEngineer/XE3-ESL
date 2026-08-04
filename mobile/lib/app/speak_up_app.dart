@@ -16,16 +16,15 @@ import 'package:speakup/features/coaching/preparation/job_preparation_wizard.dar
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
-import 'package:speakup/features/review/review.dart';
+import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_gate.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
-import 'package:speakup/review/interview_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
-import 'package:speakup/review/review_history_controller.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 
 class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp({
@@ -38,7 +37,6 @@ class SpeakUpApp extends StatelessWidget {
     this.avatarControllerFactory,
     this.interviewReportController,
     this.ieltsSpeakingReportController,
-    this.ieltsSpeakingReportIndexController,
     this.speechFeedbackController,
     super.key,
   }) : _authentication = (controller: authController),
@@ -53,7 +51,6 @@ class SpeakUpApp extends StatelessWidget {
     this.avatarControllerFactory,
     this.interviewReportController,
     this.ieltsSpeakingReportController,
-    this.ieltsSpeakingReportIndexController,
     this.speechFeedbackController,
     super.key,
   }) : _authentication = null,
@@ -68,7 +65,6 @@ class SpeakUpApp extends StatelessWidget {
   final AvatarControllerFactory? avatarControllerFactory;
   final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
-  final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
   final SpeechFeedbackController? speechFeedbackController;
   final bool _allowFakePreview;
 
@@ -89,8 +85,6 @@ class SpeakUpApp extends StatelessWidget {
               avatarControllerFactory: avatarControllerFactory,
               interviewReportController: interviewReportController,
               ieltsSpeakingReportController: ieltsSpeakingReportController,
-              ieltsSpeakingReportIndexController:
-                  ieltsSpeakingReportIndexController,
               speechFeedbackController: speechFeedbackController,
               allowFakePreview: _allowFakePreview,
             )
@@ -107,8 +101,6 @@ class SpeakUpApp extends StatelessWidget {
                 avatarControllerFactory: avatarControllerFactory,
                 interviewReportController: interviewReportController,
                 ieltsSpeakingReportController: ieltsSpeakingReportController,
-                ieltsSpeakingReportIndexController:
-                    ieltsSpeakingReportIndexController,
                 speechFeedbackController: speechFeedbackController,
                 allowFakePreview: _allowFakePreview,
               ),
@@ -129,7 +121,6 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.avatarControllerFactory,
     this.interviewReportController,
     this.ieltsSpeakingReportController,
-    this.ieltsSpeakingReportIndexController,
     this.speechFeedbackController,
     required this.allowFakePreview,
   });
@@ -144,7 +135,6 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final AvatarControllerFactory? avatarControllerFactory;
   final InterviewReportController? interviewReportController;
   final IeltsSpeakingReportController? ieltsSpeakingReportController;
-  final IeltsSpeakingReportIndexController? ieltsSpeakingReportIndexController;
   final SpeechFeedbackController? speechFeedbackController;
   final bool allowFakePreview;
 
@@ -234,8 +224,6 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             reviewHistoryController: widget.reviewHistoryController,
             interviewReportController: widget.interviewReportController,
             ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
-            ieltsSpeakingReportIndexController:
-                widget.ieltsSpeakingReportIndexController,
             speechFeedbackController: widget.speechFeedbackController,
           ),
           AppRoutes.preparation => PreparationPage(
@@ -273,8 +261,6 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             reviewHistoryController: widget.reviewHistoryController,
             interviewReportController: widget.interviewReportController,
             ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
-            ieltsSpeakingReportIndexController:
-                widget.ieltsSpeakingReportIndexController,
             speechFeedbackController: widget.speechFeedbackController,
           ),
           AppRoutes.review => ReviewPage(
@@ -282,10 +268,6 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             previewMode: widget.allowFakePreview,
             practiceAvailable: _agentController.supportsPracticeFlow,
             historyController: widget.reviewHistoryController,
-            interviewReportController: widget.interviewReportController,
-            ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
-            ieltsSpeakingReportIndexController:
-                widget.ieltsSpeakingReportIndexController,
           ),
           _ => null,
         };

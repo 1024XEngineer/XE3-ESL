@@ -27,19 +27,19 @@ import (
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
+	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	goalhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/http"
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	practicevoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/http"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
-	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
+	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
-	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
-	reviewhttp "github.com/1024XEngineer/XE3-ESL/server/internal/review/http"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -168,8 +168,18 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	reviewRepository := review.NewPostgresRepository(database)
-	reviewHistory := review.NewHistoryService(reviewRepository)
+	evaluationRepository := evaluation.NewPostgresRepository(database)
+	learningProfileReader, err := newAgentLearningProfileReader(
+		evaluationRepository,
+	)
+	if err != nil {
+		return nil, err
+	}
+	reviewReports, err := newEvaluationReportHistory(evaluationRepository)
+	if err != nil {
+		return nil, err
+	}
+	reviewHistory := review.NewHistoryService(reviewReports)
 	goalTools, err := goalagentcapability.NewServicePort(
 		goalService,
 		agentService,
@@ -182,7 +192,7 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	evaluationTools, err := evaluationagenttool.NewServicePort(
-		evaluation.NewPostgresRepository(database),
+		evaluationRepository,
 	)
 	if err != nil {
 		return nil, err
@@ -223,6 +233,7 @@ func buildIdentityAgentComposition(
 	contextAssembler, err := agentcontext.NewAssembler(
 		contextRepository,
 		goalService,
+		learningProfileReader,
 		stableProfileReader,
 		contextMemorySearcher,
 		contextOptions...,

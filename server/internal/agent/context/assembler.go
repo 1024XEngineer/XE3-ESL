@@ -33,11 +33,12 @@ const (
 )
 
 type Assembler struct {
-	repository     Repository
-	goals          goal.Reader
-	stableProfiles StableProfileReader
-	memories       MemorySearcher
-	images         agentimage.ContextReader
+	repository       Repository
+	goals            goal.Reader
+	learningProfiles LearningProfileReader
+	stableProfiles   StableProfileReader
+	memories         MemorySearcher
+	images           agentimage.ContextReader
 }
 
 type Option func(*Assembler) error
@@ -57,19 +58,21 @@ func WithImageReader(
 func NewAssembler(
 	repository Repository,
 	goals goal.Reader,
+	learningProfiles LearningProfileReader,
 	stableProfiles StableProfileReader,
 	memories MemorySearcher,
 	options ...Option,
 ) (*Assembler, error) {
-	if repository == nil || goals == nil ||
+	if repository == nil || goals == nil || learningProfiles == nil ||
 		stableProfiles == nil || memories == nil {
 		return nil, errors.New("agent: context dependency is required")
 	}
 	assembler := &Assembler{
-		repository:     repository,
-		goals:          goals,
-		stableProfiles: stableProfiles,
-		memories:       memories,
+		repository:       repository,
+		goals:            goals,
+		learningProfiles: learningProfiles,
+		stableProfiles:   stableProfiles,
+		memories:         memories,
 	}
 	for _, option := range options {
 		if option == nil {
@@ -132,22 +135,24 @@ func (assembler *Assembler) Assemble(
 		"review identifier. Use historical Review search only when the user asks " +
 		"about an older practice."
 	manifest := Manifest{
-		RunID:                             command.RunID,
-		OwnerID:                           actor.UserID,
-		ThreadID:                          command.ThreadID,
-		InputMessageID:                    input.ID,
-		TrimReason:                        contextTrimNone,
-		InstructionVersion:                instructionV1,
-		StableProfileContextPolicyVersion: stableProfileContextPolicyV1,
-		SelectedStableProfile:             make([]StableProfileSource, 0),
-		MemoryContextPolicyVersion:        memoryContextPolicyV1,
-		SelectedMemories:                  make([]MemorySource, 0),
-		SummaryContextPolicyVersion:       summaryContextPolicyV1,
-		SummaryContextStatus:              summaryContextNotAvailable,
-		MaxInputCharacters:                command.MaxInputCharacters,
-		RequestedProvider:                 command.Provider,
-		RequestedModel:                    command.Model,
-		MaxOutputTokens:                   command.MaxOutputTokens,
+		RunID:                               command.RunID,
+		OwnerID:                             actor.UserID,
+		ThreadID:                            command.ThreadID,
+		InputMessageID:                      input.ID,
+		TrimReason:                          contextTrimNone,
+		InstructionVersion:                  instructionV1,
+		LearningProfileContextPolicyVersion: learningProfileContextPolicyV1,
+		SelectedLearningProfile:             make([]LearningProfileSource, 0),
+		StableProfileContextPolicyVersion:   stableProfileContextPolicyV1,
+		SelectedStableProfile:               make([]StableProfileSource, 0),
+		MemoryContextPolicyVersion:          memoryContextPolicyV1,
+		SelectedMemories:                    make([]MemorySource, 0),
+		SummaryContextPolicyVersion:         summaryContextPolicyV1,
+		SummaryContextStatus:                summaryContextNotAvailable,
+		MaxInputCharacters:                  command.MaxInputCharacters,
+		RequestedProvider:                   command.Provider,
+		RequestedModel:                      command.Model,
+		MaxOutputTokens:                     command.MaxOutputTokens,
 	}
 	if thread.ActiveGoalID != "" {
 		activeGoal, readErr := assembler.goals.ReadOwned(
@@ -174,6 +179,26 @@ func (assembler *Assembler) Assemble(
 	if utf8.RuneCountInString(systemContent)+inputCharacters >
 		command.MaxInputCharacters {
 		return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+	}
+	learningProfile, err := assembler.learningProfiles.ReadLearningProfile(
+		ctx,
+		LearningProfileReadRequest{
+			Actor:  actor,
+			GoalID: manifest.ActiveGoalID,
+			Limit:  learningProfileContextLimit,
+		},
+	)
+	if err != nil || len(learningProfile) > learningProfileContextLimit {
+		return Manifest{}, ai.TextRequest{}, ErrRepository
+	}
+	systemContent, manifest.SelectedLearningProfile, err =
+		selectLearningProfileContext(
+			systemContent,
+			learningProfile,
+			command.MaxInputCharacters-inputCharacters,
+		)
+	if err != nil {
+		return Manifest{}, ai.TextRequest{}, err
 	}
 	stableProfile, err := assembler.stableProfiles.ReadStableProfile(
 		ctx,

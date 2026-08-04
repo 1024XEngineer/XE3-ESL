@@ -16,7 +16,7 @@ import 'package:speakup/features/coaching/goal/goal.dart';
 import 'package:speakup/features/coaching/practice/conversation.dart';
 import 'package:speakup/features/coaching/practice/practice.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
-import 'package:speakup/features/review/review.dart';
+import 'package:speakup/features/coaching/review/review.dart';
 
 void main() {
   testWidgets('starts on the Agent home with four primary navigation entries', (

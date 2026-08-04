@@ -7,7 +7,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
 // Application is the smoke composition layer. It coordinates formal module
@@ -16,7 +15,7 @@ type Application struct {
 	preparation  *preparationBackend
 	practice     *practiceBackend
 	conversation *practiceinput.Service
-	review       *review.Service
+	review       *reviewService
 	failures     FailureControl
 }
 
@@ -24,7 +23,7 @@ func NewApplication(
 	preparationStore *preparationBackend,
 	practiceStore *practiceBackend,
 	conversationService *practiceinput.Service,
-	reviewService *review.Service,
+	reviewService *reviewService,
 	failures FailureControl,
 ) *Application {
 	return &Application{
@@ -149,7 +148,7 @@ func (a *Application) AnalyzeTurn(turnID string) (Analysis, error) {
 	if turn.Status != "completed" {
 		return Analysis{}, ErrResourceConflict
 	}
-	analysis, _, created, err := a.review.Evaluate(review.TurnInput{
+	analysis, _, created, err := a.review.Evaluate(turnEvaluationInput{
 		TurnID:            turn.ID,
 		SessionID:         turn.SessionID,
 		QuestionID:        turn.QuestionID,

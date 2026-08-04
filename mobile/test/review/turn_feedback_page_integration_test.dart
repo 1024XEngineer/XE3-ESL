@@ -12,10 +12,10 @@ import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dar
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
-import 'package:speakup/review/turn_feedback.dart';
-import 'package:speakup/review/turn_feedback_client.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
-import 'package:speakup/review/turn_feedback_disclosure.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_client.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 void main() {
   testWidgets(

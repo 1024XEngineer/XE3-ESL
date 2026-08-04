@@ -10,7 +10,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 )
 
 func TestModelToolRoutingExposesEveryRegisteredTool(t *testing.T) {

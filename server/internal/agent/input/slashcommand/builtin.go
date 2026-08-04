@@ -5,8 +5,8 @@ import "encoding/json"
 const (
 	ToolGoalCreate           = "goal.create.v1"
 	ToolGoalSearch           = "goal.search.v1"
-	ToolReviewSearch         = "review.search.v1"
-	ToolLatestPracticeReport = "practice.report.latest.v1"
+	ToolReviewSearch         = "review.search.v2"
+	ToolLatestPracticeReport = "evaluation.report.latest.v1"
 )
 
 // Builtins 返回 Agent 首批支持的用户可见斜杠命令。

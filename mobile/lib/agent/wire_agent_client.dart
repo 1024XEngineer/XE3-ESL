@@ -15,7 +15,7 @@ import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
-import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 
 final class WireAgentClient
     implements

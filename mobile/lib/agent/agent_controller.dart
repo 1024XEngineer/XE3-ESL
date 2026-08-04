@@ -19,7 +19,7 @@ import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
-import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 
 typedef AgentClientIdFactory = String Function(String scope);
 

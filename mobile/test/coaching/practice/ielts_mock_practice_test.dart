@@ -21,9 +21,9 @@ import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
-import 'package:speakup/review/ielts_speaking_report.dart';
-import 'package:speakup/review/ielts_speaking_report_client.dart';
-import 'package:speakup/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 
 void main() {
   testWidgets('Part 1 prefers the shared practice question voice', (

@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,7 +26,7 @@ func NewSpeechFeedbackAcousticProvider(
 	database *pgxpool.Pool,
 	store objectstore.Store,
 	evaluator *xfyun.Evaluator,
-) (review.SpeechFeedbackAcousticProvider, error) {
+) (evaluation.SpeechFeedbackAcousticProvider, error) {
 	if database == nil || store == nil || evaluator == nil {
 		return nil, errors.New(
 			"bootstrap: SpeechFeedback acoustic dependencies are required",
@@ -47,7 +47,7 @@ func NewSpeechFeedbackAcousticProvider(
 	if err != nil {
 		return nil, err
 	}
-	return review.NewXFYUNSpeechFeedbackAcousticProvider(
+	return evaluation.NewXFYUNSpeechFeedbackAcousticProvider(
 		&speechFeedbackAudioReader{
 			service: service,
 			store:   store,
@@ -80,7 +80,7 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 ) ([]byte, error) {
 	if reader == nil || reader.service == nil ||
 		reader.store == nil || reader.client == nil {
-		return nil, review.ErrSpeechFeedbackAcousticUnavailable
+		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
 	}
 	var playback objectstore.SignedGetResult
 	var err error
@@ -94,7 +94,7 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 		playback, err = reader.store.SignedGet(ctx, audioObjectKey)
 	}
 	if err != nil || !playback.ExpiresAt.After(time.Now()) {
-		return nil, review.ErrSpeechFeedbackAcousticUnavailable
+		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
 	}
 	playbackURL, err := url.Parse(playback.URL)
 	if err != nil ||
@@ -103,7 +103,7 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 		playback.ExpiresAt.After(
 			time.Now().Add(practiceinput.MaxPlaybackURLTTL),
 		) {
-		return nil, review.ErrSpeechFeedbackAcousticUnavailable
+		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
 	}
 	request, err := http.NewRequestWithContext(
 		ctx,
@@ -112,7 +112,7 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 		nil,
 	)
 	if err != nil {
-		return nil, review.ErrSpeechFeedbackAcousticUnavailable
+		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
 	}
 	response, err := reader.client.Do(request)
 	if err != nil {
@@ -133,11 +133,11 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 		return nil, err
 	}
 	if len(audio) == 0 || len(audio) > maxSpeechFeedbackAudioBytes {
-		return nil, review.ErrSpeechFeedbackAcousticUnavailable
+		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
 	}
 	checksum := sha256.Sum256(audio)
 	if hex.EncodeToString(checksum[:]) != expectedChecksum {
-		return nil, review.ErrSpeechFeedbackAcousticUnavailable
+		return nil, evaluation.ErrSpeechFeedbackAcousticUnavailable
 	}
 	return audio, nil
 }

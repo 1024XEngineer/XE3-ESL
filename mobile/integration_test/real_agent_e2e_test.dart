@@ -10,7 +10,7 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
-import 'package:speakup/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/review/review_history_controller.dart';
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();

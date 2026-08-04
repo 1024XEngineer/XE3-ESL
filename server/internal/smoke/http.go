@@ -20,7 +20,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -36,7 +36,7 @@ type Server struct {
 	preparation  *preparationBackend
 	practice     *practiceBackend
 	conversation *practiceinput.Service
-	review       *review.Service
+	review       *reviewService
 	application  *Application
 	idempotency  *idempotencyStore
 	identity     *mockIdentityStore
@@ -52,7 +52,7 @@ func NewServer(logger *slog.Logger) *Server {
 		conversationBackend{runtime: runtime},
 		provider,
 	)
-	reviewService := review.NewService(reviewBackend{runtime: runtime}, provider)
+	reviewService := newReviewService(reviewBackend{runtime: runtime}, provider)
 	toolRegistry, err := capabilityfixture.NewRegistry(
 		capabilityfixture.NewStore(),
 	)

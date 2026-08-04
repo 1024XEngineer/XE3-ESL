@@ -6,15 +6,14 @@ import (
 	"sync"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
 // MockProvider is the explicit external-capability boundary exercised by the
 // offline smoke flow. A production adapter can replace question generation and
-// review without taking ownership of Session, Turn, retry, or history state.
+// deterministic feedback without taking ownership of production resources.
 type MockProvider interface {
 	practice.QuestionProvider
-	review.Provider
+	reviewProvider
 	FailureController
 	FailureGate
 }
@@ -98,9 +97,9 @@ func (p *DeterministicProvider) BuildQuestion(
 }
 
 func (p *DeterministicProvider) Evaluate(
-	turn review.TurnInput,
-) (review.Evaluation, error) {
-	return review.Evaluation{
+	turn turnEvaluationInput,
+) (evaluationResult, error) {
+	return evaluationResult{
 		Score:      80 + turn.EffectiveSequence,
 		Summary:    "Deterministic review completed for the submitted answer.",
 		Transcript: turn.AnswerText,

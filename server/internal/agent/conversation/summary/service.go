@@ -23,7 +23,7 @@ Return exactly one JSON object with exactly these six array fields:
 {
   "goals": ["current user goals that remain relevant"],
   "background": ["user or situation context needed to continue the thread"],
-  "progress": ["meaningful completed work or milestones"],
+  "progress": ["meaningful completed work or milestones, never inferred language ability, score, strength, or weakness"],
   "decisions": ["decisions and commitments that still matter"],
   "open_questions": ["unresolved questions"],
   "next_steps": ["agreed or clearly implied next actions"]

@@ -16,10 +16,10 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
 func TestRunLoopExposesAllToolsAndAllowsDirectResponse(t *testing.T) {
@@ -97,7 +97,7 @@ func TestRunLoopExecutesToolCallAndFeedsResultBackToModel(t *testing.T) {
 	toolMessage := second.Messages[len(second.Messages)-1]
 	if toolMessage.Role != ai.TextRoleTool ||
 		toolMessage.ToolCallID != "call-review-1" ||
-		!strings.Contains(toolMessage.Content, `"reviews"`) {
+		!strings.Contains(toolMessage.Content, `"reports"`) {
 		t.Fatalf("tool message = %#v", toolMessage)
 	}
 }
@@ -292,7 +292,7 @@ func TestRunLoopExecutesMultipleToolCallsAndFeedsAllResultsBack(t *testing.T) {
 		message := messages[index+3]
 		if message.Role != ai.TextRoleTool ||
 			message.ToolCallID != callID ||
-			!strings.Contains(message.Content, `"reviews"`) {
+			!strings.Contains(message.Content, `"reports"`) {
 			t.Fatalf("tool message %d = %#v", index, message)
 		}
 	}

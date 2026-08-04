@@ -13,10 +13,10 @@ import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
-import 'package:speakup/review/review_history_client.dart';
-import 'package:speakup/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/review/review_history_client.dart';
+import 'package:speakup/features/coaching/review/review_history_controller.dart';
 
-import '../review/formal_review_fixture.dart';
+import '../review/evaluation_report_fixture.dart';
 
 void main() {
   test(
@@ -276,10 +276,9 @@ final class _CompletedReviewHistoryClient implements ReviewHistoryClient {
     );
     return ReviewHistoryItem(
       review: review,
-      formalReview: legacyFormalReviewFixture(
+      report: evaluationReportFixture(
         review: review,
         practiceSessionId: sessionId,
-        createdAt: createdAt,
         completedAt: completedAt,
       ),
       practiceSessionId: sessionId,

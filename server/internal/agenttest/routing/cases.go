@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
+	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/agenttool"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
-	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 )
 
 const (
@@ -134,14 +134,14 @@ func BaselineCases() []RoutingCase {
 			Name: "expand_first_review_candidate",
 			Messages: []EvalMessage{
 				{Role: "user", Content: "看看我上次面试评价"},
-				{Role: "assistant", Content: "1. mock-review-001 PM interview answer review"},
+				{Role: "assistant", Content: "1. mock-report-001 PM interview answer report"},
 				{Role: "user", Content: "把第一条评价展开"},
 			},
 			ExpectedDecision:  DecisionToolCall,
 			ExpectedToolNames: []string{reviewtool.ReviewGetToolName},
 			ExpectedArgs: map[string]map[string]any{
 				reviewtool.ReviewGetToolName: {
-					"review_id": "mock-review-001",
+					"report_id": "mock-report-001",
 				},
 			},
 		},

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/review/interview_report.dart';
-import 'package:speakup/review/interview_report_decoder.dart';
+import 'package:speakup/features/coaching/review/interview_report.dart';
+import 'package:speakup/features/coaching/review/interview_report_decoder.dart';
 
 import 'interview_report_fixture.dart';
 

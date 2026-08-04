@@ -10,7 +10,6 @@ import (
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
 type preparationBackend struct {
@@ -391,8 +390,8 @@ func (b reviewBackend) ListFeedback(analysisID string) ([]Feedback, bool) {
 }
 
 func (b reviewBackend) SaveEvaluation(
-	turn review.TurnInput,
-	evaluation review.Evaluation,
+	turn turnEvaluationInput,
+	evaluation evaluationResult,
 ) (Analysis, Feedback, bool, error) {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()

@@ -30,15 +30,14 @@ import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
-import 'package:speakup/review/interview_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_wire_client.dart';
-import 'package:speakup/review/review_history_controller.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
-import 'package:speakup/review/wire_interview_report_client.dart';
-import 'package:speakup/review/wire_review_history_client.dart';
-import 'package:speakup/review/wire_turn_feedback_client.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_wire_client.dart';
+import 'package:speakup/features/coaching/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/review/wire_interview_report_client.dart';
+import 'package:speakup/features/coaching/review/wire_review_history_client.dart';
+import 'package:speakup/features/coaching/evaluation/wire_turn_feedback_client.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,8 +59,6 @@ void main() {
       avatarControllerFactory: dependencies.avatarControllerFactory,
       interviewReportController: dependencies.interviewReportController,
       ieltsSpeakingReportController: dependencies.ieltsSpeakingReportController,
-      ieltsSpeakingReportIndexController:
-          dependencies.ieltsSpeakingReportIndexController,
       speechFeedbackController: dependencies.speechFeedbackController,
     ),
   );
@@ -78,7 +75,6 @@ final class ProductionAppDependencies {
     required this.avatarControllerFactory,
     required this.interviewReportController,
     required this.ieltsSpeakingReportController,
-    required this.ieltsSpeakingReportIndexController,
     required this.speechFeedbackController,
   });
 
@@ -91,7 +87,6 @@ final class ProductionAppDependencies {
   final AvatarControllerFactory avatarControllerFactory;
   final InterviewReportController interviewReportController;
   final IeltsSpeakingReportController ieltsSpeakingReportController;
-  final IeltsSpeakingReportIndexController ieltsSpeakingReportIndexController;
   final SpeechFeedbackController speechFeedbackController;
 }
 
@@ -289,9 +284,6 @@ ProductionAppDependencies createProductionAppDependencies({
   final ieltsSpeakingReportController = IeltsSpeakingReportController(
     client: ieltsSpeakingReportClient,
   );
-  final ieltsSpeakingReportIndexController = IeltsSpeakingReportIndexController(
-    client: ieltsSpeakingReportClient,
-  );
   final speechFeedbackController = SpeechFeedbackController(
     client: WireSpeechFeedbackClient(
       baseUri: baseUri,
@@ -444,8 +436,6 @@ ProductionAppDependencies createProductionAppDependencies({
           .clearPrivateState();
       final ieltsSpeakingReportCleanup = ieltsSpeakingReportController
           .clearPrivateState();
-      final ieltsSpeakingReportIndexCleanup = ieltsSpeakingReportIndexController
-          .clearPrivateState();
       final speechFeedbackCleanup = speechFeedbackController
           .clearPrivateState();
       try {
@@ -461,7 +451,6 @@ ProductionAppDependencies createProductionAppDependencies({
         await Future.wait<void>([
           interviewReportCleanup,
           ieltsSpeakingReportCleanup,
-          ieltsSpeakingReportIndexCleanup,
           speechFeedbackCleanup,
         ]);
       }
@@ -477,7 +466,6 @@ ProductionAppDependencies createProductionAppDependencies({
     avatarControllerFactory: createAvatarController,
     interviewReportController: interviewReportController,
     ieltsSpeakingReportController: ieltsSpeakingReportController,
-    ieltsSpeakingReportIndexController: ieltsSpeakingReportIndexController,
     speechFeedbackController: speechFeedbackController,
   );
 }

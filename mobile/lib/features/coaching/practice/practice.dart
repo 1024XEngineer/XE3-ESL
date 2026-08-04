@@ -13,15 +13,15 @@ import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_practice.dart';
 import 'package:speakup/features/coaching/practice/ielts_examiner_speaker.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
-import 'package:speakup/features/review/interview_report_view.dart';
+import 'package:speakup/features/coaching/review/interview_report_view.dart';
 import 'package:speakup/features/coaching/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recordings.dart';
-import 'package:speakup/review/interview_report_controller.dart';
-import 'package:speakup/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/review/turn_feedback.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
-import 'package:speakup/review/turn_feedback_disclosure.dart';
+import 'package:speakup/features/coaching/review/interview_report_controller.dart';
+import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 class PracticePage extends StatefulWidget {
   const PracticePage({

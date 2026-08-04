@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/review/turn_feedback.dart';
-import 'package:speakup/review/turn_feedback_controller.dart';
-import 'package:speakup/review/turn_feedback_disclosure.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback_disclosure.dart';
 
 void main() {
   testWidgets('stays folded when pending feedback becomes READY', (

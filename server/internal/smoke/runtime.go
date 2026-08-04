@@ -12,7 +12,6 @@ import (
 	practiceinput "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
 const (
@@ -51,11 +50,6 @@ var (
 type Question = practice.Question
 type Turn = practice.Turn
 type Event = practiceinput.Event
-type Analysis = review.Analysis
-type Feedback = review.Feedback
-type RetryRequest = review.RetryRequest
-type HistoryRecord = review.HistoryRecord
-
 type Runtime struct {
 	mu sync.Mutex
 

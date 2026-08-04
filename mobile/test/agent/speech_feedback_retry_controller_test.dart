@@ -8,7 +8,7 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
-import 'package:speakup/review/turn_feedback.dart';
+import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

@@ -9,7 +9,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 )
 
 const (
@@ -71,26 +71,26 @@ func NewStore() *Store {
 			}},
 		}},
 		reviews: []reviewtool.ReviewDetail{{
-			ID:                 "mock-review-001",
-			PracticeSessionID:  "mock-practice-session-001",
-			SceneID:            "mock-scene-001",
-			Status:             "completed",
-			SummaryEligibility: "eligible",
-			Summary:            "The answer had clear structure, but the example needed stronger metrics.",
+			ID:                "mock-report-001",
+			PracticeSessionID: "mock-practice-session-001",
+			SceneType:         "INTERVIEW",
+			SceneModel:        "project_interview",
+			Scoreability:      "PROVISIONAL",
+			Summary:           "The answer had clear structure, but the example needed stronger metrics.",
 			SourceRefs: []tool.SourceRef{{
-				Type: "mock_review",
-				ID:   "mock-review-001",
+				Type: "evaluation_report",
+				ID:   "mock-report-001",
 			}},
 		}, {
-			ID:                 "mock-review-002",
-			PracticeSessionID:  "mock-practice-session-002",
-			SceneID:            "mock-scene-002",
-			Status:             "completed",
-			SummaryEligibility: "eligible",
-			Summary:            "Tone was calm, but the next action and owner were not explicit enough.",
+			ID:                "mock-report-002",
+			PracticeSessionID: "mock-practice-session-002",
+			SceneType:         "OVERSEAS_WORKPLACE",
+			SceneModel:        "workplace_communication",
+			Scoreability:      "PROVISIONAL",
+			Summary:           "Tone was calm, but the next action and owner were not explicit enough.",
 			SourceRefs: []tool.SourceRef{{
-				Type: "mock_review",
-				ID:   "mock-review-002",
+				Type: "evaluation_report",
+				ID:   "mock-report-002",
 			}},
 		}},
 		materials: []Material{{
@@ -231,12 +231,15 @@ func (s *Store) SearchReviews(
 			input.Query,
 			review.Summary,
 			review.PracticeSessionID,
-			review.SceneID,
+			review.SceneType,
+			review.SceneModel,
 		) {
 			results = append(results, reviewtool.ReviewSummary{
 				ID:                review.ID,
 				PracticeSessionID: review.PracticeSessionID,
-				SceneID:           review.SceneID,
+				SceneType:         review.SceneType,
+				SceneModel:        review.SceneModel,
+				Scoreability:      review.Scoreability,
 				Summary:           review.Summary,
 				CompletedAt:       review.CompletedAt,
 				SourceRefs:        review.SourceRefs,
@@ -257,7 +260,7 @@ func (s *Store) GetReview(
 		return reviewtool.ReviewDetail{}, err
 	}
 	for _, review := range s.reviews {
-		if review.ID == input.ReviewID {
+		if review.ID == input.ReportID {
 			return review, nil
 		}
 	}

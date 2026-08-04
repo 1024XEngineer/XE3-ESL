@@ -39,6 +39,7 @@ func TestAssemblerAddsSignedImagesToMultimodalUserMessage(
 	assembler, err := NewAssembler(
 		repository,
 		multimodalContextGoals{},
+		multimodalContextLearningProfile{},
 		multimodalContextStableProfile{},
 		multimodalContextMemories{},
 		WithImageReader(multimodalContextImages{}),
@@ -116,6 +117,7 @@ func TestAssemblerImageBudgetKeepsNewestImages(t *testing.T) {
 	assembler, err := NewAssembler(
 		repository,
 		multimodalContextGoals{},
+		multimodalContextLearningProfile{},
 		multimodalContextStableProfile{},
 		multimodalContextMemories{},
 		WithImageReader(multimodalBudgetImages{}),
@@ -222,6 +224,15 @@ func (multimodalContextGoals) ReadOwned(
 }
 
 type multimodalContextStableProfile struct{}
+
+type multimodalContextLearningProfile struct{}
+
+func (multimodalContextLearningProfile) ReadLearningProfile(
+	context.Context,
+	LearningProfileReadRequest,
+) ([]LearningProfileDimension, error) {
+	return []LearningProfileDimension{}, nil
+}
 
 func (multimodalContextStableProfile) ReadStableProfile(
 	context.Context,

@@ -9,8 +9,8 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
 func TestRegistryExposesInitialMockToolSet(t *testing.T) {
@@ -163,15 +163,15 @@ func TestReadOnlyMockToolsReturnExpectedFixtures(t *testing.T) {
 			name:       "review search",
 			toolName:   reviewtool.ReviewSearchToolName,
 			input:      json.RawMessage(`{"query":"metrics","limit":1}`),
-			resultKey:  "reviews",
-			sourceType: "mock_review",
+			resultKey:  "reports",
+			sourceType: "evaluation_report",
 		},
 		{
 			name:       "review get",
 			toolName:   reviewtool.ReviewGetToolName,
-			input:      json.RawMessage(`{"review_id":"mock-review-001"}`),
-			resultKey:  "review",
-			sourceType: "mock_review",
+			input:      json.RawMessage(`{"report_id":"mock-report-001"}`),
+			resultKey:  "report",
+			sourceType: "evaluation_report",
 		},
 		{
 			name:       "material search",

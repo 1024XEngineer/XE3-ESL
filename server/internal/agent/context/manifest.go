@@ -35,6 +35,13 @@ type StableProfileSource struct {
 	Scope         string `json:"scope"`
 }
 
+type LearningProfileSource struct {
+	DimensionKey                string    `json:"dimension_key"`
+	StrategyVersion             string    `json:"strategy_version"`
+	UpdatedAt                   time.Time `json:"updated_at"`
+	EvaluationRevisionSourceIDs []string  `json:"evaluation_revision_source_ids"`
+}
+
 type SummarySource struct {
 	CheckpointID           string `json:"checkpoint_id"`
 	SourceFromSequence     int64  `json:"source_from_sequence"`
@@ -46,31 +53,33 @@ type SummarySource struct {
 }
 
 type Manifest struct {
-	RunID                             string
-	OwnerID                           string
-	ThreadID                          string
-	InputMessageID                    string
-	ActiveGoalID                      string
-	ActiveGoalVersion                 int64
-	InstructionVersion                string
-	StableProfileContextPolicyVersion string
-	SelectedStableProfile             []StableProfileSource
-	MemoryContextPolicyVersion        string
-	SelectedMemories                  []MemorySource
-	SummaryContextPolicyVersion       string
-	SummaryContextStatus              string
-	SelectedSummary                   *SummarySource
-	SelectedMessages                  []MessageSource
-	OmittedMessageCount               int
-	TrimReason                        string
-	MaxInputCharacters                int
-	UsedInputCharacters               int
-	RequestedProvider                 string
-	RequestedModel                    string
-	MaxOutputTokens                   int
-	ExposedTools                      []string
-	ToolSchemaHashes                  map[string]string
-	CreatedAt                         time.Time
+	RunID                               string
+	OwnerID                             string
+	ThreadID                            string
+	InputMessageID                      string
+	ActiveGoalID                        string
+	ActiveGoalVersion                   int64
+	InstructionVersion                  string
+	LearningProfileContextPolicyVersion string
+	SelectedLearningProfile             []LearningProfileSource
+	StableProfileContextPolicyVersion   string
+	SelectedStableProfile               []StableProfileSource
+	MemoryContextPolicyVersion          string
+	SelectedMemories                    []MemorySource
+	SummaryContextPolicyVersion         string
+	SummaryContextStatus                string
+	SelectedSummary                     *SummarySource
+	SelectedMessages                    []MessageSource
+	OmittedMessageCount                 int
+	TrimReason                          string
+	MaxInputCharacters                  int
+	UsedInputCharacters                 int
+	RequestedProvider                   string
+	RequestedModel                      string
+	MaxOutputTokens                     int
+	ExposedTools                        []string
+	ToolSchemaHashes                    map[string]string
+	CreatedAt                           time.Time
 }
 
 func (manifest Manifest) Valid() bool {

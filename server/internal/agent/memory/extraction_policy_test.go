@@ -46,7 +46,7 @@ func TestExtractionPolicyAcceptsOnlyExplicitSupportedFacts(t *testing.T) {
 		},
 		{
 			Action:       CandidateUpsert,
-			Type:         TypeWeakness,
+			Type:         Type("weakness"),
 			CanonicalKey: "weakness.metrics",
 			Content:      "Lacks metrics",
 			Scope:        ScopeUser,
@@ -398,7 +398,7 @@ func TestExtractionPolicyClassifiesEveryCandidateRejection(t *testing.T) {
 		"unsupported type": {
 			candidate: func() ExtractedCandidate {
 				item := baseCandidate
-				item.Type = TypeWeakness
+				item.Type = Type("weakness")
 				item.CanonicalKey = "weakness.name"
 				return item
 			}(),
