@@ -89,6 +89,95 @@ func newAgentRunHTTPRouter(
 	return router
 }
 
+func TestPostgresAgentRunMemoryConsistencyFailureSkipsProvider(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	generator := &recordingTextGenerator{result: successfulTextResult()}
+	goalService, dataService, _, repository := newAgentRunServices(
+		t,
+		database.pool,
+		generator,
+		testRunConfiguration,
+	)
+	actor := testActorA()
+	tests := []struct {
+		name      string
+		failure   error
+		retryable bool
+	}{
+		{
+			name:      "unavailable",
+			failure:   agentcontext.ErrMemoryConsistencyUnavailable,
+			retryable: true,
+		},
+		{
+			name:      "rejected",
+			failure:   agentcontext.ErrMemoryConsistencyRejected,
+			retryable: false,
+		},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			thread, err := dataService.CreateThread(
+				context.Background(),
+				actor,
+				"",
+			)
+			if err != nil {
+				t.Fatalf("create Thread: %v", err)
+			}
+			assembler, err := agentcontext.NewAssembler(
+				repository.context,
+				goalService,
+				emptyLearningProfileReader{},
+				emptyStableProfileReader{},
+				&recordingMemorySearcher{},
+				failingMemoryExtractionBarrier{err: test.failure},
+			)
+			if err != nil {
+				t.Fatalf("new Context Assembler: %v", err)
+			}
+			runService, err := agentrun.NewService(
+				repository.run,
+				repository.conversation,
+				repository.context,
+				assembler,
+				generator,
+				testRunConfiguration,
+			)
+			if err != nil {
+				t.Fatalf("new Run service: %v", err)
+			}
+
+			submission, err := runService.SubmitText(
+				context.Background(),
+				actor,
+				thread.ID,
+				fmt.Sprintf("memory-barrier-%d", index),
+				"What do you remember about me?",
+			)
+			if err != nil {
+				t.Fatalf("submit text: %v", err)
+			}
+			if submission.Run.Status != agentrun.StatusFailed ||
+				submission.Run.FailureKind !=
+					agentrun.FailureMemoryConsistencyUnavailable ||
+				submission.Run.FailureRetryable != test.retryable {
+				t.Fatalf("failed Run = %#v", submission.Run)
+			}
+			if _, err := runService.GetContextManifest(
+				context.Background(),
+				actor,
+				submission.Run.ID,
+			); !errors.Is(err, agentcontext.ErrNotFound) {
+				t.Fatalf("Context Manifest error = %v, want not found", err)
+			}
+		})
+	}
+	if generator.CallCount() != 0 {
+		t.Fatalf("provider calls = %d, want 0", generator.CallCount())
+	}
+}
+
 func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 	database := newAgentTestDatabase(t)
 	generator := &recordingTextGenerator{result: successfulTextResult()}
@@ -255,6 +344,14 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 		manifest.RequestedModel != testRunConfiguration.Model ||
 		manifest.MaxOutputTokens != testRunConfiguration.MaxOutputTokens ||
 		manifest.InstructionVersion != "speakup_text_v1" ||
+		manifest.MemoryExtractionBarrierPolicyVersion !=
+			agentcontext.MemoryExtractionBarrierPolicyV1 ||
+		manifest.MemoryExtractionBarrierStatus != "ready" ||
+		manifest.MemoryExtractionBarrierWaitedMilliseconds != 0 ||
+		!manifest.MemoryExtractionBarrierCutoff.Equal(
+			submission.Run.CreatedAt,
+		) ||
+		!manifest.MemoryExtractionBarrierCoveredThrough.IsZero() ||
 		len(manifest.SelectedMessages) != 1 ||
 		manifest.SelectedMessages[0].MessageID != submission.UserMessage.ID ||
 		manifest.TrimReason != "none" {
@@ -423,6 +520,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 		emptyLearningProfileReader{},
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
+		readyMemoryExtractionBarrier{},
 	)
 	if err != nil {
 		t.Fatalf("new agentcontext.Assembler: %v", err)
@@ -550,6 +648,7 @@ func TestPostgresAgentHandoffPersistsProjectsAndStaysOutOfProviderInput(
 		emptyLearningProfileReader{},
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
+		readyMemoryExtractionBarrier{},
 	)
 	if err != nil {
 		t.Fatalf("new agentcontext.Assembler: %v", err)
@@ -741,6 +840,7 @@ WHERE table_schema = current_schema()
 		emptyLearningProfileReader{},
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
+		readyMemoryExtractionBarrier{},
 	)
 	if err != nil {
 		t.Fatalf("new agentcontext.Assembler: %v", err)
@@ -3821,6 +3921,7 @@ func newRunServiceWithContexts(
 		emptyLearningProfileReader{},
 		stableProfiles,
 		memories,
+		readyMemoryExtractionBarrier{},
 	)
 	if err != nil {
 		t.Fatalf("new agentcontext.Assembler: %v", err)
@@ -3858,6 +3959,30 @@ type recordingMemorySearcher struct {
 type emptyStableProfileReader struct{}
 
 type emptyLearningProfileReader struct{}
+
+type readyMemoryExtractionBarrier struct{}
+
+type failingMemoryExtractionBarrier struct {
+	err error
+}
+
+func (barrier failingMemoryExtractionBarrier) Await(
+	context.Context,
+	agentcontext.MemoryExtractionBarrierRequest,
+) (agentcontext.MemoryExtractionBarrierResult, error) {
+	return agentcontext.MemoryExtractionBarrierResult{}, barrier.err
+}
+
+func (readyMemoryExtractionBarrier) Await(
+	_ context.Context,
+	request agentcontext.MemoryExtractionBarrierRequest,
+) (agentcontext.MemoryExtractionBarrierResult, error) {
+	return agentcontext.MemoryExtractionBarrierResult{
+		PolicyVersion: agentcontext.MemoryExtractionBarrierPolicyV1,
+		Cutoff:        request.Cutoff,
+		Status:        agentcontext.MemoryExtractionBarrierReady,
+	}, nil
+}
 
 func (emptyLearningProfileReader) ReadLearningProfile(
 	context.Context,

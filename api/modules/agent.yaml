@@ -1872,6 +1872,10 @@ components:
         - selected_stable_profile
         - memory_context_policy_version
         - selected_memories
+        - memory_extraction_barrier_policy_version
+        - memory_extraction_barrier_cutoff
+        - memory_extraction_barrier_status
+        - memory_extraction_barrier_waited_milliseconds
         - selected_messages
         - omitted_message_count
         - trim_reason
@@ -1917,6 +1921,31 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ContextMemorySource'
+        memory_extraction_barrier_policy_version:
+          type: string
+          enum:
+            - memory-extraction-barrier-v1
+          readOnly: true
+        memory_extraction_barrier_cutoff:
+          type: string
+          format: date-time
+          readOnly: true
+        memory_extraction_barrier_status:
+          type: string
+          enum:
+            - not_required
+            - ready
+            - waited
+          readOnly: true
+        memory_extraction_barrier_waited_milliseconds:
+          type: integer
+          minimum: 0
+          maximum: 5000
+          readOnly: true
+        memory_extraction_barrier_covered_through:
+          type: string
+          format: date-time
+          readOnly: true
         selected_messages:
           type: array
           minItems: 1

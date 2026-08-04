@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
@@ -38,6 +39,7 @@ type Assembler struct {
 	learningProfiles LearningProfileReader
 	stableProfiles   StableProfileReader
 	memories         MemorySearcher
+	memoryBarrier    MemoryExtractionBarrier
 	images           agentimage.ContextReader
 }
 
@@ -61,10 +63,11 @@ func NewAssembler(
 	learningProfiles LearningProfileReader,
 	stableProfiles StableProfileReader,
 	memories MemorySearcher,
+	memoryBarrier MemoryExtractionBarrier,
 	options ...Option,
 ) (*Assembler, error) {
 	if repository == nil || goals == nil || learningProfiles == nil ||
-		stableProfiles == nil || memories == nil {
+		stableProfiles == nil || memories == nil || memoryBarrier == nil {
 		return nil, errors.New("agent: context dependency is required")
 	}
 	assembler := &Assembler{
@@ -73,6 +76,7 @@ func NewAssembler(
 		learningProfiles: learningProfiles,
 		stableProfiles:   stableProfiles,
 		memories:         memories,
+		memoryBarrier:    memoryBarrier,
 	}
 	for _, option := range options {
 		if option == nil {
@@ -118,6 +122,33 @@ func (assembler *Assembler) Assemble(
 	if len(input.Content) > ai.MaxEmbeddingInputBytes {
 		return Manifest{}, ai.TextRequest{}, ErrInvalidContext
 	}
+	memoryBarrierStatus := memoryExtractionBarrierNotRequired
+	memoryBarrierWaitedMilliseconds := int64(0)
+	var memoryBarrierCoveredThrough time.Time
+	if input.Sequence == 1 {
+		barrier, barrierErr := assembler.memoryBarrier.Await(
+			ctx,
+			MemoryExtractionBarrierRequest{
+				Actor:  actor,
+				Cutoff: command.RunCreatedAt,
+			},
+		)
+		if barrierErr != nil {
+			if errors.Is(barrierErr, ErrMemoryConsistencyRejected) {
+				return Manifest{}, ai.TextRequest{},
+					ErrMemoryConsistencyRejected
+			}
+			return Manifest{}, ai.TextRequest{},
+				ErrMemoryConsistencyUnavailable
+		}
+		if !barrier.Valid() || !barrier.Cutoff.Equal(command.RunCreatedAt) {
+			return Manifest{}, ai.TextRequest{},
+				ErrMemoryConsistencyUnavailable
+		}
+		memoryBarrierStatus = string(barrier.Status)
+		memoryBarrierWaitedMilliseconds = barrier.Waited.Milliseconds()
+		memoryBarrierCoveredThrough = barrier.CoveredThrough
+	}
 
 	systemContent := "You are SpeakUp, an English communication coach. " +
 		"Give one concise, actionable reply and one helpful follow-up question. " +
@@ -135,24 +166,29 @@ func (assembler *Assembler) Assemble(
 		"review identifier. Use historical Review search only when the user asks " +
 		"about an older practice."
 	manifest := Manifest{
-		RunID:                               command.RunID,
-		OwnerID:                             actor.UserID,
-		ThreadID:                            command.ThreadID,
-		InputMessageID:                      input.ID,
-		TrimReason:                          contextTrimNone,
-		InstructionVersion:                  instructionV1,
-		LearningProfileContextPolicyVersion: learningProfileContextPolicyV1,
-		SelectedLearningProfile:             make([]LearningProfileSource, 0),
-		StableProfileContextPolicyVersion:   stableProfileContextPolicyV1,
-		SelectedStableProfile:               make([]StableProfileSource, 0),
-		MemoryContextPolicyVersion:          memoryContextPolicyV1,
-		SelectedMemories:                    make([]MemorySource, 0),
-		SummaryContextPolicyVersion:         summaryContextPolicyV1,
-		SummaryContextStatus:                summaryContextNotAvailable,
-		MaxInputCharacters:                  command.MaxInputCharacters,
-		RequestedProvider:                   command.Provider,
-		RequestedModel:                      command.Model,
-		MaxOutputTokens:                     command.MaxOutputTokens,
+		RunID:                                     command.RunID,
+		OwnerID:                                   actor.UserID,
+		ThreadID:                                  command.ThreadID,
+		InputMessageID:                            input.ID,
+		TrimReason:                                contextTrimNone,
+		InstructionVersion:                        instructionV1,
+		LearningProfileContextPolicyVersion:       learningProfileContextPolicyV1,
+		SelectedLearningProfile:                   make([]LearningProfileSource, 0),
+		StableProfileContextPolicyVersion:         stableProfileContextPolicyV1,
+		SelectedStableProfile:                     make([]StableProfileSource, 0),
+		MemoryContextPolicyVersion:                memoryContextPolicyV1,
+		SelectedMemories:                          make([]MemorySource, 0),
+		MemoryExtractionBarrierPolicyVersion:      MemoryExtractionBarrierPolicyV1,
+		MemoryExtractionBarrierCutoff:             command.RunCreatedAt,
+		MemoryExtractionBarrierStatus:             memoryBarrierStatus,
+		MemoryExtractionBarrierWaitedMilliseconds: memoryBarrierWaitedMilliseconds,
+		MemoryExtractionBarrierCoveredThrough:     memoryBarrierCoveredThrough,
+		SummaryContextPolicyVersion:               summaryContextPolicyV1,
+		SummaryContextStatus:                      summaryContextNotAvailable,
+		MaxInputCharacters:                        command.MaxInputCharacters,
+		RequestedProvider:                         command.Provider,
+		RequestedModel:                            command.Model,
+		MaxOutputTokens:                           command.MaxOutputTokens,
 	}
 	if thread.ActiveGoalID != "" {
 		activeGoal, readErr := assembler.goals.ReadOwned(

@@ -26,10 +26,11 @@ func (status Status) Valid() bool {
 }
 
 const (
-	FailureInterrupted        = "interrupted"
-	FailureConfigurationDrift = "configuration_drift"
-	FailureInvalidContext     = "invalid_context"
-	FailureInternal           = "internal_error"
+	FailureInterrupted                  = "interrupted"
+	FailureConfigurationDrift           = "configuration_drift"
+	FailureInvalidContext               = "invalid_context"
+	FailureMemoryConsistencyUnavailable = "memory_consistency_unavailable"
+	FailureInternal                     = "internal_error"
 )
 
 type Run struct {

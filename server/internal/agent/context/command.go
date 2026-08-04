@@ -1,6 +1,9 @@
 package context
 
-import "regexp"
+import (
+	"regexp"
+	"time"
+)
 
 const maxBudget = 1_000_000
 
@@ -19,6 +22,7 @@ type AssembleCommand struct {
 	OwnerID            string
 	ThreadID           string
 	InputMessageID     string
+	RunCreatedAt       time.Time
 	Provider           string
 	Model              string
 	MaxOutputTokens    int
@@ -30,6 +34,8 @@ func (command AssembleCommand) Valid() bool {
 		uuidPattern.MatchString(command.OwnerID) &&
 		uuidPattern.MatchString(command.ThreadID) &&
 		uuidPattern.MatchString(command.InputMessageID) &&
+		!command.RunCreatedAt.IsZero() &&
+		command.RunCreatedAt.Location() == time.UTC &&
 		providerPattern.MatchString(command.Provider) &&
 		modelPattern.MatchString(command.Model) &&
 		command.MaxOutputTokens > 0 &&

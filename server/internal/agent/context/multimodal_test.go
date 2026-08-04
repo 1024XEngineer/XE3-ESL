@@ -3,6 +3,7 @@ package context
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
@@ -42,6 +43,7 @@ func TestAssemblerAddsSignedImagesToMultimodalUserMessage(
 		multimodalContextLearningProfile{},
 		multimodalContextStableProfile{},
 		multimodalContextMemories{},
+		multimodalContextMemoryBarrier{},
 		WithImageReader(multimodalContextImages{}),
 	)
 	if err != nil {
@@ -52,6 +54,7 @@ func TestAssemblerAddsSignedImagesToMultimodalUserMessage(
 		OwnerID:            ownerID,
 		ThreadID:           threadID,
 		InputMessageID:     messageID,
+		RunCreatedAt:       time.Date(2026, time.August, 4, 10, 0, 0, 0, time.UTC),
 		Provider:           "fake",
 		Model:              "fake-multimodal",
 		MaxOutputTokens:    256,
@@ -120,6 +123,7 @@ func TestAssemblerImageBudgetKeepsNewestImages(t *testing.T) {
 		multimodalContextLearningProfile{},
 		multimodalContextStableProfile{},
 		multimodalContextMemories{},
+		multimodalContextMemoryBarrier{},
 		WithImageReader(multimodalBudgetImages{}),
 	)
 	if err != nil {
@@ -130,6 +134,7 @@ func TestAssemblerImageBudgetKeepsNewestImages(t *testing.T) {
 		OwnerID:            ownerID,
 		ThreadID:           threadID,
 		InputMessageID:     messages[2].ID,
+		RunCreatedAt:       time.Date(2026, time.August, 4, 10, 0, 0, 0, time.UTC),
 		Provider:           "fake",
 		Model:              "fake-multimodal",
 		MaxOutputTokens:    256,
@@ -248,6 +253,19 @@ func (multimodalContextMemories) Search(
 	MemorySearchRequest,
 ) ([]MemorySearchHit, error) {
 	return nil, nil
+}
+
+type multimodalContextMemoryBarrier struct{}
+
+func (multimodalContextMemoryBarrier) Await(
+	_ context.Context,
+	request MemoryExtractionBarrierRequest,
+) (MemoryExtractionBarrierResult, error) {
+	return MemoryExtractionBarrierResult{
+		PolicyVersion: MemoryExtractionBarrierPolicyV1,
+		Cutoff:        request.Cutoff,
+		Status:        MemoryExtractionBarrierReady,
+	}, nil
 }
 
 type multimodalContextImages struct{}
