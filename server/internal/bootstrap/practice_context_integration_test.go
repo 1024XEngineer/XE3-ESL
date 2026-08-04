@@ -11,13 +11,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
+	evaluationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
-	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,12 +33,12 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	}
 	composition := newPracticeContextIntegrationComposition(t, pool, catalog)
 	wantTools := map[string]bool{
-		goalagentcapability.GoalCreateCapabilityName:       true,
-		goalagentcapability.GoalSearchCapabilityName:       true,
-		reviewagenttool.ReviewSearchToolName:               true,
-		reviewagenttool.ReviewGetToolName:                  true,
-		preparationagentcapability.PracticePreviewToolName: true,
-		evaluationagenttool.LatestPracticeReportToolName:   true,
+		goalagentcapability.GoalCreateCapabilityName:           true,
+		goalagentcapability.GoalSearchCapabilityName:           true,
+		reviewagentcapability.ReviewSearchToolName:             true,
+		reviewagentcapability.ReviewGetToolName:                true,
+		preparationagentcapability.PracticePreviewToolName:     true,
+		evaluationagentcapability.LatestPracticeReportToolName: true,
 	}
 	if composition.productionTools == nil {
 		t.Fatal("production Agent Tool Registry is nil")
@@ -171,8 +171,8 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 		t.Fatalf("Preparation resources = %#v / %#v", profile, snapshot)
 	}
 
-	previewExecutor := tool.NewExecutor(composition.productionTools)
-	previewCall := tool.CallContext{
+	previewExecutor := capability.NewExecutor(composition.productionTools)
+	previewCall := capability.CallContext{
 		Actor:      actor,
 		ThreadID:   threadID,
 		RunID:      "preview-run-0001",
@@ -182,7 +182,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	needsInput, err := previewExecutor.Execute(
 		context.Background(),
 		previewCall,
-		tool.Invocation{
+		capability.Invocation{
 			Name: preparationagentcapability.PracticePreviewToolName,
 			Input: json.RawMessage(fmt.Sprintf(
 				`{"scene_query":%q,"max_effective_turns":4}`,
@@ -223,7 +223,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	ready, err := previewExecutor.Execute(
 		context.Background(),
 		previewCall,
-		tool.Invocation{
+		capability.Invocation{
 			Name:  preparationagentcapability.PracticePreviewToolName,
 			Input: previewInput,
 		},
@@ -257,7 +257,7 @@ func TestIdentityAgentPracticeCompositionPersistsAndResolvesContext(
 	replayedPreview, err := previewExecutor.Execute(
 		context.Background(),
 		previewCall,
-		tool.Invocation{
+		capability.Invocation{
 			Name:  preparationagentcapability.PracticePreviewToolName,
 			Input: previewInput,
 		},

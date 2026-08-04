@@ -1,4 +1,4 @@
-package agenttool
+package agentcapability
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	domainreview "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 )
 
@@ -18,18 +18,18 @@ type ServicePort struct {
 
 func NewServicePort(history *domainreview.HistoryService) (*ServicePort, error) {
 	if history == nil {
-		return nil, errors.New("review agenttool: history service is required")
+		return nil, errors.New("review capability: history service is required")
 	}
 	return &ServicePort{history: history}, nil
 }
 
 func (port *ServicePort) SearchReviews(
 	ctx context.Context,
-	call tool.CallContext,
+	call capability.CallContext,
 	input ReviewSearchInput,
 ) ([]ReviewSummary, error) {
 	if port == nil || port.history == nil || !call.Actor.Valid() {
-		return nil, tool.ErrExecutionRejected
+		return nil, capability.ErrExecutionRejected
 	}
 	limit := input.Limit
 	if limit == 0 {
@@ -68,7 +68,7 @@ func (port *ServicePort) SearchReviews(
 	result := make([]ReviewSummary, len(items))
 	for index, item := range items {
 		if !item.Valid() {
-			return nil, tool.ErrExecutionRejected
+			return nil, capability.ErrExecutionRejected
 		}
 		result[index] = mapReviewSummary(item)
 	}
@@ -77,11 +77,11 @@ func (port *ServicePort) SearchReviews(
 
 func (port *ServicePort) GetReview(
 	ctx context.Context,
-	call tool.CallContext,
+	call capability.CallContext,
 	input ReviewGetInput,
 ) (ReviewDetail, error) {
 	if port == nil || port.history == nil || !call.Actor.Valid() {
-		return ReviewDetail{}, tool.ErrExecutionRejected
+		return ReviewDetail{}, capability.ErrExecutionRejected
 	}
 	item, err := port.history.Get(
 		ctx,
@@ -92,7 +92,7 @@ func (port *ServicePort) GetReview(
 		return ReviewDetail{}, mapReviewToolError(err)
 	}
 	if !item.Valid() {
-		return ReviewDetail{}, tool.ErrExecutionRejected
+		return ReviewDetail{}, capability.ErrExecutionRejected
 	}
 	return mapReviewDetail(item), nil
 }
@@ -106,7 +106,7 @@ func mapReviewSummary(item domainreview.Report) ReviewSummary {
 		Scoreability:      item.ScoreabilityStatus,
 		Summary:           item.Summary,
 		CompletedAt:       item.CreatedAt.UTC().Format(time.RFC3339Nano),
-		SourceRefs: []tool.SourceRef{{
+		SourceRefs: []capability.SourceRef{{
 			Type: "evaluation_report",
 			ID:   item.ID,
 		}},
@@ -144,7 +144,7 @@ func mapReviewDetail(item domainreview.Report) ReviewDetail {
 		Dimensions:        dimensions,
 		PriorityActions:   actions,
 		CompletedAt:       item.CreatedAt.UTC().Format(time.RFC3339Nano),
-		SourceRefs: []tool.SourceRef{{
+		SourceRefs: []capability.SourceRef{{
 			Type: "evaluation_report",
 			ID:   item.ID,
 		}},
@@ -181,10 +181,10 @@ func cloneScore(value *float64) *float64 {
 func mapReviewToolError(err error) error {
 	switch {
 	case errors.Is(err, domainreview.ErrInvalidReview):
-		return tool.ErrInvalidInput
+		return capability.ErrInvalidInput
 	case errors.Is(err, domainreview.ErrReviewNotFound),
 		errors.Is(err, domainreview.ErrAccountDeleted):
-		return tool.ErrExecutionRejected
+		return capability.ErrExecutionRejected
 	default:
 		return err
 	}

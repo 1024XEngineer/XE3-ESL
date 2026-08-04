@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 )
 
 type previewPortStub struct {
@@ -15,7 +15,7 @@ type previewPortStub struct {
 
 func (stub *previewPortStub) PreviewPractice(
 	_ context.Context,
-	_ tool.CallContext,
+	_ capability.CallContext,
 	input PreviewInput,
 ) (PreviewResult, error) {
 	stub.input = input
@@ -41,7 +41,7 @@ func (stub *previewPortStub) PreviewPractice(
 	return PreviewResult{
 		Status:  "preview_ready",
 		Handoff: handoff,
-		SourceRefs: []tool.SourceRef{{
+		SourceRefs: []capability.SourceRef{{
 			Type: "practice_plan",
 			ID:   handoff.PracticePlanID,
 		}},
@@ -81,24 +81,24 @@ func TestPreviewToolDoesNotExposePreparationIdentifiers(t *testing.T) {
 }
 
 func TestPreviewToolClassifiesDiscoveryAndCreation(t *testing.T) {
-	registry, err := tool.NewRegistry(NewPreviewTool(&previewPortStub{}))
+	registry, err := capability.NewRegistry(NewPreviewTool(&previewPortStub{}))
 	if err != nil {
-		t.Fatalf("tool.NewRegistry() error = %v", err)
+		t.Fatalf("capability.NewRegistry() error = %v", err)
 	}
-	readOnly := registry.InvocationEffect(tool.Invocation{
+	readOnly := registry.InvocationEffect(capability.Invocation{
 		Name:  PracticePreviewToolName,
 		Input: json.RawMessage(`{"scene_query":"AI product manager interview"}`),
 	})
-	if readOnly != tool.InvocationEffectReadOnly {
+	if readOnly != capability.InvocationEffectReadOnly {
 		t.Fatalf("discovery effect = %v", readOnly)
 	}
-	mayWrite := registry.InvocationEffect(tool.Invocation{
+	mayWrite := registry.InvocationEffect(capability.Invocation{
 		Name: PracticePreviewToolName,
 		Input: json.RawMessage(
 			`{"background_summary":"AI product manager","max_effective_turns":3}`,
 		),
 	})
-	if mayWrite != tool.InvocationEffectMayWrite {
+	if mayWrite != capability.InvocationEffectMayWrite {
 		t.Fatalf("creation effect = %v", mayWrite)
 	}
 }

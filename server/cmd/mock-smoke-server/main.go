@@ -8,7 +8,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/smoke"
+	"github.com/1024XEngineer/XE3-ESL/server/test/smoke"
 )
 
 func main() {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	evaluationprofile "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/evaluationprofile"
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
@@ -26,10 +27,9 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	agentrunhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
-	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agenttool"
+	evaluationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	goalhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/http"
@@ -37,7 +37,7 @@ import (
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	practicevoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
-	reviewagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agenttool"
+	reviewagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	evaluationhistory "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/evaluationhistory"
 	reviewhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
@@ -94,7 +94,7 @@ type identityAgentComposition struct {
 	agentVoiceReclaimer AgentVoiceObjectReclaimer
 	agentImageReclaimer AgentImageObjectReclaimer
 	goalService         *goal.Service
-	productionTools     *tool.Registry
+	productionTools     *capability.Registry
 	runService          *agentrun.Service
 	memoryExtraction    memory.ExtractionProcessor
 	summaryProcessor    agentsummary.Processor
@@ -189,22 +189,22 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	reviewTools, err := reviewagenttool.NewServicePort(reviewHistory)
+	reviewTools, err := reviewagentcapability.NewServicePort(reviewHistory)
 	if err != nil {
 		return nil, err
 	}
-	evaluationTools, err := evaluationagenttool.NewServicePort(
+	evaluationTools, err := evaluationagentcapability.NewServicePort(
 		evaluationRepository,
 	)
 	if err != nil {
 		return nil, err
 	}
-	productionTools, err := tool.NewRegistry(
+	productionTools, err := capability.NewRegistry(
 		goalagentcapability.NewGoalCreateCapability(goalTools),
 		goalagentcapability.NewGoalSearchCapability(goalTools),
-		reviewagenttool.NewReviewSearchTool(reviewTools),
-		reviewagenttool.NewReviewGetTool(reviewTools),
-		evaluationagenttool.NewLatestPracticeReportTool(evaluationTools),
+		reviewagentcapability.NewReviewSearchTool(reviewTools),
+		reviewagentcapability.NewReviewGetTool(reviewTools),
+		evaluationagentcapability.NewLatestPracticeReportTool(evaluationTools),
 	)
 	if err != nil {
 		return nil, err

@@ -1,10 +1,10 @@
-package agenttool
+package agentcapability
 
 import (
 	"context"
 	"encoding/json"
 
-	. "github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	. "github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 )
 
 const LatestPracticeReportToolName = "evaluation.report.latest.v1"

@@ -4,19 +4,19 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 )
 
 type agentRunOptions struct {
 	runOptions         []agentrun.Option
-	productionRegistry *tool.Registry
+	productionRegistry *capability.Registry
 }
 
 func agentRunServiceOptions(
-	productionRegistry *tool.Registry,
+	productionRegistry *capability.Registry,
 ) (agentRunOptions, error) {
 	if productionRegistry == nil {
 		return agentRunOptions{},

@@ -1,4 +1,4 @@
-package tool
+package capability
 
 import (
 	"encoding/json"

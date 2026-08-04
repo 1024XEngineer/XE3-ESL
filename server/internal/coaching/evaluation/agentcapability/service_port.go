@@ -1,4 +1,4 @@
-package agenttool
+package agentcapability
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
 
@@ -25,7 +25,7 @@ type ServicePort struct {
 func NewServicePort(reports LatestReportReader) (*ServicePort, error) {
 	if reports == nil {
 		return nil, errors.New(
-			"evaluation agenttool: report reader is required",
+			"evaluation capability: report reader is required",
 		)
 	}
 	return &ServicePort{reports: reports}, nil
@@ -33,10 +33,10 @@ func NewServicePort(reports LatestReportReader) (*ServicePort, error) {
 
 func (port *ServicePort) LatestPracticeReport(
 	ctx context.Context,
-	call tool.CallContext,
+	call capability.CallContext,
 ) (LatestPracticeReport, error) {
 	if port == nil || port.reports == nil || !call.Actor.Valid() {
-		return LatestPracticeReport{}, tool.ErrExecutionRejected
+		return LatestPracticeReport{}, capability.ErrExecutionRejected
 	}
 	page, err := port.reports.ListFormalReports(
 		ctx,
@@ -46,12 +46,12 @@ func (port *ServicePort) LatestPracticeReport(
 	if err != nil {
 		if errors.Is(err, evaluation.ErrNotFound) ||
 			errors.Is(err, evaluation.ErrAccountUnavailable) {
-			return LatestPracticeReport{}, tool.ErrExecutionRejected
+			return LatestPracticeReport{}, capability.ErrExecutionRejected
 		}
 		return LatestPracticeReport{}, err
 	}
 	if len(page.Items) != 1 || !page.Items[0].Valid() {
-		return LatestPracticeReport{}, tool.ErrExecutionRejected
+		return LatestPracticeReport{}, capability.ErrExecutionRejected
 	}
 	return mapLatestFormalReport(page.Items[0]), nil
 }

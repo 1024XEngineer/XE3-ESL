@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -217,8 +217,8 @@ func TestServicePortIELTSWithoutQuestionSelectionNeedsInput(t *testing.T) {
 	}
 }
 
-func previewCallContext() tool.CallContext {
-	return tool.CallContext{
+func previewCallContext() capability.CallContext {
+	return capability.CallContext{
 		Actor: requestcontext.Actor{
 			UserID:    "user-1",
 			SessionID: "session-1",

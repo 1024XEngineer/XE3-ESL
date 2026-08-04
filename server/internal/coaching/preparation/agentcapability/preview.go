@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 )
 
@@ -39,13 +39,13 @@ type PreviewResult struct {
 	Candidates            []CatalogCandidate
 	Replayed              bool
 	Handoff               agenthandoff.Item
-	SourceRefs            []tool.SourceRef
+	SourceRefs            []capability.SourceRef
 }
 
 type PreviewPort interface {
 	PreviewPractice(
 		context.Context,
-		tool.CallContext,
+		capability.CallContext,
 		PreviewInput,
 	) (PreviewResult, error)
 }
@@ -58,93 +58,93 @@ func NewPreviewTool(port PreviewPort) PreviewTool {
 	return PreviewTool{port: port}
 }
 
-func (value PreviewTool) Definition() tool.Definition {
+func (value PreviewTool) Definition() capability.Definition {
 	identifierArray := map[string]any{
 		"type":        "array",
 		"description": "Exact role definition ids selected from the Scene catalog.",
-		"items":       tool.IdentifierSchema("One exact role definition id."),
+		"items":       capability.IdentifierSchema("One exact role definition id."),
 		"minItems":    1,
 		"maxItems":    8,
 	}
-	return tool.Definition{
+	return capability.Definition{
 		Name:        PracticePreviewToolName,
 		Description: "Resolve and create a server-authoritative PracticePlan for the current Agent thread. Use when the user wants to configure an English practice after identifying a Scene. Pass background_summary using only facts the user already provided; Preparation creates the Profile and immutable Snapshot internally. IELTS Scenes require an explicit ielts_selection; never infer or automatically choose a question set. Missing user-facing details return needs_input without creating a Plan. All identifiers are internal: never ask the user to provide, repeat, or understand an id. A preview_ready result creates only a PracticePlan and never starts a PracticeSession. Do not use for creating a Goal, starting practice, or claiming that the user confirmed.",
-		InputSchema: tool.ObjectSchema(map[string]any{
-			"scene_query": tool.TextSchema(
+		InputSchema: capability.ObjectSchema(map[string]any{
+			"scene_query": capability.TextSchema(
 				"Natural-language catalog query used only to return or resolve official Scene candidates.",
 				500,
 			),
-			"background_summary": tool.TextSchema(
+			"background_summary": capability.TextSchema(
 				"Concise preparation background assembled only from facts the user provided, such as their target, experience, and practice focus.",
 				6000,
 			),
-			"goal_id": tool.IdentifierSchema(
+			"goal_id": capability.IdentifierSchema(
 				"Optional internal Goal id returned by a capability in this conversation. Never request it from the user.",
 			),
-			"scene_id": tool.IdentifierSchema("Exact official Scene id."),
-			"scene_version": tool.IntegerRangeSchema(
+			"scene_id": capability.IdentifierSchema("Exact official Scene id."),
+			"scene_version": capability.IntegerRangeSchema(
 				"Exact Scene version.",
 				1,
 				1000000,
 			),
 			"selected_role_ids": identifierArray,
-			"practice_option_id": tool.IdentifierSchema(
+			"practice_option_id": capability.IdentifierSchema(
 				"Exact official Practice option id.",
 			),
-			"max_effective_turns": tool.IntegerRangeSchema(
+			"max_effective_turns": capability.IntegerRangeSchema(
 				"Maximum effective turns for this Practice Plan.",
 				1,
 				100,
 			),
-			"ielts_selection": tool.ObjectSchema(map[string]any{
-				"mode": tool.StringEnumSchema(
+			"ielts_selection": capability.ObjectSchema(map[string]any{
+				"mode": capability.StringEnumSchema(
 					"Exact IELTS practice mode required by the selected Scene.",
 					"FULL_MOCK",
 					"PART_1",
 					"PART_2",
 					"PART_3",
 				),
-				"part_1_set_id": tool.IdentifierSchema(
+				"part_1_set_id": capability.IdentifierSchema(
 					"Exact published Part 1 set id.",
 				),
-				"topic_group_id": tool.IdentifierSchema(
+				"topic_group_id": capability.IdentifierSchema(
 					"Exact published Part 2/3 topic-group id.",
 				),
 			}, []string{"mode"}),
 		}, nil),
 		ReadOnly: false,
-		Risk:     tool.RiskLowRiskWrite,
+		Risk:     capability.RiskLowRiskWrite,
 	}
 }
 
 func (value PreviewTool) ClassifyInvocationEffect(
 	input json.RawMessage,
-) (tool.InvocationEffect, error) {
+) (capability.InvocationEffect, error) {
 	parsed, err := parsePreviewInput(input)
 	if err != nil {
 		return 0, err
 	}
 	if parsed.BackgroundSummary != "" && parsed.MaxEffectiveTurns > 0 {
-		return tool.InvocationEffectMayWrite, nil
+		return capability.InvocationEffectMayWrite, nil
 	}
-	return tool.InvocationEffectReadOnly, nil
+	return capability.InvocationEffectReadOnly, nil
 }
 
 func (value PreviewTool) Execute(
 	ctx context.Context,
-	call tool.CallContext,
+	call capability.CallContext,
 	input json.RawMessage,
-) (tool.Result, error) {
+) (capability.Result, error) {
 	if value.port == nil {
-		return tool.Result{}, tool.ErrExecutionRejected
+		return capability.Result{}, capability.ErrExecutionRejected
 	}
 	parsed, err := parsePreviewInput(input)
 	if err != nil {
-		return tool.Result{}, err
+		return capability.Result{}, err
 	}
 	result, err := value.port.PreviewPractice(ctx, call, parsed)
 	if err != nil {
-		return tool.Result{}, err
+		return capability.Result{}, err
 	}
 	return previewToolResult(result), nil
 }
@@ -152,12 +152,12 @@ func (value PreviewTool) Execute(
 func parsePreviewInput(input json.RawMessage) (PreviewInput, error) {
 	var parsed PreviewInput
 	if err := json.Unmarshal(input, &parsed); err != nil {
-		return PreviewInput{}, tool.ErrInvalidInput
+		return PreviewInput{}, capability.ErrInvalidInput
 	}
 	return parsed, nil
 }
 
-func previewToolResult(preview PreviewResult) tool.Result {
+func previewToolResult(preview PreviewResult) capability.Result {
 	content := map[string]any{
 		"status":                  preview.Status,
 		"required_missing_fields": preview.RequiredMissingFields,
@@ -179,7 +179,7 @@ func previewToolResult(preview PreviewResult) tool.Result {
 	if preview.Status == "preview_ready" {
 		handoffs = []agenthandoff.Item{preview.Handoff}
 	}
-	return tool.Result{
+	return capability.Result{
 		Content:    content,
 		SourceRefs: preview.SourceRefs,
 		Handoffs:   handoffs,

@@ -1,4 +1,4 @@
-package agenttool
+package agentcapability
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 )
 
 func TestReviewSearchToolReturnsReportsAndEvaluationSources(t *testing.T) {
@@ -19,13 +19,13 @@ func TestReviewSearchToolReturnsReportsAndEvaluationSources(t *testing.T) {
 		Scoreability:      "PROVISIONAL",
 		Summary:           "Completed report",
 		CompletedAt:       "2026-08-04T08:00:00Z",
-		SourceRefs: []tool.SourceRef{{
+		SourceRefs: []capability.SourceRef{{
 			Type: "evaluation_report",
 			ID:   "10000000-0000-4000-8000-000000000001",
 		}},
 	}}}
 	reviewTool := NewReviewSearchTool(port)
-	if err := tool.ValidateDefinition(reviewTool.Definition()); err != nil {
+	if err := capability.ValidateDefinition(reviewTool.Definition()); err != nil {
 		t.Fatal(err)
 	}
 	result, err := reviewTool.Execute(
@@ -50,7 +50,7 @@ func TestReviewGetToolRejectsMissingReportID(t *testing.T) {
 		validReviewCallContext(),
 		json.RawMessage(`{}`),
 	)
-	if !errors.Is(err, tool.ErrInvalidInput) {
+	if !errors.Is(err, capability.ErrInvalidInput) {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -61,7 +61,7 @@ type reviewPortStub struct {
 
 func (port *reviewPortStub) SearchReviews(
 	context.Context,
-	tool.CallContext,
+	capability.CallContext,
 	ReviewSearchInput,
 ) ([]ReviewSummary, error) {
 	return port.summaries, nil
@@ -69,7 +69,7 @@ func (port *reviewPortStub) SearchReviews(
 
 func (port *reviewPortStub) GetReview(
 	context.Context,
-	tool.CallContext,
+	capability.CallContext,
 	ReviewGetInput,
 ) (ReviewDetail, error) {
 	return ReviewDetail{}, nil

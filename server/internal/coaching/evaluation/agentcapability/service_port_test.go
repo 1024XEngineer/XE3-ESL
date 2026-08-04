@@ -1,4 +1,4 @@
-package agenttool
+package agentcapability
 
 import (
 	"encoding/json"

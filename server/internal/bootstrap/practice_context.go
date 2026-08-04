@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practiceapi "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/api"
@@ -49,7 +49,7 @@ type IdentityAgentPracticeComposition struct {
 	planHTTP               *preparation.PlanHTTPHandler
 	practiceApplication    *practice.SessionApplication
 	practiceHTTP           *practiceapi.Handler
-	productionTools        *tool.Registry
+	productionTools        *capability.Registry
 }
 
 // NewIdentityAgentAndPracticeComposition builds the production Identity,

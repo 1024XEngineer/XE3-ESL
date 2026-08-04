@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -58,13 +58,13 @@ func NewServicePort(
 
 func (port *ServicePort) PreviewPractice(
 	ctx context.Context,
-	call tool.CallContext,
+	call capability.CallContext,
 	input PreviewInput,
 ) (PreviewResult, error) {
 	if port == nil || port.plans == nil || port.catalog == nil ||
 		port.profiles == nil || ctx == nil || !call.Actor.Valid() ||
 		call.ThreadID == "" || call.RequestID == "" {
-		return PreviewResult{}, tool.ErrExecutionRejected
+		return PreviewResult{}, capability.ErrExecutionRejected
 	}
 	input.BackgroundSummary = strings.TrimSpace(input.BackgroundSummary)
 
@@ -138,13 +138,13 @@ func (port *ServicePort) PreviewPractice(
 	}
 	handoff, err := practicePlanHandoff(plan)
 	if err != nil {
-		return PreviewResult{}, tool.ErrExecutionRejected
+		return PreviewResult{}, capability.ErrExecutionRejected
 	}
 	return PreviewResult{
 		Status:   "preview_ready",
 		Replayed: replayed,
 		Handoff:  handoff,
-		SourceRefs: []tool.SourceRef{
+		SourceRefs: []capability.SourceRef{
 			{Type: "practice_plan", ID: plan.ID},
 			{Type: "preparation_snapshot", ID: plan.PreparationSnapshot.ID},
 		},
@@ -352,14 +352,14 @@ func mapPreparationToolError(err error) error {
 	case errors.Is(err, scene.ErrCatalogSelectionInvalid),
 		errors.Is(err, preparation.ErrProfileInvalid),
 		errors.Is(err, preparation.ErrPlanInvalid):
-		return tool.ErrInvalidInput
+		return capability.ErrInvalidInput
 	case errors.Is(err, preparation.ErrProfileNotFound),
 		errors.Is(err, preparation.ErrProfileConflict),
 		errors.Is(err, preparation.ErrProfileIdempotencyConflict),
 		errors.Is(err, preparation.ErrPlanNotFound),
 		errors.Is(err, preparation.ErrPlanConflict),
 		errors.Is(err, preparation.ErrPlanIdempotencyConflict):
-		return tool.ErrExecutionRejected
+		return capability.ErrExecutionRejected
 	default:
 		return err
 	}

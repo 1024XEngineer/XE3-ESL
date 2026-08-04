@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 )
 
 func TestAgentRunServiceOptionsAreDisabledByDefault(t *testing.T) {
@@ -11,7 +11,7 @@ func TestAgentRunServiceOptionsAreDisabledByDefault(t *testing.T) {
 	t.Setenv("AGENT_TOOL_FIXTURES", "")
 	t.Setenv("APP_ENV", "development")
 
-	registry, err := tool.NewRegistry()
+	registry, err := capability.NewRegistry()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestAgentRunServiceOptionsEnableDevelopmentFixtures(t *testing.T) {
 	t.Setenv("AGENT_TOOL_FIXTURES", "1")
 	t.Setenv("APP_ENV", "development")
 
-	registry, err := tool.NewRegistry()
+	registry, err := capability.NewRegistry()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestAgentRunServiceOptionsRejectProductionFixtures(t *testing.T) {
 	t.Setenv("AGENT_TOOL_FIXTURES", "1")
 	t.Setenv("APP_ENV", "production")
 
-	registry, err := tool.NewRegistry()
+	registry, err := capability.NewRegistry()
 	if err != nil {
 		t.Fatal(err)
 	}

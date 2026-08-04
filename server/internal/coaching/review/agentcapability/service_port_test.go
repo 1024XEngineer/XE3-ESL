@@ -1,11 +1,11 @@
-package agenttool
+package agentcapability
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	domainreview "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -117,8 +117,8 @@ func validAgentToolReport() domainreview.Report {
 	}
 }
 
-func validReviewCallContext() tool.CallContext {
-	return tool.CallContext{Actor: requestcontext.Actor{
+func validReviewCallContext() capability.CallContext {
+	return capability.CallContext{Actor: requestcontext.Actor{
 		UserID:    "40000000-0000-4000-8000-000000000001",
 		SessionID: "session-1",
 	}}
