@@ -10,7 +10,6 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const ObjectPrefix = "audio/v1/agent/"
@@ -230,7 +229,7 @@ type Repository interface {
 		string,
 		string,
 		uint64,
-		ai.TranscriptionResult,
+		TranscriptionResult,
 	) (Candidate, error)
 	FailTranscription(
 		context.Context,

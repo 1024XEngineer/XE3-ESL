@@ -8,7 +8,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -76,9 +75,9 @@ func TestAssemblerAddsSignedImagesToMultimodalUserMessage(
 	}
 	user := request.Messages[1]
 	if user.Content != "" || len(user.ContentParts) != 2 ||
-		user.ContentParts[0].Kind != ai.ContentPartText ||
+		user.ContentParts[0].Kind != ModelContentPartText ||
 		user.ContentParts[0].Text != message.Content ||
-		user.ContentParts[1].Kind != ai.ContentPartImageURL ||
+		user.ContentParts[1].Kind != ModelContentPartImageURL ||
 		user.ContentParts[1].ImageURL !=
 			"https://objects.invalid/image?signature=ephemeral" {
 		t.Fatalf("user message = %#v", user)

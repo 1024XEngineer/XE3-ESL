@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 func TestEmbeddingClientUsesCompatibleContractAndPreservesOrder(
@@ -73,7 +73,7 @@ func TestEmbeddingClientUsesCompatibleContractAndPreservesOrder(
 	}
 	result, err := client.Embed(
 		context.Background(),
-		ai.EmbeddingRequest{
+		protocol.EmbeddingRequest{
 			Inputs:     []string{"first", "second"},
 			Dimensions: 1024,
 		},
@@ -119,7 +119,7 @@ func TestEmbeddingClientRejectsDuplicateProviderIndexes(t *testing.T) {
 	}
 	if _, err := client.Embed(
 		context.Background(),
-		ai.EmbeddingRequest{
+		protocol.EmbeddingRequest{
 			Inputs:     []string{"first", "second"},
 			Dimensions: 1024,
 		},

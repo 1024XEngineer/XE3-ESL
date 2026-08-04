@@ -12,8 +12,6 @@ import (
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -81,18 +79,18 @@ func TestCompletedAgentRunQueuesAndAppliesMemoryExtraction(
 		MaxOutputTokens:    128,
 		MaxInputCharacters: 8192,
 	}
-	generator := aifake.NewTextGenerator(ai.TextResult{
+	generator := &memoryRunGenerator{result: agentrun.TextResult{
 		ID:           "completion-memory-1",
 		Provider:     runConfiguration.Provider,
 		Model:        runConfiguration.Model,
 		Content:      "Thanks, I will tailor the interview practice.",
 		FinishReason: "stop",
-		Usage: ai.TokenUsage{
+		Usage: agentrun.TokenUsage{
 			InputTokens:  10,
 			OutputTokens: 8,
 			TotalTokens:  18,
 		},
-	})
+	}}
 	runService, err := agentrun.NewService(
 		runRepository,
 		conversationRepository,
@@ -346,6 +344,18 @@ WHERE source_run_id IN ($1, $2)`,
 	if jobCount != 2 {
 		t.Fatalf("job count = %d, want 2", jobCount)
 	}
+}
+
+type memoryRunGenerator struct {
+	result agentrun.TextResult
+	err    error
+}
+
+func (generator *memoryRunGenerator) Generate(
+	_ context.Context,
+	_ agentrun.TextRequest,
+) (agentrun.TextResult, error) {
+	return generator.result, generator.err
 }
 
 type emptyAgentMemorySearcher struct{}

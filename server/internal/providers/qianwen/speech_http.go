@@ -6,11 +6,11 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 func decodeSpeechStatusError(
-	operation ai.SpeechOperation,
+	operation protocol.SpeechOperation,
 	response *http.Response,
 ) error {
 	body, readErr := readBounded(response.Body, maxErrorResponseBytes)
@@ -32,7 +32,7 @@ func decodeSpeechStatusError(
 			}
 		}
 	}
-	return ai.NewSpeechError(
+	return protocol.NewSpeechError(
 		operation,
 		classifyStatus(response.StatusCode, code),
 		response.StatusCode,
@@ -43,20 +43,20 @@ func decodeSpeechStatusError(
 }
 
 func speechTransportError(
-	operation ai.SpeechOperation,
+	operation protocol.SpeechOperation,
 	ctx context.Context,
 	cause error,
 ) error {
-	kind := ai.ErrorProviderUnavailable
+	kind := protocol.ErrorProviderUnavailable
 	var safeCause error
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):
-		kind = ai.ErrorCancelled
+		kind = protocol.ErrorCancelled
 		safeCause = context.Canceled
 	case errors.Is(ctx.Err(), context.DeadlineExceeded),
 		errors.Is(cause, context.DeadlineExceeded):
-		kind = ai.ErrorTimeout
+		kind = protocol.ErrorTimeout
 		safeCause = context.DeadlineExceeded
 	}
-	return ai.NewSpeechError(operation, kind, 0, "", "", safeCause)
+	return protocol.NewSpeechError(operation, kind, 0, "", "", safeCause)
 }

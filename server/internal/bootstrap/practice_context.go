@@ -10,7 +10,6 @@ import (
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practiceapi "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/api"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/postgres"
@@ -60,10 +59,11 @@ func NewIdentityAgentAndPracticeComposition(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
-	generator ai.TextGenerator,
+	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	jobTargetGenerator preparation.JobTargetGenerator,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
 	return newIdentityAgentAndPracticeComposition(
@@ -71,10 +71,11 @@ func NewIdentityAgentAndPracticeComposition(
 		database,
 		trustedProxyCIDRs,
 		trustedProxyHeader,
-		generator,
+		modelProviders,
 		runConfiguration,
 		memorySearcher,
 		catalog,
+		jobTargetGenerator,
 		nil,
 		nil,
 		nil,
@@ -89,10 +90,11 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
-	generator ai.TextGenerator,
+	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	jobTargetGenerator preparation.JobTargetGenerator,
 	memoryExtractionNotifier interface{ Notify() },
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
@@ -101,10 +103,11 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 		database,
 		trustedProxyCIDRs,
 		trustedProxyHeader,
-		generator,
+		modelProviders,
 		runConfiguration,
 		memorySearcher,
 		catalog,
+		jobTargetGenerator,
 		memoryExtractionNotifier,
 		nil,
 		nil,
@@ -122,10 +125,11 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
-	generator ai.TextGenerator,
+	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	jobTargetGenerator preparation.JobTargetGenerator,
 	wakeups AgentWorkerWakeups,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
@@ -134,10 +138,11 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 		database,
 		trustedProxyCIDRs,
 		trustedProxyHeader,
-		generator,
+		modelProviders,
 		runConfiguration,
 		memorySearcher,
 		catalog,
+		jobTargetGenerator,
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
 		nil,
@@ -150,10 +155,11 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
-	generator ai.TextGenerator,
+	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	jobTargetGenerator preparation.JobTargetGenerator,
 	wakeups AgentWorkerWakeups,
 	imageConfiguration *AgentImageConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
@@ -163,10 +169,11 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 		database,
 		trustedProxyCIDRs,
 		trustedProxyHeader,
-		generator,
+		modelProviders,
 		runConfiguration,
 		memorySearcher,
 		catalog,
+		jobTargetGenerator,
 		wakeups.MemoryExtraction,
 		wakeups.ThreadSummary,
 		imageConfiguration,
@@ -179,24 +186,25 @@ func newIdentityAgentAndPracticeComposition(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
-	generator ai.TextGenerator,
+	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	catalog scene.CatalogReader,
+	jobTargetGenerator preparation.JobTargetGenerator,
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
 	imageConfiguration *AgentImageConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
-	if catalog == nil {
-		return nil, errors.New("bootstrap: Preparation catalog is required")
+	if catalog == nil || jobTargetGenerator == nil {
+		return nil, errors.New("bootstrap: Preparation dependencies are required")
 	}
 	base, err := buildIdentityAgentComposition(
 		ctx,
 		database,
 		trustedProxyCIDRs,
 		trustedProxyHeader,
-		generator,
+		modelProviders,
 		runConfiguration,
 		memorySearcher,
 		memoryExtractionNotifier,
@@ -224,7 +232,7 @@ func newIdentityAgentAndPracticeComposition(
 	}
 	jobTargetParser, err := preparation.NewAIJobTargetParser(
 		ctx,
-		generator,
+		jobTargetGenerator,
 		catalog,
 	)
 	if err != nil {

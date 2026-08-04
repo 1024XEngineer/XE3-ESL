@@ -6,40 +6,85 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
 )
 
-func TestNewTextGeneratorRegistersOnlyConfiguredQianwen(t *testing.T) {
+func TestNewAgentAndPreparationGeneratorsRegisterConfiguredQianwen(
+	t *testing.T,
+) {
 	setBootstrapTextGenerationEnvironment(t, "server-only-test-key")
 
 	configuration, err := config.LoadTextGeneration()
 	if err != nil {
 		t.Fatalf("load text generation configuration: %v", err)
 	}
-	generator, err := NewTextGenerator(configuration)
+	providers, err := NewAgentModelProviders(configuration)
 	if err != nil {
-		t.Fatalf("register text generator: %v", err)
+		t.Fatalf("register Agent model providers: %v", err)
 	}
-	if _, ok := generator.(*qianwen.Generator); !ok {
-		t.Fatalf("registered generator has unexpected type %T", generator)
+	if providers.Run == nil || providers.Memory == nil || providers.Summary == nil {
+		t.Fatalf("Agent model providers are incomplete: %#v", providers)
+	}
+	jobTargetGenerator, err := NewPreparationJobTargetGenerator(configuration)
+	if err != nil {
+		t.Fatalf("register Preparation model provider: %v", err)
+	}
+	if jobTargetGenerator == nil {
+		t.Fatal("Preparation model provider is nil")
+	}
+	resumeConfiguration := configuration
+	resumeConfiguration.MaxOutputTokens = 1
+	resumeGenerator, err := NewResumeFieldGenerator(resumeConfiguration)
+	if err != nil {
+		t.Fatalf("register Resume model provider with independent budget: %v", err)
+	}
+	if resumeGenerator == nil {
+		t.Fatal("Resume model provider is nil")
 	}
 }
 
-func TestNewTextGeneratorRejectsUnregisteredProviderWithoutFallback(
+func TestExplicitModelPortsRejectUnregisteredProviderWithoutFallback(
 	t *testing.T,
 ) {
 	configuration := config.TextGenerationConfig{Provider: "fake"}
-	if generator, err := NewTextGenerator(configuration); err == nil ||
-		generator != nil {
+	if providers, err := NewAgentModelProviders(configuration); err == nil ||
+		providers.Run != nil || providers.Memory != nil || providers.Summary != nil {
 		t.Fatalf(
-			"unregistered provider returned generator=%T error=%v",
+			"unregistered provider returned Agent ports=%#v error=%v",
+			providers,
+			err,
+		)
+	}
+	if generator, err := NewPreparationJobTargetGenerator(configuration); err == nil || generator != nil {
+		t.Fatalf(
+			"unregistered provider returned Preparation port=%T error=%v",
+			generator,
+			err,
+		)
+	}
+	if generator, err := NewEvaluationScoringGenerator(configuration); err == nil || generator != nil {
+		t.Fatalf(
+			"unregistered provider returned Evaluation scoring port=%T error=%v",
+			generator,
+			err,
+		)
+	}
+	if generator, err := NewEvaluationSpeechFeedbackGenerator(configuration); err == nil || generator != nil {
+		t.Fatalf(
+			"unregistered provider returned Evaluation feedback port=%T error=%v",
+			generator,
+			err,
+		)
+	}
+	if generator, err := NewResumeFieldGenerator(configuration); err == nil || generator != nil {
+		t.Fatalf(
+			"unregistered provider returned Resume port=%T error=%v",
 			generator,
 			err,
 		)
 	}
 }
 
-func TestNewTextGeneratorDoesNotExposeAPIKeyInStartupError(t *testing.T) {
+func TestNewAgentModelProvidersDoesNotExposeAPIKeyInStartupError(t *testing.T) {
 	const apiKey = "must-never-appear"
 	setBootstrapTextGenerationEnvironment(t, apiKey)
 	t.Setenv("QIANWEN_BASE_URL", "https://example.com/compatible-mode/v1")
@@ -48,7 +93,7 @@ func TestNewTextGeneratorDoesNotExposeAPIKeyInStartupError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load text generation configuration: %v", err)
 	}
-	_, err = NewTextGenerator(configuration)
+	_, err = NewAgentModelProviders(configuration)
 	if err == nil {
 		t.Fatal("expected unsafe endpoint to be rejected")
 	}

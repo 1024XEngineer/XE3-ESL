@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 func TestWorkerSkipsBelowThresholdWithoutGeneration(t *testing.T) {
@@ -136,13 +135,10 @@ func TestWorkerRecordsRetryableAndTerminalFailures(t *testing.T) {
 	}{
 		{
 			name: "retryable provider",
-			generation: ai.NewGenerationError(
-				ai.ErrorProviderUnavailable,
-				503,
-				"",
-				"",
-				errors.New("provider unavailable"),
-			),
+			generation: testGenerationFailure{
+				category:  "provider_unavailable",
+				retryable: true,
+			},
 			wantStatus: JobPending,
 			wantReason: "provider_unavailable",
 		},
@@ -199,6 +195,23 @@ func TestWorkerRecordsRetryableAndTerminalFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+type testGenerationFailure struct {
+	category  string
+	retryable bool
+}
+
+func (failure testGenerationFailure) Error() string {
+	return "generation failed"
+}
+
+func (failure testGenerationFailure) StableCategory() string {
+	return failure.category
+}
+
+func (failure testGenerationFailure) Retryable() bool {
+	return failure.retryable
 }
 
 func newWorkerForTest(

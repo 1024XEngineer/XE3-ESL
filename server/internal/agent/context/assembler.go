@@ -15,7 +15,6 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -93,11 +92,11 @@ func (assembler *Assembler) Assemble(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	command AssembleCommand,
-) (Manifest, ai.TextRequest, error) {
+) (Manifest, ModelInput, error) {
 	if !actor.Valid() ||
 		command.OwnerID != actor.UserID ||
 		!command.Valid() {
-		return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+		return Manifest{}, ModelInput{}, ErrInvalidContext
 	}
 	thread, err := assembler.repository.FindThread(
 		ctx,
@@ -105,7 +104,7 @@ func (assembler *Assembler) Assemble(
 		command.ThreadID,
 	)
 	if err != nil {
-		return Manifest{}, ai.TextRequest{}, err
+		return Manifest{}, ModelInput{}, err
 	}
 	input, err := assembler.repository.FindMessage(
 		ctx,
@@ -114,13 +113,13 @@ func (assembler *Assembler) Assemble(
 		command.InputMessageID,
 	)
 	if err != nil {
-		return Manifest{}, ai.TextRequest{}, err
+		return Manifest{}, ModelInput{}, err
 	}
 	if input.Role != conversation.MessageRoleUser {
-		return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+		return Manifest{}, ModelInput{}, ErrInvalidContext
 	}
-	if len(input.Content) > ai.MaxEmbeddingInputBytes {
-		return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+	if len(input.Content) > maxMessageContentBytes {
+		return Manifest{}, ModelInput{}, ErrInvalidContext
 	}
 	memoryBarrierStatus := memoryExtractionBarrierNotRequired
 	memoryBarrierWaitedMilliseconds := int64(0)
@@ -135,14 +134,14 @@ func (assembler *Assembler) Assemble(
 		)
 		if barrierErr != nil {
 			if errors.Is(barrierErr, ErrMemoryConsistencyRejected) {
-				return Manifest{}, ai.TextRequest{},
+				return Manifest{}, ModelInput{},
 					ErrMemoryConsistencyRejected
 			}
-			return Manifest{}, ai.TextRequest{},
+			return Manifest{}, ModelInput{},
 				ErrMemoryConsistencyUnavailable
 		}
 		if !barrier.Valid() || !barrier.Cutoff.Equal(command.RunCreatedAt) {
-			return Manifest{}, ai.TextRequest{},
+			return Manifest{}, ModelInput{},
 				ErrMemoryConsistencyUnavailable
 		}
 		memoryBarrierStatus = string(barrier.Status)
@@ -198,12 +197,12 @@ func (assembler *Assembler) Assemble(
 		)
 		if readErr != nil {
 			if errors.Is(readErr, goal.ErrNotFound) {
-				return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+				return Manifest{}, ModelInput{}, ErrInvalidContext
 			}
-			return Manifest{}, ai.TextRequest{}, ErrRepository
+			return Manifest{}, ModelInput{}, ErrRepository
 		}
 		if activeGoal.Status != goal.StatusActive {
-			return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+			return Manifest{}, ModelInput{}, ErrInvalidContext
 		}
 		manifest.ActiveGoalID = activeGoal.ID
 		manifest.ActiveGoalVersion = activeGoal.Version
@@ -214,7 +213,7 @@ func (assembler *Assembler) Assemble(
 	inputCharacters := utf8.RuneCountInString(input.Content)
 	if utf8.RuneCountInString(systemContent)+inputCharacters >
 		command.MaxInputCharacters {
-		return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+		return Manifest{}, ModelInput{}, ErrInvalidContext
 	}
 	learningProfile, err := assembler.learningProfiles.ReadLearningProfile(
 		ctx,
@@ -225,7 +224,7 @@ func (assembler *Assembler) Assemble(
 		},
 	)
 	if err != nil || len(learningProfile) > learningProfileContextLimit {
-		return Manifest{}, ai.TextRequest{}, ErrRepository
+		return Manifest{}, ModelInput{}, ErrRepository
 	}
 	systemContent, manifest.SelectedLearningProfile, err =
 		selectLearningProfileContext(
@@ -234,14 +233,14 @@ func (assembler *Assembler) Assemble(
 			command.MaxInputCharacters-inputCharacters,
 		)
 	if err != nil {
-		return Manifest{}, ai.TextRequest{}, err
+		return Manifest{}, ModelInput{}, err
 	}
 	stableProfile, err := assembler.stableProfiles.ReadStableProfile(
 		ctx,
 		StableProfileReadRequest{Actor: actor},
 	)
 	if err != nil {
-		return Manifest{}, ai.TextRequest{}, ErrRepository
+		return Manifest{}, ModelInput{}, ErrRepository
 	}
 	var excludedCanonicalKeys []string
 	systemContent, manifest.SelectedStableProfile,
@@ -251,7 +250,7 @@ func (assembler *Assembler) Assemble(
 		command.MaxInputCharacters-inputCharacters,
 	)
 	if err != nil {
-		return Manifest{}, ai.TextRequest{}, err
+		return Manifest{}, ModelInput{}, err
 	}
 	hits, err := assembler.memories.Search(ctx, MemorySearchRequest{
 		Actor:                 actor,
@@ -261,10 +260,10 @@ func (assembler *Assembler) Assemble(
 		Limit:                 memoryContextLimit,
 	})
 	if err != nil {
-		return Manifest{}, ai.TextRequest{}, ErrRepository
+		return Manifest{}, ModelInput{}, ErrRepository
 	}
 	if len(hits) > memoryContextLimit {
-		return Manifest{}, ai.TextRequest{}, ErrRepository
+		return Manifest{}, ModelInput{}, ErrRepository
 	}
 	systemContent, manifest.SelectedMemories, err = selectMemoryContext(
 		systemContent,
@@ -273,7 +272,7 @@ func (assembler *Assembler) Assemble(
 		command.MaxInputCharacters-inputCharacters,
 	)
 	if err != nil {
-		return Manifest{}, ai.TextRequest{}, err
+		return Manifest{}, ModelInput{}, err
 	}
 	usedCharacters := utf8.RuneCountInString(systemContent)
 
@@ -289,13 +288,13 @@ func (assembler *Assembler) Assemble(
 		switch {
 		case errors.Is(checkpointErr, conversation.ErrNotFound):
 		case checkpointErr != nil:
-			return Manifest{}, ai.TextRequest{}, ErrRepository
+			return Manifest{}, ModelInput{}, ErrRepository
 		default:
 			if !checkpoint.Valid() ||
 				checkpoint.OwnerID != actor.UserID ||
 				checkpoint.ThreadID != command.ThreadID ||
 				checkpoint.CoveredThroughSequence >= input.Sequence {
-				return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+				return Manifest{}, ModelInput{}, ErrInvalidContext
 			}
 			systemContent, manifest.SelectedSummary,
 				manifest.SummaryContextStatus, err = selectSummaryContext(
@@ -304,7 +303,7 @@ func (assembler *Assembler) Assemble(
 				command.MaxInputCharacters-inputCharacters,
 			)
 			if err != nil {
-				return Manifest{}, ai.TextRequest{}, err
+				return Manifest{}, ModelInput{}, err
 			}
 			if manifest.SelectedSummary != nil {
 				minMessageSequence = checkpoint.CoveredThroughSequence
@@ -323,11 +322,11 @@ func (assembler *Assembler) Assemble(
 			command.MaxInputCharacters-usedCharacters,
 		)
 	if err != nil {
-		return Manifest{}, ai.TextRequest{}, err
+		return Manifest{}, ModelInput{}, err
 	}
 	if len(messages) == 0 ||
 		messages[len(messages)-1].ID != input.ID {
-		return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+		return Manifest{}, ModelInput{}, ErrInvalidContext
 	}
 	manifest.OmittedMessageCount = omittedMessageCount
 	switch {
@@ -350,7 +349,7 @@ func (assembler *Assembler) Assemble(
 			continue
 		}
 		if message.Role != conversation.MessageRoleUser || assembler.images == nil {
-			return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+			return Manifest{}, ModelInput{}, ErrInvalidContext
 		}
 		images, imageErr := assembler.images.MessageImages(
 			ctx,
@@ -362,17 +361,17 @@ func (assembler *Assembler) Assemble(
 			continue
 		}
 		if imageErr != nil {
-			return Manifest{}, ai.TextRequest{}, imageErr
+			return Manifest{}, ModelInput{}, imageErr
 		}
 		if len(images) == 0 {
 			if message.ID == input.ID {
-				return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+				return Manifest{}, ModelInput{}, ErrInvalidContext
 			}
 			continue
 		}
 		if len(images) > remainingImages {
 			if message.ID == input.ID {
-				return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+				return Manifest{}, ModelInput{}, ErrInvalidContext
 			}
 			continue
 		}
@@ -380,9 +379,9 @@ func (assembler *Assembler) Assemble(
 		remainingImages -= len(images)
 	}
 
-	request := ai.TextRequest{
-		Messages: []ai.TextMessage{{
-			Role:    ai.TextRoleSystem,
+	request := ModelInput{
+		Messages: []ModelMessage{{
+			Role:    ModelRoleSystem,
 			Content: systemContent,
 		}},
 	}
@@ -394,9 +393,9 @@ func (assembler *Assembler) Assemble(
 	for _, message := range messages {
 		role, ok := providerRole(message.Role)
 		if !ok {
-			return Manifest{}, ai.TextRequest{}, ErrInvalidContext
+			return Manifest{}, ModelInput{}, ErrInvalidContext
 		}
-		providerMessage := ai.TextMessage{
+		providerMessage := ModelMessage{
 			Role:    role,
 			Content: message.Content,
 		}
@@ -405,22 +404,22 @@ func (assembler *Assembler) Assemble(
 			if len(images) > 0 {
 				providerMessage.Content = ""
 				providerMessage.ContentParts = make(
-					[]ai.ContentPart,
+					[]ModelContentPart,
 					0,
 					len(images)+1,
 				)
 				providerMessage.ContentParts = append(
 					providerMessage.ContentParts,
-					ai.ContentPart{
-						Kind: ai.ContentPartText,
+					ModelContentPart{
+						Kind: ModelContentPartText,
 						Text: message.Content,
 					},
 				)
 				for _, image := range images {
 					providerMessage.ContentParts = append(
 						providerMessage.ContentParts,
-						ai.ContentPart{
-							Kind:     ai.ContentPartImageURL,
+						ModelContentPart{
+							Kind:     ModelContentPartImageURL,
 							ImageURL: image.URL,
 						},
 					)
@@ -438,8 +437,8 @@ func (assembler *Assembler) Assemble(
 		)
 	}
 	manifest.UsedInputCharacters = usedCharacters
-	if err := ai.ValidateTextRequest(request); err != nil {
-		return Manifest{}, ai.TextRequest{}, fmt.Errorf(
+	if err := validateModelInput(request); err != nil {
+		return Manifest{}, ModelInput{}, fmt.Errorf(
 			"%w: %v",
 			ErrInvalidContext,
 			err,
@@ -553,12 +552,12 @@ func contextMemorySource(hit MemorySearchHit) MemorySource {
 	}
 }
 
-func providerRole(role conversation.MessageRole) (ai.TextRole, bool) {
+func providerRole(role conversation.MessageRole) (ModelRole, bool) {
 	switch role {
 	case conversation.MessageRoleUser:
-		return ai.TextRoleUser, true
+		return ModelRoleUser, true
 	case conversation.MessageRoleAssistant:
-		return ai.TextRoleAssistant, true
+		return ModelRoleAssistant, true
 	default:
 		return "", false
 	}

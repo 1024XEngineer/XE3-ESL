@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
@@ -28,7 +28,7 @@ func TestMessageAudioRoutes(t *testing.T) {
 			URL:       "https://private.example/audio.wav?signature=fake",
 			ExpiresAt: now.Add(time.Minute),
 		},
-		synthesis: ai.SynthesisResult{Audio: audio},
+		synthesis: agentvoice.SynthesisResult{Audio: audio},
 	}
 	router := newTestRouter(t, application, true)
 
@@ -109,9 +109,9 @@ func TestMessageAudioRoutesRejectUnauthenticatedAndInvalidPreview(t *testing.T) 
 }
 
 func TestMessageAudioMapsSpeechQuotaFailure(t *testing.T) {
-	application := &testApplication{err: ai.NewSpeechError(
-		ai.SpeechOperationSynthesis,
-		ai.ErrorQuotaExhausted,
+	application := &testApplication{err: agentvoice.NewSpeechError(
+		agentvoice.SpeechOperationSynthesis,
+		agentvoice.ErrorQuotaExhausted,
 		429,
 		"quota",
 		"provider-request",
@@ -140,7 +140,7 @@ func TestMessageAudioMapsSpeechQuotaFailure(t *testing.T) {
 
 type testApplication struct {
 	playback       objectstore.SignedGetResult
-	synthesis      ai.SynthesisResult
+	synthesis      agentvoice.SynthesisResult
 	err            error
 	messageID      string
 	previewText    string
@@ -170,7 +170,7 @@ func (application *testApplication) SynthesizeMessage(
 	_ requestcontext.Actor,
 	messageID string,
 	previewText string,
-) (ai.SynthesisResult, error) {
+) (agentvoice.SynthesisResult, error) {
 	application.synthesisCalls++
 	application.messageID = messageID
 	application.previewText = previewText

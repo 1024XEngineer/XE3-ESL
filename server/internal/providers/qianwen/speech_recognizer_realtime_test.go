@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 	"github.com/gorilla/websocket"
 )
 
@@ -151,7 +151,7 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 	observer := &recordingTranscriptionObserver{}
 	result, err := recognizer.TranscribeStream(
 		context.Background(),
-		ai.TranscriptionRequest{Audio: &asrTestAudio{data: audio}},
+		protocol.TranscriptionRequest{Audio: &asrTestAudio{data: audio}},
 		observer,
 	)
 	if err != nil {
@@ -172,12 +172,12 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 
 type recordingTranscriptionObserver struct {
 	mutex   sync.Mutex
-	updates []ai.TranscriptionUpdate
+	updates []protocol.TranscriptionUpdate
 }
 
 func (observer *recordingTranscriptionObserver) OnTranscriptionUpdate(
 	_ context.Context,
-	update ai.TranscriptionUpdate,
+	update protocol.TranscriptionUpdate,
 ) error {
 	observer.mutex.Lock()
 	defer observer.mutex.Unlock()
@@ -185,10 +185,10 @@ func (observer *recordingTranscriptionObserver) OnTranscriptionUpdate(
 	return nil
 }
 
-func (observer *recordingTranscriptionObserver) Updates() []ai.TranscriptionUpdate {
+func (observer *recordingTranscriptionObserver) Updates() []protocol.TranscriptionUpdate {
 	observer.mutex.Lock()
 	defer observer.mutex.Unlock()
-	return append([]ai.TranscriptionUpdate(nil), observer.updates...)
+	return append([]protocol.TranscriptionUpdate(nil), observer.updates...)
 }
 
 func TestRealtimeEndpointDerivesFromDashScopeHTTPBase(t *testing.T) {

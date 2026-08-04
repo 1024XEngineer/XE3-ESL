@@ -8,7 +8,6 @@ import (
 	"time"
 
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpinput"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
@@ -31,7 +30,7 @@ type Application interface {
 		requestcontext.Actor,
 		string,
 		string,
-	) (ai.SynthesisResult, error)
+	) (agentvoice.SynthesisResult, error)
 }
 
 type Handler struct {
@@ -169,7 +168,7 @@ func (handler *Handler) serveMessageSpeech(c *gin.Context, text string) {
 }
 
 func mapError(err error) error {
-	var speechError *ai.SpeechError
+	var speechError *agentvoice.SpeechError
 	switch {
 	case errors.Is(err, agentvoice.ErrInvalidRequest):
 		return invalidRequest(err)
@@ -193,7 +192,7 @@ func mapError(err error) error {
 	case errors.As(err, &speechError):
 		code := "provider_unavailable"
 		message := "The configured provider is temporarily unavailable."
-		if speechError.Kind == ai.ErrorQuotaExhausted {
+		if speechError.Kind == agentvoice.ErrorQuotaExhausted {
 			code = "quota_exhausted"
 			message = "The configured provider quota is exhausted."
 		}

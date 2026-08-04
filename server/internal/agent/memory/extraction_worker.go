@@ -3,8 +3,6 @@ package memory
 import (
 	"context"
 	"errors"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const maxExtractionSweepLimit = 20
@@ -211,7 +209,7 @@ func extractionFailure(cause error) (
 	case errors.Is(cause, context.DeadlineExceeded):
 		return "timeout", true, false
 	}
-	var generationError *ai.GenerationError
+	var generationError ProviderFailure
 	if errors.As(cause, &generationError) {
 		kind := generationError.StableCategory()
 		if !stableFailurePattern.MatchString(kind) {

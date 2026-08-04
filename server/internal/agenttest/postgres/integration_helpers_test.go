@@ -9,16 +9,18 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
+	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	objectfake "github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/fake"
 	"github.com/gin-gonic/gin"
 )
 
-func successfulVoiceTranscription() ai.TranscriptionResult {
-	return ai.TranscriptionResult{
+func successfulVoiceTranscription() agentvoice.TranscriptionResult {
+	return agentvoice.TranscriptionResult{
 		ID:         "fake-asr-request-1",
 		Provider:   "fake",
 		Model:      "fake-asr-model",
@@ -26,6 +28,200 @@ func successfulVoiceTranscription() ai.TranscriptionResult {
 		Language:   "en",
 	}
 }
+
+type fixedTextGenerator struct {
+	result agentrun.TextResult
+	err    error
+}
+
+type fixedSummaryGenerator struct {
+	mu       sync.Mutex
+	result   agentsummary.GenerationResult
+	err      error
+	requests []agentsummary.GenerationRequest
+}
+
+func newFixedSummaryGenerator(
+	result agentsummary.GenerationResult,
+) *fixedSummaryGenerator {
+	return &fixedSummaryGenerator{result: result}
+}
+
+func (generator *fixedSummaryGenerator) GenerateJSON(
+	ctx context.Context,
+	request agentsummary.GenerationRequest,
+) (agentsummary.GenerationResult, error) {
+	if err := ctx.Err(); err != nil {
+		return agentsummary.GenerationResult{}, err
+	}
+	generator.mu.Lock()
+	defer generator.mu.Unlock()
+	generator.requests = append(generator.requests, request)
+	if generator.err != nil {
+		return agentsummary.GenerationResult{}, generator.err
+	}
+	return generator.result, nil
+}
+
+func (generator *fixedSummaryGenerator) CallCount() int {
+	generator.mu.Lock()
+	defer generator.mu.Unlock()
+	return len(generator.requests)
+}
+
+func newFixedTextGenerator(result agentrun.TextResult) *fixedTextGenerator {
+	return &fixedTextGenerator{result: result}
+}
+
+func newFailingTextGenerator(err error) *fixedTextGenerator {
+	return &fixedTextGenerator{err: err}
+}
+
+func (generator *fixedTextGenerator) Generate(
+	ctx context.Context,
+	request agentrun.TextRequest,
+) (agentrun.TextResult, error) {
+	if err := ctx.Err(); err != nil {
+		kind := agentrun.ErrorCancelled
+		if err == context.DeadlineExceeded {
+			kind = agentrun.ErrorTimeout
+		}
+		return agentrun.TextResult{}, agentrun.NewGenerationError(
+			kind,
+			0,
+			"",
+			"",
+			err,
+		)
+	}
+	if err := agentrun.ValidateTextRequest(request); err != nil {
+		return agentrun.TextResult{}, agentrun.NewGenerationError(
+			agentrun.ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			err,
+		)
+	}
+	if generator.err != nil {
+		return agentrun.TextResult{}, generator.err
+	}
+	return generator.result, nil
+}
+
+type fixedMemoryEmbedder struct {
+	result memory.EmbeddingResult
+	err    error
+}
+
+func (embedder *fixedMemoryEmbedder) Embed(
+	ctx context.Context,
+	request memory.EmbeddingRequest,
+) (memory.EmbeddingResult, error) {
+	if err := ctx.Err(); err != nil {
+		return memory.EmbeddingResult{}, err
+	}
+	if err := memory.ValidateEmbeddingRequest(request); err != nil {
+		return memory.EmbeddingResult{}, err
+	}
+	if embedder.err != nil {
+		return memory.EmbeddingResult{}, embedder.err
+	}
+	return embedder.result, nil
+}
+
+type fixedSpeechRecognizer struct {
+	result agentvoice.TranscriptionResult
+	err    error
+}
+
+func newFixedSpeechRecognizer(
+	result agentvoice.TranscriptionResult,
+) *fixedSpeechRecognizer {
+	return &fixedSpeechRecognizer{result: result}
+}
+
+func (recognizer *fixedSpeechRecognizer) Transcribe(
+	ctx context.Context,
+	request agentvoice.TranscriptionRequest,
+) (agentvoice.TranscriptionResult, error) {
+	if err := ctx.Err(); err != nil {
+		return agentvoice.TranscriptionResult{}, err
+	}
+	if err := agentvoice.ValidateTranscriptionRequest(request); err != nil {
+		return agentvoice.TranscriptionResult{}, err
+	}
+	if recognizer.err != nil {
+		return agentvoice.TranscriptionResult{}, recognizer.err
+	}
+	return recognizer.result, nil
+}
+
+func (recognizer *fixedSpeechRecognizer) TranscribeStream(
+	ctx context.Context,
+	request agentvoice.TranscriptionRequest,
+	observer agentvoice.TranscriptionObserver,
+) (agentvoice.TranscriptionResult, error) {
+	result, err := recognizer.Transcribe(ctx, request)
+	if err != nil {
+		return agentvoice.TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		agentvoice.TranscriptionUpdate{Transcript: result.Transcript},
+	); err != nil {
+		return agentvoice.TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		agentvoice.TranscriptionUpdate{Transcript: result.Transcript, Final: true},
+	); err != nil {
+		return agentvoice.TranscriptionResult{}, err
+	}
+	return result, nil
+}
+
+type fixedSpeechSynthesizer struct {
+	result       agentvoice.SynthesisResult
+	audioFactory func() platformmedia.ManagedAudioSource
+	err          error
+}
+
+func newFixedSpeechSynthesizer(
+	result agentvoice.SynthesisResult,
+	audioFactory func() platformmedia.ManagedAudioSource,
+) *fixedSpeechSynthesizer {
+	result.Audio = nil
+	return &fixedSpeechSynthesizer{result: result, audioFactory: audioFactory}
+}
+
+func (synthesizer *fixedSpeechSynthesizer) Synthesize(
+	ctx context.Context,
+	request agentvoice.SynthesisRequest,
+) (agentvoice.SynthesisResult, error) {
+	if err := ctx.Err(); err != nil {
+		return agentvoice.SynthesisResult{}, err
+	}
+	if err := agentvoice.ValidateSynthesisRequest(request); err != nil {
+		return agentvoice.SynthesisResult{}, err
+	}
+	if synthesizer.err != nil {
+		return agentvoice.SynthesisResult{}, synthesizer.err
+	}
+	result := synthesizer.result
+	if synthesizer.audioFactory != nil {
+		result.Audio = synthesizer.audioFactory()
+	}
+	return result, nil
+}
+
+var (
+	_ agentrun.TextGenerator               = (*fixedTextGenerator)(nil)
+	_ agentsummary.Generator               = (*fixedSummaryGenerator)(nil)
+	_ memory.Embedder                      = (*fixedMemoryEmbedder)(nil)
+	_ agentvoice.StreamingSpeechRecognizer = (*fixedSpeechRecognizer)(nil)
+	_ agentvoice.SpeechSynthesizer         = (*fixedSpeechSynthesizer)(nil)
+)
 
 func voiceTestWAV(sample byte) []byte {
 	const (

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 func TestRunCompletionNotifierFiresOnlyAfterSuccessfulCommit(t *testing.T) {
@@ -29,7 +28,7 @@ func TestRunCompletionNotifierFiresOnlyAfterSuccessfulCommit(t *testing.T) {
 		"run",
 		"lease",
 		"content",
-		ai.TextResult{},
+		agentrun.TextResult{},
 	); err != nil {
 		t.Fatalf("CompleteRun: %v", err)
 	}
@@ -46,7 +45,7 @@ func TestRunCompletionNotifierFiresOnlyAfterSuccessfulCommit(t *testing.T) {
 		"run",
 		"lease",
 		"content",
-		ai.TextResult{},
+		agentrun.TextResult{},
 	); err == nil {
 		t.Fatal("CompleteRun error = nil")
 	}
@@ -74,7 +73,7 @@ func TestRunCompletionNotifierFansOutPayloadFreeWakeups(t *testing.T) {
 		"run",
 		"lease",
 		"content",
-		ai.TextResult{},
+		agentrun.TextResult{},
 	); err != nil {
 		t.Fatalf("CompleteRun: %v", err)
 	}
@@ -98,7 +97,7 @@ func (repository *completionRepositoryStub) Complete(
 	string,
 	string,
 	string,
-	ai.TextResult,
+	agentrun.TextResult,
 ) (agentrun.Run, error) {
 	return repository.complete()
 }

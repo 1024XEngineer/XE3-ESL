@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const (
@@ -129,12 +127,12 @@ type fixedMemoryAddition struct {
 }
 
 type LLMExtractor struct {
-	generator ai.TextGenerator
+	generator Generator
 	config    ExtractionConfig
 }
 
 func NewLLMExtractor(
-	generator ai.TextGenerator,
+	generator Generator,
 	configuration ExtractionConfig,
 ) (*LLMExtractor, error) {
 	if generator == nil || !configuration.Valid() {
@@ -165,12 +163,9 @@ func (extractor *LLMExtractor) Extract(
 	if err != nil {
 		return ExtractionOutput{}, ErrExtractionResponse
 	}
-	result, err := extractor.generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{Role: ai.TextRoleSystem, Content: extractionSystemPrompt},
-			{Role: ai.TextRoleUser, Content: string(payload)},
-		},
-		ResponseFormat: ai.TextResponseFormatJSON,
+	result, err := extractor.generator.GenerateJSON(ctx, GenerationRequest{
+		SystemPrompt: extractionSystemPrompt,
+		UserPrompt:   string(payload),
 	})
 	if err != nil {
 		return ExtractionOutput{}, err

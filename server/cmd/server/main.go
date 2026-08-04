@@ -54,19 +54,25 @@ func run() int {
 		logger.Error("text generation configuration failed")
 		return 1
 	}
-	textGenerator, err := bootstrap.NewTextGenerator(textConfig)
+	modelProviders, err := bootstrap.NewAgentModelProviders(textConfig)
 	if err != nil {
 		logger.Error("text generation startup failed")
 		return 1
 	}
+	preparationJobTargets, err :=
+		bootstrap.NewPreparationJobTargetGenerator(textConfig)
+	if err != nil {
+		logger.Error("Preparation job target generation startup failed")
+		return 1
+	}
 	evaluationScoringGenerator, err :=
-		bootstrap.NewEvaluationScoringGenerator(textGenerator)
+		bootstrap.NewEvaluationScoringGenerator(textConfig)
 	if err != nil {
 		logger.Error("evaluation scoring startup failed")
 		return 1
 	}
 	evaluationSpeechFeedbackGenerator, err :=
-		bootstrap.NewEvaluationSpeechFeedbackGenerator(textGenerator)
+		bootstrap.NewEvaluationSpeechFeedbackGenerator(textConfig)
 	if err != nil {
 		logger.Error("evaluation speech feedback startup failed")
 		return 1
@@ -76,7 +82,7 @@ func run() int {
 		logger.Error("embedding configuration failed")
 		return 1
 	}
-	embedder, err := bootstrap.NewEmbedder(embeddingConfig)
+	embedder, err := bootstrap.NewMemoryEmbedder(embeddingConfig)
 	if err != nil {
 		logger.Error("embedding startup failed")
 		return 1
@@ -91,12 +97,12 @@ func run() int {
 		logger.Error("speech synthesis configuration failed")
 		return 1
 	}
-	recognizer, err := bootstrap.NewSpeechRecognizer(asrConfig)
+	recognizer, err := bootstrap.NewAgentSpeechRecognizer(asrConfig)
 	if err != nil {
 		logger.Error("speech recognition startup failed")
 		return 1
 	}
-	synthesizer, err := bootstrap.NewSpeechSynthesizer(ttsConfig)
+	synthesizer, err := bootstrap.NewAgentSpeechSynthesizer(ttsConfig)
 	if err != nil {
 		logger.Error("speech synthesis startup failed")
 		return 1
@@ -326,7 +332,7 @@ func run() int {
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
 			cfg.TrustedProxyHeader,
-			textGenerator,
+			modelProviders,
 			agentrun.Configuration{
 				Provider:           textConfig.Provider,
 				Model:              textConfig.Model,
@@ -335,6 +341,7 @@ func run() int {
 			},
 			memoryIndexComposition.Searcher(),
 			sceneCatalog,
+			preparationJobTargets,
 			bootstrap.AgentWorkerWakeups{
 				MemoryExtraction: memoryExtractionWakeup,
 				ThreadSummary:    threadSummaryWakeup,
@@ -378,16 +385,13 @@ func run() int {
 		)
 		return 1
 	}
-	var avatarProvider avatar.TokenProvider
-	if spatiusConfig.Enabled {
-		avatarProvider, err = avatar.NewSpatiusClient(spatiusConfig)
-		if err != nil {
-			logger.Error(
-				"avatar provider startup failed",
-				slog.String("error_kind", "dependency"),
-			)
-			return 1
-		}
+	avatarProvider, err := bootstrap.NewAvatarTokenProvider(spatiusConfig)
+	if err != nil {
+		logger.Error(
+			"avatar provider startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
 	}
 	avatarService, err := avatar.NewService(
 		avatar.ServiceConfiguration{

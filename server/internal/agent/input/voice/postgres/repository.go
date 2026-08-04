@@ -11,7 +11,6 @@ import (
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -419,7 +418,7 @@ func (r *Repository) CompleteTranscription(
 	ownerID string,
 	candidateID string,
 	fencingToken uint64,
-	result ai.TranscriptionResult,
+	result agentvoice.TranscriptionResult,
 ) (agentvoice.Candidate, error) {
 	if !agentvoice.ValidUUID(ownerID) || !agentvoice.ValidUUID(candidateID) ||
 		fencingToken == 0 || !agentvoice.ValidTranscription(result) {

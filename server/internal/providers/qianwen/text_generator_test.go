@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
@@ -59,10 +59,10 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 		}`), nil
 	})
 	generator := mustGenerator(t, doer, testAPIKey)
-	request := ai.TextRequest{Messages: []ai.TextMessage{
-		{Role: ai.TextRoleSystem, Content: "You are an English coach."},
-		{Role: ai.TextRoleAssistant, Content: "What are you preparing for?"},
-		{Role: ai.TextRoleUser, Content: "A product interview."},
+	request := protocol.TextRequest{Messages: []protocol.TextMessage{
+		{Role: protocol.TextRoleSystem, Content: "You are an English coach."},
+		{Role: protocol.TextRoleAssistant, Content: "What are you preparing for?"},
+		{Role: protocol.TextRoleUser, Content: "A product interview."},
 	}}
 
 	result, err := generator.Generate(context.Background(), request)
@@ -100,13 +100,13 @@ func TestGenerateUsesOpenAICompatibleChatContract(t *testing.T) {
 			t.Fatalf("message %d changed: %#v", index, message)
 		}
 	}
-	expected := ai.TextResult{
+	expected := protocol.TextResult{
 		ID:           "chatcmpl-safe-1",
 		Provider:     providerName,
 		Model:        "qwen3.5-flash",
 		Content:      "A useful answer.",
 		FinishReason: "stop",
-		Usage: ai.TokenUsage{
+		Usage: protocol.TokenUsage{
 			InputTokens:  12,
 			OutputTokens: 4,
 			TotalTokens:  16,
@@ -141,7 +141,7 @@ func TestGenerateStreamEmitsCanonicalVisibleText(t *testing.T) {
 	result, err := generator.GenerateStream(
 		context.Background(),
 		validRequest(),
-		ai.TextDeltaObserverFunc(func(_ context.Context, delta string) error {
+		protocol.TextDeltaObserverFunc(func(_ context.Context, delta string) error {
 			deltas = append(deltas, delta)
 			return nil
 		}),
@@ -176,16 +176,16 @@ func TestGenerateStreamKeepsToolFragmentsPrivate(t *testing.T) {
 	})
 	generator := mustGenerator(t, doer, "test-api-key")
 	request := validRequest()
-	request.Tools = []ai.ToolDefinition{{
+	request.Tools = []protocol.ToolDefinition{{
 		Name: "goal.create.v1", Description: "Create a scenario.",
 		InputSchema: map[string]any{"type": "object"},
 	}}
-	request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
+	request.ToolChoice = protocol.ToolChoice{Mode: protocol.ToolChoiceAuto}
 	emitted := false
 	result, err := generator.GenerateStream(
 		context.Background(),
 		request,
-		ai.TextDeltaObserverFunc(func(context.Context, string) error {
+		protocol.TextDeltaObserverFunc(func(context.Context, string) error {
 			emitted = true
 			return nil
 		}),
@@ -216,16 +216,16 @@ func TestGenerateStreamAllowsVisiblePreambleBeforeToolCall(t *testing.T) {
 	})
 	generator := mustGenerator(t, doer, "test-api-key")
 	request := validRequest()
-	request.Tools = []ai.ToolDefinition{{
+	request.Tools = []protocol.ToolDefinition{{
 		Name: "goal.create.v1", Description: "Create a scenario.",
 		InputSchema: map[string]any{"type": "object"},
 	}}
-	request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
+	request.ToolChoice = protocol.ToolChoice{Mode: protocol.ToolChoiceAuto}
 	var deltas []string
 	result, err := generator.GenerateStream(
 		context.Background(),
 		request,
-		ai.TextDeltaObserverFunc(func(_ context.Context, delta string) error {
+		protocol.TextDeltaObserverFunc(func(_ context.Context, delta string) error {
 			deltas = append(deltas, delta)
 			return nil
 		}),
@@ -263,7 +263,7 @@ func TestGenerateRequestsJSONObjectResponse(t *testing.T) {
 	})
 	generator := mustGenerator(t, doer, "test-api-key")
 	request := validRequest()
-	request.ResponseFormat = ai.TextResponseFormatJSON
+	request.ResponseFormat = protocol.TextResponseFormatJSON
 
 	if _, err := generator.Generate(context.Background(), request); err != nil {
 		t.Fatalf("generate: %v", err)
@@ -324,12 +324,12 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 		}`), nil
 	})
 	generator := mustGenerator(t, doer, "test-api-key")
-	request := ai.TextRequest{
-		Messages: []ai.TextMessage{{
-			Role:    ai.TextRoleUser,
+	request := protocol.TextRequest{
+		Messages: []protocol.TextMessage{{
+			Role:    protocol.TextRoleUser,
 			Content: "Prepare for my interview using my resume.",
 		}},
-		Tools: []ai.ToolDefinition{
+		Tools: []protocol.ToolDefinition{
 			{
 				Name:        "goal.create.v1",
 				Description: "Create a confirmed preparation scenario.",
@@ -341,8 +341,8 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 				InputSchema: map[string]any{"type": "object"},
 			},
 		},
-		ToolChoice: ai.ToolChoice{
-			Mode: ai.ToolChoiceSpecific,
+		ToolChoice: protocol.ToolChoice{
+			Mode: protocol.ToolChoiceSpecific,
 			Name: "material.search.v1",
 		},
 	}
@@ -361,7 +361,7 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 		`{"type":"function","function":{"name":"material_search_v1"}}` {
 		t.Fatalf("tool_choice = %s", got)
 	}
-	expectedCalls := []ai.ToolCall{
+	expectedCalls := []protocol.ToolCall{
 		{
 			ID:        "call-1",
 			Name:      "goal.create.v1",
@@ -410,7 +410,7 @@ func TestGenerateParsesSingleToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	expected := []ai.ToolCall{{
+	expected := []protocol.ToolCall{{
 		ID:        "call-review-1",
 		Name:      "review.search.v1",
 		Arguments: json.RawMessage(`{"limit":1}`),
@@ -477,24 +477,24 @@ func TestGenerateMapsAssistantCallsAndToolResultsBackToProvider(t *testing.T) {
 		}`), nil
 	})
 	generator := mustGenerator(t, doer, "test-api-key")
-	request := ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{Role: ai.TextRoleUser, Content: "Find my last review."},
+	request := protocol.TextRequest{
+		Messages: []protocol.TextMessage{
+			{Role: protocol.TextRoleUser, Content: "Find my last review."},
 			{
-				Role: ai.TextRoleAssistant,
-				ToolCalls: []ai.ToolCall{{
+				Role: protocol.TextRoleAssistant,
+				ToolCalls: []protocol.ToolCall{{
 					ID:        "call-review-1",
 					Name:      "review.search.v1",
 					Arguments: json.RawMessage(`{"limit":1}`),
 				}},
 			},
 			{
-				Role:       ai.TextRoleTool,
+				Role:       protocol.TextRoleTool,
 				Content:    `{"reviews":[{"id":"review-1"}]}`,
 				ToolCallID: "call-review-1",
 			},
 		},
-		Tools: []ai.ToolDefinition{{
+		Tools: []protocol.ToolDefinition{{
 			Name:        "review.search.v1",
 			Description: "Search review summaries.",
 			InputSchema: map[string]any{"type": "object"},
@@ -560,21 +560,21 @@ func TestGenerateMapsMultimodalUserContentWithTools(t *testing.T) {
 	})
 	generator := mustGenerator(t, doer, "test-api-key")
 	request := toolRequest()
-	request.ResponseFormat = ai.TextResponseFormatJSON
-	request.Messages[0] = ai.TextMessage{
-		Role: ai.TextRoleUser,
-		ContentParts: []ai.ContentPart{
+	request.ResponseFormat = protocol.TextResponseFormatJSON
+	request.Messages[0] = protocol.TextMessage{
+		Role: protocol.TextRoleUser,
+		ContentParts: []protocol.ContentPart{
 			{
-				Kind: ai.ContentPartText,
+				Kind: protocol.ContentPartText,
 				Text: "Review the English in this screenshot.",
 			},
 			{
-				Kind: ai.ContentPartImageURL,
+				Kind: protocol.ContentPartImageURL,
 				ImageURL: "https://private.example.test/image.png" +
 					"?Expires=60&Signature=redacted",
 			},
 			{
-				Kind: ai.ContentPartImageURL,
+				Kind: protocol.ContentPartImageURL,
 				ImageURL: "https://private.example.test/second.png" +
 					"?Expires=60&Signature=redacted-2",
 			},
@@ -622,10 +622,10 @@ func TestGenerateMapsMultimodalUserContentWithTools(t *testing.T) {
 func TestProviderContentPartsMapsSingleImage(t *testing.T) {
 	t.Parallel()
 
-	mapped := providerContentParts([]ai.ContentPart{
-		{Kind: ai.ContentPartText, Text: "Describe this image."},
+	mapped := providerContentParts([]protocol.ContentPart{
+		{Kind: protocol.ContentPartText, Text: "Describe this image."},
 		{
-			Kind:     ai.ContentPartImageURL,
+			Kind:     protocol.ContentPartImageURL,
 			ImageURL: "https://private.example.test/image.png?Signature=redacted",
 		},
 	})
@@ -652,11 +652,11 @@ func TestGenerateMultimodalTransportFailureDoesNotLeakImageURL(t *testing.T) {
 		},
 	), "test-api-key")
 	request := validRequest()
-	request.Messages[0] = ai.TextMessage{
-		Role: ai.TextRoleUser,
-		ContentParts: []ai.ContentPart{
-			{Kind: ai.ContentPartText, Text: "Describe this image."},
-			{Kind: ai.ContentPartImageURL, ImageURL: imageURL},
+	request.Messages[0] = protocol.TextMessage{
+		Role: protocol.TextRoleUser,
+		ContentParts: []protocol.ContentPart{
+			{Kind: protocol.ContentPartText, Text: "Describe this image."},
+			{Kind: protocol.ContentPartImageURL, ImageURL: imageURL},
 		},
 	}
 
@@ -677,7 +677,7 @@ func TestGenerateMapsProviderFailuresWithoutLeakingSensitiveValues(t *testing.T)
 		name       string
 		statusCode int
 		body       string
-		kind       ai.ErrorKind
+		kind       protocol.ErrorKind
 		retryable  bool
 		code       string
 		requestID  string
@@ -687,7 +687,7 @@ func TestGenerateMapsProviderFailuresWithoutLeakingSensitiveValues(t *testing.T)
 			statusCode: http.StatusBadRequest,
 			body: `{"error":{"code":"BadRequest","message":"private-prompt"},
 				"request_id":"request-400"}`,
-			kind:      ai.ErrorInvalidRequest,
+			kind:      protocol.ErrorInvalidRequest,
 			code:      "BadRequest",
 			requestID: "request-400",
 		},
@@ -695,35 +695,35 @@ func TestGenerateMapsProviderFailuresWithoutLeakingSensitiveValues(t *testing.T)
 			name:       "invalid API key",
 			statusCode: http.StatusUnauthorized,
 			body:       `{"code":"InvalidApiKey","message":"test-api-key"}`,
-			kind:       ai.ErrorAuthentication,
+			kind:       protocol.ErrorAuthentication,
 			code:       "InvalidApiKey",
 		},
 		{
 			name:       "provider quota exhausted",
 			statusCode: http.StatusForbidden,
 			body:       `{"code":"AllocationQuota.FreeTierOnly"}`,
-			kind:       ai.ErrorQuotaExhausted,
+			kind:       protocol.ErrorQuotaExhausted,
 			code:       "AllocationQuota.FreeTierOnly",
 		},
 		{
 			name:       "permission denied",
 			statusCode: http.StatusForbidden,
 			body:       `{"code":"Model.AccessDenied"}`,
-			kind:       ai.ErrorAuthorization,
+			kind:       protocol.ErrorAuthorization,
 			code:       "Model.AccessDenied",
 		},
 		{
 			name:       "model missing",
 			statusCode: http.StatusNotFound,
 			body:       `{"error":{"type":"model_not_found","code":null}}`,
-			kind:       ai.ErrorConfiguration,
+			kind:       protocol.ErrorConfiguration,
 			code:       "model_not_found",
 		},
 		{
 			name:       "rate limited",
 			statusCode: http.StatusTooManyRequests,
 			body:       `{"code":"Throttling.RateQuota"}`,
-			kind:       ai.ErrorRateLimited,
+			kind:       protocol.ErrorRateLimited,
 			retryable:  true,
 			code:       "Throttling.RateQuota",
 		},
@@ -731,28 +731,28 @@ func TestGenerateMapsProviderFailuresWithoutLeakingSensitiveValues(t *testing.T)
 			name:       "billing unavailable",
 			statusCode: http.StatusTooManyRequests,
 			body:       `{"code":"PostpaidBillOverdue"}`,
-			kind:       ai.ErrorAuthorization,
+			kind:       protocol.ErrorAuthorization,
 			code:       "PostpaidBillOverdue",
 		},
 		{
 			name:       "account in arrears",
 			statusCode: http.StatusBadRequest,
 			body:       `{"code":"Arrearage"}`,
-			kind:       ai.ErrorAuthorization,
+			kind:       protocol.ErrorAuthorization,
 			code:       "Arrearage",
 		},
 		{
 			name:       "model not purchased",
 			statusCode: http.StatusBadRequest,
 			body:       `{"code":"CommodityNotPurchased"}`,
-			kind:       ai.ErrorAuthorization,
+			kind:       protocol.ErrorAuthorization,
 			code:       "CommodityNotPurchased",
 		},
 		{
 			name:       "provider timeout",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"code":"RequestTimeOut"}`,
-			kind:       ai.ErrorTimeout,
+			kind:       protocol.ErrorTimeout,
 			retryable:  true,
 			code:       "RequestTimeOut",
 		},
@@ -760,7 +760,7 @@ func TestGenerateMapsProviderFailuresWithoutLeakingSensitiveValues(t *testing.T)
 			name:       "provider unavailable",
 			statusCode: http.StatusServiceUnavailable,
 			body:       `{"code":"ModelUnavailable"}`,
-			kind:       ai.ErrorProviderUnavailable,
+			kind:       protocol.ErrorProviderUnavailable,
 			retryable:  true,
 			code:       "ModelUnavailable",
 		},
@@ -768,7 +768,7 @@ func TestGenerateMapsProviderFailuresWithoutLeakingSensitiveValues(t *testing.T)
 			name:       "redirect is not followed",
 			statusCode: http.StatusTemporaryRedirect,
 			body:       `<html>redirect</html>`,
-			kind:       ai.ErrorConfiguration,
+			kind:       protocol.ErrorConfiguration,
 		},
 	}
 	for _, test := range tests {
@@ -784,14 +784,14 @@ func TestGenerateMapsProviderFailuresWithoutLeakingSensitiveValues(t *testing.T)
 				return response, nil
 			})
 			generator := mustGenerator(t, doer, "test-api-key")
-			_, err := generator.Generate(context.Background(), ai.TextRequest{
-				Messages: []ai.TextMessage{{
-					Role:    ai.TextRoleUser,
+			_, err := generator.Generate(context.Background(), protocol.TextRequest{
+				Messages: []protocol.TextMessage{{
+					Role:    protocol.TextRoleUser,
 					Content: "private-prompt",
 				}},
 			})
 
-			var generationError *ai.GenerationError
+			var generationError *protocol.GenerationError
 			if !errors.As(err, &generationError) {
 				t.Fatalf("expected GenerationError, got %T: %v", err, err)
 			}
@@ -909,9 +909,9 @@ func TestGenerateRejectsInvalidResponses(t *testing.T) {
 			}), "test-api-key")
 
 			_, err := generator.Generate(context.Background(), validRequest())
-			var generationError *ai.GenerationError
+			var generationError *protocol.GenerationError
 			if !errors.As(err, &generationError) ||
-				generationError.Kind != ai.ErrorInvalidResponse ||
+				generationError.Kind != protocol.ErrorInvalidResponse ||
 				!generationError.Retryable() {
 				t.Fatalf("expected retryable invalid response, got %#v", err)
 			}
@@ -999,7 +999,7 @@ func TestGenerateRejectsInvalidToolResponses(t *testing.T) {
 			}), "test-api-key")
 
 			_, err := generator.Generate(context.Background(), toolRequest())
-			assertGenerationErrorKind(t, err, ai.ErrorInvalidResponse, true)
+			assertGenerationErrorKind(t, err, protocol.ErrorInvalidResponse, true)
 		})
 	}
 }
@@ -1013,8 +1013,8 @@ func TestGenerateRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
 		return jsonResponse(http.StatusOK, `{}`), nil
 	}), "test-api-key")
 
-	_, err := generator.Generate(context.Background(), ai.TextRequest{})
-	assertGenerationErrorKind(t, err, ai.ErrorInvalidRequest, false)
+	_, err := generator.Generate(context.Background(), protocol.TextRequest{})
+	assertGenerationErrorKind(t, err, protocol.ErrorInvalidRequest, false)
 	if calls.Load() != 0 {
 		t.Fatalf("provider calls = %d, want zero", calls.Load())
 	}
@@ -1029,7 +1029,7 @@ func TestGenerateRejectsProviderToolNameCollisionsBeforeProviderCall(t *testing.
 		return jsonResponse(http.StatusOK, `{}`), nil
 	}), "test-api-key")
 	request := validRequest()
-	request.Tools = []ai.ToolDefinition{
+	request.Tools = []protocol.ToolDefinition{
 		{
 			Name:        "review.search.v1",
 			Description: "Search reviews.",
@@ -1043,7 +1043,7 @@ func TestGenerateRejectsProviderToolNameCollisionsBeforeProviderCall(t *testing.
 	}
 
 	_, err := generator.Generate(context.Background(), request)
-	assertGenerationErrorKind(t, err, ai.ErrorInvalidRequest, false)
+	assertGenerationErrorKind(t, err, protocol.ErrorInvalidRequest, false)
 	if calls.Load() != 0 {
 		t.Fatalf("provider calls = %d, want zero", calls.Load())
 	}
@@ -1065,21 +1065,21 @@ func TestGenerateRejectsHistoricalToolNotExposedThisTurn(t *testing.T) {
 		}`), nil
 	}), "test-api-key")
 	request := toolRequest()
-	request.Messages = []ai.TextMessage{
-		{Role: ai.TextRoleUser, Content: "Use my resume."},
+	request.Messages = []protocol.TextMessage{
+		{Role: protocol.TextRoleUser, Content: "Use my resume."},
 		{
-			Role: ai.TextRoleAssistant,
-			ToolCalls: []ai.ToolCall{{
+			Role: protocol.TextRoleAssistant,
+			ToolCalls: []protocol.ToolCall{{
 				ID:        "call-1",
 				Name:      "material.search.v1",
 				Arguments: json.RawMessage(`{}`),
 			}},
 		},
-		{Role: ai.TextRoleTool, Content: `{}`, ToolCallID: "call-1"},
+		{Role: protocol.TextRoleTool, Content: `{}`, ToolCallID: "call-1"},
 	}
 
 	_, err := generator.Generate(context.Background(), request)
-	assertGenerationErrorKind(t, err, ai.ErrorInvalidResponse, true)
+	assertGenerationErrorKind(t, err, protocol.ErrorInvalidResponse, true)
 }
 
 func TestGenerateRejectsMissingHTTPResponseWithoutPanicking(t *testing.T) {
@@ -1102,7 +1102,7 @@ func TestGenerateRejectsMissingHTTPResponseWithoutPanicking(t *testing.T) {
 			t.Parallel()
 			generator := mustGenerator(t, doer, "test-api-key")
 			_, err := generator.Generate(context.Background(), validRequest())
-			assertGenerationErrorKind(t, err, ai.ErrorInvalidResponse, true)
+			assertGenerationErrorKind(t, err, protocol.ErrorInvalidResponse, true)
 		})
 	}
 }
@@ -1121,12 +1121,12 @@ func TestGenerateClassifiesCallerCancellationAndTimeout(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err := generator.Generate(ctx, validRequest())
-		assertGenerationErrorKind(t, err, ai.ErrorCancelled, true)
+		assertGenerationErrorKind(t, err, protocol.ErrorCancelled, true)
 	})
 
 	t.Run("configured timeout", func(t *testing.T) {
 		t.Parallel()
-		generator, err := newWithClient(Config{
+		generator, err := newWithClient(TextConfig{
 			BaseURL:         "https://dashscope.aliyuncs.com/compatible-mode/v1",
 			Model:           "qwen3.5-flash",
 			Timeout:         10 * time.Millisecond,
@@ -1136,7 +1136,7 @@ func TestGenerateClassifiesCallerCancellationAndTimeout(t *testing.T) {
 			t.Fatalf("new generator: %v", err)
 		}
 		_, err = generator.Generate(context.Background(), validRequest())
-		assertGenerationErrorKind(t, err, ai.ErrorTimeout, true)
+		assertGenerationErrorKind(t, err, protocol.ErrorTimeout, true)
 	})
 }
 
@@ -1149,7 +1149,7 @@ func TestGenerateDoesNotExposeTransportErrorDetails(t *testing.T) {
 	}), sensitive)
 
 	_, err := generator.Generate(context.Background(), validRequest())
-	assertGenerationErrorKind(t, err, ai.ErrorProviderUnavailable, true)
+	assertGenerationErrorKind(t, err, protocol.ErrorProviderUnavailable, true)
 	if strings.Contains(err.Error(), sensitive) {
 		t.Fatalf("error string leaked transport details: %q", err)
 	}
@@ -1161,7 +1161,7 @@ func TestGenerateDoesNotExposeTransportErrorDetails(t *testing.T) {
 func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 	t.Parallel()
 
-	valid := Config{
+	valid := TextConfig{
 		BaseURL:         "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		Model:           "qwen3.5-flash",
 		Timeout:         time.Second,
@@ -1169,25 +1169,25 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 	}
 	tests := []struct {
 		name   string
-		mutate func(*Config) string
+		mutate func(*TextConfig) string
 	}{
 		{
 			name: "plain HTTP",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.BaseURL = "http://dashscope.aliyuncs.com/compatible-mode/v1"
 				return "test-api-key"
 			},
 		},
 		{
 			name: "untrusted host",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.BaseURL = "https://example.com/compatible-mode/v1"
 				return "test-api-key"
 			},
 		},
 		{
 			name: "credentials in URL",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.BaseURL =
 					"https://user:password@dashscope.aliyuncs.com/compatible-mode/v1"
 				return "test-api-key"
@@ -1195,7 +1195,7 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 		},
 		{
 			name: "query in URL",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.BaseURL =
 					"https://dashscope.aliyuncs.com/compatible-mode/v1?redirect=1"
 				return "test-api-key"
@@ -1203,14 +1203,14 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 		},
 		{
 			name: "wrong path",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.BaseURL = "https://dashscope.aliyuncs.com/api/v1"
 				return "test-api-key"
 			},
 		},
 		{
 			name: "token plan endpoint",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.BaseURL =
 					"https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 				return "test-api-key"
@@ -1218,40 +1218,40 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 		},
 		{
 			name: "non Qwen model",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.Model = "deepseek-v3"
 				return "test-api-key"
 			},
 		},
 		{
 			name: "non ASCII model ID",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.Model = "qwen-模型"
 				return "test-api-key"
 			},
 		},
 		{
 			name: "empty API key",
-			mutate: func(*Config) string {
+			mutate: func(*TextConfig) string {
 				return ""
 			},
 		},
 		{
 			name: "API key newline",
-			mutate: func(*Config) string {
+			mutate: func(*TextConfig) string {
 				return "test-key\ninjected"
 			},
 		},
 		{
 			name: "zero timeout",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.Timeout = 0
 				return "test-api-key"
 			},
 		},
 		{
 			name: "zero output budget",
-			mutate: func(config *Config) string {
+			mutate: func(config *TextConfig) string {
 				config.MaxOutputTokens = 0
 				return "test-api-key"
 			},
@@ -1263,7 +1263,7 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 			t.Parallel()
 			config := valid
 			apiKey := test.mutate(&config)
-			if _, err := New(config, apiKey); err == nil {
+			if _, err := newTextClient(config, apiKey); err == nil {
 				t.Fatal("expected configuration error")
 			}
 		})
@@ -1284,7 +1284,7 @@ func TestNewAcceptsOfficialWorkspaceAndTrialHosts(t *testing.T) {
 		baseURL := baseURL
 		t.Run(baseURL, func(t *testing.T) {
 			t.Parallel()
-			if _, err := New(Config{
+			if _, err := newTextClient(TextConfig{
 				BaseURL:         baseURL,
 				Model:           "qwen3.5-flash",
 				Timeout:         time.Second,
@@ -1299,7 +1299,7 @@ func TestNewAcceptsOfficialWorkspaceAndTrialHosts(t *testing.T) {
 func TestNewDisablesHTTPRedirects(t *testing.T) {
 	t.Parallel()
 
-	generator, err := New(Config{
+	generator, err := newTextClient(TextConfig{
 		BaseURL:         "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		Model:           "qwen3.5-flash",
 		Timeout:         time.Second,
@@ -1321,7 +1321,7 @@ func TestGeneratorFormattingRedactsAPIKey(t *testing.T) {
 	t.Parallel()
 
 	const apiKey = "must-never-be-logged"
-	generator, err := New(Config{
+	generator, err := newTextClient(TextConfig{
 		BaseURL:         "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		Model:           "qwen3.5-flash",
 		Timeout:         time.Second,
@@ -1342,7 +1342,7 @@ func TestGeneratorFormattingRedactsAPIKey(t *testing.T) {
 			t.Fatalf("generator formatting exposed API key: %q", formatted)
 		}
 	}
-	var nilGenerator *Generator
+	var nilGenerator *textClient
 	for _, formatted := range []string{
 		fmt.Sprint(nilGenerator),
 		fmt.Sprintf("%+v", nilGenerator),
@@ -1367,12 +1367,12 @@ func TestGenerateRejectsOversizedResponse(t *testing.T) {
 	}), "test-api-key")
 
 	_, err := generator.Generate(context.Background(), validRequest())
-	assertGenerationErrorKind(t, err, ai.ErrorInvalidResponse, true)
+	assertGenerationErrorKind(t, err, protocol.ErrorInvalidResponse, true)
 }
 
-func mustGenerator(t *testing.T, client httpDoer, apiKey string) *Generator {
+func mustGenerator(t *testing.T, client httpDoer, apiKey string) *textClient {
 	t.Helper()
-	generator, err := newWithClient(Config{
+	generator, err := newWithClient(TextConfig{
 		BaseURL:         "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		Model:           "qwen3.5-flash",
 		Timeout:         time.Second,
@@ -1384,16 +1384,16 @@ func mustGenerator(t *testing.T, client httpDoer, apiKey string) *Generator {
 	return generator
 }
 
-func validRequest() ai.TextRequest {
-	return ai.TextRequest{Messages: []ai.TextMessage{{
-		Role:    ai.TextRoleUser,
+func validRequest() protocol.TextRequest {
+	return protocol.TextRequest{Messages: []protocol.TextMessage{{
+		Role:    protocol.TextRoleUser,
 		Content: "question",
 	}}}
 }
 
-func toolRequest() ai.TextRequest {
+func toolRequest() protocol.TextRequest {
 	request := validRequest()
-	request.Tools = []ai.ToolDefinition{{
+	request.Tools = []protocol.ToolDefinition{{
 		Name:        "review.search.v1",
 		Description: "Search review summaries.",
 		InputSchema: map[string]any{"type": "object"},
@@ -1428,11 +1428,11 @@ func (function doerFunc) Do(request *http.Request) (*http.Response, error) {
 func assertGenerationErrorKind(
 	t *testing.T,
 	err error,
-	kind ai.ErrorKind,
+	kind protocol.ErrorKind,
 	retryable bool,
 ) {
 	t.Helper()
-	var generationError *ai.GenerationError
+	var generationError *protocol.GenerationError
 	if !errors.As(err, &generationError) ||
 		generationError.Kind != kind ||
 		generationError.Retryable() != retryable {

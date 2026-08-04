@@ -6,7 +6,6 @@ import (
 
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -48,7 +47,7 @@ type Repository interface {
 		string,
 		string,
 		string,
-		ai.TextResult,
+		TextResult,
 	) (Run, error)
 	Fail(stdcontext.Context, string, string, string, string, bool) (Run, error)
 	RecoverInterrupted(stdcontext.Context) (int64, error)

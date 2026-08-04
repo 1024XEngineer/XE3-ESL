@@ -10,7 +10,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
@@ -43,17 +42,17 @@ Return exactly one JSON object and no markdown. Use exactly these fields:
 
 Every array must be non-empty and contain unique, concise items. Each array item is limited to 2048 Unicode characters, and the entire returned JSON is limited to 65536 UTF-8 bytes. For an INTERVIEW scenario, selected_role_ids must contain exactly one role ID: roles are independent interviewer perspectives, never a combined hiring sequence. For quick_start, set general_advice_only to true and state clearly in scope_notice that the advice is generic and not based on a real job description. For job_description, set it to false. Recommend only exact IDs and versions from TRUSTED_CATALOG. If the target is outside the catalog's technical-interview scope, say so in scope_notice; do not silently pretend it is Backend engineer.`
 
-// AIJobTargetParser adapts the shared text-generation capability to
-// Preparation's data-only parser Port. It cannot expose provider APIs, tools,
-// repositories, HTTP clients, or Actor identity to untrusted input.
+// AIJobTargetParser uses Preparation's data-only generation Port. It cannot
+// expose provider APIs, tools, repositories, HTTP clients, or Actor identity
+// to untrusted input.
 type AIJobTargetParser struct {
-	generator      ai.TextGenerator
+	generator      JobTargetGenerator
 	trustedCatalog string
 }
 
 func NewAIJobTargetParser(
 	ctx context.Context,
-	generator ai.TextGenerator,
+	generator JobTargetGenerator,
 	catalog scene.CatalogReader,
 ) (*AIJobTargetParser, error) {
 	if ctx == nil || generator == nil || catalog == nil {
@@ -111,20 +110,15 @@ func (p *AIJobTargetParser) ParseJobTarget(
 		)
 	}
 
-	result, err := p.generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{
-				Role: ai.TextRoleSystem,
-				Content: jobTargetParserSystemInstruction +
-					"\n\nTRUSTED_CATALOG:\n" + p.trustedCatalog,
-			},
-			{
-				Role: ai.TextRoleUser,
-				Content: "UNTRUSTED_MATERIAL:\n" +
-					string(material),
-			},
+	result, err := p.generator.GenerateJobTarget(
+		ctx,
+		JobTargetGenerationRequest{
+			SystemInstruction: jobTargetParserSystemInstruction +
+				"\n\nTRUSTED_CATALOG:\n" + p.trustedCatalog,
+			UserMaterial: "UNTRUSTED_MATERIAL:\n" +
+				string(material),
 		},
-	})
+	)
 	if err != nil {
 		return JobTargetCandidate{}, newJobTargetParserError(
 			jobTargetGenerationCategory(err),
@@ -312,9 +306,9 @@ func (e *jobTargetParserError) StableCategory() string {
 }
 
 func jobTargetGenerationCategory(err error) string {
-	var generation *ai.GenerationError
+	var generation JobTargetGenerationFailure
 	if errors.As(err, &generation) {
-		category := string(generation.Kind)
+		category := generation.StableCategory()
 		if stableJobTargetCategoryPattern.MatchString(category) {
 			return category
 		}

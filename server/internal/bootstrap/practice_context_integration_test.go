@@ -13,7 +13,6 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	evaluationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
@@ -401,12 +400,13 @@ func newPracticeContextIntegrationComposition(
 	t.Setenv("AGENT_TOOL_MODE", "real")
 	t.Setenv("AGENT_TOOL_FIXTURES", "")
 	t.Setenv("APP_ENV", "development")
+	generator := practiceContextTextGenerator{}
 	composition, err := NewIdentityAgentAndPracticeComposition(
 		context.Background(),
 		pool,
 		nil,
 		"",
-		practiceContextTextGenerator{},
+		testAgentModelProviders(generator),
 		agentrun.Configuration{
 			Provider:           "test",
 			Model:              "test-context-v1",
@@ -415,6 +415,7 @@ func newPracticeContextIntegrationComposition(
 		},
 		emptyBootstrapMemorySearcher{},
 		catalog,
+		testJobTargetGenerator(generator),
 	)
 	if err != nil {
 		t.Fatalf("NewIdentityAgentAndPracticeComposition: %v", err)
@@ -426,15 +427,15 @@ type practiceContextTextGenerator struct{}
 
 func (practiceContextTextGenerator) Generate(
 	context.Context,
-	ai.TextRequest,
-) (ai.TextResult, error) {
-	return ai.TextResult{
+	agentrun.TextRequest,
+) (agentrun.TextResult, error) {
+	return agentrun.TextResult{
 		ID:           "context-composition-result",
 		Provider:     "test",
 		Model:        "test-context-v1",
 		Content:      "test result",
 		FinishReason: "stop",
-		Usage: ai.TokenUsage{
+		Usage: agentrun.TokenUsage{
 			InputTokens:  1,
 			OutputTokens: 1,
 			TotalTokens:  2,

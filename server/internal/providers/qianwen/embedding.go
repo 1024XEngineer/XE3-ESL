@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 const embeddingsPath = "/embeddings"
@@ -22,7 +22,7 @@ type EmbeddingConfig struct {
 	Timeout    time.Duration
 }
 
-type EmbeddingClient struct {
+type embeddingClient struct {
 	endpoint   string
 	model      string
 	dimensions int
@@ -31,10 +31,10 @@ type EmbeddingClient struct {
 	client     httpDoer
 }
 
-func NewEmbeddingClient(
+func newEmbeddingClient(
 	config EmbeddingConfig,
 	apiKey string,
-) (*EmbeddingClient, error) {
+) (*embeddingClient, error) {
 	client := &http.Client{
 		Timeout: config.Timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -48,7 +48,7 @@ func newEmbeddingClientWithHTTP(
 	config EmbeddingConfig,
 	apiKey string,
 	client httpDoer,
-) (*EmbeddingClient, error) {
+) (*embeddingClient, error) {
 	baseURL, err := normalizeBaseURL(config.BaseURL)
 	if err != nil {
 		return nil, err
@@ -62,10 +62,10 @@ func newEmbeddingClientWithHTTP(
 		return nil, err
 	}
 	if config.Dimensions < 64 ||
-		config.Dimensions > ai.MaxEmbeddingDimensions {
+		config.Dimensions > protocol.MaxEmbeddingDimensions {
 		return nil, fmt.Errorf(
 			"Qianwen embedding dimensions must be between 64 and %d",
-			ai.MaxEmbeddingDimensions,
+			protocol.MaxEmbeddingDimensions,
 		)
 	}
 	if config.Timeout <= 0 || config.Timeout > maxTimeout {
@@ -77,7 +77,7 @@ func newEmbeddingClientWithHTTP(
 	if client == nil {
 		return nil, errors.New("Qianwen embedding HTTP client is required")
 	}
-	return &EmbeddingClient{
+	return &embeddingClient{
 		endpoint:   baseURL + embeddingsPath,
 		model:      model,
 		dimensions: config.Dimensions,
@@ -87,7 +87,7 @@ func newEmbeddingClientWithHTTP(
 	}, nil
 }
 
-func (client *EmbeddingClient) String() string {
+func (client *embeddingClient) String() string {
 	if client == nil {
 		return "QianwenEmbeddingClient(<nil>)"
 	}
@@ -99,28 +99,28 @@ func (client *EmbeddingClient) String() string {
 	)
 }
 
-func (client *EmbeddingClient) GoString() string {
+func (client *embeddingClient) GoString() string {
 	return client.String()
 }
 
-func (client *EmbeddingClient) Embed(
+func (client *embeddingClient) Embed(
 	ctx context.Context,
-	request ai.EmbeddingRequest,
-) (ai.EmbeddingResult, error) {
+	request protocol.EmbeddingRequest,
+) (protocol.EmbeddingResult, error) {
 	if ctx == nil {
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorInvalidRequest, 0, "", "",
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorInvalidRequest, 0, "", "",
 			errors.New("embedding context is required"),
 		)
 	}
-	if err := ai.ValidateEmbeddingRequest(request); err != nil {
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorInvalidRequest, 0, "", "", err,
+	if err := protocol.ValidateEmbeddingRequest(request); err != nil {
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorInvalidRequest, 0, "", "", err,
 		)
 	}
 	if request.Dimensions != client.dimensions {
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorInvalidRequest, 0, "", "",
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorInvalidRequest, 0, "", "",
 			errors.New("embedding request dimension does not match configuration"),
 		)
 	}
@@ -131,8 +131,8 @@ func (client *EmbeddingClient) Embed(
 		EncodingFormat: "float",
 	})
 	if err != nil {
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorInvalidRequest, 0, "", "", err,
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorInvalidRequest, 0, "", "", err,
 		)
 	}
 	callContext, cancel := context.WithTimeout(ctx, client.timeout)
@@ -144,8 +144,8 @@ func (client *EmbeddingClient) Embed(
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorConfiguration, 0, "", "", err,
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorConfiguration, 0, "", "", err,
 		)
 	}
 	httpRequest.Header.Set(
@@ -157,11 +157,11 @@ func (client *EmbeddingClient) Embed(
 
 	response, err := client.client.Do(httpRequest)
 	if err != nil {
-		return ai.EmbeddingResult{}, embeddingTransportError(callContext, err)
+		return protocol.EmbeddingResult{}, embeddingTransportError(callContext, err)
 	}
 	if response == nil || response.Body == nil {
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorInvalidResponse, 0, "", "",
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorInvalidResponse, 0, "", "",
 			errors.New("Qianwen returned an incomplete embedding response"),
 		)
 	}
@@ -169,9 +169,9 @@ func (client *EmbeddingClient) Embed(
 	if response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices {
 		generationErr := decodeStatusError(response)
-		var providerErr *ai.GenerationError
+		var providerErr *protocol.GenerationError
 		if errors.As(generationErr, &providerErr) {
-			return ai.EmbeddingResult{}, embeddingError(
+			return protocol.EmbeddingResult{}, embeddingError(
 				providerErr.Kind,
 				providerErr.StatusCode,
 				providerErr.ProviderCode,
@@ -179,8 +179,8 @@ func (client *EmbeddingClient) Embed(
 				providerErr,
 			)
 		}
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorInvalidResponse,
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			"",
@@ -189,8 +189,8 @@ func (client *EmbeddingClient) Embed(
 	}
 	responseBody, err := readBounded(response.Body, maxResponseBytes)
 	if err != nil {
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorInvalidResponse,
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
@@ -199,8 +199,8 @@ func (client *EmbeddingClient) Embed(
 	}
 	var decoded embeddingResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorInvalidResponse,
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
@@ -209,8 +209,8 @@ func (client *EmbeddingClient) Embed(
 	}
 	result, err := decoded.result(request, client.model, client.dimensions)
 	if err != nil {
-		return ai.EmbeddingResult{}, embeddingError(
-			ai.ErrorInvalidResponse,
+		return protocol.EmbeddingResult{}, embeddingError(
+			protocol.ErrorInvalidResponse,
 			response.StatusCode,
 			"",
 			sanitizeIdentifier(response.Header.Get("X-Request-Id")),
@@ -240,10 +240,10 @@ type embeddingResponse struct {
 }
 
 func (response embeddingResponse) result(
-	request ai.EmbeddingRequest,
+	request protocol.EmbeddingRequest,
 	model string,
 	dimensions int,
-) (ai.EmbeddingResult, error) {
+) (protocol.EmbeddingResult, error) {
 	if response.Model != model ||
 		response.Usage == nil ||
 		response.Usage.PromptTokens == nil ||
@@ -251,7 +251,7 @@ func (response embeddingResponse) result(
 		*response.Usage.PromptTokens < 0 ||
 		*response.Usage.TotalTokens < *response.Usage.PromptTokens ||
 		len(response.Data) != len(request.Inputs) {
-		return ai.EmbeddingResult{}, errors.New(
+		return protocol.EmbeddingResult{}, errors.New(
 			"Qianwen embedding response metadata is invalid",
 		)
 	}
@@ -259,13 +259,13 @@ func (response embeddingResponse) result(
 	for _, item := range response.Data {
 		if item.Index < 0 || item.Index >= len(vectors) ||
 			vectors[item.Index] != nil {
-			return ai.EmbeddingResult{}, errors.New(
+			return protocol.EmbeddingResult{}, errors.New(
 				"Qianwen embedding response index is invalid",
 			)
 		}
 		vectors[item.Index] = item.Embedding
 	}
-	result := ai.EmbeddingResult{
+	result := protocol.EmbeddingResult{
 		Provider:    providerName,
 		Model:       model,
 		Dimensions:  dimensions,
@@ -273,8 +273,8 @@ func (response embeddingResponse) result(
 		InputTokens: *response.Usage.PromptTokens,
 		TotalTokens: *response.Usage.TotalTokens,
 	}
-	if err := ai.ValidateEmbeddingResult(request, result); err != nil {
-		return ai.EmbeddingResult{}, err
+	if err := protocol.ValidateEmbeddingResult(request, result); err != nil {
+		return protocol.EmbeddingResult{}, err
 	}
 	return result, nil
 }
@@ -302,7 +302,7 @@ func normalizeEmbeddingModel(raw string) (string, error) {
 
 func embeddingTransportError(ctx context.Context, cause error) error {
 	generationErr := transportError(ctx, cause)
-	var providerErr *ai.GenerationError
+	var providerErr *protocol.GenerationError
 	if errors.As(generationErr, &providerErr) {
 		return embeddingError(
 			providerErr.Kind,
@@ -312,17 +312,17 @@ func embeddingTransportError(ctx context.Context, cause error) error {
 			providerErr,
 		)
 	}
-	return embeddingError(ai.ErrorProviderUnavailable, 0, "", "", cause)
+	return embeddingError(protocol.ErrorProviderUnavailable, 0, "", "", cause)
 }
 
 func embeddingError(
-	kind ai.ErrorKind,
+	kind protocol.ErrorKind,
 	status int,
 	code string,
 	requestID string,
 	cause error,
 ) error {
-	return ai.NewEmbeddingError(kind, status, code, requestID, cause)
+	return protocol.NewEmbeddingError(kind, status, code, requestID, cause)
 }
 
-var _ ai.Embedder = (*EmbeddingClient)(nil)
+var _ protocol.Embedder = (*embeddingClient)(nil)

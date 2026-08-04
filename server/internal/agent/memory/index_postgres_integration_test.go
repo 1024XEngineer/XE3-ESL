@@ -64,7 +64,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 	candidates, err := repository.SearchCandidates(
 		ctx,
 		actorA,
-		validEmbeddingResult().Vectors[0],
+		validEmbeddingResult().Vector,
 		"",
 		nil,
 		searchConfiguration,
@@ -104,7 +104,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 	rolledOut, err := repository.SearchCandidates(
 		ctx,
 		actorA,
-		validEmbeddingResult().Vectors[0],
+		validEmbeddingResult().Vector,
 		"",
 		nil,
 		searchConfiguration,
@@ -129,7 +129,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 	crossOwner, err := repository.SearchCandidates(
 		ctx,
 		actorB,
-		validEmbeddingResult().Vectors[0],
+		validEmbeddingResult().Vector,
 		"",
 		nil,
 		searchConfiguration,
@@ -159,7 +159,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 	stale, err := repository.SearchCandidates(
 		ctx,
 		actorA,
-		validEmbeddingResult().Vectors[0],
+		validEmbeddingResult().Vector,
 		"",
 		nil,
 		searchConfiguration,
@@ -208,7 +208,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 	inactive, err := repository.SearchCandidates(
 		ctx,
 		actorA,
-		validEmbeddingResult().Vectors[0],
+		validEmbeddingResult().Vector,
 		"",
 		nil,
 		searchConfiguration,
@@ -222,7 +222,7 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 	if _, err := repository.SearchCandidates(
 		ctx,
 		actorA,
-		validEmbeddingResult().Vectors[0],
+		validEmbeddingResult().Vector,
 		integrationGoalB,
 		nil,
 		searchConfiguration,
@@ -272,7 +272,7 @@ func TestPostgresSearchCandidatesExcludesCanonicalKeysBeforeLimit(
 	candidates, err := repository.SearchCandidates(
 		ctx,
 		actor,
-		validEmbeddingResult().Vectors[0],
+		validEmbeddingResult().Vector,
 		"",
 		[]string{CanonicalProfilePreferredName},
 		testSearchConfig(),

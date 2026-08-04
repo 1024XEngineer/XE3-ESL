@@ -3,21 +3,19 @@ package memory
 import (
 	"context"
 	"errors"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const maxIndexSweepLimit = 20
 
 type IndexWorker struct {
 	repository IndexRepository
-	embedder   ai.Embedder
+	embedder   Embedder
 	config     IndexConfig
 }
 
 func NewIndexWorker(
 	repository IndexRepository,
-	embedder ai.Embedder,
+	embedder Embedder,
 	configuration IndexConfig,
 ) (*IndexWorker, error) {
 	if repository == nil || embedder == nil || !configuration.Valid() {
@@ -81,14 +79,16 @@ func (worker *IndexWorker) processClaim(
 	if err != nil {
 		return worker.recordFailure(ctx, claim, err)
 	}
-	result, err := worker.embedder.Embed(ctx, ai.EmbeddingRequest{
-		Inputs:     []string{source.Content},
+	request := EmbeddingRequest{
+		Input:      source.Content,
 		Dimensions: worker.config.Dimensions,
-	})
+	}
+	result, err := worker.embedder.Embed(ctx, request)
 	if err != nil {
 		return worker.recordFailure(ctx, claim, err)
 	}
-	if result.Provider != claim.Provider ||
+	if ValidateEmbeddingResult(request.Dimensions, result) != nil ||
+		result.Provider != claim.Provider ||
 		result.Model != claim.Model ||
 		result.Dimensions != claim.Dimensions {
 		return worker.recordFailure(ctx, claim, ErrIndexResponse)
@@ -126,11 +126,6 @@ func (worker *IndexWorker) recordFailure(
 	return job.Status, nil
 }
 
-type stableProviderFailure interface {
-	StableCategory() string
-	Retryable() bool
-}
-
 func indexFailure(cause error) (
 	kind string,
 	retryable bool,
@@ -149,7 +144,7 @@ func indexFailure(cause error) (
 	case errors.Is(cause, context.DeadlineExceeded):
 		return "timeout", true, false
 	}
-	var providerError stableProviderFailure
+	var providerError ProviderFailure
 	if errors.As(cause, &providerError) {
 		kind := providerError.StableCategory()
 		if !stableFailurePattern.MatchString(kind) {

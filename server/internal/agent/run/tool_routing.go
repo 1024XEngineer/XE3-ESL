@@ -5,7 +5,6 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const (
@@ -14,8 +13,8 @@ const (
 )
 
 type modelToolRouting struct {
-	Definitions []ai.ToolDefinition
-	ToolChoice  ai.ToolChoice
+	Definitions []ToolDefinition
+	ToolChoice  ToolChoice
 }
 
 // buildModelToolRouting 将 Registry 中的全部工具交给模型自主选择。
@@ -25,16 +24,16 @@ func buildModelToolRouting(
 	runID string,
 ) modelToolRouting {
 	routing := modelToolRouting{
-		ToolChoice: ai.ToolChoice{Mode: ai.ToolChoiceAuto},
+		ToolChoice: ToolChoice{Mode: ToolChoiceAuto},
 	}
 	if registry == nil {
 		return routing
 	}
 	registered := registry.Definitions()
-	routing.Definitions = make([]ai.ToolDefinition, 0, len(registered))
+	routing.Definitions = make([]ToolDefinition, 0, len(registered))
 	names := make([]string, 0, len(registered))
 	for _, definition := range registered {
-		routing.Definitions = append(routing.Definitions, ai.ToolDefinition{
+		routing.Definitions = append(routing.Definitions, ToolDefinition{
 			Name:        definition.Name,
 			Description: definition.Description,
 			InputSchema: definition.InputSchema,

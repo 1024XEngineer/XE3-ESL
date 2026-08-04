@@ -28,7 +28,6 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	agentrunhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	evaluationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
 	evaluationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
@@ -54,7 +53,7 @@ func NewIdentityAndAgentModules(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
-	generator ai.TextGenerator,
+	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	voiceConfigurations ...VoiceConfiguration,
@@ -70,7 +69,7 @@ func NewIdentityAndAgentModules(
 		database,
 		trustedProxyCIDRs,
 		trustedProxyHeader,
-		generator,
+		modelProviders,
 		runConfiguration,
 		memorySearcher,
 		nil,
@@ -120,7 +119,7 @@ func buildIdentityAgentComposition(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
-	generator ai.TextGenerator,
+	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	memoryExtractionNotifier interface{ Notify() },
@@ -128,7 +127,8 @@ func buildIdentityAgentComposition(
 	imageConfiguration *AgentImageConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*identityAgentComposition, error) {
-	if ctx == nil || database == nil || generator == nil ||
+	if ctx == nil || database == nil || modelProviders.Run == nil ||
+		modelProviders.Memory == nil || modelProviders.Summary == nil ||
 		memorySearcher == nil || len(voiceConfigurations) > 1 {
 		return nil, errors.New(
 			"bootstrap: Agent Run dependencies are required",
@@ -298,7 +298,7 @@ func buildIdentityAgentComposition(
 		conversationRepository,
 		contextRepository,
 		contextAssembler,
-		generator,
+		modelProviders.Run,
 		runConfiguration,
 		runOptions...,
 	)
@@ -311,7 +311,7 @@ func buildIdentityAgentComposition(
 		runRepository,
 		conversationRepository,
 		contextRepository,
-		generator,
+		modelProviders.Memory,
 		runConfiguration,
 	)
 	if err != nil {
@@ -323,7 +323,7 @@ func buildIdentityAgentComposition(
 	}
 	summaryService, err := agentsummary.NewService(
 		summaryRepository,
-		generator,
+		modelProviders.Summary,
 		agentsummary.Configuration{
 			PolicyVersion: "summary-policy-v1",
 			PromptVersion: "summary-prompt-v1",
@@ -555,7 +555,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 	database *pgxpool.Pool,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
-	generator ai.TextGenerator,
+	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
 	voiceConfigurations ...VoiceConfiguration,
@@ -570,7 +570,7 @@ func NewIdentityAgentModulesWithVoiceCleanup(
 		database,
 		trustedProxyCIDRs,
 		trustedProxyHeader,
-		generator,
+		modelProviders,
 		runConfiguration,
 		memorySearcher,
 		nil,

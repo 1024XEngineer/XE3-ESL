@@ -6,12 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
 )
 
 func TestLLMExtractorUsesConfiguredGeneratorAndUntrustedEnvelope(t *testing.T) {
-	generator := &capturingGenerator{result: ai.TextResult{
+	generator := &capturingGenerator{result: GenerationResult{
 		Provider: "qianwen",
 		Model:    "qwen3.5-flash",
 		Content: `{"target_position":"后端工程师","professional_summary":"",` +
@@ -38,16 +37,15 @@ func TestLLMExtractorUsesConfiguredGeneratorAndUntrustedEnvelope(t *testing.T) {
 		content.EducationExperiences[0].GPA != "4.588/5.0" {
 		t.Fatalf("content = %#v", content)
 	}
-	if len(generator.request.Messages) != 2 ||
-		generator.request.ResponseFormat != ai.TextResponseFormatJSON ||
-		!strings.Contains(generator.request.Messages[0].Content, "untrusted JSON data") ||
-		!strings.Contains(generator.request.Messages[1].Content, "document_markdown") {
+	if !strings.Contains(generator.request.SystemPrompt, "untrusted JSON data") ||
+		!strings.Contains(generator.request.DocumentPayload, "document_markdown") ||
+		generator.request.MinimumOutputTokens != MinimumGenerationOutputTokens {
 		t.Fatalf("request = %#v", generator.request)
 	}
 }
 
 func TestLLMExtractorRejectsInvalidShapeAndProviderMetadata(t *testing.T) {
-	for name, result := range map[string]ai.TextResult{
+	for name, result := range map[string]GenerationResult{
 		"unknown field": {
 			Provider: "qianwen", Model: "qwen3.5-flash",
 			Content: `{"target_position":"","professional_summary":"",` +
@@ -81,13 +79,10 @@ func TestLLMExtractorRejectsInvalidShapeAndProviderMetadata(t *testing.T) {
 }
 
 func TestLLMExtractorMapsProviderTimeoutToStableFailure(t *testing.T) {
-	generator := &capturingGenerator{err: ai.NewGenerationError(
-		ai.ErrorTimeout,
-		0,
-		"",
-		"",
-		errors.New("provider detail must not persist"),
-	)}
+	generator := &capturingGenerator{err: fieldGenerationFailure{
+		category: "timeout",
+		cause:    errors.New("provider detail must not persist"),
+	}}
 	extractor := newTestExtractor(t, generator)
 	_, err := extractor.Extract(context.Background(), document.StructuredDocument{
 		Markdown: "这是一份长度足够的测试简历正文内容。",
@@ -98,7 +93,7 @@ func TestLLMExtractorMapsProviderTimeoutToStableFailure(t *testing.T) {
 	}
 }
 
-func newTestExtractor(t *testing.T, generator ai.TextGenerator) *LLMExtractor {
+func newTestExtractor(t *testing.T, generator Generator) *LLMExtractor {
 	t.Helper()
 	extractor, err := NewLLMExtractor(generator, Config{
 		Provider: "qianwen", Model: "qwen3.5-flash", MaxDocumentCharacters: 12000,
@@ -110,15 +105,32 @@ func newTestExtractor(t *testing.T, generator ai.TextGenerator) *LLMExtractor {
 }
 
 type capturingGenerator struct {
-	request ai.TextRequest
-	result  ai.TextResult
+	request GenerationRequest
+	result  GenerationResult
 	err     error
 }
 
-func (generator *capturingGenerator) Generate(
+func (generator *capturingGenerator) GenerateJSON(
 	_ context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
+	request GenerationRequest,
+) (GenerationResult, error) {
 	generator.request = request
 	return generator.result, generator.err
+}
+
+type fieldGenerationFailure struct {
+	category string
+	cause    error
+}
+
+func (failure fieldGenerationFailure) Error() string {
+	return "field generation failed"
+}
+
+func (failure fieldGenerationFailure) Unwrap() error {
+	return failure.cause
+}
+
+func (failure fieldGenerationFailure) StableCategory() string {
+	return failure.category
 }

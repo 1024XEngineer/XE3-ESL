@@ -16,7 +16,6 @@ import (
 	agentconversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -381,15 +380,15 @@ func (application *voiceInputHTTPApplication) UploadStream(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	request agentvoice.UploadRequest,
-	observer ai.TranscriptionObserver,
+	observer agentvoice.TranscriptionObserver,
 ) (agentvoice.Candidate, error) {
 	application.streamCalls++
-	if err := observer.OnTranscriptionUpdate(ctx, ai.TranscriptionUpdate{
+	if err := observer.OnTranscriptionUpdate(ctx, agentvoice.TranscriptionUpdate{
 		Transcript: "Provider candidate",
 	}); err != nil {
 		return agentvoice.Candidate{}, err
 	}
-	if err := observer.OnTranscriptionUpdate(ctx, ai.TranscriptionUpdate{
+	if err := observer.OnTranscriptionUpdate(ctx, agentvoice.TranscriptionUpdate{
 		Transcript: "Provider candidate",
 		Final:      true,
 	}); err != nil {

@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 const (
@@ -37,7 +37,7 @@ type TTSConfig struct {
 	TempDirectory string
 }
 
-type Synthesizer struct {
+type speechSynthesizer struct {
 	endpoint      string
 	model         string
 	voice         string
@@ -49,7 +49,7 @@ type Synthesizer struct {
 	now           func() time.Time
 }
 
-func (synthesizer *Synthesizer) String() string {
+func (synthesizer *speechSynthesizer) String() string {
 	if synthesizer == nil {
 		return "QianwenSynthesizer(<nil>)"
 	}
@@ -62,11 +62,11 @@ func (synthesizer *Synthesizer) String() string {
 	)
 }
 
-func (synthesizer *Synthesizer) GoString() string {
+func (synthesizer *speechSynthesizer) GoString() string {
 	return synthesizer.String()
 }
 
-func NewSynthesizer(config TTSConfig, apiKey string) (*Synthesizer, error) {
+func newSpeechSynthesizer(config TTSConfig, apiKey string) (*speechSynthesizer, error) {
 	client := &http.Client{
 		Timeout: config.Timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -80,7 +80,7 @@ func newSynthesizerWithClient(
 	config TTSConfig,
 	apiKey string,
 	client httpDoer,
-) (*Synthesizer, error) {
+) (*speechSynthesizer, error) {
 	baseURL, err := normalizeDashScopeAPIBaseURL(config.BaseURL)
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func newSynthesizerWithClient(
 	if client == nil {
 		return nil, errors.New("Qianwen TTS HTTP client is required")
 	}
-	return &Synthesizer{
+	return &speechSynthesizer{
 		endpoint:      baseURL + ttsSpeechSynthesizerPath,
 		model:         model,
 		voice:         voice,
@@ -125,24 +125,24 @@ func newSynthesizerWithClient(
 	}, nil
 }
 
-func (synthesizer *Synthesizer) Synthesize(
+func (synthesizer *speechSynthesizer) Synthesize(
 	ctx context.Context,
-	request ai.SynthesisRequest,
-) (ai.SynthesisResult, error) {
+	request protocol.SynthesisRequest,
+) (protocol.SynthesisResult, error) {
 	if ctx == nil {
-		return ai.SynthesisResult{}, ai.NewSpeechError(
-			ai.SpeechOperationSynthesis,
-			ai.ErrorInvalidRequest,
+		return protocol.SynthesisResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationSynthesis,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
 			errors.New("speech synthesis context is required"),
 		)
 	}
-	if err := ai.ValidateSynthesisRequest(request); err != nil {
-		return ai.SynthesisResult{}, ai.NewSpeechError(
-			ai.SpeechOperationSynthesis,
-			ai.ErrorInvalidRequest,
+	if err := protocol.ValidateSynthesisRequest(request); err != nil {
+		return protocol.SynthesisResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationSynthesis,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -161,9 +161,9 @@ func (synthesizer *Synthesizer) Synthesize(
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return ai.SynthesisResult{}, ai.NewSpeechError(
-			ai.SpeechOperationSynthesis,
-			ai.ErrorInvalidRequest,
+		return protocol.SynthesisResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationSynthesis,
+			protocol.ErrorInvalidRequest,
 			0,
 			"",
 			"",
@@ -180,9 +180,9 @@ func (synthesizer *Synthesizer) Synthesize(
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return ai.SynthesisResult{}, ai.NewSpeechError(
-			ai.SpeechOperationSynthesis,
-			ai.ErrorConfiguration,
+		return protocol.SynthesisResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationSynthesis,
+			protocol.ErrorConfiguration,
 			0,
 			"",
 			"",
@@ -198,23 +198,23 @@ func (synthesizer *Synthesizer) Synthesize(
 
 	response, err := synthesizer.client.Do(httpRequest)
 	if err != nil {
-		return ai.SynthesisResult{}, speechTransportError(
-			ai.SpeechOperationSynthesis,
+		return protocol.SynthesisResult{}, speechTransportError(
+			protocol.SpeechOperationSynthesis,
 			callContext,
 			err,
 		)
 	}
 	if response == nil {
-		return ai.SynthesisResult{}, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+		return protocol.SynthesisResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationSynthesis,
 			0,
 			"",
 			"Qianwen TTS returned a nil HTTP response",
 		)
 	}
 	if response.Body == nil {
-		return ai.SynthesisResult{}, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+		return protocol.SynthesisResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
 			"Qianwen TTS returned an HTTP response without a body",
@@ -222,16 +222,16 @@ func (synthesizer *Synthesizer) Synthesize(
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		defer response.Body.Close()
-		return ai.SynthesisResult{}, decodeSpeechStatusError(
-			ai.SpeechOperationSynthesis,
+		return protocol.SynthesisResult{}, decodeSpeechStatusError(
+			protocol.SpeechOperationSynthesis,
 			response,
 		)
 	}
 	responseBody, readErr := readBounded(response.Body, maxResponseBytes)
 	closeErr := response.Body.Close()
 	if readErr != nil || closeErr != nil {
-		return ai.SynthesisResult{}, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+		return protocol.SynthesisResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
 			"read Qianwen TTS response",
@@ -239,8 +239,8 @@ func (synthesizer *Synthesizer) Synthesize(
 	}
 	var completion ttsResponse
 	if err := json.Unmarshal(responseBody, &completion); err != nil {
-		return ai.SynthesisResult{}, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+		return protocol.SynthesisResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
 			"decode Qianwen TTS response",
@@ -248,12 +248,12 @@ func (synthesizer *Synthesizer) Synthesize(
 	}
 	metadata, err := completion.metadata(synthesizer.model, synthesizer.now())
 	if err != nil {
-		var speechError *ai.SpeechError
+		var speechError *protocol.SpeechError
 		if errors.As(err, &speechError) {
-			return ai.SynthesisResult{}, err
+			return protocol.SynthesisResult{}, err
 		}
-		return ai.SynthesisResult{}, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+		return protocol.SynthesisResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
 			err.Error(),
@@ -261,9 +261,9 @@ func (synthesizer *Synthesizer) Synthesize(
 	}
 	audio, err := synthesizer.downloadAudio(callContext, metadata.audioURL)
 	if err != nil {
-		return ai.SynthesisResult{}, err
+		return protocol.SynthesisResult{}, err
 	}
-	return ai.SynthesisResult{
+	return protocol.SynthesisResult{
 		RequestID: metadata.requestID,
 		Provider:  providerName,
 		Model:     synthesizer.model,
@@ -308,7 +308,7 @@ type ttsMetadata struct {
 	requestID string
 	audioID   string
 	audioURL  string
-	usage     ai.SpeechUsage
+	usage     protocol.SpeechUsage
 }
 
 func (response ttsResponse) metadata(
@@ -342,7 +342,7 @@ func (response ttsResponse) metadata(
 		requestID: requestID,
 		audioID:   audioID,
 		audioURL:  response.Output.Audio.URL,
-		usage: ai.SpeechUsage{
+		usage: protocol.SpeechUsage{
 			InputTokens:  response.Usage.InputTokens,
 			OutputTokens: response.Usage.OutputTokens,
 			TotalTokens:  response.Usage.TotalTokens,
@@ -351,14 +351,14 @@ func (response ttsResponse) metadata(
 	}, nil
 }
 
-func (synthesizer *Synthesizer) downloadAudio(
+func (synthesizer *speechSynthesizer) downloadAudio(
 	ctx context.Context,
 	rawURL string,
 ) (*platformmedia.TemporaryAudio, error) {
 	audioURL, err := validateProviderAudioURL(rawURL)
 	if err != nil {
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			http.StatusOK,
 			"",
 			"Qianwen TTS returned an unsafe audio reference",
@@ -367,7 +367,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, audioURL.String(), nil)
 	if err != nil {
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			http.StatusOK,
 			"",
 			"create Qianwen TTS audio request",
@@ -376,11 +376,11 @@ func (synthesizer *Synthesizer) downloadAudio(
 	request.Header.Set("Accept", "audio/wav, application/octet-stream")
 	response, err := synthesizer.client.Do(request)
 	if err != nil {
-		return nil, speechTransportError(ai.SpeechOperationSynthesis, ctx, err)
+		return nil, speechTransportError(protocol.SpeechOperationSynthesis, ctx, err)
 	}
 	if response == nil || response.Body == nil {
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			0,
 			"",
 			"Qianwen TTS audio download returned no response",
@@ -389,7 +389,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			"",
 			"Qianwen TTS audio download failed",
@@ -402,7 +402,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 		(contentEncoding != "" &&
 			!strings.EqualFold(contentEncoding, "identity")) {
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			"",
 			"Qianwen TTS audio download uses unsupported content encoding",
@@ -410,7 +410,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 	}
 	if response.ContentLength > platformmedia.MaxAudioBytes {
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			"",
 			"Qianwen TTS audio download exceeds the accepted limit",
@@ -419,7 +419,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 	contentType, _, parseErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if parseErr != nil {
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			"",
 			"Qianwen TTS audio download has an invalid content type",
@@ -431,7 +431,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 	case "application/octet-stream":
 		if strings.ToLower(path.Ext(audioURL.Path)) != ".wav" {
 			return nil, invalidSpeechResponse(
-				ai.SpeechOperationSynthesis,
+				protocol.SpeechOperationSynthesis,
 				response.StatusCode,
 				"",
 				"Qianwen TTS binary download is not a WAV resource",
@@ -440,7 +440,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 		contentType = platformmedia.ContentTypeWAV
 	default:
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			"",
 			"Qianwen TTS audio download has an unsupported content type",
@@ -452,7 +452,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 	)
 	if err != nil {
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			"",
 			"Qianwen TTS audio download has an incomplete WAV header",
@@ -466,7 +466,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 	)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, speechTransportError(ai.SpeechOperationSynthesis, ctx, ctx.Err())
+			return nil, speechTransportError(protocol.SpeechOperationSynthesis, ctx, ctx.Err())
 		}
 		validationCause := err.Error()
 		if validationCause == "WAV size declaration does not match the upload" {
@@ -479,7 +479,7 @@ func (synthesizer *Synthesizer) downloadAudio(
 			}
 		}
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			"",
 			"Qianwen TTS audio download failed validation: "+validationCause,
@@ -488,14 +488,14 @@ func (synthesizer *Synthesizer) downloadAudio(
 	if audio.SampleRate() != ttsOutputSampleRate {
 		if err := audio.Close(); err != nil {
 			return nil, invalidSpeechResponse(
-				ai.SpeechOperationSynthesis,
+				protocol.SpeechOperationSynthesis,
 				response.StatusCode,
 				"",
 				"Qianwen TTS audio cleanup failed after sample-rate validation",
 			)
 		}
 		return nil, invalidSpeechResponse(
-			ai.SpeechOperationSynthesis,
+			protocol.SpeechOperationSynthesis,
 			response.StatusCode,
 			"",
 			"Qianwen TTS audio has an unexpected sample rate",
@@ -676,4 +676,4 @@ func validateProviderAudioURL(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
-var _ ai.SpeechSynthesizer = (*Synthesizer)(nil)
+var _ protocol.SpeechSynthesizer = (*speechSynthesizer)(nil)

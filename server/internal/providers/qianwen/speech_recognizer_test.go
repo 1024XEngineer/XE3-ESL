@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 func TestTranscribeUsesDocumentedFunASRFlashContract(t *testing.T) {
@@ -48,7 +48,7 @@ func TestTranscribeUsesDocumentedFunASRFlashContract(t *testing.T) {
 
 	result, err := recognizer.Transcribe(
 		context.Background(),
-		ai.TranscriptionRequest{Audio: &asrTestAudio{data: audio}},
+		protocol.TranscriptionRequest{Audio: &asrTestAudio{data: audio}},
 	)
 	if err != nil {
 		t.Fatalf("transcribe: %v", err)
@@ -65,12 +65,12 @@ func TestTranscribeUsesDocumentedFunASRFlashContract(t *testing.T) {
 	if received.Input.Messages[0].Content[0].InputAudio.Data != expectedDataURL {
 		t.Fatal("ASR audio was not encoded as the documented Data URL")
 	}
-	expected := ai.TranscriptionResult{
+	expected := protocol.TranscriptionResult{
 		ID:         "fun-asr-safe-1",
 		Provider:   providerName,
 		Model:      "fun-asr-flash-2026-06-15",
 		Transcript: "I am preparing for an interview.",
-		Usage: ai.SpeechUsage{
+		Usage: protocol.SpeechUsage{
 			AudioSeconds: 4,
 		},
 	}
@@ -79,7 +79,7 @@ func TestTranscribeUsesDocumentedFunASRFlashContract(t *testing.T) {
 	}
 }
 
-func TestTranscribeAcceptsEachDocumentedTranscriptLocation(t *testing.T) {
+func TestTranscribeAcceptsDocumentedTranscriptLocations(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
@@ -91,10 +91,6 @@ func TestTranscribeAcceptsEachDocumentedTranscriptLocation(t *testing.T) {
 			"output":{"sentence":{"text":"Hello from the sentence."}},
 			"request_id":"fun-asr-sentence"
 		}`,
-		"legacy nested sentence text": `{
-			"output":{"output":{"sentence":{"text":"Hello from the nested sentence."}}},
-			"request_id":"fun-asr-nested"
-		}`,
 	}
 	for name, body := range tests {
 		body := body
@@ -105,7 +101,7 @@ func TestTranscribeAcceptsEachDocumentedTranscriptLocation(t *testing.T) {
 			}), "test-api-key")
 			result, err := recognizer.Transcribe(
 				context.Background(),
-				ai.TranscriptionRequest{Audio: &asrTestAudio{data: []byte("wav")}},
+				protocol.TranscriptionRequest{Audio: &asrTestAudio{data: []byte("wav")}},
 			)
 			if err != nil {
 				t.Fatalf("transcribe: %v", err)
@@ -132,7 +128,7 @@ func TestTranscribePrefersCumulativeTextAndMapsDurationUsage(t *testing.T) {
 	}), "test-api-key")
 	result, err := recognizer.Transcribe(
 		context.Background(),
-		ai.TranscriptionRequest{Audio: &asrTestAudio{data: []byte("wav")}},
+		protocol.TranscriptionRequest{Audio: &asrTestAudio{data: []byte("wav")}},
 	)
 	if err != nil {
 		t.Fatalf("transcribe: %v", err)
@@ -152,8 +148,8 @@ func TestTranscribeRejectsInvalidAudioBeforeProviderCall(t *testing.T) {
 		calls.Add(1)
 		return jsonResponse(http.StatusOK, `{}`), nil
 	}), "test-api-key")
-	_, err := recognizer.Transcribe(context.Background(), ai.TranscriptionRequest{})
-	assertSpeechError(t, err, ai.SpeechOperationTranscription, ai.ErrorInvalidRequest, false)
+	_, err := recognizer.Transcribe(context.Background(), protocol.TranscriptionRequest{})
+	assertSpeechError(t, err, protocol.SpeechOperationTranscription, protocol.ErrorInvalidRequest, false)
 	if calls.Load() != 0 {
 		t.Fatalf("provider calls = %d, want zero", calls.Load())
 	}
@@ -169,15 +165,15 @@ func TestTranscribeRejectsAudioCloseFailureBeforeProviderCall(t *testing.T) {
 	}), "test-api-key")
 	_, err := recognizer.Transcribe(
 		context.Background(),
-		ai.TranscriptionRequest{Audio: &closeFailingASRAudio{
+		protocol.TranscriptionRequest{Audio: &closeFailingASRAudio{
 			asrTestAudio: asrTestAudio{data: []byte("wav")},
 		}},
 	)
 	assertSpeechError(
 		t,
 		err,
-		ai.SpeechOperationTranscription,
-		ai.ErrorInvalidRequest,
+		protocol.SpeechOperationTranscription,
+		protocol.ErrorInvalidRequest,
 		false,
 	)
 	if calls.Load() != 0 {
@@ -207,13 +203,13 @@ func TestTranscribeRejectsInvalidResponse(t *testing.T) {
 			}), "test-api-key")
 			_, err := recognizer.Transcribe(
 				context.Background(),
-				ai.TranscriptionRequest{Audio: &asrTestAudio{data: []byte("wav")}},
+				protocol.TranscriptionRequest{Audio: &asrTestAudio{data: []byte("wav")}},
 			)
 			assertSpeechError(
 				t,
 				err,
-				ai.SpeechOperationTranscription,
-				ai.ErrorInvalidResponse,
+				protocol.SpeechOperationTranscription,
+				protocol.ErrorInvalidResponse,
 				true,
 			)
 		})
@@ -232,13 +228,13 @@ func TestTranscribeMapsFailuresWithoutLeakingAudioOrCredentials(t *testing.T) {
 	}), sensitive)
 	_, err := recognizer.Transcribe(
 		context.Background(),
-		ai.TranscriptionRequest{Audio: &asrTestAudio{data: []byte(sensitive)}},
+		protocol.TranscriptionRequest{Audio: &asrTestAudio{data: []byte(sensitive)}},
 	)
 	assertSpeechError(
 		t,
 		err,
-		ai.SpeechOperationTranscription,
-		ai.ErrorQuotaExhausted,
+		protocol.SpeechOperationTranscription,
+		protocol.ErrorQuotaExhausted,
 		false,
 	)
 	if strings.Contains(err.Error(), sensitive) {
@@ -264,13 +260,13 @@ func TestRecognizerTimeoutAndFormattingAreSafe(t *testing.T) {
 	}
 	_, err = recognizer.Transcribe(
 		context.Background(),
-		ai.TranscriptionRequest{Audio: &asrTestAudio{data: []byte("wav")}},
+		protocol.TranscriptionRequest{Audio: &asrTestAudio{data: []byte("wav")}},
 	)
 	assertSpeechError(
 		t,
 		err,
-		ai.SpeechOperationTranscription,
-		ai.ErrorTimeout,
+		protocol.SpeechOperationTranscription,
+		protocol.ErrorTimeout,
 		true,
 	)
 	for _, value := range []string{
@@ -285,7 +281,7 @@ func TestRecognizerTimeoutAndFormattingAreSafe(t *testing.T) {
 			t.Fatalf("recognizer formatting exposed API key: %q", value)
 		}
 	}
-	var nilRecognizer *Recognizer
+	var nilRecognizer *speechRecognizer
 	for _, value := range []string{
 		fmt.Sprint(nilRecognizer),
 		fmt.Sprintf("%+v", nilRecognizer),
@@ -325,14 +321,14 @@ func TestNewRecognizerRejectsUnsupportedModelAndEndpoint(t *testing.T) {
 			t.Parallel()
 			config := valid
 			test.mutate(&config)
-			if _, err := NewRecognizer(config, "test-api-key"); err == nil {
+			if _, err := newSpeechRecognizer(config, "test-api-key"); err == nil {
 				t.Fatal("expected configuration error")
 			}
 		})
 	}
 }
 
-func mustRecognizer(t *testing.T, client httpDoer, apiKey string) *Recognizer {
+func mustRecognizer(t *testing.T, client httpDoer, apiKey string) *speechRecognizer {
 	t.Helper()
 	recognizer, err := newRecognizerWithClient(ASRConfig{
 		BaseURL: "https://dashscope.aliyuncs.com/api/v1",
@@ -390,12 +386,12 @@ func (closeFailingReader) Close() error {
 func assertSpeechError(
 	t *testing.T,
 	err error,
-	operation ai.SpeechOperation,
-	kind ai.ErrorKind,
+	operation protocol.SpeechOperation,
+	kind protocol.ErrorKind,
 	retryable bool,
 ) {
 	t.Helper()
-	var speechError *ai.SpeechError
+	var speechError *protocol.SpeechError
 	if !errors.As(err, &speechError) ||
 		speechError.Operation != operation ||
 		speechError.Kind != kind ||

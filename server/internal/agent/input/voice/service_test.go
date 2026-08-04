@@ -14,8 +14,6 @@ import (
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	objectfake "github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/fake"
@@ -32,7 +30,7 @@ func TestVoiceInputUploadUsesFakeObjectStoreAndASRWithoutEarlyMessage(
 ) {
 	fixture := newVoiceInputFixture(
 		t,
-		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
+		&voiceStaticRecognizer{result: successfulVoiceTranscription()},
 		&voiceTestRunProcessor{},
 	)
 	audio := voiceTestWAV(0x10)
@@ -191,9 +189,9 @@ func TestVoiceInputUploadUsesOrdinaryTranscriptionWithoutObserver(
 func TestVoiceInputRetryAdvancesVersionAndFencesLateASR(t *testing.T) {
 	recognizer := &voiceSequenceRecognizer{
 		results: []voiceRecognizerStep{
-			{err: ai.NewSpeechError(
-				ai.SpeechOperationTranscription,
-				ai.ErrorProviderUnavailable,
+			{err: NewSpeechError(
+				SpeechOperationTranscription,
+				ErrorProviderUnavailable,
 				503,
 				"",
 				"fake-request-1",
@@ -761,7 +759,7 @@ func TestVoiceConfirmationReplayResumesOriginalPendingRun(t *testing.T) {
 	processor := &voiceTestRunProcessor{failFirst: true}
 	fixture := newVoiceInputFixture(
 		t,
-		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
+		&voiceStaticRecognizer{result: successfulVoiceTranscription()},
 		processor,
 	)
 	candidate, err := fixture.service.Upload(
@@ -842,7 +840,7 @@ func TestVoiceConfirmationReplayResumesOriginalPendingRun(t *testing.T) {
 func TestVoiceConfirmationAllowsFeedbackNotApplicable(t *testing.T) {
 	fixture := newVoiceInputFixture(
 		t,
-		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
+		&voiceStaticRecognizer{result: successfulVoiceTranscription()},
 		&voiceTestRunProcessor{},
 	)
 	fixture.service.feedback = voiceInputFeedbackStub{}
@@ -899,7 +897,7 @@ func TestVoicePlaybackRejectsExpiredOrUntrustedCapabilities(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fixture := newVoiceInputFixture(
 				t,
-				aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
+				&voiceStaticRecognizer{result: successfulVoiceTranscription()},
 				&voiceTestRunProcessor{},
 			)
 			fixture.service.clock = func() time.Time { return now }
@@ -935,7 +933,7 @@ type voiceInputFixture struct {
 
 func newVoiceInputFixture(
 	t *testing.T,
-	recognizer ai.StreamingSpeechRecognizer,
+	recognizer StreamingSpeechRecognizer,
 	processor *voiceTestRunProcessor,
 ) voiceInputFixture {
 	t.Helper()
@@ -954,7 +952,7 @@ func newVoiceInputFixture(
 		store,
 		sources,
 		recognizer,
-		aifake.NewSpeechSynthesizer(ai.SynthesisResult{}, nil),
+		&voiceStaticSynthesizer{},
 		processor,
 		&voiceTestIDs{values: []string{
 			"30000000-0000-4000-8000-000000000001",
@@ -982,8 +980,8 @@ func newVoiceInputFixture(
 	}
 }
 
-func successfulVoiceTranscription() ai.TranscriptionResult {
-	return ai.TranscriptionResult{
+func successfulVoiceTranscription() TranscriptionResult {
+	return TranscriptionResult{
 		ID:         "fake-asr-request-1",
 		Provider:   "fake",
 		Model:      "fake-asr-model",
@@ -1042,8 +1040,64 @@ func (ids *voiceTestIDs) NewID() (string, error) {
 }
 
 type voiceRecognizerStep struct {
-	result ai.TranscriptionResult
+	result TranscriptionResult
 	err    error
+}
+
+type voiceStaticRecognizer struct {
+	result TranscriptionResult
+}
+
+func (recognizer *voiceStaticRecognizer) Transcribe(
+	ctx context.Context,
+	request TranscriptionRequest,
+) (TranscriptionResult, error) {
+	if err := ctx.Err(); err != nil {
+		return TranscriptionResult{}, err
+	}
+	if err := ValidateTranscriptionRequest(request); err != nil {
+		return TranscriptionResult{}, err
+	}
+	return recognizer.result, nil
+}
+
+func (recognizer *voiceStaticRecognizer) TranscribeStream(
+	ctx context.Context,
+	request TranscriptionRequest,
+	observer TranscriptionObserver,
+) (TranscriptionResult, error) {
+	result, err := recognizer.Transcribe(ctx, request)
+	if err != nil {
+		return TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		TranscriptionUpdate{Transcript: result.Transcript},
+	); err != nil {
+		return TranscriptionResult{}, err
+	}
+	if err := observer.OnTranscriptionUpdate(
+		ctx,
+		TranscriptionUpdate{Transcript: result.Transcript, Final: true},
+	); err != nil {
+		return TranscriptionResult{}, err
+	}
+	return result, nil
+}
+
+type voiceStaticSynthesizer struct{}
+
+func (*voiceStaticSynthesizer) Synthesize(
+	ctx context.Context,
+	request SynthesisRequest,
+) (SynthesisResult, error) {
+	if err := ctx.Err(); err != nil {
+		return SynthesisResult{}, err
+	}
+	if err := ValidateSynthesisRequest(request); err != nil {
+		return SynthesisResult{}, err
+	}
+	return SynthesisResult{}, nil
 }
 
 type voiceSequenceRecognizer struct {
@@ -1053,43 +1107,43 @@ type voiceSequenceRecognizer struct {
 
 func (recognizer *voiceSequenceRecognizer) Transcribe(
 	_ context.Context,
-	_ ai.TranscriptionRequest,
-) (ai.TranscriptionResult, error) {
+	_ TranscriptionRequest,
+) (TranscriptionResult, error) {
 	return recognizer.next()
 }
 
 func (recognizer *voiceSequenceRecognizer) TranscribeStream(
 	ctx context.Context,
-	_ ai.TranscriptionRequest,
-	observer ai.TranscriptionObserver,
-) (ai.TranscriptionResult, error) {
+	_ TranscriptionRequest,
+	observer TranscriptionObserver,
+) (TranscriptionResult, error) {
 	result, err := recognizer.next()
 	if err != nil {
-		return ai.TranscriptionResult{}, err
+		return TranscriptionResult{}, err
 	}
 	if err := observer.OnTranscriptionUpdate(
 		ctx,
-		ai.TranscriptionUpdate{Transcript: result.Transcript},
+		TranscriptionUpdate{Transcript: result.Transcript},
 	); err != nil {
-		return ai.TranscriptionResult{}, err
+		return TranscriptionResult{}, err
 	}
 	if err := observer.OnTranscriptionUpdate(
 		ctx,
-		ai.TranscriptionUpdate{Transcript: result.Transcript, Final: true},
+		TranscriptionUpdate{Transcript: result.Transcript, Final: true},
 	); err != nil {
-		return ai.TranscriptionResult{}, err
+		return TranscriptionResult{}, err
 	}
 	return result, nil
 }
 
 func (recognizer *voiceSequenceRecognizer) next() (
-	ai.TranscriptionResult,
+	TranscriptionResult,
 	error,
 ) {
 	recognizer.mu.Lock()
 	defer recognizer.mu.Unlock()
 	if len(recognizer.results) == 0 {
-		return ai.TranscriptionResult{}, errors.New("no fake ASR result")
+		return TranscriptionResult{}, errors.New("no fake ASR result")
 	}
 	result := recognizer.results[0]
 	recognizer.results = recognizer.results[1:]
@@ -1097,50 +1151,50 @@ func (recognizer *voiceSequenceRecognizer) next() (
 }
 
 type voiceStreamingContractRecognizer struct {
-	result          ai.TranscriptionResult
+	result          TranscriptionResult
 	transcribeCalls int
 	streamCalls     int
 }
 
 func (recognizer *voiceStreamingContractRecognizer) Transcribe(
 	context.Context,
-	ai.TranscriptionRequest,
-) (ai.TranscriptionResult, error) {
+	TranscriptionRequest,
+) (TranscriptionResult, error) {
 	recognizer.transcribeCalls++
 	return recognizer.result, nil
 }
 
 func (recognizer *voiceStreamingContractRecognizer) TranscribeStream(
 	ctx context.Context,
-	_ ai.TranscriptionRequest,
-	observer ai.TranscriptionObserver,
-) (ai.TranscriptionResult, error) {
+	_ TranscriptionRequest,
+	observer TranscriptionObserver,
+) (TranscriptionResult, error) {
 	recognizer.streamCalls++
 	if err := observer.OnTranscriptionUpdate(
 		ctx,
-		ai.TranscriptionUpdate{Transcript: "A provider partial transcript."},
+		TranscriptionUpdate{Transcript: "A provider partial transcript."},
 	); err != nil {
-		return ai.TranscriptionResult{}, err
+		return TranscriptionResult{}, err
 	}
 	if err := observer.OnTranscriptionUpdate(
 		ctx,
-		ai.TranscriptionUpdate{
+		TranscriptionUpdate{
 			Transcript: recognizer.result.Transcript,
 			Final:      true,
 		},
 	); err != nil {
-		return ai.TranscriptionResult{}, err
+		return TranscriptionResult{}, err
 	}
 	return recognizer.result, nil
 }
 
 type voiceRecordingTranscriptionObserver struct {
-	updates []ai.TranscriptionUpdate
+	updates []TranscriptionUpdate
 }
 
 func (observer *voiceRecordingTranscriptionObserver) OnTranscriptionUpdate(
 	_ context.Context,
-	update ai.TranscriptionUpdate,
+	update TranscriptionUpdate,
 ) error {
 	observer.updates = append(observer.updates, update)
 	return nil
@@ -1273,8 +1327,8 @@ func newVoiceLeaseTestService(
 			store:     sourceStore,
 			directory: t.TempDir(),
 		},
-		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
-		aifake.NewSpeechSynthesizer(ai.SynthesisResult{}, nil),
+		&voiceStaticRecognizer{result: successfulVoiceTranscription()},
+		&voiceStaticSynthesizer{},
 		processor,
 		&voiceTestIDs{values: []string{
 			"30000000-0000-4000-8000-000000000011",
@@ -1474,7 +1528,7 @@ func (repository *memoryVoiceRepository) CompleteTranscription(
 	ownerID string,
 	candidateID string,
 	token uint64,
-	result ai.TranscriptionResult,
+	result TranscriptionResult,
 ) (Candidate, error) {
 	repository.mu.Lock()
 	defer repository.mu.Unlock()

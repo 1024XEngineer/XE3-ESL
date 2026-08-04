@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 )
@@ -32,7 +31,7 @@ func TestModelToolRoutingExposesEveryRegisteredTool(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("exposed tools = %#v, want %#v", got, want)
 	}
-	if routing.ToolChoice.Mode != ai.ToolChoiceAuto {
+	if routing.ToolChoice.Mode != ToolChoiceAuto {
 		t.Fatalf("ToolChoice = %#v, want auto", routing.ToolChoice)
 	}
 }

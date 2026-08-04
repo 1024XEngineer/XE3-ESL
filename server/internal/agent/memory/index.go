@@ -3,8 +3,6 @@ package memory
 import (
 	"context"
 	"time"
-
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const MemoryEmbeddingDimensions = 1024
@@ -107,7 +105,7 @@ type IndexRepository interface {
 	CompleteIndex(
 		context.Context,
 		IndexClaim,
-		ai.EmbeddingResult,
+		EmbeddingResult,
 	) (IndexJob, error)
 	FailIndex(
 		context.Context,

@@ -26,8 +26,6 @@ import (
 	runhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
 	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
@@ -360,9 +358,9 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 	requests := generator.Requests()
 	if len(requests) != 1 ||
 		len(requests[0].Messages) != 2 ||
-		requests[0].Messages[0].Role != ai.TextRoleSystem ||
+		requests[0].Messages[0].Role != agentrun.TextRoleSystem ||
 		!strings.Contains(requests[0].Messages[0].Content, activeGoal.Title) ||
-		requests[0].Messages[1].Role != ai.TextRoleUser {
+		requests[0].Messages[1].Role != agentrun.TextRoleUser {
 		t.Fatalf("unexpected provider request: %#v", requests)
 	}
 
@@ -479,29 +477,29 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 		t.Fatalf("new mock registry: %v", err)
 	}
 	generator := newSequenceTextGenerator(
-		ai.TextResult{
+		agentrun.TextResult{
 			ID:           "fake-completion-tools",
 			Provider:     "fake",
 			Model:        "configured-model",
 			FinishReason: "tool_calls",
-			ToolCalls: []ai.ToolCall{{
+			ToolCalls: []agentrun.ModelToolCall{{
 				ID:        "call-review-1",
 				Name:      reviewcapability.ReviewSearchToolName,
 				Arguments: json.RawMessage(`{"query":"metrics","limit":1}`),
 			}},
-			Usage: ai.TokenUsage{
+			Usage: agentrun.TokenUsage{
 				InputTokens:  20,
 				OutputTokens: 4,
 				TotalTokens:  24,
 			},
 		},
-		ai.TextResult{
+		agentrun.TextResult{
 			ID:           "fake-completion-final",
 			Provider:     "fake",
 			Model:        "configured-model",
 			Content:      "I found the latest review and summarized it.",
 			FinishReason: "stop",
-			Usage: ai.TokenUsage{
+			Usage: agentrun.TokenUsage{
 				InputTokens:  44,
 				OutputTokens: 9,
 				TotalTokens:  53,
@@ -704,7 +702,7 @@ func TestPostgresAgentHandoffPersistsProjectsAndStaysOutOfProviderInput(
 		t.Fatalf("Provider requests = %d, want 2", len(requests))
 	}
 	toolMessage := requests[1].Messages[len(requests[1].Messages)-1]
-	if toolMessage.Role != ai.TextRoleTool ||
+	if toolMessage.Role != agentrun.TextRoleTool ||
 		!strings.Contains(toolMessage.Content, `"status":"ready"`) {
 		t.Fatalf("Provider Tool Result = %#v", toolMessage)
 	}
@@ -978,10 +976,10 @@ WHERE table_schema = current_schema()
 		if len(request.Messages) == 0 {
 			t.Fatal("Provider received an empty message list")
 		}
-		if request.Messages[len(request.Messages)-1].Role == ai.TextRoleUser {
+		if request.Messages[len(request.Messages)-1].Role == agentrun.TextRoleUser {
 			initialRequests++
 			if len(request.Tools) != 6 ||
-				request.ToolChoice.Mode != ai.ToolChoiceAuto {
+				request.ToolChoice.Mode != agentrun.ToolChoiceAuto {
 				t.Fatalf(
 					"initial Provider request exposed %d tools with choice %#v",
 					len(request.Tools),
@@ -990,7 +988,7 @@ WHERE table_schema = current_schema()
 			}
 		}
 		last := request.Messages[len(request.Messages)-1]
-		if last.Role == ai.TextRoleTool &&
+		if last.Role == agentrun.TextRoleTool &&
 			last.ToolCallID == "call-dependent-goal" &&
 			strings.Contains(last.Content, `"mock-goal-001"`) {
 			dependentResultSeen = true
@@ -1284,8 +1282,8 @@ func TestPostgresAgentRunRejectsConcurrentRetryOnThread(t *testing.T) {
 		t,
 		repository,
 		goalService,
-		fake.NewFailingTextGenerator(ai.NewGenerationError(
-			ai.ErrorTimeout,
+		newFailingTextGenerator(agentrun.NewGenerationError(
+			agentrun.ErrorTimeout,
 			0,
 			"",
 			"",
@@ -1381,7 +1379,7 @@ func TestPostgresAgentRunPendingClaimHasOneWinner(t *testing.T) {
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	actor := testActorA()
@@ -1470,7 +1468,7 @@ func TestPostgresAgentRunRollsBackUserMessageWhenPendingRunCannotCommit(
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	actor := testActorA()
@@ -1521,7 +1519,7 @@ func TestPostgresAgentRunPanicRollsBackAndReleasesConnection(t *testing.T) {
 	_, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	actor := testActorA()
@@ -1581,7 +1579,7 @@ func TestPostgresAgentRunRejectsPartialResultsOnNonterminalRuns(t *testing.T) {
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	actor := testActorA()
@@ -1648,7 +1646,7 @@ func TestPostgresAgentRunRollsBackAssistantWhenCompletionCannotCommit(
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	actor := testActorA()
@@ -1748,8 +1746,8 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 	)
 	actor := testActorA()
 	timeoutGenerator := &recordingTextGenerator{
-		err: ai.NewGenerationError(
-			ai.ErrorTimeout,
+		err: agentrun.NewGenerationError(
+			agentrun.ErrorTimeout,
 			0,
 			"",
 			"",
@@ -1776,54 +1774,54 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 
 	tests := []struct {
 		name      string
-		generator ai.TextGenerator
+		generator agentrun.TextGenerator
 		wantKind  string
 	}{
 		{
 			name:      "timeout",
 			generator: timeoutGenerator,
-			wantKind:  string(ai.ErrorTimeout),
+			wantKind:  string(agentrun.ErrorTimeout),
 		},
 		{
 			name: "rate limited",
-			generator: fake.NewFailingTextGenerator(ai.NewGenerationError(
-				ai.ErrorRateLimited,
+			generator: newFailingTextGenerator(agentrun.NewGenerationError(
+				agentrun.ErrorRateLimited,
 				http.StatusTooManyRequests,
 				"Throttling",
 				"req-safe",
 				nil,
 			)),
-			wantKind: string(ai.ErrorRateLimited),
+			wantKind: string(agentrun.ErrorRateLimited),
 		},
 		{
 			name:      "invalid response",
-			generator: fake.NewTextGenerator(ai.TextResult{}),
-			wantKind:  string(ai.ErrorInvalidResponse),
+			generator: newFixedTextGenerator(agentrun.TextResult{}),
+			wantKind:  string(agentrun.ErrorInvalidResponse),
 		},
 		{
 			name:      "token usage exceeds persistence range",
-			generator: fake.NewTextGenerator(oversizedUsage),
-			wantKind:  string(ai.ErrorInvalidResponse),
+			generator: newFixedTextGenerator(oversizedUsage),
+			wantKind:  string(agentrun.ErrorInvalidResponse),
 		},
 		{
 			name:      "raw content exceeds persistence range",
-			generator: fake.NewTextGenerator(oversizedContent),
-			wantKind:  string(ai.ErrorInvalidResponse),
+			generator: newFixedTextGenerator(oversizedContent),
+			wantKind:  string(agentrun.ErrorInvalidResponse),
 		},
 		{
 			name:      "provider switched model",
-			generator: fake.NewTextGenerator(mismatchedModelResult),
-			wantKind:  string(ai.ErrorInvalidResponse),
+			generator: newFixedTextGenerator(mismatchedModelResult),
+			wantKind:  string(agentrun.ErrorInvalidResponse),
 		},
 		{
 			name:      "provider exceeded output budget",
-			generator: fake.NewTextGenerator(overBudgetResult),
-			wantKind:  string(ai.ErrorInvalidResponse),
+			generator: newFixedTextGenerator(overBudgetResult),
+			wantKind:  string(agentrun.ErrorInvalidResponse),
 		},
 		{
 			name:      "provider returned inconsistent usage",
-			generator: fake.NewTextGenerator(inconsistentUsageResult),
-			wantKind:  string(ai.ErrorInvalidResponse),
+			generator: newFixedTextGenerator(inconsistentUsageResult),
+			wantKind:  string(agentrun.ErrorInvalidResponse),
 		},
 	}
 	var timeoutRun agentrun.Run
@@ -1904,7 +1902,7 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 		t,
 		repository,
 		goalService,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	retry, err := successService.RetryText(
@@ -1940,7 +1938,7 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 	)
 	if err != nil ||
 		original.Status != agentrun.StatusFailed ||
-		original.FailureKind != string(ai.ErrorTimeout) {
+		original.FailureKind != string(agentrun.ErrorTimeout) {
 		t.Fatalf("original retry history changed: %#v, %v", original, err)
 	}
 }
@@ -1962,8 +1960,8 @@ func TestPostgresAgentRunRetryCannotChangeInputMessage(t *testing.T) {
 		t,
 		repository,
 		goalService,
-		fake.NewFailingTextGenerator(ai.NewGenerationError(
-			ai.ErrorTimeout,
+		newFailingTextGenerator(agentrun.NewGenerationError(
+			agentrun.ErrorTimeout,
 			0,
 			"",
 			"",
@@ -2108,7 +2106,7 @@ func TestPostgresAgentRunPersistsCallerCancellationAsRetryable(t *testing.T) {
 	}
 	if response.Code != http.StatusCreated ||
 		cancelled.Status != agentrun.StatusFailed ||
-		cancelled.Failure.Kind != string(ai.ErrorCancelled) ||
+		cancelled.Failure.Kind != string(agentrun.ErrorCancelled) ||
 		!cancelled.Failure.Retryable {
 		t.Fatalf("cancelled HTTP Run = %d %#v", response.Code, cancelled)
 	}
@@ -2117,7 +2115,7 @@ func TestPostgresAgentRunPersistsCallerCancellationAsRetryable(t *testing.T) {
 		t,
 		repository,
 		goalService,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	retry, err := successService.RetryText(
@@ -2140,7 +2138,7 @@ func TestPostgresAgentRunRecoversRunningAndResumesPendingAfterRestart(
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	actor := testActorA()
@@ -2302,7 +2300,7 @@ func TestPostgresAgentRunRejectsPendingReplayAfterConfigurationDrift(
 	_, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	actor := testActorA()
@@ -2538,9 +2536,9 @@ func TestPostgresContextAssemblerIncludesRecentCommittedConversation(t *testing.
 	if len(requests) != 2 || len(requests[1].Messages) != 4 {
 		t.Fatalf("recent provider requests: %#v", requests)
 	}
-	if requests[1].Messages[1].Role != ai.TextRoleUser ||
-		requests[1].Messages[2].Role != ai.TextRoleAssistant ||
-		requests[1].Messages[3].Role != ai.TextRoleUser {
+	if requests[1].Messages[1].Role != agentrun.TextRoleUser ||
+		requests[1].Messages[2].Role != agentrun.TextRoleAssistant ||
+		requests[1].Messages[3].Role != agentrun.TextRoleUser {
 		t.Fatalf("recent provider roles: %#v", requests[1].Messages)
 	}
 }
@@ -2836,11 +2834,11 @@ func TestPostgresAgentMemoryStoresIndexesRecallsAndInjects(t *testing.T) {
 	}
 	vector := make([]float32, memory.MemoryEmbeddingDimensions)
 	vector[0] = 1
-	embeddingResult := ai.EmbeddingResult{
+	embeddingResult := memory.EmbeddingResult{
 		Provider:    "qianwen",
 		Model:       "text-embedding-v4",
 		Dimensions:  memory.MemoryEmbeddingDimensions,
-		Vectors:     [][]float32{vector},
+		Vector:      vector,
 		InputTokens: 3,
 		TotalTokens: 3,
 	}
@@ -2871,7 +2869,7 @@ func TestPostgresAgentMemoryStoresIndexesRecallsAndInjects(t *testing.T) {
 	}
 	searchService, err := memory.NewSearchService(
 		memoryRepository,
-		&fake.Embedder{Result: embeddingResult},
+		&fixedMemoryEmbedder{result: embeddingResult},
 		memory.SearchConfig{
 			Provider:               embeddingResult.Provider,
 			Model:                  embeddingResult.Model,
@@ -3024,11 +3022,11 @@ func TestPostgresStableProfileAndRelevantMemoryRecallAcrossThreads(
 
 	vector := make([]float32, memory.MemoryEmbeddingDimensions)
 	vector[0] = 1
-	embeddingResult := ai.EmbeddingResult{
+	embeddingResult := memory.EmbeddingResult{
 		Provider:    "qianwen",
 		Model:       "text-embedding-v4",
 		Dimensions:  memory.MemoryEmbeddingDimensions,
-		Vectors:     [][]float32{vector},
+		Vector:      vector,
 		InputTokens: 3,
 		TotalTokens: 3,
 	}
@@ -3101,7 +3099,7 @@ WHERE memory_id = $1`,
 
 	searchService, err := memory.NewSearchService(
 		memoryRepository,
-		&fake.Embedder{Result: embeddingResult},
+		&fixedMemoryEmbedder{result: embeddingResult},
 		memory.SearchConfig{
 			Provider:               embeddingResult.Provider,
 			Model:                  embeddingResult.Model,
@@ -3455,7 +3453,7 @@ func TestPostgresAgentRunProtectedHTTP(t *testing.T) {
 	goalService, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
-		fake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	actorA := testActorA()
@@ -3581,18 +3579,18 @@ WHERE owner_user_id = $1 AND thread_id = $2`,
 
 type recordingTextGenerator struct {
 	mu       sync.Mutex
-	result   ai.TextResult
+	result   agentrun.TextResult
 	err      error
-	requests []ai.TextRequest
+	requests []agentrun.TextRequest
 }
 
 type sequenceTextGenerator struct {
 	mu       sync.Mutex
-	results  []ai.TextResult
-	requests []ai.TextRequest
+	results  []agentrun.TextResult
+	requests []agentrun.TextRequest
 }
 
-func newSequenceTextGenerator(results ...ai.TextResult) *sequenceTextGenerator {
+func newSequenceTextGenerator(results ...agentrun.TextResult) *sequenceTextGenerator {
 	return &sequenceTextGenerator{results: results}
 }
 
@@ -3644,10 +3642,10 @@ func newBlockingTextGenerator() *blockingTextGenerator {
 
 func (generator *blockingTextGenerator) Generate(
 	ctx context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
-	if err := ai.ValidateTextRequest(request); err != nil {
-		return ai.TextResult{}, err
+	request agentrun.TextRequest,
+) (agentrun.TextResult, error) {
+	if err := agentrun.ValidateTextRequest(request); err != nil {
+		return agentrun.TextResult{}, err
 	}
 	generator.mu.Lock()
 	generator.calls++
@@ -3655,8 +3653,8 @@ func (generator *blockingTextGenerator) Generate(
 	generator.once.Do(func() { close(generator.started) })
 	select {
 	case <-ctx.Done():
-		return ai.TextResult{}, ai.NewGenerationError(
-			ai.ErrorCancelled,
+		return agentrun.TextResult{}, agentrun.NewGenerationError(
+			agentrun.ErrorCancelled,
 			0,
 			"",
 			"",
@@ -3675,26 +3673,26 @@ func (generator *blockingTextGenerator) CallCount() int {
 
 func (generator *recordingTextGenerator) Generate(
 	ctx context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
+	request agentrun.TextRequest,
+) (agentrun.TextResult, error) {
 	generator.mu.Lock()
 	generator.requests = append(generator.requests, request)
 	generator.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return ai.TextResult{}, err
+		return agentrun.TextResult{}, err
 	}
 	return generator.result, generator.err
 }
 
 func (generator *sequenceTextGenerator) Generate(
 	ctx context.Context,
-	request ai.TextRequest,
-) (ai.TextResult, error) {
-	if err := ai.ValidateTextRequest(request); err != nil {
-		return ai.TextResult{}, err
+	request agentrun.TextRequest,
+) (agentrun.TextResult, error) {
+	if err := agentrun.ValidateTextRequest(request); err != nil {
+		return agentrun.TextResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return ai.TextResult{}, err
+		return agentrun.TextResult{}, err
 	}
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
@@ -3713,10 +3711,10 @@ func (generator *recordingTextGenerator) CallCount() int {
 	return len(generator.requests)
 }
 
-func (generator *recordingTextGenerator) Requests() []ai.TextRequest {
+func (generator *recordingTextGenerator) Requests() []agentrun.TextRequest {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
-	result := make([]ai.TextRequest, len(generator.requests))
+	result := make([]agentrun.TextRequest, len(generator.requests))
 	copy(result, generator.requests)
 	return result
 }
@@ -3727,22 +3725,22 @@ func (generator *sequenceTextGenerator) CallCount() int {
 	return len(generator.requests)
 }
 
-func (generator *sequenceTextGenerator) Requests() []ai.TextRequest {
+func (generator *sequenceTextGenerator) Requests() []agentrun.TextRequest {
 	generator.mu.Lock()
 	defer generator.mu.Unlock()
-	result := make([]ai.TextRequest, len(generator.requests))
+	result := make([]agentrun.TextRequest, len(generator.requests))
 	copy(result, generator.requests)
 	return result
 }
 
-func successfulTextResult() ai.TextResult {
-	return ai.TextResult{
+func successfulTextResult() agentrun.TextResult {
+	return agentrun.TextResult{
 		ID:           "fake-completion-1",
 		Provider:     "fake",
 		Model:        "configured-model",
 		Content:      "Open with the shared goal, then ask what success looks like.",
 		FinishReason: "stop",
-		Usage: ai.TokenUsage{
+		Usage: agentrun.TokenUsage{
 			InputTokens:  32,
 			OutputTokens: 14,
 			TotalTokens:  46,
@@ -3754,18 +3752,18 @@ func integrationToolResult(
 	callID string,
 	name string,
 	arguments string,
-) ai.TextResult {
-	return ai.TextResult{
+) agentrun.TextResult {
+	return agentrun.TextResult{
 		ID:           "fake-tool-completion-" + callID,
 		Provider:     "fake",
 		Model:        "configured-model",
 		FinishReason: "tool_calls",
-		ToolCalls: []ai.ToolCall{{
+		ToolCalls: []agentrun.ModelToolCall{{
 			ID:        callID,
 			Name:      name,
 			Arguments: json.RawMessage(arguments),
 		}},
-		Usage: ai.TokenUsage{
+		Usage: agentrun.TokenUsage{
 			InputTokens:  20,
 			OutputTokens: 4,
 			TotalTokens:  24,
@@ -3773,14 +3771,14 @@ func integrationToolResult(
 	}
 }
 
-func integrationFinalResult(id string, content string) ai.TextResult {
-	return ai.TextResult{
+func integrationFinalResult(id string, content string) agentrun.TextResult {
+	return agentrun.TextResult{
 		ID:           "fake-final-completion-" + id,
 		Provider:     "fake",
 		Model:        "configured-model",
 		Content:      content,
 		FinishReason: "stop",
-		Usage: ai.TokenUsage{
+		Usage: agentrun.TokenUsage{
 			InputTokens:  32,
 			OutputTokens: 12,
 			TotalTokens:  44,
@@ -3836,7 +3834,7 @@ func integrationPracticeHandoff() agenthandoff.Item {
 func newAgentRunServices(
 	t *testing.T,
 	pool *pgxpool.Pool,
-	generator ai.TextGenerator,
+	generator agentrun.TextGenerator,
 	configuration agentrun.Configuration,
 ) (*goal.Service, *conversation.Service, *agentrun.Service, *agentRepositories) {
 	t.Helper()
@@ -3871,7 +3869,7 @@ func newRunService(
 	t *testing.T,
 	repository *agentRepositories,
 	goalService *goal.Service,
-	generator ai.TextGenerator,
+	generator agentrun.TextGenerator,
 	configuration agentrun.Configuration,
 ) *agentrun.Service {
 	t.Helper()
@@ -3889,7 +3887,7 @@ func newRunServiceWithMemory(
 	t *testing.T,
 	repository *agentRepositories,
 	goalService *goal.Service,
-	generator ai.TextGenerator,
+	generator agentrun.TextGenerator,
 	configuration agentrun.Configuration,
 	memories agentcontext.MemorySearcher,
 ) *agentrun.Service {
@@ -3909,7 +3907,7 @@ func newRunServiceWithContexts(
 	t *testing.T,
 	repository *agentRepositories,
 	goalService *goal.Service,
-	generator ai.TextGenerator,
+	generator agentrun.TextGenerator,
 	configuration agentrun.Configuration,
 	stableProfiles agentcontext.StableProfileReader,
 	memories agentcontext.MemorySearcher,

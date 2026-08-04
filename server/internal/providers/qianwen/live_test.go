@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	platformconfig "github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 func TestLiveTextGeneration(t *testing.T) {
@@ -21,7 +21,7 @@ func TestLiveTextGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load text generation config: %v", err)
 	}
-	generator, err := New(Config{
+	generator, err := newTextClient(TextConfig{
 		BaseURL:         cfg.BaseURL,
 		Model:           cfg.Model,
 		Timeout:         cfg.Timeout,
@@ -31,9 +31,9 @@ func TestLiveTextGeneration(t *testing.T) {
 		t.Fatalf("create Qianwen generator: %v", err)
 	}
 
-	result, err := generator.Generate(context.Background(), ai.TextRequest{
-		Messages: []ai.TextMessage{{
-			Role:    ai.TextRoleUser,
+	result, err := generator.Generate(context.Background(), protocol.TextRequest{
+		Messages: []protocol.TextMessage{{
+			Role:    protocol.TextRoleUser,
 			Content: "Reply with one short English greeting.",
 		}},
 	})

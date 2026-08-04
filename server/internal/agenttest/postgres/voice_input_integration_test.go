@@ -14,8 +14,6 @@ import (
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	voicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice/postgres"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	aifake "github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	objectfake "github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/fake"
 	"github.com/jackc/pgx/v5"
@@ -28,7 +26,7 @@ func TestPostgresAgentVoiceInputConfirmationHistoryAndDeletion(
 	goalService, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
-		aifake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	repository, err := voicepostgres.New(
@@ -54,8 +52,8 @@ func TestPostgresAgentVoiceInputConfirmationHistoryAndDeletion(
 			store:     store,
 			directory: t.TempDir(),
 		},
-		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
-		aifake.NewSpeechSynthesizer(ai.SynthesisResult{}, nil),
+		newFixedSpeechRecognizer(successfulVoiceTranscription()),
+		newFixedSpeechSynthesizer(agentvoice.SynthesisResult{}, nil),
 		runService,
 		identity.NewUUIDv4Generator(nil),
 		agentvoice.Config{
@@ -343,7 +341,7 @@ func TestPostgresAgentVoiceConfirmationRollsBackWhenRunCreationConflicts(
 	_, dataService, runService, repositories := newAgentRunServices(
 		t,
 		database.pool,
-		aifake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	voiceRepository, err := voicepostgres.New(
@@ -369,8 +367,8 @@ func TestPostgresAgentVoiceConfirmationRollsBackWhenRunCreationConflicts(
 			store:     store,
 			directory: t.TempDir(),
 		},
-		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
-		aifake.NewSpeechSynthesizer(ai.SynthesisResult{}, nil),
+		newFixedSpeechRecognizer(successfulVoiceTranscription()),
+		newFixedSpeechSynthesizer(agentvoice.SynthesisResult{}, nil),
 		runService,
 		identity.NewUUIDv4Generator(nil),
 		agentvoice.Config{
@@ -497,7 +495,7 @@ func TestPostgresAgentVoiceInputDeletionLocksCandidateBeforeAudio(t *testing.T) 
 	_, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
-		aifake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	repository, err := voicepostgres.New(
@@ -523,8 +521,8 @@ func TestPostgresAgentVoiceInputDeletionLocksCandidateBeforeAudio(t *testing.T) 
 			store:     store,
 			directory: t.TempDir(),
 		},
-		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
-		aifake.NewSpeechSynthesizer(ai.SynthesisResult{}, nil),
+		newFixedSpeechRecognizer(successfulVoiceTranscription()),
+		newFixedSpeechSynthesizer(agentvoice.SynthesisResult{}, nil),
 		runService,
 		identity.NewUUIDv4Generator(nil),
 		agentvoice.Config{
@@ -666,7 +664,7 @@ func TestPostgresAgentVoiceInputCleanupRecoversExpiredLeaseAndDeletingOwners(
 	_, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
-		aifake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	repository, err := voicepostgres.New(
@@ -687,8 +685,8 @@ func TestPostgresAgentVoiceInputCleanupRecoversExpiredLeaseAndDeletingOwners(
 			store:     store,
 			directory: t.TempDir(),
 		},
-		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
-		aifake.NewSpeechSynthesizer(ai.SynthesisResult{}, nil),
+		newFixedSpeechRecognizer(successfulVoiceTranscription()),
+		newFixedSpeechSynthesizer(agentvoice.SynthesisResult{}, nil),
 		runService,
 		identity.NewUUIDv4Generator(nil),
 		agentvoice.Config{
@@ -942,7 +940,7 @@ func TestPostgresAgentVoiceInputUploadLeaseFencesDeletingOwnerCleanup(
 	_, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
-		aifake.NewTextGenerator(successfulTextResult()),
+		newFixedTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	repository, err := voicepostgres.New(
@@ -973,8 +971,8 @@ func TestPostgresAgentVoiceInputUploadLeaseFencesDeletingOwnerCleanup(
 			store:     baseStore,
 			directory: t.TempDir(),
 		},
-		aifake.NewSpeechRecognizer(successfulVoiceTranscription()),
-		aifake.NewSpeechSynthesizer(ai.SynthesisResult{}, nil),
+		newFixedSpeechRecognizer(successfulVoiceTranscription()),
+		newFixedSpeechSynthesizer(agentvoice.SynthesisResult{}, nil),
 		runService,
 		identity.NewUUIDv4Generator(nil),
 		agentvoice.Config{

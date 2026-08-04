@@ -4,21 +4,21 @@ import (
 	"context"
 	"errors"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
+	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 type EvaluationScoringGenerator struct {
-	generator ai.TextGenerator
+	generator *textClient
 }
 
 func NewEvaluationScoringGenerator(
-	generator ai.TextGenerator,
+	configuration TextConfig,
+	apiKey string,
 ) (*EvaluationScoringGenerator, error) {
-	if generator == nil {
-		return nil, errors.New(
-			"qianwen: Evaluation scoring generator is required",
-		)
+	generator, err := newTextClient(configuration, apiKey)
+	if err != nil {
+		return nil, err
 	}
 	return &EvaluationScoringGenerator{generator: generator}, nil
 }
@@ -33,12 +33,12 @@ func (generator *EvaluationScoringGenerator) Generate(
 			"qianwen: invalid Evaluation scoring request",
 		)
 	}
-	result, err := generator.generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{Role: ai.TextRoleSystem, Content: request.SystemPrompt},
-			{Role: ai.TextRoleUser, Content: request.UserPrompt},
+	result, err := generator.generator.Generate(ctx, protocol.TextRequest{
+		Messages: []protocol.TextMessage{
+			{Role: protocol.TextRoleSystem, Content: request.SystemPrompt},
+			{Role: protocol.TextRoleUser, Content: request.UserPrompt},
 		},
-		ResponseFormat: ai.TextResponseFormatJSON,
+		ResponseFormat: protocol.TextResponseFormatJSON,
 	})
 	if err != nil {
 		return scoring.TextGenerationResult{}, err

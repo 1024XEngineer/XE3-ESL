@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 )
 
 const (
@@ -73,13 +72,13 @@ func (command GenerateCheckpointCommand) Valid() bool {
 
 type Service struct {
 	repository Repository
-	generator  ai.TextGenerator
+	generator  Generator
 	config     Configuration
 }
 
 func NewService(
 	repository Repository,
-	generator ai.TextGenerator,
+	generator Generator,
 	configuration Configuration,
 ) (*Service, error) {
 	if repository == nil || generator == nil || !configuration.Valid() {
@@ -137,12 +136,9 @@ func (service *Service) GenerateCheckpoint(
 	if err != nil {
 		return Checkpoint{}, ErrInvalidArgument
 	}
-	result, err := service.generator.Generate(ctx, ai.TextRequest{
-		Messages: []ai.TextMessage{
-			{Role: ai.TextRoleSystem, Content: summarySystemPrompt},
-			{Role: ai.TextRoleUser, Content: string(payload)},
-		},
-		ResponseFormat: ai.TextResponseFormatJSON,
+	result, err := service.generator.GenerateJSON(ctx, GenerationRequest{
+		SystemPrompt: summarySystemPrompt,
+		UserPrompt:   string(payload),
 	})
 	if err != nil {
 		return Checkpoint{}, err
