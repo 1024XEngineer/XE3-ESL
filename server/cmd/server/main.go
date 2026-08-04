@@ -14,6 +14,8 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/xfyun"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/database"
@@ -21,7 +23,6 @@ import (
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
@@ -124,12 +125,6 @@ func run() int {
 	}
 	defer audioVault.Close()
 
-	preparationCatalog, err := preparation.NewBuiltinCatalog()
-	if err != nil {
-		logger.Error("preparation catalog startup failed", slog.Any("error", err))
-		return 1
-	}
-
 	storageConfig, err := config.LoadObjectStorage()
 	if err != nil {
 		logger.Error(
@@ -161,6 +156,11 @@ func run() int {
 		return 1
 	}
 	defer databasePool.Close()
+	sceneCatalog, err := scene.NewPostgresCatalog(databasePool.Native())
+	if err != nil {
+		logger.Error("Scene catalog startup failed", slog.Any("error", err))
+		return 1
+	}
 
 	evaluationComposition, err := bootstrap.NewEvaluationComposition(
 		databasePool.Native(),
@@ -306,7 +306,7 @@ func run() int {
 				MaxInputCharacters: textConfig.MaxContextChars,
 			},
 			memoryIndexComposition.Searcher(),
-			preparationCatalog,
+			sceneCatalog,
 			bootstrap.AgentWorkerWakeups{
 				MemoryExtraction: memoryExtractionWakeup,
 				ThreadSummary:    threadSummaryWakeup,
@@ -550,7 +550,7 @@ func run() int {
 		conversation.New(),
 		review.New(),
 	)
-	bootstrap.RegisterPreparationCatalog(router, preparationCatalog)
+	bootstrap.RegisterSceneCatalog(router, sceneCatalog)
 
 	server := &http.Server{
 		Addr:              cfg.Address(),

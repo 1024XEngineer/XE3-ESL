@@ -13,7 +13,7 @@ const (
 	memoryContextLimit        = 6
 	memoryContextPolicyV1     = "memory-context-v1"
 	memoryScopeUser           = "user"
-	memoryScopeMatter         = "matter"
+	memoryScopeGoal           = "goal"
 	memoryEmbeddingDimensions = 1024
 )
 
@@ -24,7 +24,7 @@ var memoryPolicyVersionPattern = regexp.MustCompile(
 type MemorySearchRequest struct {
 	Actor                 requestcontext.Actor
 	Query                 string
-	MatterID              string
+	GoalID                string
 	ExcludedCanonicalKeys []string
 	Limit                 int
 }
@@ -36,7 +36,7 @@ type MemorySearchHit struct {
 	Type                   string
 	Content                string
 	Scope                  string
-	MatterID               string
+	GoalID                 string
 	Similarity             float64
 	Score                  float64
 	EmbeddingProvider      string
@@ -46,15 +46,15 @@ type MemorySearchHit struct {
 	RetrievalPolicyVersion string
 }
 
-func (hit MemorySearchHit) valid(matterID string) bool {
+func (hit MemorySearchHit) valid(goalID string) bool {
 	if !coreValidMemoryHit(hit) {
 		return false
 	}
 	switch hit.Scope {
 	case memoryScopeUser:
-		return hit.MatterID == ""
-	case memoryScopeMatter:
-		return matterID != "" && hit.MatterID == matterID
+		return hit.GoalID == ""
+	case memoryScopeGoal:
+		return goalID != "" && hit.GoalID == goalID
 	default:
 		return false
 	}

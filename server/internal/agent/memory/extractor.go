@@ -156,11 +156,11 @@ func (extractor *LLMExtractor) Extract(
 	payload, err := json.Marshal(struct {
 		UserText      string `json:"user_text"`
 		AssistantText string `json:"assistant_text"`
-		ActiveMatter  bool   `json:"active_matter"`
+		ActiveGoal    bool   `json:"active_goal"`
 	}{
 		UserText:      source.UserText,
 		AssistantText: source.AssistantText,
-		ActiveMatter:  source.MatterID != "",
+		ActiveGoal:    source.GoalID != "",
 	})
 	if err != nil {
 		return ExtractionOutput{}, ErrExtractionResponse
@@ -285,8 +285,8 @@ func mapProfileUpdate(
 	case profileCurrentGoal:
 		candidate.Type = TypeGoal
 		candidate.CanonicalKey = "goal.current"
-		if source.MatterID != "" {
-			candidate.Scope = ScopeMatter
+		if source.GoalID != "" {
+			candidate.Scope = ScopeGoal
 		}
 	default:
 		return ExtractedCandidate{}, false

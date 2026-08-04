@@ -79,9 +79,9 @@ func TestValidStableProfileMemoriesRequiresWhitelistAndOrder(t *testing.T) {
 			items[0].OwnerID = "30000000-0000-4000-8000-000000000001"
 			return items
 		},
-		"matter scope": func(items []Memory) []Memory {
-			items[0].Scope = ScopeMatter
-			items[0].MatterID = "40000000-0000-4000-8000-000000000001"
+		"goal scope": func(items []Memory) []Memory {
+			items[0].Scope = ScopeGoal
+			items[0].GoalID = "40000000-0000-4000-8000-000000000001"
 			return items
 		},
 		"inactive": func(items []Memory) []Memory {

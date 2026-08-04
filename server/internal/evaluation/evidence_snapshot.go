@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	practice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 type EvidenceSnapshot struct {
@@ -528,9 +528,11 @@ func validEvidenceParticipantBindings(
 ) (map[string]struct{}, map[string]struct{}, bool) {
 	all := make(map[string]struct{}, len(participants))
 	candidates := make(map[string]struct{})
+	facilitators := make(map[string]struct{})
 	for index, participant := range participants {
 		if !validIdentifier(participant.ID) ||
-			strings.TrimSpace(participant.Role) == "" ||
+			(participant.Role != "FACILITATOR" &&
+				participant.Role != "LEARNER") ||
 			participant.Order != index+1 {
 			return nil, nil, false
 		}
@@ -538,20 +540,18 @@ func validEvidenceParticipantBindings(
 			return nil, nil, false
 		}
 		all[participant.ID] = struct{}{}
-		if participant.Role == "CANDIDATE" ||
-			participant.Role == "LEARNER" {
+		if participant.Role == "LEARNER" {
 			candidates[participant.ID] = struct{}{}
+		} else {
+			facilitators[participant.ID] = struct{}{}
 		}
-		if participant.RoleDefinitionID == "" {
-			if participant.RoleDefinitionVersion != 0 {
-				return nil, nil, false
-			}
-		} else if !validIdentifier(participant.RoleDefinitionID) ||
-			participant.RoleDefinitionVersion < 1 {
+		if participant.RoleDefinitionID != "" &&
+			!validIdentifier(participant.RoleDefinitionID) {
 			return nil, nil, false
 		}
 	}
-	return all, candidates, len(all) > 1 && len(candidates) == 1
+	return all, candidates,
+		len(all) > 1 && len(candidates) == 1 && len(facilitators) > 0
 }
 
 func evidencePracticeContextMatchesScene(
@@ -562,13 +562,10 @@ func evidencePracticeContextMatchesScene(
 		validIdentifier(context.SessionSnapshotID) &&
 		context.SessionVersion > 0 &&
 		context.PlanRevision > 0 &&
-		validIdentifier(context.ScenarioDefinition.ID) &&
-		context.ScenarioDefinition.Version > 0 &&
-		validIdentifier(context.ScenarioConfig.ID) &&
-		context.ScenarioConfig.Version > 0 &&
+		validIdentifier(context.Scene.ID) &&
+		context.Scene.Version > 0 &&
 		validIdentifier(context.PracticeOption.ID) &&
 		strings.TrimSpace(context.PracticeOption.Type) != "" &&
-		context.PracticeOption.Version > 0 &&
 		strings.TrimSpace(context.UserRole) != "" &&
 		strings.TrimSpace(context.FacilitatorRole) != "" &&
 		strings.TrimSpace(context.PracticeGoal) != "" &&
@@ -578,8 +575,8 @@ func evidencePracticeContextMatchesScene(
 		len(context.TaskBlueprints) > 0 &&
 		len(context.Participants) > 1 &&
 		evidenceSceneMatches(
-			practice.ScenarioFamily(context.SceneFamily),
-			practice.ScenarioModel(context.ScenarioModel),
+			scene.SceneFamily(context.SceneFamily),
+			scene.SceneModel(context.SceneModel),
 			sceneType,
 		)
 }

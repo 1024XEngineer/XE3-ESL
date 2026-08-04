@@ -9,6 +9,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 )
 
 func TestIELTSSpeakingShadowProducesHonestPartialReport(t *testing.T) {
@@ -147,7 +149,7 @@ func TestIELTSSpeakingShadowRejectsNonFrozenModelVersion(t *testing.T) {
 	if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	payload.PracticeContext.ScenarioDefinition.Version = 1
+	payload.PracticeContext.Scene.Version = 1
 	snapshot = rebuildIELTSSpeakingSnapshot(t, payload)
 	if _, err := prepareIELTSSpeakingShadow(snapshot); !errors.Is(
 		err,
@@ -395,21 +397,73 @@ func ieltsSpeakingTestSnapshot(
 		t.Fatalf("decode EvidenceSnapshot fixture: %v", err)
 	}
 	payload.PracticeContext.SceneFamily =
-		string(practiceScenarioFamilyExam)
-	payload.PracticeContext.ScenarioModel =
-		"IELTS_SPEAKING_FULL_MOCK"
-	payload.PracticeContext.ScenarioDefinition =
+		string(scene.SceneFamilyExam)
+	payload.PracticeContext.SceneModel =
+		string(scene.SceneModelIELTSSpeakingFullMock)
+	payload.PracticeContext.Scene =
 		evidenceVersionedRef{
-			ID:      ieltsFullMockDefinitionID,
-			Version: ieltsFullMockDefinitionVersion,
+			ID:      "scn_ielts_speaking_full",
+			Version: ieltsFullMockSceneVersion,
 		}
-	payload.PracticeContext.ScenarioConfig =
-		evidenceVersionedRef{
-			ID:      ieltsFullMockConfigID,
-			Version: ieltsFullMockConfigVersion,
-		}
-	payload.PracticeContext.TaskBlueprints =
-		make([]string, ieltsQuestionCount)
+	payload.PracticeContext.Preparation.BackgroundSnapshotHash = evidenceTextHash(
+		evidenceTestPreparationBackground,
+	)
+	payload.PracticeContext.PracticeOption = evidencePracticeOption{
+		ID:   "option_ielts_speaking_full_full",
+		Type: string(scene.PracticeOptionFullSimulation),
+	}
+	payload.PracticeContext.UserRole = "考生"
+	payload.PracticeContext.FacilitatorRole = "IELTS 口语考官"
+	payload.PracticeContext.PracticeGoal =
+		"适应真实三段式流程，并在不同题型中保持连贯自然的表达。"
+	payload.PracticeContext.PracticeObjectives = []evidenceObjective{
+		{
+			ID: "part_1_familiar_topics",
+			Description: "Answer familiar-topic questions directly with " +
+				"relevant detail.",
+		},
+		{
+			ID: "part_2_long_turn",
+			Description: "Deliver a coherent long turn that covers every " +
+				"cue-card point.",
+		},
+		{
+			ID: "part_3_discussion",
+			Description: "Develop abstract ideas with reasons, examples, " +
+				"and comparisons.",
+		},
+	}
+	payload.PracticeContext.TaskContext = evidenceTaskContext{
+		PublicSceneBrief: "按 Part 1、Part 2、Part 3 连续完成一轮 IELTS 口语完整模考。",
+		PersonaSummary: "A neutral IELTS speaking examiner who follows the frozen " +
+			"three-part mock-test sequence, asks exactly one item at a time, and " +
+			"never teaches or scores during the simulation.",
+		FocusAreas: []string{
+			"part_1_familiar_topics",
+			"part_2_long_turn",
+			"part_3_discussion",
+			"section_transition",
+		},
+		SuggestedDurationSeconds: 900,
+	}
+	payload.PracticeContext.TaskBlueprints = []string{
+		"Part 1 question: Where is your hometown?",
+		"Part 1 question: Is there anything you do not like about your hometown?",
+		"Part 1 question: Would you say it is a good place for young people?",
+		"Part 1 question: Do you use artificial intelligence in your daily life?",
+		"Part 1 question: Has technology changed the way you learn things?",
+		"Part 1 question: Is there any technology you find difficult to use?",
+		"Part 1 question: What do you usually do in your free time?",
+		"Part 1 question: Do you prefer spending your free time alone or with other people?",
+		"Part 2 cue card: Describe a skill you would like to learn.\n" +
+			"You should say:\n• What the skill is\n• Why you want to learn it\n" +
+			"• How you would learn it\n• And explain how learning this skill would benefit you",
+		"Part 3 question: What kinds of skills are most valuable in today's society?",
+		"Part 3 question: Some people say it is never too late to learn a new skill. Do you agree?",
+		"Part 3 question: Do you think schools should focus more on practical skills?",
+		"Part 3 question: How has technology changed the way people learn skills?",
+		"Part 3 question: Do you think some skills will become obsolete in the future?",
+	}
 	payload.OpportunityManifest =
 		make([]evidenceOpportunity, 0, ieltsQuestionCount)
 	payload.ConfirmedTurns =
@@ -430,13 +484,17 @@ func ieltsSpeakingTestSnapshot(
 			"I explain answer %d clearly with a concrete example.",
 			index,
 		)
-		payload.PracticeContext.TaskBlueprints[index-1] =
-			questionText
+		objectiveID := "part_3_discussion"
+		if index <= 8 {
+			objectiveID = "part_1_familiar_topics"
+		} else if index == 9 {
+			objectiveID = "part_2_long_turn"
+		}
 		opportunity := evidenceOpportunity{
 			Sequence:                index,
 			QuestionID:              questionID,
 			QuestionType:            "PRIMARY",
-			ObjectiveID:             "objective-1",
+			ObjectiveID:             objectiveID,
 			QuestionText:            questionText,
 			SpeakerParticipantID:    "participant-interviewer",
 			AddresseeParticipantIDs: []string{"participant-candidate"},
@@ -520,8 +578,6 @@ func ieltsSpeakingTestSnapshot(
 	}
 	return rebuildIELTSSpeakingSnapshot(t, payload)
 }
-
-const practiceScenarioFamilyExam = "EXAM"
 
 func rebuildIELTSSpeakingSnapshot(
 	t *testing.T,

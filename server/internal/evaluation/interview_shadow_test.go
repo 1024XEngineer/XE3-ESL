@@ -1044,7 +1044,7 @@ func interviewShadowTestSnapshot(
 				QuestionID:              "question-2",
 				QuestionType:            "FOLLOW_UP",
 				ParentQuestionID:        "question-1",
-				ObjectiveID:             "objective-1",
+				ObjectiveID:             "clear_answer",
 				QuestionText:            "What changed after the migration?",
 				SpeakerParticipantID:    "participant-interviewer",
 				AddresseeParticipantIDs: []string{"participant-candidate"},

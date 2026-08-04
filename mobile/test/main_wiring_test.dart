@@ -12,11 +12,11 @@ import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
-import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
-import 'package:speakup/features/preparation/practice_launch_record_store.dart';
-import 'package:speakup/features/preparation/wire_job_preparation_client.dart';
-import 'package:speakup/features/preparation/wire_preparation_client.dart';
-import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
+import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/coaching/preparation/wire_job_preparation_client.dart';
+import 'package:speakup/features/coaching/scene/wire_scene_client.dart';
+import 'package:speakup/features/coaching/preparation/wire_preparation_launch_client.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/session_store.dart';
@@ -106,20 +106,53 @@ void main() {
       final preparationTransport = _Transport([
         _Response(
           method: 'GET',
-          path: '/v1/scenario-definitions',
+          path: '/v1/scenes',
           statusCode: HttpStatus.ok,
           body: {
-            'scenarios': [
+            'scenes': [
               {
-                'scenario_definition_id': 'scn_programmer_interview',
-                'scenario_type': 'INTERVIEW',
-                'scenario_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
+                'scene_id': 'scn_programmer_interview',
+                'scene_family': 'INTERVIEW',
+                'scene_model': 'PROJECT_EXPERIENCE_DEEP_DIVE',
                 'name': 'English interview for technical roles',
-                'summary': 'Discuss one backend project.',
-                'version': 1,
+                'scene_version': 1,
                 'status': 'active',
                 'turn_policy_ref': 'interview.project_deep_dive.turn.v1',
                 'session_policy_ref': 'interview.project_deep_dive.session.v1',
+                'prompt': {
+                  'public_scene_brief': 'Discuss one backend project.',
+                  'practice_goal': 'Explain decisions with evidence.',
+                  'user_role': 'Candidate',
+                  'ai_role': 'Technical interviewer',
+                  'persona_summary': 'Precise and evidence seeking.',
+                  'focus_areas': <String>['system_design'],
+                  'turn_blueprints': <String>['Ask for a project overview.'],
+                  'suggested_duration_seconds': 900,
+                },
+                'roles': <Object?>[
+                  <String, Object?>{
+                    'role_definition_id': 'role-technical-interviewer',
+                    'scene_id': 'scn_programmer_interview',
+                    'role_type': 'TECHNICAL_INTERVIEWER',
+                    'display_name': 'Technical interviewer',
+                    'responsibilities': 'Probe technical depth.',
+                    'style': 'Precise',
+                    'practice_objectives': <Object?>[
+                      <String, Object?>{
+                        'objective_id': 'system_design',
+                        'description': 'Explain system design decisions.',
+                      },
+                    ],
+                  },
+                ],
+                'practice_options': <Object?>[
+                  <String, Object?>{
+                    'practice_option_id': 'option-full-interview',
+                    'scene_id': 'scn_programmer_interview',
+                    'practice_option_type': 'FULL_SIMULATION',
+                    'display_name': 'Full interview',
+                  },
+                ],
               },
             ],
           },
@@ -190,10 +223,7 @@ void main() {
         dependencies.interviewReportController.client,
         isA<WireInterviewReportClient>(),
       );
-      expect(
-        dependencies.preparationController.client,
-        isA<WirePreparationCatalogClient>(),
-      );
+      expect(dependencies.preparationController.client, isA<WireSceneClient>());
       expect(
         dependencies.preparationLaunchController.client,
         isA<WirePreparationLaunchClient>(),
@@ -260,7 +290,7 @@ void main() {
 
       await dependencies.preparationController.loadIfNeeded();
       expect(dependencies.preparationController.errorMessage, isNull);
-      expect(dependencies.preparationController.scenarios, isNotEmpty);
+      expect(dependencies.preparationController.scenes, isNotEmpty);
       await tester.tap(find.byKey(const Key('primary-tab-scenes')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('scenes-page')), findsOneWidget);
@@ -318,8 +348,8 @@ void main() {
       expect(dependencies.reviewHistoryController.isLoading, isFalse);
       expect(dependencies.interviewReportController.envelope, isNull);
       expect(dependencies.interviewReportController.practiceSessionId, isNull);
-      expect(dependencies.preparationController.scenarios, isEmpty);
-      expect(dependencies.preparationController.selectedScenario, isNull);
+      expect(dependencies.preparationController.scenes, isEmpty);
+      expect(dependencies.preparationController.selectedScene, isNull);
       expect(dependencies.jobPreparationController.target, isNull);
       expect(dependencies.jobPreparationController.plan, isNull);
       expect(dependencies.agentController.threadId, isNull);
@@ -360,18 +390,8 @@ void main() {
 final class _PracticeTransport implements PracticeWireTransport {
   @override
   Future<PracticeWireResponse> send(PracticeWireRequest request) async {
-    expect(request.method, 'GET');
-    expect(
-      request.uri.path,
-      '/v1/agent-threads/$_threadId/voice-practice-session',
-    );
-    expect(
-      request.headers[HttpHeaders.authorizationHeader],
-      'Bearer sess_main-wiring',
-    );
-    return const PracticeWireResponse(
-      statusCode: HttpStatus.notFound,
-      body: '{}',
+    throw StateError(
+      'Practice transport must remain idle until an exact Session is chosen.',
     );
   }
 

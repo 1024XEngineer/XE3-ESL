@@ -4,676 +4,253 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 )
 
-func TestCreatePlanReplaysBeforeMutableContextValidation(t *testing.T) {
+func TestContextApplicationCreatesSessionFromExactExecutablePlan(t *testing.T) {
 	t.Parallel()
+	plan := practicePlanFixture()
+	repository := &sessionRepositoryStub{}
+	reader := &planReaderStub{plan: plan}
+	application := newContextTestApplication(t, repository, reader)
 
-	want := persistence.Plan{
-		ID:            "plan-existing",
-		AgentThreadID: "thread-1",
-		MatterID:      "matter-1",
-	}
-	application := newContextTestApplication(t, &contextRepositoryStub{
-		replayPlan: func(
-			_ persistence.ContextIdempotencyIntent,
-		) (persistence.Plan, bool, error) {
-			return want, true, nil
-		},
-	})
-
-	got, replayed, err := application.CreatePlan(
+	created, replayed, err := application.CreateSession(
 		context.Background(),
-		contextActorFixture(),
-		"intent-plan-0001",
-		validContextPlanRequest(),
+		practiceActorFixture(),
+		plan.ID,
+		"session-create-0001",
+		CreateSessionRequest{ExpectedPlanRevision: 3, UserConfirmed: true},
 	)
 	if err != nil {
-		t.Fatalf("CreatePlan replay: %v", err)
+		t.Fatalf("CreateSession: %v", err)
 	}
-	if !replayed || got.ID != want.ID {
-		t.Fatalf("CreatePlan replay = (%+v, %t), want existing result", got, replayed)
-	}
-}
-
-func TestCreateSessionReplaysBeforeMutableContextValidation(t *testing.T) {
-	t.Parallel()
-
-	want := persistence.ContextSessionBootstrap{
-		Session: persistence.ContextSession{ID: "session-existing"},
-	}
-	application := newContextTestApplication(t, &contextRepositoryStub{
-		replaySession: func(
-			_ persistence.ContextIdempotencyIntent,
-		) (persistence.ContextSessionBootstrap, bool, error) {
-			return want, true, nil
-		},
-	})
-
-	got, replayed, err := application.CreateSession(
-		context.Background(),
-		contextActorFixture(),
-		"plan-existing",
-		"intent-session-0001",
-		CreateSessionRequest{
-			ExpectedPlanRevision:  1,
-			UserConfirmed:         true,
-			PreparationSnapshotID: "preparation-snapshot-1",
-			PracticeOptionID:      "option_full_simulation",
-			RoleDefinitionIDs:     []string{"role_technical_interviewer"},
-		},
-	)
-	if err != nil {
-		t.Fatalf("CreateSession replay: %v", err)
-	}
-	if !replayed || got.Session.ID != want.Session.ID {
+	if replayed || reader.planID != plan.ID || reader.revision != 3 {
 		t.Fatalf(
-			"CreateSession replay = (%+v, %t), want existing result",
-			got,
+			"CreateSession replay=%t read=(%q,%d)",
 			replayed,
+			reader.planID,
+			reader.revision,
 		)
 	}
+	command := repository.created
+	if command.PlanID != plan.ID || command.PlanRevision != plan.Revision ||
+		command.Snapshot.Preparation.ID != plan.PreparationSnapshot.ID ||
+		command.Snapshot.SceneSelection.Scene.ID !=
+			plan.SceneSelection.Scene.ID ||
+		command.Snapshot.SessionPolicy != plan.SessionPolicy ||
+		len(command.Snapshot.PracticeObjectives) !=
+			len(plan.PracticeObjectives) {
+		t.Fatalf("CreateContextSession command = %#v", command)
+	}
+	if len(command.Snapshot.Participants) != 2 ||
+		command.Snapshot.Participants[0].Role != "FACILITATOR" ||
+		command.Snapshot.Participants[1].Role != "LEARNER" {
+		t.Fatalf("participants = %#v", command.Snapshot.Participants)
+	}
+	if created.Session.PlanRevision != plan.Revision ||
+		created.Snapshot.PlanRevision != plan.Revision {
+		t.Fatalf("created = %#v", created)
+	}
 }
 
-func TestConfirmAndStartPracticeBindsThreadAndReplaysSession(t *testing.T) {
+func TestContextApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 	t.Parallel()
-
-	want := persistence.ContextSessionBootstrap{
-		Session: persistence.ContextSession{
-			ID:     "session-existing",
-			PlanID: "plan-existing",
-		},
-		Snapshot: persistence.ContextSessionSnapshot{PlanRevision: 2},
+	plan := practicePlanFixture()
+	plan.SceneSelection.Scene.Family = scene.SceneFamilyExam
+	plan.SceneSelection.Scene.Model = scene.SceneModelIELTSSpeakingPart1
+	blueprints := []string{
+		"question-1", "question-2", "question-3", "question-4",
+		"question-5", "question-6", "question-7", "question-8",
 	}
-	application := newContextTestApplication(t, &contextRepositoryStub{
-		getPlan: func(string) (persistence.Plan, error) {
-			return persistence.Plan{
-				ID:            "plan-existing",
-				AgentThreadID: "thread-1",
-				Revision:      2,
-				Status:        persistence.PlanStatusReady,
-			}, nil
-		},
-		replaySession: func(
-			_ persistence.ContextIdempotencyIntent,
-		) (persistence.ContextSessionBootstrap, bool, error) {
-			return want, true, nil
-		},
-	})
-
-	got, err := application.ConfirmAndStartPractice(
+	plan.SceneSelection.Scene.Prompt.PublicSceneBrief =
+		"完成冻结的三个熟悉话题和八道 Part 1 问题。"
+	plan.SceneSelection.Scene.Prompt.TurnBlueprints = append(
+		[]string(nil),
+		blueprints...,
+	)
+	plan.IELTSAssignment = &preparation.IELTSAssignmentSnapshot{
+		BankID:         "ielts-bank-1",
+		Season:         "2026-05",
+		Mode:           scene.IELTSPracticeModePart1,
+		Part1SetID:     "part-1-set-1",
+		Part1Questions: 8,
+		TurnBlueprints: append([]string(nil), blueprints...),
+	}
+	repository := &sessionRepositoryStub{}
+	application := newContextTestApplication(
+		t,
+		repository,
+		&planReaderStub{plan: plan},
+	)
+	_, _, err := application.CreateSession(
 		context.Background(),
-		contextActorFixture(),
-		"trusted-confirmation-0001",
-		StartConfirmation{
-			AgentThreadID:        "thread-1",
-			PracticePlanID:       "plan-existing",
-			ExpectedPlanRevision: 2,
+		practiceActorFixture(),
+		plan.ID,
+		"session-create-ielts",
+		CreateSessionRequest{
+			ExpectedPlanRevision: plan.Revision,
+			UserConfirmed:        true,
 		},
 	)
 	if err != nil {
-		t.Fatalf("ConfirmAndStartPractice: %v", err)
+		t.Fatalf("CreateSession IELTS: %v", err)
 	}
-	if !got.Replayed || got.Bootstrap.Session.ID != want.Session.ID {
-		t.Fatalf("ConfirmAndStartPractice = %#v", got)
+	assignment := repository.created.Snapshot.IELTSAssignment
+	if assignment == nil || assignment == plan.IELTSAssignment ||
+		assignment.Mode != plan.IELTSAssignment.Mode ||
+		assignment.Part1SetID != plan.IELTSAssignment.Part1SetID ||
+		!equalStrings(
+			assignment.TurnBlueprints,
+			plan.IELTSAssignment.TurnBlueprints,
+		) {
+		t.Fatalf("Session IELTS assignment = %#v", assignment)
 	}
 }
 
-func TestConfirmAndStartPracticeRejectsCrossThreadConfirmation(t *testing.T) {
+func TestContextApplicationRejectsUnconfirmedSessionBeforePlanRead(
+	t *testing.T,
+) {
 	t.Parallel()
+	reader := &planReaderStub{err: errors.New("must not read")}
+	application := newContextTestApplication(t, &sessionRepositoryStub{}, reader)
+	_, _, err := application.CreateSession(
+		context.Background(),
+		practiceActorFixture(),
+		"plan-1",
+		"session-create-0002",
+		CreateSessionRequest{ExpectedPlanRevision: 1},
+	)
+	if !errors.Is(err, persistence.ErrConfirmationRequired) || reader.calls != 0 {
+		t.Fatalf("CreateSession = %v, reads=%d", err, reader.calls)
+	}
+}
 
-	application := newContextTestApplication(t, &contextRepositoryStub{
-		getPlan: func(string) (persistence.Plan, error) {
-			return persistence.Plan{
-				ID:            "plan-1",
-				AgentThreadID: "thread-owner",
-				Revision:      1,
-				Status:        persistence.PlanStatusReady,
-			}, nil
-		},
-	})
+func TestContextApplicationMapsStaleExecutablePlanToConflict(t *testing.T) {
+	t.Parallel()
+	application := newContextTestApplication(
+		t,
+		&sessionRepositoryStub{},
+		&planReaderStub{err: preparation.ErrPlanConflict},
+	)
+	_, _, err := application.CreateSession(
+		context.Background(),
+		practiceActorFixture(),
+		"plan-1",
+		"session-create-0003",
+		CreateSessionRequest{ExpectedPlanRevision: 2, UserConfirmed: true},
+	)
+	if !errors.Is(err, persistence.ErrConflict) {
+		t.Fatalf("CreateSession stale error = %v", err)
+	}
+}
+
+func TestContextApplicationReplaysSessionWithoutReadingPlan(t *testing.T) {
+	t.Parallel()
+	want := contextBootstrapFixture()
+	repository := &sessionRepositoryStub{replay: want, replayFound: true}
+	reader := &planReaderStub{err: errors.New("must not read")}
+	application := newContextTestApplication(t, repository, reader)
+	got, replayed, err := application.CreateSession(
+		context.Background(),
+		practiceActorFixture(),
+		"plan-1",
+		"session-create-0004",
+		CreateSessionRequest{ExpectedPlanRevision: 1, UserConfirmed: true},
+	)
+	if err != nil || !replayed || got.Session.ID != want.Session.ID ||
+		reader.calls != 0 {
+		t.Fatalf("CreateSession replay = (%#v,%t,%v), reads=%d", got, replayed, err, reader.calls)
+	}
+}
+
+func TestConfirmAndStartRequiresExactPlanSourceThread(t *testing.T) {
+	t.Parallel()
+	plan := practicePlanFixture()
+	plan.SourceThreadID = "thread-1"
+	reader := &planReaderStub{plan: plan}
+	application := newContextTestApplication(t, &sessionRepositoryStub{}, reader)
+
 	_, err := application.ConfirmAndStartPractice(
 		context.Background(),
-		contextActorFixture(),
-		"trusted-confirmation-0002",
+		practiceActorFixture(),
+		"session-create-0005",
 		StartConfirmation{
 			AgentThreadID:        "thread-other",
-			PracticePlanID:       "plan-1",
-			ExpectedPlanRevision: 1,
+			PracticePlanID:       plan.ID,
+			ExpectedPlanRevision: plan.Revision,
 		},
 	)
 	if !errors.Is(err, persistence.ErrNotFound) {
-		t.Fatalf("cross-Thread confirmation error = %v", err)
+		t.Fatalf("ConfirmAndStartPractice thread error = %v", err)
 	}
-}
 
-func TestConfirmAndStartPracticeReturnsExistingActiveSession(t *testing.T) {
-	t.Parallel()
-
-	want := persistence.ContextSessionBootstrap{
-		Session: persistence.ContextSession{
-			ID:     "session-active",
-			PlanID: "plan-1",
-			Status: persistence.ContextSessionProgress,
-		},
-		Snapshot: persistence.ContextSessionSnapshot{PlanRevision: 1},
-	}
-	application := newContextTestApplication(t, &contextRepositoryStub{
-		getPlan: func(string) (persistence.Plan, error) {
-			return persistence.Plan{
-				ID:            "plan-1",
-				AgentThreadID: "thread-1",
-				Revision:      1,
-				Status:        persistence.PlanStatusReady,
-			}, nil
-		},
-		replaySession: func(
-			persistence.ContextIdempotencyIntent,
-		) (persistence.ContextSessionBootstrap, bool, error) {
-			return persistence.ContextSessionBootstrap{}, false,
-				persistence.ErrActiveSessionConflict
-		},
-		resolveSession: func(string) (
-			persistence.ContextSessionBootstrap,
-			error,
-		) {
-			return want, nil
-		},
-	})
-	got, err := application.ConfirmAndStartPractice(
+	plan.SourceThreadID = ""
+	reader.plan = plan
+	_, err = application.ConfirmAndStartPractice(
 		context.Background(),
-		contextActorFixture(),
-		"trusted-confirmation-0003",
+		practiceActorFixture(),
+		"session-create-0006",
 		StartConfirmation{
 			AgentThreadID:        "thread-1",
-			PracticePlanID:       "plan-1",
-			ExpectedPlanRevision: 1,
+			PracticePlanID:       plan.ID,
+			ExpectedPlanRevision: plan.Revision,
 		},
 	)
-	if err != nil || !got.ActiveConflict ||
-		got.Bootstrap.Session.ID != want.Session.ID {
-		t.Fatalf("active conflict = (%#v, %v)", got, err)
+	if !errors.Is(err, persistence.ErrNotFound) {
+		t.Fatalf("ConfirmAndStartPractice empty source error = %v", err)
 	}
 }
 
-func TestInterviewSessionRequiresExactlyOneInterviewerRole(t *testing.T) {
+func TestConfirmAndStartResolvesActiveConflictByPlan(t *testing.T) {
 	t.Parallel()
-
-	application := newContextTestApplication(t, &contextRepositoryStub{
-		getPlan: func(string) (persistence.Plan, error) {
-			return persistence.Plan{
-				ID:           "plan-1",
-				ScenarioType: "INTERVIEW",
-				Revision:     1,
-				Status:       persistence.PlanStatusReady,
-			}, nil
-		},
-	})
-	_, _, err := application.CreateSession(
+	plan := practicePlanFixture()
+	plan.SourceThreadID = "thread-1"
+	want := contextBootstrapFixture()
+	repository := &sessionRepositoryStub{
+		createErr: persistence.ErrActiveSessionConflict,
+		resolved:  want,
+	}
+	application := newContextTestApplication(
+		t,
+		repository,
+		&planReaderStub{plan: plan},
+	)
+	result, err := application.ConfirmAndStartPractice(
 		context.Background(),
-		contextActorFixture(),
-		"plan-1",
-		"intent-session-0002",
-		CreateSessionRequest{
-			ExpectedPlanRevision:  1,
-			UserConfirmed:         true,
-			PreparationSnapshotID: "preparation-snapshot-1",
-			PracticeOptionID:      "option_full_simulation",
-			RoleDefinitionIDs: []string{
-				"role_technical_interviewer",
-				"role_hr_interviewer",
-			},
+		practiceActorFixture(),
+		"session-create-0007",
+		StartConfirmation{
+			AgentThreadID:        plan.SourceThreadID,
+			PracticePlanID:       plan.ID,
+			ExpectedPlanRevision: plan.Revision,
 		},
 	)
-	if !errors.Is(err, persistence.ErrConflict) {
-		t.Fatalf("CreateSession error = %v, want role cardinality conflict", err)
+	if err != nil || !result.ActiveConflict ||
+		repository.resolvedPlanID != plan.ID {
+		t.Fatalf("ConfirmAndStartPractice = (%#v,%v), resolved=%q", result, err, repository.resolvedPlanID)
 	}
-}
-
-func TestSessionPolicyIsFrozenByPracticeOptionType(t *testing.T) {
-	t.Parallel()
-
-	config := persistence.ScenarioConfigSnapshot{
-		FocusAreas: []string{"system_design"},
-	}
-	full := defaultContextSessionPolicy(
-		config,
-		persistence.PracticeOptionSnapshot{Type: "FULL_SIMULATION"},
-	)
-	if full.MinEffectiveTurns != 4 ||
-		full.CoverageCheckpointTurn != 4 ||
-		full.MaxEffectiveTurns != 6 {
-		t.Fatalf("FULL_SIMULATION policy = %+v", full)
-	}
-	focus := defaultContextSessionPolicy(
-		config,
-		persistence.PracticeOptionSnapshot{Type: "FOCUS"},
-	)
-	if focus.MinEffectiveTurns != 1 ||
-		focus.CoverageCheckpointTurn != 1 ||
-		focus.MaxEffectiveTurns != 3 {
-		t.Fatalf("FOCUS policy = %+v", focus)
-	}
-	interview := defaultContextSessionPolicy(
-		persistence.ScenarioConfigSnapshot{
-			Type:       persistence.ScenarioFamilyInterview,
-			FocusAreas: []string{"system_design"},
-		},
-		persistence.PracticeOptionSnapshot{Type: "FOCUS"},
-	)
-	if interview.MaxFollowUpsPerQuestion != 3 {
-		t.Fatalf("INTERVIEW policy = %+v", interview)
-	}
-
-	ieltsFull := defaultContextSessionPolicy(
-		persistence.ScenarioConfigSnapshot{
-			Model: persistence.ScenarioModelIELTSSpeakingFullMock,
-			PromptModel: persistence.ScenarioPromptModel{
-				FocusAreas:               []string{"part_1", "part_2", "part_3"},
-				SuggestedDurationSeconds: 900,
-			},
-		},
-		persistence.PracticeOptionSnapshot{Type: "FULL_SIMULATION"},
-	)
-	if ieltsFull.MinEffectiveTurns != 14 ||
-		ieltsFull.CoverageCheckpointTurn != 14 ||
-		ieltsFull.MaxEffectiveTurns != 14 ||
-		ieltsFull.MaxFollowUpsPerQuestion != 0 {
-		t.Fatalf("IELTS full mock policy = %+v", ieltsFull)
-	}
-
-	ieltsSections := []struct {
-		name  string
-		model persistence.ScenarioModel
-		turns int
-	}{
-		{"part 1", persistence.ScenarioModelIELTSSpeakingPart1, 8},
-		{"part 2 with bound part 3", persistence.ScenarioModelIELTSSpeakingPart2, 6},
-		{"part 3", persistence.ScenarioModelIELTSSpeakingPart3, 5},
-	}
-	for _, test := range ieltsSections {
-		t.Run(test.name, func(t *testing.T) {
-			policy := defaultContextSessionPolicy(
-				persistence.ScenarioConfigSnapshot{
-					Model: test.model,
-					PromptModel: persistence.ScenarioPromptModel{
-						FocusAreas:               []string{"ielts"},
-						SuggestedDurationSeconds: 300,
-					},
-				},
-				persistence.PracticeOptionSnapshot{
-					Type: "FULL_SIMULATION",
-				},
-			)
-			if policy.MinEffectiveTurns != test.turns ||
-				policy.CoverageCheckpointTurn != test.turns ||
-				policy.MaxEffectiveTurns != test.turns ||
-				policy.MaxFollowUpsPerQuestion != 0 {
-				t.Fatalf("%s policy = %+v", test.name, policy)
-			}
-		})
-	}
-
-	shortIELTSSections := []struct {
-		name  string
-		model persistence.ScenarioModel
-		turns []string
-	}{
-		{
-			"short full mock",
-			persistence.ScenarioModelIELTSSpeakingFullMock,
-			make([]string, 10),
-		},
-		{
-			"short part 2 with bound part 3",
-			persistence.ScenarioModelIELTSSpeakingPart2,
-			make([]string, 2),
-		},
-		{
-			"short part 3",
-			persistence.ScenarioModelIELTSSpeakingPart3,
-			make([]string, 1),
-		},
-	}
-	for _, test := range shortIELTSSections {
-		t.Run(test.name, func(t *testing.T) {
-			policy := defaultContextSessionPolicy(
-				persistence.ScenarioConfigSnapshot{
-					Model: test.model,
-					PromptModel: persistence.ScenarioPromptModel{
-						TurnBlueprints: test.turns,
-					},
-				},
-				persistence.PracticeOptionSnapshot{
-					Type: "FULL_SIMULATION",
-				},
-			)
-			if policy.MinEffectiveTurns != len(test.turns) ||
-				policy.CoverageCheckpointTurn != len(test.turns) ||
-				policy.MaxEffectiveTurns != len(test.turns) ||
-				policy.MaxFollowUpsPerQuestion != 0 {
-				t.Fatalf("%s policy = %+v", test.name, policy)
-			}
-		})
-	}
-}
-
-func TestFocusOptionMustMatchSelectedInterviewer(t *testing.T) {
-	t.Parallel()
-
-	plan := persistence.Plan{
-		ScenarioDefinitionID:      "scenario-1",
-		ScenarioDefinitionVersion: 1,
-		ScenarioType:              "INTERVIEW",
-		ScenarioConfigID:          "config-1",
-		ScenarioConfigVersion:     1,
-		PreparationProfileID:      "profile-1",
-		SelectedRoleIDs:           []string{"role-1", "role-2"},
-	}
-	request := CreateSessionRequest{
-		PracticeOptionID:  "option-focus-role-2",
-		RoleDefinitionIDs: []string{"role-1"},
-	}
-	selection := SessionCatalogSelection{
-		PlanCatalogSelection: PlanCatalogSelection{
-			ScenarioDefinition: persistence.ScenarioDefinitionSnapshot{
-				ID:      "scenario-1",
-				Type:    "INTERVIEW",
-				Version: 1,
-				Status:  "active",
-			},
-			ScenarioConfig: persistence.ScenarioConfigSnapshot{
-				ID:                   "config-1",
-				ScenarioDefinitionID: "scenario-1",
-				Type:                 "INTERVIEW",
-				Version:              1,
-			},
-			SelectedRoles: []persistence.RoleSnapshot{{
-				ID:                   "role-1",
-				ScenarioDefinitionID: "scenario-1",
-				Version:              1,
-			}},
-		},
-		PracticeOption: persistence.PracticeOptionSnapshot{
-			ID:                   "option-focus-role-2",
-			ScenarioDefinitionID: "scenario-1",
-			RoleDefinitionID:     "role-2",
-			Type:                 "FOCUS",
-			Version:              1,
-		},
-	}
-	if validSessionCatalogSelection(plan, request, selection) {
-		t.Fatal("FOCUS option accepted a different interviewer role")
-	}
-}
-
-func TestTransitionSessionUsesCanonicalWireAction(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		transition persistence.ContextSessionTransition
-		wireAction string
-	}{
-		{
-			name:       "pause",
-			transition: persistence.ContextSessionPause,
-			wireAction: "pause",
-		},
-		{
-			name:       "resume",
-			transition: persistence.ContextSessionResume,
-			wireAction: "resume",
-		},
-		{
-			name:       "end early",
-			transition: persistence.ContextSessionEndEarly,
-			wireAction: "end-early",
-		},
-	}
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			var captured persistence.TransitionContextSessionCommand
-			application := newContextTestApplication(
-				t,
-				&contextRepositoryStub{
-					transitionSession: func(
-						command persistence.TransitionContextSessionCommand,
-					) (persistence.ContextSession, bool, error) {
-						captured = command
-						return persistence.ContextSession{
-							ID: command.SessionID,
-						}, false, nil
-					},
-				},
-			)
-
-			session, replayed, err := application.TransitionSession(
-				context.Background(),
-				contextActorFixture(),
-				"session-1",
-				"intent-transition-0001",
-				2,
-				test.transition,
-			)
-			if err != nil {
-				t.Fatalf("TransitionSession: %v", err)
-			}
-			if replayed || session.ID != "session-1" {
-				t.Fatalf(
-					"TransitionSession = (%+v, %t), want new session result",
-					session,
-					replayed,
-				)
-			}
-			wantPath := "/v1/practice-sessions/session-1/" +
-				test.wireAction
-			if captured.Intent.CanonicalPath != wantPath {
-				t.Fatalf(
-					"canonical path = %q, want %q",
-					captured.Intent.CanonicalPath,
-					wantPath,
-				)
-			}
-			if captured.Transition != test.transition {
-				t.Fatalf(
-					"transition enum = %q, want unchanged %q",
-					captured.Transition,
-					test.transition,
-				)
-			}
-		})
-	}
-}
-
-type contextRepositoryStub struct {
-	replayPlan        func(persistence.ContextIdempotencyIntent) (persistence.Plan, bool, error)
-	createPlan        func(persistence.CreatePlanCommand) (persistence.Plan, bool, error)
-	updatePlan        func(persistence.UpdatePlanCommand) (persistence.Plan, bool, error)
-	getPlan           func(string) (persistence.Plan, error)
-	replaySession     func(persistence.ContextIdempotencyIntent) (persistence.ContextSessionBootstrap, bool, error)
-	createSession     func(persistence.CreateContextSessionCommand) (persistence.ContextSessionBootstrap, bool, error)
-	resolveSession    func(string) (persistence.ContextSessionBootstrap, error)
-	transitionSession func(persistence.TransitionContextSessionCommand) (persistence.ContextSession, bool, error)
-}
-
-func (s *contextRepositoryStub) ReplayPlan(
-	_ context.Context,
-	_ persistence.Actor,
-	intent persistence.ContextIdempotencyIntent,
-) (persistence.Plan, bool, error) {
-	if s.replayPlan != nil {
-		return s.replayPlan(intent)
-	}
-	return persistence.Plan{}, false, nil
-}
-
-func (s *contextRepositoryStub) CreatePlan(
-	_ context.Context,
-	_ persistence.Actor,
-	command persistence.CreatePlanCommand,
-) (persistence.Plan, bool, error) {
-	if s.createPlan != nil {
-		return s.createPlan(command)
-	}
-	return persistence.Plan{}, false, errors.New("unexpected CreatePlan")
-}
-
-func (s *contextRepositoryStub) UpdatePlan(
-	_ context.Context,
-	_ persistence.Actor,
-	command persistence.UpdatePlanCommand,
-) (persistence.Plan, bool, error) {
-	if s.updatePlan != nil {
-		return s.updatePlan(command)
-	}
-	return persistence.Plan{}, false, errors.New("unexpected UpdatePlan")
-}
-
-func (s *contextRepositoryStub) GetPlan(
-	_ context.Context,
-	_ persistence.Actor,
-	planID string,
-) (persistence.Plan, error) {
-	if s.getPlan != nil {
-		return s.getPlan(planID)
-	}
-	return persistence.Plan{}, errors.New("unexpected GetPlan")
-}
-
-func (s *contextRepositoryStub) ReplayContextSession(
-	_ context.Context,
-	_ persistence.Actor,
-	intent persistence.ContextIdempotencyIntent,
-) (persistence.ContextSessionBootstrap, bool, error) {
-	if s.replaySession != nil {
-		return s.replaySession(intent)
-	}
-	return persistence.ContextSessionBootstrap{}, false, nil
-}
-
-func (s *contextRepositoryStub) CreateContextSession(
-	_ context.Context,
-	_ persistence.Actor,
-	command persistence.CreateContextSessionCommand,
-) (persistence.ContextSessionBootstrap, bool, error) {
-	if s.createSession != nil {
-		return s.createSession(command)
-	}
-	return persistence.ContextSessionBootstrap{}, false,
-		errors.New("unexpected CreateContextSession")
-}
-
-func (s *contextRepositoryStub) GetContextSession(
-	context.Context,
-	persistence.Actor,
-	string,
-) (persistence.ContextSession, error) {
-	return persistence.ContextSession{}, errors.New("unexpected GetContextSession")
-}
-
-func (s *contextRepositoryStub) GetContextSessionSnapshot(
-	context.Context,
-	persistence.Actor,
-	string,
-) (persistence.ContextSessionSnapshot, error) {
-	return persistence.ContextSessionSnapshot{},
-		errors.New("unexpected GetContextSessionSnapshot")
-}
-
-func (s *contextRepositoryStub) ResolveContextSessionByThread(
-	_ context.Context,
-	_ persistence.Actor,
-	threadID string,
-) (persistence.ContextSessionBootstrap, error) {
-	if s.resolveSession != nil {
-		return s.resolveSession(threadID)
-	}
-	return persistence.ContextSessionBootstrap{},
-		errors.New("unexpected ResolveContextSessionByThread")
-}
-
-func (s *contextRepositoryStub) TransitionContextSession(
-	_ context.Context,
-	_ persistence.Actor,
-	command persistence.TransitionContextSessionCommand,
-) (persistence.ContextSession, bool, error) {
-	if s.transitionSession != nil {
-		return s.transitionSession(command)
-	}
-	return persistence.ContextSession{}, false,
-		errors.New("unexpected TransitionContextSession")
-}
-
-func (s *contextRepositoryStub) DeleteUserData(
-	context.Context,
-	persistence.DeletionContext,
-) error {
-	return errors.New("unexpected DeleteUserData")
-}
-
-type panicContextDependency struct{}
-
-func (panicContextDependency) ValidatePracticeAnchor(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	string,
-) (PracticeAnchor, error) {
-	panic("mutable Agent context must not run on replay")
-}
-
-func (panicContextDependency) ReadPreparationProfile(
-	context.Context,
-	requestcontext.Actor,
-	string,
-) (PreparationProfileRef, error) {
-	panic("mutable Preparation profile must not run on replay")
-}
-
-func (panicContextDependency) ReadPreparationSnapshot(
-	context.Context,
-	requestcontext.Actor,
-	string,
-) (persistence.PreparationSnapshot, error) {
-	panic("mutable Preparation snapshot must not run on replay")
-}
-
-func (panicContextDependency) ReadPlanCatalog(
-	PlanCatalogRequest,
-) (PlanCatalogSelection, error) {
-	panic("mutable Catalog must not run on replay")
-}
-
-func (panicContextDependency) ReadSessionCatalog(
-	SessionCatalogRequest,
-) (SessionCatalogSelection, error) {
-	panic("mutable Catalog must not run on replay")
-}
-
-type panicIDGenerator struct{}
-
-func (panicIDGenerator) NewID() (string, error) {
-	panic("ID generation must not run on replay")
 }
 
 func newContextTestApplication(
 	t *testing.T,
-	repository persistence.ContextRepository,
+	repository persistence.SessionRepository,
+	reader preparation.PlanReader,
 ) *ContextApplication {
 	t.Helper()
 	application, err := NewContextApplication(
 		repository,
-		panicIDGenerator{},
-		panicContextDependency{},
-		panicContextDependency{},
-		panicContextDependency{},
+		&practiceIDStub{values: []string{
+			"session-1",
+			"snapshot-1",
+			"participant-facilitator",
+			"participant-learner",
+		}},
+		reader,
 	)
 	if err != nil {
 		t.Fatalf("NewContextApplication: %v", err)
@@ -681,22 +258,196 @@ func newContextTestApplication(
 	return application
 }
 
-func contextActorFixture() requestcontext.Actor {
-	return requestcontext.Actor{
-		UserID:    "10000000-0000-4000-8000-000000000112",
-		SessionID: "20000000-0000-4000-8000-000000000112",
+func practicePlanFixture() preparation.PracticePlan {
+	createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
+	definition := scene.SceneDefinition{
+		ID:      "scene-1",
+		Family:  scene.SceneFamilyInterview,
+		Model:   scene.SceneModelInterviewBasicDialogue,
+		Name:    "Interview",
+		Version: 1,
+		Status:  scene.SceneStatusActive,
+		Prompt: scene.ScenePrompt{
+			PublicSceneBrief:         "Brief",
+			PracticeGoal:             "Goal",
+			UserRole:                 "Candidate",
+			AIRole:                   "Interviewer",
+			PersonaSummary:           "Interviewer",
+			FocusAreas:               []string{"clarity"},
+			TurnBlueprints:           []string{"question"},
+			SuggestedDurationSeconds: 600,
+		},
+		Roles: []scene.RoleDefinition{{
+			ID:               "role-1",
+			SceneID:          "scene-1",
+			Type:             "INTERVIEWER",
+			DisplayName:      "Interviewer",
+			Responsibilities: "Ask",
+			Style:            "Direct",
+			PracticeObjectives: []scene.PracticeObjectiveDefinition{{
+				ID: "clarity", Description: "Explain the answer clearly.",
+			}},
+		}},
+		PracticeOptions: []scene.PracticeOption{{
+			ID:          "option-full",
+			SceneID:     "scene-1",
+			Type:        scene.PracticeOptionFullSimulation,
+			DisplayName: "Full",
+		}},
+	}
+	return preparation.PracticePlan{
+		ID:             "plan-1",
+		UserID:         "user-1",
+		SourceThreadID: "thread-1",
+		PreparationSnapshot: preparation.Snapshot{
+			ID:                 "snapshot-preparation-1",
+			SourceProfileID:    "profile-1",
+			SourceVersion:      1,
+			BackgroundSnapshot: "Backend engineer",
+			CreatedAt:          createdAt,
+		},
+		SceneSelection: scene.SelectionSnapshot{
+			Scene:            definition,
+			SelectedRoleIDs:  []string{"role-1"},
+			PracticeOptionID: "option-full",
+		},
+		SessionPolicy: preparation.SessionPolicy{
+			SuggestedDurationSeconds: 600,
+			MinEffectiveTurns:        4,
+			MaxEffectiveTurns:        6,
+			CoverageCheckpointTurn:   4,
+			MaxFollowUpsPerQuestion:  1,
+			EarlyCompletionRule: preparation.
+				EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+		},
+		PracticeObjectives: []preparation.PracticeObjective{{
+			ID: "clarity", Description: "clarity",
+		}},
+		Revision:  3,
+		Status:    preparation.PlanStatusReady,
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
 	}
 }
 
-func validContextPlanRequest() CreatePlanRequest {
-	return CreatePlanRequest{
-		AgentThreadID:             "thread-1",
-		MatterID:                  "matter-1",
-		ScenarioDefinitionID:      "scenario-1",
-		ScenarioDefinitionVersion: 1,
-		ScenarioConfigID:          "config-1",
-		ScenarioConfigVersion:     1,
-		PreparationProfileID:      "profile-1",
-		SelectedRoleIDs:           []string{"role-1"},
+func practiceActorFixture() requestcontext.Actor {
+	return requestcontext.Actor{UserID: "user-1", SessionID: "auth-session-1"}
+}
+
+type planReaderStub struct {
+	plan     preparation.PracticePlan
+	err      error
+	calls    int
+	planID   string
+	revision int
+}
+
+func (s *planReaderStub) ReadExecutablePlan(
+	_ context.Context,
+	_ requestcontext.Actor,
+	planID string,
+	revision int,
+) (preparation.PracticePlan, error) {
+	s.calls++
+	s.planID = planID
+	s.revision = revision
+	return s.plan, s.err
+}
+
+type practiceIDStub struct {
+	values []string
+}
+
+func (s *practiceIDStub) NewID() (string, error) {
+	if len(s.values) == 0 {
+		return "", errors.New("no ID")
+	}
+	value := s.values[0]
+	s.values = s.values[1:]
+	return value, nil
+}
+
+type sessionRepositoryStub struct {
+	replay         persistence.ContextSessionBootstrap
+	replayFound    bool
+	created        persistence.CreateContextSessionCommand
+	createErr      error
+	resolved       persistence.ContextSessionBootstrap
+	resolvedPlanID string
+}
+
+func (s *sessionRepositoryStub) ReplayContextSession(
+	context.Context,
+	persistence.Actor,
+	persistence.ContextIdempotencyIntent,
+) (persistence.ContextSessionBootstrap, bool, error) {
+	return s.replay, s.replayFound, nil
+}
+
+func (s *sessionRepositoryStub) CreateContextSession(
+	_ context.Context,
+	_ persistence.Actor,
+	command persistence.CreateContextSessionCommand,
+) (persistence.ContextSessionBootstrap, bool, error) {
+	s.created = command
+	if s.createErr != nil {
+		return persistence.ContextSessionBootstrap{}, false, s.createErr
+	}
+	return persistence.ContextSessionBootstrap{
+		Session: persistence.ContextSession{
+			ID:           command.SessionID,
+			PlanID:       command.PlanID,
+			PlanRevision: command.PlanRevision,
+		},
+		Snapshot: command.Snapshot,
+	}, false, nil
+}
+
+func (s *sessionRepositoryStub) GetContextSession(
+	context.Context,
+	persistence.Actor,
+	string,
+) (persistence.ContextSession, error) {
+	return s.resolved.Session, nil
+}
+
+func (s *sessionRepositoryStub) GetContextSessionSnapshot(
+	context.Context,
+	persistence.Actor,
+	string,
+) (persistence.ContextSessionSnapshot, error) {
+	return s.resolved.Snapshot, nil
+}
+
+func (s *sessionRepositoryStub) ResolveContextSessionByPlan(
+	_ context.Context,
+	_ persistence.Actor,
+	planID string,
+) (persistence.ContextSessionBootstrap, error) {
+	s.resolvedPlanID = planID
+	return s.resolved, nil
+}
+
+func (s *sessionRepositoryStub) TransitionContextSession(
+	context.Context,
+	persistence.Actor,
+	persistence.TransitionContextSessionCommand,
+) (persistence.ContextSession, bool, error) {
+	return s.resolved.Session, false, nil
+}
+
+func (s *sessionRepositoryStub) DeleteUserData(
+	context.Context,
+	persistence.DeletionContext,
+) error {
+	return nil
+}
+
+func contextBootstrapFixture() persistence.ContextSessionBootstrap {
+	return persistence.ContextSessionBootstrap{
+		Session: persistence.ContextSession{ID: "session-1", PlanID: "plan-1"},
+		Snapshot: persistence.ContextSessionSnapshot{
+			ID: "snapshot-1", SessionID: "session-1",
+		},
 	}
 }

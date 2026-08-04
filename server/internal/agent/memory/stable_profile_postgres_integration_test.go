@@ -90,24 +90,24 @@ func TestPostgresRepositoryListsStableProfileDeterministically(
 		"小雨",
 	)
 
-	matterCommand := createCommand(
+	goalCommand := createCommand(
 		CanonicalProfilePreferredName,
-		"Matter 中的错误姓名",
+		"Goal 中的错误姓名",
 	)
-	matterCommand.Scope = ScopeMatter
-	matterCommand.MatterID = integrationMatterA
-	matterCommand.Source = evidence(
+	goalCommand.Scope = ScopeGoal
+	goalCommand.GoalID = integrationGoalA
+	goalCommand.Source = evidence(
 		SourceAgentMessage,
-		"matter-profile-name",
+		"goal-profile-name",
 		1,
-		"matter profile name",
+		"goal profile name",
 	)
 	if _, err := repository.Create(
 		ctx,
 		actorA,
-		matterCommand,
+		goalCommand,
 	); err != nil {
-		t.Fatalf("Create Matter-scoped profile: %v", err)
+		t.Fatalf("Create Goal-scoped profile: %v", err)
 	}
 	if _, err := repository.Inactivate(ctx, actorA, InactivateCommand{
 		MemoryID:        gender.ID,

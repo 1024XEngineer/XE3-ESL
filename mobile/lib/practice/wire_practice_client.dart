@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
 import 'package:speakup/identity/network/transport_security.dart';
@@ -16,15 +17,14 @@ import 'package:speakup/review/formal_review_decoder.dart';
 import 'package:speakup/review/formal_review_presentation.dart';
 import 'package:speakup/review/turn_feedback.dart';
 
-/// The single replaceable location for the frozen #87 voice-practice routes.
+/// The single replaceable location for voice-practice routes.
 ///
 /// UI and Controller code depend only on [PracticeClient].
 final class PracticeWireEndpoints {
   const PracticeWireEndpoints({
-    this.restoreByThread =
-        '/v1/agent-threads/{thread_id}/voice-practice-session',
-    this.startByThread =
-        '/v1/agent-threads/{thread_id}/voice-practice-sessions',
+    this.voiceActivation =
+        '/v1/practice-sessions/{practice_session_id}/voice-activation',
+    this.voiceState = '/v1/practice-sessions/{practice_session_id}/voice-state',
     this.transcribe =
         '/v1/voice-practice-sessions/{practice_session_id}/questions/'
         '{question_id}/transcription-candidates',
@@ -40,8 +40,8 @@ final class PracticeWireEndpoints {
         '{candidate_id}/confirmations',
   });
 
-  final String restoreByThread;
-  final String startByThread;
+  final String voiceActivation;
+  final String voiceState;
   final String transcribe;
   final String submitText;
   final String confirm;
@@ -50,11 +50,13 @@ final class PracticeWireEndpoints {
   final String retryRequestStatus;
   final String retryConfirmation;
 
-  String restorePath(String threadId) =>
-      restoreByThread.replaceAll('{thread_id}', _pathSegment(threadId));
+  String voiceActivationPath(String sessionId) => voiceActivation.replaceAll(
+    '{practice_session_id}',
+    _pathSegment(sessionId),
+  );
 
-  String startPath(String threadId) =>
-      startByThread.replaceAll('{thread_id}', _pathSegment(threadId));
+  String voiceStatePath(String sessionId) =>
+      voiceState.replaceAll('{practice_session_id}', _pathSegment(sessionId));
 
   String transcribePath(String sessionId, String questionId) => transcribe
       .replaceAll('{practice_session_id}', _pathSegment(sessionId))
@@ -205,50 +207,36 @@ final class WirePracticeClient
   }
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
-  }) {
+  Future<PracticeSessionSnapshot> restorePractice({required String sessionId}) {
     return _run((generation) async {
-      _requireOpaqueId(threadId);
+      _requireOpaqueId(sessionId);
       final response = await _sendJson(
         generation: generation,
         method: 'GET',
-        path: _endpoints.restorePath(threadId),
+        path: _endpoints.voiceStatePath(sessionId),
       );
-      if (response.statusCode == HttpStatus.notFound) {
-        return null;
-      }
       _requireStatus(response, const {HttpStatus.ok});
-      return _decodeSessionState(response.body, expectedThreadId: threadId);
+      return _decodeSessionState(response.body, expectedSessionId: sessionId);
     });
   }
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
   }) {
     return _run((generation) async {
-      _requireOpaqueId(threadId);
-      _requireOpaqueId(activeMatter.id);
+      _requireOpaqueId(sessionId);
       _requireClientId(clientOperationId);
       final response = await _send(
         generation: generation,
         timeout: _jsonTimeout,
         method: 'POST',
-        path: _endpoints.startPath(threadId),
+        path: _endpoints.voiceActivationPath(sessionId),
         extraHeaders: <String, String>{'Idempotency-Key': clientOperationId},
       );
       _requireStatus(response, const {HttpStatus.created});
-      return PracticeStartResult(
-        snapshot: _decodeSessionState(
-          response.body,
-          expectedThreadId: threadId,
-          expectedMatterId: activeMatter.id,
-        ),
-      );
+      return _decodeSessionState(response.body, expectedSessionId: sessionId);
     });
   }
 
@@ -724,18 +712,14 @@ final class IoPracticeWireTransport implements PracticeWireTransport {
 PracticeSessionSnapshot _decodeSessionState(
   String body, {
   String? expectedSessionId,
-  String? expectedThreadId,
-  String? expectedMatterId,
 }) {
   final root = _exactObject(
     jsonDecode(body),
     required: const {
       'practice_session_id',
       'practice_plan_id',
-      'thread_id',
-      'scenario_type',
-      'scenario_model',
-      'matter',
+      'scene_family',
+      'scene_model',
       'session_version',
       'effective_turns',
       'turn_limit',
@@ -750,10 +734,12 @@ PracticeSessionSnapshot _decodeSessionState(
   );
   final sessionId = _string(root, 'practice_session_id');
   final planId = _string(root, 'practice_plan_id');
-  final threadId = _string(root, 'thread_id');
-  final scenarioType = _string(root, 'scenario_type', maxLength: 32);
-  final scenarioModel = _string(root, 'scenario_model', maxLength: 64);
-  final matter = _decodeMatter(_object(root['matter']));
+  final sceneFamily = SceneFamily.fromWireValue(
+    _string(root, 'scene_family', maxLength: 32),
+  );
+  final sceneModel = SceneModel.fromWireValue(
+    _string(root, 'scene_model', maxLength: 64),
+  );
   final sessionVersion = _integer(root, 'session_version');
   final effectiveTurns = _integer(root, 'effective_turns');
   final turnLimit = _integer(root, 'turn_limit');
@@ -782,9 +768,9 @@ PracticeSessionSnapshot _decodeSessionState(
       .where((exchange) => exchange.turn.countsTowardEffectiveTurnLimit)
       .length;
   if ((expectedSessionId != null && sessionId != expectedSessionId) ||
-      (expectedThreadId != null && threadId != expectedThreadId) ||
-      (expectedMatterId != null && matter.id != expectedMatterId) ||
-      !validPracticeScenarioIdentity(scenarioType, scenarioModel) ||
+      sceneFamily == null ||
+      sceneModel == null ||
+      !validPracticeSceneIdentity(sceneFamily, sceneModel) ||
       sessionVersion < 1 ||
       effectiveTurns < 0 ||
       turnLimit < 1 ||
@@ -797,7 +783,7 @@ PracticeSessionSnapshot _decodeSessionState(
           (turn.sessionId != sessionId ||
               turn.effectiveTurns != effectiveTurns ||
               turn.sessionCompleted != completed)) ||
-      (isTurnFeedbackEligiblePracticeScenario(scenarioType, scenarioModel) &&
+      (isTurnFeedbackEligiblePracticeScene(sceneFamily, sceneModel) &&
           effectiveTurns > 0 &&
           !root.containsKey('turn_history')) ||
       (turnHistory.isNotEmpty &&
@@ -821,11 +807,9 @@ PracticeSessionSnapshot _decodeSessionState(
   return PracticeSessionSnapshot(
     sessionId: sessionId,
     planId: planId,
-    threadId: threadId,
-    scenarioType: scenarioType,
-    scenarioModel: scenarioModel,
+    sceneFamily: sceneFamily,
+    sceneModel: sceneModel,
     sessionVersion: sessionVersion,
-    matter: matter,
     completedTurns: effectiveTurns,
     turnLimit: turnLimit,
     sessionCompleted: completed,
@@ -882,8 +866,8 @@ PracticeSessionLifecycle _decodeSessionLifecycle(
     required: const {
       'practice_session_id',
       'practice_plan_id',
-      'scenario_type',
-      'scenario_model',
+      'scene_family',
+      'scene_model',
       'snapshot_id',
       'practice_session_status',
       'session_version',
@@ -893,8 +877,8 @@ PracticeSessionLifecycle _decodeSessionLifecycle(
   );
   final sessionId = _string(root, 'practice_session_id');
   _string(root, 'practice_plan_id');
-  _string(root, 'scenario_type', maxLength: 32);
-  _string(root, 'scenario_model', maxLength: 64);
+  _string(root, 'scene_family', maxLength: 32);
+  _string(root, 'scene_model', maxLength: 64);
   _string(root, 'snapshot_id');
   final rawStatus = _string(root, 'practice_session_status', maxLength: 32);
   final status = switch (rawStatus) {
@@ -1243,48 +1227,14 @@ PracticeTurnConfirmation _confirmationFromState(
     completedTurns: state.completedTurns,
     turnLimit: state.turnLimit,
     sessionCompleted: state.sessionCompleted,
-    scenarioType: state.scenarioType,
-    scenarioModel: state.scenarioModel,
+    sceneFamily: state.sceneFamily,
+    sceneModel: state.sceneModel,
     sessionVersion: state.sessionVersion,
     nextQuestion: state.currentQuestion,
     review: state.review,
     formalReview: state.formalReview,
     audioAssetId: turn.audioAssetId,
     speechFeedbackStatusUrl: turn.speechFeedbackStatusUrl,
-  );
-}
-
-AgentMatter _decodeMatter(Map<String, Object?> value) {
-  final root = _exactObject(
-    value,
-    required: const {
-      'matter_id',
-      'title',
-      'status',
-      'version',
-      'created_at',
-      'updated_at',
-    },
-  );
-  final id = _string(root, 'matter_id');
-  final title = _string(root, 'title', maxLength: 256);
-  final status = _string(root, 'status', maxLength: 32);
-  final version = _integer(root, 'version');
-  final createdAt = _dateTime(root, 'created_at');
-  final updatedAt = _dateTime(root, 'updated_at');
-  if (version < 1 || updatedAt.isBefore(createdAt)) {
-    throw _invalidResponse();
-  }
-  final preset = agentScenes.where((scene) => scene.title == title).firstOrNull;
-  return AgentMatter(
-    id: id,
-    scene:
-        preset ??
-        AgentScene(id: 'matter-$id', title: title, description: '自定义练习场景'),
-    status: status,
-    version: version,
-    createdAt: createdAt,
-    updatedAt: updatedAt,
   );
 }
 

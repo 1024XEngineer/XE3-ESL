@@ -371,8 +371,8 @@ func ContextManifestResponse(manifest agentcontext.Manifest) gin.H {
 			"embedding_policy_version": item.EmbeddingPolicyVersion,
 			"retrieval_policy_version": item.RetrievalPolicyVersion,
 		}
-		if item.MatterID != "" {
-			memory["matter_id"] = item.MatterID
+		if item.GoalID != "" {
+			memory["goal_id"] = item.GoalID
 		}
 		memories = append(memories, memory)
 	}
@@ -415,10 +415,10 @@ func ContextManifestResponse(manifest agentcontext.Manifest) gin.H {
 			"model":                    manifest.SelectedSummary.Model,
 		}
 	}
-	if manifest.ActiveMatterID != "" {
-		result["active_matter"] = gin.H{
-			"matter_id": manifest.ActiveMatterID,
-			"version":   manifest.ActiveMatterVersion,
+	if manifest.ActiveGoalID != "" {
+		result["active_goal"] = gin.H{
+			"goal_id": manifest.ActiveGoalID,
+			"version": manifest.ActiveGoalVersion,
 		}
 	}
 	return result

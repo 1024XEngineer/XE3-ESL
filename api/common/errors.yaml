@@ -73,7 +73,7 @@ components:
         - provider_unavailable
         - quota_exhausted
         - voice_capacity_exhausted
-        - scenario_definition_not_found
+        - scene_not_found
         - role_definition_not_found
         - preparation_profile_not_found
         - preparation_version_conflict
@@ -127,7 +127,7 @@ components:
         active_session_conflict: 409
         invalid_credentials: 401
         practice_participant_not_authorized: 403
-        scenario_definition_not_found: 404
+        scene_not_found: 404
         role_definition_not_found: 404
         preparation_profile_not_found: 404
         job_target_not_found: 404

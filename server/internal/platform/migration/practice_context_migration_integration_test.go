@@ -22,8 +22,8 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 			t.Errorf("close migration runner: %v", err)
 		}
 	})
-	if changed, err := runner.Up(); err != nil || !changed {
-		t.Fatalf("apply migrations: changed=%t err=%v", changed, err)
+	if err := runner.migrate.Steps(50); err != nil {
+		t.Fatalf("apply migrations through version 50: %v", err)
 	}
 
 	database, err := pgx.ConnectConfig(context.Background(), migrationConfig)
@@ -38,7 +38,7 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 
 	const (
 		userID   = "10000000-0000-4000-8000-000000000112"
-		matterID = "20000000-0000-4000-8000-000000000112"
+		goalID   = "20000000-0000-4000-8000-000000000112"
 		threadID = "30000000-0000-4000-8000-000000000112"
 	)
 	seed, err := database.Begin(context.Background())
@@ -55,9 +55,9 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 			[]any{userID},
 		},
 		{
-			`INSERT INTO matters (id, owner_user_id, title)
-			 VALUES ($1, $2, 'Accepted interview matter')`,
-			[]any{matterID, userID},
+			`INSERT INTO coaching_goals (goal_id, owner_user_id, title)
+			 VALUES ($1, $2, 'Accepted interview goal')`,
+			[]any{goalID, userID},
 		},
 		{
 			`INSERT INTO agent_threads (id, owner_user_id)
@@ -65,10 +65,10 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 			[]any{threadID, userID},
 		},
 		{
-			`INSERT INTO agent_thread_matter_links (
-			     owner_user_id, thread_id, matter_id, is_active
+			`INSERT INTO agent_thread_goal_links (
+			     owner_user_id, thread_id, goal_id, is_active
 			 ) VALUES ($1, $2, $3, true)`,
-			[]any{userID, threadID, matterID},
+			[]any{userID, threadID, goalID},
 		},
 		{
 			`INSERT INTO preparation_profiles (
@@ -88,7 +88,7 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 		},
 		{
 			`INSERT INTO practice_plans (
-			     owner_user_id, plan_id, agent_thread_id, matter_id,
+			     owner_user_id, plan_id, agent_thread_id, goal_id,
 			     scenario_definition_id, scenario_definition_version,
 			     scenario_type, scenario_model,
 			     scenario_config_id, scenario_config_version,
@@ -100,7 +100,7 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 			     'scfg_backend_engineer', 1, 'profile-1',
 			     '["role_technical_interviewer"]'::jsonb, 'ready'
 			 )`,
-			[]any{userID, threadID, matterID},
+			[]any{userID, threadID, goalID},
 		},
 	}
 	for _, statement := range seedStatements {
@@ -124,14 +124,14 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 	if _, err := tx.Exec(context.Background(), `
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, context_plan_id,
-			agent_thread_id, matter_id, snapshot_id, scenario_type,
+			agent_thread_id, goal_id, snapshot_id, scenario_type,
 			scenario_model, status, version, effective_turns
 		) VALUES (
 			$1, 'session-1', 'plan-1', 'plan-1',
 			$2, $3, 'session-snapshot-1', 'INTERVIEW',
 			'PROJECT_EXPERIENCE_DEEP_DIVE', 'starting', 1, 0
 		)
-	`, userID, threadID, matterID); err != nil {
+	`, userID, threadID, goalID); err != nil {
 		_ = tx.Rollback(context.Background())
 		t.Fatalf("insert exact Session binding: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 			turn_limit, snapshot_id, context_plan_id,
 			preparation_snapshot_id, snapshot_document
 		) VALUES (
-			$1, 'session-1', 'INTERVIEW', '["matter"]'::jsonb,
+			$1, 'session-1', 'INTERVIEW', '["goal"]'::jsonb,
 			'[{"participant_id":"candidate"}]'::jsonb, 6,
 			'session-snapshot-1', 'plan-1',
 			'preparation-snapshot-1', '{}'::jsonb
@@ -156,7 +156,7 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 
 	if _, err := database.Exec(context.Background(), `
 		INSERT INTO practice_plans (
-			owner_user_id, plan_id, agent_thread_id, matter_id,
+			owner_user_id, plan_id, agent_thread_id, goal_id,
 			scenario_definition_id, scenario_definition_version,
 			scenario_type, scenario_model,
 			scenario_config_id, scenario_config_version,
@@ -168,20 +168,20 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 			'scfg_backend_engineer', 1, 'profile-1',
 			'["role_hr_interviewer"]'::jsonb, 'ready'
 		)
-	`, userID, threadID, matterID); err != nil {
+	`, userID, threadID, goalID); err != nil {
 		t.Fatalf("insert second Plan on Thread: %v", err)
 	}
 	_, err = database.Exec(context.Background(), `
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, context_plan_id,
-			agent_thread_id, matter_id, snapshot_id, scenario_type,
+			agent_thread_id, goal_id, snapshot_id, scenario_type,
 			scenario_model, status, version, effective_turns
 		) VALUES (
 			$1, 'session-thread-conflict', 'plan-2', 'plan-2',
 			$2, $3, 'session-thread-conflict-snapshot',
 			'INTERVIEW', 'PROJECT_EXPERIENCE_DEEP_DIVE', 'starting', 1, 0
 		)
-	`, userID, threadID, matterID)
+	`, userID, threadID, goalID)
 	var constraintError *pgconn.PgError
 	if !errors.As(err, &constraintError) ||
 		constraintError.Code != "23505" ||
@@ -200,7 +200,7 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 	if _, err := mismatched.Exec(context.Background(), `
 		INSERT INTO practice_sessions (
 			owner_user_id, session_id, plan_id, context_plan_id,
-			agent_thread_id, matter_id, snapshot_id, scenario_type,
+			agent_thread_id, goal_id, snapshot_id, scenario_type,
 			scenario_model, status, version, effective_turns, started_at,
 			completed_at, end_reason
 		) VALUES (
@@ -209,7 +209,7 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 			'PROJECT_EXPERIENCE_DEEP_DIVE', 'completed', 2, 1,
 			transaction_timestamp(), transaction_timestamp(), 'TEST_COMPLETED'
 		)
-	`, userID, threadID, matterID); err != nil {
+	`, userID, threadID, goalID); err != nil {
 		_ = mismatched.Rollback(context.Background())
 		t.Fatalf("stage mismatched Session binding: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestPracticeContextMigrationBindsSnapshotAndRestrictsPlanDeletion(
 			turn_limit, snapshot_id, context_plan_id,
 			preparation_snapshot_id, snapshot_document
 		) VALUES (
-			$1, 'session-2', 'INTERVIEW', '["matter"]'::jsonb,
+			$1, 'session-2', 'INTERVIEW', '["goal"]'::jsonb,
 			'[{"participant_id":"candidate"}]'::jsonb, 6,
 			'different-snapshot', 'plan-1',
 			'preparation-snapshot-1', '{}'::jsonb

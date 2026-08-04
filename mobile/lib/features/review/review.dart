@@ -969,10 +969,10 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
         controller != null && controller.recordings.isNotEmpty;
     final mediaError = _visibleMediaError;
     final formalReview = entry.formalReview;
-    final scenarioReview = formalReview?.schema == FormalReviewSchema.scenarioV2
+    final sceneReview = formalReview?.schema == FormalReviewSchema.sceneV2
         ? formalReview
         : null;
-    final scenarioResult = scenarioReview?.result;
+    final sceneResult = sceneReview?.result;
     final interviewSessionId = _interviewSessionId(entry);
     final interviewReportController = widget.interviewReportController;
     final showInterviewReport =
@@ -1007,8 +1007,8 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
                 title: '整体表现',
                 body: review.summary,
               ),
-              if (scenarioReview != null && scenarioResult != null) ...[
-                if (_reviewNotice(scenarioReview) case final notice?) ...[
+              if (sceneReview != null && sceneResult != null) ...[
+                if (_reviewNotice(sceneReview) case final notice?) ...[
                   const SizedBox(height: 12),
                   _ReviewStatusNotice(
                     key: const Key('review-detail-status-notice'),
@@ -1016,15 +1016,15 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
                     message: notice.message,
                   ),
                 ],
-                if (scenarioResult.dimensions.isNotEmpty) ...[
+                if (sceneResult.dimensions.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  _ReviewDimensions(dimensions: scenarioResult.dimensions),
+                  _ReviewDimensions(dimensions: sceneResult.dimensions),
                 ],
-                if (scenarioResult.feedbackItems.isNotEmpty) ...[
+                if (sceneResult.feedbackItems.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   _ReviewFeedback(
-                    items: scenarioResult.feedbackItems,
-                    priorityRefs: scenarioResult.repracticeSuggestionRefs,
+                    items: sceneResult.feedbackItems,
+                    priorityRefs: sceneResult.repracticeSuggestionRefs,
                   ),
                 ],
               ] else ...[
@@ -1063,7 +1063,7 @@ class _ReviewDetailPageState extends State<_ReviewDetailPage> {
 
 String? _interviewSessionId(_ReviewListEntry entry) {
   final review = entry.formalReview;
-  if (review?.schema != FormalReviewSchema.scenarioV2 ||
+  if (review?.schema != FormalReviewSchema.sceneV2 ||
       review?.contextType != FormalReviewContextType.interviewProjectDeepDive) {
     return null;
   }

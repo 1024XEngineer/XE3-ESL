@@ -138,12 +138,12 @@ func (repository *PostgresRepository) CompleteExtraction(
 
 	applied := 0
 	for _, decision := range batch.Decisions {
-		if decision.Scope == ScopeMatter {
-			if err := requireOwnedMatter(
+		if decision.Scope == ScopeGoal {
+			if err := requireOwnedGoal(
 				ctx,
 				tx,
 				claim.OwnerID,
-				decision.MatterID,
+				decision.GoalID,
 			); err != nil {
 				return ExtractionJob{}, err
 			}
@@ -336,7 +336,7 @@ RETURNING
     canonical_key,
     content,
     scope_type,
-    coalesce(matter_id::text, ''),
+    coalesce(goal_id::text, ''),
     status,
     version,
     policy_version,
@@ -370,7 +370,7 @@ RETURNING
     canonical_key,
     content,
     scope_type,
-    coalesce(matter_id::text, ''),
+    coalesce(goal_id::text, ''),
     status,
     version,
     policy_version,
@@ -400,7 +400,7 @@ INSERT INTO agent_memories (
     canonical_key,
     content,
     scope_type,
-    matter_id,
+    goal_id,
     status,
     version,
     policy_version,
@@ -420,7 +420,7 @@ RETURNING
     canonical_key,
     content,
     scope_type,
-    coalesce(matter_id::text, ''),
+    coalesce(goal_id::text, ''),
     status,
     version,
     policy_version,
@@ -434,7 +434,7 @@ RETURNING
 			decision.CanonicalKey,
 			decision.Content,
 			decision.Scope,
-			nullableUUID(decision.MatterID),
+			nullableUUID(decision.GoalID),
 			claim.PolicyVersion,
 			decision.ExpiresAt,
 		))
@@ -474,7 +474,7 @@ SELECT
     canonical_key,
     content,
     scope_type,
-    coalesce(matter_id::text, ''),
+    coalesce(goal_id::text, ''),
     status,
     version,
     policy_version,
@@ -487,14 +487,14 @@ WHERE owner_user_id = $1
   AND memory_type = $2
   AND canonical_key = $3
   AND scope_type = $4
-  AND matter_id IS NOT DISTINCT FROM $5::uuid
+  AND goal_id IS NOT DISTINCT FROM $5::uuid
   AND status = 'active'
 FOR UPDATE`,
 		ownerID,
 		decision.Type,
 		decision.CanonicalKey,
 		decision.Scope,
-		nullableUUID(decision.MatterID),
+		nullableUUID(decision.GoalID),
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Memory{}, false, nil

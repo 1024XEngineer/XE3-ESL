@@ -662,8 +662,8 @@ func insertConversationSpeechFeedbackFixture(
 		INSERT INTO practice_sessions (
 			owner_user_id,
 			session_id,
-			scenario_type,
-			scenario_model
+			scene_family,
+			scene_model
 		)
 		VALUES (
 			$1,
@@ -848,8 +848,8 @@ const speechFeedbackModulePrerequisiteSQL = `
 	CREATE TABLE practice_sessions (
 		owner_user_id uuid NOT NULL,
 		session_id text NOT NULL,
-		scenario_type text,
-		scenario_model text,
+		scene_family text,
+		scene_model text,
 		PRIMARY KEY (owner_user_id, session_id)
 	);
 	CREATE TABLE conversation_questions (

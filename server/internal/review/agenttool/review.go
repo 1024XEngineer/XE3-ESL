@@ -24,12 +24,12 @@ type ReviewGetInput struct {
 }
 
 type ReviewSummary struct {
-	ID                   string      `json:"review_id"`
-	PracticeSessionID    string      `json:"practice_session_id"`
-	ScenarioDefinitionID string      `json:"scenario_definition_id,omitempty"`
-	Summary              string      `json:"summary"`
-	CompletedAt          string      `json:"completed_at,omitempty"`
-	SourceRefs           []SourceRef `json:"-"`
+	ID                string      `json:"review_id"`
+	PracticeSessionID string      `json:"practice_session_id"`
+	SceneID           string      `json:"scene_id,omitempty"`
+	Summary           string      `json:"summary"`
+	CompletedAt       string      `json:"completed_at,omitempty"`
+	SourceRefs        []SourceRef `json:"-"`
 }
 
 type ReviewConclusion struct {
@@ -50,7 +50,7 @@ type ReviewFeedbackItem struct {
 type ReviewDetail struct {
 	ID                          string               `json:"review_id"`
 	PracticeSessionID           string               `json:"practice_session_id"`
-	ScenarioDefinitionID        string               `json:"scenario_definition_id,omitempty"`
+	SceneID                     string               `json:"scene_id,omitempty"`
 	Status                      string               `json:"status"`
 	SummaryEligibility          string               `json:"summary_eligibility"`
 	OverallScore                *int                 `json:"overall_score,omitempty"`
@@ -178,11 +178,11 @@ func (tool ReviewGetTool) Execute(
 // reviewMap 返回暴露给模型的 Review 搜索摘要。
 func reviewMap(review ReviewSummary) map[string]any {
 	return map[string]any{
-		"review_id":              review.ID,
-		"practice_session_id":    review.PracticeSessionID,
-		"scenario_definition_id": review.ScenarioDefinitionID,
-		"summary":                review.Summary,
-		"completed_at":           review.CompletedAt,
+		"review_id":           review.ID,
+		"practice_session_id": review.PracticeSessionID,
+		"scene_id":            review.SceneID,
+		"summary":             review.Summary,
+		"completed_at":        review.CompletedAt,
 	}
 }
 
@@ -191,7 +191,7 @@ func reviewDetailMap(review ReviewDetail) map[string]any {
 	return map[string]any{
 		"review_id":                     review.ID,
 		"practice_session_id":           review.PracticeSessionID,
-		"scenario_definition_id":        review.ScenarioDefinitionID,
+		"scene_id":                      review.SceneID,
 		"status":                        review.Status,
 		"summary_eligibility":           review.SummaryEligibility,
 		"overall_score":                 review.OverallScore,

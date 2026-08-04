@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -91,8 +91,7 @@ func TestVoiceSessionResumeRecoversSagaCrashWindows(t *testing.T) {
 			state, err := application.Resume(
 				context.Background(),
 				agentVoiceActor("a"),
-				"thread-1",
-				"matter-1",
+				"session-1",
 			)
 			if err != nil {
 				t.Fatalf("resume: %v", err)
@@ -102,8 +101,7 @@ func TestVoiceSessionResumeRecoversSagaCrashWindows(t *testing.T) {
 				state, err = application.Resume(
 					context.Background(),
 					agentVoiceActor("a"),
-					"thread-1",
-					"matter-1",
+					"session-1",
 				)
 				if err != nil {
 					t.Fatalf("resume completed Review: %v", err)
@@ -445,19 +443,20 @@ func maximumVoiceReviewResult(t *testing.T) *ReviewResult {
 	return result
 }
 
-func TestVoiceSessionStartsWithoutMatterFromFrozenScenario(t *testing.T) {
+func TestVoiceSessionStartsFromExplicitFrozenSession(t *testing.T) {
 	session := Session{
 		ID:                       "session-1",
 		PlanID:                   "plan-1",
-		ThreadID:                 "thread-1",
-		ScenarioType:             "DAILY",
-		ScenarioModel:            "HOTEL_CHECKIN_AND_ISSUE_HANDLING",
-		PromptModel:              voiceSessionTestPrompt(),
+		SceneID:                  "scene-1",
+		SceneVersion:             1,
+		SceneFamily:              "DAILY",
+		SceneModel:               "HOTEL_CHECKIN_AND_ISSUE_HANDLING",
+		Prompt:                   voiceSessionTestPrompt(),
 		SessionVersion:           1,
 		TurnLimit:                3,
 		Status:                   "in_progress",
-		InterviewerParticipantID: "participant-facilitator",
-		CandidateParticipantID:   "participant-learner",
+		FacilitatorParticipantID: "participant-facilitator",
+		LearnerParticipantID:     "participant-learner",
 	}
 	conversations := newAgentVoiceConversation(3)
 	reviews := newAgentVoiceReview()
@@ -472,7 +471,6 @@ func TestVoiceSessionStartsWithoutMatterFromFrozenScenario(t *testing.T) {
 			reviews,
 		),
 		voiceSessionTestReviews{reviews: reviews},
-		voiceSessionTestMatters{},
 	)
 	if err != nil {
 		t.Fatalf("NewSessionApplication: %v", err)
@@ -481,15 +479,14 @@ func TestVoiceSessionStartsWithoutMatterFromFrozenScenario(t *testing.T) {
 	state, err := application.Start(
 		context.Background(),
 		agentVoiceActor("a"),
-		session.ThreadID,
-		"",
-		"start-without-matter",
+		session.ID,
+		"start-session",
 	)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if state.Matter.ID != "" || state.Question == nil {
-		t.Fatalf("matter-free state = %+v", state)
+	if state.Session.ID != session.ID || state.Question == nil {
+		t.Fatalf("explicit Session state = %+v", state)
 	}
 }
 
@@ -506,7 +503,6 @@ func TestNewVoiceSessionApplicationRequiresCheckpointPort(t *testing.T) {
 			newAgentVoiceReview(),
 		),
 		voiceSessionTestReviews{reviews: newAgentVoiceReview()},
-		voiceSessionTestMatters{},
 	)
 	if err == nil {
 		t.Fatal("NewSessionApplication accepted a missing Checkpoint port")
@@ -517,18 +513,18 @@ func TestVoiceSessionRestoresFormalEarlyCompletionBeforeMaximum(t *testing.T) {
 	session := Session{
 		ID:                       "session-early",
 		PlanID:                   "plan-early",
-		ThreadID:                 "thread-1",
-		MatterID:                 "matter-1",
-		ScenarioType:             "INTERVIEW",
-		ScenarioModel:            "PROJECT_EXPERIENCE_DEEP_DIVE",
-		PromptModel:              voiceSessionTestPrompt(),
+		SceneID:                  "scene-1",
+		SceneVersion:             1,
+		SceneFamily:              "INTERVIEW",
+		SceneModel:               "PROJECT_EXPERIENCE_DEEP_DIVE",
+		Prompt:                   voiceSessionTestPrompt(),
 		SessionVersion:           4,
 		EffectiveTurns:           2,
 		TurnLimit:                3,
 		Completed:                true,
 		Status:                   "completed",
-		InterviewerParticipantID: "participant-interviewer",
-		CandidateParticipantID:   "participant-a",
+		FacilitatorParticipantID: "participant-facilitator",
+		LearnerParticipantID:     "participant-a",
 	}
 	turn := conversation.ConfirmedVoiceTurn{
 		ID:               "turn-early",
@@ -558,7 +554,6 @@ func TestVoiceSessionRestoresFormalEarlyCompletionBeforeMaximum(t *testing.T) {
 		},
 		orchestrator,
 		voiceSessionTestReviews{reviews: reviews},
-		voiceSessionTestMatters{},
 	)
 	if err != nil {
 		t.Fatalf("NewSessionApplication: %v", err)
@@ -567,8 +562,7 @@ func TestVoiceSessionRestoresFormalEarlyCompletionBeforeMaximum(t *testing.T) {
 	state, err := application.Resume(
 		context.Background(),
 		agentVoiceActor("a"),
-		session.ThreadID,
-		session.MatterID,
+		session.ID,
 	)
 	if err != nil {
 		t.Fatalf("Resume early-completed Session: %v", err)
@@ -590,18 +584,18 @@ func TestVoiceSessionRestoresCompletedIELTSFullMockWithoutReview(
 	session := Session{
 		ID:                       "session-1",
 		PlanID:                   "plan-ielts-full",
-		ThreadID:                 "thread-1",
-		MatterID:                 "matter-1",
-		ScenarioType:             "EXAM",
-		ScenarioModel:            ieltsSpeakingFullMockModel,
-		PromptModel:              voiceSessionTestPrompt(),
+		SceneID:                  "scene-ielts-full",
+		SceneVersion:             1,
+		SceneFamily:              "EXAM",
+		SceneModel:               ieltsSpeakingFullMockModel,
+		Prompt:                   voiceSessionTestPrompt(),
 		SessionVersion:           15,
 		EffectiveTurns:           14,
 		TurnLimit:                14,
 		Completed:                true,
 		Status:                   "completed",
-		InterviewerParticipantID: "participant-interviewer",
-		CandidateParticipantID:   "participant-a",
+		FacilitatorParticipantID: "participant-facilitator",
+		LearnerParticipantID:     "participant-a",
 	}
 	conversations := newAgentVoiceConversation(14)
 	candidateID := agentVoiceCandidateID(14)
@@ -647,7 +641,6 @@ func TestVoiceSessionRestoresCompletedIELTSFullMockWithoutReview(
 			completions,
 		),
 		voiceSessionTestReviews{reviews: newAgentVoiceReview()},
-		voiceSessionTestMatters{},
 	)
 	if err != nil {
 		t.Fatalf("NewSessionApplication: %v", err)
@@ -656,8 +649,7 @@ func TestVoiceSessionRestoresCompletedIELTSFullMockWithoutReview(
 	state, err := application.Resume(
 		context.Background(),
 		agentVoiceActor("a"),
-		session.ThreadID,
-		session.MatterID,
+		session.ID,
 	)
 	if err != nil {
 		t.Fatalf("Resume completed IELTS full mock: %v", err)
@@ -692,7 +684,6 @@ func newVoiceSessionTestApplication(
 		voiceSessionTestCheckpoints{conversations: conversations},
 		orchestrator,
 		voiceSessionTestReviews{reviews: reviews},
-		voiceSessionTestMatters{},
 	)
 	if err != nil {
 		t.Fatalf("new Voice Session application: %v", err)
@@ -709,16 +700,6 @@ type fixedVoiceSessionPort struct {
 }
 
 func (port fixedVoiceSessionPort) Start(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	string,
-	string,
-) (Session, error) {
-	return port.session, nil
-}
-
-func (port fixedVoiceSessionPort) GetByThread(
 	context.Context,
 	requestcontext.Actor,
 	string,
@@ -797,16 +778,6 @@ func (sessions *voiceSessionTestSessions) Start(
 	requestcontext.Actor,
 	string,
 	string,
-	string,
-) (Session, error) {
-	return sessions.current(), nil
-}
-
-func (sessions *voiceSessionTestSessions) GetByThread(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	string,
 ) (Session, error) {
 	return sessions.current(), nil
 }
@@ -826,11 +797,11 @@ func (sessions *voiceSessionTestSessions) current() Session {
 	return Session{
 		ID:             "session-1",
 		PlanID:         "plan-1",
-		ThreadID:       "thread-1",
-		MatterID:       "matter-1",
-		ScenarioType:   "INTERVIEW",
-		ScenarioModel:  "PROJECT_EXPERIENCE_DEEP_DIVE",
-		PromptModel:    voiceSessionTestPrompt(),
+		SceneID:        "scene-1",
+		SceneVersion:   1,
+		SceneFamily:    "INTERVIEW",
+		SceneModel:     "PROJECT_EXPERIENCE_DEEP_DIVE",
+		Prompt:         voiceSessionTestPrompt(),
 		SessionVersion: effective + 1,
 		EffectiveTurns: effective,
 		TurnLimit:      3,
@@ -841,13 +812,13 @@ func (sessions *voiceSessionTestSessions) current() Session {
 			}
 			return "in_progress"
 		}(),
-		InterviewerParticipantID: "participant-interviewer",
-		CandidateParticipantID:   "participant-a",
+		FacilitatorParticipantID: "participant-facilitator",
+		LearnerParticipantID:     "participant-a",
 	}
 }
 
-func voiceSessionTestPrompt() ScenarioPrompt {
-	return ScenarioPrompt{
+func voiceSessionTestPrompt() scene.ScenePrompt {
+	return scene.ScenePrompt{
 		PublicSceneBrief: "Discuss one project in a realistic conversation.",
 		PracticeGoal:     "Explain decisions with clear evidence.",
 		UserRole:         "Candidate",
@@ -871,8 +842,8 @@ func (voiceSessionTestQuestions) EnsureQuestion(
 		SessionID:               session.ID,
 		Type:                    "PRIMARY",
 		Text:                    "What happened next?",
-		SpeakerParticipantID:    session.InterviewerParticipantID,
-		AddresseeParticipantIDs: []string{session.CandidateParticipantID},
+		SpeakerParticipantID:    session.FacilitatorParticipantID,
+		AddresseeParticipantIDs: []string{session.LearnerParticipantID},
 	}, nil
 }
 
@@ -1108,26 +1079,4 @@ func (reader fixedVoiceReviewPageReader) ListReviews(
 	ReviewHistoryQuery,
 ) (ReviewHistoryPage, error) {
 	return reader.page, nil
-}
-
-type voiceSessionTestMatters struct{}
-
-func (voiceSessionTestMatters) ReadOwned(
-	_ context.Context,
-	actor requestcontext.Actor,
-	matterID string,
-) (matter.Matter, error) {
-	if actor.UserID != "user-a" || matterID != "matter-1" {
-		return matter.Matter{}, matter.ErrNotFound
-	}
-	now := time.Unix(1, 0).UTC()
-	return matter.Matter{
-		ID:        matterID,
-		OwnerID:   actor.UserID,
-		Title:     "Customer renewal",
-		Status:    matter.StatusActive,
-		Version:   1,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}, nil
 }

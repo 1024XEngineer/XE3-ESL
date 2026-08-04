@@ -60,12 +60,12 @@ func (memoryType Type) Valid() bool {
 type ScopeType string
 
 const (
-	ScopeUser   ScopeType = "user"
-	ScopeMatter ScopeType = "matter"
+	ScopeUser ScopeType = "user"
+	ScopeGoal ScopeType = "goal"
 )
 
 func (scope ScopeType) Valid() bool {
-	return scope == ScopeUser || scope == ScopeMatter
+	return scope == ScopeUser || scope == ScopeGoal
 }
 
 type Status string
@@ -107,7 +107,7 @@ type Memory struct {
 	CanonicalKey  string
 	Content       string
 	Scope         ScopeType
-	MatterID      string
+	GoalID        string
 	Status        Status
 	Version       int64
 	PolicyVersion string
@@ -123,7 +123,7 @@ func (item Memory) Valid() bool {
 		item.Type.Valid() &&
 		validCanonicalKey(item.CanonicalKey) &&
 		validContent(item.Content) &&
-		validScope(item.Scope, item.MatterID) &&
+		validScope(item.Scope, item.GoalID) &&
 		item.Status.Valid() &&
 		item.Version > 0 &&
 		validPolicyVersion(item.PolicyVersion) &&
@@ -203,14 +203,14 @@ func validSourceID(value string) bool {
 		!strings.ContainsAny(value, " \t\r\n")
 }
 
-func validScope(scope ScopeType, matterID string) bool {
+func validScope(scope ScopeType, goalID string) bool {
 	if !scope.Valid() {
 		return false
 	}
 	if scope == ScopeUser {
-		return matterID == ""
+		return goalID == ""
 	}
-	return validUUID(matterID)
+	return validUUID(goalID)
 }
 
 func validOptionalTime(value *time.Time) bool {

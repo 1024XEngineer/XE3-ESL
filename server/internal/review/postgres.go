@@ -740,7 +740,7 @@ func (r *PostgresRepository) SearchCompletedHistory(
 		      strpos(lower(coalesce(result->>'summary', '')), lower($3)) > 0
 		      OR strpos(lower(practice_session_id), lower($3)) > 0
 		      OR strpos(
-		          lower(coalesce(evaluation_context->>'scenario_definition_id', '')),
+		          lower(coalesce(evaluation_context->>'scene_id', '')),
 		          lower($3)
 		      ) > 0
 		  )

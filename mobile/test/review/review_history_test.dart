@@ -1,3 +1,4 @@
+import '../support/scene_fixtures.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -11,6 +12,7 @@ import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
+import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/review/formal_review.dart';
 import 'package:speakup/review/formal_review_presentation.dart';
 import 'package:speakup/review/review_history_client.dart';
@@ -18,6 +20,7 @@ import 'package:speakup/review/review_history_controller.dart';
 import 'package:speakup/review/wire_review_history_client.dart';
 
 import 'formal_review_fixture.dart';
+import '../support/practice_fixtures.dart';
 
 void main() {
   test('wire client sends Bearer and decodes a bounded stable page', () async {
@@ -714,9 +717,7 @@ void main() {
     (tester) async {
       final client = _SequencedControlledClient();
       final historyController = ReviewHistoryController(client: client);
-      final agentController = AgentController(
-        client: _ReviewAgentClient(_newerId),
-      );
+      final agentController = _configuredAgentControllerWithReview(_newerId);
       addTearDown(historyController.dispose);
       addTearDown(agentController.dispose);
 
@@ -733,7 +734,7 @@ void main() {
       expect(client.requests, isEmpty);
       expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
 
-      await agentController.initialize();
+      await _restoreConfiguredReview(agentController, _newerId);
       await tester.pump();
 
       expect(client.requests, hasLength(1));
@@ -1152,9 +1153,9 @@ void main() {
   });
 
   testWidgets(
-    'scenario v2 detail renders dimensions and corrections without a total',
+    'scene v2 detail renders dimensions and corrections without a total',
     (tester) async {
-      final item = _scenarioItem(
+      final item = _sceneItem(
         id: 'review-v2-interview',
         contextType: FormalReviewContextType.interviewProjectDeepDive,
         eligibility: FormalReviewSummaryEligibility.eligible,
@@ -1222,7 +1223,7 @@ void main() {
   testWidgets(
     'provisional IELTS explains the missing pronunciation and Overall',
     (tester) async {
-      final item = _scenarioItem(
+      final item = _sceneItem(
         id: 'review-v2-ielts',
         contextType: FormalReviewContextType.ieltsSpeakingPart2,
         eligibility: FormalReviewSummaryEligibility.provisional,
@@ -1267,7 +1268,7 @@ void main() {
   testWidgets('insufficient evidence never renders a zero score', (
     tester,
   ) async {
-    final item = _scenarioItem(
+    final item = _sceneItem(
       id: 'review-v2-insufficient',
       contextType: FormalReviewContextType.workplaceProgressRiskUpdate,
       eligibility: FormalReviewSummaryEligibility.insufficientEvidence,
@@ -1741,27 +1742,22 @@ final class _FixedItemsClient implements ReviewHistoryClient {
 }
 
 Future<AgentController> _agentControllerWithReview(String reviewId) async {
-  final controller = AgentController(client: _ReviewAgentClient(reviewId));
-  await controller.initialize();
+  final controller = _configuredAgentControllerWithReview(reviewId);
+  await _restoreConfiguredReview(controller, reviewId);
   return controller;
 }
 
-final class _ReviewAgentClient implements AgentClient {
-  _ReviewAgentClient(this.reviewId);
-
-  final String reviewId;
-  final FakeAgentClient _delegate = FakeAgentClient();
-
-  @override
-  Future<void> clearAccountState() => _delegate.clearAccountState();
-
-  @override
-  Future<AgentThreadSnapshot> restoreThread() async {
-    final scene = agentScenes.first;
-    return AgentThreadSnapshot(
-      threadId: 'thread-review-fallback',
-      activeMatter: AgentMatter(id: 'matter-review-fallback', scene: scene),
-      practice: AgentPracticeSnapshot(
+AgentController _configuredAgentControllerWithReview(String reviewId) {
+  final scene = testScenes.first;
+  final sessionId = _reviewSessionId(reviewId);
+  return AgentController(
+    client: FakeAgentClient(),
+    practiceClient: FakePracticeClient(
+      sceneFamily: scene.family,
+      sceneModel: scene.model,
+      initialSnapshot: testPracticeSnapshot(
+        scene: scene,
+        sessionId: sessionId,
         completedTurns: 3,
         review: AgentReview(
           id: reviewId,
@@ -1771,68 +1767,24 @@ final class _ReviewAgentClient implements AgentClient {
           nextFocus: 'focus-91',
         ),
       ),
-    );
-  }
-
-  @override
-  Future<AgentSceneStart> startScene({
-    required String threadId,
-    required AgentScene scene,
-    required String clientOperationId,
-  }) => _delegate.startScene(
-    threadId: threadId,
-    scene: scene,
-    clientOperationId: clientOperationId,
-  );
-
-  @override
-  Future<AgentExchange> sendText({
-    required String threadId,
-    required String text,
-    required String clientMessageId,
-  }) => _delegate.sendText(
-    threadId: threadId,
-    text: text,
-    clientMessageId: clientMessageId,
-  );
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  }) => _delegate.transcribeTurn(
-    threadId: threadId,
-    turnNumber: turnNumber,
-    clientTurnId: clientTurnId,
-  );
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) => _delegate.submitPracticeTurn(
-    threadId: threadId,
-    scene: scene,
-    turnNumber: turnNumber,
-    transcript: transcript,
-    clientTurnId: clientTurnId,
-  );
-
-  @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) => _delegate.createReview(
-    threadId: threadId,
-    scene: scene,
-    clientReviewId: clientReviewId,
+    ),
   );
 }
+
+Future<void> _restoreConfiguredReview(
+  AgentController controller,
+  String reviewId,
+) async {
+  final scene = testScenes.first;
+  await controller.initialize();
+  await controller.selectScene(scene);
+  await controller.restoreCreatedPractice(
+    sessionId: _reviewSessionId(reviewId),
+    scene: scene,
+  );
+}
+
+String _reviewSessionId(String reviewId) => 'session-$reviewId';
 
 ReviewHistoryItem _item(String id, {required int score}) {
   final createdAt = DateTime.utc(2026, 7, 26, 10, score % 60);
@@ -1859,7 +1811,7 @@ ReviewHistoryItem _item(String id, {required int score}) {
   );
 }
 
-ReviewHistoryItem _scenarioItem({
+ReviewHistoryItem _sceneItem({
   required String id,
   required FormalReviewContextType contextType,
   required FormalReviewSummaryEligibility eligibility,
@@ -1876,8 +1828,8 @@ ReviewHistoryItem _scenarioItem({
     id: id,
     practiceSessionId: 'session-$id',
     status: FormalReviewStatus.completed,
-    schema: FormalReviewSchema.scenarioV2,
-    implementationVersion: 'qianwen-scenario-review-v2',
+    schema: FormalReviewSchema.sceneV2,
+    implementationVersion: 'qianwen-scene-review-v2',
     sourceTurnId: 'turn-$id',
     sourceTurnVersion: 'conversation-turn:evidence-v1',
     contextType: contextType,

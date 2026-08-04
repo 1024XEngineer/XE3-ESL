@@ -223,11 +223,11 @@ func TestPostgresMemoryIndexLifecycleAndOwnerIsolation(t *testing.T) {
 		ctx,
 		actorA,
 		validEmbeddingResult().Vectors[0],
-		integrationMatterB,
+		integrationGoalB,
 		nil,
 		searchConfiguration,
 	); err != ErrNotFound {
-		t.Fatalf("foreign Matter search error = %v", err)
+		t.Fatalf("foreign Goal search error = %v", err)
 	}
 }
 

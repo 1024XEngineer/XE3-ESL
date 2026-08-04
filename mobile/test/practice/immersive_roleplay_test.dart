@@ -1,3 +1,6 @@
+import '../support/scene_fixtures.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -140,8 +143,8 @@ void main() {
   ) async {
     final controller = await _roleplayController(
       practiceClient: _AsyncReviewPracticeClient(
-        scenarioType: 'INTERVIEW',
-        scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+        sceneFamily: SceneFamily.interview,
+        sceneModel: SceneModel.interviewBasicDialogue,
         followUpAfterAnswer: true,
       ),
     );
@@ -372,8 +375,8 @@ void main() {
   ) async {
     final controller = await _roleplayController(
       practiceClient: _AsyncReviewPracticeClient(
-        scenarioType: 'INTERVIEW',
-        scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+        sceneFamily: SceneFamily.interview,
+        sceneModel: SceneModel.interviewBasicDialogue,
       ),
     );
     addTearDown(controller.dispose);
@@ -496,21 +499,123 @@ void main() {
 Future<AgentController> _roleplayController({
   PracticeClient? practiceClient,
 }) async {
-  final controller = AgentController(
-    client: FakeAgentClient(),
-    practiceClient: practiceClient,
-  );
-  await controller.initialize();
-  await controller.selectScene(
-    const AgentScene(
-      id: 'daily-hotel',
-      title: '酒店入住',
-      description: '练习办理入住与需求沟通。',
-      scenarioType: 'DAILY',
-      presentationMode: AgentScenePresentationMode.immersiveRoleplay,
+  final sceneFamily = switch (practiceClient) {
+    final _AsyncReviewPracticeClient client => client.resolvedSceneFamily,
+    _ => SceneFamily.daily,
+  };
+  final sceneModel = switch (practiceClient) {
+    final _AsyncReviewPracticeClient client => client.resolvedSceneModel,
+    _ => SceneModel.hotelCheckinAndIssueHandling,
+  };
+  final scene = testScene(
+    id: sceneFamily == SceneFamily.interview
+        ? 'interview-roleplay'
+        : 'daily-hotel',
+    family: sceneFamily,
+    model: sceneModel,
+    name: sceneFamily == SceneFamily.interview ? '英文面试' : '酒店入住',
+    prompt: const ScenePrompt(
+      publicSceneBrief: '练习办理入住与需求沟通。',
+      practiceGoal: 'Complete the hotel check-in conversation.',
+      userRole: 'Guest',
+      aiRole: 'Receptionist',
+      personaSummary: 'Professional and helpful.',
+      focusAreas: <String>['check_in'],
+      turnBlueprints: <String>['Confirm the booking.'],
+      suggestedDurationSeconds: 600,
     ),
   );
+  final resolvedPracticeClient =
+      practiceClient ??
+      _ScenePracticeClient(sceneFamily: sceneFamily, sceneModel: sceneModel);
+  final controller = AgentController(
+    client: FakeAgentClient(),
+    practiceClient: resolvedPracticeClient,
+  );
+  await controller.initialize();
+  await controller.selectScene(scene);
+  await controller.activateCreatedPractice(
+    threadId: controller.threadId!,
+    goalId: controller.activeGoal!.id,
+    scene: scene,
+    sessionId: _roleplaySessionId,
+    planId: 'practice-plan-$_roleplaySessionId',
+    turnLimit: 3,
+    clientOperationId: 'activate-$_roleplaySessionId',
+  );
   return controller;
+}
+
+final class _ScenePracticeClient implements PracticeClient {
+  _ScenePracticeClient({required this.sceneFamily, required this.sceneModel});
+
+  final _delegate = FakePracticeClient();
+  final SceneFamily sceneFamily;
+  final SceneModel sceneModel;
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
+
+  @override
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) async => _withSceneIdentity(
+    await _delegate.restorePractice(sessionId: sessionId),
+    sceneFamily,
+    sceneModel,
+  );
+
+  @override
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
+    required String clientOperationId,
+  }) async => _withSceneIdentity(
+    await _delegate.activatePractice(
+      sessionId: sessionId,
+      clientOperationId: clientOperationId,
+    ),
+    sceneFamily,
+    sceneModel,
+  );
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) => _delegate.transcribe(request);
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) async => _withSceneIdentityConfirmation(
+    await _delegate.confirm(
+      sessionId: sessionId,
+      questionId: questionId,
+      candidateId: candidateId,
+      idempotencyKey: idempotencyKey,
+    ),
+    sceneFamily,
+    sceneModel,
+  );
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) async => _withSceneIdentityConfirmation(
+    await _delegate.submitText(
+      sessionId: sessionId,
+      questionId: questionId,
+      answerText: answerText,
+      idempotencyKey: idempotencyKey,
+    ),
+    sceneFamily,
+    sceneModel,
+  );
 }
 
 final class _FailOncePracticeClient implements PracticeClient {
@@ -521,21 +626,25 @@ final class _FailOncePracticeClient implements PracticeClient {
   Future<void> clearAccountState() => _delegate.clearAccountState();
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
-  }) =>
-      _delegate.restorePractice(threadId: threadId, activeMatter: activeMatter);
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) async => _withSceneIdentity(
+    await _delegate.restorePractice(sessionId: sessionId),
+    SceneFamily.daily,
+    SceneModel.hotelCheckinAndIssueHandling,
+  );
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
-  }) => _delegate.startPractice(
-    threadId: threadId,
-    activeMatter: activeMatter,
-    clientOperationId: clientOperationId,
+  }) async => _withSceneIdentity(
+    await _delegate.activatePractice(
+      sessionId: sessionId,
+      clientOperationId: clientOperationId,
+    ),
+    SceneFamily.daily,
+    SceneModel.hotelCheckinAndIssueHandling,
   );
 
   @override
@@ -558,11 +667,15 @@ final class _FailOncePracticeClient implements PracticeClient {
     required String questionId,
     required String candidateId,
     required String idempotencyKey,
-  }) => _delegate.confirm(
-    sessionId: sessionId,
-    questionId: questionId,
-    candidateId: candidateId,
-    idempotencyKey: idempotencyKey,
+  }) async => _withSceneIdentityConfirmation(
+    await _delegate.confirm(
+      sessionId: sessionId,
+      questionId: questionId,
+      candidateId: candidateId,
+      idempotencyKey: idempotencyKey,
+    ),
+    SceneFamily.daily,
+    SceneModel.hotelCheckinAndIssueHandling,
   );
 
   @override
@@ -571,69 +684,59 @@ final class _FailOncePracticeClient implements PracticeClient {
     required String questionId,
     required String answerText,
     required String idempotencyKey,
-  }) => _delegate.submitText(
-    sessionId: sessionId,
-    questionId: questionId,
-    answerText: answerText,
-    idempotencyKey: idempotencyKey,
+  }) async => _withSceneIdentityConfirmation(
+    await _delegate.submitText(
+      sessionId: sessionId,
+      questionId: questionId,
+      answerText: answerText,
+      idempotencyKey: idempotencyKey,
+    ),
+    SceneFamily.daily,
+    SceneModel.hotelCheckinAndIssueHandling,
   );
 }
 
 final class _AsyncReviewPracticeClient implements PracticeClient {
   _AsyncReviewPracticeClient({
-    this.scenarioType,
-    this.scenarioModel,
+    this.sceneFamily,
+    this.sceneModel,
     this.followUpAfterAnswer = false,
   });
 
   final _delegate = FakePracticeClient();
-  final String? scenarioType;
-  final String? scenarioModel;
+  final SceneFamily? sceneFamily;
+  final SceneModel? sceneModel;
   final bool followUpAfterAnswer;
+
+  SceneFamily get resolvedSceneFamily => sceneFamily ?? SceneFamily.daily;
+  SceneModel get resolvedSceneModel =>
+      sceneModel ?? SceneModel.hotelCheckinAndIssueHandling;
 
   @override
   Future<void> clearAccountState() => _delegate.clearAccountState();
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
-  }) =>
-      _delegate.restorePractice(threadId: threadId, activeMatter: activeMatter);
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) async => _withSceneIdentity(
+    await _delegate.restorePractice(sessionId: sessionId),
+    resolvedSceneFamily,
+    resolvedSceneModel,
+  );
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
   }) async {
-    final result = await _delegate.startPractice(
-      threadId: threadId,
-      activeMatter: activeMatter,
+    final snapshot = await _delegate.activatePractice(
+      sessionId: sessionId,
       clientOperationId: clientOperationId,
     );
-    final snapshot = result.snapshot;
-    if (scenarioType == null && scenarioModel == null) {
-      return result;
-    }
-    return PracticeStartResult(
-      snapshot: PracticeSessionSnapshot(
-        sessionId: snapshot.sessionId,
-        planId: snapshot.planId,
-        threadId: snapshot.threadId,
-        scenarioType: scenarioType,
-        scenarioModel: scenarioModel,
-        sessionVersion: snapshot.sessionVersion,
-        matter: snapshot.matter,
-        completedTurns: snapshot.completedTurns,
-        turnLimit: snapshot.turnLimit,
-        sessionCompleted: snapshot.sessionCompleted,
-        currentQuestion: snapshot.currentQuestion,
-        currentTurn: snapshot.currentTurn,
-        turnHistory: snapshot.turnHistory,
-        review: snapshot.review,
-        formalReview: snapshot.formalReview,
-      ),
+    return _withSceneIdentity(
+      snapshot,
+      resolvedSceneFamily,
+      resolvedSceneModel,
     );
   }
 
@@ -666,8 +769,8 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
       completedTurns: confirmation.completedTurns,
       turnLimit: confirmation.turnLimit,
       sessionCompleted: confirmation.sessionCompleted,
-      scenarioType: scenarioType ?? confirmation.scenarioType,
-      scenarioModel: scenarioModel ?? confirmation.scenarioModel,
+      sceneFamily: resolvedSceneFamily,
+      sceneModel: resolvedSceneModel,
       sessionVersion: confirmation.sessionVersion,
       nextQuestion: confirmation.nextQuestion,
       review: confirmation.sessionCompleted ? null : confirmation.review,
@@ -691,7 +794,11 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
       idempotencyKey: idempotencyKey,
     );
     if (!followUpAfterAnswer || confirmation.nextQuestion == null) {
-      return confirmation;
+      return _withSceneIdentityConfirmation(
+        confirmation,
+        resolvedSceneFamily,
+        resolvedSceneModel,
+      );
     }
     final nextQuestion = confirmation.nextQuestion!;
     return PracticeTurnConfirmation(
@@ -703,8 +810,8 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
       completedTurns: confirmation.completedTurns,
       turnLimit: confirmation.turnLimit,
       sessionCompleted: confirmation.sessionCompleted,
-      scenarioType: scenarioType,
-      scenarioModel: scenarioModel,
+      sceneFamily: resolvedSceneFamily,
+      sceneModel: resolvedSceneModel,
       sessionVersion: confirmation.sessionVersion,
       nextQuestion: PracticeQuestion(
         id: nextQuestion.id,
@@ -723,6 +830,51 @@ final class _AsyncReviewPracticeClient implements PracticeClient {
     );
   }
 }
+
+PracticeSessionSnapshot _withSceneIdentity(
+  PracticeSessionSnapshot snapshot,
+  SceneFamily sceneFamily,
+  SceneModel sceneModel,
+) => PracticeSessionSnapshot(
+  sessionId: snapshot.sessionId,
+  planId: snapshot.planId,
+  sceneFamily: sceneFamily,
+  sceneModel: sceneModel,
+  sessionVersion: snapshot.sessionVersion,
+  completedTurns: snapshot.completedTurns,
+  turnLimit: snapshot.turnLimit,
+  sessionCompleted: snapshot.sessionCompleted,
+  currentQuestion: snapshot.currentQuestion,
+  currentTurn: snapshot.currentTurn,
+  turnHistory: snapshot.turnHistory,
+  review: snapshot.review,
+  formalReview: snapshot.formalReview,
+);
+
+PracticeTurnConfirmation _withSceneIdentityConfirmation(
+  PracticeTurnConfirmation confirmation,
+  SceneFamily sceneFamily,
+  SceneModel sceneModel,
+) => PracticeTurnConfirmation(
+  turnId: confirmation.turnId,
+  sessionId: confirmation.sessionId,
+  questionId: confirmation.questionId,
+  candidateId: confirmation.candidateId,
+  answer: confirmation.answer,
+  completedTurns: confirmation.completedTurns,
+  turnLimit: confirmation.turnLimit,
+  sessionCompleted: confirmation.sessionCompleted,
+  sceneFamily: sceneFamily,
+  sceneModel: sceneModel,
+  sessionVersion: confirmation.sessionVersion,
+  nextQuestion: confirmation.nextQuestion,
+  review: confirmation.review,
+  formalReview: confirmation.formalReview,
+  audioAssetId: confirmation.audioAssetId,
+  speechFeedbackStatusUrl: confirmation.speechFeedbackStatusUrl,
+);
+
+const _roleplaySessionId = 'practice-session-roleplay';
 
 final class _PendingSpeechFeedbackClient implements SpeechFeedbackClient {
   final _pending = Completer<SpeechFeedback>();

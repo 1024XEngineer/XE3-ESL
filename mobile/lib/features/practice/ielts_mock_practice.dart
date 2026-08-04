@@ -1,3 +1,5 @@
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -7,9 +9,9 @@ import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/voice_capture_control.dart';
-import 'package:speakup/features/preparation/ielts_question_bank.dart';
+import 'package:speakup/features/coaching/scene/ielts_question_bank.dart';
 import 'package:speakup/features/practice/ielts_examiner_speaker.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
 import 'package:speakup/features/review/ielts_speaking_report_view.dart';
 import 'package:speakup/practice/ielts_mock_progress_store.dart';
 import 'package:speakup/practice/practice_models.dart';
@@ -18,35 +20,27 @@ import 'package:speakup/review/turn_feedback.dart';
 import 'package:speakup/review/turn_feedback_controller.dart';
 import 'package:speakup/review/turn_feedback_disclosure.dart';
 
-const ieltsSpeakingFullMockScenarioId = 'scn_ielts_speaking_full';
-const _ieltsSpeakingPart1ScenarioId = 'scn_ielts_speaking_part_1';
-const _ieltsSpeakingPart1Title = 'IELTS Speaking Part 1';
-const _ieltsSpeakingPart2ScenarioId = 'scn_ielts_speaking_part_2';
-const _ieltsSpeakingPart2Title = 'IELTS Speaking Part 2';
-const _ieltsSpeakingPart3ScenarioId = 'scn_ielts_speaking_part_3';
-const _ieltsSpeakingPart3Title = 'IELTS Speaking Part 3';
+const ieltsSpeakingFullMockSceneId = 'scn_ielts_speaking_full';
 const _part2IntroNarration =
     'You will have one minute to prepare and up to two minutes to speak. '
     'You may take notes during preparation.';
 
 bool isIeltsSpeakingFullMockSession(AgentController controller) =>
-    isIeltsSpeakingFullMockScenario(
-      controller.practiceScenarioType,
-      controller.practiceScenarioModel,
+    isIeltsSpeakingFullMockScene(
+      controller.practiceSceneFamily,
+      controller.practiceSceneModel,
     );
 
 bool isIeltsSpeakingSession(AgentController controller) =>
     isIeltsSpeakingFullMockSession(controller) ||
     _ieltsPracticeModeForScene(controller.scene) != null;
 
-IeltsPracticeMode? _ieltsPracticeModeForScene(AgentScene? scene) {
-  return switch ((scene?.id, scene?.title)) {
-    (_ieltsSpeakingPart1ScenarioId, _) ||
-    (_, _ieltsSpeakingPart1Title) => IeltsPracticeMode.part1,
-    (_ieltsSpeakingPart2ScenarioId, _) ||
-    (_, _ieltsSpeakingPart2Title) => IeltsPracticeMode.part2,
-    (_ieltsSpeakingPart3ScenarioId, _) ||
-    (_, _ieltsSpeakingPart3Title) => IeltsPracticeMode.part3,
+IeltsPracticeMode? _ieltsPracticeModeForScene(SceneDefinition? scene) {
+  return switch (scene?.model) {
+    SceneModel.ieltsSpeakingPart1 => IeltsPracticeMode.part1,
+    SceneModel.ieltsSpeakingPart2 => IeltsPracticeMode.part2,
+    SceneModel.ieltsSpeakingPart3 => IeltsPracticeMode.part3,
+    SceneModel.ieltsSpeakingFullMock => IeltsPracticeMode.fullMock,
     _ => null,
   };
 }

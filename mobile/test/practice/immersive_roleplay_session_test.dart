@@ -1,3 +1,6 @@
+import '../support/scene_fixtures.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -5,7 +8,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
@@ -209,16 +211,13 @@ void main() {
   testWidgets('waits for a retry before loading assistant fallback audio', (
     tester,
   ) async {
-    const scene = AgentScene(
-      id: 'daily-retry',
-      title: '旅行对话',
-      description: '练习旅行中的真实交流。',
-      scenarioType: 'DAILY',
-      presentationMode: AgentScenePresentationMode.immersiveRoleplay,
-    );
+    final scene = _dailyTravelScene('daily-retry');
     final snapshot = PracticeSessionSnapshot(
       sessionId: 'session-retry-1',
-      matter: const AgentMatter(id: 'matter-retry-1', scene: scene),
+      planId: 'plan-retry-1',
+      sceneFamily: scene.family,
+      sceneModel: scene.model,
+      sessionVersion: 1,
       completedTurns: 0,
       turnLimit: 3,
       sessionCompleted: false,
@@ -240,6 +239,7 @@ void main() {
     addTearDown(agentController.dispose);
     await agentController.initialize();
     await agentController.selectScene(scene);
+    await _activateCreatedPractice(agentController, scene, snapshot);
     final failedTokenClient = FakeAvatarSessionTokenClient(
       error: const AvatarSessionTokenException(
         failure: AvatarSessionTokenFailure.unavailable,
@@ -383,16 +383,13 @@ void main() {
   testWidgets('loads each assistant WAV once and sends it only to the avatar', (
     tester,
   ) async {
-    const scene = AgentScene(
-      id: 'daily-travel',
-      title: '旅行对话',
-      description: '练习旅行中的真实交流。',
-      scenarioType: 'DAILY',
-      presentationMode: AgentScenePresentationMode.immersiveRoleplay,
-    );
+    final scene = _dailyTravelScene('daily-travel');
     final snapshot = PracticeSessionSnapshot(
       sessionId: 'session-avatar-1',
-      matter: const AgentMatter(id: 'matter-avatar-1', scene: scene),
+      planId: 'plan-avatar-1',
+      sceneFamily: scene.family,
+      sceneModel: scene.model,
+      sessionVersion: 1,
       completedTurns: 0,
       turnLimit: 3,
       sessionCompleted: false,
@@ -414,6 +411,7 @@ void main() {
     addTearDown(agentController.dispose);
     await agentController.initialize();
     await agentController.selectScene(scene);
+    await _activateCreatedPractice(agentController, scene, snapshot);
     final renderer = FakeAvatarRenderer();
     final avatarController = AvatarController(
       renderer: renderer,
@@ -452,19 +450,63 @@ Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
 }
 
 Future<AgentController> _immersiveAgentController() async {
-  final controller = AgentController(client: FakeAgentClient());
-  await controller.initialize();
-  await controller.selectScene(
-    const AgentScene(
-      id: 'daily-travel',
-      title: '旅行对话',
-      description: '练习旅行中的真实交流。',
-      scenarioType: 'DAILY',
-      presentationMode: AgentScenePresentationMode.immersiveRoleplay,
+  final scene = _dailyTravelScene('daily-travel');
+  const sessionId = 'session-daily-travel';
+  final snapshot = PracticeSessionSnapshot(
+    sessionId: sessionId,
+    planId: 'plan-daily-travel',
+    sceneFamily: scene.family,
+    sceneModel: scene.model,
+    sessionVersion: 1,
+    completedTurns: 0,
+    turnLimit: 3,
+    sessionCompleted: false,
+    currentQuestion: const PracticeQuestion(
+      id: 'question-daily-travel-1',
+      sessionId: sessionId,
+      text: 'Where would you like to go?',
     ),
   );
+  final controller = AgentController(
+    client: FakeAgentClient(),
+    practiceClient: _SnapshotPracticeClient(snapshot),
+  );
+  await controller.initialize();
+  await controller.selectScene(scene);
+  await _activateCreatedPractice(controller, scene, snapshot);
   return controller;
 }
+
+Future<void> _activateCreatedPractice(
+  AgentController controller,
+  SceneDefinition scene,
+  PracticeSessionSnapshot snapshot,
+) => controller.activateCreatedPractice(
+  threadId: controller.threadId!,
+  goalId: controller.activeGoal!.id,
+  scene: scene,
+  sessionId: snapshot.sessionId,
+  planId: snapshot.planId,
+  turnLimit: snapshot.turnLimit,
+  clientOperationId: 'activate-${snapshot.sessionId}',
+);
+
+SceneDefinition _dailyTravelScene(String id) => testScene(
+  id: id,
+  family: SceneFamily.daily,
+  model: SceneModel.dailyBasicDialogue,
+  name: '旅行对话',
+  prompt: const ScenePrompt(
+    publicSceneBrief: '练习旅行中的真实交流。',
+    practiceGoal: 'Complete the travel conversation.',
+    userRole: 'Traveler',
+    aiRole: 'Conversation partner',
+    personaSummary: 'Helpful and natural.',
+    focusAreas: <String>['clarity'],
+    turnBlueprints: <String>['Ask one travel question.'],
+    suggestedDurationSeconds: 600,
+  ),
+);
 
 final class _SnapshotPracticeClient implements PracticeClient {
   _SnapshotPracticeClient(this.snapshot);
@@ -475,17 +517,25 @@ final class _SnapshotPracticeClient implements PracticeClient {
   Future<void> clearAccountState() async {}
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
-  }) async => null;
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) async {
+    if (sessionId != snapshot.sessionId) {
+      throw StateError('Unexpected Practice Session.');
+    }
+    return snapshot;
+  }
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
-  }) async => PracticeStartResult(snapshot: snapshot);
+  }) async {
+    if (sessionId != snapshot.sessionId || clientOperationId.trim().isEmpty) {
+      throw StateError('Unexpected Practice activation.');
+    }
+    return snapshot;
+  }
 
   @override
   Future<PracticeTurnConfirmation> confirm({

@@ -10,7 +10,7 @@ import (
 const (
 	testOwnerID  = "10000000-0000-4000-8000-000000000001"
 	testMemoryID = "20000000-0000-4000-8000-000000000001"
-	testMatterID = "30000000-0000-4000-8000-000000000001"
+	testGoalID   = "30000000-0000-4000-8000-000000000001"
 	testSourceID = "40000000-0000-4000-8000-000000000001"
 )
 
@@ -41,15 +41,15 @@ func TestCreateCommandValidation(t *testing.T) {
 			},
 		},
 		{
-			name: "user scope with matter",
+			name: "user scope with goal",
 			mutate: func(command *CreateCommand) {
-				command.MatterID = testMatterID
+				command.GoalID = testGoalID
 			},
 		},
 		{
-			name: "matter scope without matter",
+			name: "goal scope without goal",
 			mutate: func(command *CreateCommand) {
-				command.Scope = ScopeMatter
+				command.Scope = ScopeGoal
 			},
 		},
 		{
@@ -131,15 +131,15 @@ func TestScopeFilterValidation(t *testing.T) {
 		t.Fatal("valid user ScopeFilter was rejected")
 	}
 	if !(ScopeFilter{
-		Scope:    ScopeMatter,
-		MatterID: testMatterID,
-		Limit:    100,
+		Scope:  ScopeGoal,
+		GoalID: testGoalID,
+		Limit:  100,
 	}).Valid() {
-		t.Fatal("valid matter ScopeFilter was rejected")
+		t.Fatal("valid goal ScopeFilter was rejected")
 	}
 	for _, filter := range []ScopeFilter{
-		{Scope: ScopeMatter, Limit: 10},
-		{Scope: ScopeUser, MatterID: testMatterID, Limit: 10},
+		{Scope: ScopeGoal, Limit: 10},
+		{Scope: ScopeUser, GoalID: testGoalID, Limit: 10},
 		{Scope: ScopeUser, Limit: 0},
 		{Scope: ScopeUser, Limit: 101},
 	} {

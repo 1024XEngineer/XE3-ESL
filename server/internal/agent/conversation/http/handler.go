@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	defaultThreadPageSize  = 20
-	defaultMessagePageSize = 50
-	scenarioCreateToolName = "scenario.create.v1"
+	defaultThreadPageSize    = 20
+	defaultMessagePageSize   = 50
+	goalCreateCapabilityName = "goal.create.v1"
 )
 
 type ToolCallReader interface {
@@ -123,8 +123,8 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.GET("/v1/agent-threads/:thread_id", handler.getThread)
 	routes.DELETE("/v1/agent-threads/:thread_id", handler.deleteThread)
 	routes.PUT(
-		"/v1/agent-threads/:thread_id/active-matter",
-		handler.setActiveMatter,
+		"/v1/agent-threads/:thread_id/active-goal",
+		handler.setActiveGoal,
 	)
 	routes.GET(
 		"/v1/agent-threads/:thread_id/messages",
@@ -135,7 +135,7 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 func (handler *Handler) createThread(c *gin.Context) {
 	values, ok := httpinput.DecodeObject(
 		c,
-		[]string{"active_matter_id"},
+		[]string{"active_goal_id"},
 		nil,
 		httpinput.DefaultJSONBodyLimit,
 		httpinput.DefaultReadTimeout,
@@ -144,10 +144,10 @@ func (handler *Handler) createThread(c *gin.Context) {
 		handler.write(c, invalidRequest(nil))
 		return
 	}
-	activeMatterID := ""
-	if raw, exists := values["active_matter_id"]; exists {
-		activeMatterID, ok = httpinput.String(raw)
-		if !ok || activeMatterID == "" {
+	activeGoalID := ""
+	if raw, exists := values["active_goal_id"]; exists {
+		activeGoalID, ok = httpinput.String(raw)
+		if !ok || activeGoalID == "" {
 			handler.write(c, invalidRequest(nil))
 			return
 		}
@@ -158,7 +158,7 @@ func (handler *Handler) createThread(c *gin.Context) {
 		return
 	}
 	thread, err := handler.application.CreateThread(
-		c.Request.Context(), actor, activeMatterID,
+		c.Request.Context(), actor, activeGoalID,
 	)
 	if err != nil {
 		handler.write(c, mapError(err))
@@ -300,11 +300,11 @@ func (handler *Handler) deleteThread(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (handler *Handler) setActiveMatter(c *gin.Context) {
+func (handler *Handler) setActiveGoal(c *gin.Context) {
 	values, ok := httpinput.DecodeObject(
 		c,
-		[]string{"matter_id"},
-		[]string{"matter_id"},
+		[]string{"goal_id"},
+		[]string{"goal_id"},
 		httpinput.DefaultJSONBodyLimit,
 		httpinput.DefaultReadTimeout,
 	)
@@ -312,7 +312,7 @@ func (handler *Handler) setActiveMatter(c *gin.Context) {
 		handler.write(c, invalidRequest(nil))
 		return
 	}
-	matterID, ok := httpinput.String(values["matter_id"])
+	goalID, ok := httpinput.String(values["goal_id"])
 	if !ok {
 		handler.write(c, invalidRequest(nil))
 		return
@@ -322,8 +322,8 @@ func (handler *Handler) setActiveMatter(c *gin.Context) {
 		handler.write(c, authenticationRequired())
 		return
 	}
-	link, err := handler.application.SetActiveMatter(
-		c.Request.Context(), trusted, c.Param("thread_id"), matterID,
+	link, err := handler.application.SetActiveGoal(
+		c.Request.Context(), trusted, c.Param("thread_id"), goalID,
 	)
 	if err != nil {
 		handler.write(c, mapError(err))
@@ -411,16 +411,16 @@ func ThreadResponse(thread agentconversation.Thread) gin.H {
 	if thread.Title != "" {
 		result["title"] = thread.Title
 	}
-	if thread.ActiveMatterID != "" {
-		result["active_matter_id"] = thread.ActiveMatterID
+	if thread.ActiveGoalID != "" {
+		result["active_goal_id"] = thread.ActiveGoalID
 	}
 	return result
 }
 
-func LinkResponse(link agentconversation.ThreadMatterLink) gin.H {
+func LinkResponse(link agentconversation.ThreadGoalLink) gin.H {
 	return gin.H{
 		"thread_id":  link.ThreadID,
-		"matter_id":  link.MatterID,
+		"goal_id":    link.GoalID,
 		"active":     link.Active,
 		"linked_at":  link.LinkedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at": link.UpdatedAt.UTC().Format(time.RFC3339Nano),
@@ -552,38 +552,38 @@ func ImageAssetResponse(asset agentimage.Asset) gin.H {
 func interviewPreparationActions(records []agentrun.ToolCall) []gin.H {
 	actions := make([]gin.H, 0, 1)
 	for _, record := range records {
-		if record.Name != scenarioCreateToolName ||
+		if record.Name != goalCreateCapabilityName ||
 			record.Status != agentrun.ToolCallSucceeded {
 			continue
 		}
 		var result struct {
 			Content struct {
-				Matter struct {
-					ID    string `json:"matter_id"`
+				Goal struct {
+					ID    string `json:"goal_id"`
 					Title string `json:"title"`
-				} `json:"matter"`
+				} `json:"goal"`
 			} `json:"content"`
 		}
 		if json.Unmarshal(record.Result, &result) != nil ||
-			!agentconversation.ValidUUID(result.Content.Matter.ID) ||
-			strings.TrimSpace(result.Content.Matter.Title) == "" {
+			!agentconversation.ValidUUID(result.Content.Goal.ID) ||
+			strings.TrimSpace(result.Content.Goal.Title) == "" {
 			continue
 		}
-		hasMatterSource := false
+		hasGoalSource := false
 		for _, source := range record.SourceRefs {
-			if source.Type == "matter" && source.ID == result.Content.Matter.ID {
-				hasMatterSource = true
+			if source.Type == "goal" && source.ID == result.Content.Goal.ID {
+				hasGoalSource = true
 				break
 			}
 		}
-		if !hasMatterSource {
+		if !hasGoalSource {
 			continue
 		}
 		actions = append(actions, gin.H{
-			"type":      "open_interview_preparation",
-			"label":     "配置并开始面试",
-			"matter_id": result.Content.Matter.ID,
-			"title":     result.Content.Matter.Title,
+			"type":    "open_interview_preparation",
+			"label":   "配置并开始面试",
+			"goal_id": result.Content.Goal.ID,
+			"title":   result.Content.Goal.Title,
 		})
 	}
 	return actions

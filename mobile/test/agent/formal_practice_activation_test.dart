@@ -4,12 +4,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
+import 'package:speakup/features/coaching/goal/goal.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/practice/practice_models.dart';
 
+import '../support/scene_fixtures.dart';
+
 void main() {
-  test('new user activates a real Matter without legacy voice start', () async {
-    final agent = _ActivationAgentClient(activeMatter: null);
+  test('new user activates a real Goal without legacy voice start', () async {
+    final agent = _ActivationAgentClient(restoreGoal: false);
     final practice = _ActivationPracticeClient(
       snapshot: _snapshot(turnLimit: 6),
     );
@@ -17,72 +21,37 @@ void main() {
     addTearDown(controller.dispose);
     await controller.initialize();
 
-    final matter = await controller.activateMatterForScenario(
+    final goal = await controller.activateGoalForScene(
       threadId: _threadId,
-      scene: _matter.scene,
-      clientOperationId: 'matter-stable-operation',
+      scene: _scene,
+      clientOperationId: 'goal-stable-operation',
     );
 
-    expect(matter.id, _matterId);
-    expect(controller.activeMatter?.id, _matterId);
+    expect(goal.id, _goalId);
+    expect(controller.activeGoal?.id, _goalId);
     expect(agent.sceneStarts, 1);
-    expect(practice.startCalls, 0);
+    expect(practice.activationCalls, 0);
   });
 
-  test(
-    'does not reuse a same-title Matter from another catalog scene',
-    () async {
-      const staleMatter = AgentMatter(
-        id: 'matter-stale',
-        scene: AgentScene(
-          id: 'another-catalog-scene',
-          title: 'Technical interview',
-          description: 'A different catalog entry with the same title.',
-        ),
-      );
-      final agent = _ActivationAgentClient(activeMatter: staleMatter);
-      final controller = AgentController(client: agent);
-      addTearDown(controller.dispose);
-      await controller.initialize();
-
-      final matter = await controller.activateMatterForScenario(
-        threadId: _threadId,
-        scene: _matter.scene,
-        clientOperationId: 'matter-exact-catalog-match',
-      );
-
-      expect(agent.sceneStarts, 1);
-      expect(matter.scene.id, _matter.scene.id);
-      expect(matter.scene.title, _matter.scene.title);
-    },
-  );
-
-  test('rejects a Matter response for a different catalog scene', () async {
-    const mismatchedMatter = AgentMatter(
-      id: 'matter-other',
-      scene: AgentScene(
-        id: 'other-scene',
-        title: 'Other interview',
-        description: 'Wrong catalog entry.',
-      ),
-    );
+  test('rejects a Goal response with a different title', () async {
+    final mismatchedGoal = testGoal(id: 'goal-other', title: 'Other interview');
     final agent = _ActivationAgentClient(
-      activeMatter: null,
-      startSceneMatter: mismatchedMatter,
+      restoreGoal: false,
+      startSceneGoal: mismatchedGoal,
     );
     final controller = AgentController(client: agent);
     addTearDown(controller.dispose);
     await controller.initialize();
 
     await expectLater(
-      controller.activateMatterForScenario(
+      controller.activateGoalForScene(
         threadId: _threadId,
-        scene: _matter.scene,
-        clientOperationId: 'matter-reject-mismatch',
+        scene: _scene,
+        clientOperationId: 'goal-reject-mismatch',
       ),
       throwsStateError,
     );
-    expect(controller.activeMatter, isNull);
+    expect(controller.activeGoal, isNull);
   });
 
   test(
@@ -96,12 +65,14 @@ void main() {
         practiceClient: practice,
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
+      await _initializeFormalContext(controller);
 
       await controller.activateCreatedPractice(
         threadId: _threadId,
-        matterId: _matterId,
+        goalId: _goalId,
+        scene: _scene,
         sessionId: _sessionId,
+        planId: _planId,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       );
@@ -110,9 +81,8 @@ void main() {
       expect(controller.turnLimit, 6);
       expect(controller.completedTurns, 0);
       expect(controller.hasActivePractice, isTrue);
-      expect(practice.restoreCalls, 1);
-      expect(practice.startCalls, 1);
-      expect(practice.startKeys, [_voiceKey]);
+      expect(practice.activationCalls, 1);
+      expect(practice.activationKeys, [_voiceKey]);
     },
   );
 
@@ -127,13 +97,15 @@ void main() {
         practiceClient: practice,
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
+      await _initializeFormalContext(controller);
 
       await expectLater(
         controller.activateCreatedPractice(
           threadId: _threadId,
-          matterId: _matterId,
+          goalId: _goalId,
+          scene: _scene,
           sessionId: _sessionId,
+          planId: _planId,
           turnLimit: 6,
           clientOperationId: _voiceKey,
         ),
@@ -153,13 +125,15 @@ void main() {
       practiceClient: practice,
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initializeFormalContext(controller);
 
     await expectLater(
       controller.activateCreatedPractice(
         threadId: _threadId,
-        matterId: _matterId,
+        goalId: _goalId,
+        scene: _scene,
         sessionId: _sessionId,
+        planId: _planId,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       ),
@@ -173,13 +147,15 @@ void main() {
     );
     await controller.activateCreatedPractice(
       threadId: _threadId,
-      matterId: _matterId,
+      goalId: _goalId,
+      scene: _scene,
       sessionId: _sessionId,
+      planId: _planId,
       turnLimit: 6,
       clientOperationId: _voiceKey,
     );
 
-    expect(practice.startKeys, [_voiceKey, _voiceKey]);
+    expect(practice.activationKeys, [_voiceKey, _voiceKey]);
     expect(controller.practiceSessionId, _sessionId);
   });
 
@@ -187,9 +163,10 @@ void main() {
     final practice = _ActivationPracticeClient(
       snapshot: PracticeSessionSnapshot(
         sessionId: 'session-other',
-        planId: 'plan-1',
-        threadId: _threadId,
-        matter: _matter,
+        planId: _planId,
+        sceneFamily: _scene.family,
+        sceneModel: _scene.model,
+        sessionVersion: 1,
         completedTurns: 0,
         turnLimit: 6,
         sessionCompleted: false,
@@ -205,13 +182,15 @@ void main() {
       practiceClient: practice,
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initializeFormalContext(controller);
 
     await expectLater(
       controller.activateCreatedPractice(
         threadId: _threadId,
-        matterId: _matterId,
+        goalId: _goalId,
+        scene: _scene,
         sessionId: _sessionId,
+        planId: _planId,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       ),
@@ -221,32 +200,32 @@ void main() {
   });
 
   test('logout fences a late formal activation response', () async {
-    final startCompleter = Completer<PracticeStartResult>();
+    final activationCompleter = Completer<PracticeSessionSnapshot>();
     final practice = _ActivationPracticeClient(
       snapshot: _snapshot(turnLimit: 6),
-      startCompleter: startCompleter,
+      activationCompleter: activationCompleter,
     );
     final controller = AgentController(
       client: _ActivationAgentClient(),
       practiceClient: practice,
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initializeFormalContext(controller);
 
     final activation = controller.activateCreatedPractice(
       threadId: _threadId,
-      matterId: _matterId,
+      goalId: _goalId,
+      scene: _scene,
       sessionId: _sessionId,
+      planId: _planId,
       turnLimit: 6,
       clientOperationId: _voiceKey,
     );
     await Future<void>.delayed(Duration.zero);
-    expect(practice.startCalls, 1);
+    expect(practice.activationCalls, 1);
 
     await controller.clearPrivateState();
-    startCompleter.complete(
-      PracticeStartResult(snapshot: _snapshot(turnLimit: 6)),
-    );
+    activationCompleter.complete(_snapshot(turnLimit: 6));
 
     await expectLater(
       activation,
@@ -266,11 +245,13 @@ void main() {
       practiceClient: practice,
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initializeFormalContext(controller);
     await controller.activateCreatedPractice(
       threadId: _threadId,
-      matterId: _matterId,
+      goalId: _goalId,
+      scene: _scene,
       sessionId: _sessionId,
+      planId: _planId,
       turnLimit: 6,
       clientOperationId: _voiceKey,
     );
@@ -278,8 +259,10 @@ void main() {
     await expectLater(
       controller.activateCreatedPractice(
         threadId: _threadId,
-        matterId: _matterId,
+        goalId: _goalId,
+        scene: _scene,
         sessionId: _sessionId,
+        planId: _planId,
         turnLimit: 3,
         clientOperationId: _voiceKey,
       ),
@@ -288,8 +271,10 @@ void main() {
     await expectLater(
       controller.activateCreatedPractice(
         threadId: _threadId,
-        matterId: _matterId,
+        goalId: _goalId,
+        scene: _scene,
         sessionId: 'session-other',
+        planId: _planId,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       ),
@@ -297,8 +282,7 @@ void main() {
     );
     expect(controller.practiceSessionId, _sessionId);
     expect(controller.turnLimit, 6);
-    expect(practice.restoreCalls, 1);
-    expect(practice.startCalls, 1);
+    expect(practice.activationCalls, 1);
   });
 
   test('ends the exact active formal Session with one stable intent', () async {
@@ -311,11 +295,13 @@ void main() {
       clientIdFactory: (scope) => '$scope-stable-operation',
     );
     addTearDown(controller.dispose);
-    await controller.initialize();
+    await _initializeFormalContext(controller);
     await controller.activateCreatedPractice(
       threadId: _threadId,
-      matterId: _matterId,
+      goalId: _goalId,
+      scene: _scene,
       sessionId: _sessionId,
+      planId: _planId,
       turnLimit: 6,
       clientOperationId: _voiceKey,
     );
@@ -326,7 +312,7 @@ void main() {
     expect(practice.endVersions, [1]);
     expect(controller.hasActivePractice, isFalse);
     expect(controller.practiceSessionId, isNull);
-    expect(controller.activeMatter, isNull);
+    expect(controller.activeGoal, isNull);
   });
 
   test(
@@ -335,9 +321,10 @@ void main() {
       final practice = _ActivationPracticeClient(
         snapshot: PracticeSessionSnapshot(
           sessionId: _sessionId,
-          planId: 'plan-1',
-          threadId: _threadId,
-          matter: _matter,
+          planId: _planId,
+          sceneFamily: _scene.family,
+          sceneModel: _scene.model,
+          sessionVersion: 1,
           completedTurns: 4,
           turnLimit: 6,
           sessionCompleted: true,
@@ -355,12 +342,14 @@ void main() {
         practiceClient: practice,
       );
       addTearDown(controller.dispose);
-      await controller.initialize();
+      await _initializeFormalContext(controller);
 
       await controller.activateCreatedPractice(
         threadId: _threadId,
-        matterId: _matterId,
+        goalId: _goalId,
+        scene: _scene,
         sessionId: _sessionId,
+        planId: _planId,
         turnLimit: 6,
         clientOperationId: _voiceKey,
       );
@@ -373,13 +362,22 @@ void main() {
   );
 }
 
+Future<void> _initializeFormalContext(AgentController controller) async {
+  await controller.initialize();
+  await controller.activateGoalForScene(
+    threadId: _threadId,
+    scene: _scene,
+    clientOperationId: 'bind-formal-scene',
+  );
+}
+
 PracticeSessionSnapshot _snapshot({required int turnLimit}) {
   return PracticeSessionSnapshot(
     sessionId: _sessionId,
-    planId: 'plan-1',
-    threadId: _threadId,
+    planId: _planId,
+    sceneFamily: _scene.family,
+    sceneModel: _scene.model,
     sessionVersion: 1,
-    matter: _matter,
     completedTurns: 0,
     turnLimit: turnLimit,
     sessionCompleted: false,
@@ -396,16 +394,15 @@ final class _ActivationPracticeClient
   _ActivationPracticeClient({
     required this.snapshot,
     this.failFirstStart = false,
-    this.startCompleter,
+    this.activationCompleter,
   });
 
   final PracticeSessionSnapshot snapshot;
   final bool failFirstStart;
-  final Completer<PracticeStartResult>? startCompleter;
-  int restoreCalls = 0;
-  int startCalls = 0;
+  final Completer<PracticeSessionSnapshot>? activationCompleter;
+  int activationCalls = 0;
   int clearCalls = 0;
-  final startKeys = <String>[];
+  final activationKeys = <String>[];
   final endKeys = <String>[];
   final endVersions = <int>[];
 
@@ -415,35 +412,28 @@ final class _ActivationPracticeClient
   }
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
-  }) async {
-    restoreCalls++;
-    return restoreCalls == 1 ? null : snapshot;
-  }
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) async => snapshot;
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
   }) {
-    startCalls++;
-    startKeys.add(clientOperationId);
-    if (failFirstStart && startCalls == 1) {
+    activationCalls++;
+    activationKeys.add(clientOperationId);
+    if (failFirstStart && activationCalls == 1) {
       throw const AgentClientException(
         kind: AgentClientFailureKind.network,
         retryable: true,
       );
     }
-    final pending = startCompleter;
+    final pending = activationCompleter;
     if (pending != null) {
       return pending.future;
     }
-    return Future<PracticeStartResult>.value(
-      PracticeStartResult(snapshot: snapshot),
-    );
+    return Future<PracticeSessionSnapshot>.value(snapshot);
   }
 
   @override
@@ -490,10 +480,11 @@ final class _ActivationPracticeClient
 }
 
 final class _ActivationAgentClient implements AgentClient {
-  _ActivationAgentClient({this.activeMatter = _matter, this.startSceneMatter});
+  _ActivationAgentClient({bool restoreGoal = true, this.startSceneGoal})
+    : activeGoal = restoreGoal ? _goal : null;
 
-  final AgentMatter? activeMatter;
-  final AgentMatter? startSceneMatter;
+  final Goal? activeGoal;
+  final Goal? startSceneGoal;
   int sceneStarts = 0;
 
   @override
@@ -501,16 +492,7 @@ final class _ActivationAgentClient implements AgentClient {
 
   @override
   Future<AgentThreadSnapshot> restoreThread() async {
-    return AgentThreadSnapshot(threadId: _threadId, activeMatter: activeMatter);
-  }
-
-  @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) {
-    throw UnimplementedError();
+    return AgentThreadSnapshot(threadId: _threadId, activeGoal: activeGoal);
   }
 
   @override
@@ -523,55 +505,35 @@ final class _ActivationAgentClient implements AgentClient {
   }
 
   @override
-  Future<AgentSceneStart> startScene({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   }) {
     sceneStarts++;
-    return Future<AgentSceneStart>.value(
-      AgentSceneStart(
-        activeMatter:
-            startSceneMatter ?? AgentMatter(id: _matterId, scene: scene),
-        assistantMessage: AgentMessage(
-          id: 'matter-$clientOperationId',
-          role: AgentMessageRole.assistant,
-          text: scene.title,
-        ),
-      ),
+    return Future<Goal>.value(
+      startSceneGoal ?? testGoal(id: _goalId, title: scene.name),
     );
-  }
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  }) {
-    throw UnimplementedError();
   }
 }
 
 const _threadId = 'thread-1';
-const _matterId = 'matter-1';
+const _goalId = 'goal-1';
 const _sessionId = 'session-1';
+const _planId = 'plan-1';
 const _voiceKey = 'formal-voice-activation-key';
-const _matter = AgentMatter(
-  id: _matterId,
-  scene: AgentScene(
-    id: 'technical-interview',
-    title: 'Technical interview',
-    description: 'Practice technical interview answers.',
+final _scene = testScene(
+  id: 'technical-interview',
+  name: 'Technical interview',
+  prompt: const ScenePrompt(
+    publicSceneBrief: 'Practice technical interview answers.',
+    practiceGoal: 'Complete the technical interview practice.',
+    userRole: 'Candidate',
+    aiRole: 'Interviewer',
+    personaSummary: 'Professional and focused.',
+    focusAreas: <String>['clarity'],
+    turnBlueprints: <String>['Ask one technical interview question.'],
+    suggestedDurationSeconds: 600,
   ),
 );
+final _goal = testGoal(id: _goalId, title: _scene.name);

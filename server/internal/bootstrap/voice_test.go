@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	conversationpersistence "github.com/1024XEngineer/XE3-ESL/server/internal/conversation/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
@@ -55,44 +56,47 @@ func TestReviewEvaluationContextMapsFourScenesAndGeneric(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
-		model         practicepersistence.ScenarioModel
+		model         scene.SceneModel
 		turnPolicy    string
 		sessionPolicy string
 		want          review.EvaluationContextType
 	}{
-		{"interview", practicepersistence.ScenarioModelProjectExperienceDeepDive, "interview.project_deep_dive.turn.v1", "interview.project_deep_dive.session.v1", review.ContextInterviewProjectDeepDive},
-		{"ielts", practicepersistence.ScenarioModelIELTSSpeakingPart2, "ielts.speaking_part2.turn.v1", "ielts.speaking_part2.session.v1", review.ContextIELTSSpeakingPart2},
-		{"workplace", practicepersistence.ScenarioModelProgressAndRiskUpdate, "workplace.progress_risk_update.turn.v1", "workplace.progress_risk_update.session.v1", review.ContextWorkplaceProgressRisk},
-		{"daily", practicepersistence.ScenarioModelHotelCheckinAndIssueHandling, "daily.hotel_checkin_issue.turn.v1", "daily.hotel_checkin_issue.session.v1", review.ContextDailyHotelCheckin},
-		{"generic", practicepersistence.ScenarioModelDailyBasicDialogue, "generic.practice.turn.v1", "generic.practice.session.v1", review.ContextGenericPractice},
+		{"interview", scene.SceneModelProjectExperienceDeepDive, "interview.project_deep_dive.turn.v1", "interview.project_deep_dive.session.v1", review.ContextInterviewProjectDeepDive},
+		{"ielts", scene.SceneModelIELTSSpeakingPart2, "ielts.speaking_part2.turn.v1", "ielts.speaking_part2.session.v1", review.ContextIELTSSpeakingPart2},
+		{"workplace", scene.SceneModelProgressAndRiskUpdate, "workplace.progress_risk_update.turn.v1", "workplace.progress_risk_update.session.v1", review.ContextWorkplaceProgressRisk},
+		{"daily", scene.SceneModelHotelCheckinAndIssueHandling, "daily.hotel_checkin_issue.turn.v1", "daily.hotel_checkin_issue.session.v1", review.ContextDailyHotelCheckin},
+		{"generic", scene.SceneModelDailyBasicDialogue, "generic.practice.turn.v1", "generic.practice.session.v1", review.ContextGenericPractice},
 	}
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			snapshot := practicepersistence.ContextSessionSnapshot{
-				ScenarioModel: test.model,
-				ScenarioDefinition: practicepersistence.ScenarioDefinitionSnapshot{
-					ID:               "scene-1",
-					Version:          1,
-					TurnPolicyRef:    test.turnPolicy,
-					SessionPolicyRef: test.sessionPolicy,
-				},
-				ScenarioConfig: practicepersistence.ScenarioConfigSnapshot{
-					PromptModel: practicepersistence.ScenarioPromptModel{
-						PublicSceneBrief: "A realistic scene.",
-						PracticeGoal:     "Complete the exchange.",
-						UserRole:         "Learner",
-						AIRole:           "Facilitator",
-						FocusAreas:       []string{"clarity"},
-						TurnBlueprints:   []string{"Confirm the outcome."},
+				SceneModel: test.model,
+				SceneSelection: scene.SelectionSnapshot{
+					Scene: scene.SceneDefinition{
+						ID:               "scene-1",
+						Model:            test.model,
+						Version:          1,
+						TurnPolicyRef:    test.turnPolicy,
+						SessionPolicyRef: test.sessionPolicy,
+						Prompt: scene.ScenePrompt{
+							PublicSceneBrief: "A realistic scene.",
+							PracticeGoal:     "Complete the exchange.",
+							UserRole:         "Learner",
+							AIRole:           "Facilitator",
+							FocusAreas:       []string{"clarity"},
+							TurnBlueprints:   []string{"Confirm the outcome."},
+						},
+						PracticeOptions: []scene.PracticeOption{{
+							ID:   "option-full",
+							Type: scene.PracticeOptionFullSimulation,
+						}},
 					},
+					PracticeOptionID: "option-full",
 				},
-				Preparation: practicepersistence.PreparationSnapshot{
+				Preparation: preparation.Snapshot{
 					BackgroundSnapshot: "A project brief.",
-				},
-				PracticeOption: practicepersistence.PracticeOptionSnapshot{
-					Type: "FULL_SIMULATION",
 				},
 			}
 			got, err := reviewEvaluationContext(snapshot)
@@ -112,9 +116,11 @@ func TestReviewEvaluationContextMapsFourScenesAndGeneric(t *testing.T) {
 func TestLegacyReviewSnapshotKeepsV1Compatibility(t *testing.T) {
 	t.Parallel()
 	snapshot := practicepersistence.ContextSessionSnapshot{
-		ScenarioDefinition: practicepersistence.ScenarioDefinitionSnapshot{
-			ID:      "legacy-scene",
-			Version: 1,
+		SceneSelection: scene.SelectionSnapshot{
+			Scene: scene.SceneDefinition{
+				ID:      "legacy-scene",
+				Version: 1,
+			},
 		},
 	}
 	evaluationContext, err := reviewEvaluationContextForSnapshot(snapshot)
@@ -127,7 +133,7 @@ func TestLegacyReviewSnapshotKeepsV1Compatibility(t *testing.T) {
 		t.Fatalf("legacy snapshot routed incorrectly: %+v", evaluationContext)
 	}
 
-	snapshot.ScenarioDefinition.TurnPolicyRef =
+	snapshot.SceneSelection.Scene.TurnPolicyRef =
 		"generic.practice.turn.v1"
 	if _, err := reviewEvaluationContextForSnapshot(snapshot); !errors.Is(
 		err,
@@ -334,8 +340,8 @@ func TestVoiceCompletionEvaluationAdapterRoutesOnlyCompletedIELTSFullMock(
 	}
 	session := practicevoice.Session{
 		ID:             "practice-session-1",
-		ScenarioType:   "EXAM",
-		ScenarioModel:  "IELTS_SPEAKING_FULL_MOCK",
+		SceneFamily:    "EXAM",
+		SceneModel:     "IELTS_SPEAKING_FULL_MOCK",
 		Status:         "completed",
 		Completed:      true,
 		EffectiveTurns: 14,
@@ -367,8 +373,8 @@ func TestVoiceCompletionEvaluationAdapterRoutesOnlyCompletedIELTSFullMock(
 	}
 
 	interview := session
-	interview.ScenarioType = "INTERVIEW"
-	interview.ScenarioModel = "PROJECT_EXPERIENCE_DEEP_DIVE"
+	interview.SceneFamily = "INTERVIEW"
+	interview.SceneModel = "PROJECT_EXPERIENCE_DEEP_DIVE"
 	adapter.sessions = voiceCompletionSessionPortStub{session: interview}
 	if err := adapter.EnsureCompletedSessionEvaluation(
 		context.Background(),
@@ -401,8 +407,8 @@ func TestVoiceCompletionEvaluationAdapterFailsExplicitly(t *testing.T) {
 	}
 	session := practicevoice.Session{
 		ID:             "practice-session-1",
-		ScenarioType:   "EXAM",
-		ScenarioModel:  "IELTS_SPEAKING_FULL_MOCK",
+		SceneFamily:    "EXAM",
+		SceneModel:     "IELTS_SPEAKING_FULL_MOCK",
 		Status:         "completed",
 		Completed:      true,
 		EffectiveTurns: 14,
@@ -435,8 +441,8 @@ func TestVoiceCompletionEvaluationAdapterFailsExplicitly(t *testing.T) {
 	}
 
 	interview := session
-	interview.ScenarioType = "INTERVIEW"
-	interview.ScenarioModel = "INTERVIEW_BASIC_DIALOGUE"
+	interview.SceneFamily = "INTERVIEW"
+	interview.SceneModel = "INTERVIEW_BASIC_DIALOGUE"
 	interview.EffectiveTurns = 3
 	interview.TurnLimit = 3
 	adapter.sessions = voiceCompletionSessionPortStub{session: interview}
@@ -554,16 +560,6 @@ type voiceCompletionSessionPortStub struct {
 }
 
 func (stub voiceCompletionSessionPortStub) Start(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	string,
-	string,
-) (practicevoice.Session, error) {
-	return stub.session, stub.err
-}
-
-func (stub voiceCompletionSessionPortStub) GetByThread(
 	context.Context,
 	requestcontext.Actor,
 	string,
@@ -757,16 +753,16 @@ func (g *capturingTextGenerator) Generate(
 func bootstrapReviewSource(t *testing.T) review.ReviewSourceSnapshot {
 	t.Helper()
 	evaluationContext := review.EvaluationContext{
-		SchemaVersion:             review.EvaluationContextSchemaVersion,
-		ContextType:               review.ContextInterviewProjectDeepDive,
-		SceneKey:                  "scn_programmer_interview",
-		ScenarioDefinitionID:      "scn_programmer_interview",
-		ScenarioDefinitionVersion: 1,
-		PracticeOptionType:        "FULL_SIMULATION",
-		DifficultyRef:             "difficulty.standard.v1",
-		AssistanceRef:             "assistance.none.v1",
-		TurnPolicyRef:             "interview.project_deep_dive.turn.v1",
-		SessionPolicyRef:          "interview.project_deep_dive.session.v1",
+		SchemaVersion:      review.EvaluationContextSchemaVersion,
+		ContextType:        review.ContextInterviewProjectDeepDive,
+		SceneKey:           "scn_programmer_interview",
+		SceneID:            "scn_programmer_interview",
+		SceneVersion:       1,
+		PracticeOptionType: "FULL_SIMULATION",
+		DifficultyRef:      "difficulty.standard.v1",
+		AssistanceRef:      "assistance.none.v1",
+		TurnPolicyRef:      "interview.project_deep_dive.turn.v1",
+		SessionPolicyRef:   "interview.project_deep_dive.session.v1",
 		SceneSpecificContext: review.SceneSpecificContext{
 			Type: review.ContextInterviewProjectDeepDive,
 			Interview: &review.InterviewProjectDeepDiveV1{
@@ -805,7 +801,7 @@ func validGeneratedReviewJSON() string {
 		`"feedback_items":[],"repractice_suggestion_refs":[]}`
 }
 
-func TestVoiceQuestionRequestUsesFrozenScenarioPrompt(t *testing.T) {
+func TestVoiceQuestionRequestUsesFrozenScenePrompt(t *testing.T) {
 	tests := []struct {
 		name          string
 		scenarioType  string
@@ -845,11 +841,11 @@ func TestVoiceQuestionRequestUsesFrozenScenarioPrompt(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			session := practicevoice.Session{
-				ScenarioType:         test.scenarioType,
-				ScenarioModel:        test.scenarioModel,
+				SceneFamily:          test.scenarioType,
+				SceneModel:           test.scenarioModel,
 				TurnLimit:            4,
 				PreviousUserResponse: "I completed the first milestone.",
-				PromptModel: practicevoice.ScenarioPrompt{
+				Prompt: scene.ScenePrompt{
 					PublicSceneBrief: "A realistic spoken English scene.",
 					PracticeGoal:     "Complete the exchange clearly.",
 					UserRole:         "Learner",
@@ -890,8 +886,8 @@ func TestVoiceQuestionRequestUsesFrozenScenarioPrompt(t *testing.T) {
 func TestFrozenIELTSFullMockQuestionUsesExactBlueprintSequence(t *testing.T) {
 	t.Parallel()
 	session := practicevoice.Session{
-		ScenarioModel: "IELTS_SPEAKING_FULL_MOCK",
-		PromptModel: practicevoice.ScenarioPrompt{
+		SceneModel: "IELTS_SPEAKING_FULL_MOCK",
+		Prompt: scene.ScenePrompt{
 			TurnBlueprints: []string{
 				"Part 1 question: Where is your hometown?",
 				"Part 2 cue card: Describe a skill you would like to learn.\nYou should say:\n• What the skill is",
@@ -1002,14 +998,13 @@ func TestBuildVoiceApplicationRequiresOwningModulePorts(t *testing.T) {
 			Completions:       &voiceTestCompletions{},
 		},
 	}
-	if _, err := buildVoiceApplication(&voiceTestMatters{}, valid); err != nil {
+	if _, err := buildVoiceApplication(valid); err != nil {
 		t.Fatalf("build valid voice application: %v", err)
 	}
 
 	missingStore := valid
 	missingStore.Ports.ConversationStore = nil
 	if _, err := buildVoiceApplication(
-		&voiceTestMatters{},
 		missingStore,
 	); err == nil {
 		t.Fatal("missing Conversation Port was accepted")
@@ -1017,13 +1012,214 @@ func TestBuildVoiceApplicationRequiresOwningModulePorts(t *testing.T) {
 	missingCompletion := valid
 	missingCompletion.Ports.Completions = nil
 	if _, err := buildVoiceApplication(
-		&voiceTestMatters{},
 		missingCompletion,
 	); err == nil {
 		t.Fatal("missing completion Evaluation Port was accepted")
 	}
-	if _, err := buildVoiceApplication(nil, valid); err == nil {
-		t.Fatal("missing Matter Port was accepted")
+}
+
+func TestVoicePracticeAdapterStartsExplicitSessionWithFrozenPlan(t *testing.T) {
+	bootstrap := voiceContextBootstrapFixture()
+	starting := bootstrap.Session
+	starting.Status = practicepersistence.ContextSessionStarting
+	starting.Version = 1
+	starting.StartedAt = nil
+	repository := &voiceContextRepositoryStub{
+		session:   starting,
+		activated: bootstrap,
+	}
+	adapter := &voicePracticeAdapter{repository: repository}
+	actor := requestcontext.Actor{
+		UserID:    "user-1",
+		SessionID: "auth-session-1",
+	}
+
+	session, err := adapter.Start(
+		context.Background(),
+		actor,
+		bootstrap.Session.ID,
+		"activate-session-1",
+	)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if repository.getSessionID != bootstrap.Session.ID ||
+		repository.activateSessionID != bootstrap.Session.ID ||
+		repository.activatePlanID != bootstrap.Session.PlanID ||
+		repository.intent.CanonicalPath !=
+			"/v1/practice-sessions/"+bootstrap.Session.ID+
+				"/voice-activation" ||
+		session.ID != bootstrap.Session.ID ||
+		session.PlanID != bootstrap.Session.PlanID ||
+		session.SceneID != bootstrap.Snapshot.SceneSelection.Scene.ID ||
+		session.SceneVersion !=
+			bootstrap.Snapshot.SceneSelection.Scene.Version {
+		t.Fatalf(
+			"explicit activation = session %#v, repository %#v",
+			session,
+			repository,
+		)
+	}
+}
+
+func TestVoicePracticeAdapterRejectsLegacyParticipantRoles(t *testing.T) {
+	for _, role := range []string{"INTERVIEWER", "CANDIDATE"} {
+		t.Run(role, func(t *testing.T) {
+			bootstrap := voiceContextBootstrapFixture()
+			if role == "INTERVIEWER" {
+				bootstrap.Snapshot.Participants[0].Role = role
+			} else {
+				bootstrap.Snapshot.Participants[1].Role = role
+			}
+			if _, err := mapContextPracticeSession(bootstrap, "user-1"); !errors.Is(err, practicevoice.ErrInvalidContext) {
+				t.Fatalf("legacy role %q error = %v", role, err)
+			}
+		})
+	}
+}
+
+type voiceContextRepositoryStub struct {
+	session           practicepersistence.ContextSession
+	activated         practicepersistence.ContextSessionBootstrap
+	getSessionID      string
+	activateSessionID string
+	activatePlanID    string
+	intent            practicepersistence.ContextIdempotencyIntent
+}
+
+func (repository *voiceContextRepositoryStub) GetContextSession(
+	_ context.Context,
+	_ practicepersistence.Actor,
+	sessionID string,
+) (practicepersistence.ContextSession, error) {
+	repository.getSessionID = sessionID
+	return repository.session, nil
+}
+
+func (repository *voiceContextRepositoryStub) GetContextSessionSnapshot(
+	context.Context,
+	practicepersistence.Actor,
+	string,
+) (practicepersistence.ContextSessionSnapshot, error) {
+	return repository.activated.Snapshot, nil
+}
+
+func (repository *voiceContextRepositoryStub) ReplayContextVoiceStart(
+	_ context.Context,
+	_ practicepersistence.Actor,
+	intent practicepersistence.ContextIdempotencyIntent,
+) (practicepersistence.ContextSessionBootstrap, bool, error) {
+	repository.intent = intent
+	return practicepersistence.ContextSessionBootstrap{}, false, nil
+}
+
+func (repository *voiceContextRepositoryStub) ActivateContextSession(
+	_ context.Context,
+	_ practicepersistence.Actor,
+	sessionID string,
+	planID string,
+	intent practicepersistence.ContextIdempotencyIntent,
+) (practicepersistence.ContextSessionBootstrap, error) {
+	repository.activateSessionID = sessionID
+	repository.activatePlanID = planID
+	repository.intent = intent
+	return repository.activated, nil
+}
+
+func voiceContextBootstrapFixture() practicepersistence.ContextSessionBootstrap {
+	now := time.Unix(1, 0).UTC()
+	role := scene.RoleDefinition{
+		ID:               "role-1",
+		SceneID:          "scene-1",
+		Type:             "interviewer",
+		DisplayName:      "Interviewer",
+		Responsibilities: "Ask focused questions.",
+		Style:            "Professional",
+		PracticeObjectives: []scene.PracticeObjectiveDefinition{{
+			ID: "clarity", Description: "Explain the answer clearly.",
+		}},
+	}
+	definition := scene.SceneDefinition{
+		ID:      "scene-1",
+		Family:  scene.SceneFamilyInterview,
+		Model:   scene.SceneModelProjectExperienceDeepDive,
+		Name:    "Project deep dive",
+		Version: 2,
+		Status:  scene.SceneStatusActive,
+		Prompt: scene.ScenePrompt{
+			PublicSceneBrief: "Discuss one project.",
+			PracticeGoal:     "Explain decisions clearly.",
+			UserRole:         "Candidate",
+			AIRole:           "Technical interviewer",
+			PersonaSummary:   "Professional and concise",
+			FocusAreas:       []string{"clarity"},
+			TurnBlueprints:   []string{"Ask about the project"},
+		},
+		Roles: []scene.RoleDefinition{role},
+		PracticeOptions: []scene.PracticeOption{{
+			ID:               "option-1",
+			SceneID:          "scene-1",
+			RoleDefinitionID: "role-1",
+			Type:             scene.PracticeOptionFullSimulation,
+			DisplayName:      "Full simulation",
+		}},
+	}
+	session := practicepersistence.ContextSession{
+		ID:             "practice-session-1",
+		PlanID:         "practice-plan-1",
+		PlanRevision:   3,
+		SceneFamily:    definition.Family,
+		SceneModel:     definition.Model,
+		SnapshotID:     "session-snapshot-1",
+		Status:         practicepersistence.ContextSessionProgress,
+		Version:        2,
+		EffectiveTurns: 0,
+		StartedAt:      &now,
+		CreatedAt:      now,
+	}
+	return practicepersistence.ContextSessionBootstrap{
+		Session: session,
+		Snapshot: practicepersistence.ContextSessionSnapshot{
+			ID:           session.SnapshotID,
+			SessionID:    session.ID,
+			PlanRevision: session.PlanRevision,
+			SceneFamily:  session.SceneFamily,
+			SceneModel:   session.SceneModel,
+			SceneSelection: scene.SelectionSnapshot{
+				Scene:            definition,
+				SelectedRoleIDs:  []string{role.ID},
+				PracticeOptionID: "option-1",
+			},
+			Participants: []practicepersistence.ContextParticipant{
+				{
+					ID:        "participant-facilitator",
+					SessionID: session.ID,
+					Role:      "FACILITATOR",
+					SubjectRef: practicepersistence.SubjectRef{
+						Namespace: "speakup.role",
+						SubjectID: role.ID,
+					},
+					RoleDefinitionID: role.ID,
+					RoleSnapshot:     &role,
+					Order:            1,
+				},
+				{
+					ID:        "participant-learner",
+					SessionID: session.ID,
+					Role:      "LEARNER",
+					SubjectRef: practicepersistence.SubjectRef{
+						Namespace: "speakup.user",
+						SubjectID: "user-1",
+					},
+					Order: 2,
+				},
+			},
+			SessionPolicy: preparation.SessionPolicy{
+				MaxEffectiveTurns:       3,
+				MaxFollowUpsPerQuestion: 1,
+			},
+			CreatedAt: now,
+		},
 	}
 }
 
@@ -1082,8 +1278,4 @@ type voiceTestReviews struct {
 
 type voiceTestCompletions struct {
 	practicevoice.CompletionEvaluationPort
-}
-
-type voiceTestMatters struct {
-	matter.Reader
 }

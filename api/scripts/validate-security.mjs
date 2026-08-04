@@ -23,10 +23,10 @@ const publicOperations = new Set([
   'GET /health',
   'POST /v1/auth/register',
   'POST /v1/auth/login',
-  'GET /v1/ielts-speaking/question-bank',
-  'GET /v1/scenario-definitions',
-  'GET /v1/scenario-definitions/{scenario_definition_id}',
-  'GET /v1/scenario-definitions/{scenario_definition_id}/role-definitions',
+  'GET /v1/scenes',
+  'GET /v1/scenes/{scene_id}',
+  'GET /v1/scenes/{scene_id}/roles',
+  'GET /v1/scenes/ielts-speaking/question-bank',
 ]);
 const normalizeFieldName = (fieldName) =>
   String(fieldName ?? '')
@@ -532,7 +532,7 @@ assert.equal(
 assert.deepEqual(
   createPracticePlan.security ?? openApi.security,
   bearerSecurity,
-  'Practice Plan creation must resolve its Actor from BearerSession.',
+  'Preparation Plan creation must resolve its Actor from BearerSession.',
 );
 assert.ok(register.responses?.['201']);
 assert.ok(register.responses?.['409']);
@@ -614,8 +614,8 @@ assert.ok(
   createPracticePlanRequestExample,
   'Practice Plan creation must provide a request example.',
 );
-assert.ok(createPracticePlanRequestExample.agent_thread_id);
-assert.ok(createPracticePlanRequestExample.matter_id);
+assert.ok(createPracticePlanRequestExample.source_thread_id);
+assert.ok(createPracticePlanRequestExample.goal_id);
 const createPracticePlanResponse = resolveLocalReference(
   createPracticePlan.responses['201'],
 );
@@ -623,52 +623,62 @@ assert.equal(
   createPracticePlanResponse?.content?.['application/json']?.schema?.$ref,
   '#/components/schemas/PracticePlan',
 );
-assert.ok(
-  createPracticePlanResponse?.content?.['application/json']?.example
-    ?.agent_thread_id,
-);
-assert.ok(
-  createPracticePlanResponse?.content?.['application/json']?.example?.matter_id,
-);
-
 const createPracticePlanRequestSchema = schemas.CreatePracticePlanRequest;
 assert.deepEqual(sorted(createPracticePlanRequestSchema?.required ?? []), [
-  'agent_thread_id',
+  'practice_option_id',
+  'preparation_snapshot_id',
+  'scene_id',
+  'scene_version',
+  'selected_role_ids',
 ]);
 assert.deepEqual(
   sorted(Object.keys(createPracticePlanRequestSchema?.properties ?? {})),
   [
-    'agent_thread_id',
-    'matter_id',
-    'preparation_profile_id',
+    'goal_id',
+    'ielts_selection',
+    'max_effective_turns',
+    'practice_option_id',
     'preparation_snapshot_id',
-    'scenario_config_id',
-    'scenario_config_version',
-    'scenario_definition_id',
-    'scenario_definition_version',
+    'scene_id',
+    'scene_version',
     'selected_role_ids',
+    'source_thread_id',
   ],
 );
 assert.equal(createPracticePlanRequestSchema?.additionalProperties, false);
-assert.equal(createPracticePlanRequestSchema?.oneOf?.length, 2);
-for (const anchorField of ['agent_thread_id', 'matter_id']) {
+assert.equal(createPracticePlanRequestSchema?.oneOf, undefined);
+assert.equal(
+  createPracticePlanRequestSchema?.properties?.ielts_selection?.$ref,
+  '#/components/schemas/IELTSPracticeSelection',
+);
+for (const contextField of ['source_thread_id', 'goal_id']) {
   assert.equal(
-    createPracticePlanRequestSchema?.properties?.[anchorField]?.$ref,
+    createPracticePlanRequestSchema?.properties?.[contextField]?.$ref,
     '#/components/schemas/ResourceId',
-    `${anchorField} must reuse ResourceId.`,
+    `${contextField} must reuse ResourceId.`,
   );
 }
 
 const practicePlanSchema = schemas.PracticePlan;
-assert.ok(practicePlanSchema?.required?.includes('agent_thread_id'));
-assert.ok(!practicePlanSchema?.required?.includes('matter_id'));
-for (const anchorField of ['agent_thread_id', 'matter_id']) {
-  assert.equal(
-    practicePlanSchema?.properties?.[anchorField]?.$ref,
-    '#/components/schemas/ResourceId',
-    `PracticePlan ${anchorField} must reuse ResourceId.`,
-  );
-}
+assert.ok(!practicePlanSchema?.required?.includes('source_thread_id'));
+assert.ok(!practicePlanSchema?.required?.includes('goal_snapshot'));
+assert.ok(practicePlanSchema?.required?.includes('preparation_snapshot'));
+assert.ok(practicePlanSchema?.required?.includes('scene_selection'));
+assert.ok(practicePlanSchema?.required?.includes('session_policy'));
+assert.ok(practicePlanSchema?.required?.includes('practice_objectives'));
+assert.ok(!practicePlanSchema?.required?.includes('ielts_assignment'));
+assert.equal(
+  practicePlanSchema?.properties?.source_thread_id?.$ref,
+  '#/components/schemas/ResourceId',
+);
+assert.deepEqual(
+  practicePlanSchema?.properties?.practice_plan_status?.enum,
+  ['ready', 'archived'],
+);
+assert.equal(
+  practicePlanSchema?.properties?.ielts_assignment?.$ref,
+  '#/components/schemas/IELTSPracticeAssignment',
+);
 
 const userSchema = schemas.User;
 assert.deepEqual(sorted(userSchema?.required ?? []), ['email', 'user_id']);

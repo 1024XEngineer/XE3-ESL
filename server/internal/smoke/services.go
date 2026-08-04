@@ -1,13 +1,16 @@
 package smoke
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
+	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
@@ -58,164 +61,191 @@ func (b preparationBackend) SnapshotExists(id string) bool {
 	return id == demoPreparationSnapshot && b.runtime.snapshotCreated
 }
 
+func (b preparationBackend) CreatePracticePlan(
+	ctx context.Context,
+	request preparation.CreatePlanRequest,
+) (preparation.PracticePlan, error) {
+	if !b.SnapshotExists(request.PreparationSnapshotID) {
+		return preparation.PracticePlan{}, ErrSnapshotNotFound
+	}
+	if request.PracticeOptionID != DemoPracticeOption {
+		return preparation.PracticePlan{}, ErrInvalidSelection
+	}
+	selection, err := b.runtime.catalog.ResolveSelection(
+		ctx,
+		request.SceneID,
+		request.SceneVersion,
+		request.SelectedRoleIDs,
+		request.PracticeOptionID,
+	)
+	if err != nil {
+		if errors.Is(err, scene.ErrSceneNotFound) {
+			return preparation.PracticePlan{}, ErrSceneNotFound
+		}
+		return preparation.PracticePlan{}, ErrInvalidSelection
+	}
+	option, err := selection.PracticeOption()
+	if err != nil {
+		return preparation.PracticePlan{}, ErrInvalidSelection
+	}
+	policy, err := preparation.NewPolicyCatalog().ResolveSessionPolicy(
+		selection.Scene,
+		option,
+	)
+	if err != nil {
+		return preparation.PracticePlan{}, ErrInvalidSelection
+	}
+	if request.MaxEffectiveTurns > 0 {
+		if request.MaxEffectiveTurns < policy.MinEffectiveTurns ||
+			request.MaxEffectiveTurns > policy.MaxEffectiveTurns {
+			return preparation.PracticePlan{}, ErrInvalidSelection
+		}
+		policy.MaxEffectiveTurns = request.MaxEffectiveTurns
+		if policy.CoverageCheckpointTurn > policy.MaxEffectiveTurns {
+			policy.CoverageCheckpointTurn = policy.MaxEffectiveTurns
+		}
+	}
+	return b.runtime.createPlan(request, selection, policy)
+}
+
+func (b preparationBackend) PracticePlanExists(
+	planID string,
+	revision int,
+) bool {
+	b.runtime.mu.Lock()
+	defer b.runtime.mu.Unlock()
+	return b.runtime.plan != nil &&
+		b.runtime.plan.ID == planID &&
+		b.runtime.plan.Revision == revision &&
+		b.runtime.plan.Status == preparation.PlanStatusReady
+}
+
 type practiceBackend struct {
 	runtime *Runtime
 }
 
-func (b practiceBackend) CreatePracticePlan(
-	command practice.CreatePracticePlanCommand,
-) (practice.PracticePlan, error) {
-	if command.PreparationProfileID != demoPreparationProfile {
-		return practice.PracticePlan{}, ErrProfileNotFound
-	}
-	catalogSnapshot, err := b.runtime.catalog.GetCatalogSnapshot(
-		command.ScenarioDefinitionID,
-		command.ScenarioDefinitionVersion,
-		command.SelectedRoleIDs,
-		preparation.FullSimulationOptionID,
-		1,
-	)
-	if err != nil ||
-		catalogSnapshot.ScenarioConfig.ID != command.ScenarioConfigID ||
-		catalogSnapshot.ScenarioConfig.Version != command.ScenarioConfigVersion {
-		return practice.PracticePlan{}, ErrInvalidSelection
-	}
-	return b.runtime.createPlan(command)
+type practiceTurnDecision struct {
+	EffectiveTurns     int
+	Completed          bool
+	NextQuestionNumber int
+	SessionVersion     int
+	EndReason          string
+	NextAction         practice.NextAction
 }
 
-func (b practiceBackend) PracticePlanExists(query practice.PracticePlanExistsQuery) bool {
-	b.runtime.mu.Lock()
-	defer b.runtime.mu.Unlock()
-	return query.PracticePlanID == demoPracticePlan && b.runtime.planCreated
-}
-
-func (b practiceBackend) CreatePracticeSession(
-	command practice.CreatePracticeSessionCommand,
-) (practice.CreatePracticeSessionResult, error) {
-	if command.PracticePlanID != demoPracticePlan {
-		return practice.CreatePracticeSessionResult{}, ErrPlanNotFound
-	}
-	if command.ExpectedPlanRevision != 1 {
-		return practice.CreatePracticeSessionResult{}, ErrVersionConflict
-	}
-	if command.PreparationSnapshotID != demoPreparationSnapshot {
-		return practice.CreatePracticeSessionResult{}, ErrInvalidSelection
-	}
-	if _, err := b.runtime.catalog.GetCatalogSnapshot(
-		DemoScenarioDefinition,
-		1,
-		command.RoleDefinitionIDs,
-		command.PracticeOptionID,
-		1,
-	); err != nil {
-		return practice.CreatePracticeSessionResult{}, ErrInvalidSelection
-	}
+func (b practiceBackend) CreatePracticeSession() (
+	practicepersistence.ContextSessionBootstrap,
+	error,
+) {
 	return b.runtime.createSession()
 }
 
 func (b practiceBackend) GetPracticeSession(
-	query practice.GetPracticeSessionQuery,
-) (practice.PracticeSession, bool) {
+	sessionID string,
+) (practicepersistence.ContextSession, bool) {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()
-	if !b.runtime.sessionCreated || query.PracticeSessionID != demoPracticeSession {
-		return practice.PracticeSession{}, false
+	if !b.runtime.sessionCreated || sessionID != demoPracticeSession {
+		return practicepersistence.ContextSession{}, false
 	}
 	return b.runtime.sessionLocked(), true
 }
 
 func (b practiceBackend) GetPracticeSessionSnapshot(
-	query practice.GetPracticeSessionSnapshotQuery,
-) (practice.PracticeSessionSnapshot, bool) {
+	sessionID string,
+) (practicepersistence.ContextSessionSnapshot, bool) {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()
-	if !b.runtime.sessionCreated || query.PracticeSessionID != demoPracticeSession {
-		return practice.PracticeSessionSnapshot{}, false
+	if !b.runtime.sessionCreated || sessionID != demoPracticeSession {
+		return practicepersistence.ContextSessionSnapshot{}, false
 	}
 	return b.runtime.snapshotLocked(), true
 }
 
 func (b practiceBackend) StartPracticeSession(
-	command practice.StartPracticeSessionCommand,
-) (practice.StartPracticeSessionResult, error) {
+	sessionID string,
+) (sessionVersion int, started bool, err error) {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()
-	if !b.runtime.sessionCreated || command.PracticeSessionID != demoPracticeSession {
-		return practice.StartPracticeSessionResult{}, ErrSessionNotFound
+	if !b.runtime.sessionCreated || sessionID != demoPracticeSession {
+		return 0, false, ErrSessionNotFound
 	}
 	switch b.runtime.sessionStatus {
-	case string(practice.PracticeSessionStarting):
-		b.runtime.sessionStatus = string(practice.PracticeSessionInProgress)
+	case practicepersistence.ContextSessionStarting:
+		b.runtime.sessionStatus = practicepersistence.ContextSessionProgress
 		b.runtime.sessionVersion = 2
-		return practice.StartPracticeSessionResult{SessionVersion: 2, Started: true}, nil
-	case string(practice.PracticeSessionInProgress), string(practice.PracticeSessionCompleted):
-		return practice.StartPracticeSessionResult{SessionVersion: b.runtime.sessionVersion}, nil
+		return 2, true, nil
+	case practicepersistence.ContextSessionProgress,
+		practicepersistence.ContextSessionCompleted:
+		return b.runtime.sessionVersion, false, nil
 	default:
-		return practice.StartPracticeSessionResult{}, ErrResourceConflict
+		return 0, false, ErrResourceConflict
 	}
 }
 
 func (b practiceBackend) AuthorizePracticeTurn(
-	command practice.AuthorizePracticeTurnCommand,
+	sessionID string,
+	isRetry bool,
 ) error {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()
-	if !b.runtime.sessionCreated || command.PracticeSessionID != demoPracticeSession {
+	if !b.runtime.sessionCreated || sessionID != demoPracticeSession {
 		return ErrSessionNotFound
 	}
-	if command.IsRetry {
+	if isRetry {
 		switch b.runtime.sessionStatus {
-		case string(practice.PracticeSessionInProgress), string(practice.PracticeSessionCompleted):
+		case practicepersistence.ContextSessionProgress,
+			practicepersistence.ContextSessionCompleted:
 			return nil
 		default:
 			return ErrResourceConflict
 		}
 	}
-	if b.runtime.sessionStatus != string(practice.PracticeSessionInProgress) {
+	if b.runtime.sessionStatus != practicepersistence.ContextSessionProgress {
 		return ErrSessionCompleted
 	}
 	return nil
 }
 
 func (b practiceBackend) ApplyTurnOutcome(
-	command practice.ApplyTurnOutcomeCommand,
-) (practice.ApplyTurnOutcomeResult, error) {
+	outcome practice.TurnOutcome,
+) (practiceTurnDecision, error) {
 	b.runtime.mu.Lock()
 	defer b.runtime.mu.Unlock()
-	outcome := command.Outcome
 	if !b.runtime.sessionCreated || outcome.SessionID != demoPracticeSession {
-		return practice.ApplyTurnOutcomeResult{}, ErrSessionNotFound
+		return practiceTurnDecision{}, ErrSessionNotFound
 	}
 	if decision, ok := b.runtime.turnDecisions[outcome.TurnID]; ok {
 		return decision, nil
 	}
 	if outcome.IsRetry {
-		decision := practice.ApplyTurnOutcomeResult{
+		decision := practiceTurnDecision{
 			EffectiveTurns: b.runtime.effectiveTurns,
-			Completed:      b.runtime.sessionStatus == string(practice.PracticeSessionCompleted),
+			Completed: b.runtime.sessionStatus ==
+				practicepersistence.ContextSessionCompleted,
 			SessionVersion: b.runtime.sessionVersion,
 		}
 		b.runtime.turnDecisions[outcome.TurnID] = decision
 		return decision, nil
 	}
-	if b.runtime.sessionStatus != string(practice.PracticeSessionInProgress) {
-		return practice.ApplyTurnOutcomeResult{}, ErrSessionCompleted
+	if b.runtime.sessionStatus != practicepersistence.ContextSessionProgress {
+		return practiceTurnDecision{}, ErrSessionCompleted
 	}
 	b.runtime.effectiveTurns++
 	b.runtime.sessionVersion++
-	decision := practice.ApplyTurnOutcomeResult{
+	decision := practiceTurnDecision{
 		EffectiveTurns:     b.runtime.effectiveTurns,
 		NextQuestionNumber: b.runtime.effectiveTurns + 1,
 		SessionVersion:     b.runtime.sessionVersion,
 		NextAction:         practice.NextActionMoveToNextObjective,
 	}
 	if b.runtime.effectiveTurns == 4 {
-		b.runtime.sessionStatus = string(practice.PracticeSessionCompleted)
+		b.runtime.sessionStatus = practicepersistence.ContextSessionCompleted
 		b.runtime.sessionVersion = 6
 		decision.Completed = true
 		decision.NextQuestionNumber = 0
 		decision.SessionVersion = 6
-		decision.EndReason = practice.PracticeSessionEndCoverageSatisfiedAtCheckpoint
+		decision.EndReason = practice.EndReasonCoverageSatisfiedAtCheckpoint
 		decision.NextAction = practice.NextActionCompleteSession
 	}
 	b.runtime.turnDecisions[outcome.TurnID] = decision
@@ -490,8 +520,8 @@ func (b reviewBackend) ListHistory(sessionID string) []HistoryRecord {
 
 func mapServiceError(err error) (int, string) {
 	switch {
-	case errors.Is(err, ErrScenarioNotFound):
-		return 404, "scenario_definition_not_found"
+	case errors.Is(err, ErrSceneNotFound):
+		return 404, "scene_not_found"
 	case errors.Is(err, ErrProfileNotFound):
 		return 404, "preparation_profile_not_found"
 	case errors.Is(err, ErrSnapshotNotFound):

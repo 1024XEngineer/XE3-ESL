@@ -11,7 +11,7 @@ func TestRegistryMatchesAliases(t *testing.T) {
 		Name:        "创建面试",
 		Aliases:     []string{"面试"},
 		Description: "Create interview scenario.",
-		ToolName:    ToolScenarioCreate,
+		ToolName:    ToolGoalCreate,
 		BuildInput: func(args string) (json.RawMessage, error) {
 			return JSONObjectInput(map[string]any{"title": args})
 		},
@@ -34,7 +34,7 @@ func TestRegistryRejectsDuplicateAlias(t *testing.T) {
 			Name:        "创建面试",
 			Aliases:     []string{"面试"},
 			Description: "Create interview scenario.",
-			ToolName:    ToolScenarioCreate,
+			ToolName:    ToolGoalCreate,
 			BuildInput: func(args string) (json.RawMessage, error) {
 				return JSONObjectInput(nil)
 			},
@@ -43,7 +43,7 @@ func TestRegistryRejectsDuplicateAlias(t *testing.T) {
 			Name:        "创建口语场景",
 			Aliases:     []string{"面试"},
 			Description: "Create speaking scenario.",
-			ToolName:    ToolScenarioCreate,
+			ToolName:    ToolGoalCreate,
 			BuildInput: func(args string) (json.RawMessage, error) {
 				return JSONObjectInput(nil)
 			},
@@ -66,7 +66,7 @@ func TestRouterParsesBuiltinCommand(t *testing.T) {
 	if !matched {
 		t.Fatal("Parse() matched = false, want true")
 	}
-	if got, want := parsed.Invocation.Name, ToolScenarioCreate; got != want {
+	if got, want := parsed.Invocation.Name, ToolGoalCreate; got != want {
 		t.Fatalf("tool name = %q, want %q", got, want)
 	}
 	if got, want := parsed.Args, "产品经理 一面"; got != want {
@@ -76,9 +76,9 @@ func TestRouterParsesBuiltinCommand(t *testing.T) {
 
 func TestBuiltinsOnlyReferenceImplementedTools(t *testing.T) {
 	implemented := map[string]struct{}{
-		ToolScenarioCreate: {},
-		ToolScenarioSearch: {},
-		ToolReviewSearch:   {},
+		ToolGoalCreate:   {},
+		ToolGoalSearch:   {},
+		ToolReviewSearch: {},
 	}
 	for _, definition := range Builtins() {
 		if _, ok := implemented[definition.ToolName]; !ok {

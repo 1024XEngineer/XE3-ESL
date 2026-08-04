@@ -25,9 +25,9 @@ void main() {
     expect(review.result?.eligibility, FormalReviewSummaryEligibility.eligible);
   });
 
-  test('decodes eligible scenario dimensions, feedback, and repractice', () {
+  test('decodes eligible scene dimensions, feedback, and repractice', () {
     final review = decodeFormalReview(
-      _scenarioReview(
+      _sceneReview(
         contextType: 'interview.project_deep_dive',
         result: _eligibleResult(),
       ),
@@ -48,7 +48,7 @@ void main() {
 
   test('decodes transcript-only IELTS as provisional without Overall', () {
     final review = decodeFormalReview(
-      _scenarioReview(
+      _sceneReview(
         contextType: 'ielts.speaking_part2',
         result: _provisionalResult(),
       ),
@@ -66,7 +66,7 @@ void main() {
 
   test('decodes eligible IELTS only with a server-published Overall', () {
     final review = decodeFormalReview(
-      _scenarioReview(
+      _sceneReview(
         contextType: 'ielts.speaking_part2',
         result: {..._eligibleResult(), 'overall_score': 82},
       ),
@@ -78,7 +78,7 @@ void main() {
 
   test('decodes insufficient evidence without dimensions or a zero score', () {
     final review = decodeFormalReview(
-      _scenarioReview(
+      _sceneReview(
         contextType: 'daily.hotel_checkin_issue',
         result: _insufficientResult(),
       ),
@@ -109,14 +109,14 @@ void main() {
 
   test('rejects missing, mismatched, or unknown evaluation context data', () {
     final cases = <Map<String, Object?>>[
-      _mutateScenario((value) => value.remove('evaluation_context')),
-      _mutateScenario(
+      _mutateScene((value) => value.remove('evaluation_context')),
+      _mutateScene(
         (value) => value['evaluation_context_type'] = 'ielts.speaking_part2',
       ),
-      _mutateScenario((value) {
+      _mutateScene((value) {
         _context(value)['unknown'] = true;
       }),
-      _mutateScenario((value) {
+      _mutateScene((value) {
         _sceneContext(value)['type'] = 'generic.practice';
       }),
     ];
@@ -128,18 +128,18 @@ void main() {
 
   test('rejects unknown enums and fields at every typed result boundary', () {
     final cases = <Map<String, Object?>>[
-      _mutateScenario((value) => value['status'] = 'done'),
-      _mutateScenario(
+      _mutateScene((value) => value['status'] = 'done'),
+      _mutateScene(
         (value) => _result(value)['summary_eligibility'] = 'estimated',
       ),
-      _mutateScenario((value) {
+      _mutateScene((value) {
         _feedback(value).first['kind'] = 'compliment';
       }),
-      _mutateScenario((value) => _result(value)['unknown'] = true),
-      _mutateScenario((value) {
+      _mutateScene((value) => _result(value)['unknown'] = true),
+      _mutateScene((value) {
         _dimensions(value).first['unknown'] = true;
       }),
-      _mutateScenario((value) {
+      _mutateScene((value) {
         _feedback(value).first['unknown'] = true;
       }),
     ];
@@ -150,22 +150,22 @@ void main() {
   });
 
   test('rejects duplicate item keys and invalid repractice references', () {
-    final duplicateDimension = _mutateScenario((value) {
+    final duplicateDimension = _mutateScene((value) {
       _dimensions(value).add(Map<String, Object?>.from(_dimensions(value)[0]));
     });
-    final duplicateFeedback = _mutateScenario((value) {
+    final duplicateFeedback = _mutateScene((value) {
       _feedback(value).add(Map<String, Object?>.from(_feedback(value)[0]));
     });
-    final danglingReference = _mutateScenario((value) {
+    final danglingReference = _mutateScene((value) {
       _result(value)['repractice_suggestion_refs'] = ['missing-feedback'];
     });
-    final duplicateReference = _mutateScenario((value) {
+    final duplicateReference = _mutateScene((value) {
       _result(value)['repractice_suggestion_refs'] = [
         'feedback-impact',
         'feedback-impact',
       ];
     });
-    final paddedFeedbackKey = _mutateScenario((value) {
+    final paddedFeedbackKey = _mutateScene((value) {
       _feedback(value).first['key'] = ' feedback-impact';
       _result(value)['repractice_suggestion_refs'] = [' feedback-impact'];
     });
@@ -183,9 +183,9 @@ void main() {
 
   test('rejects out-of-range dimension and Overall scores', () {
     final cases = <Map<String, Object?>>[
-      _mutateScenario((value) => _dimensions(value).first['score'] = -1),
-      _mutateScenario((value) => _dimensions(value).first['score'] = 101),
-      _scenarioReview(
+      _mutateScene((value) => _dimensions(value).first['score'] = -1),
+      _mutateScene((value) => _dimensions(value).first['score'] = 101),
+      _sceneReview(
         contextType: 'ielts.speaking_part2',
         result: {..._eligibleResult(), 'overall_score': 101},
       ),
@@ -198,34 +198,34 @@ void main() {
 
   test('rejects non-IELTS Overall and mutually exclusive result shapes', () {
     final cases = <Map<String, Object?>>[
-      _mutateScenario((value) => _result(value)['overall_score'] = 82),
-      _scenarioReview(
+      _mutateScene((value) => _result(value)['overall_score'] = 82),
+      _sceneReview(
         contextType: 'ielts.speaking_part2',
         result: {..._provisionalResult(), 'overall_score': 70},
       ),
-      _scenarioReview(
+      _sceneReview(
         contextType: 'ielts.speaking_part2',
         result: _eligibleResult(),
       ),
-      _scenarioReview(
+      _sceneReview(
         contextType: 'interview.project_deep_dive',
         result: _provisionalResult(),
       ),
-      _scenarioReview(
+      _sceneReview(
         contextType: 'daily.hotel_checkin_issue',
         result: {
           ..._insufficientResult(),
           'conclusions': [_dimension()],
         },
       ),
-      _scenarioReview(
+      _sceneReview(
         contextType: 'interview.project_deep_dive',
         result: {
           ..._eligibleResult(),
           'insufficient_evidence_reasons': ['unexpected'],
         },
       ),
-      _mutateScenario((value) {
+      _mutateScene((value) {
         _dimensions(value).first.remove('score');
       }),
     ];
@@ -236,10 +236,10 @@ void main() {
   });
 
   test('rejects a completed/non-completed payload state conflict', () {
-    final pendingWithResult = _mutateScenario((value) {
+    final pendingWithResult = _mutateScene((value) {
       value['status'] = 'pending';
     });
-    final completedWithoutResult = _mutateScenario((value) {
+    final completedWithoutResult = _mutateScene((value) {
       value.remove('result');
     });
 
@@ -281,7 +281,7 @@ Map<String, Object?> _legacyReview() {
   };
 }
 
-Map<String, Object?> _scenarioReview({
+Map<String, Object?> _sceneReview({
   required String contextType,
   required Map<String, Object?> result,
 }) {
@@ -289,7 +289,7 @@ Map<String, Object?> _scenarioReview({
     'review_id': 'review-v2',
     'practice_session_id': 'session-v2',
     'status': 'completed',
-    'implementation_version': 'qianwen-scenario-review-v2',
+    'implementation_version': 'qianwen-scene-review-v2',
     'source_turn_id': 'turn-v2',
     'source_turn_version': 'conversation-turn:evidence-v2',
     'evaluation_context_type': contextType,
@@ -392,8 +392,8 @@ Map<String, Object?> _evaluationContext(String contextType) {
     'schema_version': 'evaluation-context.v1',
     'context_type': contextType,
     'scene_key': 'scene-1',
-    'scenario_definition_id': 'scenario-1',
-    'scenario_definition_version': 1,
+    'scene_id': 'scene-1',
+    'scene_version': 1,
     'practice_option_type': 'FULL_SIMULATION',
     'difficulty_ref': 'difficulty.standard.v1',
     'assistance_ref': 'assistance.none.v1',
@@ -406,13 +406,13 @@ Map<String, Object?> _evaluationContext(String contextType) {
   };
 }
 
-Map<String, Object?> _mutateScenario(
+Map<String, Object?> _mutateScene(
   void Function(Map<String, Object?> value) mutate,
 ) {
   final value =
       jsonDecode(
             jsonEncode(
-              _scenarioReview(
+              _sceneReview(
                 contextType: 'interview.project_deep_dive',
                 result: _eligibleResult(),
               ),

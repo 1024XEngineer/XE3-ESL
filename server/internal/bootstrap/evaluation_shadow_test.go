@@ -154,7 +154,7 @@ func TestIELTSSpeakingShadowTextProviderUsesStrictJSONRequest(t *testing.T) {
 		PromptVersion: evaluation.IELTSSpeakingShadowPromptVersion,
 		RubricVersion: evaluation.IELTSSpeakingShadowRubricVersion,
 		SceneType:     evaluation.SceneIELTSSpeaking,
-		ScenarioModel: "IELTS_SPEAKING_FULL_MOCK",
+		SceneModel:    "IELTS_SPEAKING_FULL_MOCK",
 		AssessableCriteria: []evaluation.IELTSCriterion{
 			evaluation.IELTSCriterionFC,
 			evaluation.IELTSCriterionLR,

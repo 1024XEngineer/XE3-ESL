@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
-	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
+	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
@@ -24,12 +24,12 @@ func TestRegistryExposesInitialMockToolSet(t *testing.T) {
 		names = append(names, definition.Name)
 	}
 	want := []string{
+		goalcapability.GoalCreateCapabilityName,
+		goalcapability.GoalSearchCapabilityName,
 		MaterialSearchToolName,
 		MistakeSearchToolName,
 		reviewtool.ReviewGetToolName,
 		reviewtool.ReviewSearchToolName,
-		mattertool.ScenarioCreateToolName,
-		mattertool.ScenarioSearchToolName,
 	}
 	if !equalStrings(names, want) {
 		t.Fatalf("tool names = %#v, want %#v", names, want)
@@ -80,14 +80,14 @@ func TestToolDefinitionsGuideModelAndConstrainArguments(t *testing.T) {
 		})
 	}
 
-	createTool, ok := registry.Get(mattertool.ScenarioCreateToolName)
+	createTool, ok := registry.Get(goalcapability.GoalCreateCapabilityName)
 	if !ok {
-		t.Fatal("scenario.create.v1 not registered")
+		t.Fatal("goal.create.v1 not registered")
 	}
 	createProperties := createTool.Definition().
 		InputSchema["properties"].(map[string]any)
 	if len(createProperties) != 1 || createProperties["title"] == nil {
-		t.Fatalf("scenario create properties = %#v, want only title", createProperties)
+		t.Fatalf("goal create properties = %#v, want only title", createProperties)
 	}
 
 	materialTool, ok := registry.Get(MaterialSearchToolName)
@@ -104,7 +104,7 @@ func TestToolDefinitionsGuideModelAndConstrainArguments(t *testing.T) {
 	}
 }
 
-func TestScenarioCreateIsAvailableAndIdempotent(t *testing.T) {
+func TestGoalCreateIsAvailableAndIdempotent(t *testing.T) {
 	registry, err := NewRegistry(NewStore())
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
@@ -113,30 +113,30 @@ func TestScenarioCreateIsAvailableAndIdempotent(t *testing.T) {
 	input := json.RawMessage(`{"title":"PM interview"}`)
 	first, err := executor.Execute(
 		context.Background(),
-		validCallContext("create-scenario-1"),
-		tool.Invocation{Name: mattertool.ScenarioCreateToolName, Input: input},
+		validCallContext("create-goal-1"),
+		tool.Invocation{Name: goalcapability.GoalCreateCapabilityName, Input: input},
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	replayed, err := executor.Execute(
 		context.Background(),
-		validCallContext("create-scenario-1"),
-		tool.Invocation{Name: mattertool.ScenarioCreateToolName, Input: input},
+		validCallContext("create-goal-1"),
+		tool.Invocation{Name: goalcapability.GoalCreateCapabilityName, Input: input},
 	)
 	if err != nil {
 		t.Fatalf("replay Execute() error = %v", err)
 	}
-	if first.Content["matter"] == nil ||
-		!equalAny(first.Content["matter"], replayed.Content["matter"]) {
-		t.Fatalf("idempotent scenario mismatch: %#v vs %#v", first.Content, replayed.Content)
+	if first.Content["goal"] == nil ||
+		!equalAny(first.Content["goal"], replayed.Content["goal"]) {
+		t.Fatalf("idempotent goal mismatch: %#v vs %#v", first.Content, replayed.Content)
 	}
 	_, err = executor.Execute(
 		context.Background(),
-		validCallContext("create-scenario-1"),
+		validCallContext("create-goal-1"),
 		tool.Invocation{
-			Name:  mattertool.ScenarioCreateToolName,
-			Input: json.RawMessage(`{"title":"Different Matter"}`),
+			Name:  goalcapability.GoalCreateCapabilityName,
+			Input: json.RawMessage(`{"title":"Different Goal"}`),
 		},
 	)
 	if !errors.Is(err, tool.ErrExecutionRejected) {
@@ -153,11 +153,11 @@ func TestReadOnlyMockToolsReturnExpectedFixtures(t *testing.T) {
 		sourceType string
 	}{
 		{
-			name:       "scenario search",
-			toolName:   mattertool.ScenarioSearchToolName,
+			name:       "goal search",
+			toolName:   goalcapability.GoalSearchCapabilityName,
 			input:      json.RawMessage(`{"query":"interview","limit":1}`),
-			resultKey:  "matters",
-			sourceType: "mock_matter",
+			resultKey:  "goals",
+			sourceType: "mock_goal",
 		},
 		{
 			name:       "review search",
@@ -284,18 +284,18 @@ func TestCapabilitySummariesIncludeRiskAndSchemaFields(t *testing.T) {
 	if got, want := len(summaries), 6; got != want {
 		t.Fatalf("len(CapabilitySummaries()) = %d, want %d", got, want)
 	}
-	var scenario CapabilitySummary
+	var goalSummary CapabilitySummary
 	for _, summary := range summaries {
-		if summary.Name == mattertool.ScenarioCreateToolName {
-			scenario = summary
+		if summary.Name == goalcapability.GoalCreateCapabilityName {
+			goalSummary = summary
 			break
 		}
 	}
-	if scenario.Risk != string(tool.RiskLowRiskWrite) ||
-		scenario.ReadOnly ||
-		!containsString(scenario.SchemaFields, "title") ||
-		!containsString(scenario.RequiredNames, "title") {
-		t.Fatalf("scenario summary = %#v", scenario)
+	if goalSummary.Risk != string(tool.RiskLowRiskWrite) ||
+		goalSummary.ReadOnly ||
+		!containsString(goalSummary.SchemaFields, "title") ||
+		!containsString(goalSummary.RequiredNames, "title") {
+		t.Fatalf("goal summary = %#v", goalSummary)
 	}
 }
 

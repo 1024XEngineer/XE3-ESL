@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 )
 
@@ -64,16 +65,16 @@ func (r *Repository) AuthorizeRetryTurn(
 	}
 
 	var (
-		scenarioType  persistence.ScenarioFamily
-		scenarioModel persistence.ScenarioModel
+		scenarioType  scene.SceneFamily
+		scenarioModel scene.SceneModel
 		sessionStatus persistence.ContextSessionStatus
 		snapshotID    string
 		snapshotJSON  []byte
 	)
 	err = tx.QueryRow(ctx, `
 		SELECT
-			session.scenario_type,
-			session.scenario_model,
+			session.scene_family,
+			session.scene_model,
 			session.status,
 			session.snapshot_id,
 			snapshot.snapshot_document
@@ -81,11 +82,9 @@ func (r *Repository) AuthorizeRetryTurn(
 		JOIN practice_session_snapshots AS snapshot
 		  ON snapshot.owner_user_id = session.owner_user_id
 		 AND snapshot.session_id = session.session_id
-		 AND snapshot.context_plan_id = session.context_plan_id
 		 AND snapshot.snapshot_id = session.snapshot_id
 		WHERE session.owner_user_id = $1
 		  AND session.session_id = $2
-		  AND session.context_plan_id IS NOT NULL
 		FOR UPDATE OF session
 	`, actor.UserID, command.PracticeSessionID).Scan(
 		&scenarioType,
@@ -106,8 +105,8 @@ func (r *Repository) AuthorizeRetryTurn(
 	if decodeErr != nil ||
 		snapshot.ID != snapshotID ||
 		snapshot.SessionID != command.PracticeSessionID ||
-		snapshot.ScenarioType != scenarioType ||
-		snapshot.ScenarioModel != scenarioModel {
+		snapshot.SceneFamily != scenarioType ||
+		snapshot.SceneModel != scenarioModel {
 		return persistence.RetryTurnAuthorization{},
 			persistence.ErrConflict
 	}
@@ -124,8 +123,8 @@ func (r *Repository) AuthorizeRetryTurn(
 			practice_session_id,
 			original_turn_id,
 			question_id,
-			scenario_type,
-			scenario_model,
+			scene_family,
+			scene_model,
 			session_status_at_authorization,
 			counts_toward_effective_turn_limit
 		)
@@ -174,8 +173,8 @@ func (r *Repository) ResolveRetryParticipant(
 	}
 	var (
 		sessionID     string
-		scenarioType  persistence.ScenarioFamily
-		scenarioModel persistence.ScenarioModel
+		scenarioType  scene.SceneFamily
+		scenarioModel scene.SceneModel
 		sessionStatus persistence.ContextSessionStatus
 		snapshotID    string
 		snapshotJSON  []byte
@@ -184,8 +183,8 @@ func (r *Repository) ResolveRetryParticipant(
 	err = tx.QueryRow(ctx, `
 		SELECT
 			retry_auth.practice_session_id,
-			retry_auth.scenario_type,
-			retry_auth.scenario_model,
+			retry_auth.scene_family,
+			retry_auth.scene_model,
 			practice_session.status,
 			practice_session.snapshot_id,
 			practice_snapshot.snapshot_document,
@@ -198,8 +197,6 @@ func (r *Repository) ResolveRetryParticipant(
 		  ON practice_snapshot.owner_user_id =
 		     practice_session.owner_user_id
 		 AND practice_snapshot.session_id = practice_session.session_id
-		 AND practice_snapshot.context_plan_id =
-		     practice_session.context_plan_id
 		 AND practice_snapshot.snapshot_id = practice_session.snapshot_id
 		WHERE retry_auth.owner_user_id = $1
 		  AND retry_auth.retry_request_id = $2
@@ -223,8 +220,8 @@ func (r *Repository) ResolveRetryParticipant(
 	if err != nil ||
 		snapshot.ID != snapshotID ||
 		snapshot.SessionID != sessionID ||
-		snapshot.ScenarioType != scenarioType ||
-		snapshot.ScenarioModel != scenarioModel ||
+		snapshot.SceneFamily != scenarioType ||
+		snapshot.SceneModel != scenarioModel ||
 		countsToward ||
 		!eligibleRetryScenario(scenarioType, scenarioModel) ||
 		(sessionStatus != persistence.ContextSessionProgress &&
@@ -251,8 +248,8 @@ const retryAuthorizationSelect = `
 		practice_session_id,
 		original_turn_id,
 		question_id,
-		scenario_type,
-		scenario_model,
+		scene_family,
+		scene_model,
 		session_status_at_authorization,
 		counts_toward_effective_turn_limit,
 		created_at
@@ -277,8 +274,8 @@ func getRetryTurnAuthorization(
 		&authorization.PracticeSessionID,
 		&authorization.OriginalTurnID,
 		&authorization.QuestionID,
-		&authorization.ScenarioType,
-		&authorization.ScenarioModel,
+		&authorization.SceneFamily,
+		&authorization.SceneModel,
 		&authorization.SessionStatusAtAuthorization,
 		&authorization.CountsTowardEffectiveLimit,
 		&authorization.CreatedAt,
@@ -291,18 +288,18 @@ func getRetryTurnAuthorization(
 }
 
 func eligibleRetryScenario(
-	scenarioType persistence.ScenarioFamily,
-	scenarioModel persistence.ScenarioModel,
+	scenarioType scene.SceneFamily,
+	scenarioModel scene.SceneModel,
 ) bool {
 	switch scenarioType {
-	case persistence.ScenarioFamilyWorkplace:
-		return scenarioModel == persistence.ScenarioModelProgressAndRiskUpdate ||
+	case scene.SceneFamilyWorkplace:
+		return scenarioModel == scene.SceneModelProgressAndRiskUpdate ||
 			scenarioModel ==
-				persistence.ScenarioModelWorkplaceBasicDialogue
-	case persistence.ScenarioFamilyDaily:
+				scene.SceneModelWorkplaceBasicDialogue
+	case scene.SceneFamilyDaily:
 		return scenarioModel ==
-			persistence.ScenarioModelHotelCheckinAndIssueHandling ||
-			scenarioModel == persistence.ScenarioModelDailyBasicDialogue
+			scene.SceneModelHotelCheckinAndIssueHandling ||
+			scenarioModel == scene.SceneModelDailyBasicDialogue
 	default:
 		return false
 	}
@@ -332,7 +329,7 @@ func retryActorParticipant(
 		participantIDs[participant.ID] = struct{}{}
 		participantOrders[participant.Order] = struct{}{}
 		switch participant.Role {
-		case "FACILITATOR", "INTERVIEWER":
+		case "FACILITATOR":
 			if participant.SubjectRef.Namespace != "speakup.role" ||
 				participant.SubjectRef.SubjectID !=
 					participant.RoleDefinitionID ||
@@ -343,7 +340,7 @@ func retryActorParticipant(
 				return "", persistence.ErrConflict
 			}
 			facilitators++
-		case "LEARNER", "CANDIDATE":
+		case "LEARNER":
 			if participantID != "" {
 				return "", persistence.ErrConflict
 			}

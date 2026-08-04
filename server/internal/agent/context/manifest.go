@@ -17,7 +17,7 @@ type MemorySource struct {
 	MemoryVersion          int64   `json:"memory_version"`
 	Type                   string  `json:"type"`
 	Scope                  string  `json:"scope"`
-	MatterID               string  `json:"matter_id,omitempty"`
+	GoalID                 string  `json:"goal_id,omitempty"`
 	Similarity             float64 `json:"similarity"`
 	Score                  float64 `json:"score"`
 	EmbeddingProvider      string  `json:"embedding_provider"`
@@ -50,8 +50,8 @@ type Manifest struct {
 	OwnerID                           string
 	ThreadID                          string
 	InputMessageID                    string
-	ActiveMatterID                    string
-	ActiveMatterVersion               int64
+	ActiveGoalID                      string
+	ActiveGoalVersion                 int64
 	InstructionVersion                string
 	StableProfileContextPolicyVersion string
 	SelectedStableProfile             []StableProfileSource

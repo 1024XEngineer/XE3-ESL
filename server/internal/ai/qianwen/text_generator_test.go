@@ -168,7 +168,7 @@ func TestGenerateStreamKeepsToolFragmentsPrivate(t *testing.T) {
 
 	doer := doerFunc(func(*http.Request) (*http.Response, error) {
 		return streamResponse(
-			`data: {"id":"chatcmpl-tools-stream","model":"qwen3.5-flash","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"scenario_create_v1","arguments":"{\"type\":"}}]}}]}` + "\n\n" +
+			`data: {"id":"chatcmpl-tools-stream","model":"qwen3.5-flash","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"goal_create_v1","arguments":"{\"type\":"}}]}}]}` + "\n\n" +
 				`data: {"id":"chatcmpl-tools-stream","model":"qwen3.5-flash","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"interview\"}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" +
 				`data: {"id":"chatcmpl-tools-stream","model":"qwen3.5-flash","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":8,"total_tokens":28}}` + "\n\n" +
 				"data: [DONE]\n\n",
@@ -177,7 +177,7 @@ func TestGenerateStreamKeepsToolFragmentsPrivate(t *testing.T) {
 	generator := mustGenerator(t, doer, "test-api-key")
 	request := validRequest()
 	request.Tools = []ai.ToolDefinition{{
-		Name: "scenario.create.v1", Description: "Create a scenario.",
+		Name: "goal.create.v1", Description: "Create a scenario.",
 		InputSchema: map[string]any{"type": "object"},
 	}}
 	request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
@@ -197,7 +197,7 @@ func TestGenerateStreamKeepsToolFragmentsPrivate(t *testing.T) {
 		t.Fatal("tool-call stream leaked a visible delta")
 	}
 	if len(result.ToolCalls) != 1 ||
-		result.ToolCalls[0].Name != "scenario.create.v1" ||
+		result.ToolCalls[0].Name != "goal.create.v1" ||
 		string(result.ToolCalls[0].Arguments) != `{"type":"interview"}` {
 		t.Fatalf("tool calls = %#v", result.ToolCalls)
 	}
@@ -209,7 +209,7 @@ func TestGenerateStreamAllowsVisiblePreambleBeforeToolCall(t *testing.T) {
 	doer := doerFunc(func(*http.Request) (*http.Response, error) {
 		return streamResponse(
 			`data: {"id":"chatcmpl-mixed-stream","model":"qwen3.5-flash","choices":[{"delta":{"role":"assistant","content":"I will create that interview now."}}]}` + "\n\n" +
-				`data: {"id":"chatcmpl-mixed-stream","model":"qwen3.5-flash","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"scenario_create_v1","arguments":"{\"type\":\"interview\"}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-mixed-stream","model":"qwen3.5-flash","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"goal_create_v1","arguments":"{\"type\":\"interview\"}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" +
 				`data: {"id":"chatcmpl-mixed-stream","model":"qwen3.5-flash","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":12,"total_tokens":32}}` + "\n\n" +
 				"data: [DONE]\n\n",
 		), nil
@@ -217,7 +217,7 @@ func TestGenerateStreamAllowsVisiblePreambleBeforeToolCall(t *testing.T) {
 	generator := mustGenerator(t, doer, "test-api-key")
 	request := validRequest()
 	request.Tools = []ai.ToolDefinition{{
-		Name: "scenario.create.v1", Description: "Create a scenario.",
+		Name: "goal.create.v1", Description: "Create a scenario.",
 		InputSchema: map[string]any{"type": "object"},
 	}}
 	request.ToolChoice = ai.ToolChoice{Mode: ai.ToolChoiceAuto}
@@ -237,7 +237,7 @@ func TestGenerateStreamAllowsVisiblePreambleBeforeToolCall(t *testing.T) {
 		result.Content != "I will create that interview now." ||
 		result.FinishReason != "tool_calls" ||
 		len(result.ToolCalls) != 1 ||
-		result.ToolCalls[0].Name != "scenario.create.v1" {
+		result.ToolCalls[0].Name != "goal.create.v1" {
 		t.Fatalf("mixed stream result = %#v, deltas = %#v", result, deltas)
 	}
 }
@@ -304,7 +304,7 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 							"type":"function",
 							"index":0,
 							"function":{
-								"name":"scenario_create_v1",
+								"name":"goal_create_v1",
 								"arguments":"{\"type\":\"interview\"}"
 							}
 						},
@@ -331,7 +331,7 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 		}},
 		Tools: []ai.ToolDefinition{
 			{
-				Name:        "scenario.create.v1",
+				Name:        "goal.create.v1",
 				Description: "Create a confirmed preparation scenario.",
 				InputSchema: map[string]any{"type": "object"},
 			},
@@ -353,7 +353,7 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 	}
 	if len(received.Tools) != 2 ||
 		received.Tools[0].Type != "function" ||
-		received.Tools[0].Function.Name != "scenario_create_v1" ||
+		received.Tools[0].Function.Name != "goal_create_v1" ||
 		received.Tools[1].Function.Name != "material_search_v1" {
 		t.Fatalf("unexpected provider tools: %#v", received.Tools)
 	}
@@ -364,7 +364,7 @@ func TestGenerateMapsToolCallingContract(t *testing.T) {
 	expectedCalls := []ai.ToolCall{
 		{
 			ID:        "call-1",
-			Name:      "scenario.create.v1",
+			Name:      "goal.create.v1",
 			Arguments: json.RawMessage(`{"type":"interview"}`),
 		},
 		{

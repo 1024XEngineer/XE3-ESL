@@ -27,13 +27,13 @@ import (
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
+	goalagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	goalhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/evaluation"
 	evaluationagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
-	matteragenttool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
-	matterhttp "github.com/1024XEngineer/XE3-ESL/server/internal/matter/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
 	practicevoicehttp "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice/http"
@@ -91,7 +91,7 @@ type identityAgentComposition struct {
 	agentService        *agentconversation.Service
 	agentVoiceReclaimer AgentVoiceObjectReclaimer
 	agentImageReclaimer AgentImageObjectReclaimer
-	matterService       *matter.Service
+	goalService         *goal.Service
 	productionTools     *tool.Registry
 	runService          *agentrun.Service
 	memoryExtraction    memory.ExtractionProcessor
@@ -141,11 +141,11 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(database, ids)
+	goalRepository, err := goal.NewPostgresRepository(database, ids)
 	if err != nil {
 		return nil, err
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func buildIdentityAgentComposition(
 	}
 	agentService, err := agentconversation.NewService(
 		conversationRepository,
-		matterService,
+		goalService,
 	)
 	if err != nil {
 		return nil, err
@@ -170,8 +170,8 @@ func buildIdentityAgentComposition(
 	}
 	reviewRepository := review.NewPostgresRepository(database)
 	reviewHistory := review.NewHistoryService(reviewRepository)
-	matterTools, err := matteragenttool.NewServicePort(
-		matterService,
+	goalTools, err := goalagentcapability.NewServicePort(
+		goalService,
 		agentService,
 	)
 	if err != nil {
@@ -188,8 +188,8 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	productionTools, err := tool.NewRegistry(
-		matteragenttool.NewScenarioCreateTool(matterTools),
-		matteragenttool.NewScenarioSearchTool(matterTools),
+		goalagentcapability.NewGoalCreateCapability(goalTools),
+		goalagentcapability.NewGoalSearchCapability(goalTools),
 		reviewagenttool.NewReviewSearchTool(reviewTools),
 		reviewagenttool.NewReviewGetTool(reviewTools),
 		evaluationagenttool.NewLatestPracticeReportTool(evaluationTools),
@@ -222,7 +222,7 @@ func buildIdentityAgentComposition(
 	}
 	contextAssembler, err := agentcontext.NewAssembler(
 		contextRepository,
-		matterService,
+		goalService,
 		stableProfileReader,
 		contextMemorySearcher,
 		contextOptions...,
@@ -364,7 +364,6 @@ func buildIdentityAgentComposition(
 			buildProductionVoiceApplication(
 				database,
 				generator,
-				matterService,
 				reviewRepository,
 				reviewHistory,
 				voiceConfigurations[0],
@@ -374,7 +373,7 @@ func buildIdentityAgentComposition(
 		}
 	}
 	errorRenderer := httpresponse.NewRenderer(nil)
-	matterHTTP, err := matterhttp.NewHandler(matterService, errorRenderer)
+	goalHTTP, err := goalhttp.NewHandler(goalService, errorRenderer)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +408,7 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	registrars := []ProtectedRouteRegistrar{
-		matterHTTP,
+		goalHTTP,
 		conversationHTTP,
 		runHTTP,
 	}
@@ -447,8 +446,6 @@ func buildIdentityAgentComposition(
 	if voiceApplication != nil {
 		practiceHTTP, practiceHTTPErr := practicevoicehttp.NewHandler(
 			voiceApplication,
-			agentService,
-			matterService,
 			practicevoicehttp.Options{
 				AudioReadTimeout:  voiceConfigurations[0].AudioReadTimeout,
 				SameQuestionRetry: sameQuestionRetry,
@@ -487,7 +484,7 @@ func buildIdentityAgentComposition(
 		agentService:        agentService,
 		agentVoiceReclaimer: agentVoiceReclaimer,
 		agentImageReclaimer: agentImageReclaimer,
-		matterService:       matterService,
+		goalService:         goalService,
 		productionTools:     toolOptions.productionRegistry,
 		runService:          runService,
 		memoryExtraction:    memoryExtraction,

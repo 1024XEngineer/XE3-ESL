@@ -8,9 +8,9 @@ import (
 )
 
 type MistakeSearchInput struct {
-	Query      string `json:"query"`
-	ScenarioID string `json:"scenario_id,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
+	Query   string `json:"query"`
+	SceneID string `json:"scene_id,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
 }
 
 type MistakeSearchTool struct {
@@ -30,8 +30,8 @@ func (t MistakeSearchTool) Definition() tool.Definition {
 				"Mistake category, language pattern, or coaching topic to find.",
 				500,
 			),
-			"scenario_id": tool.IdentifierSchema(
-				"Optional existing scenario id used to narrow the mistake search.",
+			"scene_id": tool.IdentifierSchema(
+				"Optional existing Scene id used to narrow the mistake search.",
 			),
 			"limit": tool.IntegerRangeSchema(
 				"Maximum number of historical mistakes to return.",
@@ -65,12 +65,12 @@ func (t MistakeSearchTool) Execute(
 	for _, mistake := range mistakes {
 		ref := tool.SourceRef{Type: "mock_mistake", ID: mistake.ID}
 		items = append(items, map[string]any{
-			"id":          mistake.ID,
-			"scenario_id": mistake.ScenarioID,
-			"category":    mistake.Category,
-			"summary":     mistake.Summary,
-			"suggestion":  mistake.Suggestion,
-			"source_ref":  ref,
+			"id":         mistake.ID,
+			"scene_id":   mistake.SceneID,
+			"category":   mistake.Category,
+			"summary":    mistake.Summary,
+			"suggestion": mistake.Suggestion,
+			"source_ref": ref,
 		})
 		refs = append(refs, ref)
 	}

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:speakup/agent/agent_image_client.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/agent_voice_controller.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/agent/agent_voice_models.dart';
 import 'package:speakup/agent/agent_voice_widgets.dart';
 import 'package:speakup/design/speak_up_design.dart';
@@ -78,7 +79,7 @@ class ConversationPage extends StatefulWidget {
   final VoidCallback? onCreateConversation;
   final int draftThreadRecoveryGeneration;
   final List<AgentMessage> messages;
-  final AgentScene? activeScene;
+  final SceneDefinition? activeScene;
   final bool hasFocusedThread;
   final bool hasEarlierMessages;
   final bool isLoadingEarlierMessages;
@@ -207,7 +208,7 @@ class ConversationPage extends StatefulWidget {
                                     const SizedBox(width: 8),
                                     Flexible(
                                       child: Text(
-                                        scene.title,
+                                        scene.name,
                                         key: const Key('agent-thread-title'),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,

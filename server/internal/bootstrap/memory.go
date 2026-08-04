@@ -110,7 +110,7 @@ func (reader *agentCompletedRunReader) ReadCompletedRun(
 		ThreadID:           run.ThreadID,
 		InputMessageID:     input.ID,
 		AssistantMessageID: assistant.ID,
-		MatterID:           manifest.ActiveMatterID,
+		GoalID:             manifest.ActiveGoalID,
 		UserText:           input.Content,
 		AssistantText:      assistant.Content,
 		Attempt:            run.Attempt,

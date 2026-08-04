@@ -101,11 +101,11 @@ func (port *ServicePort) GetReview(
 
 func mapReviewSummary(item domainreview.FormalReview) ReviewSummary {
 	return ReviewSummary{
-		ID:                   item.ID,
-		PracticeSessionID:    item.PracticeSessionID,
-		ScenarioDefinitionID: item.EvaluationContext.ScenarioDefinitionID,
-		Summary:              item.Result.Summary,
-		CompletedAt:          formatReviewTime(item.CompletedAt),
+		ID:                item.ID,
+		PracticeSessionID: item.PracticeSessionID,
+		SceneID:           item.EvaluationContext.SceneID,
+		Summary:           item.Result.Summary,
+		CompletedAt:       formatReviewTime(item.CompletedAt),
 		SourceRefs: []tool.SourceRef{{
 			Type: "formal_review",
 			ID:   item.ID,
@@ -118,7 +118,7 @@ func mapReviewDetail(item domainreview.FormalReview) ReviewDetail {
 	detail := ReviewDetail{
 		ID:                          item.ID,
 		PracticeSessionID:           item.PracticeSessionID,
-		ScenarioDefinitionID:        item.EvaluationContext.ScenarioDefinitionID,
+		SceneID:                     item.EvaluationContext.SceneID,
 		Status:                      string(item.Status),
 		SummaryEligibility:          string(result.SummaryEligibility),
 		Summary:                     result.Summary,

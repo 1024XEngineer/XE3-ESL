@@ -3,8 +3,9 @@
   "practice_session": {
     "practice_session_id": "session_demo_001",
     "practice_plan_id": "plan_demo_backend",
-    "scenario_type": "INTERVIEW",
-    "scenario_model": "PROJECT_EXPERIENCE_DEEP_DIVE",
+    "plan_revision": 1,
+    "scene_family": "INTERVIEW",
+    "scene_model": "PROJECT_EXPERIENCE_DEEP_DIVE",
     "snapshot_id": "snapshot_session_demo_001",
     "practice_session_status": "completed",
     "session_version": 6,
@@ -19,24 +20,6 @@
     "max_effective_turns": 6,
     "coverage_checkpoint_turn": 4,
     "max_follow_ups_per_question": 1,
-    "target_objectives": [
-      {
-        "objective_id": "introduction",
-        "description": "Explain current experience clearly."
-      },
-      {
-        "objective_id": "system_design",
-        "description": "Explain a technical design and its trade-offs."
-      },
-      {
-        "objective_id": "project_depth",
-        "description": "Provide evidence of individual contribution."
-      },
-      {
-        "objective_id": "collaboration",
-        "description": "Explain cross-team communication and outcomes."
-      }
-    ],
     "early_completion_rule": "COVERAGE_SATISFIED_AFTER_CHECKPOINT"
   },
   "participants": [

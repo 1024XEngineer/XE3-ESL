@@ -9,7 +9,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
-	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
+	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
@@ -22,12 +22,12 @@ func TestModelToolRoutingExposesEveryRegisteredTool(t *testing.T) {
 	routing := buildModelToolRouting(registry, nil, "run-1")
 	got := exposedToolNameList(routing.Definitions)
 	want := []string{
+		goalcapability.GoalCreateCapabilityName,
+		goalcapability.GoalSearchCapabilityName,
 		capabilityfixture.MaterialSearchToolName,
 		capabilityfixture.MistakeSearchToolName,
 		reviewtool.ReviewGetToolName,
 		reviewtool.ReviewSearchToolName,
-		mattertool.ScenarioCreateToolName,
-		mattertool.ScenarioSearchToolName,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("exposed tools = %#v, want %#v", got, want)

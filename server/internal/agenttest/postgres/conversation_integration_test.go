@@ -20,9 +20,9 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	conversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
+	goalhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
-	matterhttp "github.com/1024XEngineer/XE3-ESL/server/internal/matter/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -35,11 +35,12 @@ import (
 const (
 	agentTestUserA = "10000000-0000-4000-8000-000000000001"
 	agentTestUserB = "10000000-0000-4000-8000-000000000002"
+	agentTestUserC = "10000000-0000-4000-8000-000000000003"
 )
 
 func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	matterService, service := newAgentDataServices(t, database.pool)
+	goalService, service := newAgentDataServices(t, database.pool)
 	actorA := requestcontext.Actor{
 		UserID:    agentTestUserA,
 		SessionID: "20000000-0000-4000-8000-000000000001",
@@ -48,61 +49,72 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 		UserID:    agentTestUserB,
 		SessionID: "20000000-0000-4000-8000-000000000002",
 	}
+	actorC := requestcontext.Actor{
+		UserID:    agentTestUserC,
+		SessionID: "20000000-0000-4000-8000-000000000003",
+	}
 
-	matterA, err := matterService.Create(
+	goalA, err := goalService.Create(
 		context.Background(),
 		actorA,
 		"Customer renewal meeting",
 	)
 	if err != nil {
-		t.Fatalf("create matter A: %v", err)
+		t.Fatalf("create goal A: %v", err)
 	}
-	secondMatterA, err := matterService.Create(
+	secondGoalA, err := goalService.Create(
 		context.Background(),
 		actorA,
 		"Quarterly presentation",
 	)
 	if err != nil {
-		t.Fatalf("create second matter A: %v", err)
+		t.Fatalf("create second goal A: %v", err)
 	}
-	matterB, err := matterService.Create(
+	goalB, err := goalService.Create(
 		context.Background(),
 		actorB,
 		"Private interview",
 	)
 	if err != nil {
-		t.Fatalf("create matter B: %v", err)
+		t.Fatalf("create goal B: %v", err)
 	}
-	listA, err := matterService.List(context.Background(), actorA)
+	if _, err := goalService.Create(
+		context.Background(),
+		actorC,
+		"Standalone ownership constraint",
+	); err != nil {
+		t.Fatalf("create standalone Goal: %v", err)
+	}
+	listA, err := goalService.List(context.Background(), actorA)
 	if err != nil {
-		t.Fatalf("list matters A: %v", err)
+		t.Fatalf("list goals A: %v", err)
 	}
 	if len(listA) != 2 {
-		t.Fatalf("matter A count = %d, want 2", len(listA))
+		t.Fatalf("goal A count = %d, want 2", len(listA))
 	}
-	if _, err := matterService.ReadOwned(
+	if _, err := goalService.ReadOwned(
 		context.Background(),
 		actorA,
-		matterB.ID,
-	); !errors.Is(err, matter.ErrNotFound) {
-		t.Fatalf("cross-owner Matter read error = %v, want not found", err)
+		goalB.ID,
+	); !errors.Is(err, goal.ErrNotFound) {
+		t.Fatalf("cross-owner Goal read error = %v, want not found", err)
 	}
 
 	threadA, err := service.CreateThread(
 		context.Background(),
 		actorA,
-		matterA.ID,
+		goalA.ID,
 	)
 	if err != nil {
 		t.Fatalf("create thread A: %v", err)
 	}
-	if threadA.ActiveMatterID != matterA.ID {
-		t.Fatalf("active matter = %q, want %q", threadA.ActiveMatterID, matterA.ID)
+	if threadA.ActiveGoalID != goalA.ID {
+		t.Fatalf("active goal = %q, want %q", threadA.ActiveGoalID, goalA.ID)
 	}
 	threadB, err := service.CreateThread(
 		context.Background(),
 		actorB,
-		matterB.ID,
+		goalB.ID,
 	)
 	if err != nil {
 		t.Fatalf("create thread B: %v", err)
@@ -110,9 +122,9 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	if _, err := service.CreateThread(
 		context.Background(),
 		actorA,
-		matterB.ID,
+		goalB.ID,
 	); !errors.Is(err, conversation.ErrNotFound) {
-		t.Fatalf("cross-owner Matter link error = %v, want not found", err)
+		t.Fatalf("cross-owner Goal link error = %v, want not found", err)
 	}
 	if _, err := service.GetThread(
 		context.Background(),
@@ -324,16 +336,16 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 		t.Fatalf("append after repository panic: %v", err)
 	}
 
-	link, err := service.SetActiveMatter(
+	link, err := service.SetActiveGoal(
 		context.Background(),
 		actorA,
 		threadA.ID,
-		secondMatterA.ID,
+		secondGoalA.ID,
 	)
 	if err != nil {
-		t.Fatalf("change active matter: %v", err)
+		t.Fatalf("change active goal: %v", err)
 	}
-	if !link.Active || link.MatterID != secondMatterA.ID {
+	if !link.Active || link.GoalID != secondGoalA.ID {
 		t.Fatalf("unexpected active link: %#v", link)
 	}
 	threadAfterSelection, err := service.GetThread(
@@ -342,16 +354,16 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 		threadA.ID,
 	)
 	if err != nil {
-		t.Fatalf("get Thread after active Matter selection: %v", err)
+		t.Fatalf("get Thread after active Goal selection: %v", err)
 	}
-	replayedLink, err := service.SetActiveMatter(
+	replayedLink, err := service.SetActiveGoal(
 		context.Background(),
 		actorA,
 		threadA.ID,
-		secondMatterA.ID,
+		secondGoalA.ID,
 	)
 	if err != nil {
-		t.Fatalf("replay active Matter selection: %v", err)
+		t.Fatalf("replay active Goal selection: %v", err)
 	}
 	threadAfterSelectionReplay, err := service.GetThread(
 		context.Background(),
@@ -359,53 +371,53 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 		threadA.ID,
 	)
 	if err != nil {
-		t.Fatalf("get Thread after active Matter replay: %v", err)
+		t.Fatalf("get Thread after active Goal replay: %v", err)
 	}
 	if !replayedLink.LinkedAt.Equal(link.LinkedAt) ||
 		!replayedLink.UpdatedAt.Equal(link.UpdatedAt) ||
 		!threadAfterSelectionReplay.UpdatedAt.Equal(threadAfterSelection.UpdatedAt) {
 		t.Fatalf(
-			"replayed active Matter changed timestamps: %#v / %#v",
+			"replayed active Goal changed timestamps: %#v / %#v",
 			link,
 			replayedLink,
 		)
 	}
-	if _, err := service.SetActiveMatter(
+	if _, err := service.SetActiveGoal(
 		context.Background(),
 		actorA,
 		threadA.ID,
-		matterB.ID,
+		goalB.ID,
 	); !errors.Is(err, conversation.ErrNotFound) {
-		t.Fatalf("cross-owner active Matter error = %v, want not found", err)
+		t.Fatalf("cross-owner active Goal error = %v, want not found", err)
 	}
 
-	archived, err := matterService.ChangeStatus(
+	archived, err := goalService.ChangeStatus(
 		context.Background(),
 		actorA,
-		matterA.ID,
-		matterA.Version,
-		matter.StatusArchived,
+		goalA.ID,
+		goalA.Version,
+		goal.StatusArchived,
 	)
 	if err != nil {
-		t.Fatalf("archive Matter: %v", err)
+		t.Fatalf("archive Goal: %v", err)
 	}
-	if _, err := service.SetActiveMatter(
+	if _, err := service.SetActiveGoal(
 		context.Background(),
 		actorA,
 		threadA.ID,
 		archived.ID,
 	); !errors.Is(err, conversation.ErrConflict) {
-		t.Fatalf("select archived Matter error = %v, want conflict", err)
+		t.Fatalf("select archived Goal error = %v, want conflict", err)
 	}
-	reopened, err := matterService.ChangeStatus(
+	reopened, err := goalService.ChangeStatus(
 		context.Background(),
 		actorA,
 		archived.ID,
 		archived.Version,
-		matter.StatusActive,
+		goal.StatusActive,
 	)
-	if err != nil || reopened.Status != matter.StatusActive {
-		t.Fatalf("reopen Matter = %#v, %v", reopened, err)
+	if err != nil || reopened.Status != goal.StatusActive {
+		t.Fatalf("reopen Goal = %#v, %v", reopened, err)
 	}
 
 	assertCrossOwnerDatabaseConstraints(
@@ -413,13 +425,14 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 		database.pool,
 		threadA.ID,
 		threadB.ID,
-		matterA.ID,
-		matterB.ID,
+		goalA.ID,
+		goalB.ID,
 	)
 	assertRestrictedCrossModuleDeletes(
 		t,
 		database.pool,
-		secondMatterA.ID,
+		secondGoalA.ID,
+		agentTestUserC,
 	)
 
 	messages, err := service.ListMessages(
@@ -439,24 +452,24 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	}
 	database.pool.Close()
 	reopenedPool := database.reopen(t)
-	recoveredMatterService, recoveredService := newAgentDataServices(t, reopenedPool)
-	recoveredMatter, err := recoveredMatterService.ReadOwned(
+	recoveredGoalService, recoveredService := newAgentDataServices(t, reopenedPool)
+	recoveredGoal, err := recoveredGoalService.ReadOwned(
 		context.Background(),
 		actorA,
-		matterA.ID,
+		goalA.ID,
 	)
 	if err != nil ||
-		recoveredMatter.Title != reopened.Title ||
-		recoveredMatter.Status != reopened.Status ||
-		recoveredMatter.Version != reopened.Version {
-		t.Fatalf("recovered Matter = %#v, %v", recoveredMatter, err)
+		recoveredGoal.Title != reopened.Title ||
+		recoveredGoal.Status != reopened.Status ||
+		recoveredGoal.Version != reopened.Version {
+		t.Fatalf("recovered Goal = %#v, %v", recoveredGoal, err)
 	}
 	recoveredThread, err := recoveredService.GetThread(
 		context.Background(),
 		actorA,
 		threadA.ID,
 	)
-	if err != nil || recoveredThread.ActiveMatterID != secondMatterA.ID {
+	if err != nil || recoveredThread.ActiveGoalID != secondGoalA.ID {
 		t.Fatalf("recovered thread = %#v, %v", recoveredThread, err)
 	}
 	recoveredMessages, err := recoveredService.ListMessages(
@@ -474,9 +487,9 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	}
 }
 
-func TestPostgresMatterAgentToolPersistence(t *testing.T) {
+func TestPostgresGoalAgentToolPersistence(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	matterService, _ := newAgentDataServices(t, database.pool)
+	goalService, _ := newAgentDataServices(t, database.pool)
 	actorA := requestcontext.Actor{
 		UserID:    agentTestUserA,
 		SessionID: "20000000-0000-4000-8000-000000000001",
@@ -486,38 +499,38 @@ func TestPostgresMatterAgentToolPersistence(t *testing.T) {
 		SessionID: "20000000-0000-4000-8000-000000000002",
 	}
 
-	first, err := matterService.CreateIdempotent(
+	first, err := goalService.CreateIdempotent(
 		context.Background(),
 		actorA,
-		"matter-tool-request-1",
+		"goal-tool-request-1",
 		"PM interview",
 	)
 	if err != nil {
-		t.Fatalf("create idempotent Matter: %v", err)
+		t.Fatalf("create idempotent Goal: %v", err)
 	}
-	replayed, err := matterService.CreateIdempotent(
+	replayed, err := goalService.CreateIdempotent(
 		context.Background(),
 		actorA,
-		"matter-tool-request-1",
+		"goal-tool-request-1",
 		"PM interview",
 	)
 	if err != nil {
-		t.Fatalf("replay idempotent Matter: %v", err)
+		t.Fatalf("replay idempotent Goal: %v", err)
 	}
 	if replayed.ID != first.ID {
-		t.Fatalf("replayed Matter id = %q, want %q", replayed.ID, first.ID)
+		t.Fatalf("replayed Goal id = %q, want %q", replayed.ID, first.ID)
 	}
-	concurrentResults := make(chan matter.Matter, 2)
+	concurrentResults := make(chan goal.Goal, 2)
 	concurrentErrors := make(chan error, 2)
 	var concurrentCreates sync.WaitGroup
 	for range 2 {
 		concurrentCreates.Add(1)
 		go func() {
 			defer concurrentCreates.Done()
-			item, createErr := matterService.CreateIdempotent(
+			item, createErr := goalService.CreateIdempotent(
 				context.Background(),
 				actorA,
-				"matter-tool-concurrent-1",
+				"goal-tool-concurrent-1",
 				"Concurrent interview",
 			)
 			concurrentResults <- item
@@ -529,60 +542,60 @@ func TestPostgresMatterAgentToolPersistence(t *testing.T) {
 	close(concurrentErrors)
 	for createErr := range concurrentErrors {
 		if createErr != nil {
-			t.Fatalf("concurrent idempotent Matter: %v", createErr)
+			t.Fatalf("concurrent idempotent Goal: %v", createErr)
 		}
 	}
-	var concurrentMatterID string
+	var concurrentGoalID string
 	for item := range concurrentResults {
-		if concurrentMatterID == "" {
-			concurrentMatterID = item.ID
+		if concurrentGoalID == "" {
+			concurrentGoalID = item.ID
 			continue
 		}
-		if item.ID != concurrentMatterID {
+		if item.ID != concurrentGoalID {
 			t.Fatalf(
-				"concurrent Matter id = %q, want %q",
+				"concurrent Goal id = %q, want %q",
 				item.ID,
-				concurrentMatterID,
+				concurrentGoalID,
 			)
 		}
 	}
-	if _, err := matterService.CreateIdempotent(
+	if _, err := goalService.CreateIdempotent(
 		context.Background(),
 		actorA,
-		"matter-tool-request-1",
+		"goal-tool-request-1",
 		"Changed interview",
-	); !errors.Is(err, matter.ErrConflict) {
+	); !errors.Is(err, goal.ErrConflict) {
 		t.Fatalf("changed replay error = %v, want conflict", err)
 	}
 
-	otherOwner, err := matterService.CreateIdempotent(
+	otherOwner, err := goalService.CreateIdempotent(
 		context.Background(),
 		actorB,
-		"matter-tool-request-1",
+		"goal-tool-request-1",
 		"Private interview",
 	)
 	if err != nil {
-		t.Fatalf("create other-owner Matter: %v", err)
+		t.Fatalf("create other-owner Goal: %v", err)
 	}
 	if otherOwner.ID == first.ID {
 		t.Fatal("idempotency request leaked across owners")
 	}
-	if _, err := matterService.Create(
+	if _, err := goalService.Create(
 		context.Background(),
 		actorA,
 		"Interview follow-up",
 	); err != nil {
-		t.Fatalf("create second matching Matter: %v", err)
+		t.Fatalf("create second matching Goal: %v", err)
 	}
 
-	search := func() []matter.Matter {
-		items, searchErr := matterService.Search(
+	search := func() []goal.Goal {
+		items, searchErr := goalService.Search(
 			context.Background(),
 			actorA,
-			matter.SearchQuery{Query: "INTERVIEW", Limit: 1},
+			goal.SearchQuery{Query: "INTERVIEW", Limit: 1},
 		)
 		if searchErr != nil {
-			t.Fatalf("search Matters: %v", searchErr)
+			t.Fatalf("search Goals: %v", searchErr)
 		}
 		return items
 	}
@@ -613,39 +626,39 @@ func TestPostgresMatterAgentToolPersistence(t *testing.T) {
 	}
 }
 
-func TestPostgresActiveMatterBindingSerializesWithLifecycleTransition(
+func TestPostgresActiveGoalBindingSerializesWithLifecycleTransition(
 	t *testing.T,
 ) {
 	testCases := []struct {
 		name         string
-		targetStatus matter.Status
+		targetStatus goal.Status
 		createThread bool
 	}{
 		{
-			name:         "create thread while Matter is archived",
-			targetStatus: matter.StatusArchived,
+			name:         "create thread while Goal is archived",
+			targetStatus: goal.StatusArchived,
 			createThread: true,
 		},
 		{
-			name:         "select Matter while it is completed",
-			targetStatus: matter.StatusCompleted,
+			name:         "select Goal while it is completed",
+			targetStatus: goal.StatusCompleted,
 		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			database := newAgentTestDatabase(t)
-			matterService, normalService := newAgentDataServices(t, database.pool)
+			goalService, normalService := newAgentDataServices(t, database.pool)
 			actor := requestcontext.Actor{
 				UserID:    agentTestUserA,
 				SessionID: "20000000-0000-4000-8000-000000000001",
 			}
-			item, err := matterService.Create(
+			item, err := goalService.Create(
 				context.Background(),
 				actor,
 				"Concurrent lifecycle transition",
 			)
 			if err != nil {
-				t.Fatalf("create Matter: %v", err)
+				t.Fatalf("create Goal: %v", err)
 			}
 			var thread conversation.Thread
 			if !testCase.createThread {
@@ -663,13 +676,13 @@ func TestPostgresActiveMatterBindingSerializesWithLifecycleTransition(
 			defer cancel()
 			transition, err := database.pool.Begin(ctx)
 			if err != nil {
-				t.Fatalf("begin Matter transition: %v", err)
+				t.Fatalf("begin Goal transition: %v", err)
 			}
 			defer func() {
 				_ = transition.Rollback(context.Background())
 			}()
 			if _, err := transition.Exec(ctx, `
-UPDATE matters
+UPDATE coaching_goals
 SET
     status = $3,
     version = version + 1,
@@ -677,19 +690,19 @@ SET
         CURRENT_TIMESTAMP,
         updated_at + INTERVAL '1 microsecond'
     )
-WHERE id = $1 AND owner_user_id = $2`,
+WHERE goal_id = $1 AND owner_user_id = $2`,
 				item.ID,
 				actor.UserID,
 				string(testCase.targetStatus),
 			); err != nil {
-				t.Fatalf("stage Matter transition: %v", err)
+				t.Fatalf("stage Goal transition: %v", err)
 			}
 
 			lockAttempted := make(chan struct{}, 1)
 			observedDatabase := &queryObservingPostgreSQL{
 				Pool: database.pool,
 				observeQuery: func(query string) {
-					if strings.Contains(query, "FROM matters") &&
+					if strings.Contains(query, "FROM coaching_goals") &&
 						strings.Contains(query, "FOR UPDATE") {
 						select {
 						case lockAttempted <- struct{}{}:
@@ -705,7 +718,7 @@ WHERE id = $1 AND owner_user_id = $2`,
 			if err != nil {
 				t.Fatalf("new observed Agent repository: %v", err)
 			}
-			observedService, err := conversation.NewService(repository, matterService)
+			observedService, err := conversation.NewService(repository, goalService)
 			if err != nil {
 				t.Fatalf("new observed Agent service: %v", err)
 			}
@@ -720,7 +733,7 @@ WHERE id = $1 AND owner_user_id = $2`,
 					result <- operationErr
 					return
 				}
-				_, operationErr := observedService.SetActiveMatter(
+				_, operationErr := observedService.SetActiveGoal(
 					ctx,
 					actor,
 					thread.ID,
@@ -733,33 +746,33 @@ WHERE id = $1 AND owner_user_id = $2`,
 			case <-lockAttempted:
 			case operationErr := <-result:
 				t.Fatalf(
-					"binding completed before atomic Matter lock: %v",
+					"binding completed before atomic Goal lock: %v",
 					operationErr,
 				)
 			case <-ctx.Done():
-				t.Fatal("binding did not attempt the atomic Matter lock")
+				t.Fatal("binding did not attempt the atomic Goal lock")
 			}
 			select {
 			case operationErr := <-result:
 				t.Fatalf(
-					"binding escaped the uncommitted Matter transition: %v",
+					"binding escaped the uncommitted Goal transition: %v",
 					operationErr,
 				)
 			default:
 			}
 			if err := transition.Commit(ctx); err != nil {
-				t.Fatalf("commit Matter transition: %v", err)
+				t.Fatalf("commit Goal transition: %v", err)
 			}
 			select {
 			case operationErr := <-result:
 				if !errors.Is(operationErr, conversation.ErrConflict) {
 					t.Fatalf(
-						"binding error after Matter transition = %v, want conflict",
+						"binding error after Goal transition = %v, want conflict",
 						operationErr,
 					)
 				}
 			case <-ctx.Done():
-				t.Fatal("binding did not finish after Matter transition")
+				t.Fatal("binding did not finish after Goal transition")
 			}
 
 			if testCase.createThread {
@@ -785,10 +798,10 @@ WHERE id = $1 AND owner_user_id = $2`,
 				if err != nil {
 					t.Fatalf("recover Thread after rejected binding: %v", err)
 				}
-				if recovered.ActiveMatterID != "" {
+				if recovered.ActiveGoalID != "" {
 					t.Fatalf(
-						"active Matter after rejected binding = %q, want empty",
-						recovered.ActiveMatterID,
+						"active Goal after rejected binding = %q, want empty",
+						recovered.ActiveGoalID,
 					)
 				}
 			}
@@ -798,7 +811,7 @@ WHERE id = $1 AND owner_user_id = $2`,
 
 func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	matterService, service := newAgentDataServices(t, database.pool)
+	goalService, service := newAgentDataServices(t, database.pool)
 	actors := map[string]requestcontext.Actor{
 		"token-a": {
 			UserID:    agentTestUserA,
@@ -812,12 +825,12 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 	renderer := httpresponse.NewRenderer(
 		func() string { return "corr_agent_data_test" },
 	)
-	matterHandler, err := matterhttp.NewHandler(
-		matterService,
+	goalHandler, err := goalhttp.NewHandler(
+		goalService,
 		renderer,
 	)
 	if err != nil {
-		t.Fatalf("new Matter HTTP handler: %v", err)
+		t.Fatalf("new Goal HTTP handler: %v", err)
 	}
 	conversationHandler, err := conversationhttp.NewHandler(
 		service,
@@ -841,13 +854,13 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 		}
 		c.Next()
 	})
-	matterHandler.RegisterRoutes(protected)
+	goalHandler.RegisterRoutes(protected)
 	conversationHandler.RegisterRoutes(protected)
 
 	missingAuth := performAgentRequest(
 		router,
 		http.MethodGet,
-		"/v1/matters",
+		"/v1/goals",
 		"",
 		"",
 	)
@@ -859,7 +872,7 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 	forged := performAgentRequest(
 		router,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Forged","owner_user_id":"`+agentTestUserB+`"}`,
 		"token-a",
 	)
@@ -867,63 +880,63 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 		t.Fatalf("forged owner response: %d %s", forged.Code, forged.Body)
 	}
 
-	createdMatter := performAgentRequest(
+	createdGoal := performAgentRequest(
 		router,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"Customer meeting"}`,
 		"token-a",
 	)
-	if createdMatter.Code != http.StatusCreated {
+	if createdGoal.Code != http.StatusCreated {
 		t.Fatalf(
-			"create Matter response: %d %s",
-			createdMatter.Code,
-			createdMatter.Body,
+			"create Goal response: %d %s",
+			createdGoal.Code,
+			createdGoal.Body,
 		)
 	}
-	var matterBody struct {
-		ID string `json:"matter_id"`
+	var goalBody struct {
+		ID string `json:"goal_id"`
 	}
-	if err := json.Unmarshal(createdMatter.Body.Bytes(), &matterBody); err != nil {
-		t.Fatalf("decode Matter response: %v", err)
+	if err := json.Unmarshal(createdGoal.Body.Bytes(), &goalBody); err != nil {
+		t.Fatalf("decode Goal response: %v", err)
 	}
-	nulMatter := performAgentRequest(
+	nulGoal := performAgentRequest(
 		router,
 		http.MethodPost,
-		"/v1/matters",
+		"/v1/goals",
 		`{"title":"invalid\u0000title"}`,
 		"token-a",
 	)
-	if nulMatter.Code != http.StatusBadRequest {
-		t.Fatalf("NUL Matter response: %d %s", nulMatter.Code, nulMatter.Body)
+	if nulGoal.Code != http.StatusBadRequest {
+		t.Fatalf("NUL Goal response: %d %s", nulGoal.Code, nulGoal.Body)
 	}
-	recoveredMatter := performAgentRequest(
+	recoveredGoal := performAgentRequest(
 		router,
 		http.MethodGet,
-		"/v1/matters/"+matterBody.ID,
+		"/v1/goals/"+goalBody.ID,
 		"",
 		"token-a",
 	)
-	if recoveredMatter.Code != http.StatusOK ||
-		!strings.Contains(recoveredMatter.Body.String(), `"title":"Customer meeting"`) {
+	if recoveredGoal.Code != http.StatusOK ||
+		!strings.Contains(recoveredGoal.Body.String(), `"title":"Customer meeting"`) {
 		t.Fatalf(
-			"recover Matter response: %d %s",
-			recoveredMatter.Code,
-			recoveredMatter.Body,
+			"recover Goal response: %d %s",
+			recoveredGoal.Code,
+			recoveredGoal.Body,
 		)
 	}
-	privateMatter := performAgentRequest(
+	privateGoal := performAgentRequest(
 		router,
 		http.MethodGet,
-		"/v1/matters/"+matterBody.ID,
+		"/v1/goals/"+goalBody.ID,
 		"",
 		"token-b",
 	)
-	if privateMatter.Code != http.StatusNotFound {
+	if privateGoal.Code != http.StatusNotFound {
 		t.Fatalf(
-			"cross-user Matter response: %d %s",
-			privateMatter.Code,
-			privateMatter.Body,
+			"cross-user Goal response: %d %s",
+			privateGoal.Code,
+			privateGoal.Body,
 		)
 	}
 
@@ -931,7 +944,7 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/v1/agent-threads",
-		`{"active_matter_id":"`+matterBody.ID+`"}`,
+		`{"active_goal_id":"`+goalBody.ID+`"}`,
 		"token-a",
 	)
 	if createdThread.Code != http.StatusCreated {
@@ -1146,6 +1159,7 @@ func newAgentTestDatabase(t *testing.T) agentTestDatabase {
 	}{
 		{id: agentTestUserA, email: "agent-a@example.com"},
 		{id: agentTestUserB, email: "agent-b@example.com"},
+		{id: agentTestUserC, email: "agent-c@example.com"},
 	} {
 		if _, err := pool.Exec(
 			context.Background(),
@@ -1183,26 +1197,26 @@ func (database agentTestDatabase) reopen(t *testing.T) *pgxpool.Pool {
 func newAgentDataServices(
 	t *testing.T,
 	pool *pgxpool.Pool,
-) (*matter.Service, *conversation.Service) {
+) (*goal.Service, *conversation.Service) {
 	t.Helper()
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	repository, err := conversationpostgres.New(pool, ids)
 	if err != nil {
 		t.Fatalf("new Agent repository: %v", err)
 	}
-	service, err := conversation.NewService(repository, matterService)
+	service, err := conversation.NewService(repository, goalService)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
-	return matterService, service
+	return goalService, service
 }
 
 func assertCrossOwnerDatabaseConstraints(
@@ -1210,22 +1224,22 @@ func assertCrossOwnerDatabaseConstraints(
 	pool *pgxpool.Pool,
 	threadA string,
 	threadB string,
-	matterA string,
-	matterB string,
+	goalA string,
+	goalB string,
 ) {
 	t.Helper()
 	assertPostgresConstraint(
 		t,
 		pool,
-		`INSERT INTO agent_thread_matter_links (
+		`INSERT INTO agent_thread_goal_links (
     owner_user_id,
     thread_id,
-    matter_id,
+    goal_id,
     is_active
 ) VALUES ($1, $2, $3, false)`,
-		[]any{agentTestUserA, threadA, matterB},
+		[]any{agentTestUserA, threadA, goalB},
 		"23503",
-		"agent_thread_matter_links_matter_owner_fkey",
+		"agent_thread_goal_links_goal_owner_fkey",
 	)
 	assertPostgresConstraint(
 		t,
@@ -1254,12 +1268,12 @@ func assertCrossOwnerDatabaseConstraints(
 	assertPostgresConstraint(
 		t,
 		pool,
-		`UPDATE agent_thread_matter_links
+		`UPDATE agent_thread_goal_links
 SET is_active = true
-WHERE owner_user_id = $1 AND thread_id = $2 AND matter_id = $3`,
-		[]any{agentTestUserA, threadA, matterA},
+WHERE owner_user_id = $1 AND thread_id = $2 AND goal_id = $3`,
+		[]any{agentTestUserA, threadA, goalA},
 		"23505",
-		"agent_thread_matter_links_one_active_idx",
+		"agent_thread_goal_links_one_active_idx",
 	)
 	assertPostgresConstraint(
 		t,
@@ -1338,24 +1352,25 @@ WHERE owner_user_id = $1 AND thread_id = $2 AND matter_id = $3`,
 func assertRestrictedCrossModuleDeletes(
 	t *testing.T,
 	pool *pgxpool.Pool,
-	matterID string,
+	goalID string,
+	goalOwnerID string,
 ) {
 	t.Helper()
 	assertPostgresConstraint(
 		t,
 		pool,
-		"DELETE FROM matters WHERE id = $1",
-		[]any{matterID},
+		"DELETE FROM coaching_goals WHERE goal_id = $1",
+		[]any{goalID},
 		"23001",
-		"agent_thread_matter_links_matter_owner_fkey",
+		"agent_thread_goal_links_goal_owner_fkey",
 	)
 	assertPostgresConstraint(
 		t,
 		pool,
 		"DELETE FROM identity_users WHERE id = $1",
-		[]any{agentTestUserA},
+		[]any{goalOwnerID},
 		"23001",
-		"matters_owner_user_id_fkey",
+		"coaching_goals_owner_user_id_fkey",
 	)
 }
 

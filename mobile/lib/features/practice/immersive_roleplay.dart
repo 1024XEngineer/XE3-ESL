@@ -1,3 +1,5 @@
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -248,9 +250,9 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
     if (widget.interviewReportController == null ||
         sessionId == null ||
         controller.recordingState != PracticeRecordingState.completed ||
-        !isInterviewPracticeScenario(
-          controller.practiceScenarioType,
-          controller.practiceScenarioModel,
+        !isInterviewPracticeScene(
+          controller.practiceSceneFamily,
+          controller.practiceSceneModel,
         ) ||
         _interviewReportRouteActive ||
         _scheduledInterviewReportSessionId == sessionId ||
@@ -282,9 +284,9 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
         sessionId == null ||
         agentController.recordingState != PracticeRecordingState.completed ||
         _interviewReportRouteActive ||
-        !isInterviewPracticeScenario(
-          agentController.practiceScenarioType,
-          agentController.practiceScenarioModel,
+        !isInterviewPracticeScene(
+          agentController.practiceSceneFamily,
+          agentController.practiceSceneModel,
         )) {
       return;
     }
@@ -295,7 +297,7 @@ class _ImmersiveRoleplayPageState extends State<ImmersiveRoleplayPage> {
           builder: (_) => InterviewReportPage(
             practiceSessionId: sessionId,
             controller: reportController,
-            title: '${widget.agentController.scene?.title ?? '面试'} · 复盘',
+            title: '${widget.agentController.scene?.name ?? '面试'} · 复盘',
             speechFeedbackController: widget.speechFeedbackController,
             speechFeedbackSourceKeys: List<String>.unmodifiable(
               _feedbackSources.keys,
@@ -471,7 +473,7 @@ class _AvatarStage extends StatelessWidget {
     required this.onExit,
   });
 
-  final AgentScene scene;
+  final SceneDefinition scene;
   final ImmersiveAvatarSurfaceBuilder? surfaceBuilder;
   final String? statusLabel;
   final AgentMessage? latestAssistantMessage;
@@ -531,7 +533,7 @@ class _AvatarStage extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    scene.title,
+                    scene.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(

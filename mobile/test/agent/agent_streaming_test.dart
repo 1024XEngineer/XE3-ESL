@@ -1,3 +1,5 @@
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -7,6 +9,7 @@ import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
+import 'package:speakup/features/coaching/goal/goal.dart';
 import 'package:speakup/identity/auth_state.dart';
 
 void main() {
@@ -198,9 +201,9 @@ final class _StreamingAgentClient
   Future<AgentThreadSnapshot> restoreThread() => delegate.restoreThread();
 
   @override
-  Future<AgentSceneStart> startScene({
+  Future<Goal> startScene({
     required String threadId,
-    required AgentScene scene,
+    required SceneDefinition scene,
     required String clientOperationId,
   }) => delegate.startScene(
     threadId: threadId,
@@ -217,42 +220,5 @@ final class _StreamingAgentClient
     threadId: threadId,
     text: text,
     clientMessageId: clientMessageId,
-  );
-
-  @override
-  Future<String> transcribeTurn({
-    required String threadId,
-    required int turnNumber,
-    required String clientTurnId,
-  }) => delegate.transcribeTurn(
-    threadId: threadId,
-    turnNumber: turnNumber,
-    clientTurnId: clientTurnId,
-  );
-
-  @override
-  Future<AgentExchange> submitPracticeTurn({
-    required String threadId,
-    required AgentScene scene,
-    required int turnNumber,
-    required String transcript,
-    required String clientTurnId,
-  }) => delegate.submitPracticeTurn(
-    threadId: threadId,
-    scene: scene,
-    turnNumber: turnNumber,
-    transcript: transcript,
-    clientTurnId: clientTurnId,
-  );
-
-  @override
-  Future<AgentReview> createReview({
-    required String threadId,
-    required AgentScene scene,
-    required String clientReviewId,
-  }) => delegate.createReview(
-    threadId: threadId,
-    scene: scene,
-    clientReviewId: clientReviewId,
   );
 }

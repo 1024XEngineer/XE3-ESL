@@ -1,67 +1,64 @@
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/practice/practice_recording.dart';
 import 'package:speakup/review/formal_review.dart';
 
-const _practiceScenarioTypes = <String>{
-  'INTERVIEW',
-  'EXAM',
-  'WORKPLACE',
-  'DAILY',
-};
-
-const _practiceScenarioModels = <String>{
-  'PROJECT_EXPERIENCE_DEEP_DIVE',
-  'INTERVIEW_BASIC_DIALOGUE',
-  'IELTS_SPEAKING_PART_1',
-  'IELTS_SPEAKING_PART_2',
-  'IELTS_SPEAKING_PART_3',
-  'IELTS_SPEAKING_FULL_MOCK',
-  'EXAM_BASIC_DIALOGUE',
-  'PROGRESS_AND_RISK_UPDATE',
-  'WORKPLACE_BASIC_DIALOGUE',
-  'HOTEL_CHECKIN_AND_ISSUE_HANDLING',
-  'DAILY_BASIC_DIALOGUE',
-};
-
-bool validPracticeScenarioIdentity(
-  String? scenarioType,
-  String? scenarioModel, {
+bool validPracticeSceneIdentity(
+  SceneFamily? sceneFamily,
+  SceneModel? sceneModel, {
   bool allowMissing = false,
 }) {
-  if (scenarioType == null || scenarioModel == null) {
-    return allowMissing && scenarioType == null && scenarioModel == null;
+  if (sceneFamily == null || sceneModel == null) {
+    return allowMissing && sceneFamily == null && sceneModel == null;
   }
-  return _practiceScenarioTypes.contains(scenarioType) &&
-      _practiceScenarioModels.contains(scenarioModel);
+  return switch (sceneModel) {
+    SceneModel.projectExperienceDeepDive ||
+    SceneModel.interviewBasicDialogue => sceneFamily == SceneFamily.interview,
+    SceneModel.ieltsSpeakingPart1 ||
+    SceneModel.ieltsSpeakingPart2 ||
+    SceneModel.ieltsSpeakingPart3 ||
+    SceneModel.ieltsSpeakingFullMock ||
+    SceneModel.examBasicDialogue => sceneFamily == SceneFamily.exam,
+    SceneModel.progressAndRiskUpdate ||
+    SceneModel.workplaceBasicDialogue => sceneFamily == SceneFamily.workplace,
+    SceneModel.hotelCheckinAndIssueHandling ||
+    SceneModel.dailyBasicDialogue => sceneFamily == SceneFamily.daily,
+  };
 }
 
-bool isIeltsSpeakingFullMockScenario(
-  String? scenarioType,
-  String? scenarioModel,
-) => scenarioType == 'EXAM' && scenarioModel == 'IELTS_SPEAKING_FULL_MOCK';
+bool isIeltsSpeakingFullMockScene(
+  SceneFamily? sceneFamily,
+  SceneModel? sceneModel,
+) =>
+    sceneFamily == SceneFamily.exam &&
+    sceneModel == SceneModel.ieltsSpeakingFullMock;
 
-bool isInterviewPracticeScenario(String? scenarioType, String? scenarioModel) =>
-    scenarioType == 'INTERVIEW' &&
-    (scenarioModel == 'PROJECT_EXPERIENCE_DEEP_DIVE' ||
-        scenarioModel == 'INTERVIEW_BASIC_DIALOGUE');
+bool isInterviewPracticeScene(
+  SceneFamily? sceneFamily,
+  SceneModel? sceneModel,
+) =>
+    sceneFamily == SceneFamily.interview &&
+    (sceneModel == SceneModel.projectExperienceDeepDive ||
+        sceneModel == SceneModel.interviewBasicDialogue);
 
 bool usesAsynchronousPracticeReport(
-  String? scenarioType,
-  String? scenarioModel,
+  SceneFamily? sceneFamily,
+  SceneModel? sceneModel,
 ) =>
-    isInterviewPracticeScenario(scenarioType, scenarioModel) ||
-    isIeltsSpeakingFullMockScenario(scenarioType, scenarioModel);
+    isInterviewPracticeScene(sceneFamily, sceneModel) ||
+    isIeltsSpeakingFullMockScene(sceneFamily, sceneModel);
 
-bool isTurnFeedbackEligiblePracticeScenario(
-  String? scenarioType,
-  String? scenarioModel,
+bool isTurnFeedbackEligiblePracticeScene(
+  SceneFamily? sceneFamily,
+  SceneModel? sceneModel,
 ) =>
-    (scenarioType == 'WORKPLACE' &&
-        (scenarioModel == 'PROGRESS_AND_RISK_UPDATE' ||
-            scenarioModel == 'WORKPLACE_BASIC_DIALOGUE')) ||
-    (scenarioType == 'DAILY' &&
-        (scenarioModel == 'HOTEL_CHECKIN_AND_ISSUE_HANDLING' ||
-            scenarioModel == 'DAILY_BASIC_DIALOGUE'));
+    (sceneFamily == SceneFamily.workplace &&
+        (sceneModel == SceneModel.progressAndRiskUpdate ||
+            sceneModel == SceneModel.workplaceBasicDialogue)) ||
+    (sceneFamily == SceneFamily.daily &&
+        (sceneModel == SceneModel.hotelCheckinAndIssueHandling ||
+            sceneModel == SceneModel.dailyBasicDialogue));
 
 final class PracticeQuestion {
   const PracticeQuestion({
@@ -92,18 +89,14 @@ final class PracticeQuestion {
 
 /// The server-authoritative practice projection consumed by Flutter.
 ///
-/// A Thread only provides conversational continuity. Every practice resource
-/// keeps its own opaque identity; in particular, [sessionId] is never derived
-/// from or replaced by an Agent Thread ID.
+/// The projection is always loaded by the explicit opaque [sessionId].
 final class PracticeSessionSnapshot {
   const PracticeSessionSnapshot({
     required this.sessionId,
-    this.planId,
-    this.threadId,
-    this.scenarioType,
-    this.scenarioModel,
-    this.sessionVersion,
-    required this.matter,
+    required this.planId,
+    required this.sceneFamily,
+    required this.sceneModel,
+    required this.sessionVersion,
     required this.completedTurns,
     required this.turnLimit,
     required this.sessionCompleted,
@@ -115,12 +108,10 @@ final class PracticeSessionSnapshot {
   });
 
   final String sessionId;
-  final String? planId;
-  final String? threadId;
-  final String? scenarioType;
-  final String? scenarioModel;
-  final int? sessionVersion;
-  final AgentMatter matter;
+  final String planId;
+  final SceneFamily sceneFamily;
+  final SceneModel sceneModel;
+  final int sessionVersion;
   final int completedTurns;
   final int turnLimit;
   final bool sessionCompleted;
@@ -168,12 +159,6 @@ final class PracticeTurnSnapshot {
   final String? reviewId;
   final String? audioAssetId;
   final String? speechFeedbackStatusUrl;
-}
-
-final class PracticeStartResult {
-  const PracticeStartResult({required this.snapshot});
-
-  final PracticeSessionSnapshot snapshot;
 }
 
 /// A server-issued handle for one confirmed recording in the active Session.
@@ -224,8 +209,8 @@ final class PracticeTurnConfirmation {
     required this.completedTurns,
     required this.turnLimit,
     required this.sessionCompleted,
-    this.scenarioType,
-    this.scenarioModel,
+    this.sceneFamily,
+    this.sceneModel,
     this.sessionVersion,
     this.nextQuestion,
     this.review,
@@ -242,8 +227,8 @@ final class PracticeTurnConfirmation {
   final int completedTurns;
   final int turnLimit;
   final bool sessionCompleted;
-  final String? scenarioType;
-  final String? scenarioModel;
+  final SceneFamily? sceneFamily;
+  final SceneModel? sceneModel;
   final int? sessionVersion;
   final PracticeQuestion? nextQuestion;
   final AgentReview? review;

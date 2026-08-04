@@ -1,24 +1,26 @@
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_client.dart';
 import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/practice/immersive_roleplay.dart';
 import 'package:speakup/features/practice/immersive_roleplay_session.dart';
 import 'package:speakup/features/practice/practice.dart';
-import 'package:speakup/features/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/preparation/job_preparation_wizard.dart';
-import 'package:speakup/features/preparation/preparation.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
-import 'package:speakup/features/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/job_preparation_wizard.dart';
+import 'package:speakup/features/coaching/preparation/preparation.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/auth_gate.dart';
 import 'package:speakup/identity/model/identity_models.dart';
+import 'package:speakup/practice/practice_client.dart';
 import 'package:speakup/review/interview_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/review/ielts_speaking_report_index_controller.dart';
@@ -167,7 +169,11 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     }
     _ownsAgentController = injectedController == null;
     _agentController =
-        injectedController ?? AgentController(client: FakeAgentClient());
+        injectedController ??
+        AgentController(
+          client: FakeAgentClient(),
+          practiceClient: FakePracticeClient(),
+        );
     _agentController.initialize();
     final user = widget.user;
     if (user != null) {
@@ -300,8 +306,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     final presentationMode = launchController?.hasResumablePractice ?? false
         ? launchController!.resumablePresentationMode
         : _agentController.scene?.presentationMode ??
-              AgentScenePresentationMode.standard;
-    if (presentationMode == AgentScenePresentationMode.immersiveRoleplay) {
+              ScenePresentationMode.standard;
+    if (presentationMode == ScenePresentationMode.immersiveRoleplay) {
       final factory = widget.avatarControllerFactory;
       if (factory != null) {
         return ImmersiveRoleplaySession(

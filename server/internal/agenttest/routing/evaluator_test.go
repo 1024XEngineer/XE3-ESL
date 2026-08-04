@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
-	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
@@ -45,13 +46,13 @@ func TestEvaluationRegistryContainsInterviewMainlineTools(t *testing.T) {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
 	want := map[string]bool{
-		mattertool.ScenarioCreateToolName:           true,
-		mattertool.ScenarioSearchToolName:           true,
-		practicetool.PracticePreviewToolName:        true,
-		practicetool.PracticeStartToolName:          true,
-		evaluationtool.LatestPracticeReportToolName: true,
-		reviewtool.ReviewSearchToolName:             true,
-		reviewtool.ReviewGetToolName:                true,
+		goalcapability.GoalCreateCapabilityName:       true,
+		goalcapability.GoalSearchCapabilityName:       true,
+		preparationcapability.PracticePreviewToolName: true,
+		practicetool.PracticeStartToolName:            true,
+		evaluationtool.LatestPracticeReportToolName:   true,
+		reviewtool.ReviewSearchToolName:               true,
+		reviewtool.ReviewGetToolName:                  true,
 	}
 	for _, definition := range evaluator.registry.Definitions() {
 		delete(want, definition.Name)
@@ -68,8 +69,8 @@ func TestRegisteredWriteToolNamesUsesToolDefinitions(t *testing.T) {
 	}
 	writes := registeredWriteToolNames(evaluator.registry)
 	for _, name := range []string{
-		mattertool.ScenarioCreateToolName,
-		practicetool.PracticePreviewToolName,
+		goalcapability.GoalCreateCapabilityName,
+		preparationcapability.PracticePreviewToolName,
 		practicetool.PracticeStartToolName,
 	} {
 		if !containsString(writes, name) {
@@ -77,7 +78,7 @@ func TestRegisteredWriteToolNamesUsesToolDefinitions(t *testing.T) {
 		}
 	}
 	for _, name := range []string{
-		mattertool.ScenarioSearchToolName,
+		goalcapability.GoalSearchCapabilityName,
 		evaluationtool.LatestPracticeReportToolName,
 		reviewtool.ReviewSearchToolName,
 	} {

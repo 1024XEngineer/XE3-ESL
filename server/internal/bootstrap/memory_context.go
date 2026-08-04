@@ -35,7 +35,7 @@ func (searcher *agentMemoryContextSearcher) Search(
 	hits, err := searcher.searcher.Search(ctx, memory.SearchRequest{
 		Actor:                 request.Actor,
 		Query:                 request.Query,
-		MatterID:              request.MatterID,
+		GoalID:                request.GoalID,
 		ExcludedCanonicalKeys: request.ExcludedCanonicalKeys,
 		Limit:                 request.Limit,
 	})
@@ -51,7 +51,7 @@ func (searcher *agentMemoryContextSearcher) Search(
 			Type:                   string(hit.Type),
 			Content:                hit.Content,
 			Scope:                  string(hit.Scope),
-			MatterID:               hit.MatterID,
+			GoalID:                 hit.GoalID,
 			Similarity:             hit.Similarity,
 			Score:                  hit.Score,
 			EmbeddingProvider:      hit.EmbeddingProvider,

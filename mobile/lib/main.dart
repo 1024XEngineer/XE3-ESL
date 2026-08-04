@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/agent/agent_controller.dart';
-import 'package:speakup/agent/agent_models.dart';
 import 'package:speakup/agent/image_picker_agent_image_picker.dart';
 import 'package:speakup/agent/agent_voice_recording.dart';
 import 'package:speakup/agent/wire_agent_client.dart';
@@ -10,17 +9,17 @@ import 'package:speakup/agent/wire_agent_image_client.dart';
 import 'package:speakup/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/features/practice/immersive_roleplay_session.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
-import 'package:speakup/features/preparation/ielts_practice_history_store.dart';
-import 'package:speakup/features/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/preparation/job_preparation_draft_store.dart';
-import 'package:speakup/features/preparation/preparation_launch_controller.dart';
-import 'package:speakup/features/preparation/preparation_launch_models.dart';
-import 'package:speakup/features/preparation/practice_launch_record_store.dart';
-import 'package:speakup/features/preparation/practice_workspace_controller.dart';
-import 'package:speakup/features/preparation/wire_preparation_client.dart';
-import 'package:speakup/features/preparation/wire_job_preparation_client.dart';
-import 'package:speakup/features/preparation/wire_preparation_launch_client.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/ielts_practice_history_store.dart';
+import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/job_preparation_draft_store.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
+import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
+import 'package:speakup/features/coaching/scene/wire_scene_client.dart';
+import 'package:speakup/features/coaching/preparation/wire_job_preparation_client.dart';
+import 'package:speakup/features/coaching/preparation/wire_preparation_launch_client.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
@@ -271,7 +270,7 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: interviewReportTransport,
     ),
   );
-  final preparationCatalogClient = WirePreparationCatalogClient(
+  final preparationCatalogClient = WireSceneClient(
     baseUri: baseUri,
     transport: preparationTransport,
   );
@@ -333,45 +332,41 @@ ProductionAppDependencies createProductionAppDependencies({
     workspaceController: practiceWorkspaceController,
     contextProvider: () {
       final threadId = agentController.threadId;
-      final matterId = agentController.activeMatter?.id;
-      if (threadId == null || matterId == null) {
+      final goalId = agentController.activeGoal?.id;
+      if (threadId == null || goalId == null) {
         return null;
       }
-      return AgentPracticeContext(threadId: threadId, matterId: matterId);
+      return AgentPracticeContext(threadId: threadId, goalId: goalId);
     },
     threadIdProvider: () => agentController.threadId,
-    matterActivator:
+    goalActivator:
         ({
           required threadId,
           required selection,
           required clientOperationId,
         }) async {
-          final matter = await agentController.activateMatterForScenario(
+          final goal = await agentController.activateGoalForScene(
             threadId: threadId,
-            scene: AgentScene(
-              id: selection.scenarioDefinitionId,
-              title: selection.scenarioDisplayName,
-              description: selection.scenarioDescription,
-              scenarioType: selection.scenarioType,
-              presentationMode:
-                  selection.scenarioType == 'WORKPLACE' ||
-                      selection.scenarioType == 'DAILY'
-                  ? AgentScenePresentationMode.immersiveRoleplay
-                  : AgentScenePresentationMode.standard,
-            ),
+            scene: selection.scene,
             clientOperationId: clientOperationId,
           );
-          return AgentPracticeContext(threadId: threadId, matterId: matter.id);
+          return AgentPracticeContext(threadId: threadId, goalId: goal.id);
         },
     voiceActivator:
-        ({required context, required bootstrap, required clientOperationId}) =>
-            agentController.activateCreatedPractice(
-              threadId: context.threadId,
-              matterId: context.matterId,
-              sessionId: bootstrap.session.id,
-              turnLimit: bootstrap.maxEffectiveTurns,
-              clientOperationId: clientOperationId,
-            ),
+        ({
+          required context,
+          required scene,
+          required bootstrap,
+          required clientOperationId,
+        }) => agentController.activateCreatedPractice(
+          threadId: context.threadId,
+          goalId: context.goalId,
+          scene: scene,
+          sessionId: bootstrap.session.id,
+          planId: bootstrap.session.planId,
+          turnLimit: bootstrap.maxEffectiveTurns,
+          clientOperationId: clientOperationId,
+        ),
   );
   final jobPreparationController = JobPreparationController(
     client: WireJobPreparationClient(
@@ -390,32 +385,40 @@ ProductionAppDependencies createProductionAppDependencies({
         jobPreparationDraftStore ?? const SecureJobPreparationDraftStore(),
     workspaceController: practiceWorkspaceController,
     threadIdProvider: () => agentController.threadId,
-    matterActivator:
+    goalActivator:
         ({
           required threadId,
           required candidate,
           required clientOperationId,
         }) async {
-          final matter = await agentController.activateMatterForScenario(
+          final scene = await preparationCatalogClient.getScene(
+            candidate.catalogRecommendation.sceneId,
+          );
+          if (scene.version != candidate.catalogRecommendation.sceneVersion) {
+            throw StateError('Scene catalog changed before Goal activation.');
+          }
+          final goal = await agentController.activateGoalForScene(
             threadId: threadId,
-            scene: AgentScene(
-              id: candidate.catalogRecommendation.scenarioDefinitionId,
-              title: '${candidate.jobTitle}英文面试',
-              description: candidate.scopeNotice,
-            ),
+            scene: scene,
             clientOperationId: clientOperationId,
           );
-          return AgentPracticeContext(threadId: threadId, matterId: matter.id);
+          return AgentPracticeContext(threadId: threadId, goalId: goal.id);
         },
     voiceActivator:
-        ({required context, required bootstrap, required clientOperationId}) =>
-            agentController.activateCreatedPractice(
-              threadId: context.threadId,
-              matterId: context.matterId,
-              sessionId: bootstrap.session.id,
-              turnLimit: bootstrap.maxEffectiveTurns,
-              clientOperationId: clientOperationId,
-            ),
+        ({
+          required context,
+          required scene,
+          required bootstrap,
+          required clientOperationId,
+        }) => agentController.activateCreatedPractice(
+          threadId: context.threadId,
+          goalId: context.goalId,
+          scene: scene,
+          sessionId: bootstrap.session.id,
+          planId: bootstrap.session.planId,
+          turnLimit: bootstrap.maxEffectiveTurns,
+          clientOperationId: clientOperationId,
+        ),
   );
   final identityClient = WireIdentityClient(
     baseUri: baseUri,

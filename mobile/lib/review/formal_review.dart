@@ -1,4 +1,4 @@
-enum FormalReviewSchema { legacyVoiceV1, scenarioV2 }
+enum FormalReviewSchema { legacyVoiceV1, sceneV2 }
 
 enum FormalReviewStatus { pending, generating, completed, failed }
 

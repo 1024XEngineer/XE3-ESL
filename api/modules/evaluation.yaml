@@ -286,7 +286,7 @@ paths:
         Lists only the authenticated Actor's current, non-superseded
         ielts-speaking-full-mock-shadow/v1 Evaluation revisions. Each item
         identifies its report kind explicitly so clients never probe multiple
-        report endpoints or infer a scenario from a title.
+        report endpoints or infer a scene from a title.
 
         The response is private. Servers must not log cursors together with
         Actor credentials or include transcripts, evidence, audio locators,

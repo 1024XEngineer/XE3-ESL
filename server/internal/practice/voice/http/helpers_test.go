@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/practice/voice"
 )
@@ -463,7 +463,6 @@ func newVoiceSessionTestApplicationWithReader(
 		voiceSessionTestCheckpoints{conversations: conversations},
 		orchestrator,
 		reader,
-		voiceSessionTestMatters{},
 	)
 	if err != nil {
 		t.Fatalf("new Voice Session application: %v", err)
@@ -480,16 +479,6 @@ type fixedVoiceSessionPort struct {
 }
 
 func (port fixedVoiceSessionPort) Start(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	string,
-	string,
-) (practicevoice.Session, error) {
-	return port.session, nil
-}
-
-func (port fixedVoiceSessionPort) GetByThread(
 	context.Context,
 	requestcontext.Actor,
 	string,
@@ -523,16 +512,6 @@ func (sessions *voiceSessionTestSessions) Start(
 	requestcontext.Actor,
 	string,
 	string,
-	string,
-) (practicevoice.Session, error) {
-	return sessions.current(), nil
-}
-
-func (sessions *voiceSessionTestSessions) GetByThread(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	string,
 ) (practicevoice.Session, error) {
 	return sessions.current(), nil
 }
@@ -550,13 +529,13 @@ func (sessions *voiceSessionTestSessions) current() practicevoice.Session {
 	defer sessions.practice.mu.Unlock()
 	effective := sessions.practice.effectiveTurns
 	return practicevoice.Session{
-		ID:            "session-1",
-		PlanID:        "plan-1",
-		ThreadID:      "thread-1",
-		MatterID:      "matter-1",
-		ScenarioType:  "INTERVIEW",
-		ScenarioModel: "PROJECT_EXPERIENCE_DEEP_DIVE",
-		PromptModel: practicevoice.ScenarioPrompt{
+		ID:           "session-1",
+		PlanID:       "plan-1",
+		SceneID:      "scene-1",
+		SceneVersion: 1,
+		SceneFamily:  "INTERVIEW",
+		SceneModel:   "PROJECT_EXPERIENCE_DEEP_DIVE",
+		Prompt: scene.ScenePrompt{
 			PublicSceneBrief: "Discuss one project.",
 			PracticeGoal:     "Explain decisions clearly.",
 			UserRole:         "Candidate",
@@ -575,8 +554,8 @@ func (sessions *voiceSessionTestSessions) current() practicevoice.Session {
 			}
 			return "in_progress"
 		}(),
-		InterviewerParticipantID: "participant-interviewer",
-		CandidateParticipantID:   "participant-a",
+		FacilitatorParticipantID: "participant-facilitator",
+		LearnerParticipantID:     "participant-a",
 	}
 }
 
@@ -593,8 +572,8 @@ func (voiceSessionTestQuestions) EnsureQuestion(
 		SessionID:               session.ID,
 		Type:                    "PRIMARY",
 		Text:                    "What happened next?",
-		SpeakerParticipantID:    session.InterviewerParticipantID,
-		AddresseeParticipantIDs: []string{session.CandidateParticipantID},
+		SpeakerParticipantID:    session.FacilitatorParticipantID,
+		AddresseeParticipantIDs: []string{session.LearnerParticipantID},
 	}, nil
 }
 
@@ -715,26 +694,4 @@ func (reader voiceSessionTestReviews) ListReviews(
 	_ practicevoice.ReviewHistoryQuery,
 ) (practicevoice.ReviewHistoryPage, error) {
 	return practicevoice.ReviewHistoryPage{}, nil
-}
-
-type voiceSessionTestMatters struct{}
-
-func (voiceSessionTestMatters) ReadOwned(
-	_ context.Context,
-	actor requestcontext.Actor,
-	matterID string,
-) (matter.Matter, error) {
-	if actor.UserID != "user-a" || matterID != "matter-1" {
-		return matter.Matter{}, matter.ErrNotFound
-	}
-	now := time.Unix(1, 0).UTC()
-	return matter.Matter{
-		ID:        matterID,
-		OwnerID:   actor.UserID,
-		Title:     "Customer renewal",
-		Status:    matter.StatusActive,
-		Version:   1,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}, nil
 }

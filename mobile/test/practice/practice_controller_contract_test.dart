@@ -1,3 +1,6 @@
+import '../support/scene_fixtures.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -28,7 +31,7 @@ void main() {
 
     await controller.initialize();
     final threadId = controller.threadId;
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
 
     expect(controller.practiceSessionId, _sessionId);
     expect(controller.practiceSessionId, isNot(threadId));
@@ -51,8 +54,8 @@ void main() {
 
   test('reconciles an ambiguous final interview voice confirmation', () async {
     final practice = _TwoTurnPracticeClient(
-      scenarioType: 'INTERVIEW',
-      scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+      sceneFamily: SceneFamily.interview,
+      sceneModel: SceneModel.interviewBasicDialogue,
     );
     final controller = AgentController(
       client: FakeAgentClient(),
@@ -61,7 +64,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
     await controller.confirmTranscript();
@@ -73,7 +76,6 @@ void main() {
         retryable: true,
       )
       ..restoreResult = _completedInterviewSnapshot(
-        matter: controller.activeMatter!,
         questionId: 'question-2',
         candidateId: 'candidate-2',
         answer: answer,
@@ -95,8 +97,8 @@ void main() {
 
   test('reconciles an ambiguous final interview text submission', () async {
     final practice = _TwoTurnPracticeClient(
-      scenarioType: 'INTERVIEW',
-      scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+      sceneFamily: SceneFamily.interview,
+      sceneModel: SceneModel.interviewBasicDialogue,
     );
     final controller = AgentController(
       client: FakeAgentClient(),
@@ -105,7 +107,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
     await controller.confirmTranscript();
@@ -117,7 +119,6 @@ void main() {
         retryable: true,
       )
       ..restoreResult = _completedInterviewSnapshot(
-        matter: controller.activeMatter!,
         questionId: 'question-2',
         candidateId: 'server-text-candidate',
         answer: answer,
@@ -135,8 +136,8 @@ void main() {
 
   test('does not accept a mismatched final interview recovery', () async {
     final practice = _TwoTurnPracticeClient(
-      scenarioType: 'INTERVIEW',
-      scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+      sceneFamily: SceneFamily.interview,
+      sceneModel: SceneModel.interviewBasicDialogue,
     );
     final controller = AgentController(
       client: FakeAgentClient(),
@@ -145,7 +146,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
     await controller.confirmTranscript();
@@ -156,7 +157,6 @@ void main() {
         retryable: true,
       )
       ..restoreResult = _completedInterviewSnapshot(
-        matter: controller.activeMatter!,
         questionId: 'question-2',
         candidateId: 'different-candidate',
         answer: 'Answer 2',
@@ -178,8 +178,8 @@ void main() {
     'does not apply final recovery after private state is cleared',
     () async {
       final practice = _TwoTurnPracticeClient(
-        scenarioType: 'INTERVIEW',
-        scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
+        sceneFamily: SceneFamily.interview,
+        sceneModel: SceneModel.interviewBasicDialogue,
       );
       final controller = AgentController(
         client: FakeAgentClient(),
@@ -188,15 +188,13 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
       await controller.startRecording();
       await controller.stopRecording();
       await controller.confirmTranscript();
       await controller.startRecording();
       await controller.stopRecording();
-      final matter = controller.activeMatter!;
-
-      final restoreGate = Completer<PracticeSessionSnapshot?>();
+      final restoreGate = Completer<PracticeSessionSnapshot>();
       practice
         ..confirmFailure = const AgentClientException(
           kind: AgentClientFailureKind.network,
@@ -209,7 +207,6 @@ void main() {
       await controller.clearPrivateState();
       restoreGate.complete(
         _completedInterviewSnapshot(
-          matter: matter,
           questionId: 'question-2',
           candidateId: 'candidate-2',
           answer: 'Answer 2',
@@ -240,7 +237,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
 
       await controller.startRecording();
       await controller.stopRecording();
@@ -280,7 +277,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
 
@@ -309,7 +306,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
       await controller.startRecording();
       await controller.stopRecording();
 
@@ -335,7 +332,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
     final threadId = controller.threadId;
@@ -361,7 +358,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
       await controller.startRecording();
       await controller.stopRecording();
 
@@ -381,7 +378,7 @@ void main() {
       recorder: recorder,
     );
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
     expect(controller.hasPendingPracticeAudio, isTrue);
@@ -404,7 +401,7 @@ void main() {
       recorder: recorder,
     );
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
 
@@ -431,7 +428,7 @@ void main() {
         recorder: recorder,
       );
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
       await controller.startRecording();
       await controller.stopRecording();
 
@@ -457,7 +454,7 @@ void main() {
       );
 
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
       await controller.startRecording();
       await controller.clearPrivateState();
 
@@ -479,7 +476,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
 
     for (var turn = 0; turn < 2; turn++) {
       await controller.startRecording();
@@ -502,7 +499,7 @@ void main() {
       clientIdFactory: (scope) => '$scope-stable',
     );
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
 
@@ -532,7 +529,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
       await controller.startRecording();
       await controller.stopRecording();
 
@@ -565,7 +562,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
       await controller.startRecording();
       await controller.stopRecording();
       await controller.toggleQuestionAudio();
@@ -595,7 +592,7 @@ void main() {
         recorder: _Recorder(),
       );
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
       await controller.startRecording();
       await controller.stopRecording();
 
@@ -621,7 +618,7 @@ void main() {
         recorder: _Recorder(),
       );
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, _synchronousReviewScene);
       for (var turn = 0; turn < 2; turn++) {
         await controller.startRecording();
         await controller.stopRecording();
@@ -644,7 +641,7 @@ void main() {
       recorder: recorder,
     );
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
 
     final start = controller.startRecording();
     expect(controller.recordingState, PracticeRecordingState.starting);
@@ -675,7 +672,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
 
     final start = controller.startRecording();
     final finish = controller.finishRecordingGesture();
@@ -709,7 +706,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
 
       await tester.pumpWidget(
         MediaQuery(
@@ -752,7 +749,7 @@ void main() {
         recorder: recorder,
       );
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, testScenes.first);
       await controller.startRecording();
 
       final stop = controller.stopRecording();
@@ -786,7 +783,7 @@ void main() {
       recordingLimit: const Duration(milliseconds: 5),
     );
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
 
     await controller.startRecording();
     expect(recorder.recording, isTrue);
@@ -814,7 +811,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, _synchronousReviewScene);
       for (var turn = 0; turn < 2; turn++) {
         await controller.startRecording();
         await controller.stopRecording();
@@ -822,7 +819,10 @@ void main() {
       }
       practice.restoreResult = PracticeSessionSnapshot(
         sessionId: _sessionId,
-        matter: AgentMatter(id: 'matter-1', scene: agentScenes.first),
+        planId: _planId,
+        sceneFamily: _synchronousReviewScene.family,
+        sceneModel: _synchronousReviewScene.model,
+        sessionVersion: 3,
         completedTurns: 2,
         turnLimit: 2,
         sessionCompleted: true,
@@ -871,7 +871,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.initialize();
-      await controller.selectScene(agentScenes.first);
+      await _activatePractice(controller, _synchronousReviewScene);
       for (var turn = 0; turn < 2; turn++) {
         await controller.startRecording();
         await controller.stopRecording();
@@ -879,7 +879,10 @@ void main() {
       }
       practice.restoreResult = PracticeSessionSnapshot(
         sessionId: 'different-session',
-        matter: AgentMatter(id: 'matter-foreign', scene: agentScenes.first),
+        planId: 'different-plan',
+        sceneFamily: _synchronousReviewScene.family,
+        sceneModel: _synchronousReviewScene.model,
+        sessionVersion: 2,
         completedTurns: 1,
         turnLimit: 1,
         sessionCompleted: true,
@@ -926,7 +929,7 @@ void main() {
           recorder: _Recorder(),
         );
         await controller.initialize();
-        await controller.selectScene(agentScenes.first);
+        await _activatePractice(controller, testScenes.first);
         await controller.startRecording();
         expect(deadline?.isActive, isTrue);
 
@@ -956,7 +959,7 @@ void main() {
           recorder: _Recorder(),
         );
         await controller.initialize();
-        await controller.selectScene(agentScenes.first);
+        await _activatePractice(controller, testScenes.first);
         await controller.startRecording();
         expect(deadline?.isActive, isTrue);
 
@@ -985,7 +988,7 @@ void main() {
       recorder: _PermissionDeniedRecorder(),
     );
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     expect(controller.hasActivePractice, isTrue);
     expect(controller.errorMessage, isNull);
     await tester.pumpWidget(
@@ -1016,7 +1019,7 @@ void main() {
       recorder: _Recorder(),
     );
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: controller)),
     );
@@ -1044,18 +1047,18 @@ void main() {
   ) async {
     final controller = AgentController(
       client: FakeAgentClient(),
-      practiceClient: FakePracticeClient(),
+      practiceClient: _ThreeTurnPracticeClient(),
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes[1]);
+    await _activatePractice(controller, testScenes[1]);
 
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: controller)),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text(agentScenes[1].title), findsOneWidget);
+    expect(find.text(testScenes[1].name), findsOneWidget);
     expect(
       find.byKey(const Key('practice-ai-message-question-0-1')),
       findsOneWidget,
@@ -1078,11 +1081,11 @@ void main() {
   ) async {
     final controller = AgentController(
       client: FakeAgentClient(),
-      practiceClient: FakePracticeClient(),
+      practiceClient: _ThreeTurnPracticeClient(),
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: controller)),
     );
@@ -1165,11 +1168,11 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final controller = AgentController(
       client: FakeAgentClient(),
-      practiceClient: FakePracticeClient(),
+      practiceClient: _ThreeTurnPracticeClient(),
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes[1]);
+    await _activatePractice(controller, testScenes[1]);
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: controller)),
     );
@@ -1232,7 +1235,7 @@ void main() {
       recorder: _Recorder(),
     );
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
     await tester.pumpWidget(
@@ -1278,7 +1281,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await tester.pumpWidget(
       MaterialApp(home: PracticePage(agentController: controller)),
     );
@@ -1307,31 +1310,52 @@ void main() {
   testWidgets('interview and daily scenes share the conversation page', (
     tester,
   ) async {
-    const interviewScene = AgentScene(
+    final interviewScene = testScene(
       id: 'behavioral-interview',
-      title: '行为面试',
-      description: '使用具体经历回答协作、冲突和成长类问题。',
-      scenarioType: 'INTERVIEW',
+      family: SceneFamily.interview,
+      model: SceneModel.interviewBasicDialogue,
+      name: '行为面试',
+      prompt: const ScenePrompt(
+        publicSceneBrief: '使用具体经历回答协作、冲突和成长类问题。',
+        practiceGoal: 'Complete the behavioral interview.',
+        userRole: 'Candidate',
+        aiRole: 'Interviewer',
+        personaSummary: 'Professional and focused.',
+        focusAreas: <String>['clarity'],
+        turnBlueprints: <String>['Ask one behavioral question.'],
+        suggestedDurationSeconds: 600,
+      ),
     );
-    const dailyScene = AgentScene(
+    final dailyScene = testScene(
       id: 'hotel-check-in',
-      title: '酒店入住',
-      description: '练习办理入住和沟通房间问题。',
+      family: SceneFamily.daily,
+      model: SceneModel.hotelCheckinAndIssueHandling,
+      name: '酒店入住',
+      prompt: const ScenePrompt(
+        publicSceneBrief: '练习办理入住和沟通房间问题。',
+        practiceGoal: 'Complete the hotel check-in conversation.',
+        userRole: 'Guest',
+        aiRole: 'Receptionist',
+        personaSummary: 'Professional and helpful.',
+        focusAreas: <String>['check_in'],
+        turnBlueprints: <String>['Confirm the booking.'],
+        suggestedDurationSeconds: 600,
+      ),
     );
 
     for (final scene in [interviewScene, dailyScene]) {
       final controller = AgentController(
         client: FakeAgentClient(),
-        practiceClient: FakePracticeClient(),
+        practiceClient: _ThreeTurnPracticeClient(),
       );
       await controller.initialize();
-      await controller.selectScene(scene);
+      await _activatePractice(controller, scene);
       await tester.pumpWidget(
         MaterialApp(home: PracticePage(agentController: controller)),
       );
       await tester.pumpAndSettle();
 
-      expect(find.text(scene.title), findsOneWidget);
+      expect(find.text(scene.name), findsOneWidget);
       expect(find.byKey(const Key('practice-message-list')), findsOneWidget);
       expect(
         find.byKey(const Key('practice-ai-message-question-0-1')),
@@ -1375,7 +1399,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, testScenes.first);
     await controller.startRecording();
     await controller.stopRecording();
     await controller.confirmTranscript();
@@ -1421,7 +1445,7 @@ void main() {
       recorder: _Recorder(),
     );
     await controller.initialize();
-    await controller.selectScene(agentScenes.first);
+    await _activatePractice(controller, _synchronousReviewScene);
     for (var turn = 0; turn < 2; turn++) {
       await controller.startRecording();
       await controller.stopRecording();
@@ -1445,6 +1469,44 @@ void main() {
   });
 }
 
+final _synchronousReviewScene = testScene(
+  id: 'workplace-review-retry',
+  family: SceneFamily.workplace,
+  model: SceneModel.workplaceBasicDialogue,
+  name: 'Workplace update',
+);
+
+Future<void> _activatePractice(
+  AgentController controller,
+  SceneDefinition scene,
+) async {
+  final practice = controller.practiceClient;
+  late final String planId;
+  late final int turnLimit;
+  if (practice case final _TwoTurnPracticeClient client) {
+    client.bindScene(scene);
+    planId = _planId;
+    turnLimit = 2;
+  } else if (practice case final _ThreeTurnPracticeClient client) {
+    client.bindScene(scene);
+    planId = _threeTurnPlanId;
+    turnLimit = 3;
+  } else {
+    throw StateError('Unsupported explicit Practice test client.');
+  }
+
+  await controller.selectScene(scene);
+  await controller.activateCreatedPractice(
+    threadId: controller.threadId!,
+    goalId: controller.activeGoal!.id,
+    scene: scene,
+    sessionId: _sessionId,
+    planId: planId,
+    turnLimit: turnLimit,
+    clientOperationId: 'activate-$_sessionId',
+  );
+}
+
 final class _TwoTurnPracticeClient implements PracticeClient {
   _TwoTurnPracticeClient({
     this.includeAudioAssets = false,
@@ -1452,8 +1514,8 @@ final class _TwoTurnPracticeClient implements PracticeClient {
     this.firstAnswer = 'Answer 1',
     this.secondQuestion = 'Second question',
     this.formalReview,
-    this.scenarioType,
-    this.scenarioModel,
+    this.sceneFamily,
+    this.sceneModel,
   });
 
   final bool includeAudioAssets;
@@ -1461,8 +1523,8 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   final String firstAnswer;
   final String secondQuestion;
   final FormalReview? formalReview;
-  final String? scenarioType;
-  final String? scenarioModel;
+  final SceneFamily? sceneFamily;
+  final SceneModel? sceneModel;
   int completed = 0;
   int cleanupCount = 0;
   final List<String> confirmedQuestionIds = [];
@@ -1474,55 +1536,76 @@ final class _TwoTurnPracticeClient implements PracticeClient {
   Object? textFailure;
   Object? restoreFailure;
   PracticeSessionSnapshot? restoreResult;
-  Completer<PracticeSessionSnapshot?>? restoreGate;
+  Completer<PracticeSessionSnapshot>? restoreGate;
   int transcribeCount = 0;
   int restoreCount = 0;
+  SceneDefinition? activeScene;
+  PracticeSessionSnapshot? _snapshot;
   final List<String> transcriptionClientTurnIds = <String>[];
+
+  void bindScene(SceneDefinition scene) {
+    activeScene = scene;
+  }
 
   @override
   Future<void> clearAccountState() async {
     cleanupCount++;
     completed = 0;
+    activeScene = null;
+    _snapshot = null;
+    restoreResult = null;
   }
 
   @override
-  Future<PracticeSessionSnapshot?> restorePractice({
-    required String threadId,
-    AgentMatter? activeMatter,
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
   }) async {
     restoreCount++;
+    if (sessionId != _sessionId) {
+      throw StateError('Unknown Practice Session.');
+    }
     if (restoreFailure case final failure?) {
       throw failure;
     }
     if (restoreGate case final gate?) {
       return gate.future;
     }
-    return restoreResult;
+    final restored = restoreResult ?? _snapshot;
+    if (restored == null) {
+      throw StateError('Practice Session has not been activated.');
+    }
+    return restored;
   }
 
   @override
-  Future<PracticeStartResult> startPractice({
-    required String threadId,
-    required AgentMatter activeMatter,
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
     required String clientOperationId,
   }) async {
-    return PracticeStartResult(
-      snapshot: PracticeSessionSnapshot(
+    final scene = activeScene;
+    if (sessionId != _sessionId ||
+        clientOperationId.trim().isEmpty ||
+        scene == null) {
+      throw StateError('Invalid explicit Practice activation.');
+    }
+    final snapshot = PracticeSessionSnapshot(
+      sessionId: _sessionId,
+      planId: _planId,
+      sceneFamily: sceneFamily ?? scene.family,
+      sceneModel: sceneModel ?? scene.model,
+      sessionVersion: 1,
+      completedTurns: 0,
+      turnLimit: 2,
+      sessionCompleted: false,
+      currentQuestion: PracticeQuestion(
+        id: 'question-1',
         sessionId: _sessionId,
-        scenarioType: scenarioType,
-        scenarioModel: scenarioModel,
-        matter: activeMatter,
-        completedTurns: 0,
-        turnLimit: 2,
-        sessionCompleted: false,
-        currentQuestion: PracticeQuestion(
-          id: 'question-1',
-          sessionId: _sessionId,
-          text: firstQuestion,
-          speechPath: '/v1/voice-questions/question-1/speech',
-        ),
+        text: firstQuestion,
+        speechPath: '/v1/voice-questions/question-1/speech',
       ),
     );
+    _snapshot = snapshot;
+    return snapshot;
   }
 
   @override
@@ -1568,33 +1651,69 @@ final class _TwoTurnPracticeClient implements PracticeClient {
             text: secondQuestion,
             speechPath: '/v1/voice-questions/question-2/speech',
           );
+    final answerText = completed == 1 ? firstAnswer : 'Answer $completed';
+    final review = done && !omitReview
+        ? const AgentReview(
+            id: _reviewId,
+            title: 'Review',
+            summary: 'Summary',
+            strength: 'Strength',
+            nextFocus: 'Next focus',
+          )
+        : null;
+    final resolvedSceneFamily = sceneFamily ?? activeScene?.family;
+    final resolvedSceneModel = sceneModel ?? activeScene?.model;
+    if (resolvedSceneFamily == null || resolvedSceneModel == null) {
+      throw StateError('Practice Scene identity is not bound.');
+    }
+    final audioAssetId = includeAudioAssets ? 'audio-$completed' : null;
+    final turn = PracticeTurnSnapshot(
+      id: 'turn-$completed',
+      sessionId: sessionId,
+      questionId: questionId,
+      respondentParticipantId: 'participant-user',
+      candidateId: candidateId,
+      answerText: answerText,
+      evidenceVersion: completed,
+      effectiveTurns: completed,
+      sessionCompleted: done,
+      reviewId: review?.id,
+      audioAssetId: audioAssetId,
+    );
+    _snapshot = PracticeSessionSnapshot(
+      sessionId: sessionId,
+      planId: _planId,
+      sceneFamily: resolvedSceneFamily,
+      sceneModel: resolvedSceneModel,
+      sessionVersion: completed + 1,
+      completedTurns: completed,
+      turnLimit: 2,
+      sessionCompleted: done,
+      currentQuestion: nextQuestion,
+      currentTurn: turn,
+      review: review,
+      formalReview: done && !omitReview ? formalReview : null,
+    );
     return PracticeTurnConfirmation(
       turnId: 'turn-$completed',
       sessionId: sessionId,
       questionId: questionId,
       candidateId: candidateId,
-      scenarioType: scenarioType,
-      scenarioModel: scenarioModel,
+      sceneFamily: resolvedSceneFamily,
+      sceneModel: resolvedSceneModel,
+      sessionVersion: completed + 1,
       answer: AgentMessage(
         id: 'answer-$completed',
         role: AgentMessageRole.user,
-        text: completed == 1 ? firstAnswer : 'Answer $completed',
+        text: answerText,
       ),
       completedTurns: completed,
       turnLimit: 2,
       sessionCompleted: done,
       nextQuestion: nextQuestion,
-      review: done && !omitReview
-          ? const AgentReview(
-              id: _reviewId,
-              title: 'Review',
-              summary: 'Summary',
-              strength: 'Strength',
-              nextFocus: 'Next focus',
-            )
-          : null,
+      review: review,
       formalReview: done && !omitReview ? formalReview : null,
-      audioAssetId: includeAudioAssets ? 'audio-$completed' : null,
+      audioAssetId: audioAssetId,
     );
   }
 
@@ -1613,16 +1732,16 @@ final class _TwoTurnPracticeClient implements PracticeClient {
 }
 
 PracticeSessionSnapshot _completedInterviewSnapshot({
-  required AgentMatter matter,
   required String questionId,
   required String candidateId,
   required String answer,
 }) {
   return PracticeSessionSnapshot(
     sessionId: _sessionId,
-    scenarioType: 'INTERVIEW',
-    scenarioModel: 'INTERVIEW_BASIC_DIALOGUE',
-    matter: matter,
+    planId: _planId,
+    sceneFamily: SceneFamily.interview,
+    sceneModel: SceneModel.interviewBasicDialogue,
+    sessionVersion: 3,
     completedTurns: 2,
     turnLimit: 2,
     sessionCompleted: true,
@@ -1638,6 +1757,122 @@ PracticeSessionSnapshot _completedInterviewSnapshot({
       sessionCompleted: true,
     ),
   );
+}
+
+final class _ThreeTurnPracticeClient implements PracticeClient {
+  final FakePracticeClient _delegate = FakePracticeClient();
+  SceneDefinition? _scene;
+
+  void bindScene(SceneDefinition scene) {
+    _scene = scene;
+  }
+
+  @override
+  Future<void> clearAccountState() async {
+    _scene = null;
+    await _delegate.clearAccountState();
+  }
+
+  @override
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) async =>
+      _withBoundScene(await _delegate.restorePractice(sessionId: sessionId));
+
+  @override
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
+    required String clientOperationId,
+  }) async => _withBoundScene(
+    await _delegate.activatePractice(
+      sessionId: sessionId,
+      clientOperationId: clientOperationId,
+    ),
+  );
+
+  PracticeSessionSnapshot _withBoundScene(PracticeSessionSnapshot snapshot) {
+    final scene = _scene;
+    if (scene == null) {
+      throw StateError('Practice Scene identity is not bound.');
+    }
+    return PracticeSessionSnapshot(
+      sessionId: snapshot.sessionId,
+      planId: snapshot.planId,
+      sceneFamily: scene.family,
+      sceneModel: scene.model,
+      sessionVersion: snapshot.sessionVersion,
+      completedTurns: snapshot.completedTurns,
+      turnLimit: snapshot.turnLimit,
+      sessionCompleted: snapshot.sessionCompleted,
+      currentQuestion: snapshot.currentQuestion,
+      currentTurn: snapshot.currentTurn,
+      turnHistory: snapshot.turnHistory,
+      review: snapshot.review,
+      formalReview: snapshot.formalReview,
+    );
+  }
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) => _delegate.transcribe(request);
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) async => _withBoundSceneConfirmation(
+    await _delegate.confirm(
+      sessionId: sessionId,
+      questionId: questionId,
+      candidateId: candidateId,
+      idempotencyKey: idempotencyKey,
+    ),
+  );
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) async => _withBoundSceneConfirmation(
+    await _delegate.submitText(
+      sessionId: sessionId,
+      questionId: questionId,
+      answerText: answerText,
+      idempotencyKey: idempotencyKey,
+    ),
+  );
+
+  PracticeTurnConfirmation _withBoundSceneConfirmation(
+    PracticeTurnConfirmation confirmation,
+  ) {
+    final scene = _scene;
+    if (scene == null) {
+      throw StateError('Practice Scene identity is not bound.');
+    }
+    return PracticeTurnConfirmation(
+      turnId: confirmation.turnId,
+      sessionId: confirmation.sessionId,
+      questionId: confirmation.questionId,
+      candidateId: confirmation.candidateId,
+      answer: confirmation.answer,
+      completedTurns: confirmation.completedTurns,
+      turnLimit: confirmation.turnLimit,
+      sessionCompleted: confirmation.sessionCompleted,
+      sceneFamily: scene.family,
+      sceneModel: scene.model,
+      sessionVersion: confirmation.sessionVersion,
+      nextQuestion: confirmation.nextQuestion,
+      review: confirmation.review,
+      formalReview: confirmation.formalReview,
+      audioAssetId: confirmation.audioAssetId,
+      speechFeedbackStatusUrl: confirmation.speechFeedbackStatusUrl,
+    );
+  }
 }
 
 final class _NoopMediaClient implements PracticeMediaClient {
@@ -1886,6 +2121,8 @@ final class _Recorder implements PracticeRecorder {
 }
 
 const _sessionId = 'practice-session-server';
+const _planId = 'practice-plan-server';
+const _threeTurnPlanId = 'practice-plan-practice-session-server';
 const _reviewId = 'review-server';
 
 FormalReview _provisionalFormalReview() {
@@ -1894,8 +2131,8 @@ FormalReview _provisionalFormalReview() {
     id: _reviewId,
     practiceSessionId: _sessionId,
     status: FormalReviewStatus.completed,
-    schema: FormalReviewSchema.scenarioV2,
-    implementationVersion: 'qianwen-scenario-review-v2',
+    schema: FormalReviewSchema.sceneV2,
+    implementationVersion: 'qianwen-scene-review-v2',
     sourceTurnId: 'turn-2',
     sourceTurnVersion: 'conversation-turn:evidence-v2',
     contextType: FormalReviewContextType.interviewProjectDeepDive,

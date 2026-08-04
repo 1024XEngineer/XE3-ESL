@@ -39,7 +39,7 @@ func TestStartToolRejectsModelSelfConfirmation(t *testing.T) {
 	}
 	result, err := NewStartTool(port).Execute(
 		context.Background(),
-		previewCallContext(),
+		startCallContext(),
 		json.RawMessage(`{
 			"practice_plan_id":"plan-1",
 			"expected_plan_revision":1,
@@ -74,7 +74,7 @@ func TestStartToolUsesMatchingTrustedConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := previewCallContext()
+	call := startCallContext()
 	call.Confirmation = &tool.TrustedConfirmation{
 		Kind:       practiceStartConfirmationKind,
 		ResourceID: "plan-1",
@@ -106,7 +106,7 @@ func TestStartToolRejectsMismatchedTrustedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := previewCallContext()
+	call := startCallContext()
 	call.Confirmation = &tool.TrustedConfirmation{
 		Kind:       practiceStartConfirmationKind,
 		ResourceID: "plan-1",
@@ -124,5 +124,16 @@ func TestStartToolRejectsMismatchedTrustedRevision(t *testing.T) {
 	if err != nil || result.Content["status"] != "confirmation_required" ||
 		application.calls != 0 {
 		t.Fatalf("mismatched Start = (%#v, %v)", result, err)
+	}
+}
+
+func startCallContext() tool.CallContext {
+	return tool.CallContext{
+		Actor: requestcontext.Actor{
+			UserID:    "10000000-0000-4000-8000-000000000001",
+			SessionID: "20000000-0000-4000-8000-000000000001",
+		},
+		ThreadID:  "thread-1",
+		RequestID: "request-1",
 	}
 }

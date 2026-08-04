@@ -24,24 +24,6 @@ const maxPracticeContextHTTPRequestBody = 128 * 1024
 // ContextHTTPApplication is the transport-owned Practice boundary. Bearer
 // authentication runs outside this handler and injects a trusted Actor.
 type ContextHTTPApplication interface {
-	CreatePlan(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		CreatePlanRequest,
-	) (persistence.Plan, bool, error)
-	GetPlan(
-		context.Context,
-		requestcontext.Actor,
-		string,
-	) (persistence.Plan, error)
-	UpdatePlan(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		string,
-		UpdatePlanRequest,
-	) (persistence.Plan, bool, error)
 	CreateSession(
 		context.Context,
 		requestcontext.Actor,
@@ -75,7 +57,7 @@ type ContextHTTPApplication interface {
 	) (persistence.ContextSession, bool, error)
 }
 
-// ContextHTTPHandler exposes authenticated Plan and Session context routes.
+// ContextHTTPHandler exposes authenticated Practice Session routes.
 type ContextHTTPHandler struct {
 	application ContextHTTPApplication
 }
@@ -90,9 +72,6 @@ func NewContextHTTPHandler(
 }
 
 func (h *ContextHTTPHandler) RegisterRoutes(routes gin.IRoutes) {
-	routes.POST("/v1/practice-plans", h.createPlan)
-	routes.GET("/v1/practice-plans/:practice_plan_id", h.getPlan)
-	routes.PUT("/v1/practice-plans/:practice_plan_id", h.updatePlan)
 	routes.POST(
 		"/v1/practice-plans/:practice_plan_id/practice-sessions",
 		h.createSession,
@@ -141,16 +120,13 @@ func (h *ContextHTTPHandler) confirmAndStartPractice(c *gin.Context) {
 		return
 	}
 	var request struct {
-		PracticePlanID       string                  `json:"practice_plan_id"`
-		ExpectedPlanRevision int                     `json:"expected_plan_revision"`
-		UserConfirmed        bool                    `json:"user_confirmed"`
-		IELTSSelection       *IELTSPracticeSelection `json:"ielts_selection,omitempty"`
+		PracticePlanID       string `json:"practice_plan_id"`
+		ExpectedPlanRevision int    `json:"expected_plan_revision"`
+		UserConfirmed        bool   `json:"user_confirmed"`
 	}
 	if !decodePracticeContextJSONObject(c, &request) ||
 		!validContextResourceID(request.PracticePlanID) ||
-		request.ExpectedPlanRevision < 1 ||
-		(request.IELTSSelection != nil &&
-			!validIELTSPracticeSelectionInput(*request.IELTSSelection)) {
+		request.ExpectedPlanRevision < 1 {
 		writePracticeContextHTTPError(c, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -170,7 +146,6 @@ func (h *ContextHTTPHandler) confirmAndStartPractice(c *gin.Context) {
 			AgentThreadID:        threadID,
 			PracticePlanID:       request.PracticePlanID,
 			ExpectedPlanRevision: request.ExpectedPlanRevision,
-			IELTSSelection:       request.IELTSSelection,
 		},
 	)
 	if err != nil {
@@ -199,122 +174,6 @@ func (h *ContextHTTPHandler) confirmAndStartPractice(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, result.Bootstrap)
-}
-
-func (h *ContextHTTPHandler) createPlan(c *gin.Context) {
-	setPracticeContextPrivateResponseHeaders(c)
-	actor, ok := practiceContextActor(c)
-	if !ok {
-		writePracticeContextAuthenticationRequired(c)
-		return
-	}
-	idempotencyKey, ok := practiceContextIdempotencyKey(c)
-	if !ok {
-		writePracticeContextHTTPError(
-			c,
-			http.StatusBadRequest,
-			"invalid_request",
-		)
-		return
-	}
-	var request CreatePlanRequest
-	if !decodePracticeContextJSONObject(c, &request) ||
-		!validCreatePlanRequest(request) {
-		writePracticeContextHTTPError(
-			c,
-			http.StatusBadRequest,
-			"invalid_request",
-		)
-		return
-	}
-	plan, _, err := h.application.CreatePlan(
-		c.Request.Context(),
-		actor,
-		idempotencyKey,
-		request,
-	)
-	if err != nil {
-		writePracticeContextServiceError(c, err, "practice_plan_not_found")
-		return
-	}
-	c.JSON(http.StatusCreated, plan)
-}
-
-func (h *ContextHTTPHandler) getPlan(c *gin.Context) {
-	setPracticeContextPrivateResponseHeaders(c)
-	actor, ok := practiceContextActor(c)
-	if !ok {
-		writePracticeContextAuthenticationRequired(c)
-		return
-	}
-	planID := c.Param("practice_plan_id")
-	if !validContextResourceID(planID) {
-		writePracticeContextHTTPError(
-			c,
-			http.StatusNotFound,
-			"practice_plan_not_found",
-		)
-		return
-	}
-	plan, err := h.application.GetPlan(
-		c.Request.Context(),
-		actor,
-		planID,
-	)
-	if err != nil {
-		writePracticeContextReadError(c, err, "practice_plan_not_found")
-		return
-	}
-	c.JSON(http.StatusOK, plan)
-}
-
-func (h *ContextHTTPHandler) updatePlan(c *gin.Context) {
-	setPracticeContextPrivateResponseHeaders(c)
-	actor, ok := practiceContextActor(c)
-	if !ok {
-		writePracticeContextAuthenticationRequired(c)
-		return
-	}
-	idempotencyKey, ok := practiceContextIdempotencyKey(c)
-	if !ok {
-		writePracticeContextHTTPError(
-			c,
-			http.StatusBadRequest,
-			"invalid_request",
-		)
-		return
-	}
-	planID := c.Param("practice_plan_id")
-	if !validContextResourceID(planID) {
-		writePracticeContextHTTPError(
-			c,
-			http.StatusBadRequest,
-			"invalid_request",
-		)
-		return
-	}
-	var request UpdatePlanRequest
-	if !decodePracticeContextJSONObject(c, &request) ||
-		!validUpdatePlanRequest(request) {
-		writePracticeContextHTTPError(
-			c,
-			http.StatusBadRequest,
-			"invalid_request",
-		)
-		return
-	}
-	plan, _, err := h.application.UpdatePlan(
-		c.Request.Context(),
-		actor,
-		planID,
-		idempotencyKey,
-		request,
-	)
-	if err != nil {
-		writePracticeContextServiceError(c, err, "practice_plan_not_found")
-		return
-	}
-	c.JSON(http.StatusOK, plan)
 }
 
 func (h *ContextHTTPHandler) createSession(c *gin.Context) {

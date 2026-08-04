@@ -14,17 +14,17 @@ const EvaluationContextSchemaVersion = "evaluation-context.v1"
 var ErrInvalidEvaluationContext = errors.New("review: invalid evaluation context")
 
 type EvaluationContext struct {
-	SchemaVersion             string                `json:"schema_version"`
-	ContextType               EvaluationContextType `json:"context_type"`
-	SceneKey                  string                `json:"scene_key"`
-	ScenarioDefinitionID      string                `json:"scenario_definition_id"`
-	ScenarioDefinitionVersion int                   `json:"scenario_definition_version"`
-	PracticeOptionType        string                `json:"practice_option_type"`
-	DifficultyRef             string                `json:"difficulty_ref"`
-	AssistanceRef             string                `json:"assistance_ref"`
-	TurnPolicyRef             string                `json:"turn_policy_ref"`
-	SessionPolicyRef          string                `json:"session_policy_ref"`
-	SceneSpecificContext      SceneSpecificContext  `json:"scene_specific_context"`
+	SchemaVersion        string                `json:"schema_version"`
+	ContextType          EvaluationContextType `json:"context_type"`
+	SceneKey             string                `json:"scene_key"`
+	SceneID              string                `json:"scene_id"`
+	SceneVersion         int                   `json:"scene_version"`
+	PracticeOptionType   string                `json:"practice_option_type"`
+	DifficultyRef        string                `json:"difficulty_ref"`
+	AssistanceRef        string                `json:"assistance_ref"`
+	TurnPolicyRef        string                `json:"turn_policy_ref"`
+	SessionPolicyRef     string                `json:"session_policy_ref"`
+	SceneSpecificContext SceneSpecificContext  `json:"scene_specific_context"`
 }
 
 type SceneSpecificContext struct {
@@ -97,8 +97,8 @@ func (c EvaluationContext) Validate(registry *PolicyRegistry) error {
 	if c.SchemaVersion != EvaluationContextSchemaVersion ||
 		!validEvaluationContextType(c.ContextType) ||
 		!validContextIdentifier(c.SceneKey, 128) ||
-		!validContextIdentifier(c.ScenarioDefinitionID, 128) ||
-		c.ScenarioDefinitionVersion < 1 ||
+		!validContextIdentifier(c.SceneID, 128) ||
+		c.SceneVersion < 1 ||
 		!validContextIdentifier(c.PracticeOptionType, 64) ||
 		!validContextIdentifier(c.DifficultyRef, 128) ||
 		!validContextIdentifier(c.AssistanceRef, 128) ||

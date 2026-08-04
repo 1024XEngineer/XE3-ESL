@@ -1,32 +1,35 @@
 package smoke
 
 import (
+	"context"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
+	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/review"
 )
 
 // Application is the smoke composition layer. It coordinates formal module
 // services while leaving every resource mutation with its owning module.
 type Application struct {
-	preparation  *preparation.Service
-	practice     *practice.Service
+	preparation  *preparationBackend
+	practice     *practiceBackend
 	conversation *conversation.Service
 	review       *review.Service
 	failures     FailureControl
 }
 
 func NewApplication(
-	preparationService *preparation.Service,
-	practiceService *practice.Service,
+	preparationStore *preparationBackend,
+	practiceStore *practiceBackend,
 	conversationService *conversation.Service,
 	reviewService *review.Service,
 	failures FailureControl,
 ) *Application {
 	return &Application{
-		preparation:  preparationService,
-		practice:     practiceService,
+		preparation:  preparationStore,
+		practice:     practiceStore,
 		conversation: conversationService,
 		review:       reviewService,
 		failures:     failures,
@@ -34,41 +37,31 @@ func NewApplication(
 }
 
 func (a *Application) CreatePlan(
-	command practice.CreatePracticePlanCommand,
-) (practice.PracticePlan, error) {
-	if _, err := a.preparation.GetScenarioDetail(command.ScenarioDefinitionID); err != nil {
-		return practice.PracticePlan{}, ErrScenarioNotFound
-	}
-	if !a.preparation.ProfileExists(command.PreparationProfileID) {
-		return practice.PracticePlan{}, ErrProfileNotFound
-	}
-	return a.practice.CreatePracticePlan(command)
+	ctx context.Context,
+	request preparation.CreatePlanRequest,
+) (preparation.PracticePlan, error) {
+	return a.preparation.CreatePracticePlan(ctx, request)
 }
 
 func (a *Application) CreateSession(
-	command practice.CreatePracticeSessionCommand,
-) (practice.CreatePracticeSessionResult, error) {
-	if !a.practice.PracticePlanExists(practice.PracticePlanExistsQuery{
-		PracticePlanID: command.PracticePlanID,
-	}) {
-		return practice.CreatePracticeSessionResult{}, ErrPlanNotFound
+	planID string,
+	expectedPlanRevision int,
+) (practicepersistence.ContextSessionBootstrap, error) {
+	if !a.preparation.PracticePlanExists(
+		planID,
+		expectedPlanRevision,
+	) {
+		return practicepersistence.ContextSessionBootstrap{}, ErrPlanNotFound
 	}
-	if !a.preparation.SnapshotExists(command.PreparationSnapshotID) {
-		return practice.CreatePracticeSessionResult{}, ErrSnapshotNotFound
-	}
-	return a.practice.CreatePracticeSession(command)
+	return a.practice.CreatePracticeSession()
 }
 
 func (a *Application) Bootstrap(sessionID string) (map[string]any, error) {
-	session, ok := a.practice.GetPracticeSession(practice.GetPracticeSessionQuery{
-		PracticeSessionID: sessionID,
-	})
+	session, ok := a.practice.GetPracticeSession(sessionID)
 	if !ok {
 		return nil, ErrSessionNotFound
 	}
-	snapshot, ok := a.practice.GetPracticeSessionSnapshot(
-		practice.GetPracticeSessionSnapshotQuery{PracticeSessionID: sessionID},
-	)
+	snapshot, ok := a.practice.GetPracticeSessionSnapshot(sessionID)
 	if !ok {
 		return nil, ErrSessionNotFound
 	}
@@ -82,14 +75,12 @@ func (a *Application) Bootstrap(sessionID string) (map[string]any, error) {
 }
 
 func (a *Application) EnsureCurrentQuestion(sessionID string) (Question, error) {
-	startedSession, err := a.practice.StartPracticeSession(
-		practice.StartPracticeSessionCommand{PracticeSessionID: sessionID},
-	)
+	sessionVersion, started, err := a.practice.StartPracticeSession(sessionID)
 	if err != nil {
 		return Question{}, err
 	}
-	if startedSession.Started {
-		a.conversation.PublishSessionStarted(startedSession.SessionVersion)
+	if started {
+		a.conversation.PublishSessionStarted(sessionVersion)
 	}
 	return a.conversation.EnsureCurrentQuestion(sessionID)
 }
@@ -103,10 +94,10 @@ func (a *Application) SubmitTurn(
 	if !ok {
 		return Turn{}, ErrQuestionNotFound
 	}
-	if err := a.practice.AuthorizePracticeTurn(practice.AuthorizePracticeTurnCommand{
-		PracticeSessionID: question.SessionID,
-		IsRetry:           request.RetryRequestID != "",
-	}); err != nil {
+	if err := a.practice.AuthorizePracticeTurn(
+		question.SessionID,
+		request.RetryRequestID != "",
+	); err != nil {
 		return Turn{}, err
 	}
 	turn, err := a.conversation.PrepareTurn(questionID, request)
@@ -124,12 +115,10 @@ func (a *Application) SubmitTurn(
 	if err != nil {
 		return Turn{}, err
 	}
-	decision, err := a.practice.ApplyTurnOutcome(practice.ApplyTurnOutcomeCommand{
-		Outcome: practice.TurnOutcome{
-			SessionID: turn.SessionID,
-			TurnID:    turn.ID,
-			IsRetry:   turn.IsRetry,
-		},
+	decision, err := a.practice.ApplyTurnOutcome(practice.TurnOutcome{
+		SessionID: turn.SessionID,
+		TurnID:    turn.ID,
+		IsRetry:   turn.IsRetry,
 	})
 	if err != nil {
 		return Turn{}, err
@@ -138,7 +127,7 @@ func (a *Application) SubmitTurn(
 		if decision.Completed {
 			a.conversation.PublishSessionCompleted(
 				decision.SessionVersion,
-				string(decision.EndReason),
+				decision.EndReason,
 			)
 		} else {
 			if _, err := a.conversation.CreateNextQuestion(
@@ -202,9 +191,7 @@ func (a *Application) CreateRetry(feedbackID string) (RetryRequest, error) {
 }
 
 func (a *Application) ListHistory(sessionID string) ([]HistoryRecord, error) {
-	if _, ok := a.practice.GetPracticeSession(practice.GetPracticeSessionQuery{
-		PracticeSessionID: sessionID,
-	}); !ok {
+	if _, ok := a.practice.GetPracticeSession(sessionID); !ok {
 		return nil, ErrSessionNotFound
 	}
 	return a.review.ListHistory(sessionID), nil

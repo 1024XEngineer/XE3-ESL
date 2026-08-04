@@ -59,7 +59,7 @@ func (policy *ExtractionPolicy) Decide(
 			})
 			continue
 		}
-		key := string(decision.Scope) + ":" + decision.MatterID + ":" +
+		key := string(decision.Scope) + ":" + decision.GoalID + ":" +
 			string(decision.Type) + ":" + decision.CanonicalKey
 		if _, duplicate := seen[key]; duplicate {
 			rejections = append(rejections, CandidateRejection{
@@ -116,12 +116,12 @@ func (policy *ExtractionPolicy) decideCandidate(
 			!genderInteractionRequested(source.UserText)) {
 		return MemoryDecision{}, RejectionGenderInteractionUseRequired
 	}
-	matterID := ""
-	if candidate.Scope == ScopeMatter {
-		if source.MatterID == "" {
-			return MemoryDecision{}, RejectionMissingMatter
+	goalID := ""
+	if candidate.Scope == ScopeGoal {
+		if source.GoalID == "" {
+			return MemoryDecision{}, RejectionMissingGoal
 		}
-		matterID = source.MatterID
+		goalID = source.GoalID
 	} else if candidate.Scope != ScopeUser {
 		return MemoryDecision{}, RejectionInvalidScope
 	}
@@ -134,7 +134,7 @@ func (policy *ExtractionPolicy) decideCandidate(
 		Type:         candidate.Type,
 		CanonicalKey: candidate.CanonicalKey,
 		Scope:        candidate.Scope,
-		MatterID:     matterID,
+		GoalID:       goalID,
 	}
 	if candidate.Action == CandidateUpsert {
 		if !validContent(candidate.Content) {

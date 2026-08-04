@@ -10,8 +10,9 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
+	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
+	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	evaluationtool "github.com/1024XEngineer/XE3-ESL/server/internal/evaluation/agenttool"
-	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	practicetool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
@@ -198,7 +199,7 @@ func (DeterministicRouter) Route(
 		return Route{Decision: DecisionRefuse}
 	case hasAny(input, "刚才这句话", "current utterance"):
 		return Route{Decision: DecisionDirect}
-	case item.ActiveMatterID != "" && hasAny(input, "继续", "continue"):
+	case item.ActiveGoalID != "" && hasAny(input, "继续", "continue"):
 		return Route{Decision: DecisionDirect}
 	case hasAny(input, "委婉", "polish", "翻译", "有什么问题", "grammar"):
 		if !hasBusinessSignal(input) {
@@ -243,13 +244,13 @@ func (DeterministicRouter) Route(
 	case hasAny(input, "开始练习", "开始面试", "start practice"):
 		return Route{Decision: DecisionClarify}
 	case hasAny(input, "预览", "练习方案", "preview"):
-		if containsString(allowed, practicetool.PracticePreviewToolName) {
+		if containsString(allowed, preparationcapability.PracticePreviewToolName) {
 			return Route{
 				Decision: DecisionToolCall,
 				ToolCalls: []ToolCall{{
-					Name: practicetool.PracticePreviewToolName,
+					Name: preparationcapability.PracticePreviewToolName,
 					Input: mustRaw(map[string]any{
-						"scenario_query": "英文产品经理面试",
+						"scene_query": "英文产品经理面试",
 					}),
 				}},
 			}
@@ -295,11 +296,11 @@ func (DeterministicRouter) Route(
 			}
 		}
 	case hasAny(input, "确认创建"):
-		if containsString(allowed, mattertool.ScenarioCreateToolName) {
+		if containsString(allowed, goalcapability.GoalCreateCapabilityName) {
 			return Route{
 				Decision: DecisionToolCall,
 				ToolCalls: []ToolCall{{
-					Name: mattertool.ScenarioCreateToolName,
+					Name: goalcapability.GoalCreateCapabilityName,
 					Input: mustRaw(map[string]any{
 						"title": "英文 PM 面试",
 					}),
@@ -307,11 +308,11 @@ func (DeterministicRouter) Route(
 			}
 		}
 	case hasAny(input, "上次", "那个", "继续"):
-		if containsString(allowed, mattertool.ScenarioSearchToolName) {
+		if containsString(allowed, goalcapability.GoalSearchCapabilityName) {
 			return Route{
 				Decision: DecisionToolCall,
 				ToolCalls: []ToolCall{{
-					Name: mattertool.ScenarioSearchToolName,
+					Name: goalcapability.GoalSearchCapabilityName,
 					Input: mustRaw(map[string]any{
 						"query": "interview",
 						"limit": 2,
@@ -320,18 +321,18 @@ func (DeterministicRouter) Route(
 			}
 		}
 	case hasAny(input, "面试", "会议", "客户", "演讲", "interview"):
-		if containsString(allowed, mattertool.ScenarioCreateToolName) {
+		if containsString(allowed, goalcapability.GoalCreateCapabilityName) {
 			return Route{
 				Decision: DecisionToolCall,
 				ToolCalls: []ToolCall{{
-					Name: mattertool.ScenarioCreateToolName,
+					Name: goalcapability.GoalCreateCapabilityName,
 					Input: mustRaw(map[string]any{
 						"title": "English PM interview",
 					}),
 				}},
 			}
 		}
-		if containsString(allowed, mattertool.ScenarioSearchToolName) {
+		if containsString(allowed, goalcapability.GoalSearchCapabilityName) {
 			return Route{Decision: DecisionClarify}
 		}
 	}

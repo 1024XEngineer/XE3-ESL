@@ -95,7 +95,7 @@ void main() {
   });
 
   test('requires JSON content type, no-store, future UTC expiry', () async {
-    final scenarios = [
+    final scenes = [
       AvatarSessionWireResponse(
         statusCode: HttpStatus.ok,
         body: _jsonBytes(_grantJson(now)),
@@ -118,7 +118,7 @@ void main() {
       _success({..._grantJson(now), 'expires_at': '2026-07-29T18:10:00+08:00'}),
     ];
 
-    for (final response in scenarios) {
+    for (final response in scenes) {
       final client = _client(_Transport(response), now: now);
       await expectLater(
         client.createSession(practiceSessionId: 'practice-1'),

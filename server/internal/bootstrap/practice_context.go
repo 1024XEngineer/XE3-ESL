@@ -11,14 +11,15 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
 	practiceagenttool "github.com/1024XEngineer/XE3-ESL/server/internal/practice/agenttool"
 	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	practicepostgres "github.com/1024XEngineer/XE3-ESL/server/internal/practice/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -32,7 +33,7 @@ type ProtectedRouteRegistrar interface {
 
 // IdentityAgentPracticeComposition contains the production modules and the
 // narrow Preparation/Practice applications that share their Identity, Agent,
-// Matter, and ID-generation dependencies.
+// Goal, and ID-generation dependencies.
 type IdentityAgentPracticeComposition struct {
 	identityModule         *identity.Module
 	agentModule            RouteRegistrar
@@ -45,13 +46,15 @@ type IdentityAgentPracticeComposition struct {
 	preparationHTTP        *preparation.ProfileHTTPHandler
 	jobTargetApplication   *preparation.JobTargetService
 	jobTargetHTTP          *preparation.JobTargetHTTPHandler
+	planApplication        *preparation.PlanService
+	planHTTP               *preparation.PlanHTTPHandler
 	practiceApplication    *practice.ContextApplication
 	practiceHTTP           *practice.ContextHTTPHandler
 	productionTools        *tool.Registry
 }
 
 // NewIdentityAgentAndPracticeComposition builds the production Identity,
-// Agent, Matter, Preparation, and Practice context vertical once. The optional
+// Agent, Goal, Preparation, and Practice context vertical once. The optional
 // Voice composition remains unchanged and continues to use its existing Ports.
 func NewIdentityAgentAndPracticeComposition(
 	ctx context.Context,
@@ -61,7 +64,7 @@ func NewIdentityAgentAndPracticeComposition(
 	generator ai.TextGenerator,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
-	catalog preparation.CatalogReader,
+	catalog scene.CatalogReader,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
 	return newIdentityAgentAndPracticeComposition(
@@ -90,7 +93,7 @@ func NewIdentityAgentAndPracticeCompositionWithMemoryWakeup(
 	generator ai.TextGenerator,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
-	catalog preparation.CatalogReader,
+	catalog scene.CatalogReader,
 	memoryExtractionNotifier interface{ Notify() },
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
@@ -123,7 +126,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeups(
 	generator ai.TextGenerator,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
-	catalog preparation.CatalogReader,
+	catalog scene.CatalogReader,
 	wakeups AgentWorkerWakeups,
 	voiceConfigurations ...VoiceConfiguration,
 ) (*IdentityAgentPracticeComposition, error) {
@@ -151,7 +154,7 @@ func NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 	generator ai.TextGenerator,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
-	catalog preparation.CatalogReader,
+	catalog scene.CatalogReader,
 	wakeups AgentWorkerWakeups,
 	imageConfiguration *AgentImageConfiguration,
 	voiceConfigurations ...VoiceConfiguration,
@@ -180,7 +183,7 @@ func newIdentityAgentAndPracticeComposition(
 	generator ai.TextGenerator,
 	runConfiguration agentrun.Configuration,
 	memorySearcher memory.Searcher,
-	catalog preparation.CatalogReader,
+	catalog scene.CatalogReader,
 	memoryExtractionNotifier interface{ Notify() },
 	summaryNotifier interface{ Notify() },
 	imageConfiguration *AgentImageConfiguration,
@@ -221,6 +224,7 @@ func newIdentityAgentAndPracticeComposition(
 		return nil, err
 	}
 	jobTargetParser, err := preparation.NewAIJobTargetParser(
+		ctx,
 		generator,
 		catalog,
 	)
@@ -243,40 +247,41 @@ func newIdentityAgentAndPracticeComposition(
 		return nil, err
 	}
 
-	agentContext, err := newAgentPracticeContextReader(
-		base.agentService,
-		base.matterService,
-	)
+	threadReader, err := newPreparationThreadReader(base.agentService)
 	if err != nil {
 		return nil, err
 	}
-	preparationContext, err := newPreparationPracticeContextReader(
+	planApplication, err := preparation.NewPlanService(
+		preparation.NewPostgresPlanRepository(database),
+		base.ids,
 		preparationApplication,
+		base.goalService,
+		threadReader,
+		catalog,
+		preparation.NewPolicyCatalog(),
 	)
 	if err != nil {
 		return nil, err
 	}
-	catalogContext, err := newPracticeCatalogContextReader(catalog)
+	planHTTP, err := preparation.NewPlanHTTPHandler(planApplication)
 	if err != nil {
 		return nil, err
 	}
 	practiceApplication, err := practice.NewContextApplication(
 		practicepostgres.New(database),
 		base.ids,
-		agentContext,
-		preparationContext,
-		catalogContext,
+		planApplication,
 	)
 	if err != nil {
 		return nil, err
 	}
 	if base.productionTools != nil {
-		previewCatalog, err := preparation.NewCatalogPreviewResolver(catalog)
+		previewCatalog, err := scene.NewCatalogPreviewResolver(catalog)
 		if err != nil {
 			return nil, err
 		}
-		previewPort, err := practiceagenttool.NewServicePort(
-			practiceApplication,
+		previewPort, err := preparationagentcapability.NewServicePort(
+			planApplication,
 			previewCatalog,
 			preparationApplication,
 		)
@@ -284,7 +289,7 @@ func newIdentityAgentAndPracticeComposition(
 			return nil, err
 		}
 		if err := base.productionTools.Register(
-			practiceagenttool.NewPreviewTool(previewPort),
+			preparationagentcapability.NewPreviewTool(previewPort),
 		); err != nil {
 			return nil, err
 		}
@@ -320,6 +325,8 @@ func newIdentityAgentAndPracticeComposition(
 		preparationHTTP:        preparationHTTP,
 		jobTargetApplication:   jobTargetApplication,
 		jobTargetHTTP:          jobTargetHTTP,
+		planApplication:        planApplication,
+		planHTTP:               planHTTP,
 		practiceApplication:    practiceApplication,
 		practiceHTTP:           practiceHTTP,
 		productionTools:        base.productionTools,
@@ -386,6 +393,13 @@ func (c *IdentityAgentPracticeComposition) JobTargetApplication() *preparation.J
 	return c.jobTargetApplication
 }
 
+func (c *IdentityAgentPracticeComposition) PlanApplication() *preparation.PlanService {
+	if c == nil {
+		return nil
+	}
+	return c.planApplication
+}
+
 func (c *IdentityAgentPracticeComposition) PracticeApplication() *practice.ContextApplication {
 	if c == nil {
 		return nil
@@ -393,18 +407,18 @@ func (c *IdentityAgentPracticeComposition) PracticeApplication() *practice.Conte
 	return c.practiceApplication
 }
 
-// ResolveSessionByThread exposes only the exact Practice-owned resolver needed
-// by the later voice integration. It does not advance voice lifecycle state.
-func (c *IdentityAgentPracticeComposition) ResolveSessionByThread(
+// ResolveSessionByPlan exposes the exact Practice-owned resolver needed by
+// voice integration. It never infers a Plan from Thread state.
+func (c *IdentityAgentPracticeComposition) ResolveSessionByPlan(
 	ctx context.Context,
 	actor requestcontext.Actor,
-	threadID string,
+	planID string,
 ) (practicepersistence.ContextSessionBootstrap, error) {
 	if c == nil || c.practiceApplication == nil {
 		return practicepersistence.ContextSessionBootstrap{},
 			practicepersistence.ErrInvalidArgument
 	}
-	return c.practiceApplication.ResolveSessionByThread(ctx, actor, threadID)
+	return c.practiceApplication.ResolveSessionByPlan(ctx, actor, planID)
 }
 
 // ProtectedRoutes always includes the Preparation and Practice context write
@@ -415,16 +429,18 @@ func (c *IdentityAgentPracticeComposition) ProtectedRoutes(
 ) (RouteRegistrar, error) {
 	if c == nil || c.identityHTTP == nil || c.preparationHTTP == nil ||
 		c.jobTargetHTTP == nil ||
+		c.planHTTP == nil ||
 		c.practiceHTTP == nil {
 		return nil, errors.New(
 			"bootstrap: authenticated context routes are unavailable",
 		)
 	}
-	registrars := make([]ProtectedRouteRegistrar, 0, len(additional)+3)
+	registrars := make([]ProtectedRouteRegistrar, 0, len(additional)+4)
 	registrars = append(
 		registrars,
 		c.preparationHTTP,
 		c.jobTargetHTTP,
+		c.planHTTP,
 		c.practiceHTTP,
 	)
 	for _, registrar := range additional {
@@ -462,522 +478,51 @@ type agentThreadReader interface {
 	) (agentconversation.Thread, error)
 }
 
-type agentPracticeContextReader struct {
+type preparationThreadReader struct {
 	threads agentThreadReader
-	matters matter.Reader
 }
 
-func newAgentPracticeContextReader(
+func newPreparationThreadReader(
 	threads agentThreadReader,
-	matters matter.Reader,
-) (*agentPracticeContextReader, error) {
-	if threads == nil || matters == nil {
-		return nil, errors.New(
-			"bootstrap: Agent practice context dependencies are required",
-		)
+) (*preparationThreadReader, error) {
+	if threads == nil {
+		return nil, errors.New("bootstrap: Agent Thread reader is required")
 	}
-	return &agentPracticeContextReader{
-		threads: threads,
-		matters: matters,
-	}, nil
+	return &preparationThreadReader{threads: threads}, nil
 }
 
-func (r *agentPracticeContextReader) ValidatePracticeAnchor(
+func (r *preparationThreadReader) ReadOwnedThread(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	threadID string,
-	matterID string,
-) (practice.PracticeAnchor, error) {
-	if r == nil || r.threads == nil || r.matters == nil ||
-		ctx == nil || !actor.Valid() {
-		return practice.PracticeAnchor{},
-			practicepersistence.ErrInvalidArgument
+) (preparation.SourceThread, error) {
+	if r == nil || r.threads == nil || ctx == nil || !actor.Valid() {
+		return preparation.SourceThread{}, preparation.ErrPlanInvalid
 	}
 	thread, err := r.threads.GetThread(ctx, actor, threadID)
 	if err != nil {
-		return practice.PracticeAnchor{}, mapAgentPracticeContextError(err)
+		return preparation.SourceThread{}, mapPreparationThreadError(err)
 	}
 	if thread.ID != threadID || thread.OwnerID != actor.UserID {
-		return practice.PracticeAnchor{}, practicepersistence.ErrNotFound
+		return preparation.SourceThread{}, preparation.ErrPlanNotFound
 	}
-	if matterID == "" {
-		return practice.PracticeAnchor{ThreadID: thread.ID}, nil
-	}
-	if thread.ActiveMatterID == "" || thread.ActiveMatterID != matterID {
-		return practice.PracticeAnchor{}, practicepersistence.ErrConflict
-	}
-	item, err := r.matters.ReadOwned(ctx, actor, matterID)
-	if err != nil {
-		return practice.PracticeAnchor{}, mapMatterPracticeContextError(err)
-	}
-	if item.ID != matterID || item.OwnerID != actor.UserID {
-		return practice.PracticeAnchor{}, practicepersistence.ErrNotFound
-	}
-	if item.Status != matter.StatusActive {
-		return practice.PracticeAnchor{}, practicepersistence.ErrConflict
-	}
-	return practice.PracticeAnchor{
-		ThreadID: thread.ID,
-		MatterID: item.ID,
-	}, nil
+	return preparation.SourceThread{ID: thread.ID}, nil
 }
 
-func mapAgentPracticeContextError(err error) error {
+func mapPreparationThreadError(err error) error {
 	switch {
 	case errors.Is(err, agentconversation.ErrInvalidRequest):
-		return practicepersistence.ErrInvalidArgument
+		return preparation.ErrPlanInvalid
 	case errors.Is(err, agentconversation.ErrNotFound):
-		return practicepersistence.ErrNotFound
+		return preparation.ErrPlanNotFound
 	case errors.Is(err, agentconversation.ErrConflict):
-		return practicepersistence.ErrConflict
+		return preparation.ErrPlanConflict
 	default:
-		return fmt.Errorf("bootstrap: read Agent practice context: %w", err)
-	}
-}
-
-func mapMatterPracticeContextError(err error) error {
-	switch {
-	case errors.Is(err, matter.ErrInvalidRequest):
-		return practicepersistence.ErrInvalidArgument
-	case errors.Is(err, matter.ErrNotFound):
-		return practicepersistence.ErrNotFound
-	case errors.Is(err, matter.ErrConflict):
-		return practicepersistence.ErrConflict
-	default:
-		return fmt.Errorf("bootstrap: read Matter practice context: %w", err)
-	}
-}
-
-type preparationPracticeContextReader struct {
-	reader preparation.ProfileSnapshotReader
-}
-
-func newPreparationPracticeContextReader(
-	reader preparation.ProfileSnapshotReader,
-) (*preparationPracticeContextReader, error) {
-	if reader == nil {
-		return nil, errors.New(
-			"bootstrap: Preparation profile reader is required",
-		)
-	}
-	return &preparationPracticeContextReader{reader: reader}, nil
-}
-
-func (r *preparationPracticeContextReader) ReadPreparationProfile(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	profileID string,
-) (practice.PreparationProfileRef, error) {
-	if r == nil || r.reader == nil {
-		return practice.PreparationProfileRef{},
-			practicepersistence.ErrInvalidArgument
-	}
-	profile, err := r.reader.ReadProfile(ctx, actor, profileID)
-	if err != nil {
-		return practice.PreparationProfileRef{},
-			mapPreparationPracticeContextError(err)
-	}
-	if profile.ID != profileID || profile.UserID != actor.UserID ||
-		profile.Version < 1 {
-		return practice.PreparationProfileRef{},
-			practicepersistence.ErrNotFound
-	}
-	return practice.PreparationProfileRef{
-		ID:      profile.ID,
-		Version: profile.Version,
-	}, nil
-}
-
-func (r *preparationPracticeContextReader) ReadPreparationSnapshot(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	snapshotID string,
-) (practicepersistence.PreparationSnapshot, error) {
-	if r == nil || r.reader == nil {
-		return practicepersistence.PreparationSnapshot{},
-			practicepersistence.ErrInvalidArgument
-	}
-	snapshot, err := r.reader.ReadSnapshot(ctx, actor, snapshotID)
-	if err != nil {
-		return practicepersistence.PreparationSnapshot{},
-			mapPreparationPracticeContextError(err)
-	}
-	if snapshot.ID != snapshotID || snapshot.SourceVersion < 1 {
-		return practicepersistence.PreparationSnapshot{},
-			practicepersistence.ErrNotFound
-	}
-	return practicepersistence.PreparationSnapshot{
-		ID:                                 snapshot.ID,
-		SourceProfileID:                    snapshot.SourceProfileID,
-		SourceVersion:                      snapshot.SourceVersion,
-		SourceJobTargetID:                  snapshot.SourceJobTargetID,
-		SourceJobTargetConfirmationVersion: snapshot.SourceJobTargetConfirmationVersion,
-		JobTargetInputSnapshot: mapJobTargetInputSnapshot(
-			snapshot.JobTargetInputSnapshot,
-		),
-		JobTargetCandidateSnapshot: mapJobTargetCandidateSnapshot(
-			snapshot.JobTargetCandidateSnapshot,
-		),
-		ResumeSnapshot:         snapshot.ResumeSnapshot,
-		JobDescriptionSnapshot: snapshot.JobDescriptionSnapshot,
-		BackgroundSnapshot:     snapshot.BackgroundSnapshot,
-		CreatedAt:              snapshot.CreatedAt,
-	}, nil
-}
-
-func mapJobTargetInputSnapshot(
-	input *preparation.JobTargetInput,
-) *practicepersistence.JobTargetInputSnapshot {
-	if input == nil {
-		return nil
-	}
-	return &practicepersistence.JobTargetInputSnapshot{
-		Source:              string(input.Source),
-		JobTitle:            input.JobTitle,
-		JobDescription:      input.JobDescription,
-		Company:             input.Company,
-		Seniority:           input.Seniority,
-		CandidateBackground: input.CandidateBackground,
-		ResumeRef:           input.ResumeRef,
-		PracticeFocus:       input.PracticeFocus,
-	}
-}
-
-func mapJobTargetCandidateSnapshot(
-	candidate *preparation.JobTargetCandidate,
-) *practicepersistence.JobTargetCandidateSnapshot {
-	if candidate == nil {
-		return nil
-	}
-	return &practicepersistence.JobTargetCandidateSnapshot{
-		Source:             string(candidate.Source),
-		GeneralAdviceOnly:  candidate.GeneralAdviceOnly,
-		JobTitle:           candidate.JobTitle,
-		Seniority:          candidate.Seniority,
-		Responsibilities:   append([]string(nil), candidate.Responsibilities...),
-		CoreSkills:         append([]string(nil), candidate.CoreSkills...),
-		CommunicationFocus: append([]string(nil), candidate.CommunicationFocus...),
-		PracticeGoals:      append([]string(nil), candidate.PracticeGoals...),
-		ScopeNotice:        candidate.ScopeNotice,
-		CatalogRecommendation: practicepersistence.
-			JobTargetCatalogRecommendationSnapshot{
-			ScenarioDefinitionID: candidate.CatalogRecommendation.
-				ScenarioDefinitionID,
-			ScenarioDefinitionVersion: candidate.CatalogRecommendation.
-				ScenarioDefinitionVersion,
-			SelectedRoleIDs: append(
-				[]string(nil),
-				candidate.CatalogRecommendation.SelectedRoleIDs...,
-			),
-			PracticeOptionID: candidate.CatalogRecommendation.
-				PracticeOptionID,
-			PracticeOptionVersion: candidate.CatalogRecommendation.
-				PracticeOptionVersion,
-		},
-	}
-}
-
-func mapPreparationPracticeContextError(err error) error {
-	switch {
-	case errors.Is(err, preparation.ErrProfileInvalid):
-		return practicepersistence.ErrInvalidArgument
-	case errors.Is(err, preparation.ErrProfileNotFound):
-		return practicepersistence.ErrNotFound
-	case errors.Is(err, preparation.ErrProfileConflict),
-		errors.Is(err, preparation.ErrProfileIdempotencyConflict),
-		errors.Is(err, preparation.ErrProfileDeletionGeneration):
-		return practicepersistence.ErrConflict
-	default:
-		return fmt.Errorf("bootstrap: read Preparation context: %w", err)
-	}
-}
-
-type practiceCatalogContextReader struct {
-	catalog preparation.CatalogReader
-}
-
-func newPracticeCatalogContextReader(
-	catalog preparation.CatalogReader,
-) (*practiceCatalogContextReader, error) {
-	if catalog == nil {
-		return nil, errors.New("bootstrap: Practice catalog is required")
-	}
-	return &practiceCatalogContextReader{catalog: catalog}, nil
-}
-
-func (r *practiceCatalogContextReader) ReadPlanCatalog(
-	request practice.PlanCatalogRequest,
-) (practice.PlanCatalogSelection, error) {
-	detail, err := r.catalog.GetScenarioDetail(request.ScenarioDefinitionID)
-	if err != nil {
-		return practice.PlanCatalogSelection{}, mapPracticeCatalogError(err)
-	}
-	if !exactPlanCatalogRequest(request, detail) {
-		return practice.PlanCatalogSelection{},
-			practicepersistence.ErrConflict
-	}
-	option, found := requestedPracticeOption(
-		detail.PracticeOptions,
-		request.PracticeOptionID,
-		request.PracticeOptionVersion,
-	)
-	if !found {
-		return practice.PlanCatalogSelection{},
-			practicepersistence.ErrNotFound
-	}
-	snapshot, err := r.catalog.GetCatalogSnapshot(
-		request.ScenarioDefinitionID,
-		request.ScenarioDefinitionVersion,
-		append([]string(nil), request.SelectedRoleIDs...),
-		option.ID,
-		option.Version,
-	)
-	if err != nil {
-		return practice.PlanCatalogSelection{}, mapPracticeCatalogError(err)
-	}
-	if request.ScenarioConfigID != "" &&
-		(snapshot.ScenarioConfig.ID != request.ScenarioConfigID ||
-			snapshot.ScenarioConfig.Version != request.ScenarioConfigVersion) {
-		return practice.PlanCatalogSelection{},
-			practicepersistence.ErrConflict
-	}
-	return mapPlanCatalogSelection(snapshot), nil
-}
-
-func (r *practiceCatalogContextReader) ReadSessionCatalog(
-	request practice.SessionCatalogRequest,
-) (practice.SessionCatalogSelection, error) {
-	detail, err := r.catalog.GetScenarioDetail(
-		request.Plan.ScenarioDefinitionID,
-	)
-	if err != nil {
-		return practice.SessionCatalogSelection{}, mapPracticeCatalogError(err)
-	}
-	if detail.ScenarioDefinition.Version !=
-		request.Plan.ScenarioDefinitionVersion ||
-		detail.ScenarioConfig.ID != request.Plan.ScenarioConfigID ||
-		detail.ScenarioConfig.Version != request.Plan.ScenarioConfigVersion {
-		return practice.SessionCatalogSelection{},
-			practicepersistence.ErrConflict
-	}
-	option, found := practiceOption(
-		detail.PracticeOptions,
-		request.PracticeOptionID,
-	)
-	if !found {
-		return practice.SessionCatalogSelection{},
-			practicepersistence.ErrNotFound
-	}
-	snapshot, err := r.catalog.GetCatalogSnapshot(
-		request.Plan.ScenarioDefinitionID,
-		request.Plan.ScenarioDefinitionVersion,
-		append([]string(nil), request.RoleDefinitionIDs...),
-		option.ID,
-		option.Version,
-	)
-	if err != nil {
-		return practice.SessionCatalogSelection{},
-			mapPracticeCatalogError(err)
-	}
-	if snapshot.ScenarioConfig.ID != request.Plan.ScenarioConfigID ||
-		snapshot.ScenarioConfig.Version != request.Plan.ScenarioConfigVersion {
-		return practice.SessionCatalogSelection{},
-			practicepersistence.ErrConflict
-	}
-	return practice.SessionCatalogSelection{
-		PlanCatalogSelection: mapPlanCatalogSelection(snapshot),
-		PracticeOption:       mapPracticeOption(snapshot.PracticeOption),
-	}, nil
-}
-
-func (r *practiceCatalogContextReader) ResolveIELTSQuestionSet(
-	request practice.IELTSQuestionSetRequest,
-) (practice.IELTSQuestionSetSelection, error) {
-	reader, ok := r.catalog.(preparation.IELTSQuestionBankReader)
-	if !ok {
-		return practice.IELTSQuestionSetSelection{},
-			practicepersistence.ErrConflict
-	}
-	resolved, err := reader.ResolveIELTSQuestionSet(
-		preparation.IELTSQuestionSetSelection{
-			Mode:         preparation.IELTSPracticeMode(request.Mode),
-			Part1SetID:   request.Part1SetID,
-			TopicGroupID: request.TopicGroupID,
-		},
-	)
-	if err != nil {
-		switch {
-		case errors.Is(err, preparation.ErrIELTSQuestionSetNotFound):
-			return practice.IELTSQuestionSetSelection{},
-				practicepersistence.ErrNotFound
-		case errors.Is(err, preparation.ErrIELTSPracticeModeInvalid),
-			errors.Is(err, preparation.ErrIELTSQuestionBankUnavailable):
-			return practice.IELTSQuestionSetSelection{},
-				practicepersistence.ErrConflict
-		default:
-			return practice.IELTSQuestionSetSelection{},
-				fmt.Errorf("bootstrap: resolve IELTS question set: %w", err)
-		}
-	}
-	return practice.IELTSQuestionSetSelection{
-		BankID:         resolved.BankID,
-		Season:         resolved.Season,
-		Mode:           string(resolved.Mode),
-		Part1SetID:     resolved.Part1SetID,
-		TopicGroupID:   resolved.TopicGroupID,
-		TopicTitle:     resolved.TopicTitle,
-		Part2CueCard:   resolved.Part2CueCard,
-		TurnBlueprints: append([]string(nil), resolved.TurnBlueprints...),
-		Part1Questions: resolved.Part1Questions,
-		Part2Questions: resolved.Part2Questions,
-		Part3Questions: resolved.Part3Questions,
-	}, nil
-}
-
-func exactPlanCatalogRequest(
-	request practice.PlanCatalogRequest,
-	detail preparation.ScenarioDetail,
-) bool {
-	return detail.ScenarioDefinition.ID == request.ScenarioDefinitionID &&
-		detail.ScenarioDefinition.Version ==
-			request.ScenarioDefinitionVersion &&
-		detail.ScenarioDefinition.Status == preparation.ScenarioStatusActive &&
-		detail.ScenarioConfig.ScenarioDefinitionID ==
-			request.ScenarioDefinitionID &&
-		(request.ScenarioConfigID == "" ||
-			(detail.ScenarioConfig.ID == request.ScenarioConfigID &&
-				detail.ScenarioConfig.Version ==
-					request.ScenarioConfigVersion))
-}
-
-func requestedPracticeOption(
-	options []preparation.PracticeOptionDefinition,
-	optionID string,
-	optionVersion int,
-) (preparation.PracticeOptionDefinition, bool) {
-	if optionID != "" {
-		option, found := practiceOption(options, optionID)
-		return option, found && option.Version == optionVersion
-	}
-	for _, option := range options {
-		if option.Type == preparation.PracticeOptionFullSimulation {
-			return option, true
-		}
-	}
-	return preparation.PracticeOptionDefinition{}, false
-}
-
-func practiceOption(
-	options []preparation.PracticeOptionDefinition,
-	optionID string,
-) (preparation.PracticeOptionDefinition, bool) {
-	for _, option := range options {
-		if option.ID == optionID {
-			return option, true
-		}
-	}
-	return preparation.PracticeOptionDefinition{}, false
-}
-
-func mapPlanCatalogSelection(
-	snapshot preparation.CatalogSnapshot,
-) practice.PlanCatalogSelection {
-	roles := make([]practicepersistence.RoleSnapshot, len(snapshot.SelectedRoles))
-	for index, role := range snapshot.SelectedRoles {
-		roles[index] = mapRoleSnapshot(role)
-	}
-	return practice.PlanCatalogSelection{
-		ScenarioDefinition: practicepersistence.ScenarioDefinitionSnapshot{
-			ID: snapshot.ScenarioDefinition.ID,
-			Type: practicepersistence.ScenarioFamily(
-				snapshot.ScenarioDefinition.Type,
-			),
-			Model: practicepersistence.ScenarioModel(
-				snapshot.ScenarioDefinition.Model,
-			),
-			Name:             snapshot.ScenarioDefinition.Name,
-			Version:          snapshot.ScenarioDefinition.Version,
-			Status:           string(snapshot.ScenarioDefinition.Status),
-			TurnPolicyRef:    snapshot.ScenarioDefinition.TurnPolicyRef,
-			SessionPolicyRef: snapshot.ScenarioDefinition.SessionPolicyRef,
-		},
-		ScenarioConfig: practicepersistence.ScenarioConfigSnapshot{
-			ID: snapshot.ScenarioConfig.ID,
-			ScenarioDefinitionID: snapshot.ScenarioConfig.
-				ScenarioDefinitionID,
-			Type:           practicepersistence.ScenarioFamily(snapshot.ScenarioConfig.Type),
-			Model:          practicepersistence.ScenarioModel(snapshot.ScenarioConfig.Model),
-			Version:        snapshot.ScenarioConfig.Version,
-			JobTitle:       snapshot.ScenarioConfig.JobTitle,
-			JobDescription: snapshot.ScenarioConfig.JobDescription,
-			PromptModel: practicepersistence.ScenarioPromptModel{
-				PublicSceneBrief: snapshot.ScenarioConfig.PromptModel.PublicSceneBrief,
-				PracticeGoal:     snapshot.ScenarioConfig.PromptModel.PracticeGoal,
-				UserRole:         snapshot.ScenarioConfig.PromptModel.UserRole,
-				AIRole:           snapshot.ScenarioConfig.PromptModel.AIRole,
-				PersonaSummary:   snapshot.ScenarioConfig.PromptModel.PersonaSummary,
-				FocusAreas: append(
-					[]string(nil),
-					snapshot.ScenarioConfig.PromptModel.FocusAreas...,
-				),
-				TurnBlueprints: append(
-					[]string(nil),
-					snapshot.ScenarioConfig.PromptModel.TurnBlueprints...,
-				),
-				SuggestedDurationSeconds: snapshot.ScenarioConfig.PromptModel.SuggestedDurationSeconds,
-			},
-		},
-		SelectedRoles:  roles,
-		PracticeOption: mapPracticeOption(snapshot.PracticeOption),
-	}
-}
-
-func mapRoleSnapshot(
-	role preparation.RoleDefinition,
-) practicepersistence.RoleSnapshot {
-	return practicepersistence.RoleSnapshot{
-		ID:                   role.ID,
-		ScenarioDefinitionID: role.ScenarioDefinitionID,
-		Type:                 role.Type,
-		DisplayName:          role.DisplayName,
-		Responsibilities:     role.Responsibilities,
-		Style:                role.Style,
-		FocusAreas:           append([]string(nil), role.FocusAreas...),
-		VoiceConfigRef:       role.VoiceConfigRef,
-		Version:              role.Version,
-	}
-}
-
-func mapPracticeOption(
-	option preparation.PracticeOptionDefinition,
-) practicepersistence.PracticeOptionSnapshot {
-	return practicepersistence.PracticeOptionSnapshot{
-		ID:                   option.ID,
-		ScenarioDefinitionID: option.ScenarioDefinitionID,
-		RoleDefinitionID:     option.RoleDefinitionID,
-		Type:                 string(option.Type),
-		DisplayName:          option.DisplayName,
-		Version:              option.Version,
-	}
-}
-
-func mapPracticeCatalogError(err error) error {
-	switch {
-	case errors.Is(err, preparation.ErrScenarioDefinitionNotFound),
-		errors.Is(err, preparation.ErrRoleDefinitionNotFound),
-		errors.Is(err, preparation.ErrPracticeOptionNotFound):
-		return practicepersistence.ErrNotFound
-	case errors.Is(err, preparation.ErrCatalogSelectionInvalid):
-		return practicepersistence.ErrConflict
-	default:
-		return fmt.Errorf("bootstrap: read Practice catalog: %w", err)
+		return fmt.Errorf("bootstrap: read Agent Thread for Preparation: %w", err)
 	}
 }
 
 var (
-	_ practice.AgentContextReader        = (*agentPracticeContextReader)(nil)
-	_ practice.PreparationContextReader  = (*preparationPracticeContextReader)(nil)
-	_ practice.CatalogContextReader      = (*practiceCatalogContextReader)(nil)
-	_ practice.IELTSCatalogContextReader = (*practiceCatalogContextReader)(nil)
-	_ RouteRegistrar                     = (*bearerProtectedRoutes)(nil)
+	_ preparation.SourceThreadReader = (*preparationThreadReader)(nil)
+	_ RouteRegistrar                 = (*bearerProtectedRoutes)(nil)
 )

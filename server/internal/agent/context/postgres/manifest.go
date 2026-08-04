@@ -27,11 +27,11 @@ func (r *Repository) SaveManifest(
 	if err != nil {
 		return agentcontext.Manifest{}, agentcontext.ErrInvalidContext
 	}
-	var activeMatterID any
-	var activeMatterVersion any
-	if manifest.ActiveMatterID != "" {
-		activeMatterID = manifest.ActiveMatterID
-		activeMatterVersion = manifest.ActiveMatterVersion
+	var activeGoalID any
+	var activeGoalVersion any
+	if manifest.ActiveGoalID != "" {
+		activeGoalID = manifest.ActiveGoalID
+		activeGoalVersion = manifest.ActiveGoalVersion
 	}
 	var summaryCheckpointID any
 	var summarySourceFromSequence any
@@ -57,8 +57,8 @@ func (r *Repository) SaveManifest(
 	var selectedStableProfileJSON []byte
 	var exposedToolsJSON []byte
 	var toolSchemaHashesJSON []byte
-	var persistedMatterID pgtype.Text
-	var persistedMatterVersion pgtype.Int8
+	var persistedGoalID pgtype.Text
+	var persistedGoalVersion pgtype.Int8
 	var persistedSummaryCheckpointID pgtype.Text
 	var persistedSummarySourceFromSequence pgtype.Int8
 	var persistedSummaryCoveredThroughSequence pgtype.Int8
@@ -72,8 +72,8 @@ INSERT INTO agent_context_manifests (
     owner_user_id,
     thread_id,
     input_message_id,
-    active_matter_id,
-    active_matter_version,
+    active_goal_id,
+    active_goal_version,
     instruction_version,
     stable_profile_context_policy_version,
     selected_stable_profile,
@@ -109,8 +109,8 @@ RETURNING
     owner_user_id::text,
     thread_id::text,
     input_message_id::text,
-    active_matter_id::text,
-    active_matter_version,
+    active_goal_id::text,
+    active_goal_version,
     instruction_version,
     stable_profile_context_policy_version,
     selected_stable_profile,
@@ -140,8 +140,8 @@ RETURNING
 		manifest.OwnerID,
 		manifest.ThreadID,
 		manifest.InputMessageID,
-		activeMatterID,
-		activeMatterVersion,
+		activeGoalID,
+		activeGoalVersion,
 		manifest.InstructionVersion,
 		manifest.StableProfileContextPolicyVersion,
 		selectedStableProfile,
@@ -169,8 +169,8 @@ RETURNING
 		&result.OwnerID,
 		&result.ThreadID,
 		&result.InputMessageID,
-		&persistedMatterID,
-		&persistedMatterVersion,
+		&persistedGoalID,
+		&persistedGoalVersion,
 		&result.InstructionVersion,
 		&result.StableProfileContextPolicyVersion,
 		&selectedStableProfileJSON,
@@ -202,8 +202,8 @@ RETURNING
 	}
 	if err := decodeManifestOptionals(
 		&result,
-		persistedMatterID,
-		persistedMatterVersion,
+		persistedGoalID,
+		persistedGoalVersion,
 		persistedSummaryCheckpointID,
 		persistedSummarySourceFromSequence,
 		persistedSummaryCoveredThroughSequence,
@@ -233,8 +233,8 @@ func (r *Repository) FindManifest(
 	var selectedStableProfileJSON []byte
 	var exposedToolsJSON []byte
 	var toolSchemaHashesJSON []byte
-	var activeMatterID pgtype.Text
-	var activeMatterVersion pgtype.Int8
+	var activeGoalID pgtype.Text
+	var activeGoalVersion pgtype.Int8
 	var selectedSummaryCheckpointID pgtype.Text
 	var selectedSummarySourceFromSequence pgtype.Int8
 	var selectedSummaryCoveredThroughSequence pgtype.Int8
@@ -248,8 +248,8 @@ SELECT
     owner_user_id::text,
     thread_id::text,
     input_message_id::text,
-    active_matter_id::text,
-    active_matter_version,
+    active_goal_id::text,
+    active_goal_version,
     instruction_version,
     stable_profile_context_policy_version,
     selected_stable_profile,
@@ -284,8 +284,8 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 		&result.OwnerID,
 		&result.ThreadID,
 		&result.InputMessageID,
-		&activeMatterID,
-		&activeMatterVersion,
+		&activeGoalID,
+		&activeGoalVersion,
 		&result.InstructionVersion,
 		&result.StableProfileContextPolicyVersion,
 		&selectedStableProfileJSON,
@@ -317,8 +317,8 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 	}
 	if err := decodeManifestOptionals(
 		&result,
-		activeMatterID,
-		activeMatterVersion,
+		activeGoalID,
+		activeGoalVersion,
 		selectedSummaryCheckpointID,
 		selectedSummarySourceFromSequence,
 		selectedSummaryCoveredThroughSequence,
@@ -371,8 +371,8 @@ WHERE run_id = $1 AND owner_user_id = $2`,
 
 func decodeManifestOptionals(
 	manifest *agentcontext.Manifest,
-	activeMatterID pgtype.Text,
-	activeMatterVersion pgtype.Int8,
+	activeGoalID pgtype.Text,
+	activeGoalVersion pgtype.Int8,
 	selectedSummaryCheckpointID pgtype.Text,
 	selectedSummarySourceFromSequence pgtype.Int8,
 	selectedSummaryCoveredThroughSequence pgtype.Int8,
@@ -386,11 +386,11 @@ func decodeManifestOptionals(
 	exposedToolsJSON []byte,
 	toolSchemaHashesJSON []byte,
 ) error {
-	if activeMatterID.Valid {
-		manifest.ActiveMatterID = activeMatterID.String
+	if activeGoalID.Valid {
+		manifest.ActiveGoalID = activeGoalID.String
 	}
-	if activeMatterVersion.Valid {
-		manifest.ActiveMatterVersion = activeMatterVersion.Int64
+	if activeGoalVersion.Valid {
+		manifest.ActiveGoalVersion = activeGoalVersion.Int64
 	}
 	summaryFieldsValid := selectedSummaryCheckpointID.Valid &&
 		selectedSummarySourceFromSequence.Valid &&

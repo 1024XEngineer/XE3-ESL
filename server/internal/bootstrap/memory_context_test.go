@@ -19,8 +19,8 @@ func TestAgentMemoryContextSearcherPreservesSearchAuditFields(t *testing.T) {
 			CanonicalKey:           "goal.current",
 			Type:                   memory.TypeGoal,
 			Content:                "Prepare for a product interview",
-			Scope:                  memory.ScopeMatter,
-			MatterID:               "20000000-0000-4000-8000-000000000001",
+			Scope:                  memory.ScopeGoal,
+			GoalID:                 "20000000-0000-4000-8000-000000000001",
 			Similarity:             0.91,
 			Score:                  0.87,
 			EmbeddingProvider:      "qianwen",
@@ -39,8 +39,8 @@ func TestAgentMemoryContextSearcherPreservesSearchAuditFields(t *testing.T) {
 			UserID:    "30000000-0000-4000-8000-000000000001",
 			SessionID: "40000000-0000-4000-8000-000000000001",
 		},
-		Query:    "Help me prepare",
-		MatterID: delegate.hits[0].MatterID,
+		Query:  "Help me prepare",
+		GoalID: delegate.hits[0].GoalID,
 		ExcludedCanonicalKeys: []string{
 			memory.CanonicalProfilePreferredName,
 		},
@@ -52,7 +52,7 @@ func TestAgentMemoryContextSearcherPreservesSearchAuditFields(t *testing.T) {
 	}
 	if delegate.request.Actor != request.Actor ||
 		delegate.request.Query != request.Query ||
-		delegate.request.MatterID != request.MatterID ||
+		delegate.request.GoalID != request.GoalID ||
 		len(delegate.request.ExcludedCanonicalKeys) != 1 ||
 		delegate.request.ExcludedCanonicalKeys[0] !=
 			request.ExcludedCanonicalKeys[0] ||

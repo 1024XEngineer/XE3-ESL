@@ -10,10 +10,10 @@ import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/conversation/conversation.dart';
 import 'package:speakup/features/practice/ielts_mock_practice.dart';
-import 'package:speakup/features/preparation/job_preparation_controller.dart';
-import 'package:speakup/features/preparation/preparation.dart';
-import 'package:speakup/features/preparation/preparation_controller.dart';
-import 'package:speakup/features/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/coaching/preparation/job_preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation.dart';
+import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/review/review.dart';
 import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
@@ -206,8 +206,8 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     if (!reloaded ||
-        !await widget.agentController.prepareActiveMatterForScenario(
-          action.matterId,
+        !await widget.agentController.prepareActiveGoalForScene(
+          action.goalId,
         )) {
       _showMockNotice('这场面试暂时无法打开，请稍后重试');
       return;

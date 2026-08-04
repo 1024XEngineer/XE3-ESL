@@ -88,14 +88,14 @@ func testEvaluationContext(
 	contextType EvaluationContextType,
 ) EvaluationContext {
 	value := EvaluationContext{
-		SchemaVersion:             EvaluationContextSchemaVersion,
-		ContextType:               contextType,
-		SceneKey:                  "scene-key",
-		ScenarioDefinitionID:      "scenario-id",
-		ScenarioDefinitionVersion: 1,
-		PracticeOptionType:        "FULL_SIMULATION",
-		DifficultyRef:             "difficulty.standard.v1",
-		AssistanceRef:             "assistance.none.v1",
+		SchemaVersion:      EvaluationContextSchemaVersion,
+		ContextType:        contextType,
+		SceneKey:           "scene-key",
+		SceneID:            "scenario-id",
+		SceneVersion:       1,
+		PracticeOptionType: "FULL_SIMULATION",
+		DifficultyRef:      "difficulty.standard.v1",
+		AssistanceRef:      "assistance.none.v1",
 	}
 	switch contextType {
 	case ContextInterviewProjectDeepDive:

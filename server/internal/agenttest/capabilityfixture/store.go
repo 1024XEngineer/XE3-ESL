@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/tool"
-	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
+	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
 )
 
@@ -24,14 +24,14 @@ var ErrTemporarilyUnavailable = errors.New(
 type Store struct {
 	mu sync.Mutex
 
-	scenarios []mattertool.MatterResult
+	goals     []goalcapability.GoalResult
 	reviews   []reviewtool.ReviewDetail
 	materials []Material
 	mistakes  []Mistake
 
-	createdScenarios map[string]mattertool.MatterResult
-	forbidden        map[string]bool
-	unavailable      map[string]bool
+	createdGoals map[string]goalcapability.GoalResult
+	forbidden    map[string]bool
+	unavailable  map[string]bool
 }
 
 type Material struct {
@@ -43,7 +43,7 @@ type Material struct {
 
 type Mistake struct {
 	ID         string
-	ScenarioID string
+	SceneID    string
 	Category   string
 	Summary    string
 	Suggestion string
@@ -51,43 +51,43 @@ type Mistake struct {
 
 func NewStore() *Store {
 	return &Store{
-		scenarios: []mattertool.MatterResult{{
-			MatterID: "mock-scenario-001",
-			Title:    "English PM interview",
-			Status:   "active",
-			Version:  1,
+		goals: []goalcapability.GoalResult{{
+			GoalID:  "mock-goal-001",
+			Title:   "English PM interview",
+			Status:  "active",
+			Version: 1,
 			SourceRefs: []tool.SourceRef{{
-				Type: "mock_matter",
-				ID:   "mock-scenario-001",
+				Type: "mock_goal",
+				ID:   "mock-goal-001",
 			}},
 		}, {
-			MatterID: "mock-scenario-002",
-			Title:    "Customer escalation meeting",
-			Status:   "active",
-			Version:  1,
+			GoalID:  "mock-goal-002",
+			Title:   "Customer escalation meeting",
+			Status:  "active",
+			Version: 1,
 			SourceRefs: []tool.SourceRef{{
-				Type: "mock_matter",
-				ID:   "mock-scenario-002",
+				Type: "mock_goal",
+				ID:   "mock-goal-002",
 			}},
 		}},
 		reviews: []reviewtool.ReviewDetail{{
-			ID:                   "mock-review-001",
-			PracticeSessionID:    "mock-practice-session-001",
-			ScenarioDefinitionID: "mock-scenario-001",
-			Status:               "completed",
-			SummaryEligibility:   "eligible",
-			Summary:              "The answer had clear structure, but the example needed stronger metrics.",
+			ID:                 "mock-review-001",
+			PracticeSessionID:  "mock-practice-session-001",
+			SceneID:            "mock-scene-001",
+			Status:             "completed",
+			SummaryEligibility: "eligible",
+			Summary:            "The answer had clear structure, but the example needed stronger metrics.",
 			SourceRefs: []tool.SourceRef{{
 				Type: "mock_review",
 				ID:   "mock-review-001",
 			}},
 		}, {
-			ID:                   "mock-review-002",
-			PracticeSessionID:    "mock-practice-session-002",
-			ScenarioDefinitionID: "mock-scenario-002",
-			Status:               "completed",
-			SummaryEligibility:   "eligible",
-			Summary:              "Tone was calm, but the next action and owner were not explicit enough.",
+			ID:                 "mock-review-002",
+			PracticeSessionID:  "mock-practice-session-002",
+			SceneID:            "mock-scene-002",
+			Status:             "completed",
+			SummaryEligibility: "eligible",
+			Summary:            "Tone was calm, but the next action and owner were not explicit enough.",
 			SourceRefs: []tool.SourceRef{{
 				Type: "mock_review",
 				ID:   "mock-review-002",
@@ -106,20 +106,20 @@ func NewStore() *Store {
 		}},
 		mistakes: []Mistake{{
 			ID:         "mock-mistake-001",
-			ScenarioID: "mock-scenario-001",
+			SceneID:    "mock-scene-001",
 			Category:   "structure",
 			Summary:    "Answer opened with background before stating the decision.",
 			Suggestion: "Start with the decision, then add context and trade-offs.",
 		}, {
 			ID:         "mock-mistake-002",
-			ScenarioID: "mock-scenario-002",
+			SceneID:    "mock-scene-002",
 			Category:   "clarity",
 			Summary:    "Next steps did not include a specific owner or deadline.",
 			Suggestion: "Close with owner, deadline, and expected customer update.",
 		}},
-		createdScenarios: make(map[string]mattertool.MatterResult),
-		forbidden:        make(map[string]bool),
-		unavailable:      make(map[string]bool),
+		createdGoals: make(map[string]goalcapability.GoalResult),
+		forbidden:    make(map[string]bool),
+		unavailable:  make(map[string]bool),
 	}
 }
 
@@ -128,8 +128,8 @@ func Tools(store *Store) []tool.Tool {
 		store = NewStore()
 	}
 	return []tool.Tool{
-		mattertool.NewScenarioCreateTool(store),
-		mattertool.NewScenarioSearchTool(store),
+		goalcapability.NewGoalCreateCapability(store),
+		goalcapability.NewGoalSearchCapability(store),
 		reviewtool.NewReviewSearchTool(store),
 		reviewtool.NewReviewGetTool(store),
 		NewMaterialSearchTool(store),
@@ -153,59 +153,59 @@ func (s *Store) SetUnavailable(name string, unavailable bool) {
 	s.unavailable[name] = unavailable
 }
 
-func (s *Store) CreateScenario(
+func (s *Store) CreateGoal(
 	ctx context.Context,
 	call tool.CallContext,
-	input mattertool.ScenarioCreateInput,
-) (mattertool.MatterResult, error) {
+	input goalcapability.GoalCreateInput,
+) (goalcapability.GoalResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.beforeLocked(mattertool.ScenarioCreateToolName); err != nil {
-		return mattertool.MatterResult{}, err
+	if err := s.beforeLocked(goalcapability.GoalCreateCapabilityName); err != nil {
+		return goalcapability.GoalResult{}, err
 	}
 	if call.RequestID == "" {
-		return mattertool.MatterResult{}, tool.ErrExecutionRejected
+		return goalcapability.GoalResult{}, tool.ErrExecutionRejected
 	}
-	if existing, ok := s.createdScenarios[call.RequestID]; ok {
+	if existing, ok := s.createdGoals[call.RequestID]; ok {
 		if existing.Title != strings.TrimSpace(input.Title) {
-			return mattertool.MatterResult{}, tool.ErrExecutionRejected
+			return goalcapability.GoalResult{}, tool.ErrExecutionRejected
 		}
 		return existing, nil
 	}
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
-		return mattertool.MatterResult{}, tool.ErrInvalidInput
+		return goalcapability.GoalResult{}, tool.ErrInvalidInput
 	}
-	id := "mock-created-scenario-" + stableSuffix(call.RequestID)
-	result := mattertool.MatterResult{
-		MatterID: id,
-		Title:    title,
-		Status:   "active",
-		Version:  1,
+	id := "mock-created-goal-" + stableSuffix(call.RequestID)
+	result := goalcapability.GoalResult{
+		GoalID:  id,
+		Title:   title,
+		Status:  "active",
+		Version: 1,
 		SourceRefs: []tool.SourceRef{{
-			Type: "mock_matter",
+			Type: "mock_goal",
 			ID:   id,
 		}},
 	}
-	s.createdScenarios[call.RequestID] = result
-	s.scenarios = append(s.scenarios, result)
+	s.createdGoals[call.RequestID] = result
+	s.goals = append(s.goals, result)
 	return result, nil
 }
 
-func (s *Store) SearchScenarios(
+func (s *Store) SearchGoals(
 	ctx context.Context,
 	call tool.CallContext,
-	input mattertool.ScenarioSearchInput,
-) ([]mattertool.MatterResult, error) {
+	input goalcapability.GoalSearchInput,
+) ([]goalcapability.GoalResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.beforeLocked(mattertool.ScenarioSearchToolName); err != nil {
+	if err := s.beforeLocked(goalcapability.GoalSearchCapabilityName); err != nil {
 		return nil, err
 	}
-	results := make([]mattertool.MatterResult, 0)
-	for _, scenario := range s.scenarios {
-		if containsAny(input.Query, scenario.Title) {
-			results = append(results, scenario)
+	results := make([]goalcapability.GoalResult, 0)
+	for _, goal := range s.goals {
+		if containsAny(input.Query, goal.Title) {
+			results = append(results, goal)
 		}
 	}
 	return limit(results, input.Limit), nil
@@ -231,15 +231,15 @@ func (s *Store) SearchReviews(
 			input.Query,
 			review.Summary,
 			review.PracticeSessionID,
-			review.ScenarioDefinitionID,
+			review.SceneID,
 		) {
 			results = append(results, reviewtool.ReviewSummary{
-				ID:                   review.ID,
-				PracticeSessionID:    review.PracticeSessionID,
-				ScenarioDefinitionID: review.ScenarioDefinitionID,
-				Summary:              review.Summary,
-				CompletedAt:          review.CompletedAt,
-				SourceRefs:           review.SourceRefs,
+				ID:                review.ID,
+				PracticeSessionID: review.PracticeSessionID,
+				SceneID:           review.SceneID,
+				Summary:           review.Summary,
+				CompletedAt:       review.CompletedAt,
+				SourceRefs:        review.SourceRefs,
 			})
 		}
 	}
@@ -290,7 +290,7 @@ func (s *Store) SearchMistakes(name string, query MistakeSearchInput) ([]Mistake
 	}
 	results := make([]Mistake, 0)
 	for _, mistake := range s.mistakes {
-		if query.ScenarioID != "" && query.ScenarioID != mistake.ScenarioID {
+		if query.SceneID != "" && query.SceneID != mistake.SceneID {
 			continue
 		}
 		if containsAny(query.Query, mistake.Category, mistake.Summary, mistake.Suggestion) {

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/1024XEngineer/XE3-ESL/server/internal/practice"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	practicepersistence "github.com/1024XEngineer/XE3-ESL/server/internal/practice/persistence"
 	"github.com/gorilla/websocket"
 )
 
@@ -62,43 +62,64 @@ func runMainFlow(t *testing.T) flowTrace {
 		exchanges: &trace.Exchanges,
 	}
 
-	client.expect(t, http.MethodGet, "/v1/scenario-definitions", nil, nil, http.StatusOK, nil)
-	client.expect(t, http.MethodGet, "/v1/scenario-definitions/"+DemoScenarioDefinition, nil, nil, http.StatusOK, nil)
-	client.expect(t, http.MethodGet, "/v1/scenario-definitions/"+DemoScenarioDefinition+"/role-definitions", nil, nil, http.StatusOK, nil)
+	client.expect(t, http.MethodGet, "/v1/scenes", nil, nil, http.StatusOK, nil)
+	client.expect(t, http.MethodGet, "/v1/scenes/"+DemoScene, nil, nil, http.StatusOK, nil)
+	client.expect(t, http.MethodGet, "/v1/scenes/"+DemoScene+"/roles", nil, nil, http.StatusOK, nil)
 	client.expect(t, http.MethodPost, "/v1/preparation-profiles", map[string]any{
 		"background_summary": "Backend engineer preparing for an English technical interview.",
 	}, map[string]string{"Idempotency-Key": "profile-key-1"}, http.StatusCreated, nil)
 	client.expect(t, http.MethodPost, "/v1/preparation-profiles/"+demoPreparationProfile+"/snapshots", map[string]any{
 		"source_version": 1,
 	}, map[string]string{"Idempotency-Key": "snapshot-key-1"}, http.StatusCreated, nil)
-	var createdPlan practice.PracticePlan
+	var createdPlan preparation.PracticePlan
 	client.expect(t, http.MethodPost, "/v1/practice-plans", map[string]any{
-		"agent_thread_id":             "agent_thread_demo_001",
-		"matter_id":                   "matter_demo_001",
-		"preparation_snapshot_id":     demoPreparationSnapshot,
-		"scenario_definition_id":      DemoScenarioDefinition,
-		"scenario_definition_version": 1,
-		"scenario_config_id":          preparation.BackendEngineerConfigID,
-		"scenario_config_version":     1,
-		"preparation_profile_id":      demoPreparationProfile,
-		"selected_role_ids":           []string{DemoRoleDefinition},
+		"source_thread_id":        "agent_thread_demo_001",
+		"goal_id":                 "goal_demo_001",
+		"preparation_snapshot_id": demoPreparationSnapshot,
+		"scene_id":                DemoScene,
+		"scene_version":           1,
+		"selected_role_ids":       []string{DemoRoleDefinition},
+		"practice_option_id":      DemoPracticeOption,
 	}, map[string]string{"Idempotency-Key": "plan-key-1"}, http.StatusCreated, &createdPlan)
-	if createdPlan.AgentThreadID != "agent_thread_demo_001" {
-		t.Fatalf("created plan agent thread = %q", createdPlan.AgentThreadID)
+	if createdPlan.SourceThreadID != "agent_thread_demo_001" {
+		t.Fatalf("created plan source thread = %q", createdPlan.SourceThreadID)
 	}
-	if createdPlan.MatterID != "matter_demo_001" {
-		t.Fatalf("created plan matter = %q", createdPlan.MatterID)
+	if createdPlan.GoalSnapshot == nil ||
+		createdPlan.GoalSnapshot.ID != "goal_demo_001" {
+		t.Fatalf("created plan goal = %#v", createdPlan.GoalSnapshot)
+	}
+	if createdPlan.PreparationSnapshot.ID != demoPreparationSnapshot ||
+		createdPlan.SceneSelection.Scene.ID != DemoScene ||
+		createdPlan.SceneSelection.PracticeOptionID != DemoPracticeOption ||
+		createdPlan.SessionPolicy.MaxEffectiveTurns != 6 ||
+		len(createdPlan.PracticeObjectives) != 4 {
+		t.Fatalf("created plan is incomplete: %#v", createdPlan)
 	}
 	var sessionBootstrap struct {
 		Session map[string]any `json:"practice_session"`
 	}
 	client.expect(t, http.MethodPost, "/v1/practice-plans/"+demoPracticePlan+"/practice-sessions", map[string]any{
-		"expected_plan_revision":  1,
-		"preparation_snapshot_id": demoPreparationSnapshot,
-		"practice_option_id":      DemoPracticeOption,
-		"role_definition_ids":     []string{DemoRoleDefinition},
+		"expected_plan_revision": 1,
+		"user_confirmed":         true,
 	}, map[string]string{"Idempotency-Key": "session-key-1"}, http.StatusCreated, &sessionBootstrap)
-	client.expect(t, http.MethodGet, "/v1/practice-sessions/"+demoPracticeSession+"/snapshot", nil, nil, http.StatusOK, nil)
+	var sessionSnapshot practicepersistence.ContextSessionSnapshot
+	client.expect(
+		t,
+		http.MethodGet,
+		"/v1/practice-sessions/"+demoPracticeSession+"/snapshot",
+		nil,
+		nil,
+		http.StatusOK,
+		&sessionSnapshot,
+	)
+	if sessionSnapshot.Preparation.ID != createdPlan.PreparationSnapshot.ID ||
+		sessionSnapshot.SceneSelection.Scene.ID != createdPlan.SceneSelection.Scene.ID ||
+		len(sessionSnapshot.Participants) != 2 ||
+		sessionSnapshot.Participants[0].Role != "FACILITATOR" ||
+		sessionSnapshot.Participants[1].Role != "LEARNER" ||
+		len(sessionSnapshot.PracticeObjectives) != len(createdPlan.PracticeObjectives) {
+		t.Fatalf("session snapshot is not frozen from Plan: %#v", sessionSnapshot)
+	}
 	client.expect(t, http.MethodPost, "/v1/practice-sessions/"+demoPracticeSession+"/questions", nil, map[string]string{
 		"Idempotency-Key": "question-key-1",
 	}, http.StatusOK, nil)

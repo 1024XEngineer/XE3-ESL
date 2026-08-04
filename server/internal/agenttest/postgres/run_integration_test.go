@@ -25,9 +25,9 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agenttest/capabilityfixture"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/ai/fake"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
+	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/matter"
-	mattertool "github.com/1024XEngineer/XE3-ESL/server/internal/matter/agenttool"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	reviewtool "github.com/1024XEngineer/XE3-ESL/server/internal/review/agenttool"
@@ -89,7 +89,7 @@ func newAgentRunHTTPRouter(
 func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 	database := newAgentTestDatabase(t)
 	generator := &recordingTextGenerator{result: successfulTextResult()}
-	matterService, dataService, runService, _ := newAgentRunServices(
+	goalService, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
 		generator,
@@ -98,18 +98,18 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 	actorA := testActorA()
 	actorB := testActorB()
 
-	activeMatter, err := matterService.Create(
+	activeGoal, err := goalService.Create(
 		context.Background(),
 		actorA,
 		"Renewal meeting",
 	)
 	if err != nil {
-		t.Fatalf("create Matter: %v", err)
+		t.Fatalf("create Goal: %v", err)
 	}
 	thread, err := dataService.CreateThread(
 		context.Background(),
 		actorA,
-		activeMatter.ID,
+		activeGoal.ID,
 	)
 	if err != nil {
 		t.Fatalf("create Thread: %v", err)
@@ -246,8 +246,8 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get ContextManifest: %v", err)
 	}
-	if manifest.ActiveMatterID != activeMatter.ID ||
-		manifest.ActiveMatterVersion != activeMatter.Version ||
+	if manifest.ActiveGoalID != activeGoal.ID ||
+		manifest.ActiveGoalVersion != activeGoal.Version ||
 		manifest.RequestedProvider != testRunConfiguration.Provider ||
 		manifest.RequestedModel != testRunConfiguration.Model ||
 		manifest.MaxOutputTokens != testRunConfiguration.MaxOutputTokens ||
@@ -261,7 +261,7 @@ func TestPostgresAgentRunSuccessReplayAuditAndOwnership(t *testing.T) {
 	if len(requests) != 1 ||
 		len(requests[0].Messages) != 2 ||
 		requests[0].Messages[0].Role != ai.TextRoleSystem ||
-		!strings.Contains(requests[0].Messages[0].Content, activeMatter.Title) ||
+		!strings.Contains(requests[0].Messages[0].Content, activeGoal.Title) ||
 		requests[0].Messages[1].Role != ai.TextRoleUser {
 		t.Fatalf("unexpected provider request: %#v", requests)
 	}
@@ -408,7 +408,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 			},
 		},
 	)
-	matterService, dataService, _, repository := newAgentRunServices(
+	goalService, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
 		generator,
@@ -416,7 +416,7 @@ func TestPostgresAgentToolCallAuditReplayAndOwnership(t *testing.T) {
 	)
 	assembler, err := agentcontext.NewAssembler(
 		repository.context,
-		matterService,
+		goalService,
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
 	)
@@ -566,30 +566,30 @@ WHERE table_schema = current_schema()
 		),
 		integrationFinalResult("mistake", "I found the relevant mistake."),
 		integrationToolResult(
-			"call-scenario-search",
-			mattertool.ScenarioSearchToolName,
+			"call-goal-search",
+			goalcapability.GoalSearchCapabilityName,
 			`{"query":"interview","limit":1}`,
 		),
-		integrationFinalResult("scenario-search", "I found an interview scenario."),
+		integrationFinalResult("goal-search", "I found an interview Goal."),
 		integrationToolResult(
-			"call-scenario-create",
-			mattertool.ScenarioCreateToolName,
+			"call-goal-create",
+			goalcapability.GoalCreateCapabilityName,
 			`{"title":"Backend interview practice"}`,
 		),
-		integrationFinalResult("scenario-create", "The practice scenario is ready."),
+		integrationFinalResult("goal-create", "The practice Goal is ready."),
 		integrationToolResult(
-			"call-dependent-scenario",
-			mattertool.ScenarioSearchToolName,
+			"call-dependent-goal",
+			goalcapability.GoalSearchCapabilityName,
 			`{"query":"interview","limit":1}`,
 		),
 		integrationToolResult(
 			"call-dependent-review",
 			reviewtool.ReviewSearchToolName,
-			`{"query":"metrics","scenario_id":"mock-scenario-001","limit":1}`,
+			`{"query":"metrics","limit":1}`,
 		),
-		integrationFinalResult("dependent", "I combined the scenario and its review."),
+		integrationFinalResult("dependent", "I combined the Goal and its review."),
 	)
-	matterService, dataService, _, repository := newAgentRunServices(
+	goalService, dataService, _, repository := newAgentRunServices(
 		t,
 		database.pool,
 		generator,
@@ -597,7 +597,7 @@ WHERE table_schema = current_schema()
 	)
 	assembler, err := agentcontext.NewAssembler(
 		repository.context,
-		matterService,
+		goalService,
 		emptyStableProfileReader{},
 		&recordingMemorySearcher{},
 	)
@@ -660,20 +660,20 @@ WHERE table_schema = current_schema()
 			expectedCalls: []string{capabilityfixture.MistakeSearchToolName},
 		},
 		{
-			name:          "scenario search",
-			content:       "找一个适合练习英文面试的已有场景",
-			expectedCalls: []string{mattertool.ScenarioSearchToolName},
+			name:          "goal search",
+			content:       "找到我已有的英文面试目标",
+			expectedCalls: []string{goalcapability.GoalSearchCapabilityName},
 		},
 		{
-			name:          "scenario create",
-			content:       "新建一个后端岗位英文面试练习",
-			expectedCalls: []string{mattertool.ScenarioCreateToolName},
+			name:          "goal create",
+			content:       "新建一个后端岗位英文面试目标",
+			expectedCalls: []string{goalcapability.GoalCreateCapabilityName},
 		},
 		{
 			name:    "dependent tools",
-			content: "先定位面试场景，再结合这个场景对应的评价给建议",
+			content: "先定位我的面试目标，再结合最近评价给建议",
 			expectedCalls: []string{
-				mattertool.ScenarioSearchToolName,
+				goalcapability.GoalSearchCapabilityName,
 				reviewtool.ReviewSearchToolName,
 			},
 		},
@@ -750,8 +750,8 @@ WHERE table_schema = current_schema()
 		}
 		last := request.Messages[len(request.Messages)-1]
 		if last.Role == ai.TextRoleTool &&
-			last.ToolCallID == "call-dependent-scenario" &&
-			strings.Contains(last.Content, `"mock-scenario-001"`) {
+			last.ToolCallID == "call-dependent-goal" &&
+			strings.Contains(last.Content, `"mock-goal-001"`) {
 			dependentResultSeen = true
 		}
 	}
@@ -759,7 +759,7 @@ WHERE table_schema = current_schema()
 		t.Fatalf("initial Provider requests = %d, want %d", initialRequests, len(cases))
 	}
 	if !dependentResultSeen {
-		t.Fatal("dependent Review call did not receive the Scenario Tool Result")
+		t.Fatal("dependent Review call did not receive the Goal Tool Result")
 	}
 	if got, want := len(runIDs), len(cases); got != want {
 		t.Fatalf("completed Run count = %d, want %d", got, want)
@@ -773,7 +773,7 @@ WHERE table_schema = current_schema()
 		"token-a",
 	)
 	if messages.Code != http.StatusOK ||
-		!strings.Contains(messages.Body.String(), "I combined the scenario and its review.") {
+		!strings.Contains(messages.Body.String(), "I combined the Goal and its review.") {
 		t.Fatalf("final messages response: %d %s", messages.Code, messages.Body)
 	}
 }
@@ -1028,7 +1028,7 @@ SELECT
 
 func TestPostgresAgentRunRejectsConcurrentRetryOnThread(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	matterService, dataService := newAgentDataServices(t, database.pool)
+	goalService, dataService := newAgentDataServices(t, database.pool)
 	repository := newRunCapableStore(
 		t,
 		database.pool,
@@ -1042,7 +1042,7 @@ func TestPostgresAgentRunRejectsConcurrentRetryOnThread(t *testing.T) {
 	failingService := newRunService(
 		t,
 		repository,
-		matterService,
+		goalService,
 		fake.NewFailingTextGenerator(ai.NewGenerationError(
 			ai.ErrorTimeout,
 			0,
@@ -1074,7 +1074,7 @@ func TestPostgresAgentRunRejectsConcurrentRetryOnThread(t *testing.T) {
 	retryService := newRunService(
 		t,
 		repository,
-		matterService,
+		goalService,
 		generator,
 		testRunConfiguration,
 	)
@@ -1499,7 +1499,7 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 	t *testing.T,
 ) {
 	database := newAgentTestDatabase(t)
-	matterService, dataService := newAgentDataServices(t, database.pool)
+	goalService, dataService := newAgentDataServices(t, database.pool)
 	repository := newRunCapableStore(
 		t,
 		database.pool,
@@ -1600,7 +1600,7 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 			runService := newRunService(
 				t,
 				repository,
-				matterService,
+				goalService,
 				test.generator,
 				testRunConfiguration,
 			)
@@ -1636,7 +1636,7 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 	timeoutService := newRunService(
 		t,
 		repository,
-		matterService,
+		goalService,
 		timeoutGenerator,
 		testRunConfiguration,
 	)
@@ -1662,7 +1662,7 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 	successService := newRunService(
 		t,
 		repository,
-		matterService,
+		goalService,
 		fake.NewTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
@@ -1706,7 +1706,7 @@ func TestPostgresAgentRunPersistsStableProviderFailuresAndRetryHistory(
 
 func TestPostgresAgentRunRetryCannotChangeInputMessage(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	matterService, dataService := newAgentDataServices(t, database.pool)
+	goalService, dataService := newAgentDataServices(t, database.pool)
 	repository := newRunCapableStore(
 		t,
 		database.pool,
@@ -1720,7 +1720,7 @@ func TestPostgresAgentRunRetryCannotChangeInputMessage(t *testing.T) {
 	failingService := newRunService(
 		t,
 		repository,
-		matterService,
+		goalService,
 		fake.NewFailingTextGenerator(ai.NewGenerationError(
 			ai.ErrorTimeout,
 			0,
@@ -1814,7 +1814,7 @@ func TestPostgresAgentRunPersistsCallerCancellationAsRetryable(t *testing.T) {
 			close(generator.release)
 		}
 	})
-	matterService, dataService, runService, repository := newAgentRunServices(
+	goalService, dataService, runService, repository := newAgentRunServices(
 		t,
 		database.pool,
 		generator,
@@ -1875,7 +1875,7 @@ func TestPostgresAgentRunPersistsCallerCancellationAsRetryable(t *testing.T) {
 	successService := newRunService(
 		t,
 		repository,
-		matterService,
+		goalService,
 		fake.NewTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
@@ -2311,18 +2311,18 @@ func TestPostgresContextAssemblerNormalizesOnlyMemorySearchQuery(
 	generator := &recordingTextGenerator{result: successfulTextResult()}
 	searcher := &recordingMemorySearcher{}
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(database.pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	repository := newRunCapableStore(t, database.pool, ids)
 	dataService, err := conversation.NewService(
 		repository.conversation,
-		matterService,
+		goalService,
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -2330,7 +2330,7 @@ func TestPostgresContextAssemblerNormalizesOnlyMemorySearchQuery(
 	runService := newRunServiceWithMemory(
 		t,
 		repository,
-		matterService,
+		goalService,
 		generator,
 		testRunConfiguration,
 		searcher,
@@ -2382,18 +2382,18 @@ func TestPostgresContextAssemblerInjectsAuditedMemoryAsUntrustedData(
 		)},
 	}
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(database.pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	repository := newRunCapableStore(t, database.pool, ids)
 	dataService, err := conversation.NewService(
 		repository.conversation,
-		matterService,
+		goalService,
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -2401,7 +2401,7 @@ func TestPostgresContextAssemblerInjectsAuditedMemoryAsUntrustedData(
 	runService := newRunServiceWithMemory(
 		t,
 		repository,
-		matterService,
+		goalService,
 		generator,
 		testRunConfiguration,
 		searcher,
@@ -2429,7 +2429,7 @@ func TestPostgresContextAssemblerInjectsAuditedMemoryAsUntrustedData(
 	if len(requests) != 1 ||
 		requests[0].Actor != actor ||
 		requests[0].Query != query ||
-		requests[0].MatterID != "" ||
+		requests[0].GoalID != "" ||
 		requests[0].Limit != 6 {
 		t.Fatalf("Memory search requests = %#v", requests)
 	}
@@ -2492,23 +2492,23 @@ func TestPostgresContextAssemblerInjectsAndAuditsStableProfile(
 	}
 	searcher := &recordingMemorySearcher{}
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(database.pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	repository := newRunCapableStore(t, database.pool, ids)
-	dataService, err := conversation.NewService(repository.conversation, matterService)
+	dataService, err := conversation.NewService(repository.conversation, goalService)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
 	runService := newRunServiceWithContexts(
 		t,
 		repository,
-		matterService,
+		goalService,
 		generator,
 		testRunConfiguration,
 		stableProfile,
@@ -2645,18 +2645,18 @@ func TestPostgresAgentMemoryStoresIndexesRecallsAndInjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new Memory Search service: %v", err)
 	}
-	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(database.pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	agentRepository := newRunCapableStore(t, database.pool, ids)
 	dataService, err := conversation.NewService(
 		agentRepository.conversation,
-		matterService,
+		goalService,
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -2665,7 +2665,7 @@ func TestPostgresAgentMemoryStoresIndexesRecallsAndInjects(t *testing.T) {
 	runService := newRunServiceWithMemory(
 		t,
 		agentRepository,
-		matterService,
+		goalService,
 		generator,
 		testRunConfiguration,
 		domainMemorySearcherAdapter{searcher: searchService},
@@ -2715,18 +2715,18 @@ func TestPostgresStableProfileAndRelevantMemoryRecallAcrossThreads(
 	actor := testActorA()
 	ids := identity.NewUUIDv4Generator(nil)
 
-	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(database.pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	agentRepository := newRunCapableStore(t, database.pool, ids)
 	dataService, err := conversation.NewService(
 		agentRepository.conversation,
-		matterService,
+		goalService,
 	)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
@@ -2879,7 +2879,7 @@ WHERE memory_id = $1`,
 	runService := newRunServiceWithContexts(
 		t,
 		agentRepository,
-		matterService,
+		goalService,
 		generator,
 		testRunConfiguration,
 		domainStableProfileReaderAdapter{reader: memoryRepository},
@@ -3017,23 +3017,23 @@ func TestPostgresContextAssemblerFailsClosedWhenMemorySearchFails(
 		err: errors.New("embedding dependency unavailable"),
 	}
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(database.pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	repository := newRunCapableStore(t, database.pool, ids)
-	dataService, err := conversation.NewService(repository.conversation, matterService)
+	dataService, err := conversation.NewService(repository.conversation, goalService)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
 	runService := newRunServiceWithMemory(
 		t,
 		repository,
-		matterService,
+		goalService,
 		generator,
 		testRunConfiguration,
 		searcher,
@@ -3082,23 +3082,23 @@ func TestPostgresContextAssemblerPrioritizesMemoryOverOlderMessages(
 	hit := testContextMemoryHit(strings.Repeat("m", 700))
 	searcher := &recordingMemorySearcher{hits: []agentcontext.MemorySearchHit{hit}}
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(database.pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(database.pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	repository := newRunCapableStore(t, database.pool, ids)
-	dataService, err := conversation.NewService(repository.conversation, matterService)
+	dataService, err := conversation.NewService(repository.conversation, goalService)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
 	runService := newRunServiceWithMemory(
 		t,
 		repository,
-		matterService,
+		goalService,
 		generator,
 		configuration,
 		searcher,
@@ -3145,47 +3145,47 @@ func TestPostgresContextAssemblerPrioritizesMemoryOverOlderMessages(
 	}
 }
 
-func TestPostgresAgentRunRevalidatesActiveMatterBeforeProviderCall(t *testing.T) {
+func TestPostgresAgentRunRevalidatesActiveGoalBeforeProviderCall(t *testing.T) {
 	database := newAgentTestDatabase(t)
 	generator := &recordingTextGenerator{result: successfulTextResult()}
-	matterService, dataService, runService, _ := newAgentRunServices(
+	goalService, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
 		generator,
 		testRunConfiguration,
 	)
 	actor := testActorA()
-	activeMatter, err := matterService.Create(
+	activeGoal, err := goalService.Create(
 		context.Background(),
 		actor,
 		"Archived before generation",
 	)
 	if err != nil {
-		t.Fatalf("create Matter: %v", err)
+		t.Fatalf("create Goal: %v", err)
 	}
 	thread, err := dataService.CreateThread(
 		context.Background(),
 		actor,
-		activeMatter.ID,
+		activeGoal.ID,
 	)
 	if err != nil {
 		t.Fatalf("create Thread: %v", err)
 	}
-	if _, err := matterService.ChangeStatus(
+	if _, err := goalService.ChangeStatus(
 		context.Background(),
 		actor,
-		activeMatter.ID,
-		activeMatter.Version,
-		matter.StatusArchived,
+		activeGoal.ID,
+		activeGoal.Version,
+		goal.StatusArchived,
 	); err != nil {
-		t.Fatalf("archive Matter: %v", err)
+		t.Fatalf("archive Goal: %v", err)
 	}
 	submission, err := runService.SubmitText(
 		context.Background(),
 		actor,
 		thread.ID,
 		"archived-context-message",
-		"Do not call the provider with stale Matter context.",
+		"Do not call the provider with stale Goal context.",
 	)
 	if err != nil {
 		t.Fatalf("submit archived-context Run: %v", err)
@@ -3211,25 +3211,25 @@ func TestPostgresAgentRunRevalidatesActiveMatterBeforeProviderCall(t *testing.T)
 
 func TestPostgresAgentRunProtectedHTTP(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	matterService, dataService, runService, _ := newAgentRunServices(
+	goalService, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
 		fake.NewTextGenerator(successfulTextResult()),
 		testRunConfiguration,
 	)
 	actorA := testActorA()
-	activeMatter, err := matterService.Create(
+	activeGoal, err := goalService.Create(
 		context.Background(),
 		actorA,
 		"Private acquisition discussion",
 	)
 	if err != nil {
-		t.Fatalf("create HTTP Matter: %v", err)
+		t.Fatalf("create HTTP Goal: %v", err)
 	}
 	thread, err := dataService.CreateThread(
 		context.Background(),
 		actorA,
-		activeMatter.ID,
+		activeGoal.ID,
 	)
 	if err != nil {
 		t.Fatalf("create Thread: %v", err)
@@ -3321,7 +3321,7 @@ WHERE owner_user_id = $1 AND thread_id = $2`,
 			manifest.Body.String(),
 			`"summary_context_status":"not_available"`,
 		) ||
-		strings.Contains(manifest.Body.String(), activeMatter.Title) {
+		strings.Contains(manifest.Body.String(), activeGoal.Title) {
 		t.Fatalf("manifest response: %d %s", manifest.Code, manifest.Body)
 	}
 	messages := performAgentRequest(
@@ -3552,21 +3552,21 @@ func newAgentRunServices(
 	pool *pgxpool.Pool,
 	generator ai.TextGenerator,
 	configuration agentrun.Configuration,
-) (*matter.Service, *conversation.Service, *agentrun.Service, *agentRepositories) {
+) (*goal.Service, *conversation.Service, *agentrun.Service, *agentRepositories) {
 	t.Helper()
 	ids := identity.NewUUIDv4Generator(nil)
-	matterRepository, err := matter.NewPostgresRepository(pool, ids)
+	goalRepository, err := goal.NewPostgresRepository(pool, ids)
 	if err != nil {
-		t.Fatalf("new Matter repository: %v", err)
+		t.Fatalf("new Goal repository: %v", err)
 	}
-	matterService, err := matter.NewService(matterRepository)
+	goalService, err := goal.NewService(goalRepository)
 	if err != nil {
-		t.Fatalf("new Matter service: %v", err)
+		t.Fatalf("new Goal service: %v", err)
 	}
 	repository := newRunCapableStore(t, pool, ids)
 	dataService, err := conversation.NewService(
 		repository.conversation,
-		matterService,
+		goalService,
 	)
 	if err != nil {
 		t.Fatalf("new Agent data service: %v", err)
@@ -3574,17 +3574,17 @@ func newAgentRunServices(
 	runService := newRunService(
 		t,
 		repository,
-		matterService,
+		goalService,
 		generator,
 		configuration,
 	)
-	return matterService, dataService, runService, repository
+	return goalService, dataService, runService, repository
 }
 
 func newRunService(
 	t *testing.T,
 	repository *agentRepositories,
-	matterService *matter.Service,
+	goalService *goal.Service,
 	generator ai.TextGenerator,
 	configuration agentrun.Configuration,
 ) *agentrun.Service {
@@ -3592,7 +3592,7 @@ func newRunService(
 	return newRunServiceWithMemory(
 		t,
 		repository,
-		matterService,
+		goalService,
 		generator,
 		configuration,
 		&recordingMemorySearcher{},
@@ -3602,7 +3602,7 @@ func newRunService(
 func newRunServiceWithMemory(
 	t *testing.T,
 	repository *agentRepositories,
-	matterService *matter.Service,
+	goalService *goal.Service,
 	generator ai.TextGenerator,
 	configuration agentrun.Configuration,
 	memories agentcontext.MemorySearcher,
@@ -3611,7 +3611,7 @@ func newRunServiceWithMemory(
 	return newRunServiceWithContexts(
 		t,
 		repository,
-		matterService,
+		goalService,
 		generator,
 		configuration,
 		emptyStableProfileReader{},
@@ -3622,7 +3622,7 @@ func newRunServiceWithMemory(
 func newRunServiceWithContexts(
 	t *testing.T,
 	repository *agentRepositories,
-	matterService *matter.Service,
+	goalService *goal.Service,
 	generator ai.TextGenerator,
 	configuration agentrun.Configuration,
 	stableProfiles agentcontext.StableProfileReader,
@@ -3631,7 +3631,7 @@ func newRunServiceWithContexts(
 	t.Helper()
 	assembler, err := agentcontext.NewAssembler(
 		repository.context,
-		matterService,
+		goalService,
 		stableProfiles,
 		memories,
 	)
@@ -3731,7 +3731,7 @@ func (adapter domainMemorySearcherAdapter) Search(
 	hits, err := adapter.searcher.Search(ctx, memory.SearchRequest{
 		Actor:                 request.Actor,
 		Query:                 request.Query,
-		MatterID:              request.MatterID,
+		GoalID:                request.GoalID,
 		ExcludedCanonicalKeys: request.ExcludedCanonicalKeys,
 		Limit:                 request.Limit,
 	})
@@ -3747,7 +3747,7 @@ func (adapter domainMemorySearcherAdapter) Search(
 			Type:                   string(hit.Type),
 			Content:                hit.Content,
 			Scope:                  string(hit.Scope),
-			MatterID:               hit.MatterID,
+			GoalID:                 hit.GoalID,
 			Similarity:             hit.Similarity,
 			Score:                  hit.Score,
 			EmbeddingProvider:      hit.EmbeddingProvider,

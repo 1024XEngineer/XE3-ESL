@@ -25,7 +25,7 @@ func TestPostgresAgentVoiceInputConfirmationHistoryAndDeletion(
 	t *testing.T,
 ) {
 	database := newAgentTestDatabase(t)
-	matterService, dataService, runService, _ := newAgentRunServices(
+	goalService, dataService, runService, _ := newAgentRunServices(
 		t,
 		database.pool,
 		aifake.NewTextGenerator(successfulTextResult()),
@@ -262,7 +262,7 @@ SELECT
 	if err != nil {
 		t.Fatalf("new restarted Agent repository: %v", err)
 	}
-	restartedData, err := conversation.NewService(restartedRepository, matterService)
+	restartedData, err := conversation.NewService(restartedRepository, goalService)
 	if err != nil {
 		t.Fatalf("new restarted Agent data service: %v", err)
 	}
